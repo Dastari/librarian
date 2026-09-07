@@ -8,19 +8,22 @@ import {
 } from "@heroui/modal";
 import { Button } from "@heroui/button";
 import { addToast } from "@heroui/toast";
-import { IconRefresh } from "@tabler/icons-react";
+import { IconAlertTriangle, IconRefresh } from "@tabler/icons-react";
 import {
+  MetadataAppSettingsDocument,
   ScanLibraryDocument,
+  type MetadataAppSettingsQuery,
   type ScanLibraryMutation,
   type ScanLibraryMutationVariables,
 } from "../../lib/graphql/generated/graphql";
-import { useMutation } from "../../lib/graphql/client";
+import { useMutation, useQuery } from "../../lib/graphql/client";
 
 export interface ScanLibraryModalProps {
   isOpen: boolean;
   onClose: () => void;
   libraryId: string | null;
   libraryName: string | null;
+  libraryType?: string | null;
   onScanStarted?: () => void;
 }
 
@@ -51,6 +54,7 @@ export function ScanLibraryModal({
   onClose,
   libraryId,
   libraryName,
+  libraryType,
   onScanStarted,
 }: ScanLibraryModalProps) {
   const [isScanning, setIsScanning] = useState(false);
@@ -58,6 +62,18 @@ export function ScanLibraryModal({
     ScanLibraryMutation,
     ScanLibraryMutationVariables
   >(ScanLibraryDocument);
+  const { data: metadataSettings } = useQuery<MetadataAppSettingsQuery>(
+    MetadataAppSettingsDocument,
+    { skip: !isOpen || libraryType?.toLowerCase() !== "movies" },
+  );
+  const tmdbReady =
+    libraryType?.toLowerCase() !== "movies" ||
+    metadataSettings?.appSettings.edges.some(
+      ({ node }) =>
+        node.key === "metadata.tmdb_api_key" &&
+        node.value.trim() !== "" &&
+        node.value !== "null",
+    );
 
   const handleScan = async () => {
     if (!libraryId) return;
@@ -65,7 +81,7 @@ export function ScanLibraryModal({
     try {
       setIsScanning(true);
       const { data, error } = await scanLibrary({
-        variables: { Id: libraryId },
+        variables: { id: libraryId },
       });
 
       if (error) {
@@ -79,7 +95,7 @@ export function ScanLibraryModal({
 
       addToast({
         title: "Scan Started",
-        description: data?.ScanLibrary.Message || `Scanning ${libraryName}...`,
+        description: data?.scanLibrary.message || `Scanning ${libraryName}...`,
         color: "primary",
       });
 
@@ -112,6 +128,19 @@ export function ScanLibraryModal({
             This will check for new files and update metadata for existing
             items.
           </p>
+          {!tmdbReady && (
+            <div className="flex gap-2 rounded-medium border border-warning-300/50 bg-warning-50/10 p-3 text-sm text-warning-600">
+              <IconAlertTriangle className="mt-0.5 shrink-0" size={18} />
+              <div>
+                <p className="font-medium">TMDB is not configured</p>
+                <p>
+                  Files will be discovered and preserved as unmatched, but new
+                  Movie records cannot be created until a tested TMDB key is
+                  saved in Metadata settings.
+                </p>
+              </div>
+            </div>
+          )}
         </ModalBody>
         <ModalFooter>
           <Button variant="flat" onPress={onClose} isDisabled={isScanning}>

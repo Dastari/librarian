@@ -69,7 +69,7 @@ export const Route = createFileRoute("/settings/casting")({
 
 function CastingSettingsPage() {
   type CastDevice =
-    DiscoverCastDevicesOpMutation["DiscoverCastDevices"][number];
+    DiscoverCastDevicesOpMutation["discoverCastDevices"][number];
   type CastSettings = {
     autoDiscoveryEnabled: boolean;
     discoveryIntervalSeconds: number;
@@ -118,28 +118,31 @@ function CastingSettingsPage() {
   >(UpdateCastSettingDocument);
 
   const mapDeviceNode = (
-    node: CastDevicesQuery["CastDevices"]["Edges"][0]["Node"],
+    node: CastDevicesQuery["castDevices"]["edges"][0]["node"],
   ): CastDevice => ({
-    id: node.Id,
-    name: node.Name,
-    address: node.Address,
-    port: node.Port,
-    model: node.Model ?? null,
-    deviceType: node.DeviceType as CastDevice["deviceType"],
-    isFavorite: node.IsFavorite,
-    isManual: node.IsManual,
+    id: node.id,
+    name: node.name,
+    address: node.address,
+    port: node.port,
+    model: node.model ?? null,
+    deviceType: node.deviceType as CastDevice["deviceType"],
+    isFavorite: node.isFavorite,
+    isManual: node.isManual,
     isConnected: false,
-    lastSeenAt: node.LastSeenAt ?? null,
+    enabled: node.enabled ?? true,
+    playbackSupported: node.playbackSupported ?? false,
+    discoveryOrigin: node.discoveryOrigin ?? null,
+    lastSeenAt: node.lastSeenAt ?? null,
   });
 
   const mapSettingNode = (
-    node: CastSettingsQuery["CastSettings"]["Edges"][0]["Node"],
+    node: CastSettingsQuery["castSettings"]["edges"][0]["node"],
   ): CastSettings => ({
-    autoDiscoveryEnabled: node.AutoDiscoveryEnabled,
-    discoveryIntervalSeconds: node.DiscoveryIntervalSeconds,
-    defaultVolume: node.DefaultVolume,
-    transcodeIncompatible: node.TranscodeIncompatible,
-    preferredQuality: node.PreferredQuality ?? null,
+    autoDiscoveryEnabled: node.autoDiscoveryEnabled,
+    discoveryIntervalSeconds: node.discoveryIntervalSeconds,
+    defaultVolume: node.defaultVolume,
+    transcodeIncompatible: node.transcodeIncompatible,
+    preferredQuality: node.preferredQuality ?? null,
   });
 
   // Load data
@@ -158,24 +161,24 @@ function CastingSettingsPage() {
         apolloClient.query({
           query: CastSettingsDocument,
           variables: {
-            Page: { limit: 1, offset: 0 },
-            OrderBy: [{ UpdatedAt: "DESC" }],
+            page: { limit: 1, offset: 0 },
+            orderBy: [{ updatedAt: "DESC" }],
           },
           fetchPolicy: "network-only",
         }),
       ]);
 
-      if (devicesRes.data?.CastDevices?.Edges) {
+      if (devicesRes.data?.castDevices?.edges) {
         setDevices(
-          devicesRes.data.CastDevices.Edges.map((edge) =>
-            mapDeviceNode(edge.Node),
+          devicesRes.data.castDevices.edges.map((edge) =>
+            mapDeviceNode(edge.node),
           ),
         );
       }
-      if (settingsRes.data?.CastSettings?.Edges?.length) {
-        const node = settingsRes.data.CastSettings.Edges[0].Node;
+      if (settingsRes.data?.castSettings?.edges?.length) {
+        const node = settingsRes.data.castSettings.edges[0].node;
         setSettings(mapSettingNode(node));
-        setSettingsId(node.Id);
+        setSettingsId(node.id);
       }
     } finally {
       setIsLoading(false);
@@ -186,9 +189,9 @@ function CastingSettingsPage() {
     setIsDiscovering(true);
     try {
       const result = await discoverCastDevices();
-      if (result.data?.DiscoverCastDevices) {
+      if (result.data?.discoverCastDevices) {
         setDevices(
-          result.data.DiscoverCastDevices.map((device) => ({
+          result.data.discoverCastDevices.map((device) => ({
             id: device.id,
             name: device.name,
             address: device.address,
@@ -198,6 +201,9 @@ function CastingSettingsPage() {
             isFavorite: device.isFavorite,
             isManual: device.isManual,
             isConnected: device.isConnected ?? false,
+            enabled: device.enabled,
+            playbackSupported: device.playbackSupported,
+            discoveryOrigin: device.discoveryOrigin ?? null,
             lastSeenAt: device.lastSeenAt ?? null,
           })),
         );
@@ -219,27 +225,27 @@ function CastingSettingsPage() {
     try {
       const result = await createCastDevice({
         variables: {
-          Input: {
-            Name:
+          input: {
+            name:
               newDeviceName.trim() ||
               `Cast Device (${newDeviceAddress.trim()})`,
-            Address: newDeviceAddress.trim(),
-            Port: newDevicePort ? parseInt(newDevicePort, 10) : 8009,
-            Model: null,
-            DeviceType: "CHROMECAST",
-            IsFavorite: false,
-            IsManual: true,
-            LastSeenAt: null,
+            address: newDeviceAddress.trim(),
+            port: newDevicePort ? parseInt(newDevicePort, 10) : 8009,
+            model: null,
+            deviceType: "CHROMECAST",
+            isFavorite: false,
+            isManual: true,
+            lastSeenAt: null,
           },
         },
       });
 
-      const payload = result.data?.CreateCastDevice;
-      if (payload?.Success && payload.CastDevice) {
+      const payload = result.data?.createCastDevice;
+      if (payload?.success && payload.castDevice) {
         setDevices((prev) => [
           ...prev,
           mapDeviceNode(
-            payload.CastDevice as CastDevicesQuery["CastDevices"]["Edges"][0]["Node"],
+            payload.castDevice as CastDevicesQuery["castDevices"]["edges"][0]["node"],
           ),
         ]);
         onClose();
@@ -247,7 +253,7 @@ function CastingSettingsPage() {
         setNewDevicePort("8009");
         setNewDeviceName("");
       } else {
-        setAddError(payload?.Error || "Failed to add device");
+        setAddError(payload?.error || "Failed to add device");
       }
     } catch (e) {
       setAddError(e instanceof Error ? e.message : "Failed to add device");
@@ -260,22 +266,22 @@ function CastingSettingsPage() {
     try {
       const result = await updateCastDevice({
         variables: {
-          Id: device.id,
-          Input: {
-            IsFavorite: !device.isFavorite,
+          id: device.id,
+          input: {
+            isFavorite: !device.isFavorite,
           },
         },
       });
       if (
-        result.data?.UpdateCastDevice.Success &&
-        result.data.UpdateCastDevice.CastDevice
+        result.data?.updateCastDevice.success &&
+        result.data.updateCastDevice.castDevice
       ) {
         setDevices((prev) =>
           prev.map((d) =>
             d.id === device.id
               ? mapDeviceNode(
-                  result.data!.UpdateCastDevice
-                    .CastDevice as CastDevicesQuery["CastDevices"]["Edges"][0]["Node"],
+                  result.data!.updateCastDevice
+                    .castDevice as CastDevicesQuery["castDevices"]["edges"][0]["node"],
                 )
               : d,
           ),
@@ -288,8 +294,8 @@ function CastingSettingsPage() {
 
   const handleRemoveDevice = async (deviceId: string) => {
     try {
-      const result = await deleteCastDevice({ variables: { Id: deviceId } });
-      if (result.data?.DeleteCastDevice.Success) {
+      const result = await deleteCastDevice({ variables: { id: deviceId } });
+      if (result.data?.deleteCastDevice.success) {
         setDevices((prev) => prev.filter((d) => d.id !== deviceId));
       }
     } catch (e) {
@@ -305,50 +311,50 @@ function CastingSettingsPage() {
       if (settingsId) {
         const result = await updateCastSetting({
           variables: {
-            Id: settingsId,
-            Input: {
-              AutoDiscoveryEnabled: updates.autoDiscoveryEnabled,
-              DiscoveryIntervalSeconds: updates.discoveryIntervalSeconds,
-              DefaultVolume: updates.defaultVolume,
-              TranscodeIncompatible: updates.transcodeIncompatible,
-              PreferredQuality: updates.preferredQuality ?? undefined,
+            id: settingsId,
+            input: {
+              autoDiscoveryEnabled: updates.autoDiscoveryEnabled,
+              discoveryIntervalSeconds: updates.discoveryIntervalSeconds,
+              defaultVolume: updates.defaultVolume,
+              transcodeIncompatible: updates.transcodeIncompatible,
+              preferredQuality: updates.preferredQuality ?? undefined,
             },
           },
         });
         if (
-          result.data?.UpdateCastSetting.Success &&
-          result.data.UpdateCastSetting.CastSetting
+          result.data?.updateCastSetting.success &&
+          result.data.updateCastSetting.castSetting
         ) {
           setSettings(
             mapSettingNode(
-              result.data.UpdateCastSetting
-                .CastSetting as CastSettingsQuery["CastSettings"]["Edges"][0]["Node"],
+              result.data.updateCastSetting
+                .castSetting as CastSettingsQuery["castSettings"]["edges"][0]["node"],
             ),
           );
         }
       } else {
         const result = await createCastSetting({
           variables: {
-            Input: {
-              AutoDiscoveryEnabled: updates.autoDiscoveryEnabled ?? true,
-              DiscoveryIntervalSeconds: updates.discoveryIntervalSeconds ?? 30,
-              DefaultVolume: updates.defaultVolume ?? 1,
-              TranscodeIncompatible: updates.transcodeIncompatible ?? false,
-              PreferredQuality: updates.preferredQuality ?? undefined,
+            input: {
+              autoDiscoveryEnabled: updates.autoDiscoveryEnabled ?? true,
+              discoveryIntervalSeconds: updates.discoveryIntervalSeconds ?? 30,
+              defaultVolume: updates.defaultVolume ?? 1,
+              transcodeIncompatible: updates.transcodeIncompatible ?? false,
+              preferredQuality: updates.preferredQuality ?? undefined,
             },
           },
         });
         if (
-          result.data?.CreateCastSetting.Success &&
-          result.data.CreateCastSetting.CastSetting
+          result.data?.createCastSetting.success &&
+          result.data.createCastSetting.castSetting
         ) {
           setSettings(
             mapSettingNode(
-              result.data.CreateCastSetting
-                .CastSetting as CastSettingsQuery["CastSettings"]["Edges"][0]["Node"],
+              result.data.createCastSetting
+                .castSetting as CastSettingsQuery["castSettings"]["edges"][0]["node"],
             ),
           );
-          setSettingsId(result.data.CreateCastSetting.CastSetting.Id);
+          setSettingsId(result.data.createCastSetting.castSetting.id);
         }
       }
     } catch (e) {
@@ -524,8 +530,9 @@ function CastingSettingsPage() {
             columns={deviceColumns}
             rowActions={deviceActions}
             getRowKey={(device) => device.id}
+            fillHeight={false}
             ariaLabel="Cast devices"
-            searchPlaceholder="Search cast devices..."
+            toolbarQueryPlaceholder="Search cast devices..."
             showItemCount
             emptyContent={
               <div className="flex flex-col items-center justify-center py-12 text-center">

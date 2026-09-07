@@ -18,6 +18,7 @@ import {
 } from "@heroui/modal";
 import { FolderBrowserInput } from "../FolderBrowserInput";
 import { NamingPatternSelector } from "./NamingPatternSelector";
+import { QualityProfileSelector } from "./QualityProfileSelector";
 import { addToast } from "@heroui/toast";
 
 import {
@@ -25,7 +26,12 @@ import {
   configureNetworkPath,
   type LibraryType,
 } from "../../lib/graphql";
-import { IconFolder, IconRefresh, IconSettings } from "@tabler/icons-react";
+import {
+  IconFolder,
+  IconRefresh,
+  IconSettings,
+  IconAdjustmentsHorizontal,
+} from "@tabler/icons-react";
 
 // =============================================================================
 // Schema & Types
@@ -40,14 +46,15 @@ const LIBRARY_TYPE_VALUES = [
 ] as const;
 
 const librarySettingsSchema = z.object({
-  Name: z.string().min(1, "Name is required"),
-  Path: z.string().min(1, "Path is required"),
-  LibraryType: z.enum(LIBRARY_TYPE_VALUES),
-  AutoScan: z.boolean(),
-  ScanIntervalMinutes: z.number().min(5).max(1440),
-  WatchForChanges: z.boolean(),
-  AutoOrganize: z.boolean(),
-  NamingPattern: z.string().nullable(),
+  name: z.string().min(1, "Name is required"),
+  path: z.string().min(1, "Path is required"),
+  libraryType: z.enum(LIBRARY_TYPE_VALUES),
+  autoScan: z.boolean(),
+  scanIntervalMinutes: z.number().min(5).max(1440),
+  watchForChanges: z.boolean(),
+  autoOrganize: z.boolean(),
+  namingPattern: z.string().nullable(),
+  qualityProfileId: z.string().nullable(),
   NetworkAuthEnabled: z.boolean(),
   NetworkUsername: z.string(),
   NetworkPassword: z.string(),
@@ -58,14 +65,15 @@ const librarySettingsSchema = z.object({
 export type LibrarySettingsFormValues = z.infer<typeof librarySettingsSchema>;
 
 export const DEFAULT_LIBRARY_SETTINGS: LibrarySettingsFormValues = {
-  Name: "",
-  Path: "",
-  LibraryType: "TV",
-  AutoScan: true,
-  ScanIntervalMinutes: 60,
-  WatchForChanges: false,
-  AutoOrganize: true,
-  NamingPattern: null,
+  name: "",
+  path: "",
+  libraryType: "TV",
+  autoScan: true,
+  scanIntervalMinutes: 60,
+  watchForChanges: false,
+  autoOrganize: true,
+  namingPattern: null,
+  qualityProfileId: null,
   NetworkAuthEnabled: false,
   NetworkUsername: "",
   NetworkPassword: "",
@@ -150,14 +158,14 @@ export function LibrarySettingsForm({
     onChange(formValues, isValid);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    formValues.Name,
-    formValues.Path,
-    formValues.LibraryType,
-    formValues.AutoScan,
-    formValues.ScanIntervalMinutes,
-    formValues.WatchForChanges,
-    formValues.AutoOrganize,
-    formValues.NamingPattern,
+    formValues.name,
+    formValues.path,
+    formValues.libraryType,
+    formValues.autoScan,
+    formValues.scanIntervalMinutes,
+    formValues.watchForChanges,
+    formValues.autoOrganize,
+    formValues.namingPattern,
     formValues.NetworkAuthEnabled,
     formValues.NetworkUsername,
     formValues.NetworkPassword,
@@ -168,7 +176,7 @@ export function LibrarySettingsForm({
   ]);
 
   // Current library type for conditional rendering
-  const libraryType = formValues.LibraryType;
+  const libraryType = formValues.libraryType;
 
   // ==========================================================================
   // Section Renderers
@@ -177,7 +185,7 @@ export function LibrarySettingsForm({
   const renderGeneralSection = () => (
     <>
       <Controller
-        name="Name"
+        name="name"
         control={control}
         render={({ field }) => (
           <Input
@@ -188,8 +196,8 @@ export function LibrarySettingsForm({
             value={field.value}
             onChange={field.onChange}
             onBlur={field.onBlur}
-            isInvalid={!!errors.Name}
-            errorMessage={errors.Name?.message}
+            isInvalid={!!errors.name}
+            errorMessage={errors.name?.message}
             classNames={{
               label: "text-sm font-medium text-primary!",
             }}
@@ -198,21 +206,21 @@ export function LibrarySettingsForm({
       />
 
       <Controller
-        name="Path"
+        name="path"
         control={control}
         render={({ field }) => (
           <FolderBrowserInput
             label={
               mode === "create" && runtimePlatform === "windows"
                 ? "Path or UNC Path"
-                : "Path"
+                : "path"
             }
             value={field.value}
             onChange={field.onChange}
             placeholder="/data/media/TV"
             description={
-              errors.Path?.message
-                ? String(errors.Path.message)
+              errors.path?.message
+                ? String(errors.path.message)
                 : "Full path to the media folder"
             }
             modalTitle="Select Library Folder"
@@ -285,7 +293,7 @@ export function LibrarySettingsForm({
       )}
 
       <Controller
-        name="LibraryType"
+        name="libraryType"
         control={control}
         render={({ field }) => (
           <Select
@@ -303,7 +311,7 @@ export function LibrarySettingsForm({
             {LIBRARY_TYPES.map((type) => (
               <SelectItem key={type.value} textValue={type.label}>
                 <div className="flex items-center gap-2">
-                  <type.Icon className="w-4 h-4" />
+                  <type.icon className="w-4 h-4" />
                   {type.label}
                 </div>
               </SelectItem>
@@ -317,7 +325,7 @@ export function LibrarySettingsForm({
           <ModalHeader>Mount Samba Path</ModalHeader>
           <ModalBody className="space-y-3">
             <Controller
-              name="Path"
+              name="path"
               control={control}
               render={({ field }) => (
                 <Input
@@ -398,7 +406,7 @@ export function LibrarySettingsForm({
                 setIsMountingSamba(true);
                 try {
                   const configured = await configureNetworkPath({
-                    path: formValues.Path,
+                    path: formValues.path,
                     username: formValues.NetworkUsername || undefined,
                     password: formValues.NetworkPassword || undefined,
                     mountPoint: formValues.NetworkMountPoint || undefined,
@@ -417,7 +425,7 @@ export function LibrarySettingsForm({
                     return;
                   }
 
-                  setValue("Path", configured.resolvedPath, {
+                  setValue("path", configured.resolvedPath, {
                     shouldDirty: true,
                     shouldValidate: true,
                   });
@@ -447,7 +455,7 @@ export function LibrarySettingsForm({
   const renderScanningSection = () => (
     <>
       <Controller
-        name="AutoScan"
+        name="autoScan"
         control={control}
         render={({ field }) => (
           <SettingRow
@@ -463,9 +471,9 @@ export function LibrarySettingsForm({
         )}
       />
 
-      {formValues.AutoScan && (
+      {formValues.autoScan && (
         <Controller
-          name="ScanIntervalMinutes"
+          name="scanIntervalMinutes"
           control={control}
           render={({ field }) => (
             <Input
@@ -479,8 +487,8 @@ export function LibrarySettingsForm({
               onChange={(e) => field.onChange(parseInt(e.target.value) || 60)}
               min={5}
               max={1440}
-              isInvalid={!!errors.ScanIntervalMinutes}
-              errorMessage={errors.ScanIntervalMinutes?.message}
+              isInvalid={!!errors.scanIntervalMinutes}
+              errorMessage={errors.scanIntervalMinutes?.message}
               classNames={{
                 label: "text-sm font-medium text-primary!",
               }}
@@ -492,7 +500,7 @@ export function LibrarySettingsForm({
       <Divider />
 
       <Controller
-        name="WatchForChanges"
+        name="watchForChanges"
         control={control}
         render={({ field }) => (
           <SettingRow
@@ -512,7 +520,7 @@ export function LibrarySettingsForm({
 
   const renderOrganizationSection = () => {
     const organizeDescriptions: Record<
-      LibrarySettingsFormValues["LibraryType"],
+      LibrarySettingsFormValues["libraryType"],
       string
     > = {
       TV: "Organize downloaded files into show/season folders",
@@ -526,7 +534,7 @@ export function LibrarySettingsForm({
     return (
       <>
         <Controller
-          name="AutoOrganize"
+          name="autoOrganize"
           control={control}
           render={({ field }) => (
             <SettingRow
@@ -542,9 +550,9 @@ export function LibrarySettingsForm({
           )}
         />
 
-        {formValues.AutoOrganize && (
+        {formValues.autoOrganize && (
           <Controller
-            name="NamingPattern"
+            name="namingPattern"
             control={control}
             render={({ field }) => (
               <NamingPatternSelector
@@ -560,6 +568,20 @@ export function LibrarySettingsForm({
       </>
     );
   };
+
+  const renderQualitySection = () => (
+    <Controller
+      name="qualityProfileId"
+      control={control}
+      render={({ field }) => (
+        <QualityProfileSelector
+          value={field.value}
+          onChange={field.onChange}
+          label="Default Quality Profile"
+        />
+      )}
+    />
+  );
 
   // ==========================================================================
   // Render with Accordions (for settings page)
@@ -608,6 +630,20 @@ export function LibrarySettingsForm({
       >
         <div className="space-y-4 pb-2">{renderOrganizationSection()}</div>
       </AccordionItem>,
+
+      <AccordionItem
+        key="quality"
+        aria-label="Quality"
+        title={
+          <div className="flex items-center gap-2">
+            <IconAdjustmentsHorizontal size={18} className="text-pink-400" />
+            <span className="font-semibold">Quality</span>
+          </div>
+        }
+        subtitle="Default quality profile for this library"
+      >
+        <div className="space-y-4 pb-2">{renderQualitySection()}</div>
+      </AccordionItem>,
     ];
 
     return (
@@ -632,6 +668,10 @@ export function LibrarySettingsForm({
       <Divider />
 
       {renderOrganizationSection()}
+
+      <Divider />
+
+      {renderQualitySection()}
     </div>
   );
 }

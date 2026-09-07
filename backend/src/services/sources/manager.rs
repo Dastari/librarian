@@ -17,6 +17,7 @@ use tokio::sync::Semaphore;
 use super::definitions::iptorrents::IPTorrentsSource;
 use super::definitions::limetorrents::LimeTorrentsSource;
 use super::definitions::thepiratebay::ThePirateBaySource;
+use super::definitions::torznab::TorznabSource;
 use super::definitions::x1337::Source1337x;
 use super::definitions::yts::YtsSource;
 use super::encryption::CredentialEncryption;
@@ -26,6 +27,9 @@ use super::{Source, SourceQuery, SourceRelease, SourceSearchResult};
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 /// Maximum concurrent searches per source
 const MAX_CONCURRENT_SEARCHES: usize = 2;
+/// Deadline for a single source's search, so one stalled tracker can't hang
+/// the whole `search_all`/`search_sources` call forever.
+const SOURCE_SEARCH_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Manages all configured source instances
 pub struct SourcesManager {
@@ -59,6 +63,7 @@ impl SourcesManager {
     ///
     /// `credentials` is a HashMap of decrypted credential values (e.g., {"Cookie": "...", "UserAgent": "..."})
     /// `settings` is a HashMap of optional settings (e.g., {"Freeleech": "true", "Sort": "seeders"})
+    #[allow(clippy::too_many_arguments)]
     pub fn load_source(
         &self,
         source_id: &str,
@@ -107,6 +112,17 @@ impl SourcesManager {
                 site_url,
                 settings,
             )?),
+            "torznab" => {
+                let api_key = credentials.get("ApiKey").cloned().unwrap_or_default();
+
+                Arc::new(TorznabSource::new(
+                    source_id.to_string(),
+                    name.to_string(),
+                    site_url,
+                    &api_key,
+                    settings,
+                )?)
+            }
             _ => {
                 return Err(anyhow!("Unknown source definition: {}", definition_id));
             }
@@ -138,6 +154,13 @@ impl SourcesManager {
         self.sources.write().remove(source_id);
         self.priorities.write().remove(source_id);
         self.rate_limiters.write().remove(source_id);
+    }
+
+    /// Clear all loaded sources before rebuilding from current database state.
+    pub fn clear_sources(&self) {
+        self.sources.write().clear();
+        self.priorities.write().clear();
+        self.rate_limiters.write().clear();
     }
 
     /// Get a loaded source by ID
@@ -180,7 +203,8 @@ impl SourcesManager {
             let rate_limiter = self.rate_limiters.read().get(&source_id).cloned();
 
             let handle = tokio::spawn(async move {
-                Self::search_single(source_id, source, &query, cache, rate_limiter).await
+                Self::search_single_with_timeout(source_id, source, &query, cache, rate_limiter)
+                    .await
             });
             handles.push(handle);
         }
@@ -222,7 +246,8 @@ impl SourcesManager {
             let rate_limiter = self.rate_limiters.read().get(&source_id).cloned();
 
             let handle = tokio::spawn(async move {
-                Self::search_single(source_id, source, &query, cache, rate_limiter).await
+                Self::search_single_with_timeout(source_id, source, &query, cache, rate_limiter)
+                    .await
             });
             handles.push(handle);
         }
@@ -243,6 +268,49 @@ impl SourcesManager {
         results
     }
 
+    /// Search a single source, bounded by [`SOURCE_SEARCH_TIMEOUT`] so a stalled
+    /// tracker cannot hang the whole batch (and its GraphQL request) forever.
+    async fn search_single_with_timeout(
+        source_id: String,
+        source: Arc<dyn Source>,
+        query: &SourceQuery,
+        cache: SearchCache,
+        rate_limiter: Option<Arc<Semaphore>>,
+    ) -> SourceSearchResult {
+        let source_name = source.name().to_string();
+        let start = Instant::now();
+        match tokio::time::timeout(
+            SOURCE_SEARCH_TIMEOUT,
+            Self::search_single(source_id.clone(), source, query, cache, rate_limiter),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                tracing::warn!(
+                    source_id = %source_id,
+                    source_name = %source_name,
+                    timeout_secs = SOURCE_SEARCH_TIMEOUT.as_secs(),
+                    "Source search timed out; treating as empty result: source_id={}, source_name='{}', timeout_secs={}",
+                    source_id,
+                    source_name,
+                    SOURCE_SEARCH_TIMEOUT.as_secs()
+                );
+                SourceSearchResult {
+                    source_id,
+                    source_name,
+                    releases: vec![],
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                    from_cache: false,
+                    error: Some(format!(
+                        "Search timed out after {}s",
+                        SOURCE_SEARCH_TIMEOUT.as_secs()
+                    )),
+                }
+            }
+        }
+    }
+
     /// Search a single source
     async fn search_single(
         source_id: String,
@@ -255,17 +323,17 @@ impl SourcesManager {
         let cache_key = format!("{}:{}", source_id, query.cache_key());
 
         // Check cache first
-        if query.cache {
-            if let Some(cached) = cache.get(&cache_key) {
-                return SourceSearchResult {
-                    source_id: source.id().to_string(),
-                    source_name: source.name().to_string(),
-                    releases: cached,
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                    from_cache: true,
-                    error: None,
-                };
-            }
+        if query.cache
+            && let Some(cached) = cache.get(&cache_key)
+        {
+            return SourceSearchResult {
+                source_id: source.id().to_string(),
+                source_name: source.name().to_string(),
+                releases: cached,
+                elapsed_ms: start.elapsed().as_millis() as u64,
+                from_cache: true,
+                error: None,
+            };
         }
 
         // Acquire rate limit permit
@@ -282,6 +350,9 @@ impl SourcesManager {
                 for release in &mut releases {
                     release.source_id = Some(source.id().to_string());
                     release.source_name = Some(source.name().to_string());
+                }
+                if query.cache {
+                    cache.insert(cache_key, releases.clone());
                 }
 
                 SourceSearchResult {
@@ -379,7 +450,6 @@ impl SearchCache {
         })
     }
 
-    #[allow(dead_code)]
     fn insert(&self, key: String, releases: Vec<SourceRelease>) {
         let mut entries = self.entries.write();
         entries.insert(
@@ -397,5 +467,92 @@ impl std::fmt::Debug for SourcesManager {
         f.debug_struct("SourcesManager")
             .field("sources_count", &self.sources.read().len())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::encryption::CredentialEncryption;
+    use super::*;
+
+    /// tier1-features-plan.md §3: "Confirm createSource already supports
+    /// multiple Source rows with the same definition_id but different
+    /// site_url/credentials (it should - load_source keys off source_id)."
+    /// This exercises exactly that at the `SourcesManager` level (no DB
+    /// needed): two independently configured "torznab" instances must coexist,
+    /// each retaining its own site_url/credentials/priority, keyed by their
+    /// distinct source_id rather than by definition_id.
+    #[test]
+    fn same_definition_id_supports_multiple_independent_instances() {
+        let key = CredentialEncryption::generate_key();
+        let manager = SourcesManager::new(&key).expect("manager should construct");
+
+        let mut creds_a = HashMap::new();
+        creds_a.insert("ApiKey".to_string(), "key-for-indexer-a".to_string());
+        manager
+            .load_source(
+                "source-a",
+                "torznab",
+                "Indexer A",
+                Some("https://indexer-a.example.com".to_string()),
+                10,
+                creds_a,
+                HashMap::new(),
+            )
+            .expect("first torznab instance should load");
+
+        let mut creds_b = HashMap::new();
+        creds_b.insert("ApiKey".to_string(), "key-for-indexer-b".to_string());
+        manager
+            .load_source(
+                "source-b",
+                "torznab",
+                "Indexer B",
+                Some("https://indexer-b.example.com".to_string()),
+                20,
+                creds_b,
+                HashMap::new(),
+            )
+            .expect("second torznab instance should load");
+
+        let source_a = manager
+            .get_source("source-a")
+            .expect("source-a should be loaded");
+        let source_b = manager
+            .get_source("source-b")
+            .expect("source-b should be loaded");
+
+        assert_eq!(source_a.definition_id(), "torznab");
+        assert_eq!(source_b.definition_id(), "torznab");
+        assert_ne!(source_a.site_link(), source_b.site_link());
+        assert_eq!(source_a.site_link(), "https://indexer-a.example.com/");
+        assert_eq!(source_b.site_link(), "https://indexer-b.example.com/");
+
+        // Both present simultaneously, ordered by priority (source-a first).
+        let by_priority = manager.get_all_sources_by_priority();
+        assert_eq!(by_priority.len(), 2);
+        assert_eq!(by_priority[0].0, "source-a");
+        assert_eq!(by_priority[1].0, "source-b");
+    }
+
+    #[test]
+    fn torznab_missing_site_url_fails_to_load() {
+        let key = CredentialEncryption::generate_key();
+        let manager = SourcesManager::new(&key).expect("manager should construct");
+
+        let mut creds = HashMap::new();
+        creds.insert("ApiKey".to_string(), "some-key".to_string());
+        let result = manager.load_source(
+            "source-c",
+            "torznab",
+            "Indexer C",
+            None,
+            5,
+            creds,
+            HashMap::new(),
+        );
+
+        assert!(result.is_err());
+        assert!(manager.get_source("source-c").is_none());
     }
 }

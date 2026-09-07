@@ -1,3 +1,9 @@
+import {
+  useNotificationOwner,
+  useNotificationRefresh,
+  useMarkAllNotificationsRead,
+} from "../hooks/useNotificationFeed";
+import { parseTimestamp } from "../lib/format";
 import { useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Popover, PopoverTrigger, PopoverContent } from "@heroui/popover";
@@ -15,6 +21,8 @@ import {
 import {
   NotificationsDocument,
   NotificationChangedDocument,
+  UnresolvedLibraryScanIssuesDocument,
+  LibraryScanIssueNotificationChangedDocument,
   UpdateNotificationDocument,
   DeleteNotificationDocument,
   OrderDirection,
@@ -24,20 +32,29 @@ import {
   type DeleteNotificationMutation,
   type DeleteNotificationMutationVariables,
 } from "../lib/graphql/generated/graphql";
+import {
+  APPROVE_QUALITY_UPGRADE_MUTATION,
+  type ApproveQualityUpgradeMutation,
+  type ApproveQualityUpgradeMutationVariables,
+} from "../lib/graphql/qualityProfiles";
 import { useMutation, useQuery, useSubscription } from "../lib/graphql/client";
+import { addToast } from "@heroui/toast";
+import { sanitizeError } from "../lib/format";
 import { NotificationDetailModal } from "./NotificationDetailModal";
+import {
+  ScanIssueDetailModal,
+  type ScanIssueNotification,
+} from "./ScanIssueDetailModal";
 
 interface NotificationPopoverProps {
   trigger: ReactNode;
+  pendingCount: number;
 }
 
-type NotificationNode = NotificationsQuery["Notifications"]["Edges"][0]["Node"];
+type NotificationNode = NotificationsQuery["notifications"]["edges"][0]["node"];
 type NotificationType = "INFO" | "WARNING" | "ERROR" | "ACTION_REQUIRED";
 type NotificationResolution =
-  | "ACCEPTED"
-  | "REJECTED"
-  | "DISMISSED"
-  | "AUTO_RESOLVED";
+  "ACCEPTED" | "REJECTED" | "DISMISSED" | "AUTO_RESOLVED";
 interface NotificationItem {
   id: string;
   title: string;
@@ -64,35 +81,35 @@ interface NotificationItem {
 
 function nodeToNotification(node: NotificationNode): NotificationItem {
   let actionData: Record<string, unknown> | null = null;
-  if (node.ActionData) {
+  if (node.actionData) {
     try {
-      actionData = JSON.parse(node.ActionData) as Record<string, unknown>;
+      actionData = JSON.parse(node.actionData) as Record<string, unknown>;
     } catch {
       actionData = null;
     }
   }
   return {
-    id: node.Id,
-    title: node.Title,
-    message: node.Message,
-    notificationType: node.NotificationType as NotificationType,
-    category: node.Category as NotificationItem["category"],
-    libraryId: node.LibraryId ?? null,
-    torrentId: node.TorrentId ?? null,
-    mediaFileId: node.MediaFileId ?? null,
-    pendingMatchId: node.PendingMatchId ?? null,
-    actionType: node.ActionType ?? null,
+    id: node.id,
+    title: node.title,
+    message: node.message,
+    notificationType: node.notificationType as NotificationType,
+    category: node.category as NotificationItem["category"],
+    libraryId: node.libraryId ?? null,
+    torrentId: node.torrentId ?? null,
+    mediaFileId: node.mediaFileId ?? null,
+    pendingMatchId: node.pendingMatchId ?? null,
+    actionType: node.actionType ?? null,
     actionData,
-    readAt: node.ReadAt ?? null,
-    resolvedAt: node.ResolvedAt ?? null,
-    resolution: (node.Resolution as NotificationResolution) ?? null,
-    createdAt: node.CreatedAt,
+    readAt: node.readAt ?? null,
+    resolvedAt: node.resolvedAt ?? null,
+    resolution: (node.resolution as NotificationResolution) ?? null,
+    createdAt: node.createdAt,
   };
 }
 
-const UNREAD_WHERE = { ReadAt: { isNull: true } } as const;
-const RECENT_ORDER: Array<{ CreatedAt: "ASC" | "DESC" }> = [
-  { CreatedAt: OrderDirection.DESC },
+const UNREAD_WHERE = { readAt: { isNull: true } } as const;
+const RECENT_ORDER: Array<{ createdAt: "ASC" | "DESC" }> = [
+  { createdAt: OrderDirection.DESC },
 ];
 const RECENT_PAGE = { limit: 10, offset: 0 } as const;
 
@@ -110,7 +127,8 @@ const getNotificationIcon = (type: NotificationType) => {
 };
 
 const formatTimeAgo = (dateString: string): string => {
-  const date = new Date(dateString);
+  const date = parseTimestamp(dateString);
+  if (!date) return "Unknown date";
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffMins = Math.floor(diffMs / 60000);
@@ -124,11 +142,27 @@ const formatTimeAgo = (dateString: string): string => {
   return date.toLocaleDateString();
 };
 
-export function NotificationPopover({ trigger }: NotificationPopoverProps) {
+function formatScanIssueCode(value: string): string {
+  return value
+    .toLowerCase()
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+export function NotificationPopover({
+  trigger,
+  pendingCount,
+}: NotificationPopoverProps) {
+  const owner = useNotificationOwner();
   const navigate = useNavigate();
+  const { handleMarkAllRead, markingAllRead } = useMarkAllNotificationsRead();
   const [selectedNotification, setSelectedNotification] =
     useState<NotificationItem | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [selectedScanIssue, setSelectedScanIssue] =
+    useState<ScanIssueNotification | null>(null);
   const [updateNotification] = useMutation<
     UpdateNotificationMutation,
     UpdateNotificationMutationVariables
@@ -137,53 +171,76 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
     DeleteNotificationMutation,
     DeleteNotificationMutationVariables
   >(DeleteNotificationDocument);
+  const [approveQualityUpgrade] = useMutation<
+    ApproveQualityUpgradeMutation,
+    ApproveQualityUpgradeMutationVariables
+  >(APPROVE_QUALITY_UPGRADE_MUTATION);
 
   const notificationsQuery = useQuery(NotificationsDocument, {
     variables: {
-      Where: UNREAD_WHERE,
-      OrderBy: RECENT_ORDER,
-      Page: RECENT_PAGE,
+      where: { ...owner, ...UNREAD_WHERE },
+      orderBy: RECENT_ORDER,
+      page: RECENT_PAGE,
+    },
+    fetchPolicy: "cache-and-network",
+  });
+  const scanIssuesQuery = useQuery(UnresolvedLibraryScanIssuesDocument, {
+    variables: {
+      where: { ...owner, resolvedAt: { isNull: true } },
+      page: RECENT_PAGE,
     },
     fetchPolicy: "cache-and-network",
   });
 
+  const refreshNotifications = useNotificationRefresh(() =>
+    notificationsQuery.refetch(),
+  );
+  const refreshScanIssues = useNotificationRefresh(() =>
+    scanIssuesQuery.refetch(),
+  );
   useSubscription(NotificationChangedDocument, {
-    variables: {},
-    onData: () => {
-      void notificationsQuery.refetch();
-    },
+    fetchPolicy: "no-cache",
+    ignoreResults: true,
+    onData: refreshNotifications,
+  });
+  useSubscription(LibraryScanIssueNotificationChangedDocument, {
+    fetchPolicy: "no-cache",
+    ignoreResults: true,
+    onData: refreshScanIssues,
   });
 
   const notifications = useMemo(() => {
     const edges =
-      notificationsQuery.data?.Notifications?.Edges ??
-      notificationsQuery.previousData?.Notifications?.Edges ??
+      notificationsQuery.data?.notifications?.edges ??
+      notificationsQuery.previousData?.notifications?.edges ??
       [];
 
     return edges
-      .map((edge) => edge?.Node)
+      .map((edge) => edge?.node)
       .filter((node): node is NotificationNode => Boolean(node))
       .map((node) => nodeToNotification(node));
   }, [notificationsQuery.data, notificationsQuery.previousData]);
-  const isLoading = notificationsQuery.loading;
+  const scanIssues = useMemo(
+    () =>
+      (
+        scanIssuesQuery.data?.libraryScanIssues.edges ??
+        scanIssuesQuery.previousData?.libraryScanIssues.edges ??
+        []
+      ).map(({ node }) => node),
+    [scanIssuesQuery.data, scanIssuesQuery.previousData],
+  );
+  const isLoading =
+    (notificationsQuery.loading &&
+      !notificationsQuery.data &&
+      !notificationsQuery.previousData) ||
+    (scanIssuesQuery.loading &&
+      !scanIssuesQuery.data &&
+      !scanIssuesQuery.previousData);
 
   const handleMarkRead = async (id: string) => {
     await updateNotification({
-      variables: { Id: id, Input: { ReadAt: new Date().toISOString() } },
+      variables: { id: id, input: { readAt: new Date().toISOString() } },
     });
-    void notificationsQuery.refetch();
-  };
-
-  const handleMarkAllRead = async () => {
-    const now = new Date().toISOString();
-    for (const n of notifications) {
-      await updateNotification({
-        variables: {
-          Id: n.id,
-          Input: { ReadAt: now },
-        },
-      });
-    }
     void notificationsQuery.refetch();
   };
 
@@ -194,11 +251,11 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
     const now = new Date().toISOString();
     await updateNotification({
       variables: {
-        Id: id,
-        Input: {
-          ResolvedAt: now,
-          Resolution: resolution,
-          ReadAt: now,
+        id: id,
+        input: {
+          resolvedAt: now,
+          resolution: resolution,
+          readAt: now,
         },
       },
     });
@@ -206,7 +263,33 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
   };
 
   const handleDelete = async (id: string) => {
-    await deleteNotification({ variables: { Id: id } });
+    await deleteNotification({ variables: { id: id } });
+    void notificationsQuery.refetch();
+  };
+
+  const handleApproveQualityUpgrade = async (id: string) => {
+    try {
+      const result = await approveQualityUpgrade({
+        variables: { notificationId: id },
+      });
+      if (!result.data?.approveQualityUpgrade.success) {
+        throw new Error(
+          result.data?.approveQualityUpgrade.error ??
+            "Failed to approve upgrade",
+        );
+      }
+      addToast({
+        title: "Upgrade approved",
+        description: "File replaced; re-analyzing.",
+        color: "success",
+      });
+    } catch (error) {
+      addToast({
+        title: "Error",
+        description: sanitizeError(error),
+        color: "danger",
+      });
+    }
     void notificationsQuery.refetch();
   };
 
@@ -222,13 +305,13 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
     navigate({ to: "/notifications" });
   };
 
-  const unreadCount = notifications.length;
+  const unreadCount = pendingCount;
 
   return (
     <>
       <Popover placement="bottom-end" offset={10}>
         <PopoverTrigger>{trigger}</PopoverTrigger>
-        <PopoverContent className="w-80 p-0">
+        <PopoverContent className="w-[28rem] max-w-[calc(100vw-2rem)] p-0">
           <div className="flex flex-col">
             <div className="flex items-center justify-between px-4 py-3 border-b border-divider">
               <h3 className="text-sm font-semibold">Notifications</h3>
@@ -238,87 +321,144 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
                   variant="light"
                   color="primary"
                   onPress={handleMarkAllRead}
+                  isLoading={markingAllRead}
                 >
                   Mark all read
                 </Button>
               )}
             </div>
 
-            <ScrollShadow className="max-h-80">
+            <ScrollShadow className="max-h-96">
               {isLoading ? (
                 <div className="flex items-center justify-center py-8 text-default-400">
                   Loading...
                 </div>
-              ) : notifications.length === 0 ? (
+              ) : notifications.length === 0 && scanIssues.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-8 text-default-400">
                   <IconCheck size={32} className="mb-2" />
                   <span className="text-sm">No notifications</span>
                 </div>
               ) : (
-                <div className="divide-y divide-divider">
-                  {notifications.map((notification) => (
-                    <div
-                      key={notification.id}
-                      className={`px-4 py-3 hover:bg-default-100 cursor-pointer transition-colors ${
-                        !notification.readAt ? "bg-primary-50/10" : ""
-                      }`}
-                      onClick={() => handleNotificationClick(notification)}
-                    >
-                      <div className="flex gap-3">
-                        <div className="shrink-0 mt-0.5">
-                          {getNotificationIcon(notification.notificationType)}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-start justify-between gap-2">
-                            <p
-                              className={`text-sm ${!notification.readAt ? "font-semibold" : ""}`}
-                            >
-                              {notification.title}
-                            </p>
-                            <span className="text-xs text-default-400 whitespace-nowrap">
-                              {formatTimeAgo(notification.createdAt)}
-                            </span>
-                          </div>
-                          <p className="text-xs text-default-500 mt-0.5 line-clamp-2">
-                            {notification.message}
-                          </p>
-
-                          {notification.notificationType ===
-                            "ACTION_REQUIRED" &&
-                            !notification.resolvedAt && (
-                              <Chip
-                                size="sm"
-                                variant="flat"
-                                color="secondary"
-                                className="mt-2"
-                              >
-                                Click to resolve
-                              </Chip>
-                            )}
-
-                          {notification.resolvedAt &&
-                            notification.resolution && (
-                              <Chip
-                                size="sm"
-                                variant="flat"
-                                color={
-                                  notification.resolution === "ACCEPTED"
-                                    ? "success"
-                                    : notification.resolution === "REJECTED"
-                                      ? "danger"
-                                      : "default"
-                                }
-                                className="mt-2"
-                              >
-                                {notification.resolution
-                                  .toLowerCase()
-                                  .replace("_", " ")}
-                              </Chip>
-                            )}
-                        </div>
+                <div>
+                  {scanIssues.length > 0 ? (
+                    <div>
+                      <div className="border-b border-divider bg-default-100/50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-default-500">
+                        Scan issues (unresolved)
+                      </div>
+                      <div className="divide-y divide-divider">
+                        {scanIssues.map((scanIssue) => (
+                          <Button
+                            key={scanIssue.id}
+                            variant="light"
+                            className="h-auto w-full justify-start rounded-none px-4 py-3 text-left"
+                            onPress={() => setSelectedScanIssue(scanIssue)}
+                          >
+                            <div className="flex min-w-0 flex-1 gap-3">
+                              <div className="mt-0.5 shrink-0">
+                                {scanIssue.severity === "ERROR" ? (
+                                  <IconAlertCircle
+                                    size={16}
+                                    className="text-red-400"
+                                  />
+                                ) : (
+                                  <IconAlertTriangle
+                                    size={16}
+                                    className="text-amber-400"
+                                  />
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-start justify-between gap-2">
+                                  <p
+                                    className={`truncate text-sm ${scanIssue.readAt ? "font-normal text-default-500" : "font-semibold"}`}
+                                  >
+                                    {formatScanIssueCode(scanIssue.issueCode)}
+                                  </p>
+                                  <span className="shrink-0 whitespace-nowrap text-xs text-default-400">
+                                    {formatTimeAgo(scanIssue.createdAt)}
+                                  </span>
+                                </div>
+                                <p className="mt-0.5 line-clamp-2 whitespace-normal text-xs text-default-500">
+                                  {scanIssue.message}
+                                </p>
+                                <Chip
+                                  size="sm"
+                                  variant="flat"
+                                  color="warning"
+                                  className="mt-2"
+                                >
+                                  Review scan issue
+                                </Chip>
+                              </div>
+                            </div>
+                          </Button>
+                        ))}
                       </div>
                     </div>
-                  ))}
+                  ) : null}
+
+                  {notifications.length > 0 ? (
+                    <div>
+                      {scanIssues.length > 0 ? (
+                        <div className="border-y border-divider bg-default-100/50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-default-500">
+                          Other notifications
+                        </div>
+                      ) : null}
+                      <div className="divide-y divide-divider">
+                        {notifications.map((notification) => (
+                          <div
+                            key={notification.id}
+                            className={`cursor-pointer px-4 py-3 transition-colors hover:bg-default-100 ${
+                              !notification.readAt ? "bg-primary-50/10" : ""
+                            }`}
+                            onClick={() =>
+                              handleNotificationClick(notification)
+                            }
+                          >
+                            <div className="flex gap-3">
+                              <div className="mt-0.5 shrink-0">
+                                {getNotificationIcon(
+                                  notification.notificationType,
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-start justify-between gap-2">
+                                  <p
+                                    className={`text-sm ${
+                                      !notification.readAt
+                                        ? "font-semibold"
+                                        : ""
+                                    }`}
+                                  >
+                                    {notification.title}
+                                  </p>
+                                  <span className="whitespace-nowrap text-xs text-default-400">
+                                    {formatTimeAgo(notification.createdAt)}
+                                  </span>
+                                </div>
+                                <p className="mt-0.5 line-clamp-2 text-xs text-default-500">
+                                  {notification.message}
+                                </p>
+
+                                {notification.notificationType ===
+                                  "ACTION_REQUIRED" &&
+                                !notification.resolvedAt ? (
+                                  <Chip
+                                    size="sm"
+                                    variant="flat"
+                                    color="secondary"
+                                    className="mt-2"
+                                  >
+                                    Click to resolve
+                                  </Chip>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               )}
             </ScrollShadow>
@@ -349,6 +489,15 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
         onResolve={handleResolve}
         onDelete={handleDelete}
         onMarkRead={handleMarkRead}
+        onApproveQualityUpgrade={handleApproveQualityUpgrade}
+      />
+      <ScanIssueDetailModal
+        issue={selectedScanIssue}
+        isOpen={selectedScanIssue !== null}
+        onClose={() => setSelectedScanIssue(null)}
+        onChanged={async () => {
+          await scanIssuesQuery.refetch();
+        }}
       />
     </>
   );

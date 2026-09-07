@@ -26,7 +26,8 @@ import {
   type RepeatMode,
 } from "../contexts/PlaybackContext";
 import { VolumeControl } from "./VolumeControl";
-import { getMediaStreamUrl } from "./VideoPlayer";
+import { getMediaStreamUrl, resolveMediaPlaybackUrl } from "./VideoPlayer";
+import { useHlsMediaSource } from "../hooks/useHlsMediaSource";
 import { PlaybackSyncIntervalDocument } from "../lib/graphql/generated/graphql";
 import { apolloClient } from "../lib/graphql/client";
 
@@ -73,20 +74,50 @@ export function PersistentAudioPlayer() {
   const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const shouldAutoPlayRef = useRef<boolean>(false);
 
+  // Playback URL for the audio element: defaults to the direct stream URL
+  // (so the common, non-HLS case starts loading immediately) and swaps to
+  // the HLS playlist URL if `/api/media/{id}/info` says this file needs
+  // remuxing/transcoding for the browser (e.g. an audio codec the browser
+  // can't decode natively). See `resolveMediaPlaybackUrl`.
+  const [playbackSrc, setPlaybackSrc] = useState<string | undefined>(
+    undefined,
+  );
+
   // Determine if this is an audio session
   const isAudioSession =
     session?.contentType === "TRACK" || session?.contentType === "AUDIOBOOK";
+
+  // Resolve the direct-vs-HLS playback URL whenever the media file changes.
+  useEffect(() => {
+    if (!isAudioSession || !session?.mediaFileId) {
+      setPlaybackSrc(undefined);
+      return;
+    }
+    const mediaFileId = session.mediaFileId;
+    setPlaybackSrc(getMediaStreamUrl(mediaFileId));
+    let cancelled = false;
+    resolveMediaPlaybackUrl(mediaFileId).then((url) => {
+      if (!cancelled) setPlaybackSrc(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.mediaFileId, isAudioSession]);
+
+  // Attaches hls.js (or native Safari HLS) when playbackSrc is an HLS
+  // playlist, or assigns it directly for a browser-compatible file.
+  useHlsMediaSource(audioRef, playbackSrc, () => setIsReady(false));
 
   // Fetch playback sync interval from app settings
   useEffect(() => {
     apolloClient
       .query({
         query: PlaybackSyncIntervalDocument,
-        variables: { Key: "playback_sync_interval" },
+        variables: { key: "playback_sync_interval" },
         fetchPolicy: "network-only",
       })
       .then((result) => {
-        const value = result.data?.AppSettings?.Edges?.[0]?.Node?.Value;
+        const value = result.data?.appSettings?.edges?.[0]?.node?.value;
         if (value != null) {
           const seconds = Number(value);
           if (Number.isFinite(seconds)) setSyncInterval(seconds * 1000);
@@ -633,7 +664,6 @@ export function PersistentAudioPlayer() {
       {/* Hidden audio element */}
       <audio
         ref={audioRef}
-        src={getMediaStreamUrl(session.mediaFileId)}
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
         onCanPlay={handleCanPlay}

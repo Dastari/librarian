@@ -1,31 +1,32 @@
-query LibraryDetailRoute($Id: String!) {
-  Library: library(id: $Id) {
-    Id
-    Name
-    Path
-    LibraryType
-    AutoScan
-    ScanIntervalMinutes
-    WatchForChanges
-    AutoOrganize
-    NamingPattern
-    Scanning
+query LibraryDetailRoute($id: String!) {
+  library(id: $id) {
+    id
+    name
+    path
+    libraryType
+    autoScan
+    scanIntervalMinutes
+    watchForChanges
+    autoOrganize
+    namingPattern
+    qualityProfileId
+    scanning
   }
 }
 
-mutation UpdateLibraryRoute($Id: String!, $Input: UpdateLibraryInput!) {
-  UpdateLibrary: updateLibrary(id: $Id, input: $Input) {
-    Success: success
-    Error: error
-    Library: library {
-      Id
+mutation UpdateLibraryRoute($id: String!, $input: UpdateLibraryInput!) {
+  updateLibrary(id: $id, input: $input) {
+    success
+    error
+    library {
+      id
     }
   }
 }
 
-mutation DeleteShowRoute($Id: String!) {
-  DeleteShow: deleteShow(id: $Id) {
-    Success: success
-    Error: error
+mutation DeleteShowRoute($id: String!) {
+  deleteShow(id: $id) {
+    success
+    error
   }
 }

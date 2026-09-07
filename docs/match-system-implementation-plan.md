@@ -16,9 +16,9 @@ This plan is based on:
 - legacy matcher/scorer references in `legacy/backend/src/services/legacy/`
 
 ## Current State
-- `MatchMediaFile` already exists in `backend/src/services/graphql/mutations/library_scan.rs`.
+- `matchMediaFile` already exists in `backend/src/services/graphql/mutations/library_scan.rs`.
 - Main matching code already exists in `backend/src/services/library_scan.rs` (`match_media_file`, `find_*_match`, provider fallback methods).
-- `ScanLibrary` already invokes matching per discovered file.
+- `scanLibrary` already invokes matching per discovered file.
 - Manual matching by explicit IDs already works.
 - Matching is currently single-best-result oriented, not contender-list oriented.
 
@@ -33,9 +33,9 @@ This plan is based on:
 
 ## Architecture Direction
 - Keep matching logic centralized in one engine/module and called from:
-  - `ScanLibrary`
-  - `MatchMediaFile`
-  - future `RematchSource`
+  - `scanLibrary`
+  - `matchMediaFile`
+  - future `rematchSource`
 - Keep GraphQL entity operations as the required data path (`execute_graphql` / `execute_mutation`), no new direct SQL for domain matching logic.
 - Keep matching deterministic and score-based.
 
@@ -135,7 +135,7 @@ Add `MatchCandidate` type:
 
 ## Provider Fallback Separation
 - Keep metadata provider create-and-link logic behind `AllowProviderFallback`.
-- Default off for direct `MatchMediaFile`.
+- Default off for direct `matchMediaFile`.
 - Keep scan flow configurable for provider fallback as a distinct stage.
 
 ## Implementation Phases
@@ -145,7 +145,7 @@ Add `MatchCandidate` type:
 4. Add `MediaFile.ChapterId` (if adopting consistency option), wire link/unlink sync.
 5. Update unmatched queries/UI to include chapter-linked files correctly.
 6. Add tests (unit + integration).
-7. Wire `RematchSource` to shared matcher engine.
+7. Wire `rematchSource` to shared matcher engine.
 
 ## Testing Plan
 - Unit tests:

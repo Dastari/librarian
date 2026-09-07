@@ -180,7 +180,9 @@ impl FingerprintService {
             .as_ref()
             .context("AcoustID API key not configured")?;
 
-        let client = reqwest::Client::new();
+        let client = crate::services::http_client::outbound_client(
+            crate::services::http_client::OutboundHttpProfile::Metadata,
+        )?;
 
         let response = client
             .post("https://api.acoustid.org/v2/lookup")
@@ -196,14 +198,22 @@ impl FingerprintService {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("AcoustID API error {}: {}", status, body);
+            let body = crate::services::http_client::response_text_limited(response, 4 * 1024)
+                .await
+                .unwrap_or_default();
+            anyhow::bail!(
+                "AcoustID API error {}: {}",
+                status,
+                body.chars().take(300).collect::<String>()
+            );
         }
 
-        let result: AcoustIdResponse = response
-            .json()
-            .await
-            .context("Failed to parse AcoustID response")?;
+        let result: AcoustIdResponse = crate::services::http_client::response_json_limited(
+            response,
+            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+        )
+        .await
+        .context("Failed to parse bounded AcoustID response")?;
 
         if result.status != "ok" {
             anyhow::bail!(

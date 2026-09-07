@@ -1,4 +1,4 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { BreadcrumbItem, Breadcrumbs } from "@heroui/breadcrumbs";
 import { Card, CardBody } from "@heroui/card";
 import { Image } from "@heroui/image";
@@ -6,7 +6,16 @@ import { Spinner } from "@heroui/spinner";
 import { RouteError } from "../../components/RouteError";
 import { CollectionPoster } from "../../components/library/CollectionCardParts";
 import { CollectionMoviesTable } from "../../components/library/CollectionMoviesTable";
-import { gql, useQuery } from "../../lib/graphql/client";
+import { useQuery } from "../../lib/graphql/client";
+import {
+  CollectionDetailLibraryRouteDocument,
+  CollectionDetailMoviesRouteDocument,
+  CollectionDetailResolveByTmdbRouteDocument,
+  CollectionDetailRouteDocument,
+  type CollectionDetailMoviesRouteQuery,
+  type CollectionDetailResolveByTmdbRouteQuery,
+  type CollectionDetailRouteQuery,
+} from "../../lib/graphql/generated/graphql";
 
 export const Route = createFileRoute("/collections/$collectionId")({
   beforeLoad: ({ context, location }) => {
@@ -24,128 +33,6 @@ export const Route = createFileRoute("/collections/$collectionId")({
   errorComponent: RouteError,
 });
 
-interface CollectionNode {
-  Id: string;
-  LibraryId: string;
-  TmdbCollectionId: number;
-  Name: string;
-  Overview: string | null;
-  PosterUrl: string | null;
-  BackdropUrl: string | null;
-  MovieCount: number;
-}
-
-interface CollectionMovieNode {
-  TmdbId: number;
-  Title: string;
-  Year: number | null;
-  PosterUrl: string | null;
-  LibraryMovieId: string | null;
-  MediaFileId: string | null;
-  FileSizeBytes: number | null;
-  Resolution: string | null;
-  VideoCodec: string | null;
-  AudioCodec: string | null;
-  AudioChannels: string | null;
-  Wanted: boolean;
-}
-
-interface CollectionQueryData {
-  Collection: CollectionNode | null;
-}
-
-interface CollectionResolveByTmdbQueryData {
-  Collections: {
-    Edges: Array<{
-      Node: CollectionNode;
-    }>;
-  };
-}
-
-interface LibraryQueryData {
-  Library: {
-    Id: string;
-    Name: string;
-  } | null;
-}
-
-interface CollectionDetailsQueryData {
-  MovieCollectionDetails: {
-    CollectionId: number;
-    Name: string;
-    Movies: CollectionMovieNode[];
-  } | null;
-}
-
-const COLLECTION_QUERY = gql`
-  query CollectionDetailRoute($Id: String!) {
-    Collection: collection(id: $Id) {
-      Id
-      LibraryId
-      TmdbCollectionId
-      Name
-      Overview
-      PosterUrl
-      BackdropUrl
-      MovieCount
-    }
-  }
-`;
-
-const COLLECTION_RESOLVE_BY_TMDB_QUERY = gql`
-  query CollectionDetailResolveByTmdbRoute(
-    $Where: CollectionWhereInput
-    $Page: PageInput
-  ) {
-    Collections: collections(where: $Where, page: $Page) {
-      Edges: edges {
-        Node: node {
-          Id
-          LibraryId
-          TmdbCollectionId
-          Name
-          Overview
-          PosterUrl
-          BackdropUrl
-          MovieCount
-        }
-      }
-    }
-  }
-`;
-
-const LIBRARY_QUERY = gql`
-  query CollectionDetailLibraryRoute($Id: String!) {
-    Library: library(id: $Id) {
-      Id
-      Name
-    }
-  }
-`;
-
-const COLLECTION_DETAILS_QUERY = gql`
-  query CollectionDetailMoviesRoute($LibraryId: String!, $CollectionId: Int!) {
-    MovieCollectionDetails(LibraryId: $LibraryId, CollectionId: $CollectionId) {
-      CollectionId
-      Name
-      Movies {
-        TmdbId
-        Title
-        Year
-        PosterUrl
-        LibraryMovieId
-        MediaFileId
-        FileSizeBytes
-        Resolution
-        VideoCodec
-        AudioCodec
-        AudioChannels
-        Wanted
-      }
-    }
-  }
-`;
-
 function CollectionDetailPage() {
   const { collectionId } = Route.useParams();
   const parsedCollectionTmdbId = Number.parseInt(collectionId, 10);
@@ -158,39 +45,39 @@ function CollectionDetailPage() {
     data: collectionData,
     previousData: previousCollectionData,
     loading: collectionLoading,
-  } = useQuery<CollectionQueryData>(COLLECTION_QUERY, {
-    variables: { Id: collectionId },
+  } = useQuery<CollectionDetailRouteQuery>(CollectionDetailRouteDocument, {
+    variables: { id: collectionId },
     fetchPolicy: "cache-and-network",
   });
 
   const directCollection =
-    collectionData?.Collection ?? previousCollectionData?.Collection ?? null;
+    collectionData?.collection ?? previousCollectionData?.collection ?? null;
   const {
     data: resolvedCollectionData,
     previousData: previousResolvedCollectionData,
     loading: resolveCollectionLoading,
-  } = useQuery<CollectionResolveByTmdbQueryData>(
-    COLLECTION_RESOLVE_BY_TMDB_QUERY,
+  } = useQuery<CollectionDetailResolveByTmdbRouteQuery>(
+    CollectionDetailResolveByTmdbRouteDocument,
     {
       variables: {
-        Where: {
-          TmdbCollectionId: { eq: parsedCollectionTmdbId },
+        where: {
+          tmdbCollectionId: { eq: parsedCollectionTmdbId },
         },
-        Page: { limit: 1, offset: 0 },
+        page: { limit: 1, offset: 0 },
       },
       skip: !hasNumericCollectionParam || directCollection != null,
       fetchPolicy: "cache-and-network",
     },
   );
   const resolvedCollection =
-    resolvedCollectionData?.Collections?.Edges?.[0]?.Node ??
-    previousResolvedCollectionData?.Collections?.Edges?.[0]?.Node ??
+    resolvedCollectionData?.collections?.edges?.[0]?.node ??
+    previousResolvedCollectionData?.collections?.edges?.[0]?.node ??
     null;
   const collection = directCollection ?? resolvedCollection;
 
-  const { data: libraryData } = useQuery<LibraryQueryData>(LIBRARY_QUERY, {
-    variables: { Id: collection?.LibraryId ?? "" },
-    skip: !collection?.LibraryId,
+  const { data: libraryData } = useQuery(CollectionDetailLibraryRouteDocument, {
+    variables: { id: collection?.libraryId ?? "" },
+    skip: !collection?.libraryId,
     fetchPolicy: "cache-and-network",
   });
 
@@ -198,18 +85,21 @@ function CollectionDetailPage() {
     data: detailsData,
     previousData: previousDetailsData,
     loading: detailsLoading,
-  } = useQuery<CollectionDetailsQueryData>(COLLECTION_DETAILS_QUERY, {
-    variables: {
-      LibraryId: collection?.LibraryId ?? "",
-      CollectionId: collection?.TmdbCollectionId ?? -1,
+  } = useQuery<CollectionDetailMoviesRouteQuery>(
+    CollectionDetailMoviesRouteDocument,
+    {
+      variables: {
+        libraryId: collection?.libraryId ?? "",
+        collectionId: collection?.tmdbCollectionId ?? -1,
+      },
+      skip: !collection?.libraryId || collection?.tmdbCollectionId == null,
+      fetchPolicy: "cache-and-network",
     },
-    skip: !collection?.LibraryId || collection?.TmdbCollectionId == null,
-    fetchPolicy: "cache-and-network",
-  });
+  );
 
   const movies =
-    detailsData?.MovieCollectionDetails?.Movies ??
-    previousDetailsData?.MovieCollectionDetails?.Movies ??
+    detailsData?.movieCollectionDetails?.movies ??
+    previousDetailsData?.movieCollectionDetails?.movies ??
     [];
 
   if ((collectionLoading || resolveCollectionLoading) && !collection) {
@@ -238,28 +128,26 @@ function CollectionDetailPage() {
   return (
     <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 mb-20 space-y-6">
       <Breadcrumbs>
-        <BreadcrumbItem href="/libraries">Libraries</BreadcrumbItem>
-        {collection.LibraryId ? (
-          <BreadcrumbItem href={`/libraries/${collection.LibraryId}`}>
-            {libraryData?.Library?.Name || "Library"}
+        <BreadcrumbItem><Link to="/libraries">Libraries</Link></BreadcrumbItem>
+        {collection.libraryId ? (
+          <BreadcrumbItem>
+            <Link to="/libraries/$libraryId" params={{ libraryId: collection.libraryId }}>{libraryData?.library?.name || "Library"}</Link>
           </BreadcrumbItem>
         ) : null}
-        {collection.LibraryId ? (
-          <BreadcrumbItem
-            href={`/libraries/${collection.LibraryId}/collections`}
-          >
-            Collections
+        {collection.libraryId ? (
+          <BreadcrumbItem>
+            <Link to="/libraries/$libraryId/collections" params={{ libraryId: collection.libraryId }}>Collections</Link>
           </BreadcrumbItem>
         ) : null}
-        <BreadcrumbItem isCurrent>{collection.Name}</BreadcrumbItem>
+        <BreadcrumbItem isCurrent>{collection.name}</BreadcrumbItem>
       </Breadcrumbs>
 
       <Card className="overflow-hidden border-default-200">
         <div className="relative">
-          {collection.BackdropUrl ? (
+          {collection.backdropUrl ? (
             <Image
-              src={collection.BackdropUrl}
-              alt={collection.Name}
+              src={collection.backdropUrl}
+              alt={collection.name}
               className="h-64 w-full object-cover"
               removeWrapper
             />
@@ -270,8 +158,8 @@ function CollectionDetailPage() {
           <div className="absolute inset-0 p-6 sm:p-8 flex items-end z-20">
             <div className="flex items-end gap-4 sm:gap-6 w-full">
               <CollectionPoster
-                posterUrl={collection.PosterUrl}
-                name={collection.Name}
+                posterUrl={collection.posterUrl}
+                name={collection.name}
                 imageClassName="w-24 h-36 sm:w-32 sm:h-48 object-cover rounded-lg shrink-0 border border-white/15"
                 fallbackClassName="w-24 h-36 sm:w-32 sm:h-48 bg-black/30 rounded-lg flex items-center justify-center shrink-0 border border-white/15"
                 iconSize={28}
@@ -279,11 +167,11 @@ function CollectionDetailPage() {
               />
               <div className="text-white space-y-2 min-w-0">
                 <h1 className="text-2xl sm:text-3xl font-bold text-shadow-sm">
-                  {collection.Name}
+                  {collection.name}
                 </h1>
-                {collection.Overview ? (
+                {collection.overview ? (
                   <p className="text-sm sm:text-base text-white/85 line-clamp-2 sm:line-clamp-3 max-w-3xl text-shadow-sm">
-                    {collection.Overview}
+                    {collection.overview}
                   </p>
                 ) : null}
               </div>
@@ -293,9 +181,9 @@ function CollectionDetailPage() {
       </Card>
 
       <CollectionMoviesTable
-        stateKey={`collection-detail-movies-${collection.Id}`}
+        stateKey={`collection-detail-movies-${collection.id}`}
         ariaLabel="Collection movies table"
-        searchPlaceholder={`Search "${collection.Name}"...`}
+        toolbarQueryPlaceholder={`Search "${collection.name}"...`}
         isLoading={detailsLoading && movies.length === 0}
         movies={movies}
       />

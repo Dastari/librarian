@@ -1,0 +1,105 @@
+# Cross-library lists for the Wanted page. Every row carries its parent title and artwork so
+# the page can group by title without a second round trip.
+
+query WantedListEpisodes($where: EpisodeWhereInput, $page: PageInput) {
+  episodes(where: $where, orderBy: [{ season: ASC }, { episode: ASC }], page: $page) {
+    edges {
+      node {
+        ...EpisodeFields
+        show {
+          id
+          name
+          posterUrl
+          libraryId
+          imdbId
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+query WantedListMovies($where: MovieWhereInput, $page: PageInput) {
+  movies(where: $where, orderBy: [{ sortTitle: ASC }], page: $page) {
+    edges {
+      node {
+        ...MovieFields
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+query WantedListTracks($where: TrackWhereInput, $page: PageInput) {
+  tracks(where: $where, orderBy: [{ trackNumber: ASC }], page: $page) {
+    edges {
+      node {
+        ...TrackFields
+        album {
+          id
+          name
+          coverUrl
+          libraryId
+          year
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+query WantedListChapters($where: ChapterWhereInput, $page: PageInput) {
+  chapters(where: $where, orderBy: [{ chapterNumber: ASC }], page: $page) {
+    edges {
+      node {
+        ...ChapterFields
+        audiobook {
+          id
+          title
+          authorName
+          coverUrl
+          libraryId
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+# Files the quality engine marked as below their profile. The Wanted page resolves the owning
+# episode/movie/track/chapter in a second step.
+query UpgradableFiles($page: PageInput) {
+  mediaFiles(where: { qualityStatus: { eq: "suboptimal" } }, orderBy: [{ addedAt: DESC }], page: $page) {
+    edges {
+      node {
+        id
+        libraryId
+        episodeId
+        movieId
+        trackId
+        chapterId
+        resolution
+        videoCodec
+        audioCodec
+        size
+        qualityStatus
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}

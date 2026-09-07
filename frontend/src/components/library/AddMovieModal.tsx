@@ -34,7 +34,7 @@ export function AddMovieModal({
   libraryId,
   onAdded,
 }: AddMovieModalProps) {
-  type MovieSearchResult = SearchMoviesQuery['SearchMovies'][number]
+  type MovieSearchResult = SearchMoviesQuery['searchMovies'][number]
 
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<MovieSearchResult[]>([])
@@ -49,7 +49,7 @@ export function AddMovieModal({
 
     try {
       const { data, error } = await searchMovies({
-        variables: { Query: searchQuery },
+        variables: { query: searchQuery },
       })
 
       if (error) {
@@ -61,7 +61,7 @@ export function AddMovieModal({
         return
       }
 
-      setSearchResults(data?.SearchMovies ?? [])
+      setSearchResults(data?.searchMovies ?? [])
     } catch (err) {
       console.error('Search failed:', err)
     }
@@ -73,18 +73,18 @@ export function AddMovieModal({
     try {
       const { data, error } = await addMovie({
         variables: {
-          LibraryId: libraryId,
-          Input: {
-            TmdbId: selectedMovie.ProviderId,
-            Monitored: monitored,
+          libraryId: libraryId,
+          input: {
+            tmdbId: selectedMovie.providerId,
+            monitored: monitored,
           },
         },
       })
 
-      if (error || !data?.AddMovie.Success) {
+      if (error || !data?.addMovie.success) {
         addToast({
           title: 'Error',
-          description: sanitizeError(data?.AddMovie.Error || error || 'Failed to add movie'),
+          description: sanitizeError(data?.addMovie.error || error || 'Failed to add movie'),
           color: 'danger',
         })
         return
@@ -92,7 +92,7 @@ export function AddMovieModal({
 
       addToast({
         title: 'Success',
-        description: `Added "${selectedMovie.Title}" to library`,
+        description: `Added "${selectedMovie.title}" to library`,
         color: 'success',
       })
 
@@ -157,17 +157,17 @@ export function AddMovieModal({
                 <div className="space-y-2 max-h-96 overflow-auto">
                   {searchResults.map((result) => (
                     <Card
-                      key={`${result.Provider}-${result.ProviderId}`}
+                      key={`${result.provider}-${result.providerId}`}
                       isPressable
                       className="bg-content2 w-full hover:bg-content3"
                       onPress={() => setSelectedMovie(result)}
                     >
                       <CardBody className="flex flex-row gap-3 p-2">
                         <div className="shrink-0 w-10">
-                          {result.PosterUrl ? (
+                          {result.posterUrl ? (
                             <Image
-                              src={result.PosterUrl}
-                              alt={result.Title}
+                              src={result.posterUrl}
+                              alt={result.title}
                               classNames={{
                                 wrapper: "w-full",
                                 img: "w-full aspect-[2/3] object-cover",
@@ -185,32 +185,32 @@ export function AddMovieModal({
                         </div>
                         <div className="flex-1 min-w-0">
                           <h4 className="font-medium">
-                            {result.Title}
-                            {result.Year && (
+                            {result.title}
+                            {result.year && (
                               <span className="text-default-500 ml-1">
-                                ({result.Year})
+                                ({result.year})
                               </span>
                             )}
                           </h4>
                           <p className="text-xs text-default-500 line-clamp-2">
-                            {result.Overview || "No description available"}
+                            {result.overview || "No description available"}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
-                          {result.VoteAverage && result.VoteAverage > 0 && (
+                          {result.voteAverage && result.voteAverage > 0 && (
                             <Chip
                               size="sm"
                               variant="flat"
                               color={
-                                result.VoteAverage >= 7
+                                result.voteAverage >= 7
                                   ? "success"
-                                  : result.VoteAverage >= 5
+                                  : result.voteAverage >= 5
                                     ? "warning"
                                     : "danger"
                               }
                               startContent={<IconStar size={10} />}
                             >
-                              {result.VoteAverage.toFixed(1)}
+                              {result.voteAverage.toFixed(1)}
                             </Chip>
                           )}
                         </div>
@@ -229,10 +229,10 @@ export function AddMovieModal({
               <Card className="bg-content2">
                 <CardBody className="flex flex-row gap-4 p-3">
                   <div className="flex-shrink-0 w-24">
-                    {selectedMovie.PosterUrl ? (
+                    {selectedMovie.posterUrl ? (
                       <Image
-                        src={selectedMovie.PosterUrl}
-                        alt={selectedMovie.Title}
+                        src={selectedMovie.posterUrl}
+                        alt={selectedMovie.title}
                         classNames={{
                           wrapper: "w-full",
                           img: "w-full aspect-[2/3] object-cover",
@@ -247,23 +247,23 @@ export function AddMovieModal({
                   </div>
                   <div className="flex-1 min-w-0">
                     <h4 className="font-semibold text-lg">
-                      {selectedMovie.Title}
-                      {selectedMovie.Year && (
+                      {selectedMovie.title}
+                      {selectedMovie.year && (
                         <span className="text-default-500 ml-1">
-                          ({selectedMovie.Year})
+                          ({selectedMovie.year})
                         </span>
                       )}
                     </h4>
-                    {selectedMovie.VoteAverage &&
-                      selectedMovie.VoteAverage > 0 && (
+                    {selectedMovie.voteAverage &&
+                      selectedMovie.voteAverage > 0 && (
                         <div className="flex items-center gap-1 text-sm text-default-500 mt-1">
                           <IconStar size={14} className="text-yellow-400" />
-                          <span>{selectedMovie.VoteAverage.toFixed(1)}</span>
+                          <span>{selectedMovie.voteAverage.toFixed(1)}</span>
                         </div>
                       )}
-                    {selectedMovie.Overview && (
+                    {selectedMovie.overview && (
                       <p className="text-sm text-default-400 mt-2 line-clamp-4">
-                        {selectedMovie.Overview}
+                        {selectedMovie.overview}
                       </p>
                     )}
                   </div>

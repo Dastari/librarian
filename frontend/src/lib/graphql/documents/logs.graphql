@@ -1,48 +1,48 @@
 query AppLogs(
-  $Where: AppLogWhereInput
-  $OrderBy: [AppLogOrderByInput!]
-  $Page: PageInput
+  $where: AppLogWhereInput
+  $orderBy: [AppLogOrderByInput!]
+  $page: PageInput
 ) {
-  AppLogs: appLogs(where: $Where, orderBy: $OrderBy, page: $Page) {
-    Edges: edges {
-      Node: node {
-        Id
-        Timestamp
-        Level
-        Target
-        Message
-        Fields
-        SpanName
+  appLogs(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        id
+        timestamp
+        level
+        target
+        message
+        fields
+        spanName
       }
-      Cursor: cursor
+      cursor
     }
-    PageInfo: pageInfo {
-      HasNextPage: hasNextPage
-      TotalCount: totalCount
-    }
-  }
-}
-
-subscription AppLogChanged($Filter: SubscriptionFilterInput) {
-  AppLogChanged: appLogChanged(filter: $Filter) {
-    Action: action
-    Id: id
-    AppLog: appLog {
-      Id
-      Timestamp
-      Level
-      Target
-      Message
-      Fields
-      SpanName
+    pageInfo {
+      hasNextPage
+      totalCount
     }
   }
 }
 
-mutation DeleteAppLogs($Where: AppLogWhereInput!) {
-  DeleteAppLogs: deleteAppLogs(where: $Where) {
+subscription AppLogChanged($filter: SubscriptionFilterInput) {
+  appLogChanged(filter: $filter) {
+    action
+    id
+    appLog {
+      id
+      timestamp
+      level
+      target
+      message
+      fields
+      spanName
+    }
+  }
+}
+
+mutation DeleteAppLogs($where: AppLogWhereInput!) {
+  deleteAppLogs(where: $where) {
     success
     error
-    DeletedCount: deletedCount
+    deletedCount
   }
 }

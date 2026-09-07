@@ -37,10 +37,10 @@ import {
   type SearchMoviesQuery,
 } from '../../lib/graphql/generated/graphql'
 
-type LibraryNode = LibrariesQuery['Libraries']['Edges'][number]['Node']
+type LibraryNode = LibrariesQuery['libraries']['edges'][number]['node']
 type LibraryType = 'TV' | 'MOVIES' | 'MUSIC' | 'AUDIOBOOKS'
-type TvShowSearchResult = SearchTvShowsQuery['SearchTvShows'][number]
-type MovieSearchResult = SearchMoviesQuery['SearchMovies'][number]
+type TvShowSearchResult = SearchTvShowsQuery['searchTvShows'][number]
+type MovieSearchResult = SearchMoviesQuery['searchMovies'][number]
 type SearchRelease = {
   title: string
   link?: string | null
@@ -98,7 +98,7 @@ function parseTorrentName(title: string): ParsedInfo {
     }
   }
   
-  // Check for movie patterns: Title (Year) or Title.Year
+  // Check for movie patterns: Title (Year) or Title.year
   const moviePattern = /^(.+?)[\s\.\(]*((?:19|20)\d{2})[\s\)\]\.]/
   const movieMatch = cleaned.match(moviePattern)
   if (movieMatch) {
@@ -171,9 +171,9 @@ function isTvShowSearchResult(item: TvShowSearchResult | MovieSearchResult): ite
 // Get display name from either type
 function getItemDisplayName(item: TvShowSearchResult | MovieSearchResult): string {
   if (isTvShowSearchResult(item)) {
-    return item.Name
+    return item.name
   }
-  return item.Title
+  return item.title
 }
 
 export function AddToLibraryModal({
@@ -211,7 +211,7 @@ export function AddToLibraryModal({
   const [addTorrent] = useMutation(AddTorrentDocument)
   const searching = searchingTvShows || searchingMovies
   const libraries: LibraryNode[] = useMemo(
-    () => librariesData?.Libraries.Edges.map((edge) => edge.Node) ?? [],
+    () => librariesData?.libraries.edges.map((edge) => edge.node) ?? [],
     [librariesData],
   )
   
@@ -231,13 +231,13 @@ export function AddToLibraryModal({
   const filteredLibraries = useMemo(() => {
     const targetType = TYPE_TO_LIBRARY_TYPE[selectedType]
     if (!targetType) return libraries
-    return libraries.filter((lib) => lib.LibraryType === targetType)
+    return libraries.filter((lib) => lib.libraryType === targetType)
   }, [libraries, selectedType])
   
   // Auto-select first matching library
   useEffect(() => {
     if (filteredLibraries.length > 0 && !selectedLibraryId) {
-      setSelectedLibraryId(filteredLibraries[0].Id)
+      setSelectedLibraryId(filteredLibraries[0].id)
     } else if (filteredLibraries.length === 0) {
       setSelectedLibraryId('')
     }
@@ -251,14 +251,14 @@ export function AddToLibraryModal({
     try {
       if (selectedType === 'tv') {
         const { data } = await searchTvShows({
-          variables: { Query: searchQuery },
+          variables: { query: searchQuery },
         })
-        setSearchResults(data?.SearchTvShows ?? [])
+        setSearchResults(data?.searchTvShows ?? [])
       } else if (selectedType === 'movies') {
         const { data } = await searchMovies({
-          variables: { Query: searchQuery },
+          variables: { query: searchQuery },
         })
-        setSearchResults(data?.SearchMovies ?? [])
+        setSearchResults(data?.searchMovies ?? [])
       } else {
         // Music and audiobooks - no search yet
         setSearchResults([])
@@ -282,40 +282,43 @@ export function AddToLibraryModal({
     setCreating(true)
     
     try {
+      let movieId: string | undefined
+      let showId: string | undefined
+
       // Create the library item if we have a selected metadata item
       if (selectedItem && (selectedType === 'tv' || selectedType === 'movies')) {
         if (selectedType === 'tv') {
           const tvItem = selectedItem as TvShowSearchResult
           const { data, error } = await addTvShow({
             variables: {
-              LibraryId: selectedLibraryId,
-              Input: {
-                TvmazeId: tvItem.ProviderId,
-                AutoDownloadMode: 'ALL',
+              libraryId: selectedLibraryId,
+              input: {
+                tvmazeId: tvItem.providerId,
+                autoDownloadMode: 'ALL',
               },
             },
           })
           
-          if (error || !data?.AddTvShow.Success) {
-            throw new Error(data?.AddTvShow.Error || 'Failed to add TV show')
+          if (error || !data?.addTvShow.success) {
+            throw new Error(data?.addTvShow.error || 'Failed to add TV show')
           }
-          // TODO: Use data.AddTvShow.Show?.Id to link torrent to show
+          showId = data.addTvShow.show?.id
         } else if (selectedType === 'movies') {
           const movieItem = selectedItem as MovieSearchResult
           const { data, error } = await addMovie({
             variables: {
-              LibraryId: selectedLibraryId,
-              Input: {
-                TmdbId: movieItem.ProviderId,
-                Monitored: true,
+              libraryId: selectedLibraryId,
+              input: {
+                tmdbId: movieItem.providerId,
+                monitored: true,
               },
             },
           })
           
-          if (error || !data?.AddMovie.Success) {
-            throw new Error(data?.AddMovie.Error || 'Failed to add movie')
+          if (error || !data?.addMovie.success) {
+            throw new Error(data?.addMovie.error || 'Failed to add movie')
           }
-          // TODO: Use data.AddMovie.Movie?.Id to link torrent to movie
+          movieId = data.addMovie.movie?.id
         }
       }
       
@@ -334,15 +337,20 @@ export function AddToLibraryModal({
         
         const { data, error } = await addTorrent({
           variables: {
-            Input: {
-              Magnet: isMagnet ? magnetUri : undefined,
-              Url: !isMagnet ? (magnetUri || torrentUrl) : undefined,
+            input: {
+              magnet: isMagnet ? magnetUri : undefined,
+              url: !isMagnet ? (magnetUri || torrentUrl) : undefined,
+              libraryId: selectedLibraryId,
+              movieId,
+              showId,
+              sourceUrl: torrentUrl || magnetUri,
+              sourceIndexerId: release.indexerName || undefined,
             },
           },
         })
         
-        if (error || !data?.AddTorrent?.Success) {
-          throw new Error(data?.AddTorrent?.Error || 'Failed to add torrent')
+        if (error || !data?.addTorrent?.success) {
+          throw new Error(data?.addTorrent?.error || 'Failed to add torrent')
         }
       }
       
@@ -460,8 +468,8 @@ export function AddToLibraryModal({
                 placeholder="Select a library"
               >
                 {filteredLibraries.map((lib) => (
-                  <SelectItem key={lib.Id} textValue={lib.Name}>
-                    {lib.Name}
+                  <SelectItem key={lib.id} textValue={lib.name}>
+                    {lib.name}
                   </SelectItem>
                 ))}
               </Select>
@@ -511,11 +519,11 @@ export function AddToLibraryModal({
                   {searchResults.map((item) => {
                     const isTv = 'Name' in item && !('Title' in item)
                     const id = isTv
-                      ? String((item as TvShowSearchResult).ProviderId)
-                      : String((item as MovieSearchResult).ProviderId)
-                    const name = isTv ? (item as TvShowSearchResult).Name : (item as MovieSearchResult).Title
-                    const year = isTv ? (item as TvShowSearchResult).Year : (item as MovieSearchResult).Year
-                    const poster = isTv ? (item as TvShowSearchResult).PosterUrl : (item as MovieSearchResult).PosterUrl
+                      ? String((item as TvShowSearchResult).providerId)
+                      : String((item as MovieSearchResult).providerId)
+                    const name = isTv ? (item as TvShowSearchResult).name : (item as MovieSearchResult).title
+                    const year = isTv ? (item as TvShowSearchResult).year : (item as MovieSearchResult).year
+                    const poster = isTv ? (item as TvShowSearchResult).posterUrl : (item as MovieSearchResult).posterUrl
                     const isSelected = selectedItem === item
                     
                     return (

@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
-import Hls from 'hls.js'
+import { useRef } from 'react'
 import { CastButton } from './cast'
+import { useHlsMediaSource } from '../hooks/useHlsMediaSource'
+export { getMediaStreamUrl, resolveMediaPlaybackUrl, resolveMediaPlaybackSource } from '../lib/api/mediaPlayback'
 
 interface VideoPlayerProps {
   /** Video source URL (direct file or HLS m3u8) */
@@ -36,58 +37,9 @@ export function VideoPlayer({
   showCastButton = true,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
-  const hlsRef = useRef<Hls | null>(null)
 
-  useEffect(() => {
-    const video = videoRef.current
-    if (!video || !src) return
-
-    // Check if HLS is needed
-    if (src.includes('.m3u8')) {
-      if (Hls.isSupported()) {
-        const hls = new Hls({
-          enableWorker: true,
-          lowLatencyMode: false,
-        })
-        
-        hls.loadSource(src)
-        hls.attachMedia(video)
-        
-        hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (data.fatal) {
-            onError?.(new Error(`HLS fatal error: ${data.type}`))
-          }
-        })
-        
-        hlsRef.current = hls
-        
-        return () => {
-          hls.destroy()
-          hlsRef.current = null
-        }
-      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        // Native HLS support (Safari)
-        video.src = src
-        return () => {
-          // Cleanup for native HLS: abort network requests
-          video.pause()
-          video.src = ''
-          video.load()
-        }
-      } else {
-        onError?.(new Error('HLS not supported'))
-      }
-    } else {
-      // Direct play
-      video.src = src
-      return () => {
-        // Cleanup for direct play: abort network requests
-        video.pause()
-        video.src = ''
-        video.load()
-      }
-    }
-  }, [src, onError])
+  // Handles both HLS (.m3u8, via hls.js/native Safari) and direct-play src.
+  useHlsMediaSource(videoRef, src, onError)
 
   return (
     <div className="relative bg-black rounded-lg overflow-hidden group">
@@ -124,10 +76,3 @@ export function VideoPlayer({
   )
 }
 
-/**
- * Helper to generate the stream URL for a media file
- */
-export function getMediaStreamUrl(mediaFileId: string): string {
-  const apiUrl = import.meta.env.VITE_API_URL || '';
-  return `${apiUrl}/api/media/${mediaFileId}/stream`;
-}

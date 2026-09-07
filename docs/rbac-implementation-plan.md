@@ -822,7 +822,7 @@ These rules ensure the RBAC system is consistent across the stack:
 | UI visibility | N/A | `RequireRole` component wraps admin-only UI |
 | Route protection | N/A | `beforeLoad` in TanStack Router redirects unauthorized |
 | Types source of truth | Entity struct + macro → GraphQL schema | `pnpm codegen` → `generated/graphql.ts` + `generated/types.ts` (never hand-written) |
-| Naming | PascalCase in GraphQL schema (enforced by existing rules) | PascalCase in `.graphql` documents and generated types (enforced by codegen config) |
+| Naming | camelCase for GraphQL resolver fields, PascalCase for GraphQL type names | `.graphql` documents query camelCase fields and use generated types from codegen |
 | Bulk update result casing | `Update<Plural>Result` uses `success`, `error`, `affectedCount` | Documents and UI should query/use lowercase `success/error` and `affectedCount` |
 
 ---
@@ -833,7 +833,7 @@ These rules ensure the RBAC system is consistent across the stack:
 |------|------------|
 | Breaking internal service calls that use `execute_mutation` with a non-admin user | Audit all `execute_mutation` callers; ensure they construct `AuthUser` with `role: "admin"`. The `get_default_user_id` helper should return the admin user. |
 | Child entities cannot be scoped by direct `owner_field`/`library_scope` | Add relation-aware scoping (`scope_via`) and test Episode/Track/Chapter access explicitly before enabling broad policy defaults. |
-| GraphQL casing drift (`Success/Error` vs `success/error`) causes frontend/codegen breakage | Standardize result field naming in generated types and examples; validate all docs via `pnpm codegen` in CI. |
+| GraphQL casing drift (`Success/Error` vs `success/error`) causes frontend/codegen breakage | Standardize result field naming on camelCase in generated types and examples; validate all docs via `pnpm codegen` in CI. |
 | Per-field read guards changing field nullability in the GraphQL schema | Only apply `field_read_role` to already-`Option<T>` fields. Document this constraint. Codegen types already use `Maybe<T>` for these. |
 | Performance impact of library scope subqueries | The `user_library_access` table is small and indexed. For hot paths, consider caching user library IDs in context at request start. |
 | Macro complexity increase | Keep the guard injection as simple token insertion. Add macro-level integration tests using `trybuild`. |

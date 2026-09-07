@@ -1,124 +1,84 @@
 /**
  * Filesystem GraphQL operations
  *
- * Uses codegen-generated documents and PascalCase types from the backend schema.
+ * Uses codegen-generated documents from the backend schema.
  */
 
 import {
   BrowseDirectoryDocument,
+  ConfigureNetworkPathDocument,
+  CopyFilesDocument,
+  CreateDirectoryDocument,
+  DeleteFilesDocument,
+  FilesystemRuntimeInfoDocument,
+  LibraryPathAvailabilityDocument,
+  MoveFilesDocument,
+  ReconnectLibraryPathDocument,
+  RenameFileDocument,
   type BrowseDirectoryQuery,
+  type CopyFilesMutation,
+  type CreateDirectoryMutation,
+  type DeleteFilesMutation,
+  type MoveFilesMutation,
+  type RenameFileMutation,
 } from './generated/graphql';
-import {
-  CREATE_DIRECTORY_MUTATION,
-  DELETE_FILES_MUTATION,
-  COPY_FILES_MUTATION,
-  MOVE_FILES_MUTATION,
-  RENAME_FILE_MUTATION,
-} from './mutations';
-import type {
-  FileOperationResult,
-  FileOperationPayloadPascal,
-} from './types';
+import { mutationPromise, queryPromise } from './client';
+import type { FileOperationResult } from './types';
 
-function fromPascal(p: FileOperationPayloadPascal): FileOperationResult {
+type FileOperationPayload =
+  | CreateDirectoryMutation['createDirectory']
+  | DeleteFilesMutation['deleteFiles']
+  | CopyFilesMutation['copyFiles']
+  | MoveFilesMutation['moveFiles']
+  | RenameFileMutation['renameFile'];
+
+function fromPayload(p: FileOperationPayload): FileOperationResult {
   return {
-    success: p.Success,
-    error: p.Error,
-    affectedCount: p.AffectedCount,
-    messages: p.Messages ?? [],
-    path: p.Path ?? null,
+    success: p.success,
+    error: p.error,
+    affectedCount: p.affectedCount,
+    messages: p.messages ?? [],
+    path: p.path ?? null,
   };
 }
 
-/** Result shape from BrowseDirectory query (PascalCase). */
+/** Result shape from BrowseDirectory query. */
 export type BrowseDirectoryResult = NonNullable<
-  BrowseDirectoryQuery['BrowseDirectory']
+  BrowseDirectoryQuery['browseDirectory']
 >;
 export type RuntimeFilesystemInfo = {
-  Platform: string;
-  SupportsUncCredentials: boolean;
-  SupportsSambaMount: boolean;
-  DefaultLinuxMountBase?: string | null;
+  platform: string;
+  supportsUncCredentials: boolean;
+  supportsSambaMount: boolean;
+  defaultLinuxMountBase?: string | null;
 };
 export type LibraryPathAvailabilityStatus = {
-  Path: string;
-  Reachable: boolean;
-  Exists: boolean;
-  IsDirectory: boolean;
-  NeedsReconnect: boolean;
-  ReconnectAttempted: boolean;
-  ReconnectSucceeded: boolean;
-  Message?: string | null;
+  path: string;
+  reachable: boolean;
+  exists: boolean;
+  isDirectory: boolean;
+  needsReconnect: boolean;
+  reconnectAttempted: boolean;
+  reconnectSucceeded: boolean;
+  message?: string | null;
 };
-
-const FILESYSTEM_RUNTIME_INFO_QUERY = `
-  query FilesystemRuntimeInfo {
-    FilesystemRuntimeInfo {
-      Platform
-      SupportsUncCredentials
-      SupportsSambaMount
-      DefaultLinuxMountBase
-    }
-  }
-`;
-
-const LIBRARY_PATH_AVAILABILITY_QUERY = `
-  query LibraryPathAvailability($Input: LibraryPathAvailabilityInput!) {
-    LibraryPathAvailability(Input: $Input) {
-      Path
-      Reachable
-      Exists
-      IsDirectory
-      NeedsReconnect
-      ReconnectAttempted
-      ReconnectSucceeded
-      Message
-    }
-  }
-`;
-
-const CONFIGURE_NETWORK_PATH_MUTATION = `
-  mutation ConfigureNetworkPath($Input: ConfigureNetworkPathInput!) {
-    ConfigureNetworkPath(Input: $Input) {
-      Success
-      Error
-      ResolvedPath
-      Connected
-      Stored
-      Message
-    }
-  }
-`;
-
-const RECONNECT_LIBRARY_PATH_MUTATION = `
-  mutation ReconnectLibraryPath($Path: String!) {
-    ReconnectLibraryPath(Path: $Path) {
-      Success
-      Error
-      ResolvedPath
-      Connected
-      Stored
-      Message
-    }
-  }
-`;
 
 /**
  * Browse a directory on the server filesystem
  *
  * @param path - Path to browse (defaults to root)
  * @param dirsOnly - Only show directories (default: true)
- * @returns Browse result with CurrentPath, Entries, QuickPaths (PascalCase)
+ * @returns Browse result with currentPath, entries, quickPaths
  */
 export async function browseDirectory(
   path?: string,
   dirsOnly = true
 ): Promise<BrowseDirectoryResult> {
   const result = await queryPromise(BrowseDirectoryDocument, {
-      Input: {
-        Path: path ?? null,
-        DirsOnly: dirsOnly,
-        ShowHidden: false,
+      input: {
+        path: path ?? null,
+        dirsOnly: dirsOnly,
+        showHidden: false,
       },
     })
     ;
@@ -127,7 +87,7 @@ export async function browseDirectory(
     throw new Error(result.error.message);
   }
 
-  const data = result.data?.BrowseDirectory;
+  const data = result.data?.browseDirectory;
   if (!data) {
     throw new Error('Failed to browse directory');
   }
@@ -136,15 +96,15 @@ export async function browseDirectory(
 }
 
 export async function getFilesystemRuntimeInfo(): Promise<RuntimeFilesystemInfo> {
-  const result = await queryPromise<{ FilesystemRuntimeInfo: RuntimeFilesystemInfo }>(
-    FILESYSTEM_RUNTIME_INFO_QUERY
+  const result = await queryPromise<{ filesystemRuntimeInfo: RuntimeFilesystemInfo }>(
+    FilesystemRuntimeInfoDocument
   );
 
   if (result.error) {
     throw new Error(result.error.message);
   }
 
-  const data = result.data?.FilesystemRuntimeInfo;
+  const data = result.data?.filesystemRuntimeInfo;
   if (!data) {
     throw new Error('Failed to load filesystem runtime info');
   }
@@ -156,12 +116,12 @@ export async function getLibraryPathAvailability(
   paths: string[],
   attemptReconnect = false
 ): Promise<LibraryPathAvailabilityStatus[]> {
-  const result = await queryPromise<{ LibraryPathAvailability: LibraryPathAvailabilityStatus[] }>(
-    LIBRARY_PATH_AVAILABILITY_QUERY,
+  const result = await queryPromise<{ libraryPathAvailability: LibraryPathAvailabilityStatus[] }>(
+    LibraryPathAvailabilityDocument,
     {
-    Input: {
-      Paths: paths,
-      AttemptReconnect: attemptReconnect,
+    input: {
+      paths: paths,
+      attemptReconnect: attemptReconnect,
     },
     }
   );
@@ -170,7 +130,7 @@ export async function getLibraryPathAvailability(
     throw new Error(result.error.message);
   }
 
-  return result.data?.LibraryPathAvailability ?? [];
+  return result.data?.libraryPathAvailability ?? [];
 }
 
 export async function configureNetworkPath(input: {
@@ -189,26 +149,26 @@ export async function configureNetworkPath(input: {
   message?: string;
 }> {
   const result = await mutationPromise<{
-    ConfigureNetworkPath: {
-      Success: boolean;
-      Error?: string | null;
-      ResolvedPath: string;
-      Connected: boolean;
-      Stored: boolean;
-      Message?: string | null;
+    configureNetworkPath: {
+      success: boolean;
+      error?: string | null;
+      resolvedPath: string;
+      connected: boolean;
+      stored: boolean;
+      message?: string | null;
     };
-  }>(CONFIGURE_NETWORK_PATH_MUTATION, {
-    Input: {
-      Path: input.path,
-      Username: input.username ?? null,
-      Password: input.password ?? null,
-      MountPoint: input.mountPoint ?? null,
-      Persist: input.persist ?? true,
-      AttemptConnect: input.attemptConnect ?? true,
+  }>(ConfigureNetworkPathDocument, {
+    input: {
+      path: input.path,
+      username: input.username ?? null,
+      password: input.password ?? null,
+      mountPoint: input.mountPoint ?? null,
+      persist: input.persist ?? true,
+      attemptConnect: input.attemptConnect ?? true,
     },
   });
 
-  if (result.error || !result.data?.ConfigureNetworkPath) {
+  if (result.error || !result.data?.configureNetworkPath) {
     return {
       success: false,
       error: result.error?.message ?? 'Failed to configure network path',
@@ -218,14 +178,14 @@ export async function configureNetworkPath(input: {
     };
   }
 
-  const payload = result.data.ConfigureNetworkPath;
+  const payload = result.data.configureNetworkPath;
   return {
-    success: payload.Success,
-    error: payload.Error ?? undefined,
-    resolvedPath: payload.ResolvedPath,
-    connected: payload.Connected,
-    stored: payload.Stored,
-    message: payload.Message ?? undefined,
+    success: payload.success,
+    error: payload.error ?? undefined,
+    resolvedPath: payload.resolvedPath,
+    connected: payload.connected,
+    stored: payload.stored,
+    message: payload.message ?? undefined,
   };
 }
 
@@ -234,13 +194,13 @@ export async function reconnectLibraryPath(path: string): Promise<{
   error?: string;
 }> {
   const result = await mutationPromise<{
-    ReconnectLibraryPath: {
-      Success: boolean;
-      Error?: string | null;
+    reconnectLibraryPath: {
+      success: boolean;
+      error?: string | null;
     };
-  }>(RECONNECT_LIBRARY_PATH_MUTATION, { Path: path });
+  }>(ReconnectLibraryPathDocument, { path: path });
 
-  if (result.error || !result.data?.ReconnectLibraryPath) {
+  if (result.error || !result.data?.reconnectLibraryPath) {
     return {
       success: false,
       error: result.error?.message ?? 'Failed to reconnect library path',
@@ -248,8 +208,8 @@ export async function reconnectLibraryPath(path: string): Promise<{
   }
 
   return {
-    success: result.data.ReconnectLibraryPath.Success,
-    error: result.data.ReconnectLibraryPath.Error ?? undefined,
+    success: result.data.reconnectLibraryPath.success,
+    error: result.data.reconnectLibraryPath.error ?? undefined,
   };
 }
 
@@ -262,8 +222,8 @@ export async function reconnectLibraryPath(path: string): Promise<{
 export async function createDirectory(
   path: string
 ): Promise<{ success: boolean; path?: string; error?: string }> {
-  const result = await mutationPromise<{ CreateDirectory: FileOperationPayloadPascal }>(CREATE_DIRECTORY_MUTATION, {
-      Input: { Path: path },
+  const result = await mutationPromise<CreateDirectoryMutation>(CreateDirectoryDocument, {
+      input: { path: path },
     })
     ;
 
@@ -274,18 +234,18 @@ export async function createDirectory(
     };
   }
 
-  if (!result.data?.CreateDirectory) {
+  if (!result.data?.createDirectory) {
     return {
       success: false,
       error: 'Failed to create directory',
     };
   }
 
-  const data = result.data.CreateDirectory;
+  const data = result.data.createDirectory;
   return {
-    success: data.Success,
-    path: data.Path ?? undefined,
-    error: data.Error ?? undefined,
+    success: data.success,
+    path: data.path ?? undefined,
+    error: data.error ?? undefined,
   };
 }
 
@@ -300,8 +260,8 @@ export async function deleteFiles(
   paths: string[],
   recursive = true
 ): Promise<FileOperationResult> {
-  const result = await mutationPromise<{ DeleteFiles: FileOperationPayloadPascal }>(DELETE_FILES_MUTATION, {
-      Input: { Paths: paths, Recursive: recursive },
+  const result = await mutationPromise<DeleteFilesMutation>(DeleteFilesDocument, {
+      input: { paths: paths, recursive: recursive },
     })
     ;
 
@@ -315,7 +275,7 @@ export async function deleteFiles(
     };
   }
 
-  if (!result.data?.DeleteFiles) {
+  if (!result.data?.deleteFiles) {
     return {
       success: false,
       error: 'Failed to delete files',
@@ -325,7 +285,7 @@ export async function deleteFiles(
     };
   }
 
-  return fromPascal(result.data.DeleteFiles);
+  return fromPayload(result.data.deleteFiles);
 }
 
 /**
@@ -341,8 +301,8 @@ export async function copyFiles(
   destination: string,
   overwrite = false
 ): Promise<FileOperationResult> {
-  const result = await mutationPromise<{ CopyFiles: FileOperationPayloadPascal }>(COPY_FILES_MUTATION, {
-      Input: { Sources: sources, Destination: destination, Overwrite: overwrite },
+  const result = await mutationPromise<CopyFilesMutation>(CopyFilesDocument, {
+      input: { sources: sources, destination: destination, overwrite: overwrite },
     })
     ;
 
@@ -356,7 +316,7 @@ export async function copyFiles(
     };
   }
 
-  if (!result.data?.CopyFiles) {
+  if (!result.data?.copyFiles) {
     return {
       success: false,
       error: 'Failed to copy files',
@@ -366,7 +326,7 @@ export async function copyFiles(
     };
   }
 
-  return fromPascal(result.data.CopyFiles);
+  return fromPayload(result.data.copyFiles);
 }
 
 /**
@@ -382,8 +342,8 @@ export async function moveFiles(
   destination: string,
   overwrite = false
 ): Promise<FileOperationResult> {
-  const result = await mutationPromise<{ MoveFiles: FileOperationPayloadPascal }>(MOVE_FILES_MUTATION, {
-      Input: { Sources: sources, Destination: destination, Overwrite: overwrite },
+  const result = await mutationPromise<MoveFilesMutation>(MoveFilesDocument, {
+      input: { sources: sources, destination: destination, overwrite: overwrite },
     })
     ;
 
@@ -397,7 +357,7 @@ export async function moveFiles(
     };
   }
 
-  if (!result.data?.MoveFiles) {
+  if (!result.data?.moveFiles) {
     return {
       success: false,
       error: 'Failed to move files',
@@ -407,7 +367,7 @@ export async function moveFiles(
     };
   }
 
-  return fromPascal(result.data.MoveFiles);
+  return fromPayload(result.data.moveFiles);
 }
 
 /**
@@ -421,8 +381,8 @@ export async function renameFile(
   path: string,
   newName: string
 ): Promise<FileOperationResult> {
-  const result = await mutationPromise<{ RenameFile: FileOperationPayloadPascal }>(RENAME_FILE_MUTATION, {
-      Input: { Path: path, NewName: newName },
+  const result = await mutationPromise<RenameFileMutation>(RenameFileDocument, {
+      input: { path: path, newName: newName },
     })
     ;
 
@@ -436,7 +396,7 @@ export async function renameFile(
     };
   }
 
-  if (!result.data?.RenameFile) {
+  if (!result.data?.renameFile) {
     return {
       success: false,
       error: 'Failed to rename file',
@@ -446,5 +406,5 @@ export async function renameFile(
     };
   }
 
-  return fromPascal(result.data.RenameFile);
+  return fromPayload(result.data.renameFile);
 }

@@ -38,7 +38,13 @@ impl Source1337x {
             id,
             name,
             site_link: site_url.unwrap_or_else(|| "https://1337x.to/".to_string()),
-            client: Client::builder().gzip(true).build()?,
+            client: crate::services::http_client::outbound_client_builder(
+                crate::services::http_client::OutboundHttpProfile::Indexer,
+            )
+            .gzip(true)
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
+            .build()?,
             // Jackett definition sets requestDelay: 2 seconds.
             rate_limiter: RateLimitedClient::for_indexer_with_request_delay(Duration::from_secs(2)),
             capabilities: SourceCapabilities {
@@ -163,16 +169,24 @@ impl Source for Source1337x {
         let search_url = format!("{}search/{}/1/", self.site_link, urlencoding::encode(term));
 
         self.rate_limiter.wait_for_permit().await;
-        let html = self.client.get(search_url).send().await?.text().await?;
+        let response = self.client.get(search_url).send().await?;
+        let html = crate::services::http_client::response_text_limited(
+            response,
+            crate::services::http_client::INDEXER_RESPONSE_LIMIT,
+        )
+        .await?;
         let doc = Html::parse_document(&html);
 
-        let row_selector = Selector::parse("table.table-list tbody tr, tbody tr").unwrap();
-        let cat_selector = Selector::parse("td.coll-1 a, td.category a").unwrap();
-        let title_selector =
-            Selector::parse("td.name a:last-child, td.coll-1 a:last-child").unwrap();
-        let seed_selector = Selector::parse("td.seeds, td.coll-2").unwrap();
-        let leech_selector = Selector::parse("td.leeches, td.coll-3").unwrap();
-        let size_selector = Selector::parse("td.size, td.coll-4").unwrap();
+        let parse_selector = |value: &str| {
+            Selector::parse(value)
+                .map_err(|error| anyhow::anyhow!("Invalid 1337x selector '{value}': {error}"))
+        };
+        let row_selector = parse_selector("table.table-list tbody tr, tbody tr")?;
+        let cat_selector = parse_selector("td.coll-1 a, td.category a")?;
+        let title_selector = parse_selector("td.name a:last-child, td.coll-1 a:last-child")?;
+        let seed_selector = parse_selector("td.seeds, td.coll-2")?;
+        let leech_selector = parse_selector("td.leeches, td.coll-3")?;
+        let size_selector = parse_selector("td.size, td.coll-4")?;
 
         let mut releases = Vec::new();
         for row in doc.select(&row_selector) {
@@ -239,10 +253,11 @@ impl Source for Source1337x {
                 .unwrap_or_default()
                 .cmp(&a.seeders.unwrap_or_default())
         });
-        if let Some(limit) = query.limit {
-            if limit > 0 && releases.len() > limit as usize {
-                releases.truncate(limit as usize);
-            }
+        if let Some(limit) = query.limit
+            && limit > 0
+            && releases.len() > limit as usize
+        {
+            releases.truncate(limit as usize);
         }
         Ok(releases)
     }
@@ -252,7 +267,12 @@ impl Source for Source1337x {
             anyhow::bail!("Magnet links are not directly downloadable");
         }
         self.rate_limiter.wait_for_permit().await;
-        let bytes = self.client.get(link).send().await?.bytes().await?;
+        let response = self.client.get(link).send().await?;
+        let bytes = crate::services::http_client::response_bytes_limited(
+            response,
+            crate::services::http_client::DOWNLOAD_RESPONSE_LIMIT,
+        )
+        .await?;
         Ok(bytes.to_vec())
     }
 }

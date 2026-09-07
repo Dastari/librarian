@@ -32,18 +32,18 @@ interface LibraryAuthorsTabProps {
 // ============================================================================
 
 interface AuthorCardProps {
-  author: { Id: string; Name: string };
+  author: { id: string; name: string };
   bookCount: number;
   onSelect?: () => void;
 }
 
 function AuthorCard({ author, bookCount, onSelect }: AuthorCardProps) {
   return (
-    <div className="aspect-square">
+    <div className="aspect-square w-full">
       <Card
         isPressable={!!onSelect}
         onPress={onSelect}
-        className="relative overflow-hidden h-full w-full group border-none bg-content2"
+        className="relative isolate overflow-hidden h-full w-full group border-none bg-content2"
       >
         {/* Background with gradient */}
         <div className="absolute inset-0 bg-gradient-to-br from-orange-900 via-amber-800 to-yellow-900">
@@ -63,9 +63,9 @@ function AuthorCard({ author, bookCount, onSelect }: AuthorCardProps) {
         )}
 
         {/* Bottom content */}
-        <div className="absolute bottom-0 left-0 right-0 z-10 p-3 pointer-events-none bg-black/50 backdrop-blur-sm h-16 flex flex-col justify-center">
+        <div className="absolute bottom-0 left-0 right-0 z-10 h-16 overflow-hidden rounded-b-[inherit] bg-black/50 p-3 pointer-events-none backdrop-blur-sm flex flex-col justify-center">
           <h3 className="text-sm font-bold text-white mb-0.5 line-clamp-2 drop-shadow-lg">
-            {author.Name}
+            {author.name}
           </h3>
           <div className="flex items-center gap-1.5 text-xs text-white/70">
             <span>
@@ -88,8 +88,8 @@ export function LibraryAuthorsTab({
   onSelectAuthor,
 }: LibraryAuthorsTabProps) {
   type AudiobookNode =
-    LibraryAudiobooksTabQuery["Audiobooks"]["Edges"][number]["Node"];
-  type AuthorRow = { Id: string; Name: string };
+    LibraryAudiobooksTabQuery["audiobooks"]["edges"][number]["node"];
+  type AuthorRow = { id: string; name: string };
   // URL-persisted state via nuqs
   const [selectedLetter, setSelectedLetter] = useQueryState(
     "letter",
@@ -134,22 +134,22 @@ export function LibraryAuthorsTab({
       try {
         const result = await apolloClient.query({
           query: LibraryAudiobooksTabDocument,
-          variables: { LibraryId: libraryId },
+          variables: { libraryId: libraryId },
           fetchPolicy: "network-only",
         });
 
-        const edges = result.data?.Audiobooks?.Edges ?? [];
-        setAudiobooks(edges.map((e) => e.Node));
+        const edges = result.data?.audiobooks?.edges ?? [];
+        setAudiobooks(edges.map((e) => e.node));
         const derivedAuthors = Array.from(
           new Map(
             edges
-              .filter((e) => Boolean(e.Node.AuthorName))
+              .filter((e) => Boolean(e.node.authorName))
               .map((e) => [
-                e.Node.AuthorName as string,
-                e.Node.AuthorName as string,
+                e.node.authorName as string,
+                e.node.authorName as string,
               ]),
           ).values(),
-        ).map((authorName) => ({ Id: authorName, Name: authorName }));
+        ).map((authorName) => ({ id: authorName, name: authorName }));
         setAuthors(derivedAuthors);
       } catch (err) {
         console.error("Failed to fetch audiobooks:", err);
@@ -167,9 +167,9 @@ export function LibraryAuthorsTab({
   const bookCountByAuthor = useMemo(() => {
     const counts = new Map<string, number>();
     audiobooks.forEach((audiobook) => {
-      if (audiobook.AuthorName) {
-        const current = counts.get(audiobook.AuthorName) || 0;
-        counts.set(audiobook.AuthorName, current + 1);
+      if (audiobook.authorName) {
+        const current = counts.get(audiobook.authorName) || 0;
+        counts.set(audiobook.authorName, current + 1);
       }
     });
     return counts;
@@ -179,7 +179,7 @@ export function LibraryAuthorsTab({
   const availableLetters = useMemo(() => {
     const letters = new Set<string>();
     authors.forEach((author) => {
-      letters.add(getFirstLetter(author.Name));
+      letters.add(getFirstLetter(author.name));
     });
     return letters;
   }, [authors]);
@@ -188,11 +188,11 @@ export function LibraryAuthorsTab({
     const sorted = [...authors];
     sorted.sort((a, b) => {
       if (sortColumn === "audiobooks") {
-        const av = bookCountByAuthor.get(a.Id) || 0;
-        const bv = bookCountByAuthor.get(b.Id) || 0;
+        const av = bookCountByAuthor.get(a.id) || 0;
+        const bv = bookCountByAuthor.get(b.id) || 0;
         return sortDirection === "asc" ? av - bv : bv - av;
       }
-      const cmp = a.Name.localeCompare(b.Name);
+      const cmp = a.name.localeCompare(b.name);
       return sortDirection === "asc" ? cmp : -cmp;
     });
     return sorted;
@@ -202,11 +202,11 @@ export function LibraryAuthorsTab({
     let list = sortedAuthors;
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
-      list = list.filter((author) => author.Name.toLowerCase().includes(q));
+      list = list.filter((author) => author.name.toLowerCase().includes(q));
     }
     if (normalizedLetter) {
       list = list.filter(
-        (author) => getFirstLetter(author.Name) === normalizedLetter,
+        (author) => getFirstLetter(author.name) === normalizedLetter,
       );
     }
     return list;
@@ -242,7 +242,7 @@ export function LibraryAuthorsTab({
               <IconUser size={20} className="text-orange-400" />
             </div>
             <div>
-              <p className="font-medium">{author.Name}</p>
+              <p className="font-medium">{author.name}</p>
             </div>
           </div>
         ),
@@ -255,7 +255,7 @@ export function LibraryAuthorsTab({
         render: (author) => (
           <span className="flex items-center gap-1">
             <IconHeadphones size={14} className="text-default-400" />
-            {bookCountByAuthor.get(author.Id) || 0}
+            {bookCountByAuthor.get(author.id) || 0}
           </span>
         ),
       },
@@ -268,23 +268,23 @@ export function LibraryAuthorsTab({
     ({ item }: CardRendererProps<AuthorRow>) => (
       <AuthorCard
         author={item}
-        bookCount={bookCountByAuthor.get(item.Id) || 0}
-        onSelect={onSelectAuthor ? () => onSelectAuthor(item.Id) : undefined}
+        bookCount={bookCountByAuthor.get(item.id) || 0}
+        onSelect={onSelectAuthor ? () => onSelectAuthor(item.id) : undefined}
       />
     ),
     [bookCountByAuthor, onSelectAuthor],
   );
 
   return (
-    <div className="flex flex-col grow w-full">
-      <div className="flex-1 min-h-0">
+    <div className="flex h-full min-h-0 flex-1 flex-col w-full">
+      <div className="flex min-h-0 flex-1 flex-col">
         <DataTable
           stateKey="library-authors"
           skeletonDelay={500}
           data={filteredAuthors}
           columns={columns}
-          getRowKey={(author) => author.Id}
-          searchPlaceholder="Search authors..."
+          getRowKey={(author) => author.id}
+          toolbarQueryPlaceholder="Search authors..."
           sortColumn={sortColumn || "name"}
           sortDirection={sortDirection}
           onSortChange={handleSortChange}

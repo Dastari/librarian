@@ -35,14 +35,14 @@ export function DeleteMovieModal({
     setIsDeleting(true);
     try {
       const { data, error } = await deleteMovie({
-        variables: { Id: movie.id },
+        variables: { id: movie.id },
       });
 
-      if (error || !data?.DeleteMovie?.Success) {
+      if (error || !data?.deleteMovie?.success) {
         addToast({
           title: "Error",
           description: sanitizeError(
-            data?.DeleteMovie?.Error || "Failed to delete movie",
+            data?.deleteMovie?.error || "Failed to delete movie",
           ),
           color: "danger",
         });

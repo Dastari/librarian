@@ -4,14 +4,14 @@ import { Badge } from "@heroui/badge";
 import { Tooltip } from "@heroui/tooltip";
 import { Link } from "@tanstack/react-router";
 import { IconDownload } from "@tabler/icons-react";
-import { ActiveDownloadCountDocument } from "../lib/graphql/generated/graphql";
-import { gql, useQuery, useSubscription } from "../lib/graphql/client";
 import {
-  TORRENT_ADDED_SUBSCRIPTION,
-  TORRENT_COMPLETED_SUBSCRIPTION,
-  TORRENT_PROGRESS_SUBSCRIPTION,
-  TORRENT_REMOVED_SUBSCRIPTION,
-} from "../lib/graphql/subscriptions";
+  ActiveDownloadCountDocument,
+  TorrentAddedDocument,
+  TorrentCompletedDocument,
+  TorrentProgressDocument,
+  TorrentRemovedDocument,
+} from "../lib/graphql/generated/graphql";
+import { useQuery, useSubscription } from "../lib/graphql/client";
 import { ErrorBoundary } from "./ErrorBoundary";
 
 const PROGRESS_REFETCH_DEBOUNCE_MS = 500;
@@ -42,30 +42,30 @@ function useActiveDownloadCount() {
     [],
   );
 
-  useSubscription(gql(TORRENT_PROGRESS_SUBSCRIPTION), {
+  useSubscription(TorrentProgressDocument, {
     onData: () => {
       scheduleRefetch();
     },
   });
-  useSubscription(gql(TORRENT_ADDED_SUBSCRIPTION), {
+  useSubscription(TorrentAddedDocument, {
     onData: () => {
       void refetch();
     },
   });
-  useSubscription(gql(TORRENT_REMOVED_SUBSCRIPTION), {
+  useSubscription(TorrentRemovedDocument, {
     onData: () => {
       void refetch();
     },
   });
-  useSubscription(gql(TORRENT_COMPLETED_SUBSCRIPTION), {
+  useSubscription(TorrentCompletedDocument, {
     onData: () => {
       void refetch();
     },
   });
 
   return (
-    data?.ActiveDownloadCount ??
-    previousData?.ActiveDownloadCount ??
+    data?.activeDownloadCount ??
+    previousData?.activeDownloadCount ??
     0
   );
 }

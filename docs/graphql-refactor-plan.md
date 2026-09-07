@@ -64,7 +64,7 @@ Target Architecture for Librarian
 - Standardized query builder:
   - Use parameterized queries (sqlx `QueryBuilder` or a small internal DSL).
   - Separate "filter plan" from "SQL rendering" for database-specific handling.
-- Non-table utility operations (e.g. `ScanLibrary`, `DeleteFile`) live in a
+- Non-table utility operations (e.g. `scanLibrary`, `deleteFile`) live in a
   dedicated GraphQL utility module, while keeping related queries/mutations/
   subscriptions grouped together by domain (beast grouping).
 

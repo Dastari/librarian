@@ -149,8 +149,29 @@ export interface RowAction<T> {
   isDisabled?: (item: T) => boolean
   /** Whether to show in dropdown (default: false) */
   inDropdown?: boolean
+  /** Keep an inline status/control visible even when its row is not hovered. */
+  alwaysVisible?: boolean
   /** Whether this action is destructive */
   isDestructive?: boolean
+}
+
+export interface ToolbarAction<T> {
+  /** Unique key */
+  key: string
+  /** Display label */
+  label: string
+  /** Icon component */
+  icon?: React.ComponentType<{ className?: string }>
+  /** Whether to show only the icon */
+  iconOnly?: boolean
+  /** Placement in the table toolbar */
+  placement?: 'primary' | 'trailing'
+  /** Handler function */
+  onAction: (items: T[]) => void | Promise<void>
+  /** Action style */
+  variant?: 'default' | 'secondary' | 'outline' | 'ghost' | 'destructive'
+  /** Whether to disable this action */
+  disabled?: boolean
 }
 
 // ============================================================================
@@ -284,8 +305,8 @@ export interface DataTableProps<T> {
   // --- Search ---
   /** Custom search function. If not provided, searches all string properties. */
   searchFn?: (item: T, searchTerm: string) => boolean
-  /** Search placeholder */
-  searchPlaceholder?: string
+  /** Toolbar query placeholder */
+  toolbarQueryPlaceholder?: string
 
   // --- Sorting ---
   /** Default sort column */
@@ -324,6 +345,8 @@ export interface DataTableProps<T> {
   groupHeaderRenderer?: (group: DataTableGroup<T>) => ReactNode
 
   // --- Actions ---
+  /** Toolbar-level actions */
+  toolbarActions?: ToolbarAction<T>[]
   /** Bulk actions (shown when items are selected) */
   bulkActions?: BulkAction<T>[]
   /** Row actions (shown in each row) */
@@ -374,6 +397,16 @@ export interface DataTableProps<T> {
   showItemCount?: boolean
   /** Whether to hide the toolbar (search, filters, view toggle) */
   hideToolbar?: boolean
+  /** Fine-grained toolbar visibility */
+  toolbarVisibility?: {
+    title?: boolean
+    search?: boolean
+    actions?: boolean
+    trailingActions?: boolean
+    options?: boolean
+    viewToggle?: boolean
+    customToolbar?: boolean
+  }
   /** Custom class names */
   classNames?: {
     wrapper?: string
@@ -382,7 +415,7 @@ export interface DataTableProps<T> {
     tableContainer?: string
     footer?: string
   }
-  /** Whether the table should fill available height with sticky header */
+  /** Whether the table should fill a constrained flex parent (default: false) */
   fillHeight?: boolean
 
   // --- Table Props ---

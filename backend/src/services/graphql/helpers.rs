@@ -149,10 +149,9 @@ pub(crate) async fn download_torrent_file_authenticated(
 ) -> anyhow::Result<Vec<u8>> {
     use anyhow::Context;
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .context("Failed to create HTTP client")?;
+    let client = crate::services::http_client::outbound_client(
+        crate::services::http_client::OutboundHttpProfile::Indexer,
+    )?;
 
     let mut request = client.get(url);
 
@@ -190,7 +189,9 @@ pub(crate) async fn download_torrent_file_authenticated(
     let status = response.status();
     if !status.is_success() {
         // Try to get more details from the response body
-        let body = response.bytes().await.unwrap_or_default();
+        let body = crate::services::http_client::response_bytes_limited(response, 4 * 1024)
+            .await
+            .unwrap_or_default();
         let preview = String::from_utf8_lossy(&body[..std::cmp::min(200, body.len())]);
         anyhow::bail!(
             "Failed to download .torrent file: HTTP {} - {}",
@@ -207,13 +208,15 @@ pub(crate) async fn download_torrent_file_authenticated(
         .map(|s| s.to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
-    let bytes = response
-        .bytes()
-        .await
-        .context("Failed to read response body")?;
+    let bytes = crate::services::http_client::response_bytes_limited(
+        response,
+        crate::services::http_client::DOWNLOAD_RESPONSE_LIMIT,
+    )
+    .await
+    .context("Failed to read bounded torrent response body")?;
 
     tracing::debug!(
-        url = %url,
+        target = %crate::services::http_client::sanitized_request_target(url),
         content_type = %content_type,
         size = bytes.len(),
         "Downloaded torrent file"

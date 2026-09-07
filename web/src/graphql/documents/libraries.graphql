@@ -1,0 +1,221 @@
+query LibrariesOverview {
+  libraries(orderBy: [{ name: ASC }], page: { limit: 100, offset: 0 }) {
+    edges {
+      node {
+        ...LibraryFields
+        movies(orderBy: { createdAt: DESC }, page: { limit: 10, offset: 0 }) {
+          edges {
+            node {
+              id
+            }
+          }
+          pageInfo {
+            totalCount
+          }
+        }
+        shows(orderBy: { createdAt: DESC }, page: { limit: 10, offset: 0 }) {
+          edges {
+            node {
+              id
+              posterUrl
+            }
+          }
+          pageInfo {
+            totalCount
+          }
+        }
+        albums(orderBy: { createdAt: DESC }, page: { limit: 10, offset: 0 }) {
+          edges {
+            node {
+              id
+              coverUrl
+            }
+          }
+          pageInfo {
+            totalCount
+          }
+        }
+        audiobooks(orderBy: { createdAt: DESC }, page: { limit: 10, offset: 0 }) {
+          edges {
+            node {
+              id
+              coverUrl
+            }
+          }
+          pageInfo {
+            totalCount
+          }
+        }
+        mediaFiles(page: { limit: 1, offset: 0 }) {
+          pageInfo {
+            totalCount
+          }
+        }
+      }
+    }
+  }
+}
+
+query LibraryDetail($id: String!) {
+  library(id: $id) {
+    ...LibraryFields
+    movies(page: { limit: 1, offset: 0 }) {
+      pageInfo {
+        totalCount
+      }
+    }
+    shows(page: { limit: 1, offset: 0 }) {
+      pageInfo {
+        totalCount
+      }
+    }
+    collections(page: { limit: 1, offset: 0 }) {
+      pageInfo {
+        totalCount
+      }
+    }
+    albums(page: { limit: 1, offset: 0 }) {
+      pageInfo {
+        totalCount
+      }
+    }
+    audiobooks(page: { limit: 1, offset: 0 }) {
+      pageInfo {
+        totalCount
+      }
+    }
+    mediaFiles(page: { limit: 1, offset: 0 }) {
+      pageInfo {
+        totalCount
+      }
+    }
+  }
+}
+
+query LibraryUnmatchedCount($libraryId: String!) {
+  mediaFiles(
+    where: { libraryId: { eq: $libraryId }, movieId: { isNull: true }, episodeId: { isNull: true }, trackId: { isNull: true }, chapterId: { isNull: true } }
+    page: { limit: 1, offset: 0 }
+  ) {
+    pageInfo {
+      totalCount
+    }
+  }
+}
+
+query LibraryScanState($libraryId: String!) {
+  libraryScanRuns(where: { libraryId: { eq: $libraryId } }, orderBy: [{ createdAt: DESC }], page: { limit: 1, offset: 0 }) {
+    edges {
+      node {
+        ...LibraryScanRunFields
+      }
+    }
+  }
+  libraryScanIssues(where: { libraryId: { eq: $libraryId }, resolvedAt: { isNull: true } }, page: { limit: 1, offset: 0 }) {
+    pageInfo {
+      totalCount
+    }
+  }
+}
+
+mutation ScanLibrary($id: String!) {
+  scanLibrary(id: $id) {
+    success
+    status
+    message
+    scanRunId
+  }
+}
+
+query LibraryPathAvailability($input: LibraryPathAvailabilityInput!) {
+  libraryPathAvailability(input: $input) {
+    path
+    reachable
+    exists
+    isDirectory
+    needsReconnect
+    reconnectAttempted
+    reconnectSucceeded
+    message
+  }
+}
+
+query BrowseDirectory($input: BrowseDirectoryInput) {
+  browseDirectory(input: $input) {
+    currentPath
+    parentPath
+    isLibraryPath
+    libraryId
+    entries {
+      name
+      path
+      isDir
+      size
+      sizeFormatted
+      readable
+      writable
+      mimeType
+      modifiedAt
+    }
+    quickPaths {
+      name
+      path
+    }
+  }
+}
+
+query FilesystemRuntimeInfo {
+  filesystemRuntimeInfo {
+    platform
+    supportsUncCredentials
+    supportsSambaMount
+    defaultLinuxMountBase
+  }
+}
+
+mutation ConfigureNetworkPath($input: ConfigureNetworkPathInput!) {
+  configureNetworkPath(input: $input) {
+    success
+    error
+    resolvedPath
+    connected
+    stored
+    message
+  }
+}
+
+mutation ReconnectLibraryPath($path: String!) {
+  reconnectLibraryPath(path: $path) {
+    success
+    error
+    resolvedPath
+    connected
+    stored
+    message
+  }
+}
+
+mutation RetryScanIssue($issueId: String!) {
+  retryScanIssue(issueId: $issueId) {
+    success
+    queued
+    message
+  }
+}
+
+mutation ResolveScanIssue($issueId: String!, $resolution: String!) {
+  resolveScanIssue(issueId: $issueId, resolution: $resolution) {
+    success
+    queued
+    message
+  }
+}
+
+mutation TrashDuplicateScanIssue($issueId: String!) {
+  trashDuplicateScanIssue(issueId: $issueId) {
+    success
+    message
+    oldPath
+    trashPath
+  }
+}

@@ -32,27 +32,39 @@
 
 pub mod artwork;
 pub mod auth;
+pub mod backup;
+pub mod bootstrap_defaults;
 pub mod cast;
 pub mod database;
+pub mod extract;
 pub mod graphql;
+pub mod http_client;
 pub mod http_server;
 pub mod library_scan;
 pub mod logging;
+pub mod login_rate_limit;
 pub mod manager;
 pub mod metadata;
+pub mod ollama;
+pub mod quality;
 pub mod rate_limiter;
 pub mod sources;
+pub mod storage;
 pub mod torrent;
+pub mod transcode;
 
 pub use rate_limiter::{RateLimitConfig, RateLimitedClient, RetryConfig, retry_async};
 
 pub use artwork::ArtworkService;
 pub use auth::{
-    AccessTokenClaims, AuthConfig, AuthService, AuthTokens, AuthenticatedUser, LoginResult,
-    RefreshTokenClaims, RegisterInput,
+    AuthConfig, AuthService, AuthTokens, AuthenticatedUser, LoginResult, RegisterInput,
 };
 pub use cast::{CastDeviceType, CastService, CastServiceConfig, DiscoveredCastDevice};
 
+pub use backup::{
+    BackupCapabilities, BackupService, BackupServiceConfig, BackupSnapshotSummary,
+    LibrarianBackupObjectIndex,
+};
 pub use database::{DatabaseService, DatabaseServiceConfig};
 pub use graphql::{GraphqlService, GraphqlServiceConfig};
 pub use http_server::{HttpServerConfig, HttpServerService};
@@ -60,16 +72,18 @@ pub use library_scan::{
     LibraryScanService, LibraryScanServiceConfig, MatchMethod, MatchRequest, MatchResult,
     OrganizeResult,
 };
-pub use logging::{DatabaseLoggerConfig, LogEvent, LoggingService, LoggingServiceConfig};
+pub use logging::{LogEvent, LoggingService, LoggingServiceConfig};
 pub use manager::{
     HealthStatus, IntoServiceRegistration, Service, ServiceHealth, ServicesManager,
     ServicesManagerBuilder,
 };
+pub use ollama::{OllamaClient, OllamaParsedHint, OllamaParserSettings};
 pub use sources::service::{SourcesService, SourcesServiceConfig};
+pub use storage::{ObjectStorageService, ObjectStorageServiceConfig};
 pub use torrent::{
-    TorrentDetails, TorrentEvent, TorrentFile, TorrentInfo, TorrentService, TorrentServiceConfig,
-    TorrentState,
+    TorrentEvent, TorrentFile, TorrentInfo, TorrentService, TorrentServiceConfig, TorrentState,
 };
+pub use transcode::{TranscodeKind, TranscodeService, TranscodeServiceConfig};
 
 pub use metadata::tmdb::{
     TmdbClient, TmdbCollection, TmdbCredits, TmdbMovie, TmdbMovieSearchResult, TmdbReleaseDates,

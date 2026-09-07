@@ -1,10 +1,13 @@
-# Librarian Distribution Plan
+# Librarian Future Distribution Plan
 
-This document captures the distribution strategy, build pipeline, and platform-specific considerations for shipping Librarian as a single binary (plus optional `ffprobe`), with service support, installers, and Docker deployment.
+This document is a future design backlog, not a description of currently supported distribution
+capabilities. Current releases provide Docker, Linux archives, and a portable Windows server archive.
+Windows installer, service, tray, bundled FFmpeg, and VM lifecycle items below remain unimplemented and
+must not be advertised until their qualification gates pass.
 
 ---
 
-## Goals
+## Future goals
 
 - Ship a **single binary** for Windows x64/x86 and Ubuntu/Debian (x86_64).
 - Allow **one external dependency**: `ffprobe` (bundled where practical).
@@ -15,7 +18,7 @@ This document captures the distribution strategy, build pipeline, and platform-s
 - Enable **Docker deployment**.
 - Avoid nginx in the default distribution; rely on UPNP for port forwarding where possible.
 - Standardize **versioning**, reset to `1.0.0`.
-- Add **database backup/restore** accessible from both frontend UI and TUI.
+- Add **manifest-based backup** accessible from both frontend UI and TUI.
 
 ---
 
@@ -244,29 +247,32 @@ If building from WSL, `scripts/build-distro.sh` should invoke Windows host tools
 
 ---
 
-## Database Backup & Restore
+## Manifest Backup & Restore
 
 ### Backend Design
 
-- Add API endpoints:
-  - `POST /api/backup` → streams a `.db` or `.zip`
-  - `POST /api/restore` → accepts uploaded backup
-- Alternative (GraphQL-first): use a GraphQL mutation to generate a one-time download token/URL.
-- Use SQLite backup APIs or `VACUUM INTO` for safe snapshot.
-- Pause jobs while backup/restore runs.
-- Validate file integrity before swapping DB.
+- Use `graphql-orm-backup` manifest repositories rather than SQLite `.db` snapshots.
+- Store object payloads by content hash and table exports as manifest-referenced logical data once the upstream `graphql-orm` backup runtime is available.
+- Do not use SQLite backup APIs, `VACUUM INTO`, or raw database snapshotting for application backups.
+- Store backups in a configurable repository directory (`BACKUP_PATH`, default `./data/backups`).
+- Current staged scope:
+  - object backup indexing and manifest verification are available
+  - full logical database backup is unavailable until the pinned `graphql-orm` dependency exposes backup runtime APIs
+  - restore is future work until upstream restore orchestration lands
 
 ### Frontend UI
 
-- Settings page section:
-  - "Create Backup" button (download file)
-  - "Restore Backup" upload with confirmation dialog
-  - show last backup timestamp
+- Settings backup page:
+  - show backup capability state
+  - list local snapshot manifests
+  - verify snapshots
+  - keep create/restore unavailable when upstream runtime support is missing
 
 ### TUI
 
-- Add a "Backup/Restore" menu with file path prompts.
-- For restore: warn that service will restart.
+- Add a "Backup" view showing capability state and backup path/status.
+- Enable backup creation only once logical backup support is available.
+- Do not expose restore until upstream restore orchestration lands.
 
 ---
 

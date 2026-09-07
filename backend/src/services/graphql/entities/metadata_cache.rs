@@ -12,46 +12,48 @@ use serde::{Deserialize, Serialize};
     table = "metadata_cache",
     plural = "MetadataCaches",
     default_sort = "updated_at",
-    unique_composite = "provider,operation,cache_key"
+    unique_composite = "provider,operation,cache_key",
+    read_policy = "admin.read",
+    write_policy = "admin.write"
 )]
 pub struct MetadataCache {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "Provider")]
+    #[graphql(name = "provider")]
     #[filterable(type = "string")]
     #[sortable]
     pub provider: String,
 
-    #[graphql(name = "Operation")]
+    #[graphql(name = "operation")]
     #[filterable(type = "string")]
     #[sortable]
     pub operation: String,
 
-    #[graphql(name = "CacheKey")]
+    #[graphql(name = "cacheKey")]
     #[filterable(type = "string")]
     pub cache_key: String,
 
-    #[graphql(name = "Payload")]
+    #[graphql(name = "payload")]
     pub payload: String,
 
-    #[graphql(name = "PayloadVersion")]
+    #[graphql(name = "payloadVersion")]
     #[filterable(type = "number")]
     pub payload_version: i32,
 
-    #[graphql(name = "FetchedAt")]
+    #[graphql(name = "fetchedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub fetched_at: String,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,

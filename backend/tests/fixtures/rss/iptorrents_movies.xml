@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>IPT</title>
+    <link>https://iptorrents.example.invalid</link>
+    <description>Sanitized movie fixture</description>
+    <item>
+      <title>The Hunt for Red October 1990 1080p BluRay x264-GROUP</title>
+      <link>https://iptorrents.example.invalid/download.php/1/red-october.torrent?torrent_pass=REDACTED</link>
+      <pubDate>Sat, 07 Feb 2026 06:34:37 +0000</pubDate>
+      <description>12.1 GB; Movie/HD/Bluray</description>
+    </item>
+    <item>
+      <title>[German] Fabian and the Deadly Wedding 2026 HDR 2160p WEB h265-EDITH</title>
+      <link>https://iptorrents.example.invalid/download.php/2/fabian.torrent?torrent_pass=REDACTED</link>
+      <pubDate>Sat, 07 Feb 2026 07:00:00 +0000</pubDate>
+      <description>14.3 GB; Movie/4K</description>
+    </item>
+  </channel>
+</rss>

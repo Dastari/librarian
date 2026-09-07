@@ -1,0 +1,101 @@
+/* Layout helpers shared by every page. */
+
+@utility page-gutter {
+  padding-inline: calc(var(--page-gutter) + var(--safe-left)) calc(var(--page-gutter) + var(--safe-right));
+}
+
+@utility bleed-gutter {
+  margin-inline: calc(-1 * (var(--page-gutter) + var(--safe-left))) calc(-1 * (var(--page-gutter) + var(--safe-right)));
+  padding-inline: calc(var(--page-gutter) + var(--safe-left)) calc(var(--page-gutter) + var(--safe-right));
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+}
+
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--foreground) 18%, transparent) transparent;
+}
+
+/* Horizontal poster rows: scroll-snap, hidden scrollbar, gutter aware. */
+@utility snap-row {
+  display: flex;
+  gap: var(--poster-gap);
+  overflow-x: auto;
+  overflow-y: visible;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: calc(var(--page-gutter) + var(--safe-left));
+  padding-block: 0.5rem;
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+  & > * { scroll-snap-align: start; flex: 0 0 auto; }
+}
+
+@utility poster-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--poster-min), 1fr));
+  gap: var(--poster-gap);
+}
+
+/* Focus ring used by every focusable custom element. */
+@utility nav-focus {
+  outline: none;
+  &:focus-visible {
+    outline: var(--nav-focus-width) solid var(--focus);
+    outline-offset: var(--nav-focus-offset);
+  }
+  &[data-focus-visible="true"] {
+    outline: var(--nav-focus-width) solid var(--focus);
+    outline-offset: var(--nav-focus-offset);
+  }
+}
+
+@utility mask-fade-b {
+  mask-image: linear-gradient(180deg, #000 60%, transparent 100%);
+}
+
+@utility mask-fade-x {
+  mask-image: linear-gradient(90deg, transparent 0, #000 var(--page-gutter), #000 calc(100% - var(--page-gutter)), transparent 100%);
+}
+
+@utility text-shadow-hero {
+  text-shadow: 0 2px 24px oklch(0 0 0 / 0.6), 0 1px 2px oklch(0 0 0 / 0.5);
+}
+
+@utility skeleton {
+  background: linear-gradient(90deg, var(--surface-secondary) 25%, var(--surface-tertiary) 50%, var(--surface-secondary) 75%);
+  background-size: 200% 100%;
+  animation: var(--animate-shimmer);
+  border-radius: var(--radius-md);
+}
+
+/* Media-type tinted gradient placeholders when artwork is missing. */
+@utility placeholder-gradient {
+  background:
+    radial-gradient(120% 90% at 20% 0%, color-mix(in oklab, var(--placeholder-tint, var(--media-other)) 45%, transparent), transparent 60%),
+    radial-gradient(90% 90% at 100% 100%, color-mix(in oklab, var(--placeholder-tint, var(--media-other)) 25%, transparent), transparent 60%),
+    var(--surface-secondary);
+}
+
+@utility equalizer-bar {
+  transform-origin: bottom;
+  animation: equalizer 0.9s ease-in-out infinite;
+}
+
+/* Ambient gradient painted under the 3D scene (auth, empty states). */
+@utility ambient-gradient {
+  background:
+    radial-gradient(120% 80% at 20% 10%, oklch(0.34 0.1 290 / 0.75), transparent 55%),
+    radial-gradient(90% 70% at 85% 90%, oklch(0.32 0.09 230 / 0.65), transparent 55%),
+    radial-gradient(60% 50% at 60% 40%, oklch(0.4 0.1 60 / 0.25), transparent 60%),
+    var(--background);
+}
+
+/* Library tiles: fluid columns capped so a two-library server does not get half-screen cards. */
+@utility library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 22rem));
+  gap: 1rem;
+}

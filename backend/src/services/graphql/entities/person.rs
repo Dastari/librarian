@@ -8,32 +8,38 @@ use serde::{Deserialize, Serialize};
 )]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
-#[graphql_entity(table = "people", plural = "People", default_sort = "name")]
+#[graphql_entity(
+    table = "people",
+    plural = "People",
+    default_sort = "name",
+    read_policy = "member.read",
+    write_policy = "admin.write"
+)]
 pub struct Person {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "TmdbPersonId")]
+    #[graphql(name = "tmdbPersonId")]
     #[filterable(type = "number")]
     #[unique]
     pub tmdb_person_id: i32,
 
-    #[graphql(name = "Name")]
+    #[graphql(name = "name")]
     #[filterable(type = "string")]
     #[sortable]
     pub name: String,
 
-    #[graphql(name = "ProfileUrl")]
+    #[graphql(name = "profileUrl")]
     pub profile_url: Option<String>,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,

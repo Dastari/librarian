@@ -17,6 +17,22 @@ use tracing::{debug, info, warn};
 
 use crate::services::rate_limiter::{RateLimitConfig, RateLimitedClient, RetryConfig, retry_async};
 
+/// Public release lists supported by TMDB.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, async_graphql::Enum)]
+pub enum MovieReleaseKind {
+    NowPlaying,
+    Upcoming,
+}
+
+impl MovieReleaseKind {
+    pub fn endpoint(self) -> &'static str {
+        match self {
+            Self::NowPlaying => "now_playing",
+            Self::Upcoming => "upcoming",
+        }
+    }
+}
+
 /// TMDB API client with rate limiting and retry logic
 #[derive(Clone)]
 pub struct TmdbClient {
@@ -170,21 +186,6 @@ pub struct TmdbReleaseDate {
     pub release_date: Option<String>,
     #[serde(rename = "type")]
     pub release_type: Option<i32>,
-}
-
-/// Configuration for TMDB image URLs
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TmdbConfiguration {
-    pub images: TmdbImagesConfiguration,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TmdbImagesConfiguration {
-    pub base_url: String,
-    pub secure_base_url: String,
-    pub poster_sizes: Vec<String>,
-    pub backdrop_sizes: Vec<String>,
-    pub profile_sizes: Vec<String>,
 }
 
 impl TmdbClient {
@@ -361,8 +362,11 @@ impl TmdbClient {
                     }
                     adaptive_client.reduce_adaptive_delay_on_success();
 
-                    let results: TmdbMovieSearchResult = response
-                        .json()
+                    let results: TmdbMovieSearchResult =
+                        crate::services::http_client::response_json_limited(
+                            response,
+                            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                        )
                         .await
                         .context("Failed to parse TMDB search results")?;
 
@@ -376,6 +380,60 @@ impl TmdbClient {
 
         debug!(count = result.len(), "TMDB search returned results");
         Ok(result)
+    }
+
+    pub async fn movie_releases(
+        &self,
+        kind: MovieReleaseKind,
+        region: Option<&str>,
+        page: i32,
+    ) -> Result<Vec<TmdbMovie>> {
+        if !self.has_api_key() {
+            anyhow::bail!("TMDB API key not configured");
+        }
+        let url = format!("{}/movie/{}", self.base_url, kind.endpoint());
+        let mut params = vec![
+            ("api_key", self.api_key.clone()),
+            ("page", page.to_string()),
+        ];
+        if let Some(region) = region {
+            params.push(("region", region.to_string()));
+        }
+        retry_async(
+            || async {
+                self.wait_for_adaptive_delay().await;
+                let response = self
+                    .client
+                    .get_with_query(&url, &params)
+                    .await
+                    .map_err(|_| anyhow::anyhow!("TMDB movie releases request failed"))?;
+                if response.status().as_u16() == 429 {
+                    self.increase_adaptive_delay_from_429(&response);
+                    anyhow::bail!("TMDB movie releases rate limited (429)");
+                }
+                if !response.status().is_success() {
+                    anyhow::bail!(
+                        "TMDB movie releases failed with status {}",
+                        response.status()
+                    );
+                }
+                self.reduce_adaptive_delay_on_success();
+                let result: TmdbMovieSearchResult =
+                    crate::services::http_client::response_json_limited(
+                        response,
+                        crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                    )
+                    .await?;
+                Ok(result
+                    .results
+                    .into_iter()
+                    .filter(|movie| !movie.adult)
+                    .collect())
+            },
+            &self.retry_config,
+            "tmdb_movie_releases",
+        )
+        .await
     }
 
     /// Search for collections by name
@@ -433,8 +491,11 @@ impl TmdbClient {
                     }
                     adaptive_client.reduce_adaptive_delay_on_success();
 
-                    let results: TmdbCollectionSearchResult = response
-                        .json()
+                    let results: TmdbCollectionSearchResult =
+                        crate::services::http_client::response_json_limited(
+                            response,
+                            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                        )
                         .await
                         .context("Failed to parse TMDB collection search results")?;
 
@@ -496,8 +557,11 @@ impl TmdbClient {
                     }
                     adaptive_client.reduce_adaptive_delay_on_success();
 
-                    let movie: TmdbMovie = response
-                        .json()
+                    let movie: TmdbMovie =
+                        crate::services::http_client::response_json_limited(
+                            response,
+                            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                        )
                         .await
                         .context("Failed to parse TMDB movie")?;
 
@@ -547,8 +611,11 @@ impl TmdbClient {
                     }
                     adaptive_client.reduce_adaptive_delay_on_success();
 
-                    let credits: TmdbCredits = response
-                        .json()
+                    let credits: TmdbCredits =
+                        crate::services::http_client::response_json_limited(
+                            response,
+                            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                        )
                         .await
                         .context("Failed to parse TMDB credits")?;
 
@@ -601,8 +668,11 @@ impl TmdbClient {
                     }
                     adaptive_client.reduce_adaptive_delay_on_success();
 
-                    let dates: TmdbReleaseDates = response
-                        .json()
+                    let dates: TmdbReleaseDates =
+                        crate::services::http_client::response_json_limited(
+                            response,
+                            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                        )
                         .await
                         .context("Failed to parse TMDB release dates")?;
 
@@ -657,8 +727,11 @@ impl TmdbClient {
                     }
                     adaptive_client.reduce_adaptive_delay_on_success();
 
-                    let collection: TmdbCollection = response
-                        .json()
+                    let collection: TmdbCollection =
+                        crate::services::http_client::response_json_limited(
+                            response,
+                            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                        )
                         .await
                         .context("Failed to parse TMDB collection")?;
 
@@ -669,71 +742,6 @@ impl TmdbClient {
             "tmdb_get_collection",
         )
         .await
-    }
-
-    /// Find movie by external ID (IMDb)
-    pub async fn find_by_imdb(&self, imdb_id: &str) -> Result<Option<TmdbMovie>> {
-        if !self.has_api_key() {
-            anyhow::bail!("TMDB API key not configured");
-        }
-
-        debug!("Looking up IMDb ID {} on TMDB", imdb_id);
-
-        let url = format!("{}/find/{}", self.base_url, imdb_id);
-        let client = self.client.clone();
-        let api_key = self.api_key.clone();
-        let retry_config = self.retry_config.clone();
-        let adaptive_client = self.clone();
-
-        #[derive(Deserialize)]
-        struct FindResult {
-            movie_results: Vec<TmdbMovie>,
-        }
-
-        let result = retry_async(
-            || {
-                let url = url.clone();
-                let client = client.clone();
-                let key = api_key.clone();
-                let adaptive_client = adaptive_client.clone();
-                async move {
-                    adaptive_client.wait_for_adaptive_delay().await;
-                    let response = client
-                        .get_with_query(
-                            &url,
-                            &[("api_key", key), ("external_source", "imdb_id".to_string())],
-                        )
-                        .await?;
-
-                    if response.status().as_u16() == 429 {
-                        let delay_ms = adaptive_client.increase_adaptive_delay_from_429(&response);
-                        warn!(
-                            "TMDB rate limit hit (HTTP 429) while finding imdb_id={}; retrying with adaptive delay={}ms",
-                            imdb_id,
-                            delay_ms
-                        );
-                        anyhow::bail!("Rate limited (429)");
-                    }
-
-                    if !response.status().is_success() {
-                        anyhow::bail!("TMDB find failed with status: {}", response.status());
-                    }
-                    adaptive_client.reduce_adaptive_delay_on_success();
-
-                    let find_result: FindResult = response
-                        .json()
-                        .await
-                        .context("Failed to parse TMDB find result")?;
-
-                    Ok(find_result.movie_results.into_iter().next())
-                }
-            },
-            &retry_config,
-            "tmdb_find_by_imdb",
-        )
-        .await?;
-
-        Ok(result)
     }
 }
 
@@ -782,7 +790,7 @@ impl TmdbCredits {
     /// Get top billed cast names (first 10)
     pub fn top_cast(&self, limit: usize) -> Vec<String> {
         let mut cast = self.cast.clone();
-        cast.sort_by(|a, b| a.order.cmp(&b.order));
+        cast.sort_by_key(|a| a.order);
         cast.into_iter().take(limit).map(|c| c.name).collect()
     }
 }
@@ -793,19 +801,6 @@ impl TmdbReleaseDates {
         self.results
             .iter()
             .find(|r| r.iso_3166_1 == "US")
-            .and_then(|r| {
-                r.release_dates
-                    .iter()
-                    .filter_map(|d| d.certification.clone())
-                    .find(|c| !c.is_empty())
-            })
-    }
-
-    /// Get certification for a specific country
-    pub fn certification(&self, country_code: &str) -> Option<String> {
-        self.results
-            .iter()
-            .find(|r| r.iso_3166_1 == country_code)
             .and_then(|r| {
                 r.release_dates
                     .iter()
@@ -869,5 +864,46 @@ mod tests {
             status: None,
         };
         assert_eq!(movie.year(), Some(2023));
+    }
+}
+
+#[cfg(test)]
+mod guide_tests {
+    use super::*;
+    #[tokio::test]
+    async fn guide_release_endpoint_forwards_region_and_page() {
+        use axum::{Json, Router, extract::Query, routing::get};
+        async fn handler(
+            Query(query): Query<std::collections::HashMap<String, String>>,
+        ) -> Json<serde_json::Value> {
+            assert_eq!(query.get("region").map(String::as_str), Some("GB"));
+            assert_eq!(query.get("page").map(String::as_str), Some("2"));
+            Json(
+                serde_json::json!({"page":2,"total_pages":2,"total_results":21,"results":[
+                    {"id":1,"title":"Upcoming film","adult":false,"video":false,"release_date":"2026-10-01"},
+                    {"id":2,"title":"Adult film","adult":true,"video":false}
+                ]}),
+            )
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route("/movie/upcoming", get(handler))
+                    .route("/movie/now_playing", get(handler)),
+            )
+            .await
+            .unwrap()
+        });
+        let mut client = TmdbClient::new("test-key".into());
+        client.base_url = format!("http://{address}");
+        for kind in [MovieReleaseKind::Upcoming, MovieReleaseKind::NowPlaying] {
+            let releases = client.movie_releases(kind, Some("GB"), 2).await.unwrap();
+            assert_eq!(releases.len(), 1);
+            assert_eq!(releases[0].release_date.as_deref(), Some("2026-10-01"));
+        }
+        task.abort();
     }
 }

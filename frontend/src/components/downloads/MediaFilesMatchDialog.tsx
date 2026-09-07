@@ -34,17 +34,22 @@ import {
 import {
   CreateUnmatchedMediaFileFromTorrentDocument,
   TorrentByInfoHashWithFilesDocument,
+  TorrentFindMatchForMediaFileRuntimeDocument,
+  TorrentMatchCandidateArtworkRuntimeDocument,
+  TorrentMatchLibrariesRuntimeDocument,
+  TorrentMatchMediaFilesByPathsRuntimeDocument,
+  TorrentUnmatchMediaFileRuntimeDocument,
   type CreateUnmatchedMediaFileFromTorrentMutation,
   type CreateUnmatchedMediaFileFromTorrentMutationVariables,
   type TorrentByInfoHashWithFilesQuery,
   type TorrentByInfoHashWithFilesQueryVariables,
+  type TorrentFindMatchForMediaFileRuntimeMutation,
+  type TorrentMatchCandidateArtworkRuntimeQuery,
+  type TorrentMatchLibrariesRuntimeQuery,
+  type TorrentMatchMediaFilesByPathsRuntimeQuery,
+  type TorrentUnmatchMediaFileRuntimeMutation,
 } from "../../lib/graphql/generated/graphql";
-import {
-  apolloClient,
-  gql,
-  useMutation,
-  useQuery,
-} from "../../lib/graphql/client";
+import { apolloClient, useMutation, useQuery } from "../../lib/graphql/client";
 import { sanitizeError, formatBytes } from "../../lib/format";
 
 // ============================================================================
@@ -58,177 +63,20 @@ const UNMATCH_KEY = "__unmatch__";
 const UNMATCHED_LIBRARY_ID = "__torrent_unmatched__";
 
 // ============================================================================
-// GraphQL Operations
-// ============================================================================
-
-const TORRENT_MATCH_LIBRARIES_QUERY = gql(`
-  query TorrentMatchLibrariesRuntime {
-    Libraries: libraries(page: { limit: 1000, offset: 0 }) {
-      Edges: edges {
-        Node: node {
-          Id
-          Name
-          LibraryType
-        }
-      }
-    }
-  }
-`);
-
-const TORRENT_MEDIA_LOOKUP_QUERY = gql(`
-  query TorrentMatchMediaFilesByPathsRuntime($Paths: [String!]!) {
-    MediaFiles: mediaFiles(where: { Path: { inList: $Paths } }, page: { limit: 1000, offset: 0 }) {
-      Edges: edges {
-        Node: node {
-          Id
-          Path
-          Metadata
-          LibraryId
-          EpisodeId
-          MovieId
-          TrackId
-          ChapterId
-        }
-      }
-    }
-  }
-`);
-
-const TORRENT_FIND_MATCH_MUTATION = gql(`
-  mutation TorrentFindMatchForMediaFileRuntime($Input: MatchMediaFileInput!) {
-    MatchMediaFile(Input: $Input) {
-      Success
-      AutoMatched
-      AlreadyMatched
-      MatchedType
-      MatchedId
-      Confidence
-      Reason
-      Candidates {
-        TargetType
-        TargetId
-        TargetName
-        Score
-        Reason
-        Wanted
-      }
-    }
-  }
-`);
-
-const TORRENT_UNMATCH_MEDIA_FILE_MUTATION = gql(`
-  mutation TorrentUnmatchMediaFileRuntime($MediaFileId: String!) {
-    UnmatchMediaFile(MediaFileId: $MediaFileId) {
-      Success
-      Reason
-    }
-  }
-`);
-
-const TORRENT_MATCH_ARTWORK_QUERY = gql(`
-  query TorrentMatchCandidateArtworkRuntime(
-    $MovieIds: [String!]!
-    $EpisodeIds: [String!]!
-    $ShowIds: [String!]!
-    $TrackIds: [String!]!
-    $AlbumIds: [String!]!
-    $ChapterIds: [String!]!
-    $AudiobookIds: [String!]!
-  ) {
-    Movies: movies(where: { Id: { inList: $MovieIds } }, page: { limit: 1000, offset: 0 }) {
-      Edges: edges {
-        Node: node {
-          Id
-          PosterUrl: CollectionPosterUrl
-        }
-      }
-    }
-    Episodes: episodes(where: { Id: { inList: $EpisodeIds } }, page: { limit: 1000, offset: 0 }) {
-      Edges: edges {
-        Node: node {
-          Id
-          ShowId
-        }
-      }
-    }
-    Shows: shows(where: { Id: { inList: $ShowIds } }, page: { limit: 1000, offset: 0 }) {
-      Edges: edges {
-        Node: node {
-          Id
-          PosterUrl
-        }
-      }
-    }
-    Tracks: tracks(where: { Id: { inList: $TrackIds } }, page: { limit: 1000, offset: 0 }) {
-      Edges: edges {
-        Node: node {
-          Id
-          AlbumId
-        }
-      }
-    }
-    Albums: albums(where: { Id: { inList: $AlbumIds } }, page: { limit: 1000, offset: 0 }) {
-      Edges: edges {
-        Node: node {
-          Id
-          CoverUrl
-        }
-      }
-    }
-    Chapters: chapters(where: { Id: { inList: $ChapterIds } }, page: { limit: 1000, offset: 0 }) {
-      Edges: edges {
-        Node: node {
-          Id
-          AudiobookId
-        }
-      }
-    }
-    Audiobooks: audiobooks(
-      where: { Id: { inList: $AudiobookIds } }
-      page: { limit: 1000, offset: 0 }
-    ) {
-      Edges: edges {
-        Node: node {
-          Id
-          CoverUrl
-        }
-      }
-    }
-  }
-`);
-
-// ============================================================================
 // Types
 // ============================================================================
 
-type LibraryNode = {
-  Id: string;
-  Name: string;
-  LibraryType: string;
-};
+type LibraryNode =
+  TorrentMatchLibrariesRuntimeQuery["libraries"]["edges"][number]["node"];
 
 type TorrentFileNode =
-  TorrentByInfoHashWithFilesQuery["Torrents"]["Edges"][number]["Node"]["Files"]["Edges"][number]["Node"];
+  TorrentByInfoHashWithFilesQuery["torrents"]["edges"][number]["node"]["files"]["edges"][number]["node"];
 
-type MediaLookupNode = {
-  Id: string;
-  Path: string;
-  Metadata?: string | null;
-  LibraryId?: string | null;
-  EpisodeId?: string | null;
-  MovieId?: string | null;
-  TrackId?: string | null;
-  ChapterId?: string | null;
-};
+type MediaLookupNode =
+  TorrentMatchMediaFilesByPathsRuntimeQuery["mediaFiles"]["edges"][number]["node"];
 
-type MatchCandidate = {
-  TargetType: string;
-  TargetId: string;
-  TargetName?: string | null;
-  Score: number;
-  Reason?: string | null;
-  Wanted?: boolean | null;
-};
+type MatchCandidate =
+  TorrentFindMatchForMediaFileRuntimeMutation["matchMediaFile"]["candidates"][number];
 
 interface MatchRowState {
   rowId: string;
@@ -251,56 +99,6 @@ interface MatchRowState {
   error: string | null;
 }
 
-interface MatchMediaFileResult {
-  Success: boolean;
-  Reason?: string | null;
-  Candidates?: MatchCandidate[];
-}
-
-interface TorrentMatchArtworkQueryData {
-  Movies?: {
-    Edges: Array<{ Node: { Id: string; PosterUrl?: string | null } }>;
-  };
-  Episodes?: {
-    Edges: Array<{ Node: { Id: string; ShowId: string } }>;
-  };
-  Shows?: {
-    Edges: Array<{ Node: { Id: string; PosterUrl?: string | null } }>;
-  };
-  Tracks?: {
-    Edges: Array<{ Node: { Id: string; AlbumId: string } }>;
-  };
-  Albums?: {
-    Edges: Array<{ Node: { Id: string; CoverUrl?: string | null } }>;
-  };
-  Chapters?: {
-    Edges: Array<{ Node: { Id: string; AudiobookId: string } }>;
-  };
-  Audiobooks?: {
-    Edges: Array<{ Node: { Id: string; CoverUrl?: string | null } }>;
-  };
-}
-
-interface TorrentFindMatchMutationData {
-  MatchMediaFile: MatchMediaFileResult;
-}
-
-interface TorrentUnmatchMediaFileMutationData {
-  UnmatchMediaFile: { Success: boolean; Reason?: string | null };
-}
-
-interface TorrentMatchLibrariesQueryData {
-  Libraries: {
-    Edges: Array<{ Node: LibraryNode }>;
-  };
-}
-
-interface TorrentMediaLookupQueryData {
-  MediaFiles: {
-    Edges: Array<{ Node: MediaLookupNode }>;
-  };
-}
-
 export interface MediaFilesMatchDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -313,14 +111,14 @@ export interface MediaFilesMatchDialogProps {
 
 export interface MediaFileMatchInput {
   RowId?: string | null;
-  FileIndex?: number | null;
-  FilePath: string;
-  FileSize: number;
-  MediaFileId?: string | null;
-  EpisodeId?: string | null;
-  MovieId?: string | null;
-  TrackId?: string | null;
-  ChapterId?: string | null;
+  fileIndex?: number | null;
+  filePath: string;
+  fileSize: number;
+  mediaFileId?: string | null;
+  episodeId?: string | null;
+  movieId?: string | null;
+  trackId?: string | null;
+  chapterId?: string | null;
 }
 
 // ============================================================================
@@ -454,14 +252,14 @@ function formatLibraryTypeLabel(type: string): string {
 function mergeCandidatesByScore(input: MatchCandidate[]): MatchCandidate[] {
   const merged = new Map<string, MatchCandidate>();
   for (const candidate of input) {
-    const key = `${candidate.TargetType}:${candidate.TargetId}`;
+    const key = `${candidate.targetType}:${candidate.targetId}`;
     const current = merged.get(key);
-    if (!current || candidate.Score > current.Score) {
+    if (!current || candidate.score > current.score) {
       merged.set(key, candidate);
     }
   }
   return Array.from(merged.values())
-    .sort((a, b) => b.Score - a.Score)
+    .sort((a, b) => b.score - a.score)
     .slice(0, 10);
 }
 
@@ -644,10 +442,10 @@ function MatchCandidateCard({
                   Unmatch current
                 </SelectItem>,
                 ...allCandidates.map((c) => {
-                  const key = `${c.TargetType}:${c.TargetId}`;
+                  const key = `${c.targetType}:${c.targetId}`;
                   const label =
-                    c.TargetName ?? `${c.TargetType} ${c.TargetId.slice(0, 8)}`;
-                  const textVal = `${label} (${(c.Score * 100).toFixed(0)}%)`;
+                    c.targetName ?? `${c.targetType} ${c.targetId.slice(0, 8)}`;
+                  const textVal = `${label} (${(c.score * 100).toFixed(0)}%)`;
                   return (
                     <SelectItem key={key} textValue={textVal}>
                       {textVal}
@@ -663,11 +461,11 @@ function MatchCandidateCard({
   }
 
   // Show the matched entity card
-  const gradient = getTypeGradient(candidate.TargetType);
+  const gradient = getTypeGradient(candidate.targetType);
   const displayName =
-    candidate.TargetName ??
-    `${candidate.TargetType} ${candidate.TargetId.slice(0, 8)}...`;
-  const confidence = Math.round(candidate.Score * 100);
+    candidate.targetName ??
+    `${candidate.targetType} ${candidate.targetId.slice(0, 8)}...`;
+  const confidence = Math.round(candidate.score * 100);
   const isSelected = selectedKey !== DECLINE_KEY && selectedKey !== UNMATCH_KEY;
 
   return (
@@ -685,7 +483,7 @@ function MatchCandidateCard({
               className="w-12 h-16 rounded-md object-cover border border-white/20 shrink-0"
             />
           ) : (
-            getTypeIcon(candidate.TargetType, 28)
+            getTypeIcon(candidate.targetType, 28)
           )}
           <div className="min-w-0 flex-1">
             <p className="text-sm font-bold text-white truncate">
@@ -700,13 +498,13 @@ function MatchCandidateCard({
               >
                 {confidence}% match
               </Chip>
-              {candidate.Wanted && (
+              {candidate.wanted && (
                 <Chip size="sm" variant="flat" color="primary" className="h-5">
                   Wanted
                 </Chip>
               )}
               <span className="text-xs text-white/60">
-                {candidate.TargetType}
+                {candidate.targetType}
               </span>
             </div>
           </div>
@@ -714,7 +512,7 @@ function MatchCandidateCard({
             isSelected={isSelected}
             onValueChange={(value) => {
               if (value) {
-                onSelect(`${candidate.TargetType}:${candidate.TargetId}`);
+                onSelect(`${candidate.targetType}:${candidate.targetId}`);
                 return;
               }
               onSelect(DECLINE_KEY);
@@ -751,10 +549,10 @@ function MatchCandidateCard({
             >
               {[
                 ...allCandidates.map((c) => {
-                  const key = `${c.TargetType}:${c.TargetId}`;
+                  const key = `${c.targetType}:${c.targetId}`;
                   const label =
-                    c.TargetName ?? `${c.TargetType} ${c.TargetId.slice(0, 8)}`;
-                  const textVal = `${label} (${(c.Score * 100).toFixed(0)}%)`;
+                    c.targetName ?? `${c.targetType} ${c.targetId.slice(0, 8)}`;
+                  const textVal = `${label} (${(c.score * 100).toFixed(0)}%)`;
                   return (
                     <SelectItem key={key} textValue={textVal}>
                       {textVal}
@@ -841,8 +639,8 @@ export function MediaFilesMatchDialog({
   const torrentQueryVariables =
     useMemo<TorrentByInfoHashWithFilesQueryVariables>(
       () => ({
-        Where: { InfoHash: { eq: torrentInfoHash ?? "" } },
-        Page: { limit: 1, offset: 0 },
+        where: { infoHash: { eq: torrentInfoHash ?? "" } },
+        page: { limit: 1, offset: 0 },
       }),
       [torrentInfoHash],
     );
@@ -857,51 +655,55 @@ export function MediaFilesMatchDialog({
     },
   );
   const { data: librariesData, loading: librariesLoading } =
-    useQuery<TorrentMatchLibrariesQueryData>(TORRENT_MATCH_LIBRARIES_QUERY, {
-      skip: !isOpen,
-      fetchPolicy: "cache-and-network",
-      notifyOnNetworkStatusChange: true,
-    });
+    useQuery<TorrentMatchLibrariesRuntimeQuery>(
+      TorrentMatchLibrariesRuntimeDocument,
+      {
+        skip: !isOpen,
+        fetchPolicy: "cache-and-network",
+        notifyOnNetworkStatusChange: true,
+      },
+    );
 
   const [createUnmatchedMediaFile] = useMutation<
     CreateUnmatchedMediaFileFromTorrentMutation,
     CreateUnmatchedMediaFileFromTorrentMutationVariables
   >(CreateUnmatchedMediaFileFromTorrentDocument);
-  const [findMatch] = useMutation<TorrentFindMatchMutationData>(
-    TORRENT_FIND_MATCH_MUTATION,
+  const [findMatch] = useMutation<TorrentFindMatchForMediaFileRuntimeMutation>(
+    TorrentFindMatchForMediaFileRuntimeDocument,
   );
-  const [unmatchMediaFile] = useMutation<TorrentUnmatchMediaFileMutationData>(
-    TORRENT_UNMATCH_MEDIA_FILE_MUTATION,
+  const [unmatchMediaFile] =
+    useMutation<TorrentUnmatchMediaFileRuntimeMutation>(
+      TorrentUnmatchMediaFileRuntimeDocument,
   );
 
-  const torrent = torrentData?.Torrents?.Edges?.[0]?.Node ?? null;
+  const torrent = torrentData?.torrents?.edges?.[0]?.node ?? null;
   const torrentFiles = useMemo<TorrentFileNode[]>(() => {
     const files =
-      torrent?.Files?.Edges?.map((e) => e.Node).filter((f) =>
-        isMatchableMediaFile(f.FilePath),
+      torrent?.files?.edges?.map((e) => e.node).filter((f) =>
+        isMatchableMediaFile(f.filePath),
       ) ?? [];
     if (initialFileIndex == null) return files;
-    return files.filter((f) => f.FileIndex === initialFileIndex);
-  }, [torrent?.Files?.Edges, initialFileIndex]);
+    return files.filter((f) => f.fileIndex === initialFileIndex);
+  }, [torrent?.files?.edges, initialFileIndex]);
   const inputMediaFiles = useMemo<MediaFileMatchInput[]>(() => {
     if (!mediaFiles || mediaFiles.length === 0) return [];
-    const files = mediaFiles.filter((f) => isMatchableMediaFile(f.FilePath));
+    const files = mediaFiles.filter((f) => isMatchableMediaFile(f.filePath));
     if (initialFileIndex == null) return files;
-    return files.filter((f) => f.FileIndex === initialFileIndex);
+    return files.filter((f) => f.fileIndex === initialFileIndex);
   }, [mediaFiles, initialFileIndex]);
   const sourceFiles = useMemo<MediaFileMatchInput[]>(() => {
     if (inputMediaFiles.length > 0) return inputMediaFiles;
     return torrentFiles.map((f) => ({
-      RowId: `torrent:${f.FileIndex}`,
-      FileIndex: f.FileIndex,
-      FilePath: f.FilePath,
-      FileSize: f.FileSize,
+      RowId: `torrent:${f.fileIndex}`,
+      fileIndex: f.fileIndex,
+      filePath: f.filePath,
+      fileSize: f.fileSize,
     }));
   }, [inputMediaFiles, torrentFiles]);
 
   const allLibraries = useMemo<LibraryNode[]>(
-    () => librariesData?.Libraries?.Edges?.map((e) => e.Node) ?? [],
-    [librariesData?.Libraries?.Edges],
+    () => librariesData?.libraries?.edges?.map((e) => e.node) ?? [],
+    [librariesData?.libraries?.edges],
   );
 
   const availableLibraryTypes = useMemo(
@@ -909,7 +711,7 @@ export function MediaFilesMatchDialog({
       Array.from(
         new Set(
           allLibraries
-            .map((l) => normalizeLibraryType(l.LibraryType))
+            .map((l) => normalizeLibraryType(l.libraryType))
             .filter(Boolean),
         ),
       ).sort(),
@@ -921,7 +723,7 @@ export function MediaFilesMatchDialog({
       return allLibraries;
     }
     return allLibraries.filter(
-      (l) => normalizeLibraryType(l.LibraryType) === selectedLibraryType,
+      (l) => normalizeLibraryType(l.libraryType) === selectedLibraryType,
     );
   }, [allLibraries, selectedLibraryType]);
 
@@ -947,15 +749,15 @@ export function MediaFilesMatchDialog({
   }, [isOpen, selectedLibraryType]);
 
   const lookupMediaByPaths = useCallback(async (paths: string[]) => {
-    const result = await apolloClient.query<TorrentMediaLookupQueryData>({
-      query: TORRENT_MEDIA_LOOKUP_QUERY,
-      variables: { Paths: paths },
+    const result = await apolloClient.query<TorrentMatchMediaFilesByPathsRuntimeQuery>({
+      query: TorrentMatchMediaFilesByPathsRuntimeDocument,
+      variables: { paths: paths },
       fetchPolicy: "network-only",
     });
     const map = new Map<string, MediaLookupNode>();
-    const edges = result.data?.MediaFiles?.Edges ?? [];
+    const edges = result.data?.mediaFiles?.edges ?? [];
     for (const edge of edges) {
-      map.set(normalizePathForLookup(edge.Node.Path), edge.Node);
+      map.set(normalizePathForLookup(edge.node.path), edge.node);
     }
     return map;
   }, []);
@@ -967,12 +769,12 @@ export function MediaFilesMatchDialog({
       return;
     }
     try {
-      const savePath = torrent?.SavePath ?? null;
-      const sourceName = contextName ?? torrent?.Name ?? null;
+      const savePath = torrent?.savePath ?? null;
+      const sourceName = contextName ?? torrent?.name ?? null;
       const allPathCandidates = Array.from(
         new Set(
           sourceFiles.flatMap((f) =>
-            buildPathCandidates(f.FilePath, savePath, sourceName),
+            buildPathCandidates(f.filePath, savePath, sourceName),
           ),
         ),
       );
@@ -980,21 +782,21 @@ export function MediaFilesMatchDialog({
       const mediaByPath = await lookupMediaByPaths(allPathCandidates);
 
       const nextRows = sourceFiles.map((f, idx) => {
-        const rowId = f.RowId ?? `row:${f.FileIndex ?? idx}`;
+        const rowId = f.RowId ?? `row:${f.fileIndex ?? idx}`;
         const candidates = buildPathCandidates(
-          f.FilePath,
+          f.filePath,
           savePath,
           sourceName,
         );
         let media: MediaLookupNode | null =
-          f.MediaFileId != null
+          f.mediaFileId != null
             ? ({
-                Id: f.MediaFileId,
-                Path: f.FilePath,
-                EpisodeId: f.EpisodeId ?? null,
-                MovieId: f.MovieId ?? null,
-                TrackId: f.TrackId ?? null,
-                ChapterId: f.ChapterId ?? null,
+                id: f.mediaFileId,
+                path: f.filePath,
+                episodeId: f.episodeId ?? null,
+                movieId: f.movieId ?? null,
+                trackId: f.trackId ?? null,
+                chapterId: f.chapterId ?? null,
               } as MediaLookupNode)
             : null;
         if (!media) {
@@ -1003,28 +805,28 @@ export function MediaFilesMatchDialog({
             if (media) break;
           }
         }
-        const existingMatchType = media?.EpisodeId
+        const existingMatchType = media?.episodeId
           ? "Episode"
-          : media?.MovieId
+          : media?.movieId
             ? "Movie"
-            : media?.TrackId
+            : media?.trackId
               ? "Track"
-              : media?.ChapterId
+              : media?.chapterId
                 ? "Chapter"
                 : null;
         const existingMatchId =
-          media?.EpisodeId ??
-          media?.MovieId ??
-          media?.TrackId ??
-          media?.ChapterId ??
+          media?.episodeId ??
+          media?.movieId ??
+          media?.trackId ??
+          media?.chapterId ??
           null;
 
         return {
           rowId,
-          fileIndex: f.FileIndex ?? null,
-          filePath: f.FilePath,
-          fileSize: f.FileSize,
-          mediaFileId: f.MediaFileId ?? media?.Id ?? null,
+          fileIndex: f.fileIndex ?? null,
+          filePath: f.filePath,
+          fileSize: f.fileSize,
+          mediaFileId: f.mediaFileId ?? media?.id ?? null,
           existingMatchType,
           existingMatchId,
           candidates: [],
@@ -1049,8 +851,8 @@ export function MediaFilesMatchDialog({
     isOpen,
     sourceFiles,
     lookupMediaByPaths,
-    torrent?.SavePath,
-    torrent?.Name,
+    torrent?.savePath,
+    torrent?.name,
     contextName,
   ]);
 
@@ -1061,8 +863,8 @@ export function MediaFilesMatchDialog({
   const ensureMediaFile = useCallback(
     async (row: MatchRowState): Promise<string> => {
       if (row.mediaFileId) return row.mediaFileId;
-      const savePath = torrent?.SavePath ?? null;
-      const sourceName = contextName ?? torrent?.Name ?? null;
+      const savePath = torrent?.savePath ?? null;
+      const sourceName = contextName ?? torrent?.name ?? null;
 
       const pathCandidates = buildPathCandidates(
         row.filePath,
@@ -1072,33 +874,33 @@ export function MediaFilesMatchDialog({
       const mediaByPath = await lookupMediaByPaths(pathCandidates);
       for (const candidate of pathCandidates) {
         const media = mediaByPath.get(normalizePathForLookup(candidate));
-        if (media?.Id) return media.Id;
+        if (media?.id) return media.id;
       }
 
       const bestPath = pathCandidates[0] ?? row.filePath;
       const originalName = bestPath.split("/").pop() ?? bestPath;
       const createResult = await createUnmatchedMediaFile({
         variables: {
-          Input: {
-            AddedAt: new Date().toISOString(),
-            IsHdr: false,
-            LibraryId: UNMATCHED_LIBRARY_ID,
-            Metadata: JSON.stringify({
-              SourceType: "torrent",
-              UnmatchedReason: "Created for manual media-file match dialog",
+          input: {
+            addedAt: new Date().toISOString(),
+            isHdr: false,
+            libraryId: UNMATCHED_LIBRARY_ID,
+            metadata: JSON.stringify({
+              sourceType: "torrent",
+              unmatchedReason: "Created for manual media-file match dialog",
             }),
-            OriginalName: originalName,
-            Path: bestPath,
-            RelativePath: getRelativePath(bestPath, savePath, sourceName),
-            Size: Math.max(0, Math.floor(row.fileSize)),
+            originalName: originalName,
+            path: bestPath,
+            relativePath: getRelativePath(bestPath, savePath, sourceName),
+            size: Math.max(0, Math.floor(row.fileSize)),
           },
         },
       });
 
-      const mediaFileId = createResult.data?.CreateMediaFile?.MediaFile?.Id;
-      if (!createResult.data?.CreateMediaFile?.Success || !mediaFileId) {
+      const mediaFileId = createResult.data?.createMediaFile?.mediaFile?.id;
+      if (!createResult.data?.createMediaFile?.success || !mediaFileId) {
         throw new Error(
-          createResult.data?.CreateMediaFile?.Error ||
+          createResult.data?.createMediaFile?.error ||
             "Failed to create media file",
         );
       }
@@ -1108,8 +910,8 @@ export function MediaFilesMatchDialog({
     [
       createUnmatchedMediaFile,
       lookupMediaByPaths,
-      torrent?.SavePath,
-      torrent?.Name,
+      torrent?.savePath,
+      torrent?.name,
       contextName,
     ],
   );
@@ -1123,14 +925,14 @@ export function MediaFilesMatchDialog({
 
       for (const row of matchRows) {
         for (const candidate of row.candidates) {
-          if (candidate.TargetType === "Movie")
-            movieIds.add(candidate.TargetId);
-          if (candidate.TargetType === "Episode")
-            episodeIds.add(candidate.TargetId);
-          if (candidate.TargetType === "Track")
-            trackIds.add(candidate.TargetId);
-          if (candidate.TargetType === "Chapter")
-            chapterIds.add(candidate.TargetId);
+          if (candidate.targetType === "Movie")
+            movieIds.add(candidate.targetId);
+          if (candidate.targetType === "Episode")
+            episodeIds.add(candidate.targetId);
+          if (candidate.targetType === "Track")
+            trackIds.add(candidate.targetId);
+          if (candidate.targetType === "Chapter")
+            chapterIds.add(candidate.targetId);
         }
       }
 
@@ -1143,95 +945,96 @@ export function MediaFilesMatchDialog({
         return {};
       }
 
-      const firstPass = await apolloClient.query<TorrentMatchArtworkQueryData>({
-        query: TORRENT_MATCH_ARTWORK_QUERY,
+      const firstPass = await apolloClient.query<TorrentMatchCandidateArtworkRuntimeQuery>({
+        query: TorrentMatchCandidateArtworkRuntimeDocument,
         variables: {
-          MovieIds: Array.from(movieIds),
-          EpisodeIds: Array.from(episodeIds),
-          ShowIds: [],
-          TrackIds: Array.from(trackIds),
-          AlbumIds: [],
-          ChapterIds: Array.from(chapterIds),
-          AudiobookIds: [],
+          movieIds: Array.from(movieIds),
+          episodeIds: Array.from(episodeIds),
+          showIds: [],
+          trackIds: Array.from(trackIds),
+          albumIds: [],
+          chapterIds: Array.from(chapterIds),
+          audiobookIds: [],
         },
         fetchPolicy: "network-only",
       });
 
       const episodeToShow = new Map<string, string>();
-      for (const edge of firstPass.data?.Episodes?.Edges ?? []) {
-        episodeToShow.set(edge.Node.Id, edge.Node.ShowId);
+      for (const edge of firstPass.data?.episodes?.edges ?? []) {
+        episodeToShow.set(edge.node.id, edge.node.showId);
       }
       const trackToAlbum = new Map<string, string>();
-      for (const edge of firstPass.data?.Tracks?.Edges ?? []) {
-        trackToAlbum.set(edge.Node.Id, edge.Node.AlbumId);
+      for (const edge of firstPass.data?.tracks?.edges ?? []) {
+        trackToAlbum.set(edge.node.id, edge.node.albumId);
       }
       const chapterToAudiobook = new Map<string, string>();
-      for (const edge of firstPass.data?.Chapters?.Edges ?? []) {
-        chapterToAudiobook.set(edge.Node.Id, edge.Node.AudiobookId);
+      for (const edge of firstPass.data?.chapters?.edges ?? []) {
+        chapterToAudiobook.set(edge.node.id, edge.node.audiobookId);
       }
 
-      const secondPass = await apolloClient.query<TorrentMatchArtworkQueryData>(
+      const secondPass =
+        await apolloClient.query<TorrentMatchCandidateArtworkRuntimeQuery>(
         {
-          query: TORRENT_MATCH_ARTWORK_QUERY,
+          query: TorrentMatchCandidateArtworkRuntimeDocument,
           variables: {
-            MovieIds: [],
-            EpisodeIds: [],
-            ShowIds: Array.from(new Set(episodeToShow.values())),
-            TrackIds: [],
-            AlbumIds: Array.from(new Set(trackToAlbum.values())),
-            ChapterIds: [],
-            AudiobookIds: Array.from(new Set(chapterToAudiobook.values())),
+            movieIds: [],
+            episodeIds: [],
+            showIds: Array.from(new Set(episodeToShow.values())),
+            trackIds: [],
+            albumIds: Array.from(new Set(trackToAlbum.values())),
+            chapterIds: [],
+            audiobookIds: Array.from(new Set(chapterToAudiobook.values())),
           },
           fetchPolicy: "network-only",
         },
       );
 
       const moviePoster = new Map<string, string>();
-      for (const edge of firstPass.data?.Movies?.Edges ?? []) {
-        if (edge.Node.PosterUrl)
-          moviePoster.set(edge.Node.Id, edge.Node.PosterUrl);
+      for (const edge of firstPass.data?.movies?.edges ?? []) {
+        if (edge.node.posterUrl)
+          moviePoster.set(edge.node.id, edge.node.posterUrl);
       }
       const showPoster = new Map<string, string>();
-      for (const edge of secondPass.data?.Shows?.Edges ?? []) {
-        if (edge.Node.PosterUrl)
-          showPoster.set(edge.Node.Id, edge.Node.PosterUrl);
+      for (const edge of secondPass.data?.shows?.edges ?? []) {
+        if (edge.node.posterUrl)
+          showPoster.set(edge.node.id, edge.node.posterUrl);
       }
       const albumCover = new Map<string, string>();
-      for (const edge of secondPass.data?.Albums?.Edges ?? []) {
-        if (edge.Node.CoverUrl)
-          albumCover.set(edge.Node.Id, edge.Node.CoverUrl);
+      for (const edge of secondPass.data?.albums?.edges ?? []) {
+        if (edge.node.coverUrl)
+          albumCover.set(edge.node.id, edge.node.coverUrl);
       }
       const audiobookCover = new Map<string, string>();
-      for (const edge of secondPass.data?.Audiobooks?.Edges ?? []) {
-        if (edge.Node.CoverUrl)
-          audiobookCover.set(edge.Node.Id, edge.Node.CoverUrl);
+      for (const edge of secondPass.data?.audiobooks?.edges ?? []) {
+        if (edge.node.coverUrl)
+          audiobookCover.set(edge.node.id, edge.node.coverUrl);
       }
 
       const out: Record<string, string> = {};
       for (const row of matchRows) {
         for (const candidate of row.candidates) {
-          const key = `${candidate.TargetType}:${candidate.TargetId}`;
-          if (candidate.TargetType === "Movie") {
-            const url = moviePoster.get(candidate.TargetId);
+          const key = `${candidate.targetType}:${candidate.targetId}`;
+          if (candidate.targetType === "Movie") {
+            const url = moviePoster.get(candidate.targetId);
             if (url) out[key] = url;
             continue;
           }
-          if (candidate.TargetType === "Episode") {
-            const showId = episodeToShow.get(candidate.TargetId);
+          if (candidate.targetType === "Episode") {
+            const showId = episodeToShow.get(candidate.targetId);
             if (!showId) continue;
             const url = showPoster.get(showId);
             if (url) out[key] = url;
             continue;
           }
-          if (candidate.TargetType === "Track") {
-            const albumId = trackToAlbum.get(candidate.TargetId);
+          if (candidate.targetType === "Track") {
+            const albumId = trackToAlbum.get(candidate.targetId);
             if (!albumId) continue;
             const url = albumCover.get(albumId);
             if (url) out[key] = url;
             continue;
           }
-          if (candidate.TargetType === "Chapter") {
-            const audiobookId = chapterToAudiobook.get(candidate.TargetId);
+          if (candidate.targetType === "Chapter") {
+            const audiobookId = chapterToAudiobook.get(candidate.targetId);
             if (!audiobookId) continue;
             const url = audiobookCover.get(audiobookId);
             if (url) out[key] = url;
@@ -1255,7 +1058,7 @@ export function MediaFilesMatchDialog({
 
     const targetLibraryIds =
       selectedLibraryId === ALL_LIBRARIES_KEY
-        ? librariesByType.map((l) => l.Id)
+        ? librariesByType.map((l) => l.id)
         : [selectedLibraryId];
 
     setIsFinding(true);
@@ -1277,25 +1080,25 @@ export function MediaFilesMatchDialog({
           for (const libraryId of targetLibraryIds) {
             const result = await findMatch({
               variables: {
-                Input: {
-                  MediaFileId: mediaFileId,
-                  LibraryId: libraryId,
-                  AutoMatch: false,
-                  CandidateLimit: 10,
-                  Force: false,
-                  AllowProviderFallback: false,
+                input: {
+                  mediaFileId,
+                  libraryId,
+                  autoMatch: false,
+                  candidateLimit: 10,
+                  force: false,
+                  allowProviderFallback: false,
                 },
               },
             });
             allCandidates.push(
-              ...(result.data?.MatchMediaFile?.Candidates ?? []),
+              ...(result.data?.matchMediaFile?.candidates ?? []),
             );
           }
 
           const merged = mergeCandidatesByScore(allCandidates);
           const defaultKey =
             merged.length > 0
-              ? `${merged[0].TargetType}:${merged[0].TargetId}`
+              ? `${merged[0].targetType}:${merged[0].targetId}`
               : DECLINE_KEY;
 
           nextRows[i] = {
@@ -1334,7 +1137,7 @@ export function MediaFilesMatchDialog({
   useEffect(() => {
     if (!isOpen || isFinding || rows.length === 0) return;
     const scopeKey = [
-      torrent?.Id ?? contextName ?? "custom",
+      torrent?.id ?? contextName ?? "custom",
       selectedLibraryType,
       selectedLibraryId,
       rows.map((r) => r.rowId).join(","),
@@ -1347,7 +1150,7 @@ export function MediaFilesMatchDialog({
     isFinding,
     rows,
     contextName,
-    torrent?.Id,
+    torrent?.id,
     selectedLibraryType,
     selectedLibraryId,
     previewMatches,
@@ -1371,13 +1174,13 @@ export function MediaFilesMatchDialog({
 
         if (row.selectedKey === UNMATCH_KEY) {
           const result = await unmatchMediaFile({
-            variables: { MediaFileId: row.mediaFileId },
+            variables: { mediaFileId: row.mediaFileId },
           });
-          if (!result.data?.UnmatchMediaFile?.Success) {
+          if (!result.data?.unmatchMediaFile?.success) {
             nextRows[i] = {
               ...row,
               status: "error",
-              error: result.data?.UnmatchMediaFile?.Reason || "Unmatch failed",
+              error: result.data?.unmatchMediaFile?.reason || "Unmatch failed",
             };
             continue;
           }
@@ -1396,24 +1199,24 @@ export function MediaFilesMatchDialog({
         if (!targetType || !targetId) continue;
 
         const input: Record<string, unknown> = {
-          MediaFileId: row.mediaFileId,
-          Force: true,
-          AutoMatch: false,
-          AllowProviderFallback: false,
-          CandidateLimit: 10,
+          mediaFileId: row.mediaFileId,
+          force: true,
+          autoMatch: false,
+          allowProviderFallback: false,
+          candidateLimit: 10,
         };
-        if (targetType === "Movie") input.MovieId = targetId;
-        if (targetType === "Episode") input.EpisodeId = targetId;
-        if (targetType === "Track") input.TrackId = targetId;
-        if (targetType === "Chapter") input.ChapterId = targetId;
+        if (targetType === "Movie") input.movieId = targetId;
+        if (targetType === "Episode") input.episodeId = targetId;
+        if (targetType === "Track") input.trackId = targetId;
+        if (targetType === "Chapter") input.chapterId = targetId;
 
-        const result = await findMatch({ variables: { Input: input } });
-        const response = result.data?.MatchMediaFile;
-        if (!response?.Success) {
+        const result = await findMatch({ variables: { input: input } });
+        const response = result.data?.matchMediaFile;
+        if (!response?.success) {
           nextRows[i] = {
             ...row,
             status: "error",
-            error: response?.Reason || "Match failed",
+            error: response?.reason || "Match failed",
           };
           continue;
         }
@@ -1466,9 +1269,9 @@ export function MediaFilesMatchDialog({
       <ModalContent>
         <ModalHeader className="flex flex-col gap-1">
           <span>{isSingleFileMode ? "Match File" : "Match Media Files"}</span>
-          {(contextName ?? torrent?.Name) && (
+          {(contextName ?? torrent?.name) && (
             <span className="text-xs text-default-500 font-normal truncate">
-              {contextName ?? torrent?.Name}
+              {contextName ?? torrent?.name}
             </span>
           )}
         </ModalHeader>
@@ -1531,8 +1334,8 @@ export function MediaFilesMatchDialog({
                       All libraries
                     </SelectItem>,
                     ...librariesByType.map((library) => (
-                      <SelectItem key={library.Id} textValue={library.Name}>
-                        {library.Name}
+                      <SelectItem key={library.id} textValue={library.name}>
+                        {library.name}
                       </SelectItem>
                     )),
                   ]}
@@ -1571,7 +1374,7 @@ export function MediaFilesMatchDialog({
                   const selectedCandidate =
                     row.candidates.find(
                       (c) =>
-                        `${c.TargetType}:${c.TargetId}` === row.selectedKey,
+                        `${c.targetType}:${c.targetId}` === row.selectedKey,
                     ) ?? null;
 
                   return (
@@ -1589,7 +1392,7 @@ export function MediaFilesMatchDialog({
                         artworkUrl={
                           selectedCandidate
                             ? candidateArtworkByKey[
-                                `${selectedCandidate.TargetType}:${selectedCandidate.TargetId}`
+                                `${selectedCandidate.targetType}:${selectedCandidate.targetId}`
                               ]
                             : undefined
                         }

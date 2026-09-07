@@ -35,10 +35,10 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [shows, setShows] = useState<
-    LibrarySearchShowsQuery["Shows"]["Edges"][number]["Node"][]
+    LibrarySearchShowsQuery["shows"]["edges"][number]["node"][]
   >([]);
   const [movies, setMovies] = useState<
-    LibrarySearchMoviesQuery["Movies"]["Edges"][number]["Node"][]
+    LibrarySearchMoviesQuery["movies"]["edges"][number]["node"][]
   >([]);
 
   // Fetch all content when modal opens
@@ -64,10 +64,10 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
       ]);
 
       const showNodes =
-        showsResult.data?.Shows?.Edges?.map((e) => e.Node) ?? [];
+        showsResult.data?.shows?.edges?.map((e) => e.node) ?? [];
       setShows(showNodes);
       const movieNodes =
-        moviesResult.data?.Movies?.Edges?.map((e) => e.Node) ?? [];
+        moviesResult.data?.movies?.edges?.map((e) => e.node) ?? [];
       setMovies(movieNodes);
     } catch (err) {
       console.error("Failed to fetch content:", err);
@@ -83,34 +83,34 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
     // Filter shows
     for (const show of shows) {
-      if (!queryLower || show.Name.toLowerCase().includes(queryLower)) {
+      if (!queryLower || show.name.toLowerCase().includes(queryLower)) {
         results.push({
-          id: show.Id,
+          id: show.id,
           type: "show",
-          title: show.Name,
-          year: show.Year ?? null,
-          posterUrl: show.PosterUrl ?? null,
+          title: show.name,
+          year: show.year ?? null,
+          posterUrl: show.posterUrl ?? null,
           status: null,
-          libraryId: show.LibraryId,
+          libraryId: show.libraryId,
         });
       }
     }
 
     // Filter movies
     for (const movie of movies) {
-      if (!queryLower || movie.Title.toLowerCase().includes(queryLower)) {
+      if (!queryLower || movie.title.toLowerCase().includes(queryLower)) {
         results.push({
-          id: movie.Id,
+          id: movie.id,
           type: "movie",
-          title: movie.Title,
-          year: movie.Year ?? null,
+          title: movie.title,
+          year: movie.year ?? null,
           posterUrl: null,
-          status: movie.MediaFileId
+          status: movie.mediaFileId
             ? "downloaded"
-            : movie.Wanted
+            : movie.wanted
               ? "wanted"
               : null,
-          libraryId: movie.LibraryId,
+          libraryId: movie.libraryId,
         });
       }
     }

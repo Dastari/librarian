@@ -4,12 +4,16 @@ import { Button } from "@heroui/button";
 import { Card, CardBody } from "@heroui/card";
 import { useDisclosure } from "@heroui/modal";
 import { addToast } from "@heroui/toast";
-import { useQuery, gql } from "../../../lib/graphql/client";
+import { useQuery } from "../../../lib/graphql/client";
 import {
   DataTable,
   type DataTableColumn,
   type RowAction,
 } from "../../../components/data-table";
+import {
+  LibraryCollectionsRouteDocument,
+  type LibraryCollectionsRouteQuery,
+} from "../../../lib/graphql/generated/graphql";
 import { useLibraryContext } from "../$libraryId";
 import { IconEye, IconPlus, IconStack } from "@tabler/icons-react";
 import { AddCollectionModal } from "../../../components/library/AddCollectionModal";
@@ -19,20 +23,6 @@ import { CollectionPoster } from "../../../components/library/CollectionCardPart
 export const Route = createFileRoute("/libraries/$libraryId/collections")({
   component: CollectionsPage,
 });
-
-interface CollectionNode {
-  Id: string;
-  TmdbCollectionId: number;
-  Name: string;
-  PosterUrl: string | null;
-  BackdropUrl: string | null;
-  MovieCount: number;
-  DownloadedMovies: {
-    PageInfo: {
-      TotalCount: number | null;
-    };
-  };
-}
 
 interface CollectionSummary {
   rowId: string;
@@ -45,41 +35,6 @@ interface CollectionSummary {
   hasFileCount: number;
 }
 
-interface LibraryCollectionsQueryData {
-  Collections: {
-    Edges: Array<{ Node: CollectionNode }>;
-  };
-}
-
-const LIBRARY_COLLECTIONS_QUERY = gql`
-  query LibraryCollectionsRoute(
-    $Where: CollectionWhereInput
-    $Page: PageInput
-    $LibraryId: String!
-  ) {
-    Collections: collections(where: $Where, page: $Page) {
-      Edges: edges {
-        Node: node {
-          Id
-          TmdbCollectionId
-          Name
-          PosterUrl
-          BackdropUrl
-          MovieCount
-          DownloadedMovies: movies(
-            where: { LibraryId: { eq: $LibraryId }, HasFile: { eq: true } }
-            page: { limit: 1, offset: 0 }
-          ) {
-            PageInfo: pageInfo {
-              TotalCount: totalCount
-            }
-          }
-        }
-      }
-    }
-  }
-`;
-
 function CollectionsPage() {
   const { library } = useLibraryContext();
   const navigate = useNavigate();
@@ -90,37 +45,37 @@ function CollectionsPage() {
   } = useDisclosure();
 
   const { data, previousData, loading, refetch } =
-    useQuery<LibraryCollectionsQueryData>(LIBRARY_COLLECTIONS_QUERY, {
+    useQuery<LibraryCollectionsRouteQuery>(LibraryCollectionsRouteDocument, {
       variables: {
-        LibraryId: library.Id,
-        Where: {
-          LibraryId: { eq: library.Id },
+        libraryId: library.id,
+        where: {
+          libraryId: { eq: library.id },
         },
-        Page: { limit: 5000, offset: 0 },
+        page: { limit: 5000, offset: 0 },
       },
       fetchPolicy: "cache-and-network",
     });
   const collectionNodes = useMemo(
     () =>
-      (data?.Collections?.Edges ?? previousData?.Collections?.Edges ?? []).map(
-        (edge) => edge.Node,
+      (data?.collections?.edges ?? previousData?.collections?.edges ?? []).map(
+        (edge) => edge.node,
       ),
-    [data?.Collections?.Edges, previousData?.Collections?.Edges],
+    [data?.collections?.edges, previousData?.collections?.edges],
   );
 
   const collections = useMemo<CollectionSummary[]>(() => {
     return collectionNodes
       .map((collection) => {
         const hasFileCount =
-          collection.DownloadedMovies?.PageInfo?.TotalCount ?? 0;
+          collection.downloadedMovies?.pageInfo?.totalCount ?? 0;
         return {
-          rowId: collection.Id,
-          dbId: collection.Id,
-          tmdbId: collection.TmdbCollectionId,
-          name: collection.Name,
-          posterUrl: collection.PosterUrl ?? null,
-          backdropUrl: collection.BackdropUrl ?? null,
-          totalMovieCount: collection.MovieCount ?? 0,
+          rowId: collection.id,
+          dbId: collection.id,
+          tmdbId: collection.tmdbCollectionId,
+          name: collection.name,
+          posterUrl: collection.posterUrl ?? null,
+          backdropUrl: collection.backdropUrl ?? null,
+          totalMovieCount: collection.movieCount ?? 0,
           hasFileCount,
         };
       })
@@ -152,7 +107,7 @@ function CollectionsPage() {
       ),
     },
     {
-      key: "movieCount",
+      key: "totalMovieCount",
       label: "Movies",
       width: 180,
       sortable: true,
@@ -187,7 +142,7 @@ function CollectionsPage() {
   ];
 
   return (
-    <div className="flex flex-col w-full h-full overflow-hidden gap-4">
+    <div className="flex h-full min-h-0 flex-1 flex-col gap-4 overflow-hidden w-full">
       <div className="flex items-center justify-between gap-4 shrink-0">
         <h2 className="text-xl font-semibold">Collections</h2>
         <div className="flex items-center gap-2">
@@ -205,7 +160,7 @@ function CollectionsPage() {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0">
+      <div className="flex min-h-0 flex-1 flex-col">
         <DataTable
           stateKey="library-collections"
           data={collections}
@@ -213,7 +168,7 @@ function CollectionsPage() {
           rowActions={collectionActions}
           getRowKey={(collection) => collection.rowId}
           ariaLabel="Movie collections table"
-          searchPlaceholder="Search collections..."
+          toolbarQueryPlaceholder="Search collections..."
           showItemCount
           fillHeight
           isLoading={loading && collections.length === 0}
@@ -256,7 +211,7 @@ function CollectionsPage() {
                   TMDB collection data.
                 </p>
                 <p className="text-xs text-default-400">
-                  Library: {library.Name}
+                  library: {library.name}
                 </p>
               </CardBody>
             </Card>
@@ -267,7 +222,7 @@ function CollectionsPage() {
       <AddCollectionModal
         isOpen={isAddOpen}
         onClose={onAddClose}
-        libraryId={library.Id}
+        libraryId={library.id}
         onAdded={() => void refetch()}
       />
     </div>

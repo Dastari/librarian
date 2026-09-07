@@ -11,9 +11,9 @@ function UnmatchedPage() {
 
   return (
     <LibraryUnmatchedFilesTab
-      libraryId={library.Id}
-      libraryPath={library.Path}
-      libraryType={library.LibraryType}
+      libraryId={library.id}
+      libraryPath={library.path}
+      libraryType={library.libraryType}
       loading={loading}
     />
   )

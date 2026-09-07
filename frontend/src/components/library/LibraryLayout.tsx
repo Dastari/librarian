@@ -40,7 +40,7 @@ export type LibraryTab =
 interface LibraryTabConfig {
   key: LibraryTab;
   label: string;
-  Icon: TablerIcon;
+  icon: TablerIcon;
   iconColor: string;
   description: string;
   position?: "top" | "bottom";
@@ -52,7 +52,7 @@ const tvTabs: LibraryTabConfig[] = [
   {
     key: "shows",
     label: "Shows",
-    Icon: IconDeviceTv,
+    icon: IconDeviceTv,
     iconColor: "text-blue-400",
     description: "TV shows in library",
     position: "top",
@@ -61,7 +61,7 @@ const tvTabs: LibraryTabConfig[] = [
   {
     key: "unmatched",
     label: "Unmatched Files",
-    Icon: IconFileSearch,
+    icon: IconFileSearch,
     iconColor: "text-amber-400",
     description: "Files without matches",
     position: "top",
@@ -70,7 +70,7 @@ const tvTabs: LibraryTabConfig[] = [
   {
     key: "browser",
     label: "File Browser",
-    Icon: IconFolder,
+    icon: IconFolder,
     iconColor: "text-amber-400",
     description: "Browse library files",
     position: "top",
@@ -79,7 +79,7 @@ const tvTabs: LibraryTabConfig[] = [
   {
     key: "settings",
     label: "Settings",
-    Icon: IconSettings,
+    icon: IconSettings,
     iconColor: "text-default-400",
     description: "Library configuration",
     position: "bottom",
@@ -92,7 +92,7 @@ const movieTabs: LibraryTabConfig[] = [
   {
     key: "movies",
     label: "Movies",
-    Icon: IconMovie,
+    icon: IconMovie,
     iconColor: "text-purple-400",
     description: "Movies in library",
     position: "top",
@@ -101,7 +101,7 @@ const movieTabs: LibraryTabConfig[] = [
   {
     key: "collections",
     label: "Collections",
-    Icon: IconStack,
+    icon: IconStack,
     iconColor: "text-purple-300",
     description: "Movie collections",
     position: "top",
@@ -110,7 +110,7 @@ const movieTabs: LibraryTabConfig[] = [
   {
     key: "unmatched",
     label: "Unmatched Files",
-    Icon: IconFileSearch,
+    icon: IconFileSearch,
     iconColor: "text-amber-400",
     description: "Files without matches",
     position: "top",
@@ -119,7 +119,7 @@ const movieTabs: LibraryTabConfig[] = [
   {
     key: "browser",
     label: "File Browser",
-    Icon: IconFolder,
+    icon: IconFolder,
     iconColor: "text-amber-400",
     description: "Browse library files",
     position: "top",
@@ -128,7 +128,7 @@ const movieTabs: LibraryTabConfig[] = [
   {
     key: "settings",
     label: "Settings",
-    Icon: IconSettings,
+    icon: IconSettings,
     iconColor: "text-default-400",
     description: "Library configuration",
     position: "bottom",
@@ -141,7 +141,7 @@ const musicTabs: LibraryTabConfig[] = [
   {
     key: "artists",
     label: "Artists",
-    Icon: IconMicrophone,
+    icon: IconMicrophone,
     iconColor: "text-green-400",
     description: "Artists in library",
     position: "top",
@@ -150,7 +150,7 @@ const musicTabs: LibraryTabConfig[] = [
   {
     key: "albums",
     label: "Albums",
-    Icon: IconDisc,
+    icon: IconDisc,
     iconColor: "text-green-300",
     description: "Albums in library",
     position: "top",
@@ -159,7 +159,7 @@ const musicTabs: LibraryTabConfig[] = [
   {
     key: "tracks",
     label: "Tracks",
-    Icon: IconMusicBolt,
+    icon: IconMusicBolt,
     iconColor: "text-green-200",
     description: "All tracks",
     position: "top",
@@ -168,7 +168,7 @@ const musicTabs: LibraryTabConfig[] = [
   {
     key: "browser",
     label: "File Browser",
-    Icon: IconFolder,
+    icon: IconFolder,
     iconColor: "text-amber-400",
     description: "Browse library files",
     position: "top",
@@ -177,7 +177,7 @@ const musicTabs: LibraryTabConfig[] = [
   {
     key: "settings",
     label: "Settings",
-    Icon: IconSettings,
+    icon: IconSettings,
     iconColor: "text-default-400",
     description: "Library configuration",
     position: "bottom",
@@ -190,7 +190,7 @@ const audiobookTabs: LibraryTabConfig[] = [
   {
     key: "books",
     label: "Audiobooks",
-    Icon: IconHeadphones,
+    icon: IconHeadphones,
     iconColor: "text-orange-400",
     description: "Audiobooks in library",
     position: "top",
@@ -199,7 +199,7 @@ const audiobookTabs: LibraryTabConfig[] = [
   {
     key: "authors",
     label: "Authors",
-    Icon: IconUser,
+    icon: IconUser,
     iconColor: "text-orange-300",
     description: "Authors in library",
     position: "top",
@@ -208,7 +208,7 @@ const audiobookTabs: LibraryTabConfig[] = [
   {
     key: "browser",
     label: "File Browser",
-    Icon: IconFolder,
+    icon: IconFolder,
     iconColor: "text-amber-400",
     description: "Browse library files",
     position: "top",
@@ -217,7 +217,7 @@ const audiobookTabs: LibraryTabConfig[] = [
   {
     key: "settings",
     label: "Settings",
-    Icon: IconSettings,
+    icon: IconSettings,
     iconColor: "text-default-400",
     description: "Library configuration",
     position: "bottom",
@@ -230,7 +230,7 @@ const otherTabs: LibraryTabConfig[] = [
   {
     key: "browser",
     label: "File Browser",
-    Icon: IconFolder,
+    icon: IconFolder,
     iconColor: "text-amber-400",
     description: "Browse library files",
     position: "top",
@@ -239,7 +239,7 @@ const otherTabs: LibraryTabConfig[] = [
   {
     key: "settings",
     label: "Settings",
-    Icon: IconSettings,
+    icon: IconSettings,
     iconColor: "text-default-400",
     description: "Library configuration",
     position: "bottom",
@@ -316,15 +316,15 @@ export function LibraryLayout({
         variant={isActive ? "solid" : "light"}
         color={isActive ? "primary" : "default"}
         className={`
-          flex items-center gap-3 px-4 py-3 h-auto justify-start text-left w-full
+          flex items-center gap-3 px-4 py-3 h-auto justify-start text-left w-auto lg:w-full shrink-0
           ${isActive ? "shadow-md" : ""}
         `}
       >
-        <tab.Icon className={`w-5 h-5 ${isActive ? "" : tab.iconColor}`} />
+        <tab.icon className={`w-5 h-5 ${isActive ? "" : tab.iconColor}`} />
         <div className="flex flex-col min-w-0 items-start">
           <span className="font-medium text-sm">{tab.label}</span>
           <span
-            className={`text-xs truncate ${
+            className={`hidden lg:block text-xs truncate ${
               isActive ? "text-primary-foreground/70" : "text-default-400"
             }`}
           >
@@ -336,26 +336,28 @@ export function LibraryLayout({
   };
 
   return (
-    <div className="flex gap-6 h-[calc(100vh-15rem)] min-h-[500px]">
+    <div className="flex flex-col lg:flex-row h-0 min-h-0 flex-1 gap-4 lg:gap-6 overflow-hidden">
       {/* Left Sidebar - Fixed Vertical Tabs */}
-      <div className="w-56 shrink-0">
+      <div className="lg:w-56 shrink-0 min-w-0">
         <Card className="h-full">
-          <CardBody className="p-2 flex flex-col">
-            <nav className="flex flex-col gap-1 flex-1">
+          <CardBody className="p-2 flex flex-row lg:flex-col overflow-x-auto">
+            <nav aria-label="Library sections" className="flex flex-row lg:flex-col gap-1 lg:flex-1">
               {topTabs.map(renderTabButton)}
             </nav>
 
             {/* Bottom tabs (Settings) */}
             {bottomTabs.length > 0 && (
-              <div className="pt-2 mt-2">{bottomTabs.map(renderTabButton)}</div>
+              <div className="lg:pt-2 lg:mt-2 shrink-0">{bottomTabs.map(renderTabButton)}</div>
             )}
           </CardBody>
         </Card>
       </div>
 
       {/* Right Content Area */}
-      <div className="flex grow flex-col w-full">
-        <div className="flex grow h-0 overflow-auto px-4 -mx-4">{children}</div>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 -mx-4">
+          {children}
+        </div>
       </div>
     </div>
   );

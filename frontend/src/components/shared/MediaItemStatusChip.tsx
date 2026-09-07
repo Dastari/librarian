@@ -1,5 +1,6 @@
 import { Chip } from "@heroui/chip";
 import { Progress } from "@heroui/progress";
+import type { ContentStatus } from "../../lib/graphql/generated/graphql";
 
 type ChipColor =
   | "success"
@@ -29,6 +30,20 @@ const STATUS_CONFIG: Record<DerivedMediaStatus, StatusConfig> = {
   downloading: { color: "primary", label: "Downloading" },
   wanted: { color: "warning", label: "Wanted" },
   missing: { color: "danger", label: "Missing" },
+};
+
+const AUTHORITATIVE_STATUS_CONFIG: Record<ContentStatus, StatusConfig> = {
+  PLAYING: { color: "primary", label: "Playing" },
+  PAUSED: { color: "warning", label: "Paused" },
+  PROCESSING: { color: "secondary", label: "Processing" },
+  AVAILABLE: { color: "success", label: "Available" },
+  UPGRADABLE: { color: "warning", label: "Upgradable" },
+  DOWNLOADING: { color: "primary", label: "Downloading" },
+  FAILED: { color: "danger", label: "Failed" },
+  IGNORED: { color: "default", label: "Ignored" },
+  UPCOMING: { color: "secondary", label: "Upcoming" },
+  WANTED: { color: "warning", label: "Wanted" },
+  MISSING: { color: "danger", label: "Missing" },
 };
 
 /**
@@ -63,6 +78,8 @@ export function getMediaStatusLabel(status: DerivedMediaStatus): string {
 }
 
 interface MediaItemStatusChipProps {
+  /** Server-authoritative status. Legacy fields are only a loading fallback. */
+  status?: ContentStatus | null;
   /** Media file ID - if set, item is downloaded */
   mediaFileId?: string | null;
   /** Size of the chip */
@@ -81,16 +98,22 @@ interface MediaItemStatusChipProps {
  * Shows a progress bar when downloading with progress info.
  */
 export function MediaItemStatusChip({
+  status: authoritativeStatus,
   mediaFileId,
   size = "sm",
   downloadProgress,
   wanted = true,
 }: MediaItemStatusChipProps) {
   const status = deriveMediaStatus(mediaFileId, downloadProgress, wanted);
-  const config = STATUS_CONFIG[status];
+  const config = authoritativeStatus
+    ? AUTHORITATIVE_STATUS_CONFIG[authoritativeStatus]
+    : STATUS_CONFIG[status];
 
   // Show progress bar when downloading with progress info
-  if (status === "downloading" && downloadProgress != null) {
+  if (
+    (authoritativeStatus === "DOWNLOADING" || status === "downloading") &&
+    downloadProgress != null
+  ) {
     const percent = Math.round(downloadProgress * 100);
     return (
       <div className="flex items-center gap-2 min-w-[100px]">

@@ -92,13 +92,6 @@ impl SystemPanel {
 }
 
 impl Panel for SystemPanel {
-    fn title(&self) -> &str {
-        "sys"
-    }
-    fn kind(&self) -> PanelKind {
-        PanelKind::System
-    }
-
     fn render(&self, frame: &mut Frame, area: Rect, focused: bool) {
         let border_style = if focused {
             Theme::border(PanelKind::System)
@@ -308,20 +301,19 @@ fn format_number(n: u64) -> String {
 fn get_local_ip() -> Option<String> {
     use std::net::UdpSocket;
 
-    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
-        if socket.connect("8.8.8.8:80").is_ok() {
-            if let Ok(addr) = socket.local_addr() {
-                return Some(addr.ip().to_string());
-            }
-        }
+    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0")
+        && socket.connect("8.8.8.8:80").is_ok()
+        && let Ok(addr) = socket.local_addr()
+    {
+        return Some(addr.ip().to_string());
     }
 
-    if let Ok(hostname) = std::process::Command::new("hostname").arg("-I").output() {
-        if hostname.status.success() {
-            let output = String::from_utf8_lossy(&hostname.stdout);
-            if let Some(ip) = output.split_whitespace().next() {
-                return Some(ip.to_string());
-            }
+    if let Ok(hostname) = std::process::Command::new("hostname").arg("-I").output()
+        && hostname.status.success()
+    {
+        let output = String::from_utf8_lossy(&hostname.stdout);
+        if let Some(ip) = output.split_whitespace().next() {
+            return Some(ip.to_string());
         }
     }
 

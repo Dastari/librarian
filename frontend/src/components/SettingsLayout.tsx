@@ -4,13 +4,13 @@ import { Spinner } from '@heroui/spinner'
 import { ScrollShadow } from '@heroui/scroll-shadow'
 import type { ReactNode } from 'react'
 import type { TablerIcon } from '@tabler/icons-react'
-import { IconDownload, IconMovie, IconClipboard, IconCast, IconServer, IconRadar } from '@tabler/icons-react'
+import { IconDownload, IconMovie, IconClipboard, IconCast, IconRadar, IconArchive } from '@tabler/icons-react'
 
 interface SettingsTab {
   key: string
   path: string
   label: string
-  Icon: TablerIcon
+  icon: TablerIcon
   iconColor: string
   description: string
 }
@@ -20,7 +20,7 @@ const settingsTabs: SettingsTab[] = [
     key: 'torrent',
     path: '/settings',
     label: 'Torrent Client',
-    Icon: IconDownload,
+    icon: IconDownload,
     iconColor: 'text-blue-400',
     description: 'Download settings',
   },
@@ -28,23 +28,15 @@ const settingsTabs: SettingsTab[] = [
     key: 'sources',
     path: '/settings/sources',
     label: 'Sources',
-    Icon: IconRadar,
+    icon: IconRadar,
     iconColor: 'text-green-400',
     description: 'Torrent indexers, RSS feeds & source ordering',
-  },
-  {
-    key: 'usenet',
-    path: '/settings/usenet',
-    label: 'Usenet Servers',
-    Icon: IconServer,
-    iconColor: 'text-cyan-400',
-    description: 'NNTP providers',
   },
   {
     key: 'metadata',
     path: '/settings/metadata',
     label: 'Metadata & Parser',
-    Icon: IconMovie,
+    icon: IconMovie,
     iconColor: 'text-purple-400',
     description: 'Media identification',
   },
@@ -52,7 +44,7 @@ const settingsTabs: SettingsTab[] = [
     key: 'casting',
     path: '/settings/casting',
     label: 'Casting',
-    Icon: IconCast,
+    icon: IconCast,
     iconColor: 'text-teal-400',
     description: 'Chromecast devices',
   },
@@ -60,9 +52,17 @@ const settingsTabs: SettingsTab[] = [
     key: 'logs',
     path: '/settings/logs',
     label: 'System Logs',
-    Icon: IconClipboard,
+    icon: IconClipboard,
     iconColor: 'text-default-400',
     description: 'Activity & errors',
+  },
+  {
+    key: 'backup',
+    path: '/settings/backup',
+    label: 'Backup',
+    icon: IconArchive,
+    iconColor: 'text-amber-400',
+    description: 'Storage snapshots',
   },
 ]
 
@@ -82,10 +82,10 @@ export function SettingsLayout({ children, isLoading }: SettingsLayoutProps) {
   }
 
   return (
-    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col grow">
+    <div className="container mx-auto flex h-full min-h-0 grow flex-col overflow-hidden px-4 py-8 sm:px-6 lg:px-8">
       <h1 className="text-2xl font-bold mb-6 shrink-0">Settings</h1>
 
-      <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0">
+      <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden lg:flex-row">
         {/* Left Sidebar - Vertical Tabs */}
         <div className="lg:w-64 shrink-0">
           <Card className="sticky top-4">
@@ -103,7 +103,7 @@ export function SettingsLayout({ children, isLoading }: SettingsLayoutProps) {
                       }
                     `}
                   >
-                    <tab.Icon className={`w-5 h-5 ${isActive(tab.path) ? '' : tab.iconColor}`} />
+                    <tab.icon className={`w-5 h-5 ${isActive(tab.path) ? '' : tab.iconColor}`} />
                     <div className="flex flex-col">
                       <span className="font-medium text-sm">{tab.label}</span>
                       <span
@@ -123,7 +123,7 @@ export function SettingsLayout({ children, isLoading }: SettingsLayoutProps) {
         </div>
 
         {/* Right Content Area */}
-        <ScrollShadow className="flex-1 min-w-0 px-4 -mx-4">
+        <ScrollShadow className="-mx-4 h-0 min-h-0 min-w-0 flex-1 px-4">
           {isLoading ? (
             <div className="flex justify-center items-center py-20">
               <Spinner size="lg" />

@@ -1,60 +1,60 @@
 query OrganizationNamingPatterns(
-  $OrderBy: [NamingPatternOrderByInput!]
-  $Page: PageInput
+  $orderBy: [NamingPatternOrderByInput!]
+  $page: PageInput
 ) {
-  NamingPatterns: namingPatterns(orderBy: $OrderBy, page: $Page) {
-    Edges: edges {
-      Node: node {
-        Id
-        Name
-        Pattern
-        Description
-        LibraryType
-        IsDefault
-        IsSystem
+  namingPatterns(orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        id
+        name
+        pattern
+        description
+        libraryType
+        isDefault
+        isSystem
       }
     }
   }
 }
 
-mutation OrganizationCreateNamingPattern($Input: CreateNamingPatternInput!) {
-  CreateNamingPattern: createNamingPattern(input: $Input) {
-    Success: success
-    Error: error
-    NamingPattern: namingPattern {
-      Id
-      Name
-      Pattern
-      Description
-      LibraryType
-      IsDefault
-      IsSystem
+mutation OrganizationCreateNamingPattern($input: CreateNamingPatternInput!) {
+  createNamingPattern(input: $input) {
+    success
+    error
+    namingPattern {
+      id
+      name
+      pattern
+      description
+      libraryType
+      isDefault
+      isSystem
     }
   }
 }
 
 mutation OrganizationUpdateNamingPattern(
-  $Id: String!
-  $Input: UpdateNamingPatternInput!
+  $id: String!
+  $input: UpdateNamingPatternInput!
 ) {
-  UpdateNamingPattern: updateNamingPattern(id: $Id, input: $Input) {
-    Success: success
-    Error: error
-    NamingPattern: namingPattern {
-      Id
-      Name
-      Pattern
-      Description
-      LibraryType
-      IsDefault
-      IsSystem
+  updateNamingPattern(id: $id, input: $input) {
+    success
+    error
+    namingPattern {
+      id
+      name
+      pattern
+      description
+      libraryType
+      isDefault
+      isSystem
     }
   }
 }
 
-mutation OrganizationDeleteNamingPattern($Id: String!) {
-  DeleteNamingPattern: deleteNamingPattern(id: $Id) {
-    Success: success
-    Error: error
+mutation OrganizationDeleteNamingPattern($id: String!) {
+  deleteNamingPattern(id: $id) {
+    success
+    error
   }
 }

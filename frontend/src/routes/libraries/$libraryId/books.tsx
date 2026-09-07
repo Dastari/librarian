@@ -15,20 +15,15 @@ import {
   LibraryAudiobooksTab,
   AddAudiobookModal,
 } from "../../../components/library";
-import { useMutation, gql } from "../../../lib/graphql/client";
+import { useMutation } from "../../../lib/graphql/client";
+import {
+  DeleteAudiobookRouteDocument,
+  type DeleteAudiobookRouteMutation,
+} from "../../../lib/graphql/generated/graphql";
 
 export const Route = createFileRoute("/libraries/$libraryId/books")({
   component: AudiobooksPage,
 });
-
-const DELETE_AUDIOBOOK = gql`
-  mutation DeleteAudiobook($Id: String!) {
-    DeleteAudiobook: deleteAudiobook(id: $Id) {
-      Success: success
-      Error: error
-    }
-  }
-`;
 
 function AudiobooksPage() {
   const { library, loading } = useLibraryContext();
@@ -40,9 +35,8 @@ function AudiobooksPage() {
     title: string;
   } | null>(null);
 
-  const [deleteAudiobook, { loading: isDeleting }] = useMutation<{
-    DeleteAudiobook: { Success: boolean; Error?: string };
-  }>(DELETE_AUDIOBOOK);
+  const [deleteAudiobook, { loading: isDeleting }] =
+    useMutation<DeleteAudiobookRouteMutation>(DeleteAudiobookRouteDocument);
 
   const handleAudiobooksRefreshReady = useCallback((refreshFn: () => void) => {
     refreshAudiobooksRef.current = refreshFn;
@@ -65,10 +59,10 @@ function AudiobooksPage() {
 
     try {
       const { data } = await deleteAudiobook({
-        variables: { Id: deleteTarget.id },
+        variables: { id: deleteTarget.id },
       });
 
-      if (data?.DeleteAudiobook.Success) {
+      if (data?.deleteAudiobook.success) {
         addToast({
           title: "Audiobook deleted",
           description: `${deleteTarget.title} has been removed from the library.`,
@@ -79,7 +73,7 @@ function AudiobooksPage() {
         addToast({
           title: "Delete failed",
           description:
-            data?.DeleteAudiobook.Error || "Failed to delete audiobook",
+            data?.deleteAudiobook.error || "Failed to delete audiobook",
           color: "danger",
         });
       }
@@ -98,7 +92,7 @@ function AudiobooksPage() {
   return (
     <>
       <LibraryAudiobooksTab
-        libraryId={library.Id}
+        libraryId={library.id}
         loading={loading}
         onAddAudiobook={onOpen}
         onDeleteAudiobook={handleDeleteAudiobook}
@@ -107,7 +101,7 @@ function AudiobooksPage() {
       <AddAudiobookModal
         isOpen={isOpen}
         onClose={onClose}
-        libraryId={library.Id}
+        libraryId={library.id}
         onAudiobookAdded={handleAudiobookAdded}
       />
 

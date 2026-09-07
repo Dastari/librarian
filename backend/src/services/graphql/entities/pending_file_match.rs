@@ -14,107 +14,112 @@ use serde::{Deserialize, Serialize};
     default_sort = "created_at"
 )]
 pub struct PendingFileMatch {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "UserId")]
+    #[graphql(name = "userId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owner.id")]
     pub user_id: String,
 
-    #[graphql(name = "SourcePath")]
+    #[graphql(name = "sourcePath")]
     #[filterable(type = "string")]
     pub source_path: String,
 
-    #[graphql(name = "SourceType")]
+    #[graphql(name = "sourceType")]
     #[filterable(type = "string")]
     pub source_type: String,
 
-    #[graphql(name = "SourceId")]
+    #[graphql(name = "sourceId")]
     #[filterable(type = "string")]
     pub source_id: Option<String>,
 
-    #[graphql(name = "SourceFileIndex")]
+    #[graphql(name = "sourceFileIndex")]
     #[filterable(type = "number")]
     pub source_file_index: Option<i32>,
 
-    #[graphql(name = "FileSize")]
+    #[graphql(name = "fileSize")]
     #[filterable(type = "number")]
     #[sortable]
     pub file_size: i64,
 
-    #[graphql(name = "EpisodeId")]
+    #[graphql(name = "episodeId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub episode_id: Option<String>,
 
-    #[graphql(name = "MovieId")]
+    #[graphql(name = "movieId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub movie_id: Option<String>,
 
-    #[graphql(name = "TrackId")]
+    #[graphql(name = "trackId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub track_id: Option<String>,
 
-    #[graphql(name = "ChapterId")]
+    #[graphql(name = "chapterId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub chapter_id: Option<String>,
 
-    #[graphql(name = "UnmatchedReason")]
+    #[graphql(name = "unmatchedReason")]
     pub unmatched_reason: Option<String>,
 
-    #[graphql(name = "MatchType")]
+    #[graphql(name = "matchType")]
     #[filterable(type = "string")]
     pub match_type: Option<String>,
 
-    #[graphql(name = "MatchConfidence")]
+    #[graphql(name = "matchConfidence")]
     #[filterable(type = "number")]
     pub match_confidence: Option<f64>,
 
-    #[graphql(name = "MatchAttempts")]
+    #[graphql(name = "matchAttempts")]
     #[filterable(type = "number")]
     pub match_attempts: i32,
 
-    #[graphql(name = "VerificationStatus")]
+    #[graphql(name = "verificationStatus")]
     #[filterable(type = "string")]
     pub verification_status: Option<String>,
 
-    #[graphql(name = "VerificationReason")]
+    #[graphql(name = "verificationReason")]
     pub verification_reason: Option<String>,
 
-    #[graphql(name = "ParsedResolution")]
+    #[graphql(name = "parsedResolution")]
     #[filterable(type = "string")]
     pub parsed_resolution: Option<String>,
 
-    #[graphql(name = "ParsedCodec")]
+    #[graphql(name = "parsedCodec")]
     #[filterable(type = "string")]
     pub parsed_codec: Option<String>,
 
-    #[graphql(name = "ParsedSource")]
+    #[graphql(name = "parsedSource")]
     #[filterable(type = "string")]
     pub parsed_source: Option<String>,
 
-    #[graphql(name = "ParsedAudio")]
+    #[graphql(name = "parsedAudio")]
     #[filterable(type = "string")]
     pub parsed_audio: Option<String>,
 
-    #[graphql(name = "CopiedAt")]
+    #[graphql(name = "copiedAt")]
     #[filterable(type = "date")]
     pub copied_at: Option<String>,
 
-    #[graphql(name = "CopyError")]
+    #[graphql(name = "copyError")]
     pub copy_error: Option<String>,
 
-    #[graphql(name = "CopyAttempts")]
+    #[graphql(name = "copyAttempts")]
     #[filterable(type = "number")]
     pub copy_attempts: i32,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,

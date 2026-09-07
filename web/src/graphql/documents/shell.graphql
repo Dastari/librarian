@@ -1,0 +1,26 @@
+query ActiveDownloadCount {
+  activeDownloadCount
+}
+
+query UnreadNotificationCount {
+  notifications(where: { readAt: { isNull: true }, resolvedAt: { isNull: true } }, page: { limit: 1, offset: 0 }) {
+    pageInfo {
+      totalCount
+    }
+  }
+}
+
+query NavLibraries {
+  libraries(orderBy: [{ name: ASC }], page: { limit: 100, offset: 0 }) {
+    edges {
+      node {
+        id
+        name
+        libraryType
+        icon
+        color
+        scanning
+      }
+    }
+  }
+}

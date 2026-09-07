@@ -1,12 +1,12 @@
 export interface DownloadTorrent {
-  Id: string;
-  InfoHash: string;
-  Name: string;
-  State: string;
-  Progress: number;
-  TotalBytes: number;
-  DownloadedBytes: number;
-  UploadedBytes: number;
-  SavePath: string;
-  AddedAt: string;
+  id: string;
+  infoHash: string;
+  name: string;
+  state: string;
+  progress: number;
+  totalBytes: number;
+  downloadedBytes: number;
+  uploadedBytes: number;
+  savePath: string;
+  addedAt: string;
 }

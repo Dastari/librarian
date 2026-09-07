@@ -33,6 +33,7 @@ export default heroui({
         content2: "#f8fafc",
         content3: "#f1f5f9",
         content4: "#e2e8f0",
+        divider: "#cbd5e1",
         primary: {
           50: "#eff6ff",
           100: "#dbeafe",
@@ -73,6 +74,7 @@ export default heroui({
         content2: "#1e293b", // slate-800
         content3: "#334155", // slate-700
         content4: "#475569", // slate-600
+        divider: "#1e3a8a", // primary-900
         primary: {
           50: "#eff6ff",
           100: "#dbeafe",

@@ -1,0 +1,83 @@
+# Upcoming airings: episodes of shows in the library, plus the TVmaze schedule cache for
+# everything airing this week whether or not it is in a library.
+
+query UpcomingLibraryEpisodes($from: String!, $to: String!) {
+  episodes(where: { airDate: { gte: $from, lte: $to } }, orderBy: [{ airDate: ASC }, { airStamp: ASC }, { season: ASC }, { episode: ASC }], page: { limit: 100, offset: 0 }) {
+    edges {
+      node {
+        id
+        showId
+        season
+        episode
+        title
+        airDate
+        airStamp
+        runtime
+        mediaFileId
+        wanted
+        show {
+          id
+          name
+          posterUrl
+          network
+          libraryId
+        }
+      }
+    }
+  }
+}
+
+# The schedule cache is partitioned by country; a week routinely exceeds one page, so the
+# guide walks `offset` until `totalCount` is reached.
+query ScheduleWeek($from: String!, $to: String!, $country: String!, $offset: Int!) {
+  scheduleCaches(
+    where: { countryCode: { eq: $country }, airDate: { gte: $from, lte: $to } }
+    orderBy: [{ airStamp: ASC }, { showName: ASC }]
+    page: { limit: 100, offset: $offset }
+  ) {
+    edges {
+      node {
+        ...ScheduleCacheFields
+      }
+    }
+    pageInfo {
+      totalCount
+    }
+  }
+}
+
+query ScheduleCountries {
+  scheduleSyncStates(page: { limit: 20, offset: 0 }) {
+    edges {
+      node {
+        id
+        countryCode
+        lastSyncedAt
+        syncError
+      }
+    }
+  }
+}
+
+query NextLibraryEpisodes($from: String!) {
+  episodes(where: { airDate: { gt: $from }, mediaFileId: { isNull: true } }, orderBy: [{ airDate: ASC }, { airStamp: ASC }, { season: ASC }, { episode: ASC }], page: { limit: 12, offset: 0 }) {
+    edges {
+      node {
+        id
+        showId
+        season
+        episode
+        title
+        airDate
+        airStamp
+        wanted
+        show {
+          id
+          name
+          posterUrl
+          network
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,52 @@
+query BackupOverview {
+  backupCapabilities {
+    fullDatabaseBackupAvailable
+    objectBackupAvailable
+    restoreAvailable
+    incrementalBackupAvailable
+    reason
+  }
+  backupSnapshots {
+    snapshotId
+    createdAt
+    kind
+    appId
+    appVersion
+    tableCount
+    objectCount
+    totalObjectBytes
+    manifestKey
+  }
+}
+
+mutation CreateFullBackup {
+  createFullBackup {
+    success
+    error
+    snapshot {
+      snapshotId
+      createdAt
+      kind
+      appVersion
+      tableCount
+      objectCount
+      totalObjectBytes
+    }
+  }
+}
+
+mutation VerifyBackupSnapshot($snapshotId: String!) {
+  verifyBackupSnapshot(snapshotId: $snapshotId) {
+    success
+    snapshotId
+    error
+  }
+}
+
+mutation RestoreFullBackup($snapshotId: String!) {
+  restoreFullBackup(snapshotId: $snapshotId) {
+    success
+    snapshotId
+    error
+  }
+}

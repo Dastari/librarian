@@ -8,32 +8,30 @@ import { useRouterState } from "@tanstack/react-router";
 import {
   LibrariesDocument,
   LibraryChangedDocument,
-  DashboardShowsDocument,
+  TorrentCompletedDocument,
+  DashboardRecentMediaDocument,
   DashboardScheduleCachesDocument,
   type LibrariesQuery,
-  type DashboardShowsQuery,
+
   type DashboardScheduleCachesQuery,
 } from "../lib/graphql/generated/graphql";
+import { recentDashboardMedia, type RecentMedia } from "../lib/dashboard";
 import { apolloClient, subscriptionStream } from "../lib/graphql/client";
-import { TORRENT_COMPLETED_SUBSCRIPTION } from "../lib/graphql/subscriptions";
 
 /** Library node type derived from Libraries query */
-export type LibraryNode = LibrariesQuery["Libraries"]["Edges"][0]["Node"];
-
-/** Show node type derived from DashboardShows query */
-export type ShowNode = DashboardShowsQuery["Shows"]["Edges"][0]["Node"];
+export type LibraryNode = LibrariesQuery["libraries"]["edges"][0]["node"];
 
 /** ScheduleCache node type derived from DashboardScheduleCaches query */
 export type ScheduleCacheNode =
-  DashboardScheduleCachesQuery["ScheduleCaches"]["Edges"][0]["Node"];
+  DashboardScheduleCachesQuery["scheduleCaches"]["edges"][0]["node"];
 
-const CACHE_KEY = "librarian:dashboard_cache";
+const CACHE_KEY = "librarian:dashboard_cache:v2";
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const STALE_TTL_MS = 30 * 60 * 1000;
 
 interface DashboardCache {
   libraries: LibraryNode[];
-  recentShows: ShowNode[];
+  recentMedia: RecentMedia[];
   libraryUpcoming: ScheduleCacheNode[];
   globalUpcoming: ScheduleCacheNode[];
   timestamp: number;
@@ -42,7 +40,7 @@ interface DashboardCache {
 
 interface DashboardData {
   libraries: LibraryNode[];
-  recentShows: ShowNode[];
+  recentMedia: RecentMedia[];
   libraryUpcoming: ScheduleCacheNode[];
   globalUpcoming: ScheduleCacheNode[];
 }
@@ -92,7 +90,7 @@ export function useDashboardCache(
 ): UseDashboardCacheResult {
   const [data, setData] = useState<DashboardData>({
     libraries: [],
-    recentShows: [],
+    recentMedia: [],
     libraryUpcoming: [],
     globalUpcoming: [],
   });
@@ -117,69 +115,58 @@ export function useDashboardCache(
       });
 
       const libraries: LibraryNode[] =
-        librariesResult.data?.Libraries.Edges.map((e: any) => e.Node) ?? [];
+        librariesResult.data?.libraries.edges.map((e: any) => e.node) ?? [];
 
       const [libraryUpcomingResult, globalUpcomingResult] = await Promise.all([
         apolloClient.query({
           query: DashboardScheduleCachesDocument,
           variables: {
-            Where: { AirDate: { gte: fromStr, lte: toStr } },
-            OrderBy: [{ AirDate: "ASC" }],
-            Page: { limit: 50, offset: 0 },
+            where: { airDate: { gte: fromStr, lte: toStr } },
+            orderBy: [{ airDate: "ASC" }],
+            page: { limit: 50, offset: 0 },
           },
           fetchPolicy: "network-only",
         }),
         apolloClient.query({
           query: DashboardScheduleCachesDocument,
           variables: {
-            Where: {
-              AirDate: { gte: fromStr, lte: toStr },
-              CountryCode: { eq: "US" },
+            where: {
+              airDate: { gte: fromStr, lte: toStr },
+              countryCode: { eq: "US" },
             },
-            OrderBy: [{ AirDate: "ASC" }],
-            Page: { limit: 50, offset: 0 },
+            orderBy: [{ airDate: "ASC" }],
+            page: { limit: 50, offset: 0 },
           },
           fetchPolicy: "network-only",
         }),
       ]);
 
       const libraryUpcoming: ScheduleCacheNode[] =
-        libraryUpcomingResult.data?.ScheduleCaches.Edges.map(
-          (e: any) => e.Node,
+        libraryUpcomingResult.data?.scheduleCaches.edges.map(
+          (e: any) => e.node,
         ) ?? [];
       const globalUpcomingRaw: ScheduleCacheNode[] =
-        globalUpcomingResult.data?.ScheduleCaches.Edges.map(
-          (e: any) => e.Node,
+        globalUpcomingResult.data?.scheduleCaches.edges.map(
+          (e: any) => e.node,
         ) ?? [];
 
-      const tvLibraries = libraries.filter((lib) => lib.LibraryType === "TV");
-      const allShows: ShowNode[] = [];
-      for (const library of tvLibraries.slice(0, 2)) {
-        const showsResult = await apolloClient.query({
-          query: DashboardShowsDocument,
-          variables: {
-            Where: { LibraryId: { eq: library.Id } },
-            OrderBy: [{ CreatedAt: "DESC" }],
-            Page: { limit: 6, offset: 0 },
-          },
-          fetchPolicy: "network-only",
-        });
-        const nodes = showsResult.data?.Shows.Edges ?? [];
-        allShows.push(...nodes.map((e: any) => e.Node));
-      }
+      const recentResult = await apolloClient.query({
+        query: DashboardRecentMediaDocument,
+        fetchPolicy: "network-only",
+      });
 
       const seenShows = new Set<number>();
       const filteredGlobalUpcoming = globalUpcomingRaw
         .filter((ep) => {
-          if (seenShows.has(ep.TvmazeShowId)) return false;
-          seenShows.add(ep.TvmazeShowId);
+          if (seenShows.has(ep.tvmazeShowId)) return false;
+          seenShows.add(ep.tvmazeShowId);
           return true;
         })
         .slice(0, 12);
 
       return {
         libraries,
-        recentShows: allShows.slice(0, 6),
+        recentMedia: recentDashboardMedia(recentResult.data),
         libraryUpcoming,
         globalUpcoming: filteredGlobalUpcoming,
       };
@@ -215,7 +202,7 @@ export function useDashboardCache(
     if (cached) {
       setData({
         libraries: cached.libraries,
-        recentShows: cached.recentShows,
+        recentMedia: cached.recentMedia,
         libraryUpcoming: cached.libraryUpcoming,
         globalUpcoming: cached.globalUpcoming,
       });
@@ -239,12 +226,12 @@ export function useDashboardCache(
     const librarySub = subscriptionStream(LibraryChangedDocument, {}).subscribe(
       {
         next: (result: any) => {
-          if (result.data?.LibraryChanged) handleEvent();
+          if (result.data?.libraryChanged) handleEvent();
         },
       },
     );
-    const torrentSub = subscriptionStream<{ TorrentCompleted: { Id: number } }>(
-      TORRENT_COMPLETED_SUBSCRIPTION,
+    const torrentSub = subscriptionStream<{ torrentCompleted: { id: number } }>(
+      TorrentCompletedDocument,
       {},
     ).subscribe({ next: handleEvent });
     return () => {

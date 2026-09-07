@@ -1,6 +1,7 @@
 //! LimeTorrents source implementation
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use anyhow::Result;
 use async_graphql::async_trait::async_trait;
@@ -37,7 +38,13 @@ impl LimeTorrentsSource {
             id,
             name,
             site_link: site_url.unwrap_or_else(|| "https://www.limetorrents.lol/".to_string()),
-            client: Client::builder().gzip(true).build()?,
+            client: crate::services::http_client::outbound_client_builder(
+                crate::services::http_client::OutboundHttpProfile::Indexer,
+            )
+            .gzip(true)
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
+            .build()?,
             rate_limiter: RateLimitedClient::for_indexer(),
             capabilities: SourceCapabilities {
                 search_available: true,
@@ -151,15 +158,25 @@ impl Source for LimeTorrentsSource {
             urlencoding::encode(term)
         );
         self.rate_limiter.wait_for_permit().await;
-        let html = self.client.get(search_url).send().await?.text().await?;
+        let response = self.client.get(search_url).send().await?;
+        let html = crate::services::http_client::response_text_limited(
+            response,
+            crate::services::http_client::INDEXER_RESPONSE_LIMIT,
+        )
+        .await?;
         let doc = Html::parse_document(&html);
 
-        let row_selector = Selector::parse("table.table2 tr").unwrap();
-        let link_selector = Selector::parse("td.tt-name a").unwrap();
-        let seed_selector = Selector::parse("td.tdseed").unwrap();
-        let leech_selector = Selector::parse("td.tdleech").unwrap();
-        let size_selector = Selector::parse("td.tdnormal").unwrap();
-        let cat_selector = Selector::parse("div.tt-name a:first-child").unwrap();
+        let parse_selector = |value: &str| {
+            Selector::parse(value).map_err(|error| {
+                anyhow::anyhow!("Invalid LimeTorrents selector '{value}': {error}")
+            })
+        };
+        let row_selector = parse_selector("table.table2 tr")?;
+        let link_selector = parse_selector("td.tt-name a")?;
+        let seed_selector = parse_selector("td.tdseed")?;
+        let leech_selector = parse_selector("td.tdleech")?;
+        let size_selector = parse_selector("td.tdnormal")?;
+        let cat_selector = parse_selector("div.tt-name a:first-child")?;
 
         let mut releases = Vec::new();
         for row in doc.select(&row_selector) {
@@ -225,10 +242,11 @@ impl Source for LimeTorrentsSource {
                 .unwrap_or_default()
                 .cmp(&a.seeders.unwrap_or_default())
         });
-        if let Some(limit) = query.limit {
-            if limit > 0 && releases.len() > limit as usize {
-                releases.truncate(limit as usize);
-            }
+        if let Some(limit) = query.limit
+            && limit > 0
+            && releases.len() > limit as usize
+        {
+            releases.truncate(limit as usize);
         }
         Ok(releases)
     }
@@ -238,7 +256,12 @@ impl Source for LimeTorrentsSource {
             anyhow::bail!("Magnet links are not directly downloadable");
         }
         self.rate_limiter.wait_for_permit().await;
-        let bytes = self.client.get(link).send().await?.bytes().await?;
+        let response = self.client.get(link).send().await?;
+        let bytes = crate::services::http_client::response_bytes_limited(
+            response,
+            crate::services::http_client::DOWNLOAD_RESPONSE_LIMIT,
+        )
+        .await?;
         Ok(bytes.to_vec())
     }
 }

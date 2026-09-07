@@ -11,37 +11,39 @@ use serde::{Deserialize, Serialize};
 #[graphql_entity(
     table = "schedule_sync_state",
     plural = "ScheduleSyncStates",
-    default_sort = "country_code"
+    default_sort = "country_code",
+    read_policy = "admin.read",
+    write_policy = "admin.write"
 )]
 pub struct ScheduleSyncState {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "CountryCode")]
+    #[graphql(name = "countryCode")]
     #[filterable(type = "string")]
     #[sortable]
     pub country_code: String,
 
-    #[graphql(name = "LastSyncedAt")]
+    #[graphql(name = "lastSyncedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub last_synced_at: String,
 
-    #[graphql(name = "LastSyncDays")]
+    #[graphql(name = "lastSyncDays")]
     #[filterable(type = "number")]
     pub last_sync_days: i32,
 
-    #[graphql(name = "SyncError")]
+    #[graphql(name = "syncError")]
     pub sync_error: Option<String>,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,

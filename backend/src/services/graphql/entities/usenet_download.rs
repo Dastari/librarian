@@ -14,104 +14,110 @@ use serde::{Deserialize, Serialize};
     default_sort = "created_at"
 )]
 pub struct UsenetDownload {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "UserId")]
+    #[graphql(name = "userId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owner.id")]
     pub user_id: String,
 
-    #[graphql(name = "NzbName")]
+    #[graphql(name = "nzbName")]
     #[filterable(type = "string")]
     #[sortable]
     pub nzb_name: String,
 
-    #[graphql(name = "NzbHash")]
+    #[graphql(name = "nzbHash")]
     #[filterable(type = "string")]
     pub nzb_hash: Option<String>,
 
-    #[graphql(name = "NzbUrl")]
+    #[graphql(name = "nzbUrl")]
     pub nzb_url: Option<String>,
 
-    #[graphql(name = "NzbData")]
+    #[graphql(name = "nzbData")]
     pub nzb_data: Option<String>,
 
-    #[graphql(name = "State")]
+    #[graphql(name = "state")]
     #[filterable(type = "string")]
     #[sortable]
     pub state: String,
 
-    #[graphql(name = "Progress")]
+    #[graphql(name = "progress")]
     pub progress: Option<String>,
 
-    #[graphql(name = "SizeBytes")]
+    #[graphql(name = "sizeBytes")]
     #[filterable(type = "number")]
     #[sortable]
     pub size_bytes: Option<i64>,
 
-    #[graphql(name = "DownloadedBytes")]
+    #[graphql(name = "downloadedBytes")]
     #[filterable(type = "number")]
     pub downloaded_bytes: Option<i64>,
 
-    #[graphql(name = "DownloadSpeed")]
+    #[graphql(name = "downloadSpeed")]
     #[filterable(type = "number")]
     pub download_speed: Option<i32>,
 
-    #[graphql(name = "EtaSeconds")]
+    #[graphql(name = "etaSeconds")]
     #[filterable(type = "number")]
     pub eta_seconds: Option<i32>,
 
-    #[graphql(name = "ErrorMessage")]
+    #[graphql(name = "errorMessage")]
     pub error_message: Option<String>,
 
-    #[graphql(name = "RetryCount")]
+    #[graphql(name = "retryCount")]
     #[filterable(type = "number")]
     pub retry_count: i32,
 
-    #[graphql(name = "DownloadPath")]
+    #[graphql(name = "downloadPath")]
     pub download_path: Option<String>,
 
-    #[graphql(name = "LibraryId")]
+    #[graphql(name = "libraryId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub library_id: Option<String>,
 
-    #[graphql(name = "EpisodeId")]
+    #[graphql(name = "episodeId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub episode_id: Option<String>,
 
-    #[graphql(name = "MovieId")]
+    #[graphql(name = "movieId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub movie_id: Option<String>,
 
-    #[graphql(name = "AlbumId")]
+    #[graphql(name = "albumId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub album_id: Option<String>,
 
-    #[graphql(name = "AudiobookId")]
+    #[graphql(name = "audiobookId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub audiobook_id: Option<String>,
 
-    #[graphql(name = "IndexerId")]
+    #[graphql(name = "indexerId")]
     #[filterable(type = "string")]
     pub indexer_id: Option<String>,
 
-    #[graphql(name = "PostProcessStatus")]
+    #[graphql(name = "postProcessStatus")]
     #[filterable(type = "string")]
     pub post_process_status: Option<String>,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,
 
-    #[graphql(name = "CompletedAt")]
+    #[graphql(name = "completedAt")]
     #[filterable(type = "date")]
     pub completed_at: Option<String>,
 }

@@ -1,61 +1,99 @@
+import {
+  useNotificationOwner,
+  useNotificationRefresh,
+} from "../hooks/useNotificationFeed";
 import { Button } from "@heroui/button";
 import { Badge } from "@heroui/badge";
 import { IconBell } from "@tabler/icons-react";
 import {
   NotificationsDocument,
   NotificationChangedDocument,
+  UnresolvedLibraryScanIssuesDocument,
+  LibraryScanIssueNotificationChangedDocument,
 } from "../lib/graphql/generated/graphql";
 import { useQuery, useSubscription } from "../lib/graphql/client";
 import { NotificationPopover } from "./NotificationPopover";
 import { ErrorBoundary } from "./ErrorBoundary";
 
-const UNREAD_WHERE = { ReadAt: { isNull: true } } as const;
+const UNREAD_WHERE = { readAt: { isNull: true } } as const;
 
-function useUnreadNotificationCount() {
-  const { data, previousData, refetch } = useQuery(NotificationsDocument, {
+function usePendingNotificationCount() {
+  const owner = useNotificationOwner();
+  const notificationsQuery = useQuery(NotificationsDocument, {
     variables: {
-      Where: UNREAD_WHERE,
-      Page: { limit: 1, offset: 0 },
+      where: { ...owner, ...UNREAD_WHERE },
+      page: { limit: 1, offset: 0 },
     },
     fetchPolicy: "cache-and-network",
   });
 
-  useSubscription(NotificationChangedDocument, {
-    variables: {},
-    onData: () => {
-      void refetch();
+  const scanIssuesQuery = useQuery(UnresolvedLibraryScanIssuesDocument, {
+    variables: {
+      where: {
+        ...owner,
+        readAt: { isNull: true },
+        resolvedAt: { isNull: true },
+      },
+      page: { limit: 1, offset: 0 },
     },
+    fetchPolicy: "cache-and-network",
   });
 
-  return (
-    data?.Notifications?.PageInfo?.TotalCount ??
-    previousData?.Notifications?.PageInfo?.TotalCount ??
-    0
+  const refreshNotifications = useNotificationRefresh(() =>
+    notificationsQuery.refetch(),
   );
+  const refreshScanIssues = useNotificationRefresh(() =>
+    scanIssuesQuery.refetch(),
+  );
+  useSubscription(NotificationChangedDocument, {
+    fetchPolicy: "no-cache",
+    ignoreResults: true,
+    onData: refreshNotifications,
+  });
+  useSubscription(LibraryScanIssueNotificationChangedDocument, {
+    fetchPolicy: "no-cache",
+    ignoreResults: true,
+    onData: refreshScanIssues,
+  });
+
+  const unreadNotificationCount =
+    notificationsQuery.data?.notifications?.pageInfo?.totalCount ??
+    notificationsQuery.previousData?.notifications?.pageInfo?.totalCount ??
+    0;
+  const unresolvedScanIssueCount =
+    scanIssuesQuery.data?.libraryScanIssues.pageInfo.totalCount ??
+    scanIssuesQuery.previousData?.libraryScanIssues.pageInfo.totalCount ??
+    0;
+
+  return unreadNotificationCount + unresolvedScanIssueCount;
+}
+
+function pendingNotificationLabel(count: number): string {
+  return count > 0
+    ? `${count} pending notification${count !== 1 ? "s" : ""}`
+    : "No pending notifications";
 }
 
 function NotificationIconInner() {
-  const unreadCount = useUnreadNotificationCount();
+  const pendingCount = usePendingNotificationCount();
+  const label = pendingNotificationLabel(pendingCount);
 
   return (
     <NotificationPopover
+      pendingCount={pendingCount}
       trigger={
         <Button
           isIconOnly
           variant="light"
           size="sm"
-          aria-label={`${unreadCount} unread notifications`}
-          title={
-            unreadCount > 0
-              ? `${unreadCount} unread notification${unreadCount !== 1 ? "s" : ""}`
-              : "No unread notifications"
-          }
+          aria-label={label}
+          title={label}
         >
           <Badge
-            content={unreadCount}
+            content={pendingCount}
             color="warning"
             size="sm"
-            isInvisible={unreadCount === 0}
+            isInvisible={pendingCount === 0}
             showOutline={false}
           >
             <IconBell size={20} className="text-amber-400" />
@@ -82,8 +120,8 @@ function NotificationIconFallback() {
 }
 
 /**
- * Notification bell with unread badge and popover.
- * Uses codegen Notifications query + NotificationChanged subscription.
+ * Notification bell with a badge for unread notifications and scan issues.
+ * Uses codegen queries and subscriptions for both durable record types.
  * Only render when the user is authenticated.
  * Wrapped in ErrorBoundary so a failure here does not take down the Navbar.
  */

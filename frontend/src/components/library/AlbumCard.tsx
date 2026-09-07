@@ -43,8 +43,8 @@ export function AlbumCard({ album, artistName, onDelete }: AlbumCardProps) {
   const navigate = useNavigate();
 
   return (
-    <div className="aspect-square">
-      <Card className="relative overflow-hidden h-full w-full group border-none bg-content2">
+    <div className="aspect-square w-full">
+      <Card className="relative isolate overflow-hidden h-full w-full group border-none bg-content2">
         {/* Clickable overlay for navigation - covers the entire card */}
         <Link
           to="/albums/$albumId"
@@ -60,13 +60,10 @@ export function AlbumCard({ album, artistName, onDelete }: AlbumCardProps) {
               <Image
                 src={album.coverUrl}
                 alt={album.name}
-                loading="lazy"
-                classNames={{
-                  wrapper: "absolute inset-0 w-full h-full !max-w-full",
-                  img: "w-full h-full object-cover",
-                }}
+                loading="eager"
+                className="absolute inset-0 h-full w-full object-cover"
                 radius="none"
-                removeWrapper={false}
+                removeWrapper
               />
               {/* Dark gradient overlay for text readability */}
               <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-black/40" />
@@ -115,7 +112,7 @@ export function AlbumCard({ album, artistName, onDelete }: AlbumCardProps) {
         </div>
 
         {/* Bottom content */}
-        <div className="absolute bottom-0 left-0 right-0 z-10 p-3 pointer-events-none bg-black/50 backdrop-blur-sm h-20 flex flex-col">
+        <div className="absolute bottom-0 left-0 right-0 z-10 h-20 overflow-hidden rounded-b-[inherit] bg-black/50 p-3 pointer-events-none backdrop-blur-sm flex flex-col">
           <h3 className="text-sm font-bold text-white mb-0.5 line-clamp-2 drop-shadow-lg grow">
             {album.name}
             {album.year && (

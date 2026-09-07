@@ -26,7 +26,6 @@ import {
   IconArrowDown,
   IconSearch,
   IconWorldSearch,
-  IconDownload,
   IconAlertTriangle,
 } from "@tabler/icons-react";
 import { DataTable } from "../../components/data-table/DataTable";
@@ -39,8 +38,6 @@ import {
   SourcesDocument,
   AvailableSourceDefinitionsDocument,
   SourceSettingDefinitionsDocument,
-  SearchSourcesDocument,
-  AddTorrentDocument,
   CreateSourceDocument,
   UpdateSourceDocument,
   DeleteSourceDocument,
@@ -49,19 +46,15 @@ import {
   type SourcesQuery,
   type AvailableSourceDefinitionsQuery,
   type SourceSettingDefinitionsQuery,
-  type SearchSourcesQuery,
 } from "../../lib/graphql/generated/graphql";
 import { apolloClient, useMutation, useQuery } from "../../lib/graphql/client";
-import { addToast } from "@heroui/toast";
-import { sanitizeError } from "../../lib/format";
+import { SearchSourcesModal } from "../../components/SearchSourcesModal";
 
-type SourceNode = SourcesQuery["Sources"]["Edges"][number]["Node"];
+type SourceNode = SourcesQuery["sources"]["edges"][number]["node"];
 type SourceDefinitionInfo =
-  AvailableSourceDefinitionsQuery["AvailableSourceDefinitions"][number];
+  AvailableSourceDefinitionsQuery["availableSourceDefinitions"][number];
 type SourceSettingDefinition =
-  SourceSettingDefinitionsQuery["SourceSettingDefinitions"][number];
-type SourceReleaseInfo =
-  SearchSourcesQuery["SearchSources"]["Sources"][number]["Releases"][number];
+  SourceSettingDefinitionsQuery["sourceSettingDefinitions"][number];
 
 export const Route = createFileRoute("/settings/sources")({
   component: SourcesSettingsPage,
@@ -75,12 +68,12 @@ function SourceTypeChip({ type }: { type: string }) {
   const colorMap: Record<string, "primary" | "secondary" | "warning"> = {
     TorrentIndexer: "primary",
     UsenetIndexer: "secondary",
-    RssFeed: "warning",
+    rssFeed: "warning",
   };
   const labelMap: Record<string, string> = {
     TorrentIndexer: "Torrent Indexer",
     UsenetIndexer: "Usenet Indexer",
-    RssFeed: "RSS Feed",
+    rssFeed: "RSS Feed",
   };
   return (
     <Chip size="sm" variant="flat" color={colorMap[type] ?? "default"}>
@@ -90,23 +83,23 @@ function SourceTypeChip({ type }: { type: string }) {
 }
 
 function StatusChip({ source }: { source: SourceNode }) {
-  if (!source.Enabled) {
+  if (!source.enabled) {
     return (
       <Chip size="sm" variant="flat" color="default">
         Disabled
       </Chip>
     );
   }
-  if (source.ErrorCount > 0) {
+  if (source.errorCount > 0) {
     return (
-      <Tooltip content={source.LastError ?? "Unknown error"}>
+      <Tooltip content={source.lastError ?? "Unknown error"}>
         <Chip size="sm" variant="flat" color="danger">
           Error
         </Chip>
       </Tooltip>
     );
   }
-  if (source.LastSuccessAt) {
+  if (source.lastSuccessAt) {
     return (
       <Chip size="sm" variant="flat" color="success">
         Healthy
@@ -128,7 +121,7 @@ function SourcesSettingsPage() {
   const { data, loading, previousData, refetch } = useQuery<SourcesQuery>(
     SourcesDocument,
     {
-      variables: { OrderBy: [{ Priority: "ASC" }] },
+      variables: { orderBy: [{ priority: "ASC" }] },
       fetchPolicy: "cache-and-network",
     },
   );
@@ -139,7 +132,7 @@ function SourcesSettingsPage() {
 
   const sources = useMemo(() => {
     const d = data ?? previousData;
-    return d?.Sources?.Edges?.map((e) => e.Node) ?? [];
+    return d?.sources?.edges?.map((e) => e.node) ?? [];
   }, [data, previousData]);
   const sourceRows = useMemo(
     () => sources.map((source, index) => ({ source, index })),
@@ -158,24 +151,19 @@ function SourcesSettingsPage() {
     message: string;
   } | null>(null);
 
-  // Search
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<SourceReleaseInfo[]>([]);
-  const [searching, setSearching] = useState(false);
-
   // Handle test connection
   const handleTest = useCallback(
     async (id: string) => {
       setTestingId(id);
       setTestResult(null);
-      const { data: result } = await testSource({ variables: { Id: id } });
-      if (result?.TestSource) {
+      const { data: result } = await testSource({ variables: { id: id } });
+      if (result?.testSource) {
         setTestResult({
           id,
-          success: result.TestSource.Success,
-          message: result.TestSource.Success
-            ? `Found ${result.TestSource.ReleasesFound ?? 0} releases in ${result.TestSource.ElapsedMs ?? 0}ms`
-            : (result.TestSource.Error ?? "Connection failed"),
+          success: result.testSource.success,
+          message: result.testSource.success
+            ? `Found ${result.testSource.releasesFound ?? 0} releases in ${result.testSource.elapsedMs ?? 0}ms`
+            : (result.testSource.error ?? "Connection failed"),
         });
       }
       setTestingId(null);
@@ -187,7 +175,7 @@ function SourcesSettingsPage() {
   const handleDelete = useCallback(
     async (id: string) => {
       if (!confirm("Are you sure you want to delete this source?")) return;
-      await deleteSource({ variables: { Id: id } });
+      await deleteSource({ variables: { id: id } });
       refetch();
     },
     [deleteSource, refetch],
@@ -198,8 +186,8 @@ function SourcesSettingsPage() {
     async (source: SourceNode) => {
       await updateSource({
         variables: {
-          Id: source.Id,
-          Input: { Enabled: !source.Enabled },
+          id: source.id,
+          input: { enabled: !source.enabled },
         },
       });
       refetch();
@@ -210,7 +198,7 @@ function SourcesSettingsPage() {
   // Handle priority change
   const handleMovePriority = useCallback(
     async (sourceId: string, direction: "up" | "down") => {
-      const idx = sources.findIndex((s) => s.Id === sourceId);
+      const idx = sources.findIndex((s) => s.id === sourceId);
       if (idx < 0) return;
       const swapIdx = direction === "up" ? idx - 1 : idx + 1;
       if (swapIdx < 0 || swapIdx >= sources.length) return;
@@ -221,38 +209,13 @@ function SourcesSettingsPage() {
 
       await updateSourcePriorities({
         variables: {
-          Input: { SourceIds: newOrder.map((s) => s.Id) },
+          input: { sourceIds: newOrder.map((s) => s.id) },
         },
       });
       refetch();
     },
     [sources, refetch, updateSourcePriorities],
   );
-
-  // Handle search
-  const handleSearch = useCallback(async () => {
-    if (!searchQuery.trim()) return;
-    setSearching(true);
-    setSearchResults([]);
-    const { data: result } = await apolloClient.query<SearchSourcesQuery>({
-      query: SearchSourcesDocument,
-      fetchPolicy: "network-only",
-      variables: {
-        Input: { Query: searchQuery },
-      },
-    });
-    if (result?.SearchSources) {
-      const allReleases = result.SearchSources.Sources.flatMap(
-        (s) => s.Releases,
-      ).sort((a, b) => {
-        const seedDiff = (b.Seeders ?? -1) - (a.Seeders ?? -1);
-        if (seedDiff !== 0) return seedDiff;
-        return (b.Leechers ?? -1) - (a.Leechers ?? -1);
-      });
-      setSearchResults(allReleases);
-    }
-    setSearching(false);
-  }, [searchQuery]);
 
   // Handle edit
   const handleEdit = useCallback(
@@ -277,7 +240,7 @@ function SourcesSettingsPage() {
               size="sm"
               variant="light"
               isDisabled={index === 0}
-              onPress={() => handleMovePriority(source.Id, "up")}
+              onPress={() => handleMovePriority(source.id, "up")}
             >
               <IconArrowUp size={14} />
             </Button>
@@ -286,7 +249,7 @@ function SourcesSettingsPage() {
               size="sm"
               variant="light"
               isDisabled={index === sources.length - 1}
-              onPress={() => handleMovePriority(source.Id, "down")}
+              onPress={() => handleMovePriority(source.id, "down")}
             >
               <IconArrowDown size={14} />
             </Button>
@@ -299,9 +262,9 @@ function SourcesSettingsPage() {
         sortable: true,
         render: ({ source }) => (
           <div className="flex flex-col">
-            <span className="font-medium">{source.Name}</span>
+            <span className="font-medium">{source.name}</span>
             <span className="text-xs text-default-400">
-              {source.DefinitionId}
+              {source.definitionId}
             </span>
           </div>
         ),
@@ -311,7 +274,7 @@ function SourcesSettingsPage() {
         label: "Type",
         sortable: true,
         width: 180,
-        render: ({ source }) => <SourceTypeChip type={source.SourceType} />,
+        render: ({ source }) => <SourceTypeChip type={source.sourceType} />,
       },
       {
         key: "mediaTypes",
@@ -320,7 +283,7 @@ function SourcesSettingsPage() {
         width: 140,
         render: ({ source }) => (
           <Chip size="sm" variant="flat">
-            {source.MediaTypes}
+            {source.mediaTypes}
           </Chip>
         ),
       },
@@ -331,7 +294,7 @@ function SourcesSettingsPage() {
         render: ({ source }) => (
           <div className="flex items-center gap-2">
             <StatusChip source={source} />
-            {testResult?.id === source.Id ? (
+            {testResult?.id === source.id ? (
               <Chip
                 size="sm"
                 variant="flat"
@@ -351,7 +314,7 @@ function SourcesSettingsPage() {
         render: ({ source }) => (
           <Switch
             size="sm"
-            isSelected={source.Enabled}
+            isSelected={source.enabled}
             onValueChange={() => void handleToggleEnabled(source)}
           />
         ),
@@ -367,8 +330,8 @@ function SourcesSettingsPage() {
         label: "Test connection",
         icon: <IconPlugConnected size={16} className="text-blue-400" />,
         inDropdown: false,
-        isDisabled: ({ source }) => testingId === source.Id,
-        onAction: ({ source }) => void handleTest(source.Id),
+        isDisabled: ({ source }) => testingId === source.id,
+        onAction: ({ source }) => void handleTest(source.id),
       },
       {
         key: "edit",
@@ -383,7 +346,7 @@ function SourcesSettingsPage() {
         icon: <IconTrash size={16} className="text-red-400" />,
         isDestructive: true,
         inDropdown: false,
-        onAction: ({ source }) => void handleDelete(source.Id),
+        onAction: ({ source }) => void handleDelete(source.id),
       },
     ],
     [handleDelete, handleEdit, handleTest, testingId],
@@ -396,7 +359,7 @@ function SourcesSettingsPage() {
         <div>
           <h2 className="text-xl font-semibold">Sources</h2>
           <p className="text-sm text-default-500 mt-1">
-            Manage torrent indexers, usenet indexers, and RSS feeds
+            Manage the torrent indexers and feeds available in this build
           </p>
         </div>
         <div className="flex gap-2">
@@ -426,9 +389,10 @@ function SourcesSettingsPage() {
             data={sourceRows}
             columns={sourceColumns}
             rowActions={sourceActions}
-            getRowKey={(row) => row.source.Id}
+            getRowKey={(row) => row.source.id}
+            fillHeight={false}
             ariaLabel="Sources table"
-            searchPlaceholder="Search sources..."
+            toolbarQueryPlaceholder="Search sources..."
             showItemCount
             isLoading={loading && sourceRows.length === 0}
             emptyContent={
@@ -438,8 +402,7 @@ function SourcesSettingsPage() {
                   No sources configured
                 </p>
                 <p className="text-default-400 text-sm mt-1">
-                  Add a torrent indexer, usenet indexer, or RSS feed to get
-                  started
+                  Add an available torrent indexer or feed to get started
                 </p>
                 <Button
                   color="primary"
@@ -486,11 +449,6 @@ function SourcesSettingsPage() {
       <SearchSourcesModal
         isOpen={searchModal.isOpen}
         onClose={searchModal.onClose}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-        searchResults={searchResults}
-        searching={searching}
-        onSearch={handleSearch}
       />
     </div>
   );
@@ -528,12 +486,12 @@ function AddSourceModal({
     AvailableSourceDefinitionsDocument,
     { skip: !isOpen },
   );
-  const definitions = defsData?.AvailableSourceDefinitions ?? [];
+  const definitions = defsData?.availableSourceDefinitions ?? [];
 
   // Filter definitions by selected type
   const filteredDefinitions = useMemo(
     () =>
-      definitions.filter((d) => !selectedType || d.SourceType === selectedType),
+      definitions.filter((d) => !selectedType || d.sourceType === selectedType),
     [definitions, selectedType],
   );
 
@@ -545,16 +503,16 @@ function AddSourceModal({
         query: SourceSettingDefinitionsDocument,
         fetchPolicy: "network-only",
         variables: {
-          DefinitionId: selectedDefinition.Id,
+          definitionId: selectedDefinition.id,
         },
       })
       .then(({ data }) => {
-        if (data?.SourceSettingDefinitions) {
-          setSettingDefs(data.SourceSettingDefinitions);
+        if (data?.sourceSettingDefinitions) {
+          setSettingDefs(data.sourceSettingDefinitions);
           // Set defaults
           const defaults: Record<string, string> = {};
-          for (const s of data.SourceSettingDefinitions) {
-            if (s.DefaultValue) defaults[s.Key] = s.DefaultValue;
+          for (const s of data.sourceSettingDefinitions) {
+            if (s.defaultValue) defaults[s.key] = s.defaultValue;
           }
           setSettings(defaults);
         }
@@ -580,12 +538,12 @@ function AddSourceModal({
 
   const handleSelectDefinition = (def: SourceDefinitionInfo) => {
     setSelectedDefinition(def);
-    setSelectedType(def.SourceType);
-    setName(def.Name);
-    setSiteUrl(def.SiteLink);
+    setSelectedType(def.sourceType);
+    setName(def.name);
+    setSiteUrl(def.siteLink);
     // Init credential fields
     const creds: Record<string, string> = {};
-    for (const key of def.RequiredCredentials) {
+    for (const key of def.requiredCredentials) {
       creds[key] = "";
     }
     setCredentials(creds);
@@ -611,26 +569,26 @@ function AddSourceModal({
 
     const { data: result, error: mutationError } = await createSource({
       variables: {
-        Input: {
-          Name: name,
-          SourceType: selectedDefinition.SourceType,
-          DefinitionId: selectedDefinition.Id,
-          Enabled: true,
-          Priority: 100,
-          MediaTypes: mediaTypes,
-          SiteUrl: siteUrl || null,
-          SupportsSearch: true,
-          SupportsTvSearch: true,
-          SupportsMovieSearch: true,
-          SupportsMusicSearch: true,
-          SupportsBookSearch: true,
+        input: {
+          name: name,
+          sourceType: selectedDefinition.sourceType,
+          definitionId: selectedDefinition.id,
+          enabled: true,
+          priority: 100,
+          mediaTypes: mediaTypes,
+          siteUrl: siteUrl || null,
+          supportsSearch: true,
+          supportsTvSearch: true,
+          supportsMovieSearch: true,
+          supportsMusicSearch: true,
+          supportsBookSearch: true,
           credentials:
             Object.keys(credMap).length > 0 ? JSON.stringify(credMap) : "",
-          Settings:
+          settings:
             Object.keys(settingsMap).length > 0
               ? JSON.stringify(settingsMap)
               : null,
-          ErrorCount: 0,
+          errorCount: 0,
         },
       },
     });
@@ -641,8 +599,8 @@ function AddSourceModal({
       return;
     }
 
-    if (result?.CreateSource && !result.CreateSource.Success) {
-      setError(result.CreateSource.Error ?? "Failed to create source");
+    if (result?.createSource && !result.createSource.success) {
+      setError(result.createSource.error ?? "Failed to create source");
       setSaving(false);
       return;
     }
@@ -657,7 +615,7 @@ function AddSourceModal({
         <ModalHeader>
           {step === 1
             ? "Select Source Type"
-            : `Configure ${selectedDefinition?.Name ?? "Source"}`}
+            : `Configure ${selectedDefinition?.name ?? "Source"}`}
         </ModalHeader>
         <ModalBody>
           {step === 1 ? (
@@ -674,7 +632,7 @@ function AddSourceModal({
                 <div className="grid gap-3">
                   {filteredDefinitions.map((def) => (
                     <Card
-                      key={def.Id}
+                      key={def.id}
                       isPressable
                       className="hover:bg-content2 transition-colors"
                       onPress={() => handleSelectDefinition(def)}
@@ -686,14 +644,14 @@ function AddSourceModal({
                         />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="font-semibold">{def.Name}</span>
-                            <SourceTypeChip type={def.SourceType} />
+                            <span className="font-semibold">{def.name}</span>
+                            <SourceTypeChip type={def.sourceType} />
                             <Chip size="sm" variant="flat" color="default">
-                              {def.TrackerType}
+                              {def.trackerType}
                             </Chip>
                           </div>
                           <p className="text-sm text-default-500 mt-0.5 truncate">
-                            {def.Description}
+                            {def.description}
                           </p>
                         </div>
                       </CardBody>
@@ -750,7 +708,7 @@ function AddSourceModal({
                 Credentials
               </p>
 
-              {selectedDefinition?.RequiredCredentials.map((key) => (
+              {selectedDefinition?.requiredCredentials.map((key) => (
                 <Input
                   key={key}
                   label={key}
@@ -778,57 +736,57 @@ function AddSourceModal({
                     Settings
                   </p>
                   {settingDefs.map((def) => {
-                    if (def.SettingType === "Checkbox") {
+                    if (def.settingType === "Checkbox") {
                       return (
                         <Switch
-                          key={def.Key}
-                          isSelected={settings[def.Key] === "true"}
+                          key={def.key}
+                          isSelected={settings[def.key] === "true"}
                           onValueChange={(val) =>
                             setSettings((prev) => ({
                               ...prev,
-                              [def.Key]: val ? "true" : "false",
+                              [def.key]: val ? "true" : "false",
                             }))
                           }
                         >
-                          {def.Label}
+                          {def.label}
                         </Switch>
                       );
                     }
-                    if (def.SettingType === "Select" && def.Options) {
+                    if (def.settingType === "Select" && def.options) {
                       return (
                         <Select
-                          key={def.Key}
-                          label={def.Label}
+                          key={def.key}
+                          label={def.label}
                           selectedKeys={
-                            settings[def.Key] ? [settings[def.Key]] : []
+                            settings[def.key] ? [settings[def.key]] : []
                           }
                           onSelectionChange={(keys) => {
                             const key = Array.from(keys)[0];
                             if (key)
                               setSettings((prev) => ({
                                 ...prev,
-                                [def.Key]: String(key),
+                                [def.key]: String(key),
                               }));
                           }}
                         >
-                          {def.Options.map((opt) => (
-                            <SelectItem key={opt.Value}>{opt.Label}</SelectItem>
+                          {def.options.map((opt) => (
+                            <SelectItem key={opt.value}>{opt.label}</SelectItem>
                           ))}
                         </Select>
                       );
                     }
                     return (
                       <Input
-                        key={def.Key}
-                        label={def.Label}
+                        key={def.key}
+                        label={def.label}
                         type={
-                          def.SettingType === "Password" ? "password" : "text"
+                          def.settingType === "Password" ? "password" : "text"
                         }
-                        value={settings[def.Key] ?? ""}
+                        value={settings[def.key] ?? ""}
                         onChange={(e) =>
                           setSettings((prev) => ({
                             ...prev,
-                            [def.Key]: e.target.value,
+                            [def.key]: e.target.value,
                           }))
                         }
                       />
@@ -874,13 +832,13 @@ function EditSourceModal({
   onSuccess: () => void;
   source: SourceNode;
 }) {
-  const [name, setName] = useState(source.Name);
-  const [mediaTypes, setMediaTypes] = useState(source.MediaTypes);
-  const [siteUrl, setSiteUrl] = useState(source.SiteUrl ?? "");
+  const [name, setName] = useState(source.name);
+  const [mediaTypes, setMediaTypes] = useState(source.mediaTypes);
+  const [siteUrl, setSiteUrl] = useState(source.siteUrl ?? "");
   const [credentials, setCredentials] = useState<Record<string, string>>({});
   const [settings, setSettings] = useState<Record<string, string>>(() => {
     try {
-      return source.Settings ? JSON.parse(source.Settings) : {};
+      return source.settings ? JSON.parse(source.settings) : {};
     } catch {
       return {};
     }
@@ -897,35 +855,35 @@ function EditSourceModal({
   );
   const definition = useMemo(
     () =>
-      defsData?.AvailableSourceDefinitions?.find(
-        (d) => d.Id === source.DefinitionId,
+      defsData?.availableSourceDefinitions?.find(
+        (d) => d.id === source.definitionId,
       ),
-    [defsData, source.DefinitionId],
+    [defsData, source.definitionId],
   );
 
   // Load setting definitions
   useEffect(() => {
-    if (!source.DefinitionId || !isOpen) return;
+    if (!source.definitionId || !isOpen) return;
     apolloClient
       .query<SourceSettingDefinitionsQuery>({
         query: SourceSettingDefinitionsDocument,
         fetchPolicy: "network-only",
         variables: {
-          DefinitionId: source.DefinitionId,
+          definitionId: source.definitionId,
         },
       })
       .then(({ data }) => {
-        if (data?.SourceSettingDefinitions) {
-          setSettingDefs(data.SourceSettingDefinitions);
+        if (data?.sourceSettingDefinitions) {
+          setSettingDefs(data.sourceSettingDefinitions);
         }
       });
-  }, [source.DefinitionId, isOpen]);
+  }, [source.definitionId, isOpen]);
 
   // Init credential fields (empty for edit - "leave blank to keep existing")
   useEffect(() => {
     if (definition) {
       const creds: Record<string, string> = {};
-      for (const key of definition.RequiredCredentials) {
+      for (const key of definition.requiredCredentials) {
         creds[key] = "";
       }
       setCredentials(creds);
@@ -939,9 +897,9 @@ function EditSourceModal({
     // Build update input — only include changed fields
     const input: Record<string, unknown> = {};
 
-    if (name !== source.Name) input.Name = name;
-    if (mediaTypes !== source.MediaTypes) input.MediaTypes = mediaTypes;
-    if (siteUrl !== (source.SiteUrl ?? "")) input.SiteUrl = siteUrl || null;
+    if (name !== source.name) input.name = name;
+    if (mediaTypes !== source.mediaTypes) input.mediaTypes = mediaTypes;
+    if (siteUrl !== (source.siteUrl ?? "")) input.siteUrl = siteUrl || null;
 
     // If any credential fields were filled, send the whole credentials JSON
     const credMap: Record<string, string> = {};
@@ -949,7 +907,7 @@ function EditSourceModal({
       if (value.trim()) credMap[key] = value;
     }
     if (Object.keys(credMap).length > 0) {
-      input.Credentials = JSON.stringify(credMap);
+      input.credentials = JSON.stringify(credMap);
     }
 
     // Settings
@@ -958,13 +916,13 @@ function EditSourceModal({
       if (value.trim()) settingsMap[key] = value;
     }
     if (Object.keys(settingsMap).length > 0) {
-      input.Settings = JSON.stringify(settingsMap);
+      input.settings = JSON.stringify(settingsMap);
     }
 
     const { data: result, error: mutationError } = await updateSource({
       variables: {
-        Id: source.Id,
-        Input: input,
+        id: source.id,
+        input: input,
       },
     });
 
@@ -974,8 +932,8 @@ function EditSourceModal({
       return;
     }
 
-    if (result?.UpdateSource && !result.UpdateSource.Success) {
-      setError(result.UpdateSource.Error ?? "Failed to update source");
+    if (result?.updateSource && !result.updateSource.success) {
+      setError(result.updateSource.error ?? "Failed to update source");
       setSaving(false);
       return;
     }
@@ -987,7 +945,7 @@ function EditSourceModal({
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="2xl">
       <ModalContent>
-        <ModalHeader>Edit {source.Name}</ModalHeader>
+        <ModalHeader>Edit {source.name}</ModalHeader>
         <ModalBody>
           <div className="space-y-4">
             {error && (
@@ -1037,7 +995,7 @@ function EditSourceModal({
               </span>
             </p>
 
-            {definition?.RequiredCredentials.map((key) => (
+            {definition?.requiredCredentials.map((key) => (
               <Input
                 key={key}
                 label={key}
@@ -1060,57 +1018,57 @@ function EditSourceModal({
                 <Divider />
                 <p className="text-sm font-medium text-default-700">Settings</p>
                 {settingDefs.map((def) => {
-                  if (def.SettingType === "Checkbox") {
+                  if (def.settingType === "Checkbox") {
                     return (
                       <Switch
-                        key={def.Key}
-                        isSelected={settings[def.Key] === "true"}
+                        key={def.key}
+                        isSelected={settings[def.key] === "true"}
                         onValueChange={(val) =>
                           setSettings((prev) => ({
                             ...prev,
-                            [def.Key]: val ? "true" : "false",
+                            [def.key]: val ? "true" : "false",
                           }))
                         }
                       >
-                        {def.Label}
+                        {def.label}
                       </Switch>
                     );
                   }
-                  if (def.SettingType === "Select" && def.Options) {
+                  if (def.settingType === "Select" && def.options) {
                     return (
                       <Select
-                        key={def.Key}
-                        label={def.Label}
+                        key={def.key}
+                        label={def.label}
                         selectedKeys={
-                          settings[def.Key] ? [settings[def.Key]] : []
+                          settings[def.key] ? [settings[def.key]] : []
                         }
                         onSelectionChange={(keys) => {
                           const key = Array.from(keys)[0];
                           if (key)
                             setSettings((prev) => ({
                               ...prev,
-                              [def.Key]: String(key),
+                              [def.key]: String(key),
                             }));
                         }}
                       >
-                        {def.Options.map((opt) => (
-                          <SelectItem key={opt.Value}>{opt.Label}</SelectItem>
+                        {def.options.map((opt) => (
+                          <SelectItem key={opt.value}>{opt.label}</SelectItem>
                         ))}
                       </Select>
                     );
                   }
                   return (
                     <Input
-                      key={def.Key}
-                      label={def.Label}
+                      key={def.key}
+                      label={def.label}
                       type={
-                        def.SettingType === "Password" ? "password" : "text"
+                        def.settingType === "Password" ? "password" : "text"
                       }
-                      value={settings[def.Key] ?? ""}
+                      value={settings[def.key] ?? ""}
                       onChange={(e) =>
                         setSettings((prev) => ({
                           ...prev,
-                          [def.Key]: e.target.value,
+                          [def.key]: e.target.value,
                         }))
                       }
                     />
@@ -1136,254 +1094,3 @@ function EditSourceModal({
 // =============================================================================
 // Search Sources Modal
 // =============================================================================
-
-function SearchSourcesModal({
-  isOpen,
-  onClose,
-  searchQuery,
-  setSearchQuery,
-  searchResults,
-  searching,
-  onSearch,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  searchQuery: string;
-  setSearchQuery: (q: string) => void;
-  searchResults: SourceReleaseInfo[];
-  searching: boolean;
-  onSearch: () => void;
-}) {
-  const [addTorrent] = useMutation(AddTorrentDocument);
-  const [addingReleaseKey, setAddingReleaseKey] = useState<string | null>(null);
-
-  const getReleaseKey = useCallback(
-    (release: SourceReleaseInfo) =>
-      `${release.Guid}:${release.SourceId ?? release.SourceName ?? ""}:${release.Title}`,
-    [],
-  );
-
-  const handleAddToDownloads = useCallback(
-    async (release: SourceReleaseInfo) => {
-      const magnetUri = release.MagnetUri ?? undefined;
-      const torrentUrl = release.Link ?? undefined;
-
-      if (!magnetUri && !torrentUrl) {
-        addToast({
-          title: "No Download Link",
-          description: "This release does not include a magnet or torrent URL.",
-          color: "warning",
-        });
-        return;
-      }
-
-      const isMagnet = magnetUri?.startsWith("magnet:");
-      const releaseKey = getReleaseKey(release);
-      setAddingReleaseKey(releaseKey);
-
-      try {
-        const result = await addTorrent({
-          variables: {
-            Input: {
-              Magnet: isMagnet ? magnetUri : undefined,
-              Url: !isMagnet ? magnetUri || torrentUrl : undefined,
-            },
-          },
-        });
-
-        const data = result.data?.AddTorrent;
-        if (data?.Success && data.Torrent) {
-          addToast({
-            title: "Torrent Added",
-            description: `Started downloading: ${data.Torrent.Name}`,
-            color: "success",
-          });
-          return;
-        }
-
-        addToast({
-          title: "Failed to Add Torrent",
-          description: sanitizeError(
-            data?.Error ?? result.error?.message ?? "Unknown error",
-          ),
-          color: "danger",
-        });
-      } catch (error) {
-        addToast({
-          title: "Failed to Add Torrent",
-          description: sanitizeError(error),
-          color: "danger",
-        });
-      } finally {
-        setAddingReleaseKey(null);
-      }
-    },
-    [addTorrent, getReleaseKey],
-  );
-
-  const columns = useMemo<DataTableColumn<SourceReleaseInfo>[]>(
-    () => [
-      {
-        key: "Title",
-        label: "Title",
-        sortable: true,
-        render: (release) => (
-          <div className="truncate" title={release.Title}>
-            {release.Details ? (
-              <a
-                href={release.Details}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary hover:underline"
-              >
-                {release.Title}
-              </a>
-            ) : (
-              release.Title
-            )}
-          </div>
-        ),
-        width: 500,
-      },
-      {
-        key: "SizeFormatted",
-        label: "Size",
-        sortable: true,
-        align: "end",
-        render: (release) => (
-          <span className="text-default-500 tabular-nums whitespace-nowrap">
-            {release.SizeFormatted ?? "-"}
-          </span>
-        ),
-      },
-      {
-        key: "Seeders",
-        label: "Seeds",
-        sortable: true,
-        align: "end",
-        render: (release) => (
-          <span className="text-green-400 tabular-nums">
-            {release.Seeders ?? "-"}
-          </span>
-        ),
-      },
-      {
-        key: "Leechers",
-        label: "Leech",
-        sortable: true,
-        align: "end",
-        render: (release) => (
-          <span className="text-red-400 tabular-nums">
-            {release.Leechers ?? "-"}
-          </span>
-        ),
-      },
-      {
-        key: "SourceName",
-        label: "Source",
-        sortable: true,
-        render: (release) => (
-          <span className="text-default-500 text-xs">
-            {release.SourceName ?? "-"}
-          </span>
-        ),
-      },
-      {
-        key: "IsFreeleech",
-        label: "FL",
-        sortable: true,
-        align: "center",
-        render: (release) =>
-          release.IsFreeleech ? (
-            <Chip size="sm" variant="flat" color="success">
-              FL
-            </Chip>
-          ) : (
-            "-"
-          ),
-      },
-      {
-        key: "actions",
-        label: "Actions",
-        sortable: false,
-        align: "end",
-        render: (release) => {
-          const canDownload = Boolean(release.Link ?? release.MagnetUri);
-          const tooltipText = canDownload ? "Add to downloads" : null;
-          const releaseKey = getReleaseKey(release);
-
-          return canDownload && tooltipText ? (
-            <Tooltip content={tooltipText}>
-              <Button
-                isIconOnly
-                size="sm"
-                variant="light"
-                isLoading={addingReleaseKey === releaseKey}
-                onPress={() => void handleAddToDownloads(release)}
-              >
-                <IconDownload size={14} className="text-blue-400" />
-              </Button>
-            </Tooltip>
-          ) : (
-            <span className="text-default-400">-</span>
-          );
-        },
-      },
-    ],
-    [addingReleaseKey, getReleaseKey, handleAddToDownloads],
-  );
-
-  return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      size="full"
-      className="max-h-[80vh] max-w-[800]"
-    >
-      <ModalContent>
-        <ModalHeader>Search All Sources</ModalHeader>
-        <ModalBody>
-          <div className="space-y-4 grow h-0">
-            <div className="flex gap-2">
-              <Input
-                placeholder="Search for movies, shows, music..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                startContent={
-                  <IconSearch size={16} className="text-default-400" />
-                }
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") onSearch();
-                }}
-                className="flex-1"
-              />
-              <Button color="primary" isLoading={searching} onPress={onSearch}>
-                Search
-              </Button>
-            </div>
-
-            <DataTable
-              stateKey="settings-sources-search-results"
-              data={searchResults}
-              isLoading={searching}
-              columns={columns}
-              getRowKey={(release) => getReleaseKey(release)}
-              defaultSortColumn="Seeders"
-              defaultSortDirection="desc"
-              searchPlaceholder="Filter results..."
-              removeWrapper
-              showItemCount
-              fillHeight
-              ariaLabel="Search all sources results"
-            />
-          </div>
-        </ModalBody>
-        <ModalFooter>
-          <Button variant="flat" onPress={onClose}>
-            Close
-          </Button>
-        </ModalFooter>
-      </ModalContent>
-    </Modal>
-  );
-}

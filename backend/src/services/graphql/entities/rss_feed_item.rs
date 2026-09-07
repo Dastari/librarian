@@ -11,91 +11,93 @@ use serde::{Deserialize, Serialize};
 #[graphql_entity(
     table = "rss_feed_items",
     plural = "RssFeedItems",
-    default_sort = "seen_at"
+    default_sort = "seen_at",
+    read_policy = "member.read",
+    write_policy = "admin.write"
 )]
 pub struct RssFeedItem {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "FeedId")]
+    #[graphql(name = "feedId")]
     #[filterable(type = "string")]
     pub feed_id: String,
 
-    #[graphql(name = "Guid")]
+    #[graphql(name = "guid")]
     #[filterable(type = "string")]
     pub guid: Option<String>,
 
-    #[graphql(name = "LinkHash")]
+    #[graphql(name = "linkHash")]
     #[filterable(type = "string")]
     pub link_hash: String,
 
-    #[graphql(name = "TitleHash")]
+    #[graphql(name = "titleHash")]
     #[filterable(type = "string")]
     pub title_hash: String,
 
-    #[graphql(name = "Title")]
+    #[graphql(name = "title")]
     #[filterable(type = "string")]
     #[sortable]
     pub title: String,
 
-    #[graphql(name = "Link")]
+    #[graphql(name = "link")]
     pub link: String,
 
-    #[graphql(name = "PubDate")]
+    #[graphql(name = "pubDate")]
     #[filterable(type = "date")]
     #[sortable]
     pub pub_date: Option<String>,
 
-    #[graphql(name = "Description")]
+    #[graphql(name = "description")]
     pub description: Option<String>,
 
-    #[graphql(name = "ParsedShowName")]
+    #[graphql(name = "parsedShowName")]
     #[filterable(type = "string")]
     pub parsed_show_name: Option<String>,
 
-    #[graphql(name = "ParsedSeason")]
+    #[graphql(name = "parsedSeason")]
     #[filterable(type = "number")]
     pub parsed_season: Option<i32>,
 
-    #[graphql(name = "ParsedEpisode")]
+    #[graphql(name = "parsedEpisode")]
     #[filterable(type = "number")]
     pub parsed_episode: Option<i32>,
 
-    #[graphql(name = "ParsedResolution")]
+    #[graphql(name = "parsedResolution")]
     #[filterable(type = "string")]
     pub parsed_resolution: Option<String>,
 
-    #[graphql(name = "ParsedCodec")]
+    #[graphql(name = "parsedCodec")]
     #[filterable(type = "string")]
     pub parsed_codec: Option<String>,
 
-    #[graphql(name = "ParsedSource")]
+    #[graphql(name = "parsedSource")]
     #[filterable(type = "string")]
     pub parsed_source: Option<String>,
 
-    #[graphql(name = "ParsedAudio")]
+    #[graphql(name = "parsedAudio")]
     #[filterable(type = "string")]
     pub parsed_audio: Option<String>,
 
-    #[graphql(name = "ParsedHdr")]
+    #[graphql(name = "parsedHdr")]
     #[filterable(type = "string")]
     pub parsed_hdr: Option<String>,
 
-    #[graphql(name = "Processed")]
+    #[graphql(name = "processed")]
     #[boolean_field]
     #[filterable(type = "boolean")]
     pub processed: bool,
 
-    #[graphql(name = "TorrentId")]
+    #[graphql(name = "torrentId")]
     #[filterable(type = "string")]
     pub torrent_id: Option<String>,
 
-    #[graphql(name = "SkippedReason")]
+    #[graphql(name = "skippedReason")]
     pub skipped_reason: Option<String>,
 
-    #[graphql(name = "SeenAt")]
+    #[graphql(name = "seenAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub seen_at: String,

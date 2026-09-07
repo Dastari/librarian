@@ -13,70 +13,76 @@ use crate::services::auth::AuthService;
 )]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
-#[graphql_entity(table = "users", plural = "Users", default_sort = "username")]
+#[graphql_entity(
+    table = "users",
+    plural = "Users",
+    default_sort = "username",
+    read_policy = "admin.read",
+    write_policy = "admin.write"
+)]
 pub struct User {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "Username")]
+    #[graphql(name = "username")]
     #[filterable(type = "string")]
     #[sortable]
     pub username: String,
 
-    #[graphql(name = "Email")]
+    #[graphql(name = "email")]
     #[filterable(type = "string")]
     pub email: Option<String>,
 
-    #[graphql(skip)]
+    #[graphql_orm(private)]
     pub password_hash: String,
 
-    #[graphql(name = "Role")]
+    #[graphql(name = "role")]
     #[filterable(type = "string")]
     #[sortable]
     pub role: String,
 
-    #[graphql(name = "DisplayName")]
+    #[graphql(name = "displayName")]
     #[filterable(type = "string")]
     pub display_name: Option<String>,
 
-    #[graphql(name = "AvatarUrl")]
+    #[graphql(name = "avatarUrl")]
     pub avatar_url: Option<String>,
 
-    #[graphql(name = "IsActive")]
+    #[graphql(name = "isActive")]
     #[filterable(type = "boolean")]
     pub is_active: bool,
 
-    #[graphql(name = "LastLoginAt")]
+    #[graphql(name = "lastLoginAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub last_login_at: Option<String>,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,
 }
 
-/// Current user info returned by Me query (PascalCase).
+/// Current user info returned by the Me query.
 #[derive(Debug, Clone, async_graphql::SimpleObject)]
 #[graphql(name = "MeUser")]
 pub struct MeUser {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     pub id: String,
-    #[graphql(name = "Email")]
+    #[graphql(name = "email")]
     pub email: Option<String>,
-    #[graphql(name = "Username")]
+    #[graphql(name = "username")]
     pub username: String,
-    #[graphql(name = "Role")]
+    #[graphql(name = "role")]
     pub role: String,
-    #[graphql(name = "DisplayName")]
+    #[graphql(name = "displayName")]
     pub display_name: Option<String>,
 }
 
@@ -86,7 +92,7 @@ pub struct UserCustomOperations;
 #[Object]
 impl UserCustomOperations {
     /// True if no admin user exists yet (first-time setup required).
-    #[graphql(name = "NeedsSetup")]
+    #[graphql(name = "needsSetup")]
     async fn needs_setup(&self, ctx: &Context<'_>) -> Result<bool> {
         let auth = ctx
             .data::<Arc<AuthService>>()
@@ -97,7 +103,7 @@ impl UserCustomOperations {
     }
 
     /// Current authenticated user (requires valid JWT). Returns null if not authenticated.
-    #[graphql(name = "Me")]
+    #[graphql(name = "me")]
     async fn me(&self, ctx: &Context<'_>) -> Result<Option<MeUser>> {
         let auth_user = match ctx.data_opt::<AuthUser>() {
             Some(u) => u,

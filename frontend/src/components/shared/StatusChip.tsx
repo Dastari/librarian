@@ -15,12 +15,12 @@ interface StatusChipProps {
 const STATUS_CONFIG: Record<StatusType, {
   color: 'success' | 'warning' | 'danger' | 'default' | 'primary' | 'secondary'
   label: string
-  Icon?: React.ComponentType<{ size: number; className?: string }>
+  icon?: React.ComponentType<{ size: number; className?: string }>
 }> = {
   monitored: {
     color: 'success',
     label: 'Monitored',
-    Icon: IconCheck,
+    icon: IconCheck,
   },
   unmonitored: {
     color: 'default',
@@ -29,7 +29,7 @@ const STATUS_CONFIG: Record<StatusType, {
   active: {
     color: 'success',
     label: 'Active',
-    Icon: IconCheck,
+    icon: IconCheck,
   },
   disabled: {
     color: 'default',
@@ -38,12 +38,12 @@ const STATUS_CONFIG: Record<StatusType, {
   error: {
     color: 'danger',
     label: 'Error',
-    Icon: IconX,
+    icon: IconX,
   },
   warning: {
     color: 'warning',
     label: 'Warning',
-    Icon: IconAlertTriangle,
+    icon: IconAlertTriangle,
   },
   inheriting: {
     color: 'default',
@@ -57,7 +57,7 @@ const STATUS_CONFIG: Record<StatusType, {
  */
 export function StatusChip({ status, size = 'sm', label, showIcon = false }: StatusChipProps) {
   const config = STATUS_CONFIG[status]
-  const Icon = config.Icon
+  const Icon = config.icon
   
   return (
     <Chip

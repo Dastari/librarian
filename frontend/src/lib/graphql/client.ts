@@ -10,24 +10,24 @@ import {
   type TypedDocumentNode,
 } from "@apollo/client";
 import { onError } from "@apollo/client/link/error";
-import { setContext } from "@apollo/client/link/context";
 import { GraphQLWsLink } from "@apollo/client/link/subscriptions";
 import { getMainDefinition } from "@apollo/client/utilities";
 import { createClient as createWSClient } from "graphql-ws";
-import { getAuthHeader, getAuthHeaderSync } from "../auth";
+import { summarizeGraphQLErrors } from "./errors";
+import { API_BASE_URL, graphqlWebSocketUrl } from "../api/baseUrl";
+import { ensureFreshSession } from "../refreshSession";
 
 // Error event emitter for components to subscribe to
 type GraphQLErrorHandler = (error: {
   message: string;
   isNetworkError: boolean;
+  code?: string;
+  correlationId?: string;
 }) => void;
 const errorHandlers: Set<GraphQLErrorHandler> = new Set();
 
 export type WebSocketConnectionStatus =
-  | "idle"
-  | "connecting"
-  | "connected"
-  | "disconnected";
+  "idle" | "connecting" | "connected" | "disconnected";
 
 export interface WebSocketConnectionState {
   status: WebSocketConnectionStatus;
@@ -79,48 +79,48 @@ export function onGraphQLError(handler: GraphQLErrorHandler): () => void {
   return () => errorHandlers.delete(handler);
 }
 
-function notifyError(message: string, isNetworkError: boolean) {
-  errorHandlers.forEach((handler) => handler({ message, isNetworkError }));
+function notifyError(
+  message: string,
+  isNetworkError: boolean,
+  code?: string,
+  correlationId?: string,
+) {
+  errorHandlers.forEach((handler) =>
+    handler({ message, isNetworkError, code, correlationId }),
+  );
 }
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
-const WS_URL = API_URL.replace(/^http/, "ws");
-
-// Helper to get auth token from localStorage
-async function getAuthTokenAsync(): Promise<string> {
-  // This is already synchronous, but kept async for API compatibility
-  return getAuthHeader();
-}
-
-// Synchronous version for WebSocket connection params
-function getAuthTokenSync(): string {
-  return getAuthHeaderSync();
+function isExpectedAuthError(
+  code: string | undefined,
+  message: string,
+): boolean {
+  if (code === "UNAUTHORIZED") return true;
+  const normalizedMessage = message.toLowerCase();
+  return (
+    normalizedMessage.includes("not authenticated") ||
+    normalizedMessage.includes("unauthorized") ||
+    normalizedMessage.includes("authentication required") ||
+    normalizedMessage.includes("missing auth user")
+  );
 }
 
 // HTTP link for queries and mutations
 const httpLink = new HttpLink({
-  uri: `${API_URL}/graphql`,
+  uri: `${API_BASE_URL}/graphql`,
   credentials: "include",
+  fetch: async (input, init) => {
+    const { operationName } = JSON.parse(String(init?.body ?? "{}"));
+    if (!["Login", "Register", "RefreshToken", "Logout", "NeedsSetup", "Me"].includes(operationName)) {
+      await ensureFreshSession();
+    }
+    return fetch(input, init);
+  },
 });
 
-// Auth context link - adds Authorization header to every request
-const authLink = setContext(async (_, { headers }) => {
-  const token = await getAuthTokenAsync();
-
-  return {
-    headers: {
-      ...headers,
-      ...(token ? { authorization: token } : {}),
-    },
-  };
-});
-
-// WebSocket client for subscriptions - lazy mode so it reconnects with fresh auth
+// Browser WebSocket handshakes include same-origin cookies. The client never
+// reads access credentials or copies them into connection parameters.
 const wsClient = createWSClient({
-  url: `${WS_URL}/graphql/ws`,
-  connectionParams: () => ({
-    Authorization: getAuthTokenSync(),
-  }),
+  url: () => graphqlWebSocketUrl(),
   lazy: true, // Only connect when needed
   retryAttempts: Infinity,
   retryWait: async (retries) => {
@@ -181,14 +181,6 @@ const wsClient = createWSClient({
 
 const wsLink = new GraphQLWsLink(wsClient);
 
-// Keep auth lifecycle operations on HTTP because they rely on HTTP cookie headers.
-const HTTP_ONLY_OPERATION_NAMES = new Set([
-  "Login",
-  "Register",
-  "RefreshToken",
-  "Logout",
-]);
-
 // Function to restart WebSocket connection (called after auth changes)
 export function restartWebSocket(): void {
   // Terminate existing connection so it reconnects with new auth
@@ -204,30 +196,48 @@ const errorLink = onError(({ error, operation }) => {
 
   // Check if it's a GraphQL error (has errors array)
   if (CombinedGraphQLErrors.is(error)) {
-    error.errors.forEach((err) => {
+    const reportableErrors = error.errors.filter((err) => {
       const message = err.message;
-
-      // Check if it's an auth error (expected when not logged in)
-      const isAuthError =
-        message.toLowerCase().includes("not authenticated") ||
-        message.toLowerCase().includes("unauthorized") ||
-        message.toLowerCase().includes("authentication required");
+      const code =
+        typeof err.extensions?.code === "string"
+          ? err.extensions.code
+          : undefined;
 
       // Only log non-auth errors as errors, auth errors are expected when not logged in
-      if (isAuthError) {
-        // Silently ignore auth errors - they're expected when not logged in
-      } else {
-        console.error(
-          `[GraphQL error]: Message: ${message}, Operation: ${operationName}`
-        );
-        // Notify subscribers about the error
-        notifyError(message, false);
+      if (isExpectedAuthError(code, message)) {
+        return false;
       }
+
+      console.error(
+        `[GraphQL error]: Message: ${message}, operation: ${operationName}`,
+      );
+      return true;
     });
+
+    if (reportableErrors.length > 0) {
+      const firstError = reportableErrors[0];
+      const code =
+        typeof firstError.extensions?.code === "string"
+          ? firstError.extensions.code
+          : undefined;
+      const correlationId =
+        typeof firstError.extensions?.correlationId === "string"
+          ? firstError.extensions.correlationId
+          : undefined;
+      notifyError(
+        summarizeGraphQLErrors(
+          operationName,
+          reportableErrors.map((err) => err.message),
+        ),
+        false,
+        code,
+        correlationId,
+      );
+    }
   } else if (error) {
     // Network or other error
     console.error(
-      `[Network error]: ${error.message}, Operation: ${operationName}`
+      `[Network error]: ${error.message}, operation: ${operationName}`,
     );
 
     // Notify subscribers about network error
@@ -239,32 +249,26 @@ const errorLink = onError(({ error, operation }) => {
   }
 });
 
-// Combine error, auth and http links
-const authedHttpLink = from([errorLink, authLink, httpLink]);
+// Combine error handling and cookie-authenticated HTTP transport.
+const authedHttpLink = from([errorLink, httpLink]);
 
-// Split link: auth lifecycle ops go to HTTP; everything else goes to WebSocket.
-// This enables WS-first query/mutation/subscription transport while preserving
-// cookie-based auth flows that require HTTP response headers.
+// Split link: subscriptions use WebSocket; queries and mutations use HTTP.
+// HTTP and WebSocket requests authenticate with HttpOnly cookies.
 const splitLink = split(
   (operation) => {
     if (typeof window === "undefined") {
       // SSR/build-time execution should not attempt a WebSocket transport.
-      return true;
+      return false;
     }
-    const { query, operationName } = operation;
+    const { query } = operation;
     const definition = getMainDefinition(query);
     if (definition.kind !== "OperationDefinition") {
-      return true;
+      return false;
     }
-    const resolvedName = operationName || definition.name?.value;
-    if (!resolvedName) {
-      // Keep anonymous operations on HTTP for predictable behavior.
-      return true;
-    }
-    return HTTP_ONLY_OPERATION_NAMES.has(resolvedName);
+    return definition.operation === "subscription";
   },
-  authedHttpLink,
   wsLink,
+  authedHttpLink,
 );
 
 // Create Apollo Client
@@ -272,12 +276,12 @@ export const apolloClient = new ApolloClient({
   link: splitLink,
   cache: new InMemoryCache({
     typePolicies: {
-      MediaFile: {
-        keyFields: ["Id"],
+      mediaFile: {
+        keyFields: ["id"],
       },
-      Query: {
+      query: {
         fields: {
-          MediaFile: {
+          mediaFile: {
             // Merge partial payloads (e.g. { Id, Metadata }) into existing
             // MediaFile objects instead of replacing and dropping cached fields.
             merge: true,
@@ -350,7 +354,7 @@ export async function queryPromise<
   TVariables = OperationVariables,
 >(
   query: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
-  variables?: TVariables
+  variables?: TVariables,
 ): Promise<{ data?: TData; error?: Error }> {
   try {
     const doc = typeof query === "string" ? gql(query) : query;
@@ -370,7 +374,7 @@ export async function mutationPromise<
   TVariables = OperationVariables,
 >(
   mutation: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
-  variables?: TVariables
+  variables?: TVariables,
 ): Promise<{ data?: TData; error?: Error }> {
   try {
     const doc = typeof mutation === "string" ? gql(mutation) : mutation;
@@ -389,7 +393,7 @@ export function subscriptionStream<
   TVariables = OperationVariables,
 >(
   subscription: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
-  variables?: TVariables
+  variables?: TVariables,
 ) {
   const doc =
     typeof subscription === "string" ? gql(subscription) : subscription;
@@ -403,7 +407,7 @@ export function subscriptionStream<
 export const graphqlClient = {
   query: <TData = unknown, TVariables = OperationVariables>(
     query: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
-    variables?: TVariables
+    variables?: TVariables,
   ) => ({
     toPromise: async (): Promise<{ data?: TData; error?: Error }> => {
       try {
@@ -422,7 +426,7 @@ export const graphqlClient = {
 
   mutation: <TData = unknown, TVariables = OperationVariables>(
     mutation: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
-    variables?: TVariables
+    variables?: TVariables,
   ) => ({
     toPromise: async (): Promise<{ data?: TData; error?: Error }> => {
       try {
@@ -440,7 +444,7 @@ export const graphqlClient = {
 
   subscription: <TData = unknown, TVariables = OperationVariables>(
     subscription: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
-    variables?: TVariables
+    variables?: TVariables,
   ) => {
     const doc =
       typeof subscription === "string" ? gql(subscription) : subscription;

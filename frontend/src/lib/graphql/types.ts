@@ -1,4 +1,5 @@
 import type { TablerIcon } from "@tabler/icons-react";
+import type { ContentStatus } from "./generated/graphql";
 import {
   IconMovie,
   IconDeviceTv,
@@ -11,12 +12,10 @@ import {
 // Auth Types
 // ============================================================================
 
-/** Auth response from login/register/refresh mutations */
+/** Non-secret auth response metadata. Credentials are HttpOnly cookies. */
 export interface AuthResult {
   success: boolean;
   error: string | null;
-  accessToken: string | null;
-  refreshToken: string | null;
   expiresAt: number | null;
   user: AuthUserInfo | null;
 }
@@ -56,22 +55,22 @@ export interface RegisterInput {
 export interface LibraryTypeInfo {
   value: LibraryType;
   label: string;
-  Icon: TablerIcon;
+  icon: TablerIcon;
   color: string;
 }
 
 /** Available library types with display info */
 export const LIBRARY_TYPES: LibraryTypeInfo[] = [
-  { value: "MOVIES", label: "Movies", Icon: IconMovie, color: "purple" },
-  { value: "TV", label: "TV Shows", Icon: IconDeviceTv, color: "blue" },
-  { value: "MUSIC", label: "Music", Icon: IconMusic, color: "green" },
+  { value: "MOVIES", label: "Movies", icon: IconMovie, color: "purple" },
+  { value: "TV", label: "TV Shows", icon: IconDeviceTv, color: "blue" },
+  { value: "MUSIC", label: "Music", icon: IconMusic, color: "green" },
   {
     value: "AUDIOBOOKS",
     label: "Audiobooks",
-    Icon: IconHeadphones,
+    icon: IconHeadphones,
     color: "orange",
   },
-  { value: "OTHER", label: "Other", Icon: IconFolder, color: "slate" },
+  { value: "OTHER", label: "Other", icon: IconFolder, color: "slate" },
 ];
 
 /** Get display info for a library type */
@@ -421,15 +420,6 @@ export interface FileOperationResult {
   affectedCount: number;
   messages: string[];
   path: string | null;
-}
-
-/** PascalCase payload from GraphQL filesystem mutations (refactor-plan) */
-export interface FileOperationPayloadPascal {
-  Success: boolean;
-  Error: string | null;
-  AffectedCount: number;
-  Messages: string[];
-  Path: string | null;
 }
 
 export interface CreateDirectoryInput {
@@ -827,8 +817,8 @@ export interface AddAlbumInput {
 // Track Types
 // ============================================================================
 
-/** Track status: missing, wanted, downloading, downloaded */
-export type TrackStatus = "missing" | "wanted" | "downloading" | "downloaded";
+/** Server-authoritative status shared by every playable content type. */
+export type TrackStatus = ContentStatus;
 
 export interface Track {
   id: string;
@@ -845,7 +835,7 @@ export interface Track {
   artistId: string | null;
   mediaFileId: string | null;
   hasFile: boolean;
-  /** Track status: missing, wanted, downloading, downloaded */
+  /** Server-authoritative content status. */
   status: TrackStatus;
   /** Download progress (0.0 to 1.0) when status is 'downloading', null otherwise */
   downloadProgress: number | null;
@@ -937,8 +927,8 @@ export interface AddAudiobookInput {
 // Audiobook Chapter Types
 // ============================================================================
 
-/** Chapter status: missing, wanted, downloading, downloaded */
-export type ChapterStatus = "missing" | "wanted" | "downloading" | "downloaded";
+/** Server-authoritative status shared by every playable content type. */
+export type ChapterStatus = ContentStatus;
 
 export interface AudiobookChapter {
   id: string;
@@ -995,7 +985,7 @@ export interface MediaFile {
   contentType: string | null;
   organized: boolean;
   organizeStatus: string | null;
-  organizeError: string | null;
+  organizeerror: string | null;
   qualityStatus: QualityStatus;
   matchType: string | null;
   isManualMatch: boolean;
@@ -1157,7 +1147,7 @@ export interface RssFeed {
   pollIntervalMinutes: number;
   lastPolledAt: string | null;
   lastSuccessfulAt: string | null;
-  lastError: string | null;
+  lasterror: string | null;
   consecutiveFailures: number;
 }
 
@@ -1334,61 +1324,6 @@ export interface LibraryUpcomingEpisode {
 }
 
 // ============================================================================
-// Cast Types (Chromecast / Media Casting)
-// ============================================================================
-
-/** Cast device types */
-export type CastDeviceType =
-  | "CHROMECAST"
-  | "CHROMECAST_AUDIO"
-  | "GOOGLE_HOME"
-  | "GOOGLE_NEST_HUB"
-  | "ANDROID_TV"
-  | "UNKNOWN";
-
-/** Cast player states */
-export type CastPlayerState = "IDLE" | "BUFFERING" | "PLAYING" | "PAUSED";
-
-/** A discovered or saved cast device */
-export interface CastDevice {
-  id: string;
-  name: string;
-  address: string;
-  port: number;
-  model: string | null;
-  deviceType: CastDeviceType;
-  isFavorite: boolean;
-  isManual: boolean;
-  isConnected: boolean;
-  lastSeenAt: string | null;
-}
-
-/** An active cast session */
-export interface CastSession {
-  id: string;
-  deviceId: string | null;
-  deviceName: string | null;
-  mediaFileId: string | null;
-  episodeId: string | null;
-  streamUrl: string;
-  playerState: CastPlayerState;
-  currentTime: number;
-  duration: number | null;
-  volume: number;
-  isMuted: boolean;
-  startedAt: string;
-}
-
-/** Cast settings (global configuration) */
-export interface CastSettings {
-  autoDiscoveryEnabled: boolean;
-  discoveryIntervalSeconds: number;
-  defaultVolume: number;
-  transcodeIncompatible: boolean;
-  preferredQuality: string | null;
-}
-
-// ============================================================================
 // Playback Session Types
 // ============================================================================
 
@@ -1468,57 +1403,6 @@ export interface PlaybackSettings {
 export interface UpdatePlaybackSettingsInput {
   /** How often to sync watch progress to database (in seconds, 5-60) */
   syncIntervalSeconds?: number;
-}
-
-/** Input for adding a cast device manually */
-export interface AddCastDeviceInput {
-  address: string;
-  port?: number;
-  name?: string;
-}
-
-/** Input for updating a cast device */
-export interface UpdateCastDeviceInput {
-  name?: string;
-  isFavorite?: boolean;
-}
-
-/** Input for casting media to a device */
-export interface CastMediaInput {
-  deviceId: string;
-  mediaFileId: string;
-  episodeId?: string;
-  startPosition?: number;
-}
-
-/** Input for updating cast settings */
-export interface UpdateCastSettingsInput {
-  autoDiscoveryEnabled?: boolean;
-  discoveryIntervalSeconds?: number;
-  defaultVolume?: number;
-  transcodeIncompatible?: boolean;
-  preferredQuality?: string;
-}
-
-/** Result of a cast device mutation */
-export interface CastDeviceResult {
-  success: boolean;
-  device: CastDevice | null;
-  error: string | null;
-}
-
-/** Result of a cast session mutation */
-export interface CastSessionResult {
-  success: boolean;
-  session: CastSession | null;
-  error: string | null;
-}
-
-/** Result of cast settings mutation */
-export interface CastSettingsResult {
-  success: boolean;
-  settings: CastSettings | null;
-  error: string | null;
 }
 
 // ============================================================================
@@ -1617,97 +1501,6 @@ export interface Connection<T> {
 // ============================================================================
 // Entity-specific Filter Inputs
 // ============================================================================
-
-// ============================================================================
-// Notification Types
-// ============================================================================
-
-export type NotificationType = "INFO" | "WARNING" | "ERROR" | "ACTION_REQUIRED";
-export type NotificationCategory =
-  | "MATCHING"
-  | "PROCESSING"
-  | "QUALITY"
-  | "STORAGE"
-  | "EXTRACTION"
-  | "CONFIGURATION";
-export type NotificationActionType =
-  | "CONFIRM_UPGRADE"
-  | "MANUAL_MATCH"
-  | "RETRY"
-  | "DISMISS"
-  | "REVIEW";
-export type NotificationResolution =
-  | "ACCEPTED"
-  | "REJECTED"
-  | "DISMISSED"
-  | "AUTO_RESOLVED";
-export type NotificationEventType = "CREATED" | "READ" | "RESOLVED" | "DELETED";
-
-/** A user notification */
-export interface Notification {
-  id: string;
-  title: string;
-  message: string;
-  notificationType: NotificationType;
-  category: NotificationCategory;
-  libraryId: string | null;
-  torrentId: string | null;
-  mediaFileId: string | null;
-  pendingMatchId: string | null;
-  actionType: NotificationActionType | null;
-  actionData: Record<string, unknown> | null;
-  readAt: string | null;
-  resolvedAt: string | null;
-  resolution: NotificationResolution | null;
-  createdAt: string;
-}
-
-/** Paginated notifications result */
-export interface PaginatedNotifications {
-  notifications: Notification[];
-  totalCount: number;
-  hasMore: boolean;
-}
-
-/** Notification counts for badge display */
-export interface NotificationCounts {
-  unreadCount: number;
-  actionRequiredCount: number;
-}
-
-/** Filter input for notifications query */
-export interface NotificationFilterInput {
-  unreadOnly?: boolean;
-  unresolvedOnly?: boolean;
-  category?: NotificationCategory;
-  notificationType?: NotificationType;
-}
-
-/** Input for resolving a notification */
-export interface ResolveNotificationInput {
-  id: string;
-  resolution: NotificationResolution;
-}
-
-/** Result of a notification mutation */
-export interface NotificationResult {
-  success: boolean;
-  error: string | null;
-  notification: Notification | null;
-}
-
-/** Result of marking all notifications read */
-export interface MarkAllReadResult {
-  success: boolean;
-  count: number;
-  error: string | null;
-}
-
-/** Notification event for subscriptions */
-export interface NotificationEvent {
-  notification: Notification;
-  eventType: NotificationEventType;
-}
 
 // ============================================================================
 // Content Download Progress Types

@@ -20,3 +20,8 @@ export {
   SOURCE_OPTIONS,
   QUALITY_PRESETS,
 } from './QualitySettingsCard'
+
+export {
+  QualityProfileEditorModal,
+  type QualityProfileEditorModalProps,
+} from './QualityProfileEditorModal'

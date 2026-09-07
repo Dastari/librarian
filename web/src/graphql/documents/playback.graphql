@@ -1,0 +1,31 @@
+query PlaybackProgressForFile($userId: String!, $mediaFileId: String!) {
+  playbackProgresses(where: { userId: { eq: $userId }, mediaFileId: { eq: $mediaFileId } }, page: { limit: 1, offset: 0 }) {
+    edges {
+      node {
+        ...PlaybackProgressFields
+      }
+    }
+  }
+}
+
+query PlaybackProgressForFiles($userId: String!, $mediaFileIds: [String!]!) {
+  playbackProgresses(where: { userId: { eq: $userId }, mediaFileId: { inList: $mediaFileIds } }, page: { limit: 100, offset: 0 }) {
+    edges {
+      node {
+        ...PlaybackProgressFields
+      }
+    }
+  }
+}
+
+query PlaybackSyncInterval {
+  appSettings(where: { key: { eq: "playback_sync_interval" } }, page: { limit: 1, offset: 0 }) {
+    edges {
+      node {
+        id
+        key
+        value
+      }
+    }
+  }
+}

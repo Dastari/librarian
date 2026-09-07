@@ -71,7 +71,13 @@ impl YtsSource {
             id,
             name,
             site_link: site_url.unwrap_or_else(|| "https://yts.mx/".to_string()),
-            client: Client::builder().gzip(true).build()?,
+            client: crate::services::http_client::outbound_client_builder(
+                crate::services::http_client::OutboundHttpProfile::Indexer,
+            )
+            .gzip(true)
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
+            .build()?,
             // Jackett definition sets requestDelay: 2.5 seconds.
             rate_limiter: RateLimitedClient::for_indexer_with_request_delay(Duration::from_millis(
                 2500,
@@ -145,7 +151,7 @@ impl Source for YtsSource {
         }
 
         self.rate_limiter.wait_for_permit().await;
-        let response: YtsResponse = self
+        let response = self
             .client
             .get("https://yts.mx/api/v2/list_movies.json")
             .query(&[
@@ -155,9 +161,12 @@ impl Source for YtsSource {
                 ("order_by", "desc"),
             ])
             .send()
-            .await?
-            .json()
             .await?;
+        let response: YtsResponse = crate::services::http_client::response_json_limited(
+            response,
+            crate::services::http_client::INDEXER_RESPONSE_LIMIT,
+        )
+        .await?;
 
         let mut releases = Vec::new();
         for movie in response.data.movies.unwrap_or_default() {
@@ -220,10 +229,11 @@ impl Source for YtsSource {
                 .unwrap_or_default()
                 .cmp(&a.seeders.unwrap_or_default())
         });
-        if let Some(limit) = query.limit {
-            if limit > 0 && releases.len() > limit as usize {
-                releases.truncate(limit as usize);
-            }
+        if let Some(limit) = query.limit
+            && limit > 0
+            && releases.len() > limit as usize
+        {
+            releases.truncate(limit as usize);
         }
         Ok(releases)
     }
@@ -233,7 +243,12 @@ impl Source for YtsSource {
             anyhow::bail!("Magnet links are not directly downloadable");
         }
         self.rate_limiter.wait_for_permit().await;
-        let bytes = self.client.get(link).send().await?.bytes().await?;
+        let response = self.client.get(link).send().await?;
+        let bytes = crate::services::http_client::response_bytes_limited(
+            response,
+            crate::services::http_client::DOWNLOAD_RESPONSE_LIMIT,
+        )
+        .await?;
         Ok(bytes.to_vec())
     }
 }

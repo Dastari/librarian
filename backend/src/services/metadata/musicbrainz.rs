@@ -25,14 +25,6 @@ pub struct MusicBrainzClient {
     retry_config: RetryConfig,
 }
 
-/// Artist search result from MusicBrainz
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MusicBrainzArtistSearch {
-    pub count: i32,
-    pub offset: i32,
-    pub artists: Vec<MusicBrainzArtist>,
-}
-
 /// Artist from MusicBrainz
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MusicBrainzArtist {
@@ -88,85 +80,6 @@ pub struct MusicBrainzArtistCredit {
     pub joinphrase: Option<String>,
 }
 
-/// Recording (track) from MusicBrainz
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MusicBrainzRecording {
-    pub id: Uuid,
-    pub title: String,
-    pub length: Option<i64>, // milliseconds
-    #[serde(rename = "artist-credit")]
-    pub artist_credit: Option<Vec<MusicBrainzArtistCredit>>,
-    pub isrcs: Option<Vec<String>>,
-}
-
-/// Release (specific pressing/edition of an album)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MusicBrainzRelease {
-    pub id: Uuid,
-    pub title: String,
-    pub status: Option<String>,
-    pub date: Option<String>,
-    pub country: Option<String>,
-    pub barcode: Option<String>,
-    #[serde(rename = "release-group")]
-    pub release_group: Option<MusicBrainzReleaseGroupRef>,
-    #[serde(rename = "artist-credit")]
-    pub artist_credit: Option<Vec<MusicBrainzArtistCredit>>,
-    pub media: Option<Vec<MusicBrainzMedium>>,
-}
-
-/// Simplified release group reference
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MusicBrainzReleaseGroupRef {
-    pub id: Uuid,
-    pub title: String,
-    #[serde(rename = "primary-type")]
-    pub primary_type: Option<String>,
-}
-
-/// Medium (disc) in a release
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MusicBrainzMedium {
-    pub position: Option<i32>,
-    pub format: Option<String>,
-    #[serde(rename = "track-count")]
-    pub track_count: Option<i32>,
-    pub tracks: Option<Vec<MusicBrainzTrack>>,
-}
-
-/// Track position on a medium
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MusicBrainzTrack {
-    pub id: Uuid,
-    pub number: String,
-    pub position: Option<i32>,
-    pub title: String,
-    pub length: Option<i64>, // milliseconds
-    pub recording: MusicBrainzRecording,
-}
-
-/// Release browse result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MusicBrainzReleaseBrowse {
-    #[serde(rename = "release-count")]
-    pub release_count: i32,
-    #[serde(rename = "release-offset")]
-    pub release_offset: Option<i32>,
-    pub releases: Vec<MusicBrainzRelease>,
-}
-
-/// Track information for creating database records
-#[derive(Debug, Clone)]
-pub struct TrackInfo {
-    pub musicbrainz_id: Uuid,
-    pub title: String,
-    pub track_number: i32,
-    pub disc_number: i32,
-    pub duration_secs: Option<i32>,
-    pub isrc: Option<String>,
-    pub artist_name: Option<String>,
-}
-
 /// Cover Art Archive result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoverArtArchiveResult {
@@ -200,33 +113,6 @@ impl MusicBrainzClient {
         "Librarian/0.1.0 ( https://github.com/librarian )".to_string()
     }
 
-    /// Create a new MusicBrainz client
-    pub fn new(app_name: &str, app_version: &str, contact: &str) -> Self {
-        Self {
-            // MusicBrainz requires at least 1 second between requests
-            client: Arc::new(RateLimitedClient::new(
-                "musicbrainz",
-                RateLimitConfig {
-                    requests_per_second: 1,
-                    burst_size: 1,
-                },
-            )),
-            base_url: "https://musicbrainz.org/ws/2".to_string(),
-            user_agent: format!("{}/{} ( {} )", app_name, app_version, contact),
-            retry_config: RetryConfig {
-                max_retries: 3,
-                initial_interval: Duration::from_millis(1500),
-                max_interval: Duration::from_secs(10),
-                multiplier: 2.0,
-            },
-        }
-    }
-
-    /// Create with default values
-    pub fn new_default() -> Self {
-        Self::new_with_user_agent(Self::default_user_agent())
-    }
-
     /// Create with a fully specified User-Agent value
     pub fn new_with_user_agent(user_agent: String) -> Self {
         Self {
@@ -246,173 +132,6 @@ impl MusicBrainzClient {
                 multiplier: 2.0,
             },
         }
-    }
-
-    pub fn user_agent(&self) -> &str {
-        &self.user_agent
-    }
-
-    /// Search for artists
-    pub async fn search_artists(&self, query: &str) -> Result<Vec<MusicBrainzArtist>> {
-        debug!("Searching MusicBrainz for artist '{}'", query);
-
-        let url = format!("{}/artist", self.base_url);
-        let client = self.client.clone();
-        let user_agent = self.user_agent.clone();
-        let query_owned = query.to_string();
-        let retry_config = self.retry_config.clone();
-
-        let result = retry_async(
-            || {
-                let url = url.clone();
-                let client = client.clone();
-                let q = query_owned.clone();
-                let ua = user_agent.clone();
-                async move {
-                    let q_for_log = q.clone();
-                    let query_params = [
-                        ("query", q),
-                        ("fmt", "json".to_string()),
-                        ("limit", "25".to_string()),
-                    ];
-
-                    let response = client
-                        .get_with_headers_and_query(&url, &[("User-Agent", &ua)], &query_params)
-                        .await?;
-
-                    if response.status().as_u16() == 503 {
-                        warn!(
-                            "MusicBrainz rate limit hit (HTTP 503) while searching artists for query='{}'; retrying",
-                            q_for_log
-                        );
-                        anyhow::bail!("Rate limited (503)");
-                    }
-
-                    if !response.status().is_success() {
-                        anyhow::bail!(
-                            "MusicBrainz search failed with status: {}",
-                            response.status()
-                        );
-                    }
-
-                    let results: MusicBrainzArtistSearch = response
-                        .json()
-                        .await
-                        .context("Failed to parse MusicBrainz artist search results")?;
-
-                    Ok(results.artists)
-                }
-            },
-            &retry_config,
-            "musicbrainz_search_artists",
-        )
-        .await?;
-
-        debug!(
-            count = result.len(),
-            "MusicBrainz artist search returned results"
-        );
-        Ok(result)
-    }
-
-    /// Search for albums (release groups)
-    ///
-    /// Uses MusicBrainz Lucene query syntax for better results:
-    /// - Quotes the search term for phrase matching
-    /// - Filters to Album type by default (excludes singles, EPs, etc.)
-    /// - Optionally accepts "artist: Name" prefix to filter by artist
-    ///
-    /// Examples:
-    /// - "Appetite for Destruction" -> searches for album phrase
-    /// - "artist: Guns N' Roses Appetite" -> filters to artist + album
-    pub async fn search_albums(&self, query: &str) -> Result<Vec<MusicBrainzReleaseGroup>> {
-        debug!("Searching MusicBrainz for album '{}'", query);
-
-        let url = format!("{}/release-group", self.base_url);
-        let client = self.client.clone();
-        let user_agent = self.user_agent.clone();
-        let retry_config = self.retry_config.clone();
-
-        // Build a Lucene query for better results
-        // Check if user specified an artist filter with "artist: Name" prefix
-        let lucene_query = if let Some(rest) = query.strip_prefix("artist:").map(|s| s.trim()) {
-            // Format: "artist: Artist Name Album Name"
-            // Try to split on common patterns
-            if let Some((artist, album)) = Self::parse_artist_album_query(rest) {
-                // Use artist filter + album title
-                format!(
-                    "artist:\"{}\" AND releasegroup:\"{}\" AND primarytype:album",
-                    Self::escape_lucene(&artist),
-                    Self::escape_lucene(&album)
-                )
-            } else {
-                // Just use the whole thing as a search term
-                format!("\"{}\" AND primarytype:album", Self::escape_lucene(rest))
-            }
-        } else {
-            // Standard search - quote for phrase matching, filter to albums
-            // But also do a fallback search without quotes for partial matches
-            format!(
-                "(releasegroup:\"{}\" OR releasegroup:({})) AND primarytype:album",
-                Self::escape_lucene(query),
-                Self::escape_lucene(query)
-            )
-        };
-
-        debug!(lucene_query = %lucene_query, "Built MusicBrainz Lucene query");
-
-        let query_owned = lucene_query;
-
-        let result = retry_async(
-            || {
-                let url = url.clone();
-                let client = client.clone();
-                let q = query_owned.clone();
-                let ua = user_agent.clone();
-                async move {
-                    let query_params = [
-                        ("query", q),
-                        ("fmt", "json".to_string()),
-                        ("limit", "25".to_string()),
-                    ];
-
-                    let response = client
-                        .get_with_headers_and_query(&url, &[("User-Agent", &ua)], &query_params)
-                        .await?;
-
-                    if response.status().as_u16() == 503 {
-                        anyhow::bail!("Rate limited (503)");
-                    }
-
-                    if !response.status().is_success() {
-                        anyhow::bail!(
-                            "MusicBrainz album search failed with status: {}",
-                            response.status()
-                        );
-                    }
-
-                    let results: MusicBrainzReleaseGroupSearch = response
-                        .json()
-                        .await
-                        .context("Failed to parse MusicBrainz release group search results")?;
-
-                    Ok(results.release_groups)
-                }
-            },
-            &retry_config,
-            "musicbrainz_search_albums",
-        )
-        .await?;
-
-        // Sort by score descending (MusicBrainz provides relevance scores)
-        let mut sorted_results = result;
-        sorted_results.sort_by(|a, b| b.score.unwrap_or(0).cmp(&a.score.unwrap_or(0)));
-
-        debug!(
-            count = sorted_results.len(),
-            "MusicBrainz album search returned results"
-        );
-        Ok(sorted_results)
     }
 
     /// Escape special Lucene characters in search terms
@@ -534,8 +253,11 @@ impl MusicBrainzClient {
                         );
                     }
 
-                    let results: MusicBrainzReleaseGroupSearch = response
-                        .json()
+                    let results: MusicBrainzReleaseGroupSearch =
+                        crate::services::http_client::response_json_limited(
+                            response,
+                            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                        )
                         .await
                         .context("Failed to parse MusicBrainz release group search results")?;
 
@@ -549,65 +271,13 @@ impl MusicBrainzClient {
 
         // Sort by score descending
         let mut sorted_results = result;
-        sorted_results.sort_by(|a, b| b.score.unwrap_or(0).cmp(&a.score.unwrap_or(0)));
+        sorted_results.sort_by_key(|b| std::cmp::Reverse(b.score.unwrap_or(0)));
 
         debug!(
             count = sorted_results.len(),
             "MusicBrainz album search with types returned results"
         );
         Ok(sorted_results)
-    }
-
-    /// Get artist details by MBID
-    pub async fn get_artist(&self, mbid: Uuid) -> Result<MusicBrainzArtist> {
-        debug!("Fetching artist {} from MusicBrainz", mbid);
-
-        let url = format!("{}/artist/{}", self.base_url, mbid);
-        let client = self.client.clone();
-        let user_agent = self.user_agent.clone();
-        let retry_config = self.retry_config.clone();
-
-        retry_async(
-            || {
-                let url = url.clone();
-                let client = client.clone();
-                let ua = user_agent.clone();
-                async move {
-                    let response = client
-                        .get_with_headers_and_query(
-                            &url,
-                            &[("User-Agent", &ua)],
-                            &[("fmt", "json".to_string())],
-                        )
-                        .await?;
-
-                    if response.status().as_u16() == 503 {
-                        anyhow::bail!("Rate limited (503)");
-                    }
-
-                    if response.status().as_u16() == 404 {
-                        anyhow::bail!("Artist not found on MusicBrainz");
-                    }
-
-                    if !response.status().is_success() {
-                        anyhow::bail!(
-                            "MusicBrainz get artist failed with status: {}",
-                            response.status()
-                        );
-                    }
-
-                    let artist: MusicBrainzArtist = response
-                        .json()
-                        .await
-                        .context("Failed to parse MusicBrainz artist")?;
-
-                    Ok(artist)
-                }
-            },
-            &retry_config,
-            "musicbrainz_get_artist",
-        )
-        .await
     }
 
     /// Get release group (album) details by MBID
@@ -645,8 +315,11 @@ impl MusicBrainzClient {
                         );
                     }
 
-                    let rg: MusicBrainzReleaseGroup = response
-                        .json()
+                    let rg: MusicBrainzReleaseGroup =
+                        crate::services::http_client::response_json_limited(
+                            response,
+                            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                        )
                         .await
                         .context("Failed to parse MusicBrainz release group")?;
 
@@ -674,11 +347,13 @@ impl MusicBrainzClient {
 
         // Cover Art Archive returns 307 redirect to archive.org
         // Use a client that follows redirects
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::limited(5))
-            .timeout(Duration::from_secs(30))
-            .build()
-            .context("Failed to build HTTP client")?;
+        let client = crate::services::http_client::outbound_client_builder(
+            crate::services::http_client::OutboundHttpProfile::Metadata,
+        )
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .timeout(Duration::from_secs(30))
+        .build()
+        .context("Failed to build HTTP client")?;
 
         let response = match client
             .get(&url)
@@ -714,7 +389,9 @@ impl MusicBrainzClient {
         }
 
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
+            let body = crate::services::http_client::response_text_limited(response, 4 * 1024)
+                .await
+                .unwrap_or_default();
             warn!(
                 release_group_id = %release_group_id,
                 status = %status,
@@ -724,10 +401,12 @@ impl MusicBrainzClient {
             return Ok(None);
         }
 
-        let body = response
-            .text()
-            .await
-            .context("Failed to read response body")?;
+        let body = crate::services::http_client::response_text_limited(
+            response,
+            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+        )
+        .await
+        .context("Failed to read bounded response body")?;
         debug!("Cover Art Archive response length: {} bytes", body.len());
 
         let result: CoverArtArchiveResult = match serde_json::from_str(&body) {
@@ -763,170 +442,241 @@ impl MusicBrainzClient {
         Ok(front_cover.and_then(|img| img.thumbnails.large.or(Some(img.image))))
     }
 
-    /// Get releases for a release group, including track listings
+    /// Fetch the track listing for a release group.
     ///
-    /// This fetches all releases (editions) of an album and their track listings.
-    /// We use the "Official" status release with the most complete track listing.
-    pub async fn get_releases_for_release_group(
-        &self,
-        release_group_id: Uuid,
-    ) -> Result<Vec<MusicBrainzRelease>> {
+    /// A release group has many releases (editions, reissues, regional
+    /// pressings). MusicBrainz only stores tracks on releases, so this picks
+    /// the most representative release — preferring `Official` status, then
+    /// the earliest date, then the highest track count — and returns its
+    /// tracks. Used by `addAlbum` so an album is created with real Track rows
+    /// instead of an empty shell that auto-download can never fulfil.
+    pub async fn get_release_group_tracks(&self, mbid: Uuid) -> Result<Vec<MusicBrainzTrack>> {
         debug!(
-            "Fetching releases with tracks for {} from MusicBrainz",
-            release_group_id
+            "Fetching track listing for MusicBrainz release group {}",
+            mbid
         );
 
-        let url = format!("{}/release", self.base_url);
+        let browse_url = format!("{}/release", self.base_url);
         let client = self.client.clone();
         let user_agent = self.user_agent.clone();
         let retry_config = self.retry_config.clone();
-        let rg_id = release_group_id.to_string();
+        let mbid_string = mbid.to_string();
 
-        retry_async(
+        let releases: Vec<ReleaseSummary> = retry_async(
             || {
-                let url = url.clone();
+                let url = browse_url.clone();
                 let client = client.clone();
                 let ua = user_agent.clone();
-                let rg = rg_id.clone();
+                let mbid_string = mbid_string.clone();
                 async move {
-                    // Query releases belonging to this release group, with media and recordings
                     let query_params = [
-                        ("release-group", rg),
                         ("fmt", "json".to_string()),
-                        ("inc", "recordings+artist-credits+isrcs".to_string()),
-                        ("limit", "100".to_string()),
+                        ("release-group", mbid_string),
+                        ("inc", "media".to_string()),
+                        ("limit", "25".to_string()),
                     ];
-
                     let response = client
                         .get_with_headers_and_query(&url, &[("User-Agent", &ua)], &query_params)
                         .await?;
-
                     if response.status().as_u16() == 503 {
                         anyhow::bail!("Rate limited (503)");
                     }
-
                     if !response.status().is_success() {
                         anyhow::bail!(
-                            "MusicBrainz get releases failed with status: {}",
+                            "MusicBrainz release browse failed with status: {}",
                             response.status()
                         );
                     }
-
-                    let browse_result: MusicBrainzReleaseBrowse = response
-                        .json()
+                    let parsed: ReleaseBrowseResponse =
+                        crate::services::http_client::response_json_limited(
+                            response,
+                            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                        )
                         .await
-                        .context("Failed to parse MusicBrainz release browse results")?;
-
-                    Ok(browse_result.releases)
+                        .context("Failed to parse MusicBrainz release browse")?;
+                    Ok(parsed.releases)
                 }
             },
             &retry_config,
-            "musicbrainz_get_releases",
+            "musicbrainz_browse_releases",
         )
-        .await
-    }
+        .await?;
 
-    /// Get tracks for a release group
-    ///
-    /// Fetches the track listing from the best available release.
-    /// Prefers "Official" status releases with complete track listings.
-    pub async fn get_tracks_for_release_group(
-        &self,
-        release_group_id: Uuid,
-    ) -> Result<Vec<TrackInfo>> {
-        let releases = self
-            .get_releases_for_release_group(release_group_id)
-            .await?;
-
-        if releases.is_empty() {
-            warn!(release_group_id = %release_group_id, "No releases found for release group");
-            return Ok(vec![]);
-        }
-
-        // Find the best release (prefer Official, then by track count)
-        let best_release = releases
-            .iter()
-            .filter(|r| r.status.as_deref() == Some("Official"))
-            .max_by_key(|r| {
-                r.media
-                    .as_ref()
-                    .map(|media| media.iter().filter_map(|m| m.track_count).sum::<i32>())
-                    .unwrap_or(0)
-            })
-            .or_else(|| {
-                // Fallback to any release with the most tracks
-                releases.iter().max_by_key(|r| {
-                    r.media
-                        .as_ref()
-                        .map(|media| media.iter().filter_map(|m| m.track_count).sum::<i32>())
-                        .unwrap_or(0)
-                })
-            });
-
-        let Some(release) = best_release else {
-            return Ok(vec![]);
+        let Some(best) = releases.into_iter().max_by_key(|release| {
+            let official = i32::from(
+                release
+                    .status
+                    .as_deref()
+                    .map(|status| status.eq_ignore_ascii_case("official"))
+                    .unwrap_or(false),
+            );
+            let tracks: i32 = release.media.iter().map(|medium| medium.track_count).sum();
+            // Earlier dates win, so invert the date for the max_by_key.
+            let date_rank = release
+                .date
+                .as_deref()
+                .and_then(|date| date.split('-').next())
+                .and_then(|year| year.parse::<i32>().ok())
+                .map(|year| -year)
+                .unwrap_or(i32::MIN);
+            (official, date_rank, tracks)
+        }) else {
+            debug!(
+                "MusicBrainz release group {} has no releases; no tracks available",
+                mbid
+            );
+            return Ok(Vec::new());
         };
 
-        info!(
-            release_id = %release.id,
-            release_title = %release.title,
-            status = ?release.status,
-            "Selected release for track listing"
-        );
-
-        // Extract tracks from all media (discs)
-        let mut tracks = Vec::new();
-
-        if let Some(ref media) = release.media {
-            for medium in media {
-                let disc_number = medium.position.unwrap_or(1);
-
-                if let Some(ref medium_tracks) = medium.tracks {
-                    for track in medium_tracks {
-                        let track_number = track
-                            .position
-                            .unwrap_or_else(|| track.number.parse().unwrap_or(1));
-
-                        // Get artist name from recording's artist credit
-                        let artist_name =
-                            track.recording.artist_credit.as_ref().and_then(|credits| {
-                                credits.first().map(|c| {
-                                    c.name.clone().unwrap_or_else(|| c.artist.name.clone())
-                                })
-                            });
-
-                        // Get first ISRC if available
-                        let isrc = track
-                            .recording
-                            .isrcs
-                            .as_ref()
-                            .and_then(|isrcs| isrcs.first().cloned());
-
-                        // Convert duration from milliseconds to seconds
-                        let duration_secs = track
-                            .recording
-                            .length
-                            .or(track.length)
-                            .map(|ms| (ms / 1000) as i32);
-
-                        tracks.push(TrackInfo {
-                            musicbrainz_id: track.recording.id,
-                            title: track.recording.title.clone(),
-                            track_number,
-                            disc_number,
-                            duration_secs,
-                            isrc,
-                            artist_name,
-                        });
+        let detail_url = format!("{}/release/{}", self.base_url, best.id);
+        let client = self.client.clone();
+        let user_agent = self.user_agent.clone();
+        let retry_config = self.retry_config.clone();
+        let detail: ReleaseDetail = retry_async(
+            || {
+                let url = detail_url.clone();
+                let client = client.clone();
+                let ua = user_agent.clone();
+                async move {
+                    let query_params = [
+                        ("fmt", "json".to_string()),
+                        ("inc", "recordings".to_string()),
+                    ];
+                    let response = client
+                        .get_with_headers_and_query(&url, &[("User-Agent", &ua)], &query_params)
+                        .await?;
+                    if response.status().as_u16() == 503 {
+                        anyhow::bail!("Rate limited (503)");
                     }
+                    if !response.status().is_success() {
+                        anyhow::bail!(
+                            "MusicBrainz release fetch failed with status: {}",
+                            response.status()
+                        );
+                    }
+                    let parsed: ReleaseDetail =
+                        crate::services::http_client::response_json_limited(
+                            response,
+                            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                        )
+                        .await
+                        .context("Failed to parse MusicBrainz release detail")?;
+                    Ok(parsed)
                 }
+            },
+            &retry_config,
+            "musicbrainz_get_release",
+        )
+        .await?;
+
+        Ok(Self::tracks_from_release(&detail))
+    }
+
+    /// Flatten a release's media/tracks into ordered [`MusicBrainzTrack`]s.
+    pub(crate) fn tracks_from_release(detail: &ReleaseDetail) -> Vec<MusicBrainzTrack> {
+        let mut tracks = Vec::new();
+        for (medium_index, medium) in detail.media.iter().enumerate() {
+            let disc_number = medium.position.unwrap_or(medium_index as i32 + 1).max(1);
+            for (track_index, track) in medium.tracks.iter().enumerate() {
+                let position = track
+                    .position
+                    .or_else(|| track.number.as_deref().and_then(|n| n.parse::<i32>().ok()))
+                    .unwrap_or(track_index as i32 + 1);
+                let title = track
+                    .title
+                    .clone()
+                    .or_else(|| track.recording.as_ref().and_then(|r| r.title.clone()))
+                    .unwrap_or_else(|| format!("Track {position}"));
+                let length_ms = track
+                    .length
+                    .or_else(|| track.recording.as_ref().and_then(|r| r.length));
+                tracks.push(MusicBrainzTrack {
+                    position,
+                    disc_number,
+                    title,
+                    duration_secs: length_ms.map(|ms| (ms / 1000) as i32),
+                    recording_id: track.recording.as_ref().and_then(|r| r.id.clone()),
+                });
             }
         }
-
-        info!(track_count = tracks.len(), "Extracted tracks from release");
-
-        Ok(tracks)
+        tracks
     }
+}
+
+/// One track of a MusicBrainz release, normalized for the Track entity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MusicBrainzTrack {
+    /// Track number within its disc.
+    pub position: i32,
+    /// Disc (medium) number, 1-based.
+    pub disc_number: i32,
+    /// Track title.
+    pub title: String,
+    /// Track length in whole seconds, when MusicBrainz knows it.
+    pub duration_secs: Option<i32>,
+    /// MusicBrainz recording MBID.
+    pub recording_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ReleaseBrowseResponse {
+    #[serde(default)]
+    releases: Vec<ReleaseSummary>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ReleaseSummary {
+    id: String,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    date: Option<String>,
+    #[serde(default)]
+    media: Vec<MediumSummary>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct MediumSummary {
+    #[serde(rename = "track-count", default)]
+    track_count: i32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct ReleaseDetail {
+    #[serde(default)]
+    media: Vec<MediumDetail>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct MediumDetail {
+    #[serde(default)]
+    position: Option<i32>,
+    #[serde(default)]
+    tracks: Vec<TrackDetail>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TrackDetail {
+    #[serde(default)]
+    position: Option<i32>,
+    #[serde(default)]
+    number: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    length: Option<i64>,
+    #[serde(default)]
+    recording: Option<RecordingDetail>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RecordingDetail {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    length: Option<i64>,
 }
 
 impl MusicBrainzReleaseGroup {
@@ -961,5 +711,52 @@ impl MusicBrainzReleaseGroup {
             _ => "other",
         }
         .to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MusicBrainzClient, ReleaseDetail};
+
+    #[test]
+    fn tracks_from_release_flattens_multi_disc_listings() {
+        let detail: ReleaseDetail = serde_json::from_str(
+            r#"{
+                "media": [
+                    {
+                        "position": 1,
+                        "tracks": [
+                            {"position": 1, "number": "1", "title": "Welcome to the Jungle", "length": 273000},
+                            {"position": 2, "number": "2", "recording": {"id": "rec-2", "title": "It's So Easy", "length": 203000}}
+                        ]
+                    },
+                    {
+                        "position": 2,
+                        "tracks": [
+                            {"position": 1, "number": "1", "title": "Bonus Take"}
+                        ]
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let tracks = MusicBrainzClient::tracks_from_release(&detail);
+        assert_eq!(tracks.len(), 3);
+        assert_eq!(tracks[0].title, "Welcome to the Jungle");
+        assert_eq!(tracks[0].disc_number, 1);
+        assert_eq!(tracks[0].duration_secs, Some(273));
+        // Falls back to the recording when the track has no title of its own.
+        assert_eq!(tracks[1].title, "It's So Easy");
+        assert_eq!(tracks[1].recording_id.as_deref(), Some("rec-2"));
+        assert_eq!(tracks[2].disc_number, 2);
+        assert_eq!(tracks[2].position, 1);
+        assert_eq!(tracks[2].duration_secs, None);
+    }
+
+    #[test]
+    fn tracks_from_release_handles_empty_media() {
+        let detail: ReleaseDetail = serde_json::from_str(r#"{"media": []}"#).unwrap();
+        assert!(MusicBrainzClient::tracks_from_release(&detail).is_empty());
     }
 }

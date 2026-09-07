@@ -10,7 +10,7 @@ const proTableMock = vi.hoisted(() => ({
   props: undefined as Record<string, unknown> | undefined,
 }));
 
-vi.mock("data-table-pro", () => ({
+vi.mock("data-table-pro/heroui", () => ({
   DataTable: (props: Record<string, unknown> & { children?: ReactNode }) => {
     proTableMock.props = props;
     return <div data-testid="pro-data-table">{props.children}</div>;
@@ -33,7 +33,7 @@ const columns: DataTableColumn<TestRow>[] = [
   {
     key: "name",
     label: "Name",
-    width: { minWidth: 160 },
+    width: { width: 220, minWidth: 160, maxWidth: 280, resizable: false },
     hideOnMobile: true,
     render: (row) => row.name.toUpperCase(),
   },
@@ -71,12 +71,11 @@ describe("DataTable adapter", () => {
         getRowKey={(row) => row.id}
         headerContent="Movies"
         footerContent={<span>Footer</span>}
-        searchPlaceholder="Search movies"
+        toolbarQueryPlaceholder="Search movies"
         defaultPageSize={25}
         pageSizeOptions={[10, 25, 50]}
         serverTotalCount={100}
         classNames={{ wrapper: "wrapper", table: "table", tableContainer: "container" }}
-        fillHeight={false}
         ariaLabel="Movies table"
       />,
     );
@@ -90,6 +89,10 @@ describe("DataTable adapter", () => {
       id: "name",
       accessorKey: "name",
       header: "Name",
+      size: 220,
+      minSize: 160,
+      maxSize: 280,
+      enableResizing: false,
       enableSorting: true,
     });
     expect(mappedColumns[0].meta).toMatchObject({ hideOn: "md", minWidth: 160 });
@@ -97,23 +100,26 @@ describe("DataTable adapter", () => {
       align: "end",
       cellClassName: "whitespace-normal",
     });
+    expect(mappedColumns[1].size).toBeUndefined();
     expect((mappedColumns[0].cell as (args: unknown) => ReactNode)({
       row: { original: rows[0], index: 0 },
     })).toBe("ALPHA");
-    expect((mappedColumns[1].sortingFn as (a: unknown, b: unknown) => number)(
+    expect((mappedColumns[1].sortFn as (a: unknown, b: unknown) => number)(
       { original: rows[0] },
       { original: rows[1] },
     )).toBe(10);
     expect((props.getRowId as (row: TestRow) => string)(rows[0])).toBe("1");
-    expect(props.title).toBe("Movies");
-    expect(props.searchPlaceholder).toBe("Search movies");
+    expect(screen.getByText("Movies")).toBeTruthy();
+    expect(props.toolbarQueryPlaceholder).toBe("Search movies");
     expect(props.rowsPerPageOptions).toEqual([10, 25, 50]);
     expect(props.pageSize).toBe(25);
     expect(props.totalRowCount).toBe(100);
-    expect(props.className).toBe("wrapper");
+    expect(screen.getByTestId("pro-data-table").parentElement?.className).toBe("wrapper");
     expect(props.tableClassName).toBe("table");
     expect(props.tableContainerClassName).toBe("container");
     expect(props.stickyHeader).toBe(false);
+    expect(props.flexGrow).toBe(false);
+    expect(props.layoutMode).toBe("fill");
     expect(props["aria-label"]).toBe("Movies table");
   });
 
@@ -167,6 +173,7 @@ describe("DataTable adapter", () => {
           },
         ]}
         onRowClick={onRowClick}
+        fillHeight
         paginationMode="infinite"
         hasMore
         isLoadingMore
@@ -175,6 +182,12 @@ describe("DataTable adapter", () => {
     );
 
     const props = latestProps();
+    expect(props.flexGrow).toBe(true);
+    expect(props.stickyHeader).toBe(true);
+    expect(props.className).toContain("h-0");
+    expect(props.className).toContain("min-h-0");
+    expect(props.className).toContain("flex-1");
+    expect(props.cardSizing).toBe("fluid");
     expect(props.manualSorting).toBe(true);
     expect(props.sorting).toEqual([{ id: "score", desc: true }]);
     expect(props.rowSelection).toEqual({ "1": true });
@@ -200,7 +213,7 @@ describe("DataTable adapter", () => {
     (props.onViewModeChange as (mode: "card" | "table") => void)("table");
     expect(onViewModeChange).toHaveBeenCalledWith("table");
 
-    (props.onSearchValueChange as (value: string) => void)("matrix");
+    (props.onToolbarQueryValueChange as (value: string) => void)("matrix");
     expect(onSearchChange).toHaveBeenCalledWith("matrix");
 
     const rowActions = props.rowActions as Array<Record<string, unknown>>;
@@ -244,4 +257,3 @@ describe("DataTable adapter", () => {
     );
   });
 });
-

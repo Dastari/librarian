@@ -1,0 +1,26 @@
+query LibraryCollectionsRoute(
+  $where: CollectionWhereInput
+  $page: PageInput
+  $libraryId: String!
+) {
+  collections(where: $where, page: $page) {
+    edges {
+      node {
+        id
+        tmdbCollectionId
+        name
+        posterUrl
+        backdropUrl
+        movieCount
+        downloadedMovies: movies(
+          where: { libraryId: { eq: $libraryId }, hasFile: { eq: true } }
+          page: { limit: 1, offset: 0 }
+        ) {
+          pageInfo {
+            totalCount
+          }
+        }
+      }
+    }
+  }
+}

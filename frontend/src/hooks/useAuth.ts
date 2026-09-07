@@ -1,9 +1,10 @@
+import { refreshSession } from "../lib/refreshSession";
 import { useState, useEffect, useCallback } from "react";
 import {
   LoginDocument,
   RegisterDocument,
-  RefreshTokenDocument,
   LogoutDocument,
+  MeDocument,
 } from "../lib/graphql/generated/graphql";
 import {
   type AuthUser,
@@ -11,7 +12,6 @@ import {
   getSession,
   setTokens,
   clearTokens,
-  hasValidToken,
 } from "../lib/auth";
 import { apolloClient } from "../lib/graphql/client";
 
@@ -34,28 +34,15 @@ export function useAuth() {
   // Refresh the access token using the refresh token
   const refreshAccessToken = useCallback(async (): Promise<boolean> => {
     try {
-      const result = await apolloClient.mutate({
-        mutation: RefreshTokenDocument,
-        variables: { input: { RefreshToken: "" } },
-      });
-
-      const payload = result.data?.RefreshToken;
-      if (payload?.Success && payload.Tokens) {
-        const tokens = payload.Tokens;
-        const existingSession = getSession();
-        if (existingSession) {
-          const newSession: AuthSession = {
-            accessToken: tokens.AccessToken,
-            expiresAt: Date.now() + tokens.ExpiresIn * 1000,
-            user: existingSession.user,
-          };
-          setTokens(newSession);
-          setSession(newSession);
-          return true;
-        }
+      const newSession = await refreshSession();
+      if (newSession) {
+        setSession(newSession);
+        setUser(newSession.user);
+        return true;
       }
     } catch (err) {
-      console.error("[Auth] Token refresh failed:", err);
+      console.warn("[Auth] Token refresh temporarily unavailable; will retry", err);
+      return false;
     }
 
     // Refresh failed, clear everything
@@ -73,7 +60,7 @@ export function useAuth() {
         // Check for existing session in cookies
         const existingSession = getSession();
 
-        if (existingSession && hasValidToken()) {
+        if (existingSession) {
           // Use stored session directly - main.tsx handles server validation
           setUser(existingSession.user);
           setSession(existingSession);
@@ -144,33 +131,46 @@ export function useAuth() {
 
     const result = await apolloClient.mutate({
       mutation: LoginDocument,
-      variables: { input: { UsernameOrEmail: email, Password: password } },
+      variables: { input: { usernameOrEmail: email, password: password } },
     });
 
     if (result.error) {
       throw new Error(result.error.message || "Login failed");
     }
 
-    const authData = result.data?.Login;
-    if (!authData?.Success) {
-      throw new Error(authData?.Error ?? "Login failed");
+    const authData = result.data?.login;
+    if (!authData?.success) {
+      throw new Error(authData?.error ?? "Login failed");
     }
 
-    if (!authData.Tokens || !authData.User) {
+    if (!authData.tokens || !authData.user) {
       throw new Error("Invalid login response");
     }
 
+    const verification = await apolloClient.query({
+      query: MeDocument,
+      fetchPolicy: "network-only",
+    });
+    if (
+      !verification.data?.me ||
+      verification.data.me.id !== authData.user.id
+    ) {
+      throw new Error(
+        "Login succeeded, but the authenticated session cookie was not established. Rebuild and restart the backend so it matches the frontend.",
+      );
+    }
+
+    const verifiedUser = verification.data.me;
     const authUser: AuthUser = {
-      id: authData.User.Id,
-      email: authData.User.Email ?? undefined,
-      username: authData.User.Username,
-      role: authData.User.Role,
-      displayName: authData.User.DisplayName ?? undefined,
+      id: verifiedUser.id,
+      email: verifiedUser.email ?? undefined,
+      username: verifiedUser.username,
+      role: verifiedUser.role,
+      displayName: verifiedUser.displayName ?? undefined,
     };
 
     const newSession: AuthSession = {
-      accessToken: authData.Tokens.AccessToken,
-      expiresAt: Date.now() + authData.Tokens.ExpiresIn * 1000,
+      expiresAt: Math.floor(Date.now() / 1000) + authData.tokens.expiresIn,
       user: authUser,
     };
 
@@ -184,17 +184,24 @@ export function useAuth() {
    * @param email - The user's email address (required, used for login)
    * @param name - The user's full name (required)
    * @param password - The user's password (min 6 characters)
+   * @param inviteToken - Invite code (required unless this is the first account on the server)
    */
-  const signUp = async (email: string, name: string, password: string) => {
+  const signUp = async (
+    email: string,
+    name: string,
+    password: string,
+    inviteToken?: string,
+  ) => {
     setError(null);
 
     const result = await apolloClient.mutate({
       mutation: RegisterDocument,
       variables: {
         input: {
-          Email: email,
-          Name: name,
-          Password: password,
+          email: email,
+          name: name,
+          password: password,
+          inviteToken: inviteToken || undefined,
         },
       },
     });
@@ -203,26 +210,25 @@ export function useAuth() {
       throw new Error(result.error.message || "Registration failed");
     }
 
-    const reg = result.data?.Register;
-    if (!reg?.Success) {
-      throw new Error(reg?.Error ?? "Registration failed");
+    const reg = result.data?.register;
+    if (!reg?.success) {
+      throw new Error(reg?.error ?? "Registration failed");
     }
 
-    if (!reg.Tokens || !reg.User) {
+    if (!reg.tokens || !reg.user) {
       throw new Error("Invalid registration response");
     }
 
     const authUser: AuthUser = {
-      id: reg.User.Id,
-      email: reg.User.Email ?? undefined,
-      username: reg.User.Username,
-      role: reg.User.Role,
-      displayName: reg.User.DisplayName || undefined,
+      id: reg.user.id,
+      email: reg.user.email ?? undefined,
+      username: reg.user.username,
+      role: reg.user.role,
+      displayName: reg.user.displayName || undefined,
     };
 
     const newSession: AuthSession = {
-      accessToken: reg.Tokens.AccessToken,
-      expiresAt: Date.now() + reg.Tokens.ExpiresIn * 1000,
+      expiresAt: Math.floor(Date.now() / 1000) + reg.tokens.expiresIn,
       user: authUser,
     };
 
@@ -235,7 +241,6 @@ export function useAuth() {
     try {
       await apolloClient.mutate({
         mutation: LogoutDocument,
-        variables: { input: { RefreshToken: "" } },
       });
     } catch (err) {
       // Log but don't throw - we still want to clear local state
@@ -253,7 +258,7 @@ export function useAuth() {
     session,
     loading,
     error,
-    isAuthenticated: hasValidToken() && !!user,
+    isAuthenticated: !!user,
     signIn,
     signUp,
     signOut,

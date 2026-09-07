@@ -15,6 +15,35 @@ pub fn add_torrent_opts(paused: bool) -> AddTorrentOptions {
     }
 }
 
+/// Map librqbit's session state plus download progress onto the simplified
+/// [`TorrentState`] the API and the `torrents.state` column use.
+///
+/// Single source of truth for this mapping: the progress loop, the live
+/// `TorrentInfo` builder and the session→DB sync all call this, so a
+/// `LiveTorrent.state` can never disagree with the persisted `Torrent.state`.
+pub fn torrent_state_from_stats(
+    state: &librqbit::TorrentStatsState,
+    progress: f64,
+) -> TorrentState {
+    use librqbit::TorrentStatsState;
+    match state {
+        TorrentStatsState::Paused => TorrentState::Paused,
+        TorrentStatsState::Error => TorrentState::Error,
+        TorrentStatsState::Live if progress >= 1.0 => TorrentState::Seeding,
+        TorrentStatsState::Live => TorrentState::Downloading,
+        TorrentStatsState::Initializing { .. } => TorrentState::Queued,
+    }
+}
+
+/// Fraction of the torrent that is on disk, guarding against the
+/// zero-total-bytes case a magnet has before its metadata resolves.
+pub fn progress_ratio(progress_bytes: u64, total_bytes: u64) -> f64 {
+    if total_bytes == 0 {
+        return 0.0;
+    }
+    (progress_bytes as f64 / total_bytes as f64).min(1.0)
+}
+
 pub fn get_info_hash_hex<T: AsRef<librqbit::ManagedTorrent>>(handle: &T) -> String {
     handle
         .as_ref()
@@ -37,16 +66,6 @@ pub struct UpnpResult {
     pub tcp_forwarded: bool,
     pub udp_forwarded: bool,
     pub local_ip: Option<String>,
-    pub external_ip: Option<String>,
-    pub error: Option<String>,
-}
-
-/// Port test result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct PortTestResult {
-    pub success: bool,
-    pub port_open: bool,
     pub external_ip: Option<String>,
     pub error: Option<String>,
 }
@@ -140,43 +159,6 @@ pub struct TorrentFile {
     pub progress: f64,
 }
 
-/// Detailed peer statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct PeerStats {
-    pub queued: usize,
-    pub connecting: usize,
-    pub live: usize,
-    pub seen: usize,
-    pub dead: usize,
-    pub not_needed: usize,
-}
-
-/// Detailed torrent information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct TorrentDetails {
-    pub id: usize,
-    pub info_hash: String,
-    pub name: String,
-    pub state: TorrentState,
-    pub progress: f64,
-    pub size: u64,
-    pub downloaded: u64,
-    pub uploaded: u64,
-    pub download_speed: u64,
-    pub upload_speed: u64,
-    pub save_path: String,
-    pub files: Vec<TorrentFile>,
-    pub piece_count: u64,
-    pub pieces_downloaded: u64,
-    pub average_piece_download_ms: Option<u64>,
-    pub time_remaining_secs: Option<u64>,
-    pub peer_stats: PeerStats,
-    pub error: Option<String>,
-    pub finished: bool,
-}
-
 /// Configuration for the torrent service
 #[derive(Debug, Clone)]
 pub struct TorrentServiceConfig {
@@ -187,6 +169,13 @@ pub struct TorrentServiceConfig {
     pub max_concurrent: usize,
     pub upload_limit: u32,
     pub download_limit: u32,
+    /// `torrent.seed_ratio_limit`: stop seeding at this share ratio (0 = never).
+    pub seed_ratio_limit: f64,
+    /// `torrent.seed_time_minutes`: stop seeding after this long (0 = never).
+    pub seed_time_minutes: i64,
+    /// `torrent.remove_after_import`: delete the payload once the import
+    /// completed and the seeding rules are satisfied.
+    pub remove_after_import: bool,
 }
 
 impl Default for TorrentServiceConfig {
@@ -199,6 +188,21 @@ impl Default for TorrentServiceConfig {
             max_concurrent: 5,
             upload_limit: 0,
             download_limit: 0,
+            seed_ratio_limit: 1.0,
+            seed_time_minutes: 0,
+            remove_after_import: false,
+        }
+    }
+}
+
+impl TorrentServiceConfig {
+    /// Seeding rules derived from the `torrent.seed_*` / `torrent.remove_after_import`
+    /// settings.
+    pub fn seeding_rules(&self) -> super::seeding::SeedingRules {
+        super::seeding::SeedingRules {
+            ratio_limit: self.seed_ratio_limit,
+            time_minutes: self.seed_time_minutes,
+            remove_after_import: self.remove_after_import,
         }
     }
 }

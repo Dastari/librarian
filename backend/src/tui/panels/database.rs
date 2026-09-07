@@ -98,7 +98,7 @@ async fn fetch_all_table_counts(pool: &DbPool) -> TableCounts {
         .collect::<Vec<_>>();
 
     // Sort by count descending
-    tables.sort_by(|a, b| b.count.cmp(&a.count));
+    tables.sort_by_key(|b| std::cmp::Reverse(b.count));
 
     TableCounts { tables }
 }
@@ -127,13 +127,6 @@ impl DatabasePanel {
 }
 
 impl Panel for DatabasePanel {
-    fn title(&self) -> &str {
-        "db"
-    }
-    fn kind(&self) -> PanelKind {
-        PanelKind::Database
-    }
-
     fn render(&self, frame: &mut Frame, area: Rect, focused: bool) {
         let border_style = if focused {
             Theme::border(PanelKind::Database)
@@ -185,7 +178,7 @@ impl Panel for DatabasePanel {
             .collect();
 
         let list = List::new(items).highlight_style(Theme::selected());
-        let mut state = self.list_state.clone();
+        let mut state = self.list_state;
         frame.render_stateful_widget(list, chunks[1], &mut state);
     }
 
@@ -196,17 +189,17 @@ impl Panel for DatabasePanel {
         }
         match action {
             Action::ScrollUp => {
-                if let Some(s) = self.list_state.selected() {
-                    if s > 0 {
-                        self.list_state.select(Some(s - 1));
-                    }
+                if let Some(s) = self.list_state.selected()
+                    && s > 0
+                {
+                    self.list_state.select(Some(s - 1));
                 }
             }
             Action::ScrollDown => {
-                if let Some(s) = self.list_state.selected() {
-                    if s + 1 < len {
-                        self.list_state.select(Some(s + 1));
-                    }
+                if let Some(s) = self.list_state.selected()
+                    && s + 1 < len
+                {
+                    self.list_state.select(Some(s + 1));
                 }
             }
             Action::Home => {
@@ -220,17 +213,6 @@ impl Panel for DatabasePanel {
     }
 
     fn update(&mut self) {}
-
-    fn scroll_position(&self) -> Option<(usize, usize)> {
-        let counts = self.get_counts();
-        if counts.tables.is_empty() {
-            None
-        } else {
-            self.list_state
-                .selected()
-                .map(|p| (p + 1, counts.tables.len()))
-        }
-    }
 }
 
 /// Render pool stats in a horizontal internal box

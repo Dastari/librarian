@@ -163,7 +163,7 @@ impl Parse for MutationResultInput {
 ///
 /// For a struct `Library`, generates:
 /// - `LibraryWhereInput` - GraphQL input for filtering
-/// - `LibraryOrderByInput` - GraphQL input for sorting  
+/// - `LibraryOrderByInput` - GraphQL input for sorting
 /// - `impl DatabaseEntity for Library`
 /// - `impl FromSqlRow for Library`
 /// - `impl DatabaseFilter for LibraryWhereInput`
@@ -1142,10 +1142,9 @@ fn generate_option_row_field_assignment(
 
             match inner_name.as_str() {
                 "String" => {
-                    if meta.transform_read.is_some() {
-                        let transform_path: syn::Path =
-                            syn::parse_str(meta.transform_read.as_ref().unwrap())
-                                .unwrap_or_else(|_| syn::parse_str("unknown_transform").unwrap());
+                    if let Some(transform_read) = &meta.transform_read {
+                        let transform_path: syn::Path = syn::parse_str(transform_read)
+                            .unwrap_or_else(|_| syn::parse_str("unknown_transform").unwrap());
                         return Ok(quote! {
                             #field_name: {
                                 let v: Option<String> = row.try_get(#db_col)?;
@@ -1531,7 +1530,7 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
         let order_by_input_str = format!("{}OrderByInput", r.target_type_str);
         let connection_type_str = format!("{}Connection", r.target_type_str);
         let edge_type_str = format!("{}Edge", r.target_type_str);
-        
+
         // Create idents for local use in the macro
         let target_type = syn::Ident::new(target_type_str, struct_name.span());
         let where_input = syn::Ident::new(&where_input_str, struct_name.span());
@@ -1575,7 +1574,7 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
                 let relation_sql_value = #sql_value_expr;
             }
         };
-        
+
         if r.is_multiple {
             // One-to-many relation with smart batching
             Ok(quote! {
@@ -1597,19 +1596,19 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
                     use crate::graphql::entities::#connection_type;
                     use crate::graphql::entities::#edge_type;
                     use crate::graphql::orm::{DatabaseEntity, DatabaseFilter, DatabaseOrderBy, EntityQuery, SqlValue};
-                    
+
                     let db = ctx.data_unchecked::<crate::db::Database>();
-                    
+
                     // Check if we can use DataLoader (no filter/sort/pagination args)
                     #source_binding_multiple
 
                     let use_dataloader = #source_supports_dataloader && where_input.is_none() && order_by.is_none() && page.is_none();
-                    
+
                     let entities: Vec<#target_type> = if use_dataloader {
                         // Fast path: Use DataLoader for batched loading
                         use crate::graphql::loaders::RelationLoader;
                         use async_graphql::dataloader::DataLoader;
-                        
+
                         let loader = ctx.data_unchecked::<DataLoader<RelationLoader<#target_type>>>();
                         loader
                             .load_one(relation_loader_key)
@@ -1623,19 +1622,19 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
                                 &format!("{} = ?", #fk_column),
                                 relation_sql_value
                             );
-                        
+
                         if let Some(ref filter) = where_input {
                             query = query.filter(filter);
                         }
-                        
+
                         if let Some(ref order) = order_by {
                             query = query.order_by(order);
                         }
-                        
+
                         if query.order_clauses.is_empty() {
                             query = query.default_order();
                         }
-                        
+
                         if let Some(ref p) = page {
                             query = query.paginate(p);
                         }
@@ -1675,7 +1674,7 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
 
                         return Ok(#connection_type { edges, page_info });
                     };
-                    
+
                     // Build connection response
                     let total = entities.len() as i64;
                     let offset = page.as_ref().map(|p| p.offset()).unwrap_or(0) as usize;
@@ -1683,7 +1682,7 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
                     // DataLoader path has no server-side pagination; loaded set is complete.
                     let has_next_page = false;
                     let has_previous_page = offset > 0;
-                    
+
                     let edges: Vec<#edge_type> = entities
                         .into_iter()
                         .enumerate()
@@ -1692,7 +1691,7 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
                             node: entity,
                         })
                         .collect();
-                    
+
                     let page_info = crate::graphql::pagination::PageInfo {
                         has_next_page,
                         has_previous_page,
@@ -1700,7 +1699,7 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
                         end_cursor: edges.last().map(|e| e.cursor.clone()),
                         total_count: Some(total),
                     };
-                    
+
                     Ok(#connection_type { edges, page_info })
                 }
             })
@@ -1716,10 +1715,10 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
                 ) -> async_graphql::Result<Option<crate::graphql::entities::#target_type>> {
                     use crate::graphql::orm::{DatabaseEntity, EntityQuery, SqlValue};
                     use crate::graphql::entities::#target_type;
-                    
+
                     let db = ctx.data_unchecked::<crate::db::Database>();
                     #source_binding_single
-                    
+
                     let result = EntityQuery::<#target_type>::new()
                         .where_clause(
                             &format!("{} = ?", #fk_column),
@@ -1728,7 +1727,7 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
                         .fetch_one(db)
                         .await
                         .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-                    
+
                     Ok(result)
                 }
             })
@@ -1795,21 +1794,6 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
     })
 }
 
-fn get_inner_type(ty: &syn::Type) -> syn::Result<proc_macro2::TokenStream> {
-    if let syn::Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.last() {
-            if segment.ident == "Vec" || segment.ident == "Option" {
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
-                        return Ok(quote! { #inner });
-                    }
-                }
-            }
-        }
-    }
-    Ok(quote! { #ty })
-}
-
 // ============================================================================
 // GraphQLOperations Derive Macro
 // ============================================================================
@@ -1822,7 +1806,7 @@ fn get_inner_type(ty: &syn::Type) -> syn::Result<proc_macro2::TokenStream> {
 /// - `{PluralName}(Where, OrderBy, Page)` - List with filtering, sorting, pagination
 /// - `{EntityName}(Id)` - Get single entity by ID
 ///
-/// # Generated Mutations  
+/// # Generated Mutations
 /// - `Create{EntityName}(Input)` - Create new entity
 /// - `Update{EntityName}(Id, Input)` - Update existing entity
 /// - `Delete{EntityName}(Id)` - Delete single entity
@@ -3059,7 +3043,7 @@ pub fn schema_roots(input: TokenStream) -> TokenStream {
     };
     let query_root = emit_chunked_merged(
         "Query",
-        query_custom_chunk.as_deref(),
+        query_custom_chunk,
         &query_types,
         async_graphql_merged_object_derive(),
     );
@@ -3171,7 +3155,7 @@ impl Parse for SchemaRootsArgs {
 
         // query_custom_ops: [ ... ],
         let label: Ident = input.parse()?;
-        if label.to_string() != "query_custom_ops" {
+        if label != "query_custom_ops" {
             return Err(syn::Error::new(label.span(), "expected `query_custom_ops`"));
         }
         input.parse::<Token![:]>()?;
@@ -3182,7 +3166,7 @@ impl Parse for SchemaRootsArgs {
 
         // entities: [ ... ]
         let label: Ident = input.parse()?;
-        if label.to_string() != "entities" {
+        if label != "entities" {
             return Err(syn::Error::new(label.span(), "expected `entities`"));
         }
         input.parse::<Token![:]>()?;
@@ -3197,19 +3181,19 @@ impl Parse for SchemaRootsArgs {
         let mut extra_subscription_types = Vec::new();
         while input.peek(Ident) {
             let label: Ident = input.parse()?;
-            if label.to_string() == "extra_mutation_types" {
+            if label == "extra_mutation_types" {
                 input.parse::<Token![:]>()?;
                 let content;
                 syn::bracketed!(content in input);
                 extra_mutation_types = parse_list(&content)?;
                 let _: Option<Token![,]> = input.parse().ok();
-            } else if label.to_string() == "extra_query_types" {
+            } else if label == "extra_query_types" {
                 input.parse::<Token![:]>()?;
                 let content;
                 syn::bracketed!(content in input);
                 extra_query_types = parse_list(&content)?;
                 let _: Option<Token![,]> = input.parse().ok();
-            } else if label.to_string() == "extra_subscription_types" {
+            } else if label == "extra_subscription_types" {
                 input.parse::<Token![:]>()?;
                 let content;
                 syn::bracketed!(content in input);

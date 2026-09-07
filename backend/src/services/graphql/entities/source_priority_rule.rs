@@ -11,46 +11,48 @@ use serde::{Deserialize, Serialize};
 #[graphql_entity(
     table = "source_priority_rules",
     plural = "SourcePriorityRules",
-    default_sort = "created_at"
+    default_sort = "created_at",
+    read_policy = "admin.read",
+    write_policy = "admin.write"
 )]
 pub struct SourcePriorityRule {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "UserId")]
+    #[graphql(name = "userId")]
     #[filterable(type = "string")]
     pub user_id: String,
 
-    #[graphql(name = "LibraryType")]
+    #[graphql(name = "libraryType")]
     #[filterable(type = "string")]
     pub library_type: Option<String>,
 
-    #[graphql(name = "LibraryId")]
+    #[graphql(name = "libraryId")]
     #[filterable(type = "string")]
     pub library_id: Option<String>,
 
-    #[graphql(name = "PriorityOrder")]
+    #[graphql(name = "priorityOrder")]
     #[json_field]
     pub priority_order: Vec<String>,
 
-    #[graphql(name = "SearchAllSources")]
+    #[graphql(name = "searchAllSources")]
     #[boolean_field]
     #[filterable(type = "boolean")]
     pub search_all_sources: bool,
 
-    #[graphql(name = "Enabled")]
+    #[graphql(name = "enabled")]
     #[boolean_field]
     #[filterable(type = "boolean")]
     pub enabled: bool,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,

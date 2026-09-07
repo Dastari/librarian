@@ -13,6 +13,7 @@
 //!
 //! See `docs/design.md` (Background Services section) for how to implement and register services.
 
+use crate::jobs::schedule_sync::{ScheduleSyncConfig, ScheduleSyncService};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -22,11 +23,15 @@ use axum::Router;
 use parking_lot::RwLock as ParkingRwLock;
 use serde::Serialize;
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::app::AppState;
+use crate::jobs::download_monitor::{AutoDownloadService, AutoDownloadServiceConfig};
 
 use crate::services::auth::{AuthConfig, AuthService};
+use crate::services::backup::{BackupService, BackupServiceConfig};
 use crate::services::cast::{CastService, CastServiceConfig};
 use crate::services::database::{DatabaseService, DatabaseServiceConfig};
 use crate::services::graphql::{GraphqlService, GraphqlServiceConfig};
@@ -34,7 +39,9 @@ use crate::services::http_server::{HttpServerConfig, HttpServerService};
 use crate::services::library_scan::{LibraryScanService, LibraryScanServiceConfig};
 use crate::services::logging::{LoggingService, LoggingServiceConfig};
 use crate::services::sources::service::{SourcesService, SourcesServiceConfig};
+use crate::services::storage::{ObjectStorageService, ObjectStorageServiceConfig};
 use crate::services::torrent::{TorrentService, TorrentServiceConfig};
+use crate::services::transcode::{TranscodeService, TranscodeServiceConfig};
 
 /// Health status of a service.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -137,9 +144,13 @@ pub trait Service: Send + Sync + 'static {
 }
 
 /// Pending registration for the builder.
-enum ServiceRegistration {
+pub struct ServiceRegistration(ServiceRegistrationKind);
+
+enum ServiceRegistrationKind {
     Auth(AuthConfig),
     Database(DatabaseServiceConfig),
+    Storage(ObjectStorageServiceConfig),
+    Backup(BackupServiceConfig),
     Logging(LoggingServiceConfig),
     Graphql(GraphqlServiceConfig),
     Http(HttpServerConfig),
@@ -147,8 +158,14 @@ enum ServiceRegistration {
     Cast(CastServiceConfig),
     Sources(SourcesServiceConfig),
     LibraryScan(LibraryScanServiceConfig),
+    AutoDownload(AutoDownloadServiceConfig),
+    ScheduleSync(ScheduleSyncConfig),
+    Transcode(TranscodeServiceConfig),
     Service(Arc<dyn Service>),
 }
+
+type ApiRouteBuilder = Box<dyn Fn(AppState) -> Router<AppState> + Send + Sync>;
+type ApiRouteRegistration = (String, ApiRouteBuilder);
 
 /// Types that can be added to a [ServicesManagerBuilder] via [add_service](ServicesManagerBuilder::add_service).
 ///
@@ -160,61 +177,91 @@ pub trait IntoServiceRegistration {
 
 impl IntoServiceRegistration for GraphqlServiceConfig {
     fn into_registration(self) -> ServiceRegistration {
-        ServiceRegistration::Graphql(self)
+        ServiceRegistration(ServiceRegistrationKind::Graphql(self))
     }
 }
 
 impl IntoServiceRegistration for AuthConfig {
     fn into_registration(self) -> ServiceRegistration {
-        ServiceRegistration::Auth(self)
+        ServiceRegistration(ServiceRegistrationKind::Auth(self))
     }
 }
 
 impl IntoServiceRegistration for DatabaseServiceConfig {
     fn into_registration(self) -> ServiceRegistration {
-        ServiceRegistration::Database(self)
+        ServiceRegistration(ServiceRegistrationKind::Database(self))
+    }
+}
+
+impl IntoServiceRegistration for ObjectStorageServiceConfig {
+    fn into_registration(self) -> ServiceRegistration {
+        ServiceRegistration(ServiceRegistrationKind::Storage(self))
+    }
+}
+
+impl IntoServiceRegistration for BackupServiceConfig {
+    fn into_registration(self) -> ServiceRegistration {
+        ServiceRegistration(ServiceRegistrationKind::Backup(self))
     }
 }
 
 impl IntoServiceRegistration for LoggingServiceConfig {
     fn into_registration(self) -> ServiceRegistration {
-        ServiceRegistration::Logging(self)
+        ServiceRegistration(ServiceRegistrationKind::Logging(self))
     }
 }
 
 impl IntoServiceRegistration for HttpServerConfig {
     fn into_registration(self) -> ServiceRegistration {
-        ServiceRegistration::Http(self)
+        ServiceRegistration(ServiceRegistrationKind::Http(self))
     }
 }
 
 impl IntoServiceRegistration for TorrentServiceConfig {
     fn into_registration(self) -> ServiceRegistration {
-        ServiceRegistration::Torrent(self)
+        ServiceRegistration(ServiceRegistrationKind::Torrent(self))
     }
 }
 
 impl IntoServiceRegistration for CastServiceConfig {
     fn into_registration(self) -> ServiceRegistration {
-        ServiceRegistration::Cast(self)
+        ServiceRegistration(ServiceRegistrationKind::Cast(self))
     }
 }
 
 impl IntoServiceRegistration for SourcesServiceConfig {
     fn into_registration(self) -> ServiceRegistration {
-        ServiceRegistration::Sources(self)
+        ServiceRegistration(ServiceRegistrationKind::Sources(self))
     }
 }
 
 impl IntoServiceRegistration for LibraryScanServiceConfig {
     fn into_registration(self) -> ServiceRegistration {
-        ServiceRegistration::LibraryScan(self)
+        ServiceRegistration(ServiceRegistrationKind::LibraryScan(self))
+    }
+}
+
+impl IntoServiceRegistration for ScheduleSyncConfig {
+    fn into_registration(self) -> ServiceRegistration {
+        ServiceRegistration(ServiceRegistrationKind::ScheduleSync(self))
+    }
+}
+
+impl IntoServiceRegistration for AutoDownloadServiceConfig {
+    fn into_registration(self) -> ServiceRegistration {
+        ServiceRegistration(ServiceRegistrationKind::AutoDownload(self))
+    }
+}
+
+impl IntoServiceRegistration for TranscodeServiceConfig {
+    fn into_registration(self) -> ServiceRegistration {
+        ServiceRegistration(ServiceRegistrationKind::Transcode(self))
     }
 }
 
 impl IntoServiceRegistration for Arc<dyn Service> {
     fn into_registration(self) -> ServiceRegistration {
-        ServiceRegistration::Service(self)
+        ServiceRegistration(ServiceRegistrationKind::Service(self))
     }
 }
 
@@ -238,10 +285,7 @@ impl IntoServiceRegistration for Arc<dyn Service> {
 pub struct ServicesManagerBuilder {
     registrations: Vec<ServiceRegistration>,
     /// Route builders for /api/*; merged in order when the HTTP app is built.
-    api_route_registrations: Vec<(
-        String,
-        Box<dyn Fn(AppState) -> Router<AppState> + Send + Sync>,
-    )>,
+    api_route_registrations: Vec<ApiRouteRegistration>,
 }
 
 impl ServicesManagerBuilder {
@@ -282,50 +326,85 @@ impl ServicesManagerBuilder {
             manager.register_api_routes(name, builder);
         }
         for reg in self.registrations {
-            match reg {
-                ServiceRegistration::Auth(config) => {
+            match reg.0 {
+                ServiceRegistrationKind::Auth(config) => {
                     let auth_svc = Arc::new(AuthService::new(manager.clone(), config));
                     manager.register_auth(auth_svc).await;
                 }
-                ServiceRegistration::Database(config) => {
+                ServiceRegistrationKind::Database(config) => {
                     let db_svc = Arc::new(
-                        DatabaseService::from_config(config)
+                        DatabaseService::from_config(config, Some(Arc::downgrade(&manager)))
                             .await
                             .context("Failed to create database service from config")?,
                     );
                     manager.register_database(db_svc).await;
                 }
-                ServiceRegistration::Logging(config) => {
+                ServiceRegistrationKind::Storage(config) => {
+                    let storage_svc = Arc::new(
+                        ObjectStorageService::new(config)
+                            .context("Failed to create object storage service")?,
+                    );
+                    manager.register_storage(storage_svc).await;
+                }
+                ServiceRegistrationKind::Backup(config) => {
+                    let db = manager
+                        .get_database_unchecked()
+                        .await
+                        .context("Backup service requires database service")?
+                        .pool()
+                        .clone();
+                    let storage = manager
+                        .get_storage_unchecked()
+                        .await
+                        .context("Backup service requires storage service")?;
+                    let backup_svc = Arc::new(BackupService::new(db, storage, config));
+                    manager.register_backup(backup_svc).await;
+                }
+                ServiceRegistrationKind::Logging(config) => {
                     let logging_svc = Arc::new(LoggingService::new(manager.clone(), config));
                     manager.register_logging(logging_svc).await;
                 }
-                ServiceRegistration::Graphql(config) => {
+                ServiceRegistrationKind::Graphql(config) => {
                     let graphql_svc =
                         Arc::new(GraphqlService::new(manager.clone(), config.server_port));
                     manager.register_graphql(graphql_svc).await;
                 }
-                ServiceRegistration::Http(config) => {
+                ServiceRegistrationKind::Http(config) => {
                     let http_svc = Arc::new(HttpServerService::new(manager.clone(), config.config));
                     manager.register(http_svc).await;
                 }
-                ServiceRegistration::Torrent(config) => {
+                ServiceRegistrationKind::Torrent(config) => {
                     let torrent_svc = Arc::new(TorrentService::new(manager.clone(), config));
                     manager.register_torrent(torrent_svc).await;
                 }
-                ServiceRegistration::Cast(config) => {
-                    let cast_svc = Arc::new(CastService::new(config));
+                ServiceRegistrationKind::Cast(config) => {
+                    let cast_svc = Arc::new(CastService::new(Arc::downgrade(&manager), config));
                     manager.register_cast(cast_svc).await;
                 }
-                ServiceRegistration::Sources(_config) => {
-                    let sources_svc = Arc::new(SourcesService::new(manager.clone()));
+                ServiceRegistrationKind::Sources(_config) => {
+                    let sources_svc = Arc::new(SourcesService::new(manager.clone(), _config));
                     manager.register_sources(sources_svc).await;
                 }
-                ServiceRegistration::LibraryScan(config) => {
+                ServiceRegistrationKind::LibraryScan(config) => {
                     let library_scan_svc =
                         Arc::new(LibraryScanService::new(manager.clone(), config));
                     manager.register_library_scan(library_scan_svc).await;
                 }
-                ServiceRegistration::Service(svc) => {
+                ServiceRegistrationKind::ScheduleSync(config) => {
+                    manager
+                        .register(Arc::new(ScheduleSyncService::new(manager.clone(), config)))
+                        .await;
+                }
+                ServiceRegistrationKind::AutoDownload(config) => {
+                    let auto_download_svc =
+                        Arc::new(AutoDownloadService::new(manager.clone(), config));
+                    manager.register_auto_download(auto_download_svc).await;
+                }
+                ServiceRegistrationKind::Transcode(config) => {
+                    let transcode_svc = Arc::new(TranscodeService::new(manager.clone(), config));
+                    manager.register_transcode(transcode_svc).await;
+                }
+                ServiceRegistrationKind::Service(svc) => {
                     manager.register(svc).await;
                 }
             }
@@ -338,6 +417,7 @@ impl ServicesManagerBuilder {
     pub async fn start(self) -> Result<Arc<ServicesManager>> {
         let manager = self.build().await?;
         manager.start_all().await?;
+        manager.start_supervisor();
         Ok(manager)
     }
 }
@@ -354,20 +434,36 @@ pub struct ServicesManager {
     started: RwLock<HashSet<String>>,
     auth: RwLock<Option<Arc<AuthService>>>,
     database: RwLock<Option<Arc<DatabaseService>>>,
+    storage: RwLock<Option<Arc<ObjectStorageService>>>,
+    backup: RwLock<Option<Arc<BackupService>>>,
     logging: RwLock<Option<Arc<LoggingService>>>,
     graphql: RwLock<Option<Arc<GraphqlService>>>,
     torrent: RwLock<Option<Arc<TorrentService>>>,
     cast: RwLock<Option<Arc<CastService>>>,
     sources: RwLock<Option<Arc<SourcesService>>>,
     library_scan: RwLock<Option<Arc<LibraryScanService>>>,
+    auto_download: RwLock<Option<Arc<AutoDownloadService>>>,
+    transcode: RwLock<Option<Arc<TranscodeService>>>,
     /// Route builders for /api/*; used by [build_api_router]. ParkingRwLock so registration and build are sync.
-    api_route_builders: ParkingRwLock<
-        Vec<(
-            String,
-            Box<dyn Fn(AppState) -> Router<AppState> + Send + Sync>,
-        )>,
-    >,
+    api_route_builders: ParkingRwLock<Vec<ApiRouteRegistration>>,
+    supervisor: ParkingRwLock<Option<ServiceSupervisor>>,
 }
+
+struct ServiceSupervisor {
+    cancel: CancellationToken,
+    handle: JoinHandle<()>,
+}
+
+const SUPERVISED_BACKGROUND_SERVICES: &[&str] = &[
+    "logging",
+    "torrent",
+    "cast",
+    "library_scan",
+    "auto_download",
+    "transcode",
+];
+const SUPERVISOR_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+const SUPERVISOR_MAX_CONSECUTIVE_RESTARTS: u8 = 3;
 
 impl Default for ServicesManager {
     fn default() -> Self {
@@ -382,13 +478,128 @@ impl ServicesManager {
             started: RwLock::new(HashSet::new()),
             auth: RwLock::new(None),
             database: RwLock::new(None),
+            storage: RwLock::new(None),
+            backup: RwLock::new(None),
             logging: RwLock::new(None),
             graphql: RwLock::new(None),
             torrent: RwLock::new(None),
             cast: RwLock::new(None),
             sources: RwLock::new(None),
             library_scan: RwLock::new(None),
+            auto_download: RwLock::new(None),
+            transcode: RwLock::new(None),
             api_route_builders: ParkingRwLock::new(Vec::new()),
+            supervisor: ParkingRwLock::new(None),
+        }
+    }
+
+    /// Start a bounded health supervisor for background services.
+    ///
+    /// Only health messages that explicitly identify an unexpected worker exit
+    /// are restartable. Environmental degradation (for example unavailable
+    /// ffmpeg or a failed discovery attempt) remains visible without creating a
+    /// restart storm.
+    pub fn start_supervisor(self: &Arc<Self>) {
+        if self.supervisor.read().is_some() {
+            return;
+        }
+
+        let cancel = CancellationToken::new();
+        let worker_cancel = cancel.clone();
+        let manager = Arc::downgrade(self);
+        let handle = tokio::spawn(async move {
+            let mut consecutive_restarts: HashMap<String, u8> = HashMap::new();
+            loop {
+                tokio::select! {
+                    _ = worker_cancel.cancelled() => break,
+                    _ = tokio::time::sleep(SUPERVISOR_CHECK_INTERVAL) => {}
+                }
+
+                let Some(manager) = manager.upgrade() else {
+                    break;
+                };
+                for name in SUPERVISED_BACKGROUND_SERVICES {
+                    let service = {
+                        let services = manager.services.read().await;
+                        services.get(*name).cloned()
+                    };
+                    let Some(service) = service else {
+                        continue;
+                    };
+
+                    let health = match service.health().await {
+                        Ok(health) => health,
+                        Err(error) => {
+                            warn!(
+                                service = *name,
+                                error = %error,
+                                "Background service health check failed"
+                            );
+                            continue;
+                        }
+                    };
+
+                    if !health_requires_restart(&health) {
+                        consecutive_restarts.remove(*name);
+                        continue;
+                    }
+
+                    let attempts = consecutive_restarts.entry((*name).to_string()).or_default();
+                    if *attempts >= SUPERVISOR_MAX_CONSECUTIVE_RESTARTS {
+                        warn!(
+                            service = *name,
+                            attempts = *attempts,
+                            message = ?health.message,
+                            "Background service restart budget exhausted"
+                        );
+                        continue;
+                    }
+
+                    let attempt = *attempts + 1;
+                    let backoff = std::time::Duration::from_secs(1_u64 << (*attempts).min(4));
+                    tokio::select! {
+                        _ = worker_cancel.cancelled() => return,
+                        _ = tokio::time::sleep(backoff) => {}
+                    }
+
+                    match manager.restart_one(name).await {
+                        Ok(()) => {
+                            *attempts = attempt;
+                            warn!(
+                                service = *name,
+                                attempt,
+                                max_attempts = SUPERVISOR_MAX_CONSECUTIVE_RESTARTS,
+                                "Restarted background service after an unexpected worker exit"
+                            );
+                        }
+                        Err(error) => {
+                            *attempts = attempt;
+                            warn!(
+                                service = *name,
+                                attempt,
+                                max_attempts = SUPERVISOR_MAX_CONSECUTIVE_RESTARTS,
+                                error = %error,
+                                "Background service restart failed"
+                            );
+                        }
+                    }
+                }
+            }
+        });
+        *self.supervisor.write() = Some(ServiceSupervisor { cancel, handle });
+        info!(
+            services = ?SUPERVISED_BACKGROUND_SERVICES,
+            max_consecutive_restarts = SUPERVISOR_MAX_CONSECUTIVE_RESTARTS,
+            "Background service supervisor started"
+        );
+    }
+
+    async fn stop_supervisor(&self) {
+        let supervisor = self.supervisor.write().take();
+        if let Some(supervisor) = supervisor {
+            supervisor.cancel.cancel();
+            let _ = supervisor.handle.await;
+            info!("Background service supervisor stopped");
         }
     }
 
@@ -448,7 +659,10 @@ impl ServicesManager {
             names.iter().map(|n| (n.clone(), Vec::new())).collect();
         for (name, d) in &deps {
             for dep in d {
-                dependent_on.get_mut(dep).unwrap().push(name.clone());
+                dependent_on
+                    .get_mut(dep)
+                    .ok_or_else(|| anyhow::anyhow!("Service dependency graph lost node {dep}"))?
+                    .push(name.clone());
             }
         }
         let mut queue: Vec<String> = in_degree
@@ -460,7 +674,9 @@ impl ServicesManager {
         while let Some(n) = queue.pop() {
             order.push(n.clone());
             for s in dependent_on.get(&n).unwrap_or(&vec![]) {
-                let deg = in_degree.get_mut(s).unwrap();
+                let deg = in_degree
+                    .get_mut(s)
+                    .ok_or_else(|| anyhow::anyhow!("Service dependency graph lost node {s}"))?;
                 *deg -= 1;
                 if *deg == 0 {
                     queue.push(s.clone());
@@ -542,6 +758,51 @@ impl ServicesManager {
     /// [None] when the database is stopped.
     pub async fn get_database_unchecked(&self) -> Option<Arc<DatabaseService>> {
         self.database.read().await.clone()
+    }
+
+    /// Register the object storage service so [get_storage](ServicesManager::get_storage) works.
+    pub async fn register_storage(&self, service: Arc<ObjectStorageService>) {
+        let name = service.name().to_string();
+        *self.storage.write().await = Some(service.clone());
+        let mut guard = self.services.write().await;
+        if guard.insert(name.clone(), service).is_some() {
+            warn!(service = %name, "Service '{}' reregistered, overwriting previous", name);
+        } else {
+            info!(service = %name, "Service '{}' registered", name);
+        }
+    }
+
+    /// Return the object storage service if it is registered and currently started.
+    pub async fn get_storage(&self) -> Option<Arc<ObjectStorageService>> {
+        if !self.started.read().await.contains("storage") {
+            return None;
+        }
+        self.storage.read().await.clone()
+    }
+
+    /// Return the object storage service regardless of started state.
+    pub async fn get_storage_unchecked(&self) -> Option<Arc<ObjectStorageService>> {
+        self.storage.read().await.clone()
+    }
+
+    /// Register the backup service so [get_backup](ServicesManager::get_backup) works.
+    pub async fn register_backup(&self, service: Arc<BackupService>) {
+        let name = service.name().to_string();
+        *self.backup.write().await = Some(service.clone());
+        let mut guard = self.services.write().await;
+        if guard.insert(name.clone(), service).is_some() {
+            warn!(service = %name, "Service '{}' reregistered, overwriting previous", name);
+        } else {
+            info!(service = %name, "Service '{}' registered", name);
+        }
+    }
+
+    /// Return the backup service if it is registered and currently started.
+    pub async fn get_backup(&self) -> Option<Arc<BackupService>> {
+        if !self.started.read().await.contains("backup") {
+            return None;
+        }
+        self.backup.read().await.clone()
     }
 
     /// Register the logging service so [get_logging](ServicesManager::get_logging) works.
@@ -671,6 +932,56 @@ impl ServicesManager {
         self.library_scan.read().await.clone()
     }
 
+    /// Register the auto-download service so [get_auto_download](ServicesManager::get_auto_download) works.
+    pub async fn register_auto_download(&self, service: Arc<AutoDownloadService>) {
+        let name = service.name().to_string();
+        *self.auto_download.write().await = Some(service.clone());
+        let mut guard = self.services.write().await;
+        if guard.insert(name.clone(), service).is_some() {
+            warn!(service = %name, "Service '{}' reregistered, overwriting previous", name);
+        } else {
+            info!(service = %name, "Service '{}' registered", name);
+        }
+    }
+
+    /// Return the auto-download service if it is registered and currently **started**.
+    pub async fn get_auto_download(&self) -> Option<Arc<AutoDownloadService>> {
+        if !self.started.read().await.contains("auto_download") {
+            return None;
+        }
+        self.auto_download.read().await.clone()
+    }
+
+    /// Return the auto-download service regardless of started state.
+    pub async fn get_auto_download_unchecked(&self) -> Option<Arc<AutoDownloadService>> {
+        self.auto_download.read().await.clone()
+    }
+
+    /// Register the transcode service so [get_transcode](ServicesManager::get_transcode) works.
+    pub async fn register_transcode(&self, service: Arc<TranscodeService>) {
+        let name = service.name().to_string();
+        *self.transcode.write().await = Some(service.clone());
+        let mut guard = self.services.write().await;
+        if guard.insert(name.clone(), service).is_some() {
+            warn!(service = %name, "Service '{}' reregistered, overwriting previous", name);
+        } else {
+            info!(service = %name, "Service '{}' registered", name);
+        }
+    }
+
+    /// Return the transcode service if it is registered and currently **started**.
+    pub async fn get_transcode(&self) -> Option<Arc<TranscodeService>> {
+        if !self.started.read().await.contains("transcode") {
+            return None;
+        }
+        self.transcode.read().await.clone()
+    }
+
+    /// Return the transcode service regardless of started state.
+    pub async fn get_transcode_unchecked(&self) -> Option<Arc<TranscodeService>> {
+        self.transcode.read().await.clone()
+    }
+
     /// Unregister a service by name. Does not stop it; call [stop_one](ServicesManager::stop_one)
     /// before unregistering if it is running. Removes it from the started set.
     /// Returns the previous service if present. Clears typed handles for "auth", "database", "logging", "graphql".
@@ -681,6 +992,12 @@ impl ServicesManager {
         }
         if name == "database" {
             *self.database.write().await = None;
+        }
+        if name == "storage" {
+            *self.storage.write().await = None;
+        }
+        if name == "backup" {
+            *self.backup.write().await = None;
         }
         if name == "logging" {
             *self.logging.write().await = None;
@@ -699,6 +1016,12 @@ impl ServicesManager {
         }
         if name == "library_scan" {
             *self.library_scan.write().await = None;
+        }
+        if name == "auto_download" {
+            *self.auto_download.write().await = None;
+        }
+        if name == "transcode" {
+            *self.transcode.write().await = None;
         }
         let mut guard = self.services.write().await;
         let out = guard.remove(name);
@@ -732,6 +1055,7 @@ impl ServicesManager {
 
     /// Stop all registered services in reverse dependency order (dependents first).
     pub async fn stop_all(&self) -> Result<()> {
+        self.stop_supervisor().await;
         let order = self.start_order().await?;
         for name in order.into_iter().rev() {
             let svc = {
@@ -773,9 +1097,11 @@ impl ServicesManager {
     }
 
     /// Restart all registered services: stop all in reverse order, then start all.
-    pub async fn restart_all(&self) -> Result<()> {
+    pub async fn restart_all(self: &Arc<Self>) -> Result<()> {
         self.stop_all().await?;
-        self.start_all().await
+        self.start_all().await?;
+        self.start_supervisor();
+        Ok(())
     }
 
     /// Stop a single service by name. Logs a warning if the service is not registered.
@@ -890,5 +1216,30 @@ impl ServicesManager {
     pub async fn names(&self) -> Vec<String> {
         let guard = self.services.read().await;
         guard.keys().cloned().collect()
+    }
+}
+
+fn health_requires_restart(health: &ServiceHealth) -> bool {
+    health.message.as_deref().is_some_and(|message| {
+        message.contains("exited unexpectedly") || message.contains("exhausting restarts")
+    })
+}
+
+#[cfg(test)]
+mod supervisor_tests {
+    use super::*;
+
+    #[test]
+    fn only_worker_exit_health_is_restartable() {
+        assert!(health_requires_restart(&ServiceHealth::degraded(
+            "one or more workers exited unexpectedly"
+        )));
+        assert!(health_requires_restart(&ServiceHealth::degraded(
+            "workers stopped after exhausting restarts"
+        )));
+        assert!(!health_requires_restart(&ServiceHealth::degraded(
+            "ffmpeg is unavailable"
+        )));
+        assert!(!health_requires_restart(&ServiceHealth::healthy()));
     }
 }

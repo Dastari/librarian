@@ -11,44 +11,53 @@ use serde::{Deserialize, Serialize};
 )]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
-#[graphql_entity(table = "app_logs", plural = "AppLogs", default_sort = "timestamp")]
+#[graphql_entity(
+    table = "app_logs",
+    plural = "AppLogs",
+    default_sort = "timestamp",
+    read_policy = "admin.read",
+    write_policy = "admin.write",
+    index = "timestamp",
+    index = "target",
+    index = "level"
+)]
 pub struct AppLog {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "Timestamp")]
+    #[graphql(name = "timestamp")]
     #[filterable(type = "date")]
     #[sortable]
     pub timestamp: String,
 
-    #[graphql(name = "Level")]
+    #[graphql(name = "level")]
     #[filterable(type = "string")]
     #[sortable]
     pub level: String,
 
-    #[graphql(name = "Target")]
+    #[graphql(name = "target")]
     #[filterable(type = "string")]
     #[sortable]
     pub target: String,
 
-    #[graphql(name = "Message")]
+    #[graphql(name = "message")]
     #[filterable(type = "string")]
     pub message: String,
 
-    #[graphql(name = "Fields")]
+    #[graphql(name = "fields")]
     pub fields: Option<String>,
 
-    #[graphql(name = "SpanName")]
+    #[graphql(name = "spanName")]
     #[filterable(type = "string")]
     pub span_name: Option<String>,
 
-    #[graphql(name = "SpanId")]
+    #[graphql(name = "spanId")]
     #[filterable(type = "string")]
     pub span_id: Option<String>,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,

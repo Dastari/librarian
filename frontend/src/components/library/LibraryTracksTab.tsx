@@ -7,8 +7,14 @@ import {
   getFirstLetter,
   type DataTableColumn,
 } from "../data-table";
-import type { Track } from "../../lib/graphql/generated/graphql";
-import { useQuery, gql } from "../../lib/graphql/client";
+import {
+  LibraryTracksTabDocument,
+  ContentStatusType,
+  type OrderDirection,
+  type Track,
+  type TrackOrderByInput,
+} from "../../lib/graphql/generated/graphql";
+import { useQuery } from "../../lib/graphql/client";
 import {
   IconMusicBolt,
   IconCircleCheck,
@@ -16,6 +22,7 @@ import {
 } from "@tabler/icons-react";
 import { formatDuration } from "../../lib/format";
 import { MediaItemStatusChip } from "../shared";
+import { useContentStatuses } from "../../hooks/useContentStatuses";
 
 // ============================================================================
 // Component Props
@@ -32,10 +39,10 @@ interface LibraryTracksTabProps {
 // ============================================================================
 
 interface TracksConnectionResponse {
-  Tracks: {
-    Edges: Array<{ Node: Track; Cursor: string }>;
-    PageInfo: {
-      TotalCount: number | null;
+  tracks: {
+    edges: Array<{ node: Track; cursor: string }>;
+    pageInfo: {
+      totalCount: number | null;
     };
   };
 }
@@ -45,41 +52,12 @@ interface TracksConnectionResponse {
 // ============================================================================
 
 // Map column keys to GraphQL sort fields
-const SORT_FIELD_MAP: Record<string, string> = {
-  title: "Title",
-  trackNumber: "TrackNumber",
-  artistName: "ArtistName",
-  duration: "DurationSecs",
+const SORT_FIELD_MAP: Record<string, keyof TrackOrderByInput> = {
+  title: "title",
+  trackNumber: "trackNumber",
+  artistName: "title",
+  duration: "durationSecs",
 };
-const TRACKS_QUERY = gql`
-  query LibraryTracks(
-    $Where: TrackWhereInput
-    $OrderBy: [TrackOrderByInput!]
-    $Page: PageInput
-  ) {
-    Tracks: tracks(where: $Where, orderBy: $OrderBy, page: $Page) {
-      Edges: edges {
-        Node: node {
-          Id
-          AlbumId
-          LibraryId
-          Title
-          TrackNumber
-          DiscNumber
-          DurationSecs
-          Explicit
-          ArtistName
-          ArtistId
-          MediaFileId
-        }
-        Cursor: cursor
-      }
-      PageInfo: pageInfo {
-        TotalCount: totalCount
-      }
-    }
-  }
-`;
 
 export function LibraryTracksTab({
   libraryId,
@@ -121,23 +99,22 @@ export function LibraryTracksTab({
   // Build filter variables for GraphQL query
   const queryVariables = useMemo(() => {
     const vars: Record<string, unknown> = {
-      Where: { LibraryId: { eq: libraryId } },
+      where: { libraryId: { eq: libraryId } },
     };
 
     // Add search filter if there's a search term
     if (searchTerm) {
-      vars.Where = {
-        LibraryId: { eq: libraryId },
-        Title: { contains: searchTerm },
+      vars.where = {
+        libraryId: { eq: libraryId },
+        title: { contains: searchTerm },
       };
     }
 
     // Add order by from sort state
-    const graphqlField = SORT_FIELD_MAP[sortColumn || "title"] || "Title";
-    vars.OrderBy = [
-      { [graphqlField]: sortDirection === "asc" ? "ASC" : "DESC" },
-    ];
-    vars.Page = { limit: 5000 };
+    const graphqlField = SORT_FIELD_MAP[sortColumn || "title"] || "title";
+    const direction: OrderDirection = sortDirection === "asc" ? "ASC" : "DESC";
+    vars.orderBy = [{ [graphqlField]: direction }] satisfies TrackOrderByInput[];
+    vars.page = { limit: 5000 };
 
     return vars;
   }, [libraryId, searchTerm, sortColumn, sortDirection]);
@@ -146,7 +123,7 @@ export function LibraryTracksTab({
     data,
     previousData,
     loading: queryLoading,
-  } = useQuery<TracksConnectionResponse>(TRACKS_QUERY, {
+  } = useQuery<TracksConnectionResponse>(LibraryTracksTabDocument, {
     variables: queryVariables,
     skip: shouldSkipQueries,
     fetchPolicy: "cache-and-network",
@@ -155,22 +132,31 @@ export function LibraryTracksTab({
 
   const tracks = useMemo(
     () =>
-      (data?.Tracks?.Edges ?? previousData?.Tracks?.Edges ?? []).map(
-        (edge) => edge.Node,
+      (data?.tracks?.edges ?? previousData?.tracks?.edges ?? []).map(
+        (edge) => edge.node,
       ),
-    [data?.Tracks?.Edges, previousData?.Tracks?.Edges],
+    [data?.tracks?.edges, previousData?.tracks?.edges],
   );
+  const statusTargets = useMemo(
+    () =>
+      tracks.map((track) => ({
+        contentType: ContentStatusType.TRACK,
+        id: track.id,
+      })),
+    [tracks],
+  );
+  const { getStatus } = useContentStatuses(statusTargets);
 
   const totalCount =
-    data?.Tracks?.PageInfo?.TotalCount ??
-    previousData?.Tracks?.PageInfo?.TotalCount ??
+    data?.tracks?.pageInfo?.totalCount ??
+    previousData?.tracks?.pageInfo?.totalCount ??
     null;
 
   // Get letters that have tracks (from loaded data)
   const availableLetters = useMemo(() => {
     const letters = new Set<string>();
     tracks.forEach((track) => {
-      letters.add(getFirstLetter(track.Title));
+      letters.add(getFirstLetter(track.title));
     });
     return letters;
   }, [tracks]);
@@ -179,7 +165,7 @@ export function LibraryTracksTab({
   const filteredTracks = useMemo(() => {
     if (!normalizedLetter) return tracks;
     return tracks.filter(
-      (track) => getFirstLetter(track.Title) === normalizedLetter,
+      (track) => getFirstLetter(track.title) === normalizedLetter,
     );
   }, [tracks, normalizedLetter]);
 
@@ -212,9 +198,9 @@ export function LibraryTracksTab({
               <IconMusicBolt size={16} className="text-green-400" />
             </div>
             <div>
-              <p className="font-medium">{track.Title}</p>
-              {track.ArtistName && (
-                <p className="text-xs text-default-500">{track.ArtistName}</p>
+              <p className="font-medium">{track.title}</p>
+              {track.artistName && (
+                <p className="text-xs text-default-500">{track.artistName}</p>
               )}
             </div>
           </div>
@@ -226,8 +212,8 @@ export function LibraryTracksTab({
         width: 60,
         render: (track) => (
           <span className="text-default-500">
-            {(track.DiscNumber ?? 1) > 1 ? `${track.DiscNumber}-` : ""}
-            {track.TrackNumber}
+            {(track.discNumber ?? 1) > 1 ? `${track.discNumber}-` : ""}
+            {track.trackNumber}
           </span>
         ),
       },
@@ -236,7 +222,7 @@ export function LibraryTracksTab({
         label: "ARTIST",
         width: 200,
         render: (track) => (
-          <span className="text-default-500">{track.ArtistName || "—"}</span>
+          <span className="text-default-500">{track.artistName || "—"}</span>
         ),
       },
       {
@@ -245,7 +231,7 @@ export function LibraryTracksTab({
         width: 100,
         render: (track) => (
           <span className="text-default-500">
-            {track.DurationSecs ? formatDuration(track.DurationSecs) : "—"}
+            {track.durationSecs ? formatDuration(track.durationSecs) : "—"}
           </span>
         ),
       },
@@ -255,7 +241,11 @@ export function LibraryTracksTab({
         width: 120,
         sortable: false,
         render: (track) => (
-          <MediaItemStatusChip mediaFileId={track.MediaFileId} />
+          <MediaItemStatusChip
+            status={getStatus(ContentStatusType.TRACK, track.id)}
+            mediaFileId={track.mediaFileId}
+            wanted={track.wanted}
+          />
         ),
       },
       {
@@ -264,26 +254,26 @@ export function LibraryTracksTab({
         width: 80,
         sortable: false,
         render: (track) =>
-          track.MediaFileId ? (
+          track.mediaFileId ? (
             <IconCircleCheck size={18} className="text-green-400" />
           ) : (
             <IconDownload size={18} className="text-default-400" />
           ),
       },
     ],
-    [],
+    [getStatus],
   );
 
   return (
-    <div className="flex flex-col grow w-full">
-      <div className="flex-1 min-h-0">
+    <div className="flex h-full min-h-0 flex-1 flex-col w-full">
+      <div className="flex min-h-0 flex-1 flex-col">
         <DataTable
           stateKey="library-tracks"
           skeletonDelay={500}
           data={filteredTracks}
           columns={columns}
-          getRowKey={(track) => track.Id}
-          searchPlaceholder="Search tracks..."
+          getRowKey={(track) => track.id}
+          toolbarQueryPlaceholder="Search tracks..."
           sortColumn={sortColumn || "title"}
           sortDirection={sortDirection}
           onSortChange={handleSortChange}

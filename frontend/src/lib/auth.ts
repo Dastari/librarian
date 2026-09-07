@@ -1,13 +1,7 @@
 /**
  * Authentication utilities for custom GraphQL-based auth.
- * Manages JWT tokens in browser cookies for API authentication.
- * Cookies are shared across all tabs automatically.
- *
- * Security note:
- * This client-side cookie model is transitional. Because cookies are written via
- * JavaScript, they cannot be HttpOnly and are therefore readable by scripts.
- * Target architecture is server-set HttpOnly auth cookies with frontend code no
- * longer reading/writing token cookie values directly.
+ * Manages non-secret browser auth state. Access and refresh token values are
+ * server-set HttpOnly cookies and are never read or written by this module.
  */
 
 // ============================================================================
@@ -23,17 +17,32 @@ export interface AuthUser {
   displayName?: string;
 }
 
-/** Auth session containing tokens and user info */
-export interface AuthSession {
-  accessToken: string;
-  expiresAt: number; // Unix timestamp in seconds
-  user: AuthUser;
+export type RoleName = "admin" | "member";
+
+export function normalizeRole(role: string | null | undefined): RoleName | null {
+  const normalized = role?.trim().toLowerCase();
+  if (normalized === "admin" || normalized === "member") {
+    return normalized;
+  }
+  return null;
 }
 
-/** Auth tokens for API requests */
-export interface AuthTokens {
-  accessToken: string;
-  expiresAt: number;
+export function hasRole(
+  user: Pick<AuthUser, "role"> | null | undefined,
+  role: RoleName
+): boolean {
+  const userRole = normalizeRole(user?.role);
+  return userRole === role || (role === "member" && userRole === "admin");
+}
+
+export function isAdmin(user: Pick<AuthUser, "role"> | null | undefined): boolean {
+  return normalizeRole(user?.role) === "admin";
+}
+
+/** Auth session containing tokens and user info */
+export interface AuthSession {
+  expiresAt: number; // Unix timestamp in seconds
+  user: AuthUser;
 }
 
 // ============================================================================
@@ -41,8 +50,6 @@ export interface AuthTokens {
 // ============================================================================
 
 const COOKIE_NAMES = {
-  ACCESS_TOKEN: "librarian_access_token",
-  REFRESH_TOKEN: "librarian_refresh_token",
   EXPIRES_AT: "librarian_token_expires_at",
   USER: "librarian_user",
 } as const;
@@ -113,27 +120,6 @@ function deleteCookie(name: string): void {
 // Token Storage Functions
 // ============================================================================
 
-/** Get the current access token from cookies */
-export function getAccessToken(): string | null {
-  try {
-    const token = getCookie(COOKIE_NAMES.ACCESS_TOKEN);
-    // Only log when token is found (debug level) - no token is normal for unauthenticated users
-    return token;
-  } catch (e) {
-    console.error("[Auth] Error reading access token:", e);
-    return null;
-  }
-}
-
-/** Get the current refresh token from cookies */
-export function getRefreshToken(): string | null {
-  try {
-    return getCookie(COOKIE_NAMES.REFRESH_TOKEN);
-  } catch {
-    return null;
-  }
-}
-
 /** Get the token expiration time (Unix timestamp in seconds) */
 export function getTokenExpiresAt(): number | null {
   try {
@@ -154,19 +140,13 @@ export function getStoredUser(): AuthUser | null {
   }
 }
 
-/** Store tokens and user info in cookies */
-export function setTokens(session: AuthSession): void {
+/** Store non-secret session timing and user display state. */
+export function setTokens(session: AuthSession, options: { refresh?: boolean } = {}): void {
   try {
-    // Calculate expiry date from the token's expiresAt
-    // Use refresh token expiry (typically 7 days) for cookie expiry
-    const accessExpiry = new Date(session.expiresAt * 1000);
-    // Refresh token cookies last longer (7 days from now)
-    const refreshExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const refreshExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-    setCookie(COOKIE_NAMES.ACCESS_TOKEN, session.accessToken, {
-      expires: accessExpiry,
-    });
     setCookie(COOKIE_NAMES.EXPIRES_AT, session.expiresAt.toString(), {
+      // Retain refresh metadata after the access cookie expires (sleeping tabs).
       expires: refreshExpiry,
     });
     setCookie(COOKIE_NAMES.USER, JSON.stringify(session.user), {
@@ -177,7 +157,7 @@ export function setTokens(session: AuthSession): void {
     // This ensures the cache is ready before components try to refetch
     import("./graphql/client").then(
       ({ resetApolloCache, restartWebSocket }) => {
-        resetApolloCache();
+        if (!options.refresh) resetApolloCache();
         restartWebSocket();
         // Small delay to let the cache reset complete before triggering refetches
         setTimeout(() => {
@@ -188,9 +168,9 @@ export function setTokens(session: AuthSession): void {
 
           // Broadcast to other tabs
           try {
-            new BroadcastChannel("librarian-auth").postMessage({
-              type: "login",
-            });
+            const channel = new BroadcastChannel("librarian-auth");
+            channel.postMessage({ type: "login" });
+            channel.close();
           } catch {
             // BroadcastChannel not supported
           }
@@ -205,8 +185,6 @@ export function setTokens(session: AuthSession): void {
 /** Clear all auth data from cookies */
 export function clearTokens(): void {
   try {
-    deleteCookie(COOKIE_NAMES.ACCESS_TOKEN);
-    deleteCookie(COOKIE_NAMES.REFRESH_TOKEN);
     deleteCookie(COOKIE_NAMES.EXPIRES_AT);
     deleteCookie(COOKIE_NAMES.USER);
 
@@ -219,9 +197,9 @@ export function clearTokens(): void {
             new CustomEvent("auth-change", { detail: { type: "logout" } })
           );
           try {
-            new BroadcastChannel("librarian-auth").postMessage({
-              type: "logout",
-            });
+            const channel = new BroadcastChannel("librarian-auth");
+            channel.postMessage({ type: "logout" });
+            channel.close();
           } catch {
             // BroadcastChannel not supported
           }
@@ -235,17 +213,15 @@ export function clearTokens(): void {
 
 /** Get the full session if valid tokens exist */
 export function getSession(): AuthSession | null {
-  const accessToken = getAccessToken();
   const expiresAt = getTokenExpiresAt();
   const user = getStoredUser();
 
-  if (!accessToken || !expiresAt || !user) {
+  if (!user) {
     return null;
   }
 
   return {
-    accessToken,
-    expiresAt,
+    expiresAt: expiresAt ?? 0,
     user,
   };
 }
@@ -266,21 +242,5 @@ export function isTokenExpired(): boolean {
 
 /** Check if we have a valid (non-expired) access token */
 export function hasValidToken(): boolean {
-  const accessToken = getAccessToken();
-  return Boolean(accessToken) && !isTokenExpired();
-}
-
-// ============================================================================
-// Auth Header Helpers
-// ============================================================================
-
-/** Get the Authorization header value (Bearer token) */
-export function getAuthHeader(): string {
-  const accessToken = getAccessToken();
-  return accessToken ? `Bearer ${accessToken}` : "";
-}
-
-/** Get the Authorization header value synchronously (for WebSocket) */
-export function getAuthHeaderSync(): string {
-  return getAuthHeader();
+  return getStoredUser() !== null && !isTokenExpired();
 }

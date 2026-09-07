@@ -38,6 +38,7 @@ export function SignInModal({
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -59,9 +60,9 @@ export function SignInModal({
       });
 
       if (result.data) {
-        setNeedsSetup(result.data.NeedsSetup);
+        setNeedsSetup(result.data.needsSetup);
         // If setup is needed, force sign-up mode
-        if (result.data.NeedsSetup) {
+        if (result.data.needsSetup) {
           setIsSignUp(true);
         }
       }
@@ -101,7 +102,12 @@ export function SignInModal({
           return;
         }
 
-        await signUp(email.trim(), name.trim(), password);
+        await signUp(
+          email.trim(),
+          name.trim(),
+          password,
+          inviteCode.trim() || undefined,
+        );
 
         addToast({
           title: needsSetup ? "Admin Account Created" : "Account Created",
@@ -147,6 +153,7 @@ export function SignInModal({
     setEmail("");
     setName("");
     setPassword("");
+    setInviteCode("");
     setError("");
     setIsSignUp(false);
     setNeedsSetup(null);
@@ -282,6 +289,23 @@ export function SignInModal({
                     Minimum 6 characters
                   </p>
                 </div>
+
+                {!showAdminSetup && (
+                  <Input
+                    type="text"
+                    label="Invite Code"
+                    placeholder="Enter your invite code"
+                    value={inviteCode}
+                    onChange={(e) => setInviteCode(e.target.value)}
+                    isRequired
+                    autoComplete="off"
+                    variant="flat"
+                    classNames={{
+                      inputWrapper: "bg-default-100",
+                      input: "text-foreground",
+                    }}
+                  />
+                )}
               </>
             ) : (
               <>

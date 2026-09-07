@@ -8,7 +8,8 @@ use aes_gcm::{
 };
 use anyhow::{Result, anyhow};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-use rand::RngCore;
+use rand::Rng;
+use sha2::{Digest, Sha256};
 
 /// AES-256-GCM nonce size (96 bits = 12 bytes)
 const NONCE_SIZE: usize = 12;
@@ -19,22 +20,27 @@ const KEY_SIZE: usize = 32;
 #[derive(Clone)]
 pub struct CredentialEncryption {
     cipher: Aes256Gcm,
+    key_id: String,
 }
 
 impl CredentialEncryption {
     /// Create a new encryption service with the given key
     ///
-    /// The key should be a 32-byte (256-bit) key, typically stored as an environment variable.
-    /// If a shorter key is provided, it will be padded with zeros.
+    /// The key must be exactly 32 bytes (256 bits). Malformed, short, and long
+    /// keys fail closed rather than being padded or truncated.
     pub fn new(key: &[u8]) -> Result<Self> {
-        let mut key_bytes = [0u8; KEY_SIZE];
-        let len = key.len().min(KEY_SIZE);
-        key_bytes[..len].copy_from_slice(&key[..len]);
+        if key.len() != KEY_SIZE {
+            return Err(anyhow!(
+                "Invalid credential key length: expected {KEY_SIZE} bytes, got {}",
+                key.len()
+            ));
+        }
 
-        let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+        let cipher = Aes256Gcm::new_from_slice(key)
             .map_err(|e| anyhow!("Failed to create cipher: {}", e))?;
+        let key_id = hex_prefix(&Sha256::digest(key), 16);
 
-        Ok(Self { cipher })
+        Ok(Self { cipher, key_id })
     }
 
     /// Create from a base64-encoded key
@@ -48,8 +54,59 @@ impl CredentialEncryption {
     /// Generate a random encryption key (for initial setup)
     pub fn generate_key() -> String {
         let mut key = [0u8; KEY_SIZE];
-        rand::thread_rng().fill_bytes(&mut key);
+        rand::rng().fill_bytes(&mut key);
         BASE64.encode(key)
+    }
+
+    /// Non-secret identifier embedded in versioned envelopes. It allows a
+    /// wrong-key failure before attempting decryption without exposing key bytes.
+    pub fn key_id(&self) -> &str {
+        &self.key_id
+    }
+
+    /// Encrypt to the current versioned envelope:
+    /// `v2:<key-id>:<nonce-base64>:<ciphertext-base64>`.
+    pub fn encrypt_envelope(&self, plaintext: &str) -> Result<String> {
+        let (ciphertext, nonce) = self.encrypt(plaintext)?;
+        Ok(format!("v2:{}:{}:{}", self.key_id, nonce, ciphertext))
+    }
+
+    /// Decrypt a current versioned envelope. Legacy envelopes are intentionally
+    /// handled by the migration compatibility path, not silently accepted here.
+    pub fn decrypt_envelope(&self, envelope: &str) -> Result<String> {
+        let mut parts = envelope.splitn(4, ':');
+        let version = parts.next();
+        let key_id = parts.next();
+        let nonce = parts.next();
+        let ciphertext = parts.next();
+        if version != Some("v2") || key_id.is_none() || nonce.is_none() || ciphertext.is_none() {
+            return Err(anyhow!("Unsupported credential envelope"));
+        }
+        if key_id != Some(self.key_id.as_str()) {
+            return Err(anyhow!("Credential envelope key does not match active key"));
+        }
+        self.decrypt(ciphertext.unwrap_or_default(), nonce.unwrap_or_default())
+    }
+
+    /// Decrypt the historical `nonce:ciphertext` storage format.
+    pub fn decrypt_legacy_envelope(&self, envelope: &str) -> Result<String> {
+        let (nonce, ciphertext) = envelope
+            .split_once(':')
+            .ok_or_else(|| anyhow!("Invalid legacy credential envelope"))?;
+        self.decrypt(ciphertext, nonce)
+    }
+
+    pub fn looks_like_envelope(value: &str) -> bool {
+        if value.starts_with("v2:") {
+            return value.split(':').count() == 4;
+        }
+        let Some((nonce, ciphertext)) = value.split_once(':') else {
+            return false;
+        };
+        let Ok(nonce) = BASE64.decode(nonce) else {
+            return false;
+        };
+        nonce.len() == NONCE_SIZE && !ciphertext.is_empty() && BASE64.decode(ciphertext).is_ok()
     }
 
     /// Encrypt a plaintext value
@@ -57,12 +114,12 @@ impl CredentialEncryption {
     /// Returns a tuple of (encrypted_data_base64, nonce_base64)
     pub fn encrypt(&self, plaintext: &str) -> Result<(String, String)> {
         let mut nonce_bytes = [0u8; NONCE_SIZE];
-        rand::thread_rng().fill_bytes(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        rand::rng().fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from(nonce_bytes);
 
         let ciphertext = self
             .cipher
-            .encrypt(nonce, plaintext.as_bytes())
+            .encrypt(&nonce, plaintext.as_bytes())
             .map_err(|e| anyhow!("Encryption failed: {}", e))?;
 
         let encrypted_b64 = BASE64.encode(&ciphertext);
@@ -90,24 +147,27 @@ impl CredentialEncryption {
             ));
         }
 
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce_bytes: [u8; NONCE_SIZE] = nonce_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow!("Invalid nonce length"))?;
+        let nonce = Nonce::from(nonce_bytes);
 
         let plaintext = self
             .cipher
-            .decrypt(nonce, ciphertext.as_ref())
+            .decrypt(&nonce, ciphertext.as_ref())
             .map_err(|e| anyhow!("Decryption failed: {}", e))?;
 
         String::from_utf8(plaintext).map_err(|e| anyhow!("Invalid UTF-8 in decrypted data: {}", e))
     }
 }
 
-/// Context-aware credential encryption for use in GraphQL transform hooks.
+/// Context-aware credential encryption for Source write transforms.
 ///
 /// Signature: `async fn(&Context, String) -> async_graphql::Result<String>`
 ///
-/// Takes a plaintext JSON credential string and returns `nonce:ciphertext`
-/// (both base64-encoded). This function is intended to be referenced from
-/// `#[transform(write = "...")]` on the Source entity's credentials field.
+/// Takes a plaintext JSON credential string and returns a versioned encrypted envelope.
+/// The database service calls this from its ORM write transform.
 pub async fn encrypt_credentials_ctx(
     ctx: &async_graphql::Context<'_>,
     plaintext: String,
@@ -131,21 +191,32 @@ pub async fn encrypt_credentials_ctx(
         .await
         .ok_or_else(|| async_graphql::Error::new("Sources manager not initialized"))?;
 
-    let (data, nonce) = sources_manager
+    sources_manager
         .encryption()
-        .encrypt(&plaintext)
-        .map_err(|e| async_graphql::Error::new(format!("Encryption failed: {}", e)))?;
-
-    // Combined format: "nonce:ciphertext"
-    Ok(format!("{}:{}", nonce, data))
+        .encrypt_envelope(&plaintext)
+        .map_err(|_| async_graphql::Error::new("Credential encryption failed"))
 }
 
 impl std::fmt::Debug for CredentialEncryption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CredentialEncryption")
             .field("cipher", &"[REDACTED]")
+            .field("key_id", &"[REDACTED]")
             .finish()
     }
+}
+
+fn hex_prefix(bytes: &[u8], characters: usize) -> String {
+    let mut output = String::with_capacity(characters);
+    for byte in bytes {
+        use std::fmt::Write;
+        let _ = write!(&mut output, "{byte:02x}");
+        if output.len() >= characters {
+            output.truncate(characters);
+            break;
+        }
+    }
+    output
 }
 
 #[cfg(test)]
@@ -194,5 +265,30 @@ mod tests {
         let (encrypted, nonce) = encryption1.encrypt(plaintext).unwrap();
 
         assert!(encryption2.decrypt(&encrypted, &nonce).is_err());
+    }
+
+    #[test]
+    fn rejects_keys_that_are_not_exactly_32_bytes() {
+        assert!(CredentialEncryption::new(&[0_u8; 31]).is_err());
+        assert!(CredentialEncryption::new(&[0_u8; 33]).is_err());
+        assert!(CredentialEncryption::from_base64_key("not-base64").is_err());
+    }
+
+    #[test]
+    fn versioned_envelope_round_trips_and_rejects_wrong_key() {
+        let encryption =
+            CredentialEncryption::from_base64_key(&CredentialEncryption::generate_key()).unwrap();
+        let wrong =
+            CredentialEncryption::from_base64_key(&CredentialEncryption::generate_key()).unwrap();
+        let envelope = encryption
+            .encrypt_envelope("{\"ApiKey\":\"secret\"}")
+            .unwrap();
+
+        assert!(envelope.starts_with(&format!("v2:{}:", encryption.key_id())));
+        assert_eq!(
+            encryption.decrypt_envelope(&envelope).unwrap(),
+            "{\"ApiKey\":\"secret\"}"
+        );
+        assert!(wrong.decrypt_envelope(&envelope).is_err());
     }
 }

@@ -1,64 +1,64 @@
 query SearchAlbums(
-  $Query: String!
-  $IncludeEps: Boolean
-  $IncludeSingles: Boolean
-  $IncludeCompilations: Boolean
-  $IncludeLive: Boolean
-  $IncludeSoundtracks: Boolean
+  $query: String!
+  $includeEps: Boolean
+  $includeSingles: Boolean
+  $includeCompilations: Boolean
+  $includeLive: Boolean
+  $includeSoundtracks: Boolean
 ) {
-  SearchAlbums(
-    Query: $Query
-    IncludeEps: $IncludeEps
-    IncludeSingles: $IncludeSingles
-    IncludeCompilations: $IncludeCompilations
-    IncludeLive: $IncludeLive
-    IncludeSoundtracks: $IncludeSoundtracks
+  searchAlbums(
+    query: $query
+    includeEps: $includeEps
+    includeSingles: $includeSingles
+    includeCompilations: $includeCompilations
+    includeLive: $includeLive
+    includeSoundtracks: $includeSoundtracks
   ) {
-    Provider
-    ProviderId
-    Title
-    ArtistName
-    Year
-    AlbumType
-    CoverUrl
-    Score
+    provider
+    providerId
+    title
+    artistName
+    year
+    albumType
+    coverUrl
+    score
   }
 }
 
-query SearchAudiobooks($Query: String!) {
-  SearchAudiobooks(Query: $Query) {
-    Provider
-    ProviderId
-    Title
-    AuthorName
-    Year
-    CoverUrl
-    Isbn
-    Description
+query SearchAudiobooks($query: String!) {
+  searchAudiobooks(query: $query) {
+    provider
+    providerId
+    title
+    authorName
+    year
+    coverUrl
+    isbn
+    description
   }
 }
 
-mutation AddAlbum($Input: AddAlbumInput!) {
-  AddAlbum(Input: $Input) {
-    Success
-    Error
+mutation AddAlbum($input: AddAlbumInput!) {
+  addAlbum(input: $input) {
+    success
+    error
   }
 }
 
-mutation AddAudiobook($Input: AddAudiobookInput!) {
-  AddAudiobook(Input: $Input) {
-    Success
-    Error
+mutation AddAudiobook($input: AddAudiobookInput!) {
+  addAudiobook(input: $input) {
+    success
+    error
   }
 }
 
-mutation AddTorrent($Input: AddTorrentInput!) {
-  AddTorrent(Input: $Input) {
-    Success
-    Error
-    Torrent {
-      Id
-      Name
+mutation AddTorrent($input: AddTorrentInput!) {
+  addTorrent(input: $input) {
+    success
+    error
+    torrent {
+      id
+      name
     }
   }
 }

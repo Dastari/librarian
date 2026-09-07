@@ -4,10 +4,18 @@ const schemaUrl =
   process.env.VITE_API_URL != null && process.env.VITE_API_URL !== ""
     ? `${process.env.VITE_API_URL}/graphql`
     : "http://localhost:3001/graphql";
+const schemaFile = process.env.CODEGEN_SCHEMA_FILE;
+// Codegen is deterministic and works when production introspection is disabled.
+// CI supplies an SDL export from the Rust schema. Use `CODEGEN_SCHEMA_FILE=0`
+// only for an explicitly introspection-enabled development backend.
 const schemaSource =
-  process.env.CODEGEN_SCHEMA_FILE === "1"
-    ? "./src/lib/graphql/generated/schema.json"
-    : schemaUrl;
+  schemaFile === "0"
+    ? schemaUrl
+    : schemaFile != null && schemaFile !== ""
+      ? schemaFile === "1"
+        ? "./src/lib/graphql/generated/schema.json"
+        : schemaFile
+      : "./src/lib/graphql/generated/schema.json";
 
 const config: CodegenConfig = {
   schema: schemaSource,
@@ -32,7 +40,10 @@ const config: CodegenConfig = {
           Date: "string",
           UUID: "string",
           Int64: "number",
-          JSON: "Record<string, unknown>",
+          JSON: {
+            input: "unknown",
+            output: "Record<string, unknown>",
+          },
         },
       },
     },
@@ -55,7 +66,10 @@ const config: CodegenConfig = {
           Date: "string",
           UUID: "string",
           Int64: "number",
-          JSON: "Record<string, unknown>",
+          JSON: {
+            input: "unknown",
+            output: "Record<string, unknown>",
+          },
         },
       },
     },

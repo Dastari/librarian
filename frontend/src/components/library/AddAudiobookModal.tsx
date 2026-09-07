@@ -38,7 +38,7 @@ interface AddAudiobookModalProps {
 // ============================================================================
 
 interface SearchResultCardProps {
-  result: SearchAudiobooksQuery['SearchAudiobooks'][number]
+  result: SearchAudiobooksQuery['searchAudiobooks'][number]
   onAdd: () => void
   isAdding: boolean
 }
@@ -47,10 +47,10 @@ function SearchResultCard({ result, onAdd, isAdding }: SearchResultCardProps) {
   return (
     <Card>
       <CardBody className="flex flex-row gap-4 p-3">
-        {result.CoverUrl ? (
+        {result.coverUrl ? (
           <Image
-            src={result.CoverUrl}
-            alt={result.Title}
+            src={result.coverUrl}
+            alt={result.title}
             className="w-16 h-24 object-cover flex-shrink-0"
             radius="md"
           />
@@ -60,22 +60,22 @@ function SearchResultCard({ result, onAdd, isAdding }: SearchResultCardProps) {
           </div>
         )}
         <div className="flex-1 min-w-0">
-          <p className="font-semibold line-clamp-2">{result.Title}</p>
-          {result.AuthorName && (
+          <p className="font-semibold line-clamp-2">{result.title}</p>
+          {result.authorName && (
             <p className="text-sm text-default-500 flex items-center gap-1 line-clamp-1">
               <IconUser size={14} />
-              {result.AuthorName}
+              {result.authorName}
             </p>
           )}
-          {result.Year && (
+          {result.year && (
             <p className="text-xs text-default-400 flex items-center gap-1 mt-1">
               <IconCalendar size={12} />
-              {result.Year}
+              {result.year}
             </p>
           )}
-          {result.Description && (
+          {result.description && (
             <p className="text-xs text-default-400 mt-1 line-clamp-2">
-              {result.Description}
+              {result.description}
             </p>
           )}
         </div>
@@ -104,7 +104,7 @@ export function AddAudiobookModal({
   onAudiobookAdded,
 }: AddAudiobookModalProps) {
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<SearchAudiobooksQuery['SearchAudiobooks']>([])
+  const [searchResults, setSearchResults] = useState<SearchAudiobooksQuery['searchAudiobooks']>([])
   const [addingId, setAddingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [searchAudiobooks, { loading: searching }] = useLazyQuery(SearchAudiobooksDocument)
@@ -119,14 +119,14 @@ export function AddAudiobookModal({
     try {
       const { data, error: queryError } = await searchAudiobooks({
         variables: {
-          Query: searchQuery,
+          query: searchQuery,
         },
       })
 
       if (queryError) {
         setError(queryError.message)
-      } else if (data?.SearchAudiobooks) {
-        setSearchResults(data.SearchAudiobooks)
+      } else if (data?.searchAudiobooks) {
+        setSearchResults(data.searchAudiobooks)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed')
@@ -134,30 +134,30 @@ export function AddAudiobookModal({
   }, [searchAudiobooks, searchQuery])
 
   const handleAddAudiobook = useCallback(
-    async (result: SearchAudiobooksQuery['SearchAudiobooks'][number]) => {
-      setAddingId(result.ProviderId)
+    async (result: SearchAudiobooksQuery['searchAudiobooks'][number]) => {
+      setAddingId(result.providerId)
       setError(null)
 
       try {
         const { data, error } = await addAudiobook({
           variables: {
-            Input: {
-              OpenlibraryId: result.ProviderId,
-              LibraryId: libraryId,
+            input: {
+              openlibraryId: result.providerId,
+              libraryId: libraryId,
             },
           },
         })
 
         if (error) {
           setError(error.message)
-        } else if (data?.AddAudiobook.Success) {
+        } else if (data?.addAudiobook.success) {
           // Remove from search results
           setSearchResults((prev) =>
-            prev.filter((r) => r.ProviderId !== result.ProviderId)
+            prev.filter((r) => r.providerId !== result.providerId)
           )
           onAudiobookAdded?.()
-        } else if (data?.AddAudiobook.Error) {
-          setError(data.AddAudiobook.Error)
+        } else if (data?.addAudiobook.error) {
+          setError(data.addAudiobook.error)
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to add audiobook')
@@ -234,10 +234,10 @@ export function AddAudiobookModal({
               </p>
               {searchResults.map((result) => (
                 <SearchResultCard
-                  key={result.ProviderId}
+                  key={result.providerId}
                   result={result}
                   onAdd={() => handleAddAudiobook(result)}
-                  isAdding={addingId === result.ProviderId}
+                  isAdding={addingId === result.providerId}
                 />
               ))}
             </div>

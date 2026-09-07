@@ -1,62 +1,62 @@
-query AlbumDetailRoute($Id: String!) {
-  Album: album(id: $Id) {
-    Id
-    ArtistId
-    LibraryId
-    Name
-    SortName
-    Year
-    MusicbrainzId
-    AlbumType
-    Genres
-    Label
-    Country
-    ReleaseDate
-    CoverUrl
-    TrackCount
-    DiscCount
-    TotalDurationSecs
-    HasFiles
-    SizeBytes
-    Path
+query AlbumDetailRoute($id: String!) {
+  album(id: $id) {
+    id
+    artistId
+    libraryId
+    name
+    sortName
+    year
+    musicbrainzId
+    albumType
+    genres
+    label
+    country
+    releaseDate
+    coverUrl
+    trackCount
+    discCount
+    totalDurationSecs
+    hasFiles
+    sizeBytes
+    path
   }
-  Tracks: tracks(
-    where: { AlbumId: { eq: $Id } }
+  tracks(
+    where: { albumId: { eq: $id } }
     page: { limit: 5000, offset: 0 }
-    orderBy: [{ DiscNumber: ASC }, { TrackNumber: ASC }]
+    orderBy: [{ discNumber: ASC }, { trackNumber: ASC }]
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        AlbumId
-        LibraryId
-        Title
-        TrackNumber
-        DiscNumber
-        MusicbrainzId
-        Isrc
-        DurationSecs
-        Explicit
-        ArtistName
-        ArtistId
-        MediaFileId
-        Wanted
+    edges {
+      node {
+        id
+        albumId
+        libraryId
+        title
+        trackNumber
+        discNumber
+        musicbrainzId
+        isrc
+        durationSecs
+        explicit
+        artistName
+        artistId
+        mediaFileId
+        wanted
       }
     }
   }
 }
 
-mutation DeleteAlbumRoute($Id: String!) {
-  DeleteAlbum: deleteAlbum(id: $Id) {
-    Success: success
-    Error: error
+mutation DeleteAlbumRoute($id: String!) {
+  deleteAlbum(id: $id) {
+    success
+    error
   }
 }
 
-mutation AlbumDetailSetTrackWanted($AlbumId: String!, $Wanted: Boolean!) {
-  UpdateTracks: updateTracks(
-    where: { AlbumId: { eq: $AlbumId } }
-    input: { Wanted: $Wanted }
+mutation AlbumDetailSetTrackWanted($albumId: String!, $wanted: Boolean!) {
+  updateTracks(
+    where: { albumId: { eq: $albumId } }
+    input: { wanted: $wanted }
   ) {
     success
     error
@@ -64,54 +64,54 @@ mutation AlbumDetailSetTrackWanted($AlbumId: String!, $Wanted: Boolean!) {
   }
 }
 
-query AudiobookDetailRoute($Id: String!) {
-  Audiobook: audiobook(id: $Id) {
-    Id
-    LibraryId
-    Title
-    SortTitle
-    Isbn
-    Description
-    Publisher
-    Language
-    Narrators
-    TotalDurationSecs
-    CoverUrl
-    HasFiles
-    SizeBytes
-    Path
-    Chapters: chapters(page: { limit: 5000, offset: 0 }) {
-      Edges: edges {
-        Node: node {
-          Id
-          AudiobookId
-          ChapterNumber
-          Title
-          StartTimeSecs
-          EndTimeSecs
-          DurationSecs
-          MediaFileId
-          Wanted
+query AudiobookDetailRoute($id: String!) {
+  audiobook(id: $id) {
+    id
+    libraryId
+    title
+    sortTitle
+    isbn
+    description
+    publisher
+    language
+    narrators
+    totalDurationSecs
+    coverUrl
+    hasFiles
+    sizeBytes
+    path
+    chapters(page: { limit: 5000, offset: 0 }) {
+      edges {
+        node {
+          id
+          audiobookId
+          chapterNumber
+          title
+          startTimeSecs
+          endTimeSecs
+          durationSecs
+          mediaFileId
+          wanted
         }
       }
     }
   }
 }
 
-mutation DeleteAudiobookRoute($Id: String!) {
-  DeleteAudiobook: deleteAudiobook(id: $Id) {
-    Success: success
-    Error: error
+mutation DeleteAudiobookRoute($id: String!) {
+  deleteAudiobook(id: $id) {
+    success
+    error
   }
 }
 
 mutation AudiobookDetailSetChapterWanted(
-  $AudiobookId: String!
-  $Wanted: Boolean!
+  $audiobookId: String!
+  $wanted: Boolean!
 ) {
-  UpdateChapters: updateChapters(
-    where: { AudiobookId: { eq: $AudiobookId } }
-    input: { Wanted: $Wanted }
+  updateChapters(
+    where: { audiobookId: { eq: $audiobookId } }
+    input: { wanted: $wanted }
   ) {
     success
     error

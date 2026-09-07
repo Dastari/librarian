@@ -1,0 +1,41 @@
+query AvailableSourceDefinitions {
+  availableSourceDefinitions {
+    id
+    name
+    description
+    sourceType
+    trackerType
+    language
+    siteLink
+    requiredCredentials
+  }
+}
+
+query SourceSettingDefinitions($definitionId: String!) {
+  sourceSettingDefinitions(definitionId: $definitionId) {
+    key
+    label
+    settingType
+    defaultValue
+    options {
+      value
+      label
+    }
+  }
+}
+
+mutation TestSource($id: String!) {
+  testSource(id: $id) {
+    success
+    error
+    releasesFound
+    elapsedMs
+  }
+}
+
+mutation UpdateSourcePriorities($input: UpdateSourcePrioritiesInput!) {
+  updateSourcePriorities(input: $input) {
+    success
+    error
+  }
+}

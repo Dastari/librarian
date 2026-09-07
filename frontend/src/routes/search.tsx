@@ -81,19 +81,19 @@ function LibrarySearchPage() {
 
   const shows = useMemo(
     () =>
-      (showsData?.Shows?.Edges ?? previousShowsData?.Shows?.Edges ?? []).map(
-        (e) => e.Node,
+      (showsData?.shows?.edges ?? previousShowsData?.shows?.edges ?? []).map(
+        (e) => e.node,
       ),
-    [showsData?.Shows?.Edges, previousShowsData?.Shows?.Edges],
+    [showsData?.shows?.edges, previousShowsData?.shows?.edges],
   );
   const movies = useMemo(
     () =>
       (
-        moviesData?.Movies?.Edges ??
-        previousMoviesData?.Movies?.Edges ??
+        moviesData?.movies?.edges ??
+        previousMoviesData?.movies?.edges ??
         []
-      ).map((e) => e.Node),
-    [moviesData?.Movies?.Edges, previousMoviesData?.Movies?.Edges],
+      ).map((e) => e.node),
+    [moviesData?.movies?.edges, previousMoviesData?.movies?.edges],
   );
   const isSearching = showsLoading || moviesLoading;
 
@@ -110,15 +110,15 @@ function LibrarySearchPage() {
     // Filter shows
     if (mediaType === "all" || mediaType === "shows") {
       for (const show of shows) {
-        if (!queryLower || show.Name.toLowerCase().includes(queryLower)) {
+        if (!queryLower || show.name.toLowerCase().includes(queryLower)) {
           results.push({
-            id: show.Id,
+            id: show.id,
             type: "show",
-            title: show.Name,
-            year: show.Year ?? undefined,
-            posterUrl: show.PosterUrl ?? undefined,
+            title: show.name,
+            year: show.year ?? undefined,
+            posterUrl: show.posterUrl ?? undefined,
             status: undefined,
-            libraryId: show.LibraryId,
+            libraryId: show.libraryId,
           });
         }
       }
@@ -127,19 +127,19 @@ function LibrarySearchPage() {
     // Filter movies
     if (mediaType === "all" || mediaType === "movies") {
       for (const movie of movies) {
-        if (!queryLower || movie.Title.toLowerCase().includes(queryLower)) {
+        if (!queryLower || movie.title.toLowerCase().includes(queryLower)) {
           results.push({
-            id: movie.Id,
+            id: movie.id,
             type: "movie",
-            title: movie.Title,
-            year: movie.Year ?? undefined,
+            title: movie.title,
+            year: movie.year ?? undefined,
             posterUrl: undefined,
-            status: movie.MediaFileId
+            status: movie.mediaFileId
               ? "downloaded"
-              : movie.Wanted
+              : movie.wanted
                 ? "wanted"
                 : undefined,
-            libraryId: movie.LibraryId,
+            libraryId: movie.libraryId,
           });
         }
       }
@@ -164,10 +164,10 @@ function LibrarySearchPage() {
   };
 
   const showsCount = shows.filter(
-    (s) => !query || s.Name.toLowerCase().includes(query.toLowerCase()),
+    (s) => !query || s.name.toLowerCase().includes(query.toLowerCase()),
   ).length;
   const moviesCount = movies.filter(
-    (m) => !query || m.Title.toLowerCase().includes(query.toLowerCase()),
+    (m) => !query || m.title.toLowerCase().includes(query.toLowerCase()),
   ).length;
 
   return (

@@ -1,67 +1,117 @@
-query BrowseDirectory($Input: BrowseDirectoryInput) {
-  BrowseDirectory(Input: $Input) {
-    CurrentPath
-    ParentPath
-    Entries {
-      Name
-      Path
-      IsDir
-      Size
-      SizeFormatted
-      Readable
-      Writable
-      MimeType
-      ModifiedAt
+query BrowseDirectory($input: BrowseDirectoryInput) {
+  browseDirectory(input: $input) {
+    currentPath
+    parentPath
+    entries {
+      name
+      path
+      isDir
+      size
+      sizeFormatted
+      readable
+      writable
+      mimeType
+      modifiedAt
     }
-    QuickPaths {
-      Name
-      Path
+    quickPaths {
+      name
+      path
     }
-    IsLibraryPath
-    LibraryId
+    isLibraryPath
+    libraryId
   }
 }
 
 query FilesystemRuntimeInfo {
-  FilesystemRuntimeInfo {
-    Platform
-    SupportsUncCredentials
-    SupportsSambaMount
-    DefaultLinuxMountBase
+  filesystemRuntimeInfo {
+    platform
+    supportsUncCredentials
+    supportsSambaMount
+    defaultLinuxMountBase
   }
 }
 
-query LibraryPathAvailability($Input: LibraryPathAvailabilityInput!) {
-  LibraryPathAvailability(Input: $Input) {
-    Path
-    Reachable
-    Exists
-    IsDirectory
-    NeedsReconnect
-    ReconnectAttempted
-    ReconnectSucceeded
-    Message
+query LibraryPathAvailability($input: LibraryPathAvailabilityInput!) {
+  libraryPathAvailability(input: $input) {
+    path
+    reachable
+    exists
+    isDirectory
+    needsReconnect
+    reconnectAttempted
+    reconnectSucceeded
+    message
   }
 }
 
-mutation ConfigureNetworkPath($Input: ConfigureNetworkPathInput!) {
-  ConfigureNetworkPath(Input: $Input) {
-    Success
-    Error
-    ResolvedPath
-    Connected
-    Stored
-    Message
+mutation ConfigureNetworkPath($input: ConfigureNetworkPathInput!) {
+  configureNetworkPath(input: $input) {
+    success
+    error
+    resolvedPath
+    connected
+    stored
+    message
   }
 }
 
-mutation ReconnectLibraryPath($Path: String!) {
-  ReconnectLibraryPath(Path: $Path) {
-    Success
-    Error
-    ResolvedPath
-    Connected
-    Stored
-    Message
+mutation ReconnectLibraryPath($path: String!) {
+  reconnectLibraryPath(path: $path) {
+    success
+    error
+    resolvedPath
+    connected
+    stored
+    message
+  }
+}
+
+mutation CreateDirectory($input: CreateDirectoryInput!) {
+  createDirectory(input: $input) {
+    success
+    error
+    affectedCount
+    messages
+    path
+  }
+}
+
+mutation DeleteFiles($input: DeleteFilesInput!) {
+  deleteFiles(input: $input) {
+    success
+    error
+    affectedCount
+    messages
+    path
+  }
+}
+
+mutation CopyFiles($input: CopyFilesInput!) {
+  copyFiles(input: $input) {
+    success
+    error
+    affectedCount
+    messages
+    path
+  }
+}
+
+mutation MoveFiles($input: MoveFilesInput!) {
+  moveFiles(input: $input) {
+    success
+    error
+    affectedCount
+    messages
+    path
+  }
+}
+
+mutation RenameFile($input: RenameFileInput!) {
+  renameFile(input: $input) {
+    success
+    error
+    affectedCount
+    messages
+    path
   }
 }

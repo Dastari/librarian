@@ -12,19 +12,19 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use super::super::auth::AuthUser;
 
-/// Event emitted when a filesystem mutation completes (PascalCase for GraphQL).
+/// Event emitted when a filesystem mutation completes.
 #[derive(Clone, async_graphql::SimpleObject)]
 #[graphql(name = "FilesystemChangeEvent")]
 pub struct FilesystemChangeEvent {
-    #[graphql(name = "Path")]
+    #[graphql(name = "path")]
     pub path: String,
-    #[graphql(name = "ChangeType")]
+    #[graphql(name = "changeType")]
     pub change_type: String,
-    #[graphql(name = "Name")]
+    #[graphql(name = "name")]
     pub name: Option<String>,
-    #[graphql(name = "NewName")]
+    #[graphql(name = "newName")]
     pub new_name: Option<String>,
-    #[graphql(name = "Timestamp")]
+    #[graphql(name = "timestamp")]
     pub timestamp: String,
 }
 
@@ -56,31 +56,31 @@ pub struct FilesystemSubscriptions;
 impl FilesystemSubscriptions {
     /// Subscribe to filesystem change events (create/delete/copy/move/rename).
     /// Fires when any filesystem mutation completes. Optional path filter.
-    #[graphql(name = "FilesystemChanged")]
+    #[graphql(name = "filesystemChanged")]
     async fn filesystem_changed(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Path", desc = "Filter to changes under this path (optional)")]
+        #[graphql(name = "path", desc = "Filter to changes under this path (optional)")]
         path_filter: Option<String>,
     ) -> Pin<Box<dyn Stream<Item = FilesystemChangeEvent> + Send>> {
         let filter = path_filter;
 
-        if ctx.data_opt::<AuthUser>().is_some() {
-            if let Ok(broker) = ctx.data::<Arc<FilesystemChangeBroker>>() {
-                let rx = broker.subscribe();
-                let stream =
-                    BroadcastStream::new(rx)
-                        .filter_map(|r| r.ok())
-                        .filter_map(move |event| {
-                            let pass = match filter.as_ref() {
-                                Some(p) => event.path.starts_with(p),
-                                None => true,
-                            };
-                            if pass { Some(event) } else { None }
-                        });
-                return Box::pin(Box::new(stream)
-                    as Box<dyn Stream<Item = FilesystemChangeEvent> + Send + Unpin>);
-            }
+        if ctx.data_opt::<AuthUser>().is_some()
+            && let Ok(broker) = ctx.data::<Arc<FilesystemChangeBroker>>()
+        {
+            let rx = broker.subscribe();
+            let stream = BroadcastStream::new(rx)
+                .filter_map(|r| r.ok())
+                .filter_map(move |event| {
+                    let pass = match filter.as_ref() {
+                        Some(p) => event.path.starts_with(p),
+                        None => true,
+                    };
+                    if pass { Some(event) } else { None }
+                });
+            return Box::pin(
+                Box::new(stream) as Box<dyn Stream<Item = FilesystemChangeEvent> + Send + Unpin>
+            );
         }
 
         Box::pin(Box::new(futures::stream::empty::<FilesystemChangeEvent>())

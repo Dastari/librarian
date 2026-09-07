@@ -8,7 +8,10 @@ import {
 } from "@heroui/dropdown";
 import { Button } from "@heroui/button";
 import { Image } from "@heroui/image";
-import type { Movie } from "../../lib/graphql/generated/graphql";
+import type {
+  ContentStatus,
+  Movie,
+} from "../../lib/graphql/generated/graphql";
 import {
   IconEye,
   IconTrash,
@@ -29,6 +32,7 @@ export interface MovieCardProps {
   onPlay?: (movie: Movie) => void;
   isCurrentMovie?: boolean;
   isPlaying?: boolean;
+  status?: ContentStatus;
 }
 
 // ============================================================================
@@ -41,34 +45,35 @@ export function MovieCard({
   onPlay,
   isCurrentMovie = false,
   isPlaying = false,
+  status,
 }: MovieCardProps) {
   const navigate = useNavigate();
+  const displayStatus =
+    status ??
+    (movie.mediaFileId ? "AVAILABLE" : movie.wanted ? "WANTED" : "MISSING");
 
   return (
-    <div className="aspect-[2/3]">
-      <Card className="relative overflow-hidden h-full w-full group border-none bg-content2">
+    <div className="aspect-[2/3] w-full">
+      <Card className="relative isolate overflow-hidden h-full w-full group border-none bg-content2">
         {/* Clickable overlay for navigation - covers the entire card */}
         <Link
           to="/movies/$movieId"
-          params={{ movieId: movie.Id }}
+          params={{ movieId: movie.id }}
           className="absolute inset-0 z-20 w-full h-full cursor-pointer bg-transparent border-none outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-          aria-label={`View ${movie.Title}`}
+          aria-label={`View ${movie.title}`}
         />
 
         {/* Background artwork with gradient overlay */}
         <div className="absolute inset-0 w-full h-full">
-          {movie.CollectionPosterUrl ? (
+          {movie.collectionPosterUrl ? (
             <>
               <Image
-                src={movie.CollectionPosterUrl}
-                alt={movie.Title}
-                loading="lazy"
-                classNames={{
-                  wrapper: "absolute inset-0 w-full h-full !max-w-full",
-                  img: "w-full h-full object-cover",
-                }}
+                src={movie.collectionPosterUrl}
+                alt={movie.title}
+                loading="eager"
+                className="absolute inset-0 h-full w-full object-cover"
                 radius="none"
-                removeWrapper={false}
+                removeWrapper
               />
               {/* Dark gradient overlay for text readability */}
               <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-black/40" />
@@ -84,36 +89,36 @@ export function MovieCard({
         </div>
 
         {/* Status badge - top left (only for wanted/missing) */}
-        {!movie.MediaFileId && (
+        {!["AVAILABLE", "PLAYING"].includes(displayStatus) && (
           <div className="absolute top-2 left-2 z-10 pointer-events-none">
             <div className="px-2 py-1 rounded-md backdrop-blur-sm text-xs font-medium bg-black/45 text-white/90">
-              {movie.Wanted ? "Wanted" : "Missing"}
+              {displayStatus.charAt(0) + displayStatus.slice(1).toLowerCase()}
             </div>
           </div>
         )}
 
         {/* Rating badge - top right */}
-        {movie.TmdbRating && Number(movie.TmdbRating) > 0 && (
+        {movie.tmdbRating && Number(movie.tmdbRating) > 0 && (
           <div className="absolute top-2 right-2 z-10 pointer-events-none">
             <div
               className={`px-2 py-1 rounded-md backdrop-blur-sm text-xs font-semibold ${
-                Number(movie.TmdbRating) >= 7
+                Number(movie.tmdbRating) >= 7
                   ? "bg-success/80 text-success-foreground"
-                  : Number(movie.TmdbRating) >= 5
+                  : Number(movie.tmdbRating) >= 5
                     ? "bg-warning/80 text-warning-foreground"
                     : "bg-danger/80 text-danger-foreground"
               }`}
             >
               <span className="inline-flex items-center gap-1">
                 <IconStar size={10} />
-                {Number(movie.TmdbRating).toFixed(1)}
+                {Number(movie.tmdbRating).toFixed(1)}
               </span>
             </div>
           </div>
         )}
 
         {/* Play/Pause overlay button */}
-        {movie.MediaFileId && onPlay && (
+        {movie.mediaFileId && onPlay && (
           <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 rounded-lg pointer-events-none">
             <button
               type="button"
@@ -137,23 +142,23 @@ export function MovieCard({
         )}
 
         {/* Bottom content */}
-        <div className="absolute bottom-0 left-0 right-0 z-10 p-3 pointer-events-none bg-black/50 backdrop-blur-sm h-20 flex flex-col">
+        <div className="absolute bottom-0 left-0 right-0 z-10 h-20 overflow-hidden rounded-b-[inherit] bg-black/50 p-3 pointer-events-none backdrop-blur-sm flex flex-col">
           <h3 className="text-sm font-bold text-white mb-0.5 line-clamp-2 drop-shadow-lg grow">
-            {movie.Title}
-            {movie.Year != null && (
-              <span className="font-normal opacity-70"> ({movie.Year})</span>
+            {movie.title}
+            {movie.year != null && (
+              <span className="font-normal opacity-70"> ({movie.year})</span>
             )}
           </h3>
           <div className="flex items-center gap-1.5 text-xs text-white/70">
-            {movie.Runtime != null && (
+            {movie.runtime != null && (
               <span className="text-nowrap">
-                {Math.floor(movie.Runtime / 60)}h {movie.Runtime % 60}m
+                {Math.floor(movie.runtime / 60)}h {movie.runtime % 60}m
               </span>
             )}
-            {movie.Genres.length > 0 && (
+            {movie.genres.length > 0 && (
               <>
                 <span>•</span>
-                <span className="truncate">{movie.Genres[0]}</span>
+                <span className="truncate">{movie.genres[0]}</span>
               </>
             )}
           </div>
@@ -179,16 +184,16 @@ export function MovieCard({
                 if (key === "view") {
                   navigate({
                     to: "/movies/$movieId",
-                    params: { movieId: movie.Id },
+                    params: { movieId: movie.id },
                   });
-                } else if (key === "play" && movie.MediaFileId && onPlay) {
+                } else if (key === "play" && movie.mediaFileId && onPlay) {
                   onPlay(movie);
                 } else if (key === "delete") {
                   onDelete();
                 }
               }}
             >
-              {movie.MediaFileId && onPlay ? (
+              {movie.mediaFileId && onPlay ? (
                 <DropdownItem
                   key="play"
                   startContent={<IconPlayerPlay size={16} />}

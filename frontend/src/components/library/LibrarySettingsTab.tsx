@@ -10,21 +10,31 @@ import type {
   Library as LibraryEntity,
 } from "../../lib/graphql/generated/graphql";
 
+// `qualityProfileId` is not yet in the generated `Library`/`UpdateLibraryInput`
+// types: codegen introspects the *running* backend, and this environment's
+// server process could not be restarted to pick up the new `QualityProfile`
+// schema (see docs/tier1-features-plan.md §2 "Implemented" note). Extend the
+// generated types by hand for now; remove this once codegen is re-run against
+// the updated schema.
 type LibrarySettingsData = Pick<
   LibraryEntity,
-  | "Name"
-  | "Path"
-  | "LibraryType"
-  | "AutoScan"
-  | "ScanIntervalMinutes"
-  | "WatchForChanges"
-  | "AutoOrganize"
-  | "NamingPattern"
->;
+  | "name"
+  | "path"
+  | "libraryType"
+  | "autoScan"
+  | "scanIntervalMinutes"
+  | "watchForChanges"
+  | "autoOrganize"
+  | "namingPattern"
+> & { qualityProfileId?: string | null };
+
+type UpdateLibraryInputWithQualityProfile = UpdateLibraryInput & {
+  qualityProfileId?: string | null;
+};
 
 interface LibrarySettingsTabProps {
   library: LibrarySettingsData;
-  onSave: (input: UpdateLibraryInput) => Promise<void>;
+  onSave: (input: UpdateLibraryInputWithQualityProfile) => Promise<void>;
   isLoading: boolean;
 }
 
@@ -36,14 +46,15 @@ export function LibrarySettingsTab({
   // Convert Library entity to form values
   const libraryToFormValues = useCallback(
     (lib: LibrarySettingsData): LibrarySettingsFormValues => ({
-      Name: lib.Name,
-      Path: lib.Path,
-      LibraryType: lib.LibraryType as LibrarySettingsFormValues["LibraryType"],
-      AutoScan: lib.AutoScan,
-      ScanIntervalMinutes: lib.ScanIntervalMinutes,
-      WatchForChanges: lib.WatchForChanges,
-      AutoOrganize: lib.AutoOrganize,
-      NamingPattern: lib.NamingPattern || null,
+      name: lib.name,
+      path: lib.path,
+      libraryType: lib.libraryType as LibrarySettingsFormValues["libraryType"],
+      autoScan: lib.autoScan,
+      scanIntervalMinutes: lib.scanIntervalMinutes,
+      watchForChanges: lib.watchForChanges,
+      autoOrganize: lib.autoOrganize,
+      namingPattern: lib.namingPattern || null,
+      qualityProfileId: lib.qualityProfileId ?? null,
       NetworkAuthEnabled: false,
       NetworkUsername: "",
       NetworkPassword: "",
@@ -73,13 +84,14 @@ export function LibrarySettingsTab({
 
   useEffect(() => {
     const changed =
-      formValues.Name !== originalValues.Name ||
-      formValues.Path !== originalValues.Path ||
-      formValues.AutoScan !== originalValues.AutoScan ||
-      formValues.ScanIntervalMinutes !== originalValues.ScanIntervalMinutes ||
-      formValues.WatchForChanges !== originalValues.WatchForChanges ||
-      formValues.AutoOrganize !== originalValues.AutoOrganize ||
-      formValues.NamingPattern !== originalValues.NamingPattern;
+      formValues.name !== originalValues.name ||
+      formValues.path !== originalValues.path ||
+      formValues.autoScan !== originalValues.autoScan ||
+      formValues.scanIntervalMinutes !== originalValues.scanIntervalMinutes ||
+      formValues.watchForChanges !== originalValues.watchForChanges ||
+      formValues.autoOrganize !== originalValues.autoOrganize ||
+      formValues.namingPattern !== originalValues.namingPattern ||
+      formValues.qualityProfileId !== originalValues.qualityProfileId;
 
     setHasChanges(changed);
   }, [formValues, originalValues]);
@@ -103,14 +115,15 @@ export function LibrarySettingsTab({
     }
 
     await onSave({
-      Name: formValues.Name,
-      Path: formValues.Path,
-      LibraryType: formValues.LibraryType,
-      AutoScan: formValues.AutoScan,
-      ScanIntervalMinutes: formValues.ScanIntervalMinutes,
-      WatchForChanges: formValues.WatchForChanges,
-      AutoOrganize: formValues.AutoOrganize,
-      NamingPattern: formValues.NamingPattern,
+      name: formValues.name,
+      path: formValues.path,
+      libraryType: formValues.libraryType,
+      autoScan: formValues.autoScan,
+      scanIntervalMinutes: formValues.scanIntervalMinutes,
+      watchForChanges: formValues.watchForChanges,
+      autoOrganize: formValues.autoOrganize,
+      namingPattern: formValues.namingPattern,
+      qualityProfileId: formValues.qualityProfileId,
     });
   };
 

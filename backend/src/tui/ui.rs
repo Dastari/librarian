@@ -144,6 +144,7 @@ pub struct PanelAreas {
 }
 
 /// Render all panels
+#[allow(clippy::too_many_arguments)]
 pub fn render_panels(
     frame: &mut Frame,
     layout: &UiLayout,

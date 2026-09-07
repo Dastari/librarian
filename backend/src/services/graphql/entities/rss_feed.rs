@@ -10,62 +10,64 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(table = "rss_feeds", plural = "RssFeeds", default_sort = "name")]
 pub struct RssFeed {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "UserId")]
+    #[graphql(name = "userId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owner.id")]
     pub user_id: String,
 
-    #[graphql(name = "LibraryId")]
+    #[graphql(name = "libraryId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub library_id: Option<String>,
 
-    #[graphql(name = "Name")]
+    #[graphql(name = "name")]
     #[filterable(type = "string")]
     #[sortable]
     pub name: String,
 
-    #[graphql(name = "Url")]
+    #[graphql(name = "url")]
     #[filterable(type = "string")]
     pub url: String,
 
-    #[graphql(name = "Enabled")]
+    #[graphql(name = "enabled")]
     #[filterable(type = "boolean")]
     pub enabled: bool,
 
-    #[graphql(name = "PollIntervalMinutes")]
+    #[graphql(name = "pollIntervalMinutes")]
     #[filterable(type = "number")]
     pub poll_interval_minutes: i32,
 
-    #[graphql(name = "PostDownloadAction")]
+    #[graphql(name = "postDownloadAction")]
     #[filterable(type = "string")]
     pub post_download_action: Option<String>,
 
-    #[graphql(name = "LastPolledAt")]
+    #[graphql(name = "lastPolledAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub last_polled_at: Option<String>,
 
-    #[graphql(name = "LastSuccessfulAt")]
+    #[graphql(name = "lastSuccessfulAt")]
     #[filterable(type = "date")]
     pub last_successful_at: Option<String>,
 
-    #[graphql(name = "LastError")]
+    #[graphql(name = "lastError")]
     pub last_error: Option<String>,
 
-    #[graphql(name = "ConsecutiveFailures")]
+    #[graphql(name = "consecutiveFailures")]
     #[filterable(type = "number")]
     pub consecutive_failures: Option<i32>,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,

@@ -1,72 +1,87 @@
 query DashboardShows(
-  $Where: ShowWhereInput
-  $Page: PageInput
-  $OrderBy: [ShowOrderByInput!]
+  $where: ShowWhereInput
+  $page: PageInput
+  $orderBy: [ShowOrderByInput!]
 ) {
-  Shows: shows(where: $Where, page: $Page, orderBy: $OrderBy) {
-    Edges: edges {
-      Node: node {
-        Id
-        LibraryId
-        Name
-        SortName
-        Year
-        TvmazeId
-        TmdbId
-        TvdbId
-        ImdbId
-        Overview
-        Network
-        Runtime
-        PosterUrl
-        BackdropUrl
-        Path
-        Genres
-        CreatedAt
+  shows(where: $where, page: $page, orderBy: $orderBy) {
+    edges {
+      node {
+        id
+        libraryId
+        name
+        sortName
+        year
+        tvmazeId
+        tmdbId
+        tvdbId
+        imdbId
+        overview
+        network
+        runtime
+        posterUrl
+        backdropUrl
+        path
+        genres
+        createdAt
       }
-      Cursor: cursor
+      cursor
     }
-    PageInfo: pageInfo {
-      TotalCount: totalCount
+    pageInfo {
+      totalCount
     }
   }
 }
 
 query DashboardScheduleCaches(
-  $Where: ScheduleCacheWhereInput
-  $OrderBy: [ScheduleCacheOrderByInput!]
-  $Page: PageInput
+  $where: ScheduleCacheWhereInput
+  $orderBy: [ScheduleCacheOrderByInput!]
+  $page: PageInput
 ) {
-  ScheduleCaches: scheduleCaches(
-    where: $Where
-    orderBy: $OrderBy
-    page: $Page
+  scheduleCaches(
+    where: $where
+    orderBy: $orderBy
+    page: $page
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        TvmazeEpisodeId
-        EpisodeName
-        Season
-        EpisodeNumber
-        EpisodeType
-        AirDate
-        AirTime
-        AirStamp
-        Runtime
-        EpisodeImageUrl
-        Summary
-        TvmazeShowId
-        ShowName
-        ShowNetwork
-        ShowPosterUrl
-        ShowGenres
-        CountryCode
+    edges {
+      node {
+        id
+        tvmazeEpisodeId
+        episodeName
+        season
+        episodeNumber
+        episodeType
+        airDate
+        airTime
+        airStamp
+        runtime
+        episodeImageUrl
+        summary
+        tvmazeShowId
+        showName
+        showNetwork
+        showPosterUrl
+        showGenres
+        countryCode
       }
-      Cursor: cursor
+      cursor
     }
-    PageInfo: pageInfo {
-      TotalCount: totalCount
+    pageInfo {
+      totalCount
     }
+  }
+}
+
+query DashboardRecentMedia {
+  shows(orderBy: [{createdAt: DESC}], page: {limit: 6}) {
+    edges { node { id name posterUrl createdAt } }
+  }
+  movies(orderBy: [{createdAt: DESC}], page: {limit: 6}) {
+    edges { node { id title collectionPosterUrl createdAt } }
+  }
+  albums(orderBy: [{createdAt: DESC}], page: {limit: 6}) {
+    edges { node { id name coverUrl createdAt } }
+  }
+  audiobooks(orderBy: [{createdAt: DESC}], page: {limit: 6}) {
+    edges { node { id title coverUrl createdAt } }
   }
 }

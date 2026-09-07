@@ -38,23 +38,23 @@ function GeneralSettingsPage() {
   const [isRefreshingHealth, setIsRefreshingHealth] = useState(false)
 
   const { data, previousData, loading } = useQuery(PlaybackSyncIntervalDocument, {
-    variables: { Key: PLAYBACK_SYNC_KEY },
+    variables: { key: PLAYBACK_SYNC_KEY },
     fetchPolicy: 'cache-and-network',
   })
 
   const [updateAppSetting, { loading: saving }] = useMutation(UpdateAppSettingDocument)
 
-  const node = data?.AppSettings?.Edges?.[0]?.Node ?? previousData?.AppSettings?.Edges?.[0]?.Node
-  const settingId = node?.Id ?? null
+  const node = data?.appSettings?.edges?.[0]?.node ?? previousData?.appSettings?.edges?.[0]?.node
+  const settingId = node?.id ?? null
 
   useEffect(() => {
     if (!node) return
-    const val = Number(node.Value)
+    const val = Number(node.value)
     if (Number.isFinite(val)) {
       setSyncInterval(val)
       setSavedSyncInterval(val)
     }
-  }, [node?.Id, node?.Value])
+  }, [node?.id, node?.value])
 
   const loadHealth = async (isRefresh = false) => {
     try {
@@ -87,13 +87,13 @@ function GeneralSettingsPage() {
     try {
       const result = await updateAppSetting({
         variables: {
-          Id: settingId,
-          Input: { Value: String(syncInterval) },
+          id: settingId,
+          input: { value: String(syncInterval) },
         },
       })
 
-      const payload = result.data?.UpdateAppSetting
-      if (payload?.Success) {
+      const payload = result.data?.updateAppSetting
+      if (payload?.success) {
         setSavedSyncInterval(syncInterval)
         addToast({
           title: 'Settings Saved',
@@ -103,7 +103,7 @@ function GeneralSettingsPage() {
       } else {
         addToast({
           title: 'Error',
-          description: payload?.Error ?? 'Failed to save playback settings',
+          description: payload?.error ?? 'Failed to save playback settings',
           color: 'danger',
         })
       }

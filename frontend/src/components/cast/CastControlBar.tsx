@@ -30,12 +30,24 @@ function formatTime(seconds: number): string {
 }
 
 export function CastControlBar() {
-  const { activeSession, play, pause, stop, seek, setVolume, setMuted } = useCast();
+  const {
+    activeSession,
+    castMedia,
+    play,
+    pause,
+    stop,
+    seek,
+    setVolume,
+    setMuted,
+  } = useCast();
 
   if (!activeSession) return null;
 
   const isPlaying = activeSession.playerState === 'PLAYING';
   const isBuffering = activeSession.playerState === 'BUFFERING';
+  const isFailed = ['FAILED', 'DISCONNECTED'].includes(
+    activeSession.playerState,
+  );
   const progress = activeSession.duration 
     ? (activeSession.currentTime / activeSession.duration) * 100 
     : 0;
@@ -55,13 +67,63 @@ export function CastControlBar() {
   return (
     <Card className="fixed bottom-4 left-1/2 -translate-x-1/2 w-[90%] max-w-2xl z-50 shadow-lg">
       <CardBody className="p-3">
+        {isFailed && (
+          <div className="mb-2 flex items-center justify-between gap-3 rounded-medium bg-danger-50/10 p-2 text-sm text-danger">
+            <span>
+              {activeSession.lastError ??
+                "The receiver connection failed. The stream grant was revoked."}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                color="danger"
+                variant="flat"
+                isDisabled={
+                  !activeSession.deviceId || !activeSession.mediaFileId
+                }
+                onPress={() => {
+                  if (
+                    activeSession.deviceId &&
+                    activeSession.mediaFileId
+                  ) {
+                    void castMedia({
+                      deviceId: activeSession.deviceId,
+                      mediaFileId: activeSession.mediaFileId,
+                      episodeId: activeSession.episodeId,
+                      startPosition: activeSession.currentTime,
+                    });
+                  }
+                }}
+              >
+                Retry
+              </Button>
+              <Button size="sm" variant="light" onPress={stop}>
+                Dismiss
+              </Button>
+            </div>
+          </div>
+        )}
         <div className="flex items-center gap-4">
           {/* Cast indicator */}
           <div className="flex items-center gap-2 text-primary">
             <IconCast size={20} />
-            <span className="text-sm font-medium truncate max-w-32">
-              {activeSession.deviceName || 'Casting'}
-            </span>
+            <div className="min-w-0">
+              <span className="block truncate text-sm font-medium max-w-32">
+                {activeSession.deviceName || 'Casting'}
+              </span>
+              {activeSession.playbackDecision && (
+                <Tooltip
+                  content={
+                    activeSession.playbackReason ??
+                    "Playback mode selected from the receiver and media capabilities"
+                  }
+                >
+                  <span className="block cursor-help text-[10px] uppercase tracking-wide text-default-400">
+                    {activeSession.playbackDecision}
+                  </span>
+                </Tooltip>
+              )}
+            </div>
           </div>
 
           {/* Playback controls */}
@@ -72,7 +134,7 @@ export function CastControlBar() {
                 size="sm"
                 variant="light"
                 onPress={() => isPlaying ? pause() : play()}
-                isDisabled={isBuffering}
+                isDisabled={isBuffering || isFailed}
               >
                 {isPlaying ? <IconPlayerPause size={20} /> : <IconPlayerPlay size={20} />}
               </Button>
@@ -136,6 +198,7 @@ export function CastControlBar() {
               value={activeSession.isMuted ? 0 : activeSession.volume * 100}
               onChange={handleVolumeChange}
               className="flex-1"
+              isDisabled={isFailed}
             />
           </div>
 

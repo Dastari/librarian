@@ -2,8 +2,9 @@ import { createFileRoute, Outlet, redirect } from '@tanstack/react-router'
 import { Link, useLocation } from '@tanstack/react-router'
 import { Card, CardBody } from '@heroui/card'
 import { RouteError } from '../components/RouteError'
+import { isAdmin } from '../lib/auth'
 import type { TablerIcon } from '@tabler/icons-react'
-import { IconSettings, IconDownload, IconMovie, IconClipboard, IconCast, IconFolderCog, IconCloud, IconRadar } from '@tabler/icons-react'
+import { IconArchive, IconSettings, IconDownload, IconMovie, IconClipboard, IconCast, IconFolderCog, IconRadar, IconAdjustmentsHorizontal } from '@tabler/icons-react'
 
 // This is the parent route for /settings/* that provides the shared layout
 export const Route = createFileRoute('/settings')({
@@ -17,6 +18,10 @@ export const Route = createFileRoute('/settings')({
         },
       })
     }
+
+    if (!isAdmin(context.auth.user)) {
+      throw redirect({ to: '/libraries' })
+    }
   },
   component: SettingsLayoutRoute,
   errorComponent: RouteError,
@@ -26,7 +31,7 @@ interface SettingsTab {
   key: string
   path: string
   label: string
-  Icon: TablerIcon
+  icon: TablerIcon
   iconColor: string
   description: string
 }
@@ -36,7 +41,7 @@ const settingsTabs: SettingsTab[] = [
     key: 'general',
     path: '/settings',
     label: 'General',
-    Icon: IconSettings,
+    icon: IconSettings,
     iconColor: 'text-default-400',
     description: 'App preferences',
   },
@@ -44,23 +49,15 @@ const settingsTabs: SettingsTab[] = [
     key: 'torrent',
     path: '/settings/torrent',
     label: 'Torrent Client',
-    Icon: IconDownload,
+    icon: IconDownload,
     iconColor: 'text-blue-400',
     description: 'Download settings',
-  },
-  {
-    key: 'usenet',
-    path: '/settings/usenet',
-    label: 'Usenet Servers',
-    Icon: IconCloud,
-    iconColor: 'text-cyan-400',
-    description: 'News server providers',
   },
   {
     key: 'sources',
     path: '/settings/sources',
     label: 'Sources',
-    Icon: IconRadar,
+    icon: IconRadar,
     iconColor: 'text-green-400',
     description: 'Torrent indexers, RSS feeds & source ordering',
   },
@@ -68,7 +65,7 @@ const settingsTabs: SettingsTab[] = [
     key: 'metadata',
     path: '/settings/metadata',
     label: 'Metadata',
-    Icon: IconMovie,
+    icon: IconMovie,
     iconColor: 'text-purple-400',
     description: 'Media identification',
   },
@@ -76,23 +73,32 @@ const settingsTabs: SettingsTab[] = [
     key: 'organization',
     path: '/settings/organization',
     label: 'File Organization',
-    Icon: IconFolderCog,
+    icon: IconFolderCog,
     iconColor: 'text-amber-400',
     description: 'Naming patterns',
+  },
+  {
+    key: 'quality-profiles',
+    path: '/settings/quality-profiles',
+    label: 'Quality Profiles',
+    icon: IconAdjustmentsHorizontal,
+    iconColor: 'text-pink-400',
+    description: 'Resolution, codec & HDR rules',
   },
   {
     key: 'casting',
     path: '/settings/casting',
     label: 'Casting',
-    Icon: IconCast,
+    icon: IconCast,
     iconColor: 'text-teal-400',
     description: 'Chromecast devices',
   },
+  { key: 'backup', path: '/settings/backup', label: 'Backup', icon: IconArchive, iconColor: 'text-blue-400', description: 'Snapshots & verification' },
   {
     key: 'logs',
     path: '/settings/logs',
     label: 'System Logs',
-    Icon: IconClipboard,
+    icon: IconClipboard,
     iconColor: 'text-default-400',
     description: 'Activity & errors',
   },
@@ -117,24 +123,24 @@ function SettingsLayoutRoute() {
         <div className="lg:w-64 shrink-0">
           <Card className="sticky top-4">
             <CardBody className="p-2">
-              <nav className="flex flex-col gap-1">
+              <nav aria-label="Settings sections" className="flex flex-row lg:flex-col gap-1 overflow-x-auto">
                 {settingsTabs.map((tab) => (
                   <Link
                     key={tab.key}
                     to={tab.path}
                     className={`
-                      flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200
+                      flex shrink-0 items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200
                       ${isActive(tab.path)
                         ? 'bg-primary text-primary-foreground shadow-md'
                         : 'hover:bg-content2 text-default-600 hover:text-foreground'
                       }
                     `}
                   >
-                    <tab.Icon size={20} className={isActive(tab.path) ? '' : tab.iconColor} />
+                    <tab.icon size={20} className={isActive(tab.path) ? '' : tab.iconColor} />
                     <div className="flex flex-col">
-                      <span className="font-medium text-sm">{tab.label}</span>
+                      <span className="font-medium text-sm whitespace-nowrap">{tab.label}</span>
                       <span
-                        className={`text-xs ${isActive(tab.path)
+                        className={`hidden lg:block text-xs ${isActive(tab.path)
                           ? 'text-primary-foreground/70'
                           : 'text-default-400'
                           }`}

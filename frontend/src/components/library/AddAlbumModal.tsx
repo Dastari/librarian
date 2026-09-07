@@ -40,7 +40,7 @@ interface AddAlbumModalProps {
 // ============================================================================
 
 interface SearchResultCardProps {
-  result: SearchAlbumsQuery['SearchAlbums'][number]
+  result: SearchAlbumsQuery['searchAlbums'][number]
   onAdd: () => void
   isAdding: boolean
 }
@@ -49,10 +49,10 @@ function SearchResultCard({ result, onAdd, isAdding }: SearchResultCardProps) {
   return (
     <Card className="bg-content2">
       <CardBody className="flex flex-row gap-4 p-3">
-        {result.CoverUrl ? (
+        {result.coverUrl ? (
           <Image
-            src={result.CoverUrl}
-            alt={result.Title}
+            src={result.coverUrl}
+            alt={result.title}
             className="w-16 h-16 object-cover flex-shrink-0"
             radius="md"
           />
@@ -62,25 +62,25 @@ function SearchResultCard({ result, onAdd, isAdding }: SearchResultCardProps) {
           </div>
         )}
         <div className="flex-1 min-w-0">
-          <p className="font-semibold line-clamp-1">{result.Title}</p>
-          {result.ArtistName && (
+          <p className="font-semibold line-clamp-1">{result.title}</p>
+          {result.artistName && (
             <p className="text-sm text-default-500 flex items-center gap-1 line-clamp-1">
               <IconUser size={14} />
-              {result.ArtistName}
+              {result.artistName}
             </p>
           )}
           <div className="flex items-center gap-2 mt-1">
-            {result.Year && (
+            {result.year && (
               <Chip size="sm" variant="flat">
                 <span className="flex items-center gap-1">
                   <IconCalendar size={12} />
-                  {result.Year}
+                  {result.year}
                 </span>
               </Chip>
             )}
-            {result.AlbumType && (
+            {result.albumType && (
               <Chip size="sm" variant="flat" color="secondary">
-                {result.AlbumType}
+                {result.albumType}
               </Chip>
             )}
           </div>
@@ -119,10 +119,9 @@ export function AddAlbumModal({
   onAlbumAdded,
 }: AddAlbumModalProps) {
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<SearchAlbumsQuery['SearchAlbums']>([])
+  const [searchResults, setSearchResults] = useState<SearchAlbumsQuery['searchAlbums']>([])
   const [addingId, setAddingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [_showFilters, _setShowFilters] = useState(false) // TODO: implement filter UI
   const [filters, setFilters] = useState<AlbumTypeFilters>({
     includeEps: false,
     includeSingles: false,
@@ -142,19 +141,19 @@ export function AddAlbumModal({
     try {
       const { data, error: queryError } = await searchAlbums({
         variables: {
-          Query: searchQuery,
-          IncludeEps: filters.includeEps,
-          IncludeSingles: filters.includeSingles,
-          IncludeCompilations: filters.includeCompilations,
-          IncludeLive: filters.includeLive,
-          IncludeSoundtracks: filters.includeSoundtracks,
+          query: searchQuery,
+          includeEps: filters.includeEps,
+          includeSingles: filters.includeSingles,
+          includeCompilations: filters.includeCompilations,
+          includeLive: filters.includeLive,
+          includeSoundtracks: filters.includeSoundtracks,
         },
       })
 
       if (queryError) {
         setError(queryError.message)
-      } else if (data?.SearchAlbums) {
-        setSearchResults(data.SearchAlbums)
+      } else if (data?.searchAlbums) {
+        setSearchResults(data.searchAlbums)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed')
@@ -162,30 +161,30 @@ export function AddAlbumModal({
   }, [searchQuery, filters])
 
   const handleAddAlbum = useCallback(
-    async (result: SearchAlbumsQuery['SearchAlbums'][number]) => {
-      setAddingId(result.ProviderId)
+    async (result: SearchAlbumsQuery['searchAlbums'][number]) => {
+      setAddingId(result.providerId)
       setError(null)
 
       try {
         const { data, error } = await addAlbum({
           variables: {
-            Input: {
-              MusicbrainzId: result.ProviderId,
-              LibraryId: libraryId,
+            input: {
+              musicbrainzId: result.providerId,
+              libraryId: libraryId,
             },
           },
         })
 
         if (error) {
           setError(error.message)
-        } else if (data?.AddAlbum.Success) {
+        } else if (data?.addAlbum.success) {
           // Remove from search results
           setSearchResults((prev) =>
-            prev.filter((r) => r.ProviderId !== result.ProviderId)
+            prev.filter((r) => r.providerId !== result.providerId)
           )
           onAlbumAdded?.()
-        } else if (data?.AddAlbum.Error) {
-          setError(data.AddAlbum.Error)
+        } else if (data?.addAlbum.error) {
+          setError(data.addAlbum.error)
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to add album')
@@ -316,10 +315,10 @@ export function AddAlbumModal({
               </p>
               {searchResults.map((result) => (
                 <SearchResultCard
-                  key={result.ProviderId}
+                  key={result.providerId}
                   result={result}
                   onAdd={() => handleAddAlbum(result)}
-                  isAdding={addingId === result.ProviderId}
+                  isAdding={addingId === result.providerId}
                 />
               ))}
             </div>

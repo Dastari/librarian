@@ -34,11 +34,11 @@ export function ErrorLogToaster() {
       AppLogChangedSubscriptionVariables
     >(AppLogChangedDocument, {}).subscribe({
         next: (result: any) => {
-          const log = result.data?.AppLogChanged?.AppLog
-          if (log && log.Level === 'ERROR') {
+          const log = result.data?.appLogChanged?.appLog
+          if (log && log.level === 'ERROR') {
 
             // Create a key for deduplication
-            const key = `${log.Target}:${log.Message.substring(0, 50)}`
+            const key = `${log.target}:${log.message.substring(0, 50)}`
 
             // Check if we've shown this error recently
             const lastShown = recentErrors.current.get(key)
@@ -60,14 +60,14 @@ export function ErrorLogToaster() {
             }
 
             // Extract the module name from target for a cleaner title
-            const targetParts = log.Target.split('::')
-            const moduleName = targetParts.length > 1 ? targetParts[targetParts.length - 1] : log.Target
+            const targetParts = log.target.split('::')
+            const moduleName = targetParts.length > 1 ? targetParts[targetParts.length - 1] : log.target
 
             // Truncate message if too long
             const message =
-              log.Message.length > MAX_MESSAGE_LENGTH
-                ? `${log.Message.substring(0, MAX_MESSAGE_LENGTH)}...`
-                : log.Message
+              log.message.length > MAX_MESSAGE_LENGTH
+                ? `${log.message.substring(0, MAX_MESSAGE_LENGTH)}...`
+                : log.message
 
             addToast({
               title: `Error in ${moduleName}`,

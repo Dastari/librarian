@@ -4,6 +4,7 @@
 //! categories to our Torznab-compatible source model.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use anyhow::Result;
 use async_graphql::async_trait::async_trait;
@@ -53,7 +54,13 @@ impl ThePirateBaySource {
         settings: HashMap<String, String>,
     ) -> Result<Self> {
         let site_link = site_url.unwrap_or_else(|| "https://thepiratebay.org/".to_string());
-        let client = Client::builder().gzip(true).build()?;
+        let client = crate::services::http_client::outbound_client_builder(
+            crate::services::http_client::OutboundHttpProfile::Indexer,
+        )
+        .gzip(true)
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(10))
+        .build()?;
 
         Ok(Self {
             id,
@@ -216,7 +223,17 @@ impl Source for ThePirateBaySource {
         };
 
         self.rate_limiter.wait_for_permit().await;
-        let rows: Vec<ApiBayResult> = self.client.get(endpoint).send().await?.json().await?;
+        let response = crate::services::http_client::send_with_policy(
+            self.client.get(endpoint),
+            "thepiratebay",
+            "search",
+        )
+        .await?;
+        let rows: Vec<ApiBayResult> = crate::services::http_client::response_json_limited(
+            response,
+            crate::services::http_client::INDEXER_RESPONSE_LIMIT,
+        )
+        .await?;
         let uploader_filter = self
             .settings
             .get("Uploader")
@@ -298,10 +315,11 @@ impl Source for ThePirateBaySource {
                 .then_with(|| b.publish_date.cmp(&a.publish_date))
         });
 
-        if let Some(limit) = query.limit {
-            if limit > 0 && releases.len() > limit as usize {
-                releases.truncate(limit as usize);
-            }
+        if let Some(limit) = query.limit
+            && limit > 0
+            && releases.len() > limit as usize
+        {
+            releases.truncate(limit as usize);
         }
 
         Ok(releases)
@@ -312,7 +330,17 @@ impl Source for ThePirateBaySource {
             anyhow::bail!("Magnet links are not directly downloadable");
         }
         self.rate_limiter.wait_for_permit().await;
-        let bytes = self.client.get(link).send().await?.bytes().await?;
+        let response = crate::services::http_client::send_with_policy(
+            self.client.get(link),
+            "thepiratebay",
+            "download",
+        )
+        .await?;
+        let bytes = crate::services::http_client::response_bytes_limited(
+            response,
+            crate::services::http_client::DOWNLOAD_RESPONSE_LIMIT,
+        )
+        .await?;
         Ok(bytes.to_vec())
     }
 }

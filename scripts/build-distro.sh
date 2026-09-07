@@ -71,7 +71,7 @@ fi
 
 if [[ "${BUILD_LINUX}" -eq 1 ]]; then
   log "Building Linux release binary..."
-  (cd "${BACKEND_DIR}" && cargo build --release --features embed-frontend)
+  (cd "${BACKEND_DIR}" && cargo build --locked --release --features embed-frontend)
 
   mkdir -p "${DIST_DIR}/linux"
   cp "${BACKEND_DIR}/target/release/librarian" "${DIST_DIR}/linux/librarian"
@@ -89,7 +89,7 @@ if [[ "${BUILD_WINDOWS}" -eq 1 ]] && is_wsl; then
   WIN_INNO_ISS="$(wslpath -w "${WINDOWS_INNO_ISS}")"
 
   if [[ "${SKIP_WINDOWS_BUILD}" -eq 0 ]]; then
-    win_run "Set-Location '${WIN_BACKEND_DIR}'; rustup target add x86_64-pc-windows-msvc; cargo build --release --features embed-frontend --target x86_64-pc-windows-msvc"
+    win_run "Set-Location '${WIN_BACKEND_DIR}'; rustup target add x86_64-pc-windows-msvc; cargo build --locked --release --features embed-frontend --target x86_64-pc-windows-msvc"
   fi
 
   mkdir -p "${DIST_DIR}/windows/x86_64"

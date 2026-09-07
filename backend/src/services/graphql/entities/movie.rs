@@ -1,3 +1,7 @@
+// GraphQLRelations expands a compatibility let-else pattern that cannot be
+// rewritten at this entity call site.
+#![allow(clippy::question_mark)]
+
 use async_graphql::{Context, InputObject, Object};
 use std::sync::Arc;
 
@@ -8,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::db::Database;
 use crate::services::graphql::AuthUser;
 
-use super::common::{ContentStatus, ContentType, calculate_content_status};
+use super::library::Library;
 use super::media_file::MediaFile;
 
 // Re-export types used for movie creation from metadata
@@ -29,81 +33,89 @@ pub use crate::services::metadata::providers::{
 #[graphql(complex)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
-#[graphql_entity(table = "movies", plural = "Movies", default_sort = "title")]
+#[graphql_entity(
+    table = "movies",
+    plural = "Movies",
+    default_sort = "title",
+    index = "library_id",
+    index = "collection_id"
+)]
 pub struct Movie {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "LibraryId")]
+    #[graphql(name = "libraryId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub library_id: String,
 
-    #[graphql(name = "UserId")]
+    #[graphql(name = "userId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owner.id")]
     pub user_id: String,
 
-    #[graphql(name = "Title")]
+    #[graphql(name = "title")]
     #[filterable(type = "string")]
     #[sortable]
     pub title: String,
 
-    #[graphql(name = "SortTitle")]
+    #[graphql(name = "sortTitle")]
     #[sortable]
     pub sort_title: Option<String>,
 
-    #[graphql(name = "OriginalTitle")]
+    #[graphql(name = "originalTitle")]
     pub original_title: Option<String>,
 
-    #[graphql(name = "Year")]
+    #[graphql(name = "year")]
     #[filterable(type = "number")]
     #[sortable]
     pub year: Option<i32>,
 
-    #[graphql(name = "TmdbId")]
+    #[graphql(name = "tmdbId")]
     #[filterable(type = "number")]
     pub tmdb_id: Option<i32>,
 
-    #[graphql(name = "ImdbId")]
+    #[graphql(name = "imdbId")]
     #[filterable(type = "string")]
     pub imdb_id: Option<String>,
 
-    #[graphql(name = "Overview")]
+    #[graphql(name = "overview")]
     pub overview: Option<String>,
 
-    #[graphql(name = "Tagline")]
+    #[graphql(name = "tagline")]
     pub tagline: Option<String>,
 
-    #[graphql(name = "Runtime")]
+    #[graphql(name = "runtime")]
     #[filterable(type = "number")]
     #[sortable]
     pub runtime: Option<i32>,
 
-    #[graphql(name = "Genres")]
+    #[graphql(name = "genres")]
     #[json_field]
     pub genres: Vec<String>,
 
-    #[graphql(name = "Director")]
+    #[graphql(name = "director")]
     #[filterable(type = "string")]
     pub director: Option<String>,
 
-    #[graphql(name = "CastNames")]
+    #[graphql(name = "castNames")]
     #[json_field]
     pub cast_names: Vec<String>,
 
-    #[graphql(name = "ProductionCountries")]
+    #[graphql(name = "productionCountries")]
     #[json_field]
     pub production_countries: Vec<String>,
 
-    #[graphql(name = "SpokenLanguages")]
+    #[graphql(name = "spokenLanguages")]
     #[json_field]
     pub spoken_languages: Vec<String>,
 
-    #[graphql(name = "TmdbRating")]
+    #[graphql(name = "tmdbRating")]
     pub tmdb_rating: Option<String>,
 
-    #[graphql(name = "TmdbVoteCount")]
+    #[graphql(name = "tmdbVoteCount")]
     #[filterable(type = "number")]
     pub tmdb_vote_count: Option<i32>,
 
@@ -113,62 +125,88 @@ pub struct Movie {
     #[graphql(skip)]
     pub backdrop_url: Option<String>,
 
-    #[graphql(name = "CollectionId")]
+    #[graphql(name = "collectionId")]
     #[filterable(type = "number")]
     pub collection_id: Option<i32>,
 
-    #[graphql(name = "CollectionName")]
+    #[graphql(name = "collectionName")]
     #[filterable(type = "string")]
     pub collection_name: Option<String>,
 
-    #[graphql(name = "CollectionPosterUrl")]
+    #[graphql(name = "collectionPosterUrl")]
     pub collection_poster_url: Option<String>,
 
-    #[graphql(name = "ReleaseDate")]
+    #[graphql(name = "releaseDate")]
     #[filterable(type = "date")]
     #[sortable]
     pub release_date: Option<String>,
 
-    #[graphql(name = "Certification")]
+    #[graphql(name = "certification")]
     #[filterable(type = "string")]
     pub certification: Option<String>,
 
-    #[graphql(name = "Monitored")]
+    #[graphql(name = "monitored")]
     #[filterable(type = "boolean")]
     pub monitored: bool,
 
-    #[graphql(name = "TmdbStatus")]
+    #[graphql(name = "tmdbStatus")]
     #[filterable(type = "string")]
     pub tmdb_status: Option<String>,
 
-    #[graphql(name = "Wanted")]
+    #[graphql(name = "wanted")]
     #[filterable(type = "boolean")]
     pub wanted: bool,
 
-    #[graphql(name = "DownloadStatus")]
+    /// Explicit user opt-out. `None` is the legacy/default false value.
+    #[graphql(name = "ignored")]
+    #[filterable(type = "boolean")]
+    pub ignored: Option<bool>,
+
+    #[graphql(name = "downloadStatus")]
     #[filterable(type = "string")]
     pub download_status: Option<String>,
 
-    #[graphql(name = "HasFile")]
+    #[graphql(name = "hasFile")]
     #[filterable(type = "boolean")]
     pub has_file: bool,
 
-    #[graphql(name = "MediaFileId")]
+    #[graphql(name = "mediaFileId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub media_file_id: Option<String>,
 
-    #[graphql(name = "CreatedAt")]
+    /// Optional quality profile override; falls back to
+    /// `Library.qualityProfileId` (then the seeded default) when unset.
+    #[graphql(name = "qualityProfileId")]
+    #[filterable(type = "string")]
+    pub quality_profile_id: Option<String>,
+
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,
     #[graphql(skip)]
     #[serde(skip)]
-    #[relation(target = "MediaFile", from = "media_file_id", to = "id")]
+    #[relation(
+        target = "Library",
+        from = "library_id",
+        to = "id",
+        on_delete = "cascade"
+    )]
+    pub library: Option<Library>,
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[relation(
+        target = "MediaFile",
+        from = "media_file_id",
+        to = "id",
+        on_delete = "set_null"
+    )]
     pub media_file: Option<MediaFile>,
 }
 
@@ -196,7 +234,7 @@ impl Movie {
     ) -> anyhow::Result<Self> {
         let tmdb_rating = details
             .vote_average
-            .and_then(|v| rust_decimal::Decimal::from_f64_retain(v))
+            .and_then(rust_decimal::Decimal::from_f64_retain)
             .map(|d| d.to_string());
 
         let movie = Self::insert(
@@ -230,9 +268,11 @@ impl Movie {
                 monitored: options.monitored,
                 tmdb_status: details.tmdb_status.clone(),
                 wanted: options.monitored,
+                ignored: None,
                 download_status: None,
                 has_file: false,
                 media_file_id: None,
+                quality_profile_id: None,
             },
         )
         .await?;
@@ -254,12 +294,12 @@ pub struct MovieCustomOperations;
 #[async_graphql::Object]
 impl MovieCustomOperations {
     /// Search for movies on TMDB
-    #[graphql(name = "SearchMovies")]
+    #[graphql(name = "searchMovies")]
     async fn search_movies(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Query")] query: String,
-        #[graphql(name = "Year")] year: Option<i32>,
+        #[graphql(name = "query")] query: String,
+        #[graphql(name = "year")] year: Option<i32>,
     ) -> async_graphql::Result<Vec<MovieSearchResultGql>> {
         use crate::graphql::auth::AuthExt;
 
@@ -286,6 +326,42 @@ impl MovieCustomOperations {
                 title: m.title,
                 original_title: m.original_title,
                 year: m.year,
+                release_date: m.release_date,
+                overview: m.overview,
+                poster_url: m.poster_url,
+                backdrop_url: m.backdrop_url,
+                imdb_id: m.imdb_id,
+                vote_average: m.vote_average,
+                popularity: m.popularity,
+            })
+            .collect())
+    }
+
+    /// Discover theatrical releases beyond the user's library.
+    #[graphql(name = "movieReleases")]
+    async fn movie_releases(
+        &self,
+        ctx: &Context<'_>,
+        kind: crate::services::metadata::tmdb::MovieReleaseKind,
+        region: Option<String>,
+        #[graphql(default = 1)] page: i32,
+    ) -> async_graphql::Result<Vec<MovieSearchResultGql>> {
+        use crate::graphql::auth::AuthExt;
+        ctx.require_member()?;
+        let metadata = ctx.data::<Arc<crate::services::metadata::providers::MetadataService>>()?;
+        let movies = metadata
+            .movie_releases(kind, region, page)
+            .await
+            .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+        Ok(movies
+            .into_iter()
+            .map(|m| MovieSearchResultGql {
+                provider: "tmdb".into(),
+                provider_id: m.provider_id as i32,
+                title: m.title,
+                original_title: m.original_title,
+                year: m.year,
+                release_date: m.release_date,
                 overview: m.overview,
                 poster_url: m.poster_url,
                 backdrop_url: m.backdrop_url,
@@ -297,11 +373,11 @@ impl MovieCustomOperations {
     }
 
     /// Search for movie collections on TMDB
-    #[graphql(name = "SearchMovieCollections")]
+    #[graphql(name = "searchMovieCollections")]
     async fn search_movie_collections(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Query")] query: String,
+        #[graphql(name = "query")] query: String,
     ) -> async_graphql::Result<Vec<MovieCollectionSearchResultGql>> {
         use crate::graphql::auth::AuthExt;
 
@@ -334,12 +410,12 @@ impl MovieCustomOperations {
     }
 
     /// Get full collection details from TMDB with library state overlay.
-    #[graphql(name = "MovieCollectionDetails")]
+    #[graphql(name = "movieCollectionDetails")]
     async fn movie_collection_details(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "LibraryId")] library_id: String,
-        #[graphql(name = "CollectionId")] collection_id: i32,
+        #[graphql(name = "libraryId")] library_id: String,
+        #[graphql(name = "collectionId")] collection_id: i32,
     ) -> async_graphql::Result<MovieCollectionDetailsGql> {
         use crate::graphql::auth::AuthExt;
         use crate::services::metadata::providers::MetadataService;
@@ -399,9 +475,9 @@ impl MovieCustomOperations {
 #[derive(Debug, InputObject)]
 #[graphql(name = "SearchMoviesInput")]
 pub struct SearchMoviesInput {
-    #[graphql(name = "Query")]
+    #[graphql(name = "query")]
     pub query: String,
-    #[graphql(name = "Year")]
+    #[graphql(name = "year")]
     pub year: Option<i32>,
 }
 
@@ -410,10 +486,10 @@ pub struct SearchMoviesInput {
 #[graphql(name = "AddMovieInput")]
 pub struct AddMovieInput {
     /// TMDB movie ID
-    #[graphql(name = "TmdbId")]
+    #[graphql(name = "tmdbId")]
     pub tmdb_id: i32,
     /// Whether to monitor for releases (enables auto-download)
-    #[graphql(name = "Monitored")]
+    #[graphql(name = "monitored")]
     pub monitored: Option<bool>,
 }
 
@@ -422,10 +498,10 @@ pub struct AddMovieInput {
 #[graphql(name = "AddMovieCollectionInput")]
 pub struct AddMovieCollectionInput {
     /// TMDB collection ID
-    #[graphql(name = "CollectionId")]
+    #[graphql(name = "collectionId")]
     pub collection_id: i32,
     /// Mark missing imported movies as wanted
-    #[graphql(name = "WantedMissing")]
+    #[graphql(name = "wantedMissing")]
     pub wanted_missing: Option<bool>,
 }
 
@@ -433,27 +509,29 @@ pub struct AddMovieCollectionInput {
 #[derive(Debug, Clone, async_graphql::SimpleObject)]
 #[graphql(name = "MovieSearchResult")]
 pub struct MovieSearchResultGql {
-    #[graphql(name = "Provider")]
+    #[graphql(name = "provider")]
     pub provider: String,
-    #[graphql(name = "ProviderId")]
+    #[graphql(name = "providerId")]
     pub provider_id: i32,
-    #[graphql(name = "Title")]
+    #[graphql(name = "title")]
     pub title: String,
-    #[graphql(name = "OriginalTitle")]
+    #[graphql(name = "originalTitle")]
     pub original_title: Option<String>,
-    #[graphql(name = "Year")]
+    #[graphql(name = "year")]
     pub year: Option<i32>,
-    #[graphql(name = "Overview")]
+    #[graphql(name = "releaseDate")]
+    pub release_date: Option<String>,
+    #[graphql(name = "overview")]
     pub overview: Option<String>,
-    #[graphql(name = "PosterUrl")]
+    #[graphql(name = "posterUrl")]
     pub poster_url: Option<String>,
-    #[graphql(name = "BackdropUrl")]
+    #[graphql(name = "backdropUrl")]
     pub backdrop_url: Option<String>,
-    #[graphql(name = "ImdbId")]
+    #[graphql(name = "imdbId")]
     pub imdb_id: Option<String>,
-    #[graphql(name = "VoteAverage")]
+    #[graphql(name = "voteAverage")]
     pub vote_average: Option<f64>,
-    #[graphql(name = "Popularity")]
+    #[graphql(name = "popularity")]
     pub popularity: Option<f64>,
 }
 
@@ -461,17 +539,17 @@ pub struct MovieSearchResultGql {
 #[derive(Debug, Clone, async_graphql::SimpleObject)]
 #[graphql(name = "MovieCollectionSearchResult")]
 pub struct MovieCollectionSearchResultGql {
-    #[graphql(name = "Provider")]
+    #[graphql(name = "provider")]
     pub provider: String,
-    #[graphql(name = "CollectionId")]
+    #[graphql(name = "collectionId")]
     pub collection_id: i32,
-    #[graphql(name = "Name")]
+    #[graphql(name = "name")]
     pub name: String,
-    #[graphql(name = "Overview")]
+    #[graphql(name = "overview")]
     pub overview: Option<String>,
-    #[graphql(name = "PosterUrl")]
+    #[graphql(name = "posterUrl")]
     pub poster_url: Option<String>,
-    #[graphql(name = "BackdropUrl")]
+    #[graphql(name = "backdropUrl")]
     pub backdrop_url: Option<String>,
 }
 
@@ -479,29 +557,29 @@ pub struct MovieCollectionSearchResultGql {
 #[derive(Debug, Clone, async_graphql::SimpleObject)]
 #[graphql(name = "MovieCollectionMovieDetails")]
 pub struct MovieCollectionMovieDetailsGql {
-    #[graphql(name = "TmdbId")]
+    #[graphql(name = "tmdbId")]
     pub tmdb_id: i32,
-    #[graphql(name = "Title")]
+    #[graphql(name = "title")]
     pub title: String,
-    #[graphql(name = "Year")]
+    #[graphql(name = "year")]
     pub year: Option<i32>,
-    #[graphql(name = "PosterUrl")]
+    #[graphql(name = "posterUrl")]
     pub poster_url: Option<String>,
-    #[graphql(name = "LibraryMovieId")]
+    #[graphql(name = "libraryMovieId")]
     pub library_movie_id: Option<String>,
-    #[graphql(name = "MediaFileId")]
+    #[graphql(name = "mediaFileId")]
     pub media_file_id: Option<String>,
-    #[graphql(name = "FileSizeBytes")]
+    #[graphql(name = "fileSizeBytes")]
     pub file_size_bytes: Option<i64>,
-    #[graphql(name = "Resolution")]
+    #[graphql(name = "resolution")]
     pub resolution: Option<String>,
-    #[graphql(name = "VideoCodec")]
+    #[graphql(name = "videoCodec")]
     pub video_codec: Option<String>,
-    #[graphql(name = "AudioCodec")]
+    #[graphql(name = "audioCodec")]
     pub audio_codec: Option<String>,
-    #[graphql(name = "AudioChannels")]
+    #[graphql(name = "audioChannels")]
     pub audio_channels: Option<String>,
-    #[graphql(name = "Wanted")]
+    #[graphql(name = "wanted")]
     pub wanted: bool,
 }
 
@@ -509,17 +587,17 @@ pub struct MovieCollectionMovieDetailsGql {
 #[derive(Debug, Clone, async_graphql::SimpleObject)]
 #[graphql(name = "MovieCollectionDetails")]
 pub struct MovieCollectionDetailsGql {
-    #[graphql(name = "CollectionId")]
+    #[graphql(name = "collectionId")]
     pub collection_id: i32,
-    #[graphql(name = "Name")]
+    #[graphql(name = "name")]
     pub name: String,
-    #[graphql(name = "Overview")]
+    #[graphql(name = "overview")]
     pub overview: Option<String>,
-    #[graphql(name = "PosterUrl")]
+    #[graphql(name = "posterUrl")]
     pub poster_url: Option<String>,
-    #[graphql(name = "BackdropUrl")]
+    #[graphql(name = "backdropUrl")]
     pub backdrop_url: Option<String>,
-    #[graphql(name = "Movies")]
+    #[graphql(name = "movies")]
     pub movies: Vec<MovieCollectionMovieDetailsGql>,
 }
 
@@ -527,11 +605,11 @@ pub struct MovieCollectionDetailsGql {
 #[derive(Debug, async_graphql::SimpleObject)]
 #[graphql(name = "MovieOperationResult")]
 pub struct MovieOperationResult {
-    #[graphql(name = "Success")]
+    #[graphql(name = "success")]
     pub success: bool,
-    #[graphql(name = "Movie")]
+    #[graphql(name = "movie")]
     pub movie: Option<Movie>,
-    #[graphql(name = "Error")]
+    #[graphql(name = "error")]
     pub error: Option<String>,
 }
 
@@ -539,19 +617,19 @@ pub struct MovieOperationResult {
 #[derive(Debug, async_graphql::SimpleObject)]
 #[graphql(name = "MovieCollectionOperationResult")]
 pub struct MovieCollectionOperationResult {
-    #[graphql(name = "Success")]
+    #[graphql(name = "success")]
     pub success: bool,
-    #[graphql(name = "CollectionId")]
+    #[graphql(name = "collectionId")]
     pub collection_id: Option<i32>,
-    #[graphql(name = "CollectionName")]
+    #[graphql(name = "collectionName")]
     pub collection_name: Option<String>,
-    #[graphql(name = "ImportedCount")]
+    #[graphql(name = "importedCount")]
     pub imported_count: i32,
-    #[graphql(name = "ExistingCount")]
+    #[graphql(name = "existingCount")]
     pub existing_count: i32,
-    #[graphql(name = "WantedUpdatedCount")]
+    #[graphql(name = "wantedUpdatedCount")]
     pub wanted_updated_count: i32,
-    #[graphql(name = "Error")]
+    #[graphql(name = "error")]
     pub error: Option<String>,
 }
 
@@ -562,12 +640,12 @@ pub struct MovieMetadataMutations;
 #[Object]
 impl MovieMetadataMutations {
     /// Add a movie to a library by fetching metadata from TMDB
-    #[graphql(name = "AddMovie")]
+    #[graphql(name = "addMovie")]
     async fn add_movie(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "LibraryId")] library_id: String,
-        #[graphql(name = "Input")] input: AddMovieInput,
+        #[graphql(name = "libraryId")] library_id: String,
+        #[graphql(name = "input")] input: AddMovieInput,
     ) -> async_graphql::Result<MovieOperationResult> {
         use crate::graphql::auth::AuthExt;
         use crate::services::metadata::providers::{
@@ -627,12 +705,12 @@ impl MovieMetadataMutations {
     }
 
     /// Add/import all movies from a TMDB collection into a library.
-    #[graphql(name = "AddMovieCollection")]
+    #[graphql(name = "addMovieCollection")]
     async fn add_movie_collection(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "LibraryId")] library_id: String,
-        #[graphql(name = "Input")] input: AddMovieCollectionInput,
+        #[graphql(name = "libraryId")] library_id: String,
+        #[graphql(name = "input")] input: AddMovieCollectionInput,
     ) -> async_graphql::Result<MovieCollectionOperationResult> {
         use crate::graphql::auth::AuthExt;
         use crate::services::metadata::providers::{
@@ -692,11 +770,11 @@ impl MovieMetadataMutations {
     }
 
     /// Refresh a movie's metadata and artwork from TMDB.
-    #[graphql(name = "RefreshMovie")]
+    #[graphql(name = "refreshMovie")]
     async fn refresh_movie(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Id")] id: String,
+        #[graphql(name = "id")] id: String,
     ) -> async_graphql::Result<MovieOperationResult> {
         use crate::graphql::auth::AuthExt;
         use crate::services::metadata::providers::MetadataService;

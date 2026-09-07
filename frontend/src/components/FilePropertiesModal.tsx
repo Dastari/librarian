@@ -52,17 +52,17 @@ interface FilePropertiesModalProps {
 }
 
 type VideoStreamNode = NonNullable<
-  MediaFilePropertiesQuery["VideoStreams"]
->["Edges"][number]["Node"];
+  MediaFilePropertiesQuery["videoStreams"]
+>["edges"][number]["node"];
 type AudioStreamNode = NonNullable<
-  MediaFilePropertiesQuery["AudioStreams"]
->["Edges"][number]["Node"];
+  MediaFilePropertiesQuery["audioStreams"]
+>["edges"][number]["node"];
 type SubtitleNode = NonNullable<
-  MediaFilePropertiesQuery["Subtitles"]
->["Edges"][number]["Node"];
+  MediaFilePropertiesQuery["subtitles"]
+>["edges"][number]["node"];
 type ChapterNode = NonNullable<
-  MediaFilePropertiesQuery["MediaChapters"]
->["Edges"][number]["Node"];
+  MediaFilePropertiesQuery["mediaChapters"]
+>["edges"][number]["node"];
 
 /** Format duration from seconds to HH:MM:SS */
 function formatDuration(seconds: number | null): string {
@@ -240,7 +240,7 @@ export function FilePropertiesModal({
           MediaFilePropertiesQueryVariables
         >({
           query: MediaFilePropertiesDocument,
-          variables: { Id: mediaFileId },
+          variables: { id: mediaFileId },
           fetchPolicy: "network-only",
         }),
         apolloClient.query<
@@ -248,7 +248,7 @@ export function FilePropertiesModal({
           MediaFileMetadataQueryVariables
         >({
           query: MediaFileMetadataDocument,
-          variables: { Id: mediaFileId },
+          variables: { id: mediaFileId },
           fetchPolicy: "network-only",
         }),
       ]);
@@ -256,9 +256,9 @@ export function FilePropertiesModal({
       if (result.error) {
         setError(result.error.message);
         setRawMetadata(null);
-      } else if (result.data?.MediaFile) {
+      } else if (result.data?.mediaFile) {
         const parsedRawMetadata = parseJsonMetadata(
-          metadataResult.data?.MediaFile?.Metadata ?? null,
+          metadataResult.data?.mediaFile?.metadata ?? null,
         );
         setDetails(result.data);
         setRawMetadata(parsedRawMetadata);
@@ -273,20 +273,20 @@ export function FilePropertiesModal({
   }, [isOpen, mediaFileId]);
 
   const handleCopyPath = async () => {
-    if (details?.MediaFile?.Path) {
-      await navigator.clipboard.writeText(details.MediaFile.Path);
+    if (details?.mediaFile?.path) {
+      await navigator.clipboard.writeText(details.mediaFile.path);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
   };
 
-  const file = details?.MediaFile;
-  const videoStreams = details?.VideoStreams?.Edges?.map((edge) => edge.Node) ?? [];
-  const audioStreams = details?.AudioStreams?.Edges?.map((edge) => edge.Node) ?? [];
-  const subtitles = details?.Subtitles?.Edges?.map((edge) => edge.Node) ?? [];
-  const chapters = details?.MediaChapters?.Edges?.map((edge) => edge.Node) ?? [];
+  const file = details?.mediaFile;
+  const videoStreams = details?.videoStreams?.edges?.map((edge) => edge.node) ?? [];
+  const audioStreams = details?.audioStreams?.edges?.map((edge) => edge.node) ?? [];
+  const subtitles = details?.subtitles?.edges?.map((edge) => edge.node) ?? [];
+  const chapters = details?.mediaChapters?.edges?.map((edge) => edge.node) ?? [];
   const filename =
-    file?.Path.split("/").pop() || file?.OriginalName || "Unknown";
+    file?.path.split("/").pop() || file?.originalName || "Unknown";
 
   return (
     <Modal
@@ -360,44 +360,44 @@ export function FilePropertiesModal({
                 <div className="pt-4 space-y-6">
                   {/* Media Summary Badges - show first as visual highlight */}
                   <div className="flex flex-wrap gap-2">
-                    {file?.Resolution && (
+                    {file?.resolution && (
                       <Chip
                         size="md"
                         variant="flat"
                         color="primary"
                         classNames={{ content: "font-semibold" }}
                       >
-                        {file.Resolution}
+                        {file.resolution}
                       </Chip>
                     )}
-                    {file?.VideoCodec && (
+                    {file?.videoCodec && (
                       <Chip
                         size="md"
                         variant="flat"
                         color="secondary"
                         classNames={{ content: "font-semibold" }}
                       >
-                        {formatVideoCodec(file.VideoCodec)}
+                        {formatVideoCodec(file.videoCodec)}
                       </Chip>
                     )}
-                    {file?.HdrType && (
+                    {file?.hdrType && (
                       <Chip
                         size="md"
                         variant="flat"
                         color="warning"
                         classNames={{ content: "font-semibold" }}
                       >
-                        {file.HdrType}
+                        {file.hdrType}
                       </Chip>
                     )}
-                    {file?.AudioCodec && (
+                    {file?.audioCodec && (
                       <Chip
                         size="md"
                         variant="flat"
                         color="default"
                         classNames={{ content: "font-medium" }}
                       >
-                        {formatAudioCodec(file.AudioCodec)}
+                        {formatAudioCodec(file.audioCodec)}
                       </Chip>
                     )}
                   </div>
@@ -408,30 +408,30 @@ export function FilePropertiesModal({
                       File Information
                     </h4>
                     <PropertyRow label="File Name" value={filename} />
-                    {file?.OriginalName && file.OriginalName !== filename && (
+                    {file?.originalName && file.originalName !== filename && (
                       <PropertyRow
                         label="Original Name"
-                        value={file.OriginalName}
+                        value={file.originalName}
                       />
                     )}
-                    <PropertyRow label="Size" value={file ? formatBytes(file.Size) : null} />
+                    <PropertyRow label="Size" value={file ? formatBytes(file.size) : null} />
                     <PropertyRow
                       label="Container"
-                      value={file?.Container?.toUpperCase()}
+                      value={file?.container?.toUpperCase()}
                     />
                     <PropertyRow
                       label="Duration"
-                      value={formatDuration(file?.Duration ?? null)}
+                      value={formatDuration(file?.duration ?? null)}
                     />
                     <PropertyRow
                       label="Overall Bitrate"
-                      value={formatBitrate(file?.Bitrate ?? null)}
+                      value={formatBitrate(file?.bitrate ?? null)}
                     />
                     <PropertyRow
                       label="Added"
                       value={
-                        file?.AddedAt
-                          ? new Date(file.AddedAt).toLocaleString()
+                        file?.addedAt
+                          ? new Date(file.addedAt).toLocaleString()
                           : null
                       }
                     />
@@ -460,7 +460,7 @@ export function FilePropertiesModal({
                       </Tooltip>
                     </div>
                     <code className="text-xs text-default-400 break-all block border p-3 rounded-lg font-mono">
-                      {file?.Path}
+                      {file?.path}
                     </code>
                   </div>
 
@@ -516,7 +516,7 @@ export function FilePropertiesModal({
                   ) : (
                     <div className="space-y-3">
                       {videoStreams.map((stream) => (
-                        <VideoStreamCard key={stream.Id} stream={stream} />
+                        <VideoStreamCard key={stream.id} stream={stream} />
                       ))}
                     </div>
                   )}
@@ -541,7 +541,7 @@ export function FilePropertiesModal({
                   ) : (
                     <div className="space-y-3">
                       {audioStreams.map((stream) => (
-                        <AudioStreamCard key={stream.Id} stream={stream} />
+                        <AudioStreamCard key={stream.id} stream={stream} />
                       ))}
                     </div>
                   )}
@@ -566,7 +566,7 @@ export function FilePropertiesModal({
                   ) : (
                     <div className="space-y-3">
                       {subtitles.map((sub) => (
-                        <SubtitleCard key={sub.Id} subtitle={sub} />
+                        <SubtitleCard key={sub.id} subtitle={sub} />
                       ))}
                     </div>
                   )}
@@ -591,7 +591,7 @@ export function FilePropertiesModal({
                   ) : (
                     <div className="space-y-2">
                       {chapters.map((chapter) => (
-                        <ChapterRow key={chapter.Id} chapter={chapter} />
+                        <ChapterRow key={chapter.id} chapter={chapter} />
                       ))}
                     </div>
                   )}
@@ -633,18 +633,18 @@ function VideoStreamCard({ stream }: { stream: VideoStreamNode }) {
   return (
     <StreamCard
       icon={<IconVideo size={16} />}
-      title={formatVideoCodec(stream.Codec)}
-      subtitle={stream.CodecLongName || undefined}
+      title={formatVideoCodec(stream.codec)}
+      subtitle={stream.codecLongName || undefined}
       badges={
         <>
-          {stream.IsDefault && (
+          {stream.isDefault && (
             <Chip size="sm" variant="flat" color="primary">
               Default
             </Chip>
           )}
-          {stream.HdrType && (
+          {stream.hdrType && (
             <Chip size="sm" variant="flat" color="warning">
-              {stream.HdrType}
+              {stream.hdrType}
             </Chip>
           )}
         </>
@@ -653,26 +653,26 @@ function VideoStreamCard({ stream }: { stream: VideoStreamNode }) {
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
         <PropertyRow
           label="Resolution"
-          value={`${stream.Width}x${stream.Height}`}
+          value={`${stream.width}x${stream.height}`}
         />
-        <PropertyRow label="Aspect Ratio" value={stream.AspectRatio} />
-        <PropertyRow label="Frame Rate" value={stream.FrameRate} />
+        <PropertyRow label="Aspect Ratio" value={stream.aspectRatio} />
+        <PropertyRow label="Frame Rate" value={stream.frameRate} />
         <PropertyRow
           label="Bitrate"
-          value={formatBitrate(stream.Bitrate ?? null)}
+          value={formatBitrate(stream.bitrate ?? null)}
         />
-        <PropertyRow label="Pixel Format" value={stream.PixelFormat} />
+        <PropertyRow label="Pixel Format" value={stream.pixelFormat} />
         <PropertyRow
           label="Bit Depth"
-          value={stream.BitDepth ? `${stream.BitDepth}-bit` : null}
+          value={stream.bitDepth ? `${stream.bitDepth}-bit` : null}
         />
-        {stream.Language && (
+        {stream.language && (
           <PropertyRow
             label="Language"
-            value={getLanguageName(stream.Language)}
+            value={getLanguageName(stream.language)}
           />
         )}
-        {stream.Title && <PropertyRow label="Title" value={stream.Title} />}
+        {stream.title && <PropertyRow label="Title" value={stream.title} />}
       </div>
     </StreamCard>
   );
@@ -683,23 +683,23 @@ function AudioStreamCard({ stream }: { stream: AudioStreamNode }) {
   return (
     <StreamCard
       icon={<IconVolume size={16} />}
-      title={formatAudioCodec(stream.Codec)}
-      subtitle={stream.CodecLongName || undefined}
+      title={formatAudioCodec(stream.codec)}
+      subtitle={stream.codecLongName || undefined}
       badges={
         <>
-          {stream.IsDefault && (
+          {stream.isDefault && (
             <Chip size="sm" variant="flat" color="primary">
               Default
             </Chip>
           )}
-          {stream.IsCommentary && (
+          {stream.isCommentary && (
             <Chip size="sm" variant="flat" color="secondary">
               Commentary
             </Chip>
           )}
-          {stream.Language && (
+          {stream.language && (
             <Chip size="sm" variant="flat" color="default">
-              {getLanguageName(stream.Language)}
+              {getLanguageName(stream.language)}
             </Chip>
           )}
         </>
@@ -708,21 +708,21 @@ function AudioStreamCard({ stream }: { stream: AudioStreamNode }) {
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
         <PropertyRow
           label="Channels"
-          value={stream.ChannelLayout || `${stream.Channels} ch`}
+          value={stream.channelLayout || `${stream.channels} ch`}
         />
         <PropertyRow
           label="Sample Rate"
-          value={formatSampleRate(stream.SampleRate ?? null)}
+          value={formatSampleRate(stream.sampleRate ?? null)}
         />
         <PropertyRow
           label="Bitrate"
-          value={formatBitrate(stream.Bitrate ?? null)}
+          value={formatBitrate(stream.bitrate ?? null)}
         />
         <PropertyRow
           label="Bit Depth"
-          value={stream.BitDepth ? `${stream.BitDepth}-bit` : null}
+          value={stream.bitDepth ? `${stream.bitDepth}-bit` : null}
         />
-        {stream.Title && <PropertyRow label="Title" value={stream.Title} />}
+        {stream.title && <PropertyRow label="Title" value={stream.title} />}
       </div>
     </StreamCard>
   );
@@ -735,33 +735,33 @@ function SubtitleCard({ subtitle }: { subtitle: SubtitleNode }) {
       EMBEDDED: "Embedded",
       EXTERNAL: "External File",
       DOWNLOADED: "Downloaded",
-    }[subtitle.SourceType ?? "EMBEDDED"] || subtitle.SourceType;
+    }[subtitle.sourceType ?? "EMBEDDED"] || subtitle.sourceType;
 
   return (
     <StreamCard
       icon={<IconFileText size={16} />}
       title={
-        subtitle.Language
-          ? getLanguageName(subtitle.Language)
+        subtitle.language
+          ? getLanguageName(subtitle.language)
           : "Unknown Language"
       }
-      subtitle={subtitle.Codec || undefined}
+      subtitle={subtitle.codec || undefined}
       badges={
         <>
           <Chip size="sm" variant="flat" color="default">
             {sourceLabel}
           </Chip>
-          {subtitle.IsDefault && (
+          {subtitle.isDefault && (
             <Chip size="sm" variant="flat" color="primary">
               Default
             </Chip>
           )}
-          {subtitle.IsForced && (
+          {subtitle.isForced && (
             <Chip size="sm" variant="flat" color="warning">
               Forced
             </Chip>
           )}
-          {subtitle.IsHearingImpaired && (
+          {subtitle.isHearingImpaired && (
             <Chip size="sm" variant="flat" color="secondary">
               SDH
             </Chip>
@@ -770,11 +770,11 @@ function SubtitleCard({ subtitle }: { subtitle: SubtitleNode }) {
       }
     >
       <div className="text-xs">
-        {subtitle.Title && <PropertyRow label="Title" value={subtitle.Title} />}
-        {subtitle.FilePath && (
+        {subtitle.title && <PropertyRow label="Title" value={subtitle.title} />}
+        {subtitle.filePath && (
           <PropertyRow
             label="File"
-            value={subtitle.FilePath.split("/").pop()}
+            value={subtitle.filePath.split("/").pop()}
           />
         )}
       </div>
@@ -784,21 +784,21 @@ function SubtitleCard({ subtitle }: { subtitle: SubtitleNode }) {
 
 /** Chapter row */
 function ChapterRow({ chapter }: { chapter: ChapterNode }) {
-  const duration = chapter.EndSecs - chapter.StartSecs;
+  const duration = chapter.endSecs - chapter.startSecs;
   return (
     <div className="flex items-center gap-3 py-2.5 px-4 bg-default-100/30 rounded-lg hover:bg-default-100/50 transition-colors border border-default-200/20">
       <span className="text-default-400 text-xs w-6 font-medium">
-        {chapter.ChapterIndex + 1}
+        {chapter.chapterIndex + 1}
       </span>
       <span className="flex-1 text-sm truncate text-default-foreground">
-        {chapter.Title || `Chapter ${chapter.ChapterIndex + 1}`}
+        {chapter.title || `Chapter ${chapter.chapterIndex + 1}`}
       </span>
       <span className="text-xs text-default-400 font-mono tabular-nums">
-        {formatDuration(chapter.StartSecs)}
+        {formatDuration(chapter.startSecs)}
       </span>
       <span className="text-xs text-default-300">→</span>
       <span className="text-xs text-default-400 font-mono tabular-nums">
-        {formatDuration(chapter.EndSecs)}
+        {formatDuration(chapter.endSecs)}
       </span>
       <span className="text-xs text-primary-400 w-16 text-right font-medium tabular-nums">
         ({formatDuration(duration)})

@@ -1,0 +1,59 @@
+mutation MoveFiles($input: MoveFilesInput!) {
+  moveFiles(input: $input) {
+    success
+    error
+    affectedCount
+    messages
+    path
+  }
+}
+
+mutation CopyFiles($input: CopyFilesInput!) {
+  copyFiles(input: $input) {
+    success
+    error
+    affectedCount
+    messages
+    path
+  }
+}
+
+mutation DeleteFiles($input: DeleteFilesInput!) {
+  deleteFiles(input: $input) {
+    success
+    error
+    affectedCount
+    messages
+    path
+  }
+}
+
+mutation RenameFile($input: RenameFileInput!) {
+  renameFile(input: $input) {
+    success
+    error
+    affectedCount
+    messages
+    path
+  }
+}
+
+mutation CreateDirectory($input: CreateDirectoryInput!) {
+  createDirectory(input: $input) {
+    success
+    error
+    affectedCount
+    messages
+    path
+  }
+}
+
+subscription FilesystemChanged($path: String) {
+  filesystemChanged(path: $path) {
+    path
+    changeType
+    name
+    newName
+    timestamp
+  }
+}

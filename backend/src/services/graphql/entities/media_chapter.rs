@@ -11,36 +11,38 @@ use serde::{Deserialize, Serialize};
 #[graphql_entity(
     table = "media_chapters",
     plural = "MediaChapters",
-    default_sort = "chapter_index"
+    default_sort = "chapter_index",
+    read_policy = "member.read",
+    write_policy = "admin.write"
 )]
 pub struct MediaChapter {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "MediaFileId")]
+    #[graphql(name = "mediaFileId")]
     #[filterable(type = "string")]
     pub media_file_id: String,
 
-    #[graphql(name = "ChapterIndex")]
+    #[graphql(name = "chapterIndex")]
     #[filterable(type = "number")]
     #[sortable]
     pub chapter_index: i32,
 
-    #[graphql(name = "StartSecs")]
+    #[graphql(name = "startSecs")]
     #[filterable(type = "number")]
     pub start_secs: f64,
 
-    #[graphql(name = "EndSecs")]
+    #[graphql(name = "endSecs")]
     #[filterable(type = "number")]
     pub end_secs: f64,
 
-    #[graphql(name = "Title")]
+    #[graphql(name = "title")]
     #[filterable(type = "string")]
     pub title: Option<String>,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,

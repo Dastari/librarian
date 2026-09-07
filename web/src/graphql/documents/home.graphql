@@ -1,0 +1,183 @@
+# Home feed: continue watching, recently added and per-library rows.
+
+query ContinueWatching($userId: String!) {
+  playbackProgresses(
+    where: { userId: { eq: $userId }, isWatched: { eq: false }, progressPercent: { gt: 1 } }
+    orderBy: [{ updatedAt: DESC }]
+    page: { limit: 12, offset: 0 }
+  ) {
+    edges {
+      node {
+        ...PlaybackProgressFields
+      }
+    }
+  }
+}
+
+query MediaFilesByIds($ids: [String!]!) {
+  mediaFiles(where: { id: { inList: $ids } }, page: { limit: 50, offset: 0 }) {
+    edges {
+      node {
+        ...MediaFileFields
+      }
+    }
+  }
+}
+
+query MoviesByIds($ids: [String!]!) {
+  movies(where: { id: { inList: $ids } }, page: { limit: 50, offset: 0 }) {
+    edges {
+      node {
+        ...MovieFields
+      }
+    }
+  }
+}
+
+query EpisodesByIds($ids: [String!]!) {
+  episodes(where: { id: { inList: $ids } }, page: { limit: 50, offset: 0 }) {
+    edges {
+      node {
+        ...EpisodeFields
+        show {
+          id
+          name
+          posterUrl
+          backdropUrl
+        }
+      }
+    }
+  }
+}
+
+query TracksByIds($ids: [String!]!) {
+  tracks(where: { id: { inList: $ids } }, page: { limit: 50, offset: 0 }) {
+    edges {
+      node {
+        ...TrackFields
+        album {
+          id
+          name
+          coverUrl
+        }
+      }
+    }
+  }
+}
+
+query ChaptersByIds($ids: [String!]!) {
+  chapters(where: { id: { inList: $ids } }, page: { limit: 50, offset: 0 }) {
+    edges {
+      node {
+        ...ChapterFields
+        audiobook {
+          id
+          title
+          coverUrl
+          authorName
+        }
+      }
+    }
+  }
+}
+
+query RecentMovies($limit: Int!) {
+  movies(orderBy: [{ createdAt: DESC }], page: { limit: $limit, offset: 0 }) {
+    edges {
+      node {
+        ...MovieFields
+      }
+    }
+  }
+}
+
+query RecentShows($limit: Int!) {
+  shows(orderBy: [{ createdAt: DESC }], page: { limit: $limit, offset: 0 }) {
+    edges {
+      node {
+        ...ShowFields
+      }
+    }
+  }
+}
+
+query RecentAlbums($limit: Int!) {
+  albums(orderBy: [{ createdAt: DESC }], page: { limit: $limit, offset: 0 }) {
+    edges {
+      node {
+        ...AlbumFields
+      }
+    }
+  }
+}
+
+query RecentAudiobooks($limit: Int!) {
+  audiobooks(orderBy: [{ createdAt: DESC }], page: { limit: $limit, offset: 0 }) {
+    edges {
+      node {
+        ...AudiobookFields
+      }
+    }
+  }
+}
+
+query RecentEpisodes($limit: Int!) {
+  episodes(where: { mediaFileId: { isNull: false } }, orderBy: [{ updatedAt: DESC }], page: { limit: $limit, offset: 0 }) {
+    edges {
+      node {
+        ...EpisodeFields
+        show {
+          id
+          name
+          posterUrl
+          backdropUrl
+        }
+      }
+    }
+  }
+}
+
+query WantedMovies($limit: Int!) {
+  movies(where: { wanted: { eq: true }, hasFile: { eq: false } }, orderBy: [{ releaseDate: DESC }], page: { limit: $limit, offset: 0 }) {
+    edges {
+      node {
+        ...MovieFields
+      }
+    }
+    pageInfo {
+      totalCount
+    }
+  }
+}
+
+# Theatrical release lists from TMDB (cached by the server for a day). `LibraryMoviesByTmdbIds`
+# marks which of them are already in a library.
+query MovieReleaseGuide($kind: MovieReleaseKind!, $region: String, $page: Int!) {
+  movieReleases(kind: $kind, region: $region, page: $page) {
+    provider
+    providerId
+    title
+    originalTitle
+    year
+    releaseDate
+    overview
+    posterUrl
+    backdropUrl
+    imdbId
+    voteAverage
+    popularity
+  }
+}
+
+query LibraryMoviesByTmdbIds($ids: [Int!]!) {
+  movies(where: { tmdbId: { inList: $ids } }, page: { limit: 100, offset: 0 }) {
+    edges {
+      node {
+        id
+        tmdbId
+        hasFile
+        wanted
+      }
+    }
+  }
+}

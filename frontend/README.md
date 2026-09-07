@@ -78,4 +78,12 @@ const { data } = await graphqlClient
 
 | Variable | Description |
 |----------|-------------|
-| `VITE_API_URL` | Backend API URL (default: `http://localhost:3001`) |
+| `VITE_API_URL` | Optional separate backend URL. Empty/unset uses the page's origin for REST, GraphQL, media, and WebSockets. |
+| `BACKEND_PROXY_TARGET` | Vite server-side backend target (default: `http://127.0.0.1:3001`); never exposed as the browser's API address. |
+| `DEV_SERVER_PUBLIC_URL` | Public frontend origin when Vite runs behind a reverse proxy; sets its browser WebSocket host, protocol, and port. |
+
+For `https://librarian.dastari.net`, leave `VITE_API_URL` empty or set it to that public origin.
+The reverse proxy must forward `/api`, `/graphql`, and `/graphql/ws` to the backend, including
+WebSocket upgrades. Vite also proxies these paths for local development.
+When serving Vite through the live domain, set `DEV_SERVER_PUBLIC_URL=https://librarian.dastari.net`
+and forward Vite's WebSocket upgrades through the frontend proxy too.

@@ -64,9 +64,9 @@ interface TorrentSettingsShape {
 }
 
 function appSettingsToTorrentSettings(
-  edges: TorrentAppSettingsQuery["AppSettings"]["Edges"],
+  edges: TorrentAppSettingsQuery["appSettings"]["edges"],
 ): TorrentSettingsShape {
-  const map = new Map(edges.map((e) => [e.Node.Key, e.Node.Value]));
+  const map = new Map(edges.map((e) => [e.node.key, e.node.value]));
   const get = (k: string, def: string) => map.get(k) ?? def;
   return {
     downloadDir: get(TORRENT_KEYS.download_dir, ""),
@@ -81,9 +81,9 @@ function appSettingsToTorrentSettings(
 
 /** Map from app setting key to node Id (for updates). */
 function keyToIdMap(
-  edges: TorrentAppSettingsQuery["AppSettings"]["Edges"],
+  edges: TorrentAppSettingsQuery["appSettings"]["edges"],
 ): Map<string, string> {
-  return new Map(edges.map((e) => [e.Node.Key, e.Node.Id]));
+  return new Map(edges.map((e) => [e.node.key, e.node.id]));
 }
 
 export const Route = createFileRoute("/settings/torrent")({
@@ -148,13 +148,13 @@ function TorrentSettingsPage() {
   const [createAppSetting] = useMutation(CreateAppSettingDocument);
 
   useEffect(() => {
-    if (!settingsData?.AppSettings?.Edges) return;
+    if (!settingsData?.appSettings?.edges) return;
     if (originalSettings !== null) return;
     const settings = appSettingsToTorrentSettings(
-      settingsData.AppSettings.Edges,
+      settingsData.appSettings.edges,
     );
     setOriginalSettings(settings);
-    setSettingIds(keyToIdMap(settingsData.AppSettings.Edges));
+    setSettingIds(keyToIdMap(settingsData.appSettings.edges));
     setDownloadDir(settings.downloadDir);
     setSessionDir(settings.sessionDir);
     setEnableDht(settings.enableDht);
@@ -251,15 +251,15 @@ function TorrentSettingsPage() {
         if (id) {
           const { data } = await updateAppSetting({
             variables: {
-              Id: id,
-              Input: { Value: value },
+              id: id,
+              input: { value: value },
             },
           });
-          if (!data?.UpdateAppSetting?.Success) {
+          if (!data?.updateAppSetting?.success) {
             addToast({
               title: "Error",
               description: sanitizeError(
-                data?.UpdateAppSetting?.Error ?? "Failed to save setting",
+                data?.updateAppSetting?.error ?? "Failed to save setting",
               ),
               color: "danger",
             });
@@ -268,18 +268,18 @@ function TorrentSettingsPage() {
         } else {
           const { data } = await createAppSetting({
             variables: {
-              Input: {
-                Key: settingKey,
-                Value: value,
-                Category: TORRENT_CATEGORY,
+              input: {
+                key: settingKey,
+                value: value,
+                category: TORRENT_CATEGORY,
               },
             },
           });
-          if (!data?.CreateAppSetting?.Success) {
+          if (!data?.createAppSetting?.success) {
             addToast({
               title: "Error",
               description: sanitizeError(
-                data?.CreateAppSetting?.Error ?? "Failed to create setting",
+                data?.createAppSetting?.error ?? "Failed to create setting",
               ),
               color: "danger",
             });
@@ -293,12 +293,12 @@ function TorrentSettingsPage() {
         color: "success",
       });
       const refreshed = await refetchSettings();
-      if (refreshed.data?.AppSettings?.Edges) {
+      if (refreshed.data?.appSettings?.edges) {
         const settings = appSettingsToTorrentSettings(
-          refreshed.data.AppSettings.Edges,
+          refreshed.data.appSettings.edges,
         );
         setOriginalSettings(settings);
-        setSettingIds(keyToIdMap(refreshed.data.AppSettings.Edges));
+        setSettingIds(keyToIdMap(refreshed.data.appSettings.edges));
         setDownloadDir(settings.downloadDir);
         setSessionDir(settings.sessionDir);
         setEnableDht(settings.enableDht);

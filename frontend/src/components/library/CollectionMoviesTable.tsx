@@ -18,45 +18,49 @@ import { useQuery } from "../../lib/graphql/client";
 import {
   MeDocument,
   ShowPlaybackProgressByMediaDocument,
+  ContentStatusType,
+  type ContentStatus,
   type ShowPlaybackProgressByMediaQuery,
 } from "../../lib/graphql/generated/graphql";
 import { formatBytes } from "../../lib/format";
+import { useContentStatuses } from "../../hooks/useContentStatuses";
 
 export interface CollectionMovieTableItem {
-  TmdbId: number;
-  Title: string;
-  Year: number | null;
-  PosterUrl: string | null;
-  LibraryMovieId: string | null;
-  MediaFileId: string | null;
-  FileSizeBytes?: number | null;
-  Resolution?: string | null;
-  VideoCodec?: string | null;
-  AudioCodec?: string | null;
-  AudioChannels?: string | null;
-  Wanted: boolean;
+  tmdbId: number;
+  title: string;
+  year: number | null;
+  posterUrl: string | null;
+  libraryMovieId: string | null;
+  mediaFileId: string | null;
+  fileSizeBytes?: number | null;
+  resolution?: string | null;
+  videoCodec?: string | null;
+  audioCodec?: string | null;
+  audioChannels?: string | null;
+  wanted: boolean;
 }
 
 interface CollectionMoviesTableProps {
   movies: CollectionMovieTableItem[];
   stateKey: string;
   ariaLabel: string;
-  searchPlaceholder: string;
+  toolbarQueryPlaceholder: string;
   isLoading?: boolean;
   headerContent?: ReactNode;
 }
 
 type PlaybackProgressNode =
-  ShowPlaybackProgressByMediaQuery["PlaybackProgresses"]["Edges"][number]["Node"];
+  ShowPlaybackProgressByMediaQuery["playbackProgresses"]["edges"][number]["node"];
 
 interface CollectionMovieResolvedRow extends CollectionMovieTableItem {
   ResolvedWanted: boolean;
   ResolvedMediaFileId: string | null;
-  FileSizeBytes: number | null;
-  Resolution: string | null;
-  VideoCodec: string | null;
-  AudioCodec: string | null;
-  AudioChannels: string | null;
+  fileSizeBytes: number | null;
+  resolution: string | null;
+  videoCodec: string | null;
+  audioCodec: string | null;
+  audioChannels: string | null;
+  contentStatus?: ContentStatus;
 }
 
 function formatVideoCodec(codec: string | null): string {
@@ -94,7 +98,7 @@ export function CollectionMoviesTable({
   movies,
   stateKey,
   ariaLabel,
-  searchPlaceholder,
+  toolbarQueryPlaceholder,
   isLoading = false,
   headerContent,
 }: CollectionMoviesTableProps) {
@@ -111,25 +115,43 @@ export function CollectionMoviesTable({
 
   const currentMovieId = session?.movieId ?? null;
   const isPlaying = session?.isPlaying ?? false;
+  const statusTargets = useMemo(
+    () =>
+      movies.flatMap((movie) =>
+        movie.libraryMovieId
+          ? [
+              {
+                contentType: ContentStatusType.MOVIE,
+                id: movie.libraryMovieId,
+              },
+            ]
+          : [],
+      ),
+    [movies],
+  );
+  const { getStatus } = useContentStatuses(statusTargets);
   const resolvedMovies = useMemo<CollectionMovieResolvedRow[]>(() => {
     return movies.map((movie) => {
       return {
         ...movie,
-        ResolvedWanted: movie.Wanted,
-        ResolvedMediaFileId: movie.MediaFileId ?? null,
-        FileSizeBytes: movie.FileSizeBytes ?? null,
-        Resolution: movie.Resolution ?? null,
-        VideoCodec: movie.VideoCodec ?? null,
-        AudioCodec: movie.AudioCodec ?? null,
-        AudioChannels: movie.AudioChannels ?? null,
+        ResolvedWanted: movie.wanted,
+        ResolvedMediaFileId: movie.mediaFileId ?? null,
+        fileSizeBytes: movie.fileSizeBytes ?? null,
+        resolution: movie.resolution ?? null,
+        videoCodec: movie.videoCodec ?? null,
+        audioCodec: movie.audioCodec ?? null,
+        audioChannels: movie.audioChannels ?? null,
+        contentStatus: movie.libraryMovieId
+          ? getStatus(ContentStatusType.MOVIE, movie.libraryMovieId)
+          : undefined,
       };
     });
-  }, [movies]);
+  }, [getStatus, movies]);
 
   const { data: meData } = useQuery(MeDocument, {
     fetchPolicy: "cache-first",
   });
-  const userId = meData?.Me?.Id;
+  const userId = meData?.me?.id;
   const mediaFileIds = useMemo(
     () => [
       ...new Set(
@@ -144,29 +166,29 @@ export function CollectionMoviesTable({
     ShowPlaybackProgressByMediaDocument,
     {
       variables: {
-        Where: {
-          UserId: { eq: userId },
-          MediaFileId: { inList: mediaFileIds },
+        where: {
+          userId: { eq: userId },
+          mediaFileId: { inList: mediaFileIds },
         },
-        Page: { limit: 5000, offset: 0 },
-        OrderBy: [{ UpdatedAt: "DESC" }],
+        page: { limit: 5000, offset: 0 },
+        orderBy: [{ updatedAt: "DESC" }],
       },
       skip: !userId || mediaFileIds.length === 0,
       fetchPolicy: "cache-and-network",
     },
   );
   const progressEdges =
-    progressData?.PlaybackProgresses?.Edges ??
-    previousProgressData?.PlaybackProgresses?.Edges ??
+    progressData?.playbackProgresses?.edges ??
+    previousProgressData?.playbackProgresses?.edges ??
     [];
   const progressByMediaFile = useMemo(() => {
     const map = new Map<string, PlaybackProgressNode>();
     for (const edge of progressEdges) {
-      const node = edge.Node;
+      const node = edge.node;
       if (!node) continue;
-      if (!node.MediaFileId) continue;
-      if (!map.has(node.MediaFileId)) {
-        map.set(node.MediaFileId, node);
+      if (!node.mediaFileId) continue;
+      if (!map.has(node.mediaFileId)) {
+        map.set(node.mediaFileId, node);
       }
     }
     return map;
@@ -174,7 +196,7 @@ export function CollectionMoviesTable({
 
   const isCurrentMovieRow = useCallback(
     (movie: CollectionMovieResolvedRow) =>
-      Boolean(movie.LibraryMovieId) && movie.LibraryMovieId === currentMovieId,
+      Boolean(movie.libraryMovieId) && movie.libraryMovieId === currentMovieId,
     [currentMovieId],
   );
 
@@ -185,10 +207,10 @@ export function CollectionMoviesTable({
       sortable: true,
       render: (movie) => (
         <div className="flex items-center gap-3 min-w-0">
-          {movie.PosterUrl ? (
+          {movie.posterUrl ? (
             <Image
-              src={movie.PosterUrl}
-              alt={movie.Title}
+              src={movie.posterUrl}
+              alt={movie.title}
               className="w-10 h-14 object-cover rounded shrink-0"
               loading="lazy"
             />
@@ -197,16 +219,16 @@ export function CollectionMoviesTable({
               <IconMovie size={16} className="text-purple-400" />
             </div>
           )}
-          {movie.LibraryMovieId ? (
+          {movie.libraryMovieId ? (
             <Link
               to="/movies/$movieId"
-              params={{ movieId: movie.LibraryMovieId }}
+              params={{ movieId: movie.libraryMovieId }}
               className="font-medium hover:opacity-80 truncate"
             >
-              {movie.Title}
+              {movie.title}
             </Link>
           ) : (
-            <span className="font-medium truncate">{movie.Title}</span>
+            <span className="font-medium truncate">{movie.title}</span>
           )}
         </div>
       ),
@@ -216,7 +238,7 @@ export function CollectionMoviesTable({
       label: "Progress",
       width: 110,
       render: (movie) => {
-        if (!movie.ResolvedMediaFileId || !movie.LibraryMovieId) {
+        if (!movie.ResolvedMediaFileId || !movie.libraryMovieId) {
           return <span className="text-default-400">-</span>;
         }
         if (isCurrentMovieRow(movie)) {
@@ -236,12 +258,12 @@ export function CollectionMoviesTable({
         if (!playbackProgress) {
           return <span className="text-default-400">-</span>;
         }
-        if (playbackProgress.IsWatched) {
+        if (playbackProgress.isWatched) {
           return <span className="text-success text-sm">Watched</span>;
         }
-        if (playbackProgress.ProgressPercent > 0) {
+        if (playbackProgress.progressPercent > 0) {
           const percentage = Math.round(
-            Math.max(0, Math.min(1, playbackProgress.ProgressPercent)) * 100,
+            Math.max(0, Math.min(1, playbackProgress.progressPercent)) * 100,
           );
           return (
             <div className="flex items-center gap-2">
@@ -265,7 +287,7 @@ export function CollectionMoviesTable({
       sortable: true,
       render: (movie) => (
         <span className="text-default-500 text-sm text-nowrap">
-          {movie.Year ?? "—"}
+          {movie.year ?? "—"}
         </span>
       ),
     },
@@ -277,8 +299,8 @@ export function CollectionMoviesTable({
         if (!movie.ResolvedMediaFileId)
           return <span className="text-default-400">-</span>;
         const qualityParts = [
-          movie.Resolution,
-          formatVideoCodec(movie.VideoCodec),
+          movie.resolution,
+          formatVideoCodec(movie.videoCodec),
         ].filter(Boolean);
         if (qualityParts.length === 0)
           return <span className="text-default-400">-</span>;
@@ -297,8 +319,8 @@ export function CollectionMoviesTable({
         if (!movie.ResolvedMediaFileId)
           return <span className="text-default-400">-</span>;
         const audioLabel = formatAudioCodec(
-          movie.AudioCodec,
-          movie.AudioChannels,
+          movie.audioCodec,
+          movie.audioChannels,
         );
         if (!audioLabel) return <span className="text-default-400">-</span>;
         return <span className="text-default-500 text-sm">{audioLabel}</span>;
@@ -309,12 +331,12 @@ export function CollectionMoviesTable({
       label: "Size",
       width: 100,
       render: (movie) => {
-        if (!movie.ResolvedMediaFileId || !movie.FileSizeBytes) {
+        if (!movie.ResolvedMediaFileId || !movie.fileSizeBytes) {
           return <span className="text-default-400">-</span>;
         }
         return (
           <span className="text-default-500 text-sm text-nowrap">
-            {formatBytes(movie.FileSizeBytes)}
+            {formatBytes(movie.fileSizeBytes)}
           </span>
         );
       },
@@ -326,6 +348,7 @@ export function CollectionMoviesTable({
       sortable: true,
       render: (movie) => (
         <MediaItemStatusChip
+          status={movie.contentStatus}
           mediaFileId={movie.ResolvedMediaFileId}
           wanted={movie.ResolvedWanted}
         />
@@ -361,19 +384,19 @@ export function CollectionMoviesTable({
       color: "success",
       inDropdown: false,
       isVisible: (movie) =>
-        Boolean(movie.LibraryMovieId) &&
+        Boolean(movie.libraryMovieId) &&
         Boolean(movie.ResolvedMediaFileId) &&
         !(isCurrentMovieRow(movie) && isPlaying),
       onAction: (movie) => {
-        if (!movie.LibraryMovieId || !movie.ResolvedMediaFileId) return;
+        if (!movie.libraryMovieId || !movie.ResolvedMediaFileId) return;
         const playbackMovie = {
-          Id: movie.LibraryMovieId,
-          Title: movie.Title,
-          Year: movie.Year,
-          CollectionPosterUrl: movie.PosterUrl,
+          id: movie.libraryMovieId,
+          title: movie.title,
+          year: movie.year,
+          collectionPosterUrl: movie.posterUrl,
         };
         void startMoviePlayback(
-          movie.LibraryMovieId,
+          movie.libraryMovieId,
           movie.ResolvedMediaFileId,
           playbackMovie as unknown as Parameters<typeof startMoviePlayback>[2],
         );
@@ -420,9 +443,9 @@ export function CollectionMoviesTable({
         data={resolvedMovies}
         columns={columns}
         rowActions={rowActions}
-        getRowKey={(movie) => movie.LibraryMovieId ?? `tmdb-${movie.TmdbId}`}
+        getRowKey={(movie) => movie.libraryMovieId ?? `tmdb-${movie.tmdbId}`}
         ariaLabel={ariaLabel}
-        searchPlaceholder={searchPlaceholder}
+        toolbarQueryPlaceholder={toolbarQueryPlaceholder}
         showItemCount
         showViewModeToggle
         cardGridClassName="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"
@@ -432,10 +455,10 @@ export function CollectionMoviesTable({
           <Card className="bg-content1 border border-default-200 w-full">
             <CardBody className="p-3">
               <div className="flex gap-3">
-                {item.PosterUrl ? (
+                {item.posterUrl ? (
                   <Image
-                    src={item.PosterUrl}
-                    alt={item.Title}
+                    src={item.posterUrl}
+                    alt={item.title}
                     className="w-14 h-20 object-cover rounded-md shrink-0"
                     loading="lazy"
                   />
@@ -445,21 +468,22 @@ export function CollectionMoviesTable({
                   </div>
                 )}
                 <div className="min-w-0 flex-1 space-y-2">
-                  {item.LibraryMovieId ? (
+                  {item.libraryMovieId ? (
                     <Link
                       to="/movies/$movieId"
-                      params={{ movieId: item.LibraryMovieId }}
+                      params={{ movieId: item.libraryMovieId }}
                       className="block font-medium truncate hover:opacity-80"
                     >
-                      {item.Title}
+                      {item.title}
                     </Link>
                   ) : (
-                    <p className="font-medium truncate">{item.Title}</p>
+                    <p className="font-medium truncate">{item.title}</p>
                   )}
                   <p className="text-xs text-default-500">
-                    {item.Year ?? "Unknown year"}
+                    {item.year ?? "Unknown year"}
                   </p>
                   <MediaItemStatusChip
+                    status={item.contentStatus}
                     mediaFileId={item.ResolvedMediaFileId}
                     wanted={item.ResolvedWanted}
                   />

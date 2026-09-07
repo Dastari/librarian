@@ -10,76 +10,80 @@ use serde::{Deserialize, Serialize};
 #[graphql_entity(
     table = "notifications",
     plural = "Notifications",
-    default_sort = "created_at"
+    default_sort = "created_at",
+    index = "user_id"
 )]
 pub struct Notification {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "UserId")]
+    #[graphql(name = "userId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owner.id")]
     pub user_id: String,
 
-    #[graphql(name = "NotificationType")]
+    #[graphql(name = "notificationType")]
     #[filterable(type = "string")]
     #[sortable]
     pub notification_type: String,
 
-    #[graphql(name = "Category")]
+    #[graphql(name = "category")]
     #[filterable(type = "string")]
     #[sortable]
     pub category: String,
 
-    #[graphql(name = "Title")]
+    #[graphql(name = "title")]
     #[filterable(type = "string")]
     pub title: String,
 
-    #[graphql(name = "Message")]
+    #[graphql(name = "message")]
     pub message: String,
 
-    #[graphql(name = "LibraryId")]
+    #[graphql(name = "libraryId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub library_id: Option<String>,
 
-    #[graphql(name = "TorrentId")]
+    #[graphql(name = "torrentId")]
     #[filterable(type = "string")]
     pub torrent_id: Option<String>,
 
-    #[graphql(name = "MediaFileId")]
+    #[graphql(name = "mediaFileId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub media_file_id: Option<String>,
 
-    #[graphql(name = "PendingMatchId")]
+    #[graphql(name = "pendingMatchId")]
     #[filterable(type = "string")]
     pub pending_match_id: Option<String>,
 
-    #[graphql(name = "ActionType")]
+    #[graphql(name = "actionType")]
     #[filterable(type = "string")]
     pub action_type: Option<String>,
 
-    #[graphql(name = "ActionData")]
+    #[graphql(name = "actionData")]
     pub action_data: Option<String>,
 
-    #[graphql(name = "ReadAt")]
+    #[graphql(name = "readAt")]
     #[filterable(type = "date")]
     pub read_at: Option<String>,
 
-    #[graphql(name = "ResolvedAt")]
+    #[graphql(name = "resolvedAt")]
     #[filterable(type = "date")]
     pub resolved_at: Option<String>,
 
-    #[graphql(name = "Resolution")]
+    #[graphql(name = "resolution")]
     #[filterable(type = "string")]
     pub resolution: Option<String>,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,

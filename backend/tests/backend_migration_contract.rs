@@ -47,13 +47,34 @@ fn assert_not_contains(path: &Path, contents: &str, needles: &[&str]) {
     }
 }
 
+fn starts_uppercase_ascii(name: &str) -> bool {
+    name.as_bytes()
+        .first()
+        .is_some_and(|byte| byte.is_ascii_uppercase())
+}
+
 #[test]
 fn backend_uses_shared_graphql_orm_and_agql_auth_dependencies() {
     let cargo_toml = read(backend_root().join("Cargo.toml"));
+    let monorepo_url = "https://github.com/Dastari/graphql-orm.git";
+    let monorepo_revision = "39181034b02eca6a487eeadcf8d281aaf155a398";
 
-    assert!(
-        cargo_toml.contains("graphql-orm = { git = \"https://github.com/Dastari/graphql-orm\"")
-    );
+    for (package, version) in [
+        ("graphql-orm", "0.30.0"),
+        ("graphql-orm-storage", "0.6.2"),
+        ("graphql-orm-backup", "0.7.2"),
+    ] {
+        let dependency = cargo_toml
+            .lines()
+            .find(|line| line.starts_with(&format!("{package} = ")))
+            .unwrap_or_else(|| panic!("missing direct {package} dependency"));
+        assert!(dependency.contains(&format!("git = \"{monorepo_url}\"")));
+        assert!(dependency.contains(&format!("rev = \"{monorepo_revision}\"")));
+        assert!(dependency.contains(&format!("version = \"{version}\"")));
+    }
+
+    assert!(!cargo_toml.contains("github.com/Dastari/graphql-orm-storage"));
+    assert!(!cargo_toml.contains("github.com/Dastari/graphql-orm-backup"));
     assert!(cargo_toml.contains("agql-auth = { git = \"https://github.com/Dastari/agql-auth\""));
     assert!(cargo_toml.contains("sqlite = [\"sqlx/sqlite\", \"graphql-orm/sqlite\"]"));
 
@@ -89,6 +110,21 @@ fn backend_source_does_not_contain_direct_sql_access() {
 }
 
 #[test]
+fn artwork_fetch_uses_the_bounded_ssrf_safe_client_path() {
+    let artwork = read(backend_root().join("src/services/artwork.rs"));
+    let http_client = read(backend_root().join("src/services/http_client.rs"));
+
+    assert!(!artwork.contains("reqwest::get"));
+    assert!(!artwork.contains(".bytes().await"));
+    assert!(artwork.contains("OutboundHttpProfile::Artwork"));
+    assert!(http_client.contains("Self::Artwork | Self::LocalService => redirect::Policy::none()"));
+    assert!(artwork.contains("resolve_artwork_destination"));
+    assert!(artwork.contains("BODY_IDLE_TIMEOUT"));
+    assert!(artwork.contains("MAX_ARTWORK_BYTES"));
+    assert!(artwork.contains("response.chunk()"));
+}
+
+#[test]
 fn legacy_sql_repository_and_loader_modules_are_removed() {
     let removed_paths = [
         "src/db/artwork.rs",
@@ -116,6 +152,28 @@ fn legacy_sql_repository_and_loader_modules_are_removed() {
     assert!(
         rust_files_under(backend_root().join("src/services/graphql/orm")).is_empty(),
         "legacy GraphQL ORM directory should not contain Rust source files"
+    );
+}
+
+#[test]
+fn legacy_sql_migration_files_are_removed() {
+    let migrations_dir = backend_root().join("migrations_sqlite");
+    if !migrations_dir.exists() {
+        return;
+    }
+
+    let sql_files = fs::read_dir(&migrations_dir)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", migrations_dir.display()))
+        .filter_map(|entry| {
+            let path = entry.expect("directory entry should be readable").path();
+            (path.extension().and_then(|ext| ext.to_str()) == Some("sql")).then_some(path)
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        sql_files.is_empty(),
+        "legacy SQL migration files should be removed: {:?}",
+        sql_files
     );
 }
 
@@ -152,14 +210,46 @@ fn auth_service_uses_agql_auth_without_legacy_password_or_token_libraries() {
 }
 
 #[test]
+fn browser_auth_contract_keeps_credentials_out_of_graphql_payloads() {
+    let auth_service = read(backend_root().join("src/services/auth.rs"));
+    let auth_mutations = read(backend_root().join("src/services/graphql/mutations/auth.rs"));
+    let graphql_service = read(backend_root().join("src/services/graphql/service.rs"));
+    let config = read(backend_root().join("src/config/mod.rs"));
+
+    assert!(!auth_service.contains("AuthTokens, SimpleObject"));
+    assert!(auth_mutations.contains("AuthSessionInfo"));
+    assert!(auth_mutations.contains("HttpOnly; SameSite=Lax"));
+    assert!(auth_mutations.contains("Path=/graphql"));
+    assert!(!auth_mutations.contains("RefreshTokenInput"));
+    assert!(!auth_mutations.contains("LogoutInput"));
+
+    assert!(graphql_service.contains("cookie_request_origin_allowed"));
+    assert!(graphql_service.contains("peer_is_trusted"));
+    assert!(config.contains("LIBRARIAN_TRUSTED_PROXIES"));
+}
+
+#[test]
+fn private_artwork_requires_auth_and_private_cache_headers() {
+    let artwork_api = read(backend_root().join("src/api/artwork.rs"));
+    assert!(artwork_api.contains("require_authenticated_user"));
+    assert!(artwork_api.contains("can_access_artwork"));
+    assert!(artwork_api.contains("private, max-age=86400"));
+    assert!(artwork_api.contains("Cookie, Authorization"));
+    assert!(!artwork_api.contains("public, max-age"));
+}
+
+#[test]
 fn database_startup_uses_entity_metadata_for_schema_reset() {
     let database_service = read(backend_root().join("src/services/database.rs"));
 
-    assert!(database_service.contains("SchemaStageRunner"));
-    assert!(database_service.contains("SchemaStage::from_entities"));
-    assert!(database_service.contains("entity_schema_stage()"));
-    assert!(database_service.contains("apply_schema_stages"));
+    // graphql-orm's schema sync is explicit (validate -> plan -> apply) rather than automatic
+    // staged migrations; the backend drives all three steps from the same entity metadata list.
+    assert!(database_service.contains("validate_against_entities"));
+    assert!(database_service.contains("plan_migration_to_entities"));
+    assert!(database_service.contains("apply_migration"));
+    assert!(database_service.contains("entity_metadata()"));
     assert!(database_service.contains("as Entity>::metadata"));
+    assert!(database_service.contains("PaginationConfig::legacy()"));
 
     assert!(!database_service.contains("migrations_sqlite"));
     assert!(!database_service.contains("schema_sync"));
@@ -188,16 +278,8 @@ fn entity_files_use_graphql_orm_derives_and_camel_case_generation() {
         if contents.contains("#[graphql_entity(") {
             entity_files.push(path.clone());
             assert!(
-                contents.contains(
-                    "use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations}"
-                ) || contents.contains(
-                    "use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};"
-                ) || contents.contains(
-                    "use graphql_orm::{GraphQLEntity, GraphQLRelations, GraphQLOperations}"
-                ) || contents.contains(
-                    "use graphql_orm::{GraphQLEntity, GraphQLRelations, GraphQLOperations};"
-                ),
-                "{} should import shared graphql-orm derives",
+                contents.contains("use graphql_orm::{"),
+                "{} should import graphql-orm derives",
                 path.display()
             );
             assert!(
@@ -210,11 +292,13 @@ fn entity_files_use_graphql_orm_derives_and_camel_case_generation() {
                 "{} should derive GraphQLOperations",
                 path.display()
             );
-            assert!(
-                contents.contains("GraphQLRelations"),
-                "{} should derive GraphQLRelations",
-                path.display()
-            );
+            if contents.contains("#[relation(") {
+                assert!(
+                    contents.contains("GraphQLRelations"),
+                    "{} should derive GraphQLRelations when it declares relations",
+                    path.display()
+                );
+            }
             assert!(
                 contents.contains("#[graphql(rename_fields = \"camelCase\")]"),
                 "{} should align generated ORM fields to camelCase",
@@ -233,6 +317,164 @@ fn entity_files_use_graphql_orm_derives_and_camel_case_generation() {
         "expected broad entity coverage, found {} entity files",
         entity_files.len()
     );
+}
+
+#[test]
+fn generated_graphql_schema_has_no_pascal_case_fields_args_or_input_fields() {
+    let schema_path = backend_root().join("../frontend/src/lib/graphql/generated/schema.json");
+    let schema: serde_json::Value = serde_json::from_str(&read(&schema_path))
+        .unwrap_or_else(|err| panic!("failed to parse {}: {err}", schema_path.display()));
+
+    let types = schema
+        .pointer("/__schema/types")
+        .and_then(|value| value.as_array())
+        .expect("introspection schema should contain types");
+
+    let mut violations = Vec::new();
+    for ty in types {
+        let type_name = ty
+            .get("name")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        if type_name.starts_with("__") {
+            continue;
+        }
+
+        if let Some(fields) = ty.get("fields").and_then(|value| value.as_array()) {
+            for field in fields {
+                let field_name = field
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                if starts_uppercase_ascii(field_name) {
+                    violations.push(format!("{type_name}.{field_name}"));
+                }
+
+                if let Some(args) = field.get("args").and_then(|value| value.as_array()) {
+                    for arg in args {
+                        let arg_name = arg
+                            .get("name")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("");
+                        if starts_uppercase_ascii(arg_name) {
+                            violations.push(format!("{type_name}.{field_name}({arg_name}:)"));
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(input_fields) = ty.get("inputFields").and_then(|value| value.as_array()) {
+            for input_field in input_fields {
+                let field_name = input_field
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                if starts_uppercase_ascii(field_name) {
+                    violations.push(format!("{type_name}.{field_name}"));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "GraphQL fields, args, and input fields must be lower camelCase:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn graphql_name_overrides_do_not_define_pascal_case_fields_or_methods() {
+    let graphql_dir = backend_root().join("src/services/graphql");
+    let name_attr = regex::Regex::new(r#"#\[graphql\([^\]]*name\s*=\s*"([A-Z][A-Za-z0-9_]*)""#)
+        .expect("name attr regex should compile");
+    let mut violations = Vec::new();
+
+    for path in rust_files_under(graphql_dir) {
+        let contents = read(&path);
+        let lines = contents.lines().collect::<Vec<_>>();
+        for (idx, line) in lines.iter().enumerate() {
+            let Some(capture) = name_attr.captures(line) else {
+                continue;
+            };
+
+            let mut next = "";
+            for candidate in lines.iter().skip(idx + 1).map(|line| line.trim()) {
+                if candidate.is_empty() || candidate.starts_with("#[") {
+                    continue;
+                }
+                next = candidate;
+                break;
+            }
+
+            let is_type_or_enum = next.starts_with("pub struct ")
+                || next.starts_with("struct ")
+                || next.starts_with("pub enum ")
+                || next.starts_with("enum ");
+            let is_enum_variant =
+                next.ends_with(',') && !next.contains(':') && !next.contains("fn ");
+            if !is_type_or_enum && !is_enum_variant {
+                violations.push(format!(
+                    "{}:{} uses PascalCase #[graphql(name = \"{}\")] before `{next}`",
+                    path.display(),
+                    idx + 1,
+                    &capture[1]
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "PascalCase GraphQL name overrides are only allowed for type names and enum values:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn rbac_policy_hooks_and_sensitive_entity_annotations_are_registered() {
+    let database_service = read(backend_root().join("src/services/database.rs"));
+    assert!(database_service.contains("set_entity_policy(AppEntityPolicy)"));
+
+    let admin_only_entities = [
+        "user.rs",
+        "refresh_token.rs",
+        "invite_token.rs",
+        "app_setting.rs",
+        "app_log.rs",
+        "source.rs",
+        "source_priority_rule.rs",
+        "usenet_server.rs",
+        "metadata_cache.rs",
+        "schedule_sync_state.rs",
+    ];
+
+    for file_name in admin_only_entities {
+        let contents = read(
+            backend_root()
+                .join("src/services/graphql/entities")
+                .join(file_name),
+        );
+        assert!(
+            contents.contains(r#"read_policy = "admin.read""#),
+            "{file_name} should require admin reads"
+        );
+        assert!(
+            contents.contains(r#"write_policy = "admin.write""#),
+            "{file_name} should require admin writes"
+        );
+    }
+
+    let user = read(backend_root().join("src/services/graphql/entities/user.rs"));
+    let refresh_token = read(backend_root().join("src/services/graphql/entities/refresh_token.rs"));
+    let invite_token = read(backend_root().join("src/services/graphql/entities/invite_token.rs"));
+    let usenet_server = read(backend_root().join("src/services/graphql/entities/usenet_server.rs"));
+
+    assert!(user.contains("#[graphql_orm(private)]"));
+    assert!(refresh_token.matches("#[graphql_orm(private)]").count() >= 3);
+    assert!(invite_token.contains("#[graphql_orm(private)]"));
+    assert!(usenet_server.matches("#[graphql_orm(private)]").count() >= 2);
 }
 
 #[test]

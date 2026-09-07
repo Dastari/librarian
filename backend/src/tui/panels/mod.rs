@@ -18,16 +18,9 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use crate::tui::input::Action;
-use crate::tui::theme::PanelKind;
 
 /// Trait for TUI panels
 pub trait Panel {
-    /// Get the panel title (short name like "logs", "net")
-    fn title(&self) -> &str;
-
-    /// Get the panel kind for theming
-    fn kind(&self) -> PanelKind;
-
     /// Render the panel content
     fn render(&self, frame: &mut Frame, area: Rect, focused: bool);
 
@@ -36,14 +29,4 @@ pub trait Panel {
 
     /// Update panel data (called on tick)
     fn update(&mut self);
-
-    /// Get current scroll position (for status display)
-    fn scroll_position(&self) -> Option<(usize, usize)> {
-        None
-    }
-
-    /// Check if panel is visible (for toggle functionality)
-    fn is_visible(&self) -> bool {
-        true
-    }
 }

@@ -3,7 +3,8 @@ use tracing::info;
 
 use crate::db::Database;
 use crate::graphql::entities::Movie;
-use crate::services::ArtworkService;
+use crate::services::graphql::auth::AuthExt;
+use crate::services::{ArtworkService, ServicesManager};
 
 #[derive(Default)]
 pub struct ArtworkMutations;
@@ -11,18 +12,25 @@ pub struct ArtworkMutations;
 #[Object(name = "ArtworkMutation")]
 impl ArtworkMutations {
     /// Recache artwork for a specific movie
-    #[graphql(name = "RecacheMovieArtwork")]
+    #[graphql(name = "recacheMovieArtwork")]
     async fn recache_movie_artwork(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "MovieId")] movie_id: String,
+        #[graphql(name = "movieId")] movie_id: String,
     ) -> Result<bool> {
+        ctx.require_admin()?;
         let db = ctx.data_unchecked::<Database>();
+        let services = ctx.data_unchecked::<std::sync::Arc<ServicesManager>>();
 
         let movie = Movie::get(db.pool(), &movie_id).await?;
 
         if let Some(movie) = movie {
-            let artwork_service = ArtworkService::new(db.clone());
+            let Some(storage) = services.get_storage().await else {
+                return Err(async_graphql::Error::new(
+                    "Object storage service unavailable",
+                ));
+            };
+            let artwork_service = ArtworkService::new(db.clone(), storage);
 
             info!(
                 movie_id = %movie_id,
@@ -48,9 +56,11 @@ impl ArtworkMutations {
     }
 
     /// Recache artwork for all movies (runs in background)
-    #[graphql(name = "RecacheAllMovieArtwork")]
+    #[graphql(name = "recacheAllMovieArtwork")]
     async fn recache_all_movie_artwork(&self, ctx: &Context<'_>) -> Result<i64> {
+        ctx.require_admin()?;
         let db = ctx.data_unchecked::<Database>();
+        let services = ctx.data_unchecked::<std::sync::Arc<ServicesManager>>();
 
         let movies = Movie::query(db.pool())
             .fetch_all()
@@ -61,6 +71,11 @@ impl ArtworkMutations {
 
         let count = movies.len() as i64;
         let db_clone = db.clone();
+        let Some(storage) = services.get_storage().await else {
+            return Err(async_graphql::Error::new(
+                "Object storage service unavailable",
+            ));
+        };
 
         info!(
             count = count,
@@ -69,7 +84,7 @@ impl ArtworkMutations {
 
         // Process in background
         tokio::spawn(async move {
-            let artwork_service = ArtworkService::new(db_clone);
+            let artwork_service = ArtworkService::new(db_clone, storage);
 
             for movie in movies {
                 artwork_service

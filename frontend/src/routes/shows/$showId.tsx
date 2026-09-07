@@ -39,6 +39,7 @@ import {
   IconClipboard,
   IconPlayerPlay,
   IconPlayerPause,
+  IconPlayerStop,
   IconPlayerTrackNext,
   IconDotsVertical,
   IconRefresh,
@@ -54,18 +55,24 @@ import {
 } from "../../components/shared";
 import { DetailItemsTable } from "../../components/media/DetailItemsTable";
 import { usePlaybackContext } from "../../contexts/PlaybackContext";
+import { SearchSourcesModal, type SearchSourcesModalProps } from "../../components/SearchSourcesModal";
 import { FilePropertiesModal } from "../../components/FilePropertiesModal";
+import { ShowSettingsModal, type ShowSettingsInput } from "../../components/shows/ShowSettingsModal";
 import {
   DeleteShowRouteDocument,
   LibraryDetailRouteDocument,
   MeDocument,
   RefreshShowRouteDocument,
   ShowDetailRouteDocument,
+  UpdateShowSettingsDocument,
   ShowDetailSetEpisodeWantedDocument,
   type ShowDetailRouteQuery,
   ShowPlaybackProgressByMediaDocument,
+  ContentStatusType,
+  type ContentStatus,
   type ShowPlaybackProgressByMediaQuery,
 } from "../../lib/graphql/generated/graphql";
+import { useContentStatuses } from "../../hooks/useContentStatuses";
 
 export const Route = createFileRoute("/shows/$showId")({
   beforeLoad: ({ context, location }) => {
@@ -85,35 +92,36 @@ export const Route = createFileRoute("/shows/$showId")({
 
 // Type for episode - using PascalCase to match backend
 interface Episode {
-  Id: string;
-  ShowId: string;
-  Season: number;
-  Episode: number;
-  AbsoluteNumber: number | null;
-  Title: string | null;
-  Overview: string | null;
-  AirDate: string | null;
-  Runtime: number | null;
-  TvmazeId: number | null;
-  TmdbId: number | null;
-  TvdbId: number | null;
-  ImdbId: string | null;
-  MediaFileId: string | null;
-  Resolution: string | null;
-  VideoCodec: string | null;
-  AudioCodec: string | null;
-  AudioChannels: string | null;
-  IsHdr: boolean | null;
-  HdrType: string | null;
-  FileSizeBytes: number | null;
+  id: string;
+  showId: string;
+  season: number;
+  episode: number;
+  absoluteNumber: number | null;
+  title: string | null;
+  overview: string | null;
+  airDate: string | null;
+  runtime: number | null;
+  tvmazeId: number | null;
+  tmdbId: number | null;
+  tvdbId: number | null;
+  imdbId: string | null;
+  mediaFileId: string | null;
+  resolution: string | null;
+  videoCodec: string | null;
+  audioCodec: string | null;
+  audioChannels: string | null;
+  isHdr: boolean | null;
+  hdrType: string | null;
+  fileSizeBytes: number | null;
   FileSizeFormatted: string | null;
   WatchProgress: number | null;
   WatchPosition: number | null;
-  IsWatched: boolean;
-  Wanted: boolean;
+  isWatched: boolean;
+  wanted: boolean;
   DownloadProgress: number | null;
-  CreatedAt: string;
-  UpdatedAt: string;
+  contentStatus?: ContentStatus;
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface SeasonData {
@@ -122,10 +130,10 @@ interface SeasonData {
   downloadedCount: number;
   totalCount: number;
 }
-type ShowDetailNode = NonNullable<ShowDetailRouteQuery["Show"]>;
-type ShowEpisodeNode = ShowDetailNode["Episodes"]["Edges"][number]["Node"];
+type ShowDetailNode = NonNullable<ShowDetailRouteQuery["show"]>;
+type ShowEpisodeNode = ShowDetailNode["episodes"]["edges"][number]["node"];
 type PlaybackProgressNode =
-  ShowPlaybackProgressByMediaQuery["PlaybackProgresses"]["Edges"][number]["Node"];
+  ShowPlaybackProgressByMediaQuery["playbackProgresses"]["edges"][number]["node"];
 
 // Helper functions
 function formatAirDate(dateStr: string | null): string {
@@ -172,7 +180,7 @@ const episodeColumns: DataTableColumn<Episode>[] = [
     sortable: true,
     render: (ep) => (
       <span className="font-mono text-default-500">
-        {String(ep.Episode).padStart(2, "0")}
+        {String(ep.episode).padStart(2, "0")}
       </span>
     ),
   },
@@ -183,9 +191,9 @@ const episodeColumns: DataTableColumn<Episode>[] = [
     render: (ep) => (
       <div className="flex items-center gap-2">
         <span className="font-medium">
-          {ep.Title || `Episode ${ep.Episode}`}
+          {ep.title || `Episode ${ep.episode}`}
         </span>
-        {ep.IsWatched && <span className="text-xs text-success">✓</span>}
+        {ep.isWatched && <span className="text-xs text-success">✓</span>}
       </div>
     ),
   },
@@ -194,8 +202,8 @@ const episodeColumns: DataTableColumn<Episode>[] = [
     label: "Progress",
     width: 100,
     render: (ep) => {
-      if (!ep.MediaFileId) return <span className="text-default-400">-</span>;
-      if (ep.IsWatched)
+      if (!ep.mediaFileId) return <span className="text-default-400">-</span>;
+      if (ep.isWatched)
         return <span className="text-success text-sm">Watched</span>;
       if (ep.WatchProgress !== null && ep.WatchProgress > 0) {
         return (
@@ -222,7 +230,7 @@ const episodeColumns: DataTableColumn<Episode>[] = [
     sortable: true,
     render: (ep) => (
       <span className="text-default-500 text-sm text-nowrap">
-        {formatAirDate(ep.AirDate)}
+        {formatAirDate(ep.airDate)}
       </span>
     ),
   },
@@ -231,37 +239,37 @@ const episodeColumns: DataTableColumn<Episode>[] = [
     label: "Quality",
     width: 220,
     render: (ep) => {
-      if (!ep.MediaFileId) return <span className="text-default-400">-</span>;
+      if (!ep.mediaFileId) return <span className="text-default-400">-</span>;
       return (
         <div className="flex items-center gap-1.5 flex-wrap">
-          {ep.Resolution && (
+          {ep.resolution && (
             <Chip
               size="sm"
               variant="flat"
               color="primary"
               className="h-5 text-xs"
             >
-              {ep.Resolution}
+              {ep.resolution}
             </Chip>
           )}
-          {ep.VideoCodec && (
+          {ep.videoCodec && (
             <Chip
               size="sm"
               variant="flat"
               color="secondary"
               className="h-5 text-xs"
             >
-              {formatVideoCodec(ep.VideoCodec)}
+              {formatVideoCodec(ep.videoCodec)}
             </Chip>
           )}
-          {ep.IsHdr && (
+          {ep.isHdr && (
             <Chip
               size="sm"
               variant="flat"
               color="warning"
               className="h-5 text-xs"
             >
-              {ep.HdrType || "HDR"}
+              {ep.hdrType || "HDR"}
             </Chip>
           )}
         </div>
@@ -273,11 +281,11 @@ const episodeColumns: DataTableColumn<Episode>[] = [
     label: "Audio",
     width: 100,
     render: (ep) => {
-      if (!ep.MediaFileId || !ep.AudioCodec)
+      if (!ep.mediaFileId || !ep.audioCodec)
         return <span className="text-default-400">-</span>;
       return (
         <Chip size="sm" variant="flat" color="default" className="h-5 text-xs">
-          {formatAudioCodec(ep.AudioCodec, ep.AudioChannels)}
+          {formatAudioCodec(ep.audioCodec, ep.audioChannels)}
         </Chip>
       );
     },
@@ -287,7 +295,7 @@ const episodeColumns: DataTableColumn<Episode>[] = [
     label: "Size",
     width: 100,
     render: (ep) => {
-      if (!ep.MediaFileId || !ep.FileSizeFormatted)
+      if (!ep.mediaFileId || !ep.FileSizeFormatted)
         return <span className="text-default-400">-</span>;
       return (
         <span className="text-default-500 text-sm text-nowrap">
@@ -303,9 +311,10 @@ const episodeColumns: DataTableColumn<Episode>[] = [
     sortable: true,
     render: (ep) => (
       <MediaItemStatusChip
-        mediaFileId={ep.MediaFileId}
+        status={ep.contentStatus}
+        mediaFileId={ep.mediaFileId}
         downloadProgress={ep.DownloadProgress}
-        wanted={ep.Wanted}
+        wanted={ep.wanted}
       />
     ),
   },
@@ -328,7 +337,7 @@ function EpisodeTable({
   onSearch,
   onShowProperties,
 }: EpisodeTableProps) {
-  const { session, updatePlayback } = usePlaybackContext();
+  const { session, updatePlayback, stopPlayback } = usePlaybackContext();
   const handlePause = useCallback(
     () => updatePlayback({ isPlaying: false }),
     [updatePlayback],
@@ -338,20 +347,24 @@ function EpisodeTable({
   const isPlaying = session?.isPlaying ?? false;
 
   const hasResumeProgress = (ep: Episode) =>
-    ep.WatchProgress !== null && ep.WatchProgress > 0 && !ep.IsWatched;
+    ep.WatchProgress !== null && ep.WatchProgress > 0 && !ep.isWatched;
   const isCurrentlyPlaying = (ep: Episode) =>
-    currentlyPlayingEpisodeId === ep.Id;
+    currentlyPlayingEpisodeId === ep.id;
   const playActionKey = `play-${currentlyPlayingEpisodeId || "none"}-${isPlaying}`;
-  const hasFile = (ep: Episode) => !!ep.MediaFileId;
+  const hasFile = (ep: Episode) => !!ep.mediaFileId;
   const isDownloading = (ep: Episode) =>
-    !ep.MediaFileId && ep.DownloadProgress != null && ep.DownloadProgress > 0;
+    ep.contentStatus === "DOWNLOADING" ||
+    (!ep.mediaFileId && ep.DownloadProgress != null && ep.DownloadProgress > 0);
   const isWanted = (ep: Episode) =>
-    !ep.MediaFileId && ep.Wanted && !isDownloading(ep);
+    ep.contentStatus === "WANTED" ||
+    ep.contentStatus === "UPCOMING" ||
+    (!ep.mediaFileId && ep.wanted && !isDownloading(ep));
 
   const rowActions: RowAction<Episode>[] = [
     {
       key: `playing-${currentlyPlayingEpisodeId || "none"}`,
       label: "Pause",
+      alwaysVisible: true,
       icon: (
         <PlayPauseIndicator
           size={16}
@@ -362,7 +375,25 @@ function EpisodeTable({
       color: "default",
       inDropdown: false,
       isVisible: (ep) => hasFile(ep) && isCurrentlyPlaying(ep) && isPlaying,
-      onAction: () => handlePause(),
+      onAction: () => { void handlePause(); },
+    },
+    {
+      key: "resume-current",
+      label: "Resume",
+      icon: <IconPlayerPlay size={16} />,
+      color: "success",
+      inDropdown: false,
+      alwaysVisible: true,
+      isVisible: ep => hasFile(ep) && isCurrentlyPlaying(ep) && !isPlaying,
+      onAction: () => { void updatePlayback({ isPlaying: true }); },
+    },
+    {
+      key: "stop-current",
+      label: "Stop",
+      icon: <IconPlayerStop size={16} />,
+      inDropdown: false,
+      isVisible: ep => isCurrentlyPlaying(ep),
+      onAction: () => { void stopPlayback(); },
     },
     {
       key: `resume-${playActionKey}`,
@@ -426,7 +457,7 @@ function EpisodeTable({
       tableKey={tableKey}
       data={episodes}
       columns={episodeColumns}
-      getRowKey={(ep) => ep.Id}
+      getRowKey={(ep) => ep.id}
       ariaLabel={`Season ${seasonNumber} episodes`}
       removeWrapper
       isCompact
@@ -441,6 +472,8 @@ function EpisodeTable({
 }
 
 function ShowDetailPage() {
+  const [isShowSettingsOpen, setShowSettingsOpen] = useState(false);
+  const [sourceSearch, setSourceSearch] = useState<Pick<SearchSourcesModalProps, "initialSearch" | "title"> | null>(null);
   const navigate = useNavigate();
   const { showId } = Route.useParams();
   const { startEpisodePlayback, session, updatePlayback } =
@@ -467,58 +500,68 @@ function ShowDetailPage() {
     loading: showLoading,
     refetch,
   } = useQuery(ShowDetailRouteDocument, {
-    variables: { Id: showId },
+    variables: { id: showId },
     fetchPolicy: "cache-and-network",
   });
-  const show = showData?.Show ?? previousShowData?.Show;
+  const show = showData?.show ?? previousShowData?.show;
 
   const rawEpisodes = useMemo<Episode[]>(() => {
-    const edges = show?.Episodes?.Edges ?? [];
-    return edges.map(({ Node: ep }: { Node: ShowEpisodeNode }) => {
-      const mediaFile = ep.MediaFile ?? null;
+    const edges = show?.episodes?.edges ?? [];
+    return edges.map(({ node: ep }: { node: ShowEpisodeNode }) => {
+      const mediaFile = ep.mediaFile ?? null;
       return {
-        Id: ep.Id,
-        ShowId: ep.ShowId,
-        Season: ep.Season,
-        Episode: ep.Episode,
-        AbsoluteNumber: ep.AbsoluteNumber ?? null,
-        Title: ep.Title ?? null,
-        Overview: ep.Overview ?? null,
-        AirDate: ep.AirDate ?? null,
-        Runtime: ep.Runtime ?? mediaFile?.Duration ?? null,
-        TvmazeId: ep.TvmazeId ?? null,
-        TmdbId: ep.TmdbId ?? null,
-        TvdbId: ep.TvdbId ?? null,
-        ImdbId: null,
-        MediaFileId: ep.MediaFileId ?? null,
-        Resolution: mediaFile?.Resolution ?? null,
-        VideoCodec: mediaFile?.VideoCodec ?? null,
-        AudioCodec: mediaFile?.AudioCodec ?? null,
-        AudioChannels: mediaFile?.AudioChannels ?? null,
-        IsHdr: mediaFile?.IsHdr ?? null,
-        HdrType: mediaFile?.HdrType ?? null,
-        FileSizeBytes: mediaFile?.Size ?? null,
-        FileSizeFormatted: mediaFile?.Size ? formatBytes(mediaFile.Size) : null,
+        id: ep.id,
+        showId: ep.showId,
+        season: ep.season,
+        episode: ep.episode,
+        absoluteNumber: ep.absoluteNumber ?? null,
+        title: ep.title ?? null,
+        overview: ep.overview ?? null,
+        airDate: ep.airDate ?? null,
+        runtime: ep.runtime ?? mediaFile?.duration ?? null,
+        tvmazeId: ep.tvmazeId ?? null,
+        tmdbId: ep.tmdbId ?? null,
+        tvdbId: ep.tvdbId ?? null,
+        imdbId: null,
+        mediaFileId: ep.mediaFileId ?? null,
+        resolution: mediaFile?.resolution ?? null,
+        videoCodec: mediaFile?.videoCodec ?? null,
+        audioCodec: mediaFile?.audioCodec ?? null,
+        audioChannels: mediaFile?.audioChannels ?? null,
+        isHdr: mediaFile?.isHdr ?? null,
+        hdrType: mediaFile?.hdrType ?? null,
+        fileSizeBytes: mediaFile?.size ?? null,
+        FileSizeFormatted: mediaFile?.size ? formatBytes(mediaFile.size) : null,
         WatchProgress: null,
         WatchPosition: null,
-        IsWatched: false,
-        Wanted: ep.Wanted,
+        isWatched: false,
+        wanted: ep.wanted,
         DownloadProgress: null,
-        CreatedAt: ep.CreatedAt,
-        UpdatedAt: ep.UpdatedAt,
+        createdAt: ep.createdAt,
+        updatedAt: ep.updatedAt,
       };
     });
   }, [show]);
+  const episodeStatusTargets = useMemo(
+    () =>
+      rawEpisodes.map((episode) => ({
+        contentType: ContentStatusType.EPISODE,
+        id: episode.id,
+      })),
+    [rawEpisodes],
+  );
+  const { getStatus: getEpisodeStatus } =
+    useContentStatuses(episodeStatusTargets);
 
   const { data: meData } = useQuery(MeDocument, {
     fetchPolicy: "cache-first",
   });
-  const userId = meData?.Me?.Id;
+  const userId = meData?.me?.id;
   const episodeMediaFileIds = useMemo(
     () => [
       ...new Set(
         rawEpisodes
-          .map((ep) => ep.MediaFileId)
+          .map((ep) => ep.mediaFileId)
           .filter((id): id is string => Boolean(id)),
       ),
     ],
@@ -528,29 +571,29 @@ function ShowDetailPage() {
     ShowPlaybackProgressByMediaDocument,
     {
       variables: {
-        Where: {
-          UserId: { eq: userId },
-          MediaFileId: { inList: episodeMediaFileIds },
+        where: {
+          userId: { eq: userId },
+          mediaFileId: { inList: episodeMediaFileIds },
         },
-        Page: { limit: 5000, offset: 0 },
-        OrderBy: [{ UpdatedAt: "DESC" }],
+        page: { limit: 5000, offset: 0 },
+        orderBy: [{ updatedAt: "DESC" }],
       },
       skip: !userId || episodeMediaFileIds.length === 0,
       fetchPolicy: "cache-and-network",
     },
   );
   const progressEdges =
-    progressData?.PlaybackProgresses?.Edges ??
-    previousProgressData?.PlaybackProgresses?.Edges ??
+    progressData?.playbackProgresses?.edges ??
+    previousProgressData?.playbackProgresses?.edges ??
     [];
   const progressByMediaFile = useMemo(() => {
     const map = new Map<string, PlaybackProgressNode>();
     for (const edge of progressEdges) {
-      const node = edge.Node;
+      const node = edge.node;
       if (!node) continue;
-      if (!node.MediaFileId) continue;
-      if (!map.has(node.MediaFileId)) {
-        map.set(node.MediaFileId, node);
+      if (!node.mediaFileId) continue;
+      if (!map.has(node.mediaFileId)) {
+        map.set(node.mediaFileId, node);
       }
     }
     return map;
@@ -558,50 +601,60 @@ function ShowDetailPage() {
 
   const episodes = useMemo<Episode[]>(() => {
     return rawEpisodes.map((ep) => {
-      if (!ep.MediaFileId) {
-        return ep;
-      }
-      const progress = progressByMediaFile.get(ep.MediaFileId);
-      if (!progress) {
-        return ep;
-      }
+      const progress = ep.mediaFileId
+        ? progressByMediaFile.get(ep.mediaFileId)
+        : undefined;
       return {
         ...ep,
-        WatchProgress: Math.max(0, Math.min(1, progress.ProgressPercent)),
-        WatchPosition: progress.CurrentPosition,
-        IsWatched: progress.IsWatched,
+        contentStatus: getEpisodeStatus(ContentStatusType.EPISODE, ep.id),
+        WatchProgress: progress
+          ? Math.max(0, Math.min(1, progress.progressPercent))
+          : ep.WatchProgress,
+        WatchPosition: progress?.currentPosition ?? ep.WatchPosition,
+        isWatched: progress?.isWatched ?? ep.isWatched,
       };
     });
-  }, [progressByMediaFile, rawEpisodes]);
+  }, [getEpisodeStatus, progressByMediaFile, rawEpisodes]);
 
   // Query library
   const { data: libraryData, previousData: previousLibraryData } = useQuery(
     LibraryDetailRouteDocument,
     {
-      variables: { Id: show?.LibraryId || "" },
-      skip: !show?.LibraryId,
+      variables: { id: show?.libraryId || "" },
+      skip: !show?.libraryId,
       fetchPolicy: "cache-and-network",
     },
   );
-  const library = libraryData?.Library ?? previousLibraryData?.Library;
+  const library = libraryData?.library ?? previousLibraryData?.library;
 
   // Mutations
   const [refreshShow, { loading: refreshing }] = useMutation(
     RefreshShowRouteDocument,
   );
   const [setEpisodesWanted] = useMutation(ShowDetailSetEpisodeWantedDocument);
+  const [updateShowSettings, { loading: savingShowSettings }] = useMutation(UpdateShowSettingsDocument);
+  const handleSaveShowSettings = async (input: ShowSettingsInput) => {
+    try {
+      const { data } = await updateShowSettings({ variables: { id: showId, input } });
+      if (!data?.updateShow.success) throw new Error(data?.updateShow.error ?? "Failed to save show settings");
+      setShowSettingsOpen(false);
+      addToast({ title: "Show settings saved", color: "success" });
+    } catch (error) {
+      addToast({ title: "Could not save show settings", description: sanitizeError(error), color: "danger" });
+    }
+  };
   const [deleteShow, { loading: deleting }] = useMutation(
     DeleteShowRouteDocument,
   );
 
   const handleRefresh = async () => {
     try {
-      const { data } = await refreshShow({ variables: { Id: showId } });
-      if (!data?.RefreshShow?.Success) {
+      const { data } = await refreshShow({ variables: { id: showId } });
+      if (!data?.refreshShow?.success) {
         addToast({
           title: "Error",
           description: sanitizeError(
-            data?.RefreshShow?.Error || "Failed to refresh show",
+            data?.refreshShow?.error || "Failed to refresh show",
           ),
           color: "danger",
         });
@@ -625,12 +678,12 @@ function ShowDetailPage() {
 
   const handleDelete = async () => {
     try {
-      const { data } = await deleteShow({ variables: { Id: showId } });
-      if (!data?.DeleteShow?.Success) {
+      const { data } = await deleteShow({ variables: { id: showId } });
+      if (!data?.deleteShow?.success) {
         addToast({
           title: "Error",
           description: sanitizeError(
-            data?.DeleteShow?.Error || "Failed to delete show",
+            data?.deleteShow?.error || "Failed to delete show",
           ),
           color: "danger",
         });
@@ -644,7 +697,7 @@ function ShowDetailPage() {
       onDeleteClose();
       navigate({
         to: "/libraries/$libraryId",
-        params: { libraryId: show?.LibraryId || "" },
+        params: { libraryId: show?.libraryId || "" },
       });
     } catch (err) {
       console.error("Failed to delete show:", err);
@@ -658,21 +711,21 @@ function ShowDetailPage() {
 
   const handlePlay = useCallback(
     async (episode: Episode, startFromBeginning = false) => {
-      if (episode.MediaFileId && show) {
+      if (episode.mediaFileId && show) {
         let startPosition = 0;
         if (
           !startFromBeginning &&
           episode.WatchPosition &&
           episode.WatchProgress !== null
         ) {
-          if (!episode.IsWatched && episode.WatchProgress > 0) {
+          if (!episode.isWatched && episode.WatchProgress > 0) {
             startPosition = episode.WatchPosition;
           }
         }
         await startEpisodePlayback(
-          episode.Id,
-          episode.MediaFileId,
-          show.Id,
+          episode.id,
+          episode.mediaFileId,
+          show.id,
           episode as any,
           show as any,
           startPosition,
@@ -683,11 +736,14 @@ function ShowDetailPage() {
   );
 
   const handleSearchEpisode = useCallback(
-    (_episode: Episode) => {
+    (episode: Episode) => {
       if (!show) return;
-      navigate({ to: "/settings/sources" });
+      setSourceSearch({
+        title: `Search for ${show.name} S${String(episode.season).padStart(2, "0")}E${String(episode.episode).padStart(2, "0")}`,
+        initialSearch: { query: show.name, season: episode.season, episode: String(episode.episode), categories: [5000] },
+      });
     },
-    [show, navigate],
+    [show],
   );
 
   const handleShowProperties = useCallback(
@@ -711,13 +767,13 @@ function ShowDetailPage() {
 
       try {
         const { data } = await setEpisodesWanted({
-          variables: { ShowId: showId, Wanted: wanted },
+          variables: { showId: showId, wanted: wanted },
         });
-        if (!data?.UpdateEpisodes?.success) {
+        if (!data?.updateEpisodes?.success) {
           addToast({
             title: "Error",
             description:
-              data?.UpdateEpisodes?.error ||
+              data?.updateEpisodes?.error ||
               "Failed to update wanted status for episodes",
             color: "danger",
           });
@@ -727,8 +783,8 @@ function ShowDetailPage() {
         addToast({
           title: wanted ? "Marked as wanted" : "Removed wanted",
           description: wanted
-            ? `${data.UpdateEpisodes.affectedCount} episodes marked as wanted`
-            : `${data.UpdateEpisodes.affectedCount} episodes removed from wanted`,
+            ? `${data.updateEpisodes.affectedCount} episodes marked as wanted`
+            : `${data.updateEpisodes.affectedCount} episodes removed from wanted`,
           color: "success",
         });
 
@@ -749,14 +805,14 @@ function ShowDetailPage() {
   const seasons = useMemo<SeasonData[]>(() => {
     const seasonMap = new Map<number, Episode[]>();
     for (const ep of episodes) {
-      if (!seasonMap.has(ep.Season)) seasonMap.set(ep.Season, []);
-      seasonMap.get(ep.Season)!.push(ep);
+      if (!seasonMap.has(ep.season)) seasonMap.set(ep.season, []);
+      seasonMap.get(ep.season)!.push(ep);
     }
     return Array.from(seasonMap.entries())
       .map(([season, eps]) => ({
         season,
-        episodes: eps.sort((a, b) => a.Episode - b.Episode),
-        downloadedCount: eps.filter((e) => !!e.MediaFileId).length,
+        episodes: eps.sort((a, b) => a.episode - b.episode),
+        downloadedCount: eps.filter((e) => !!e.mediaFileId).length,
         totalCount: eps.length,
       }))
       .sort((a, b) => a.season - b.season);
@@ -766,11 +822,11 @@ function ShowDetailPage() {
     useMemo(
       () => ({
         totalEpisodes: episodes.length,
-        downloadedEpisodes: episodes.filter((e: Episode) => !!e.MediaFileId)
+        downloadedEpisodes: episodes.filter((e: Episode) => !!e.mediaFileId)
           .length,
-        missingEpisodes: episodes.filter((e: Episode) => !e.MediaFileId).length,
+        missingEpisodes: episodes.filter((e: Episode) => !e.mediaFileId).length,
         totalSizeBytes: episodes.reduce(
-          (sum: number, e: Episode) => sum + (e.FileSizeBytes || 0),
+          (sum: number, e: Episode) => sum + (e.fileSizeBytes || 0),
           0,
         ),
       }),
@@ -780,9 +836,9 @@ function ShowDetailPage() {
   const playableEpisodes = useMemo(
     () =>
       [...episodes]
-        .filter((e) => !!e.MediaFileId)
+        .filter((e) => !!e.mediaFileId)
         .sort((a, b) =>
-          a.Season === b.Season ? a.Episode - b.Episode : a.Season - b.Season,
+          a.season === b.season ? a.episode - b.episode : a.season - b.season,
         ),
     [episodes],
   );
@@ -794,7 +850,7 @@ function ShowDetailPage() {
       (episode) =>
         episode.WatchProgress !== null &&
         episode.WatchProgress > 0 &&
-        !episode.IsWatched,
+        !episode.isWatched,
     );
     return resumable ?? playableEpisodes[0];
   }, [playableEpisodes]);
@@ -829,10 +885,10 @@ function ShowDetailPage() {
       {/* Header */}
       <div className="flex flex-col md:flex-row gap-6 mb-8">
         <div className="shrink-0 relative group">
-          {show.PosterUrl ? (
+          {show.posterUrl ? (
             <Image
-              src={show.PosterUrl}
-              alt={show.Name}
+              src={show.posterUrl}
+              alt={show.name}
               className="w-48 h-72 object-cover rounded-lg shadow-lg"
             />
           ) : (
@@ -869,18 +925,18 @@ function ShowDetailPage() {
 
         <div className="flex-1">
           <Breadcrumbs className="mb-2">
-            <BreadcrumbItem href="/libraries">Libraries</BreadcrumbItem>
-            <BreadcrumbItem href={`/libraries/${show.LibraryId}`}>
-              {library?.Name ?? "Library"}
+            <BreadcrumbItem><Link to="/libraries">Libraries</Link></BreadcrumbItem>
+            <BreadcrumbItem>
+              <Link to="/libraries/$libraryId" params={{ libraryId: show.libraryId }}>{library?.name ?? "Library"}</Link>
             </BreadcrumbItem>
-            <BreadcrumbItem isCurrent>{show.Name}</BreadcrumbItem>
+            <BreadcrumbItem isCurrent>{show.name}</BreadcrumbItem>
           </Breadcrumbs>
 
           <div className="flex items-start justify-between gap-4 mb-2">
             <h1 className="text-3xl font-bold">
-              {show.Name}
-              {show.Year && (
-                <span className="text-default-500 ml-2">({show.Year})</span>
+              {show.name}
+              {show.year && (
+                <span className="text-default-500 ml-2">({show.year})</span>
               )}
             </h1>
             <Dropdown>
@@ -898,7 +954,7 @@ function ShowDetailPage() {
                 aria-label="Show actions menu"
                 onAction={(key) => {
                   if (key === "search") {
-                    navigate({ to: "/settings/sources" });
+                    setSourceSearch({ title: `Search for ${show.name}`, initialSearch: { query: show.name, categories: [5000] } });
                   } else if (key === "refresh") {
                     void handleRefresh();
                   } else if (key === "wanted-on") {
@@ -906,10 +962,7 @@ function ShowDetailPage() {
                   } else if (key === "wanted-off") {
                     void handleSetWantedForAllEpisodes(false);
                   } else if (key === "properties") {
-                    const firstPlayable = playableEpisodes[0];
-                    if (firstPlayable) {
-                      handleShowProperties(firstPlayable);
-                    }
+                    setShowSettingsOpen(true);
                   } else if (key === "delete") {
                     onDeleteOpen();
                   }
@@ -931,7 +984,7 @@ function ShowDetailPage() {
                   key="wanted-on"
                   startContent={<IconCheck size={16} />}
                   isDisabled={
-                    episodes.length === 0 || episodes.every((ep) => ep.Wanted)
+                    episodes.length === 0 || episodes.every((ep) => ep.wanted)
                   }
                 >
                   Mark as Wanted
@@ -940,19 +993,17 @@ function ShowDetailPage() {
                   key="wanted-off"
                   startContent={<IconX size={16} />}
                   isDisabled={
-                    episodes.length === 0 || episodes.every((ep) => !ep.Wanted)
+                    episodes.length === 0 || episodes.every((ep) => !ep.wanted)
                   }
                 >
                   Remove as Wanted
                 </DropdownItem>
-                {playableEpisodes.length > 0 ? (
                   <DropdownItem
                     key="properties"
                     startContent={<IconInfoCircle size={16} />}
                   >
                     Properties
                   </DropdownItem>
-                ) : null}
                 <DropdownItem
                   key="delete"
                   startContent={
@@ -968,21 +1019,21 @@ function ShowDetailPage() {
           </div>
 
           <div className="flex flex-wrap gap-2 mb-4">
-            {show.Network && (
+            {show.network && (
               <Chip size="sm" variant="flat">
-                {show.Network}
+                {show.network}
               </Chip>
             )}
-            {show.Year && (
+            {show.year && (
               <Chip size="sm" variant="flat">
-                {show.Year}
+                {show.year}
               </Chip>
             )}
           </div>
 
-          {show.Overview && (
+          {show.overview && (
             <p className="text-default-600 mb-4 line-clamp-3">
-              {show.Overview}
+              {show.overview}
             </p>
           )}
 
@@ -1013,12 +1064,12 @@ function ShowDetailPage() {
             <Chip
               size="sm"
               variant="flat"
-              color={show.AutoDownload ? "success" : "default"}
+              color={show.autoDownload ? "success" : "default"}
             >
-              {show.AutoDownload ? "Auto Download: On" : "Auto Download: Off"}
+              {show.autoDownload ? "Auto Download: On" : "Auto Download: Off"}
             </Chip>
             <Chip size="sm" variant="flat">
-              Mode: {show.AutoDownloadMode}
+              Mode: {show.autoDownloadMode}
             </Chip>
           </div>
         </div>
@@ -1108,7 +1159,7 @@ function ShowDetailPage() {
                 <EpisodeTable
                   episodes={seasonData.episodes}
                   seasonNumber={seasonData.season}
-                  showId={show.Id}
+                  showId={show.id}
                   onPlay={handlePlay}
                   onSearch={handleSearchEpisode}
                   onShowProperties={handleShowProperties}
@@ -1126,7 +1177,7 @@ function ShowDetailPage() {
             <ModalHeader>Delete Show</ModalHeader>
             <ModalBody>
               <p>
-                Are you sure you want to delete <strong>{show.Name}</strong>?
+                Are you sure you want to delete <strong>{show.name}</strong>?
               </p>
               <p className="text-sm text-default-500 mt-2">
                 This will remove the show from the library. Associated files
@@ -1149,17 +1200,29 @@ function ShowDetailPage() {
         </Modal>
       )}
 
+      <SearchSourcesModal
+        isOpen={sourceSearch !== null}
+        onClose={() => setSourceSearch(null)}
+        {...sourceSearch}
+        libraryId={show.libraryId}
+        showId={show.id}
+      />
+
       {/* File Properties Modal */}
+      {isShowSettingsOpen && (
+        <ShowSettingsModal isOpen onClose={() => setShowSettingsOpen(false)}
+          show={show} onSave={handleSaveShowSettings} isLoading={savingShowSettings} />
+      )}
       <FilePropertiesModal
         isOpen={isPropertiesOpen}
         onClose={() => {
           onPropertiesClose();
           setPropertiesEpisode(null);
         }}
-        mediaFileId={propertiesEpisode?.MediaFileId ?? null}
+        mediaFileId={propertiesEpisode?.mediaFileId ?? null}
         title={
           propertiesEpisode
-            ? `${show.Name} - S${String(propertiesEpisode.Season).padStart(2, "0")}E${String(propertiesEpisode.Episode).padStart(2, "0")}${propertiesEpisode.Title ? ` - ${propertiesEpisode.Title}` : ""}`
+            ? `${show.name} - S${String(propertiesEpisode.season).padStart(2, "0")}E${String(propertiesEpisode.episode).padStart(2, "0")}${propertiesEpisode.title ? ` - ${propertiesEpisode.title}` : ""}`
             : undefined
         }
       />

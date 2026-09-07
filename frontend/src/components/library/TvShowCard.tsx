@@ -29,30 +29,27 @@ export function TvShowCard({ show, onDelete }: TvShowCardProps) {
   const navigate = useNavigate()
 
   return (
-    <div className="aspect-[2/3]">
-      <Card className="relative overflow-hidden h-full w-full group border-none bg-content2">
+    <div className="aspect-[2/3] w-full">
+      <Card className="relative isolate overflow-hidden h-full w-full group border-none bg-content2 rounded-2xl">
         {/* Clickable overlay for navigation - covers the entire card */}
         <Link
           to="/shows/$showId"
-          params={{ showId: show.Id }}
+          params={{ showId: show.id }}
           className="absolute inset-0 z-20 w-full h-full cursor-pointer bg-transparent border-none outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-          aria-label={`View ${show.Name}`}
+          aria-label={`View ${show.name}`}
         />
 
         {/* Background artwork with gradient overlay */}
         <div className="absolute inset-0 w-full h-full">
-          {show.PosterUrl ? (
+          {show.posterUrl ? (
             <>
               <Image
-                src={show.PosterUrl}
-                alt={show.Name}
-                loading="lazy"
-                classNames={{
-                  wrapper: "absolute inset-0 w-full h-full !max-w-full",
-                  img: "w-full h-full object-cover",
-                }}
+                src={show.posterUrl}
+                alt={show.name}
+                loading="eager"
+                className="absolute inset-0 h-full w-full object-cover"
                 radius="none"
-                removeWrapper={false}
+                removeWrapper
               />
               {/* Dark gradient overlay for text readability */}
               <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-black/40" />
@@ -68,24 +65,21 @@ export function TvShowCard({ show, onDelete }: TvShowCardProps) {
         </div>
 
         {/* Year badge - top left */}
-        {show.Year && (
+        {show.year && (
           <div className="absolute top-2 left-2 z-10 pointer-events-none">
             <div className="px-2 py-1 rounded-md backdrop-blur-sm text-xs font-medium bg-default-100/80 text-default-foreground">
-              {show.Year}
+              {show.year}
             </div>
           </div>
         )}
 
         {/* Bottom content */}
-        <div className="absolute bottom-0 left-0 right-0 z-10 p-3 pointer-events-none bg-black/50 backdrop-blur-sm h-20 flex flex-col">
+        <div className="absolute bottom-0 left-0 right-0 z-10 h-20 overflow-hidden rounded-b-[inherit] bg-black/50 p-3 pointer-events-none backdrop-blur-sm flex flex-col">
           <h3 className="text-sm font-bold text-white mb-0.5 line-clamp-2 drop-shadow-lg grow">
-            {show.Name}
-            {show.Year != null && (
-              <span className="font-normal opacity-70"> ({show.Year})</span>
-            )}
+            {show.name}
           </h3>
           <div className="flex items-center gap-1.5 text-xs text-white/70">
-            {show.Network && <span className="truncate">{show.Network}</span>}
+            {show.network && <span className="truncate">{show.network}</span>}
           </div>
         </div>
 
@@ -93,9 +87,9 @@ export function TvShowCard({ show, onDelete }: TvShowCardProps) {
         <div className="absolute inset-0 z-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
           <Link
             to="/shows/$showId"
-            params={{ showId: show.Id }}
+            params={{ showId: show.id }}
             className="pointer-events-auto w-14 h-14 rounded-full bg-primary/90 text-white flex items-center justify-center shadow-lg hover:scale-110 transition-transform"
-            aria-label={`Open ${show.Name} to play`}
+            aria-label={`Open ${show.name} to play`}
           >
             <IconPlayerPlay size={28} className="ml-1" />
           </Link>
@@ -121,7 +115,7 @@ export function TvShowCard({ show, onDelete }: TvShowCardProps) {
                 if (key === "view") {
                   navigate({
                     to: "/shows/$showId",
-                    params: { showId: show.Id },
+                    params: { showId: show.id },
                   });
                 } else if (key === "delete") {
                   onDelete();

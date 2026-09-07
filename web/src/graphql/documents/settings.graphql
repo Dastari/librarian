@@ -1,0 +1,72 @@
+query AppSettingsByCategory($category: String!) {
+  appSettings(where: { category: { eq: $category } }, orderBy: [{ key: ASC }], page: { limit: 100, offset: 0 }) {
+    edges {
+      node {
+        ...AppSettingFields
+      }
+    }
+  }
+}
+
+query AppSettingByKey($key: String!) {
+  appSettings(where: { key: { eq: $key } }, page: { limit: 1, offset: 0 }) {
+    edges {
+      node {
+        ...AppSettingFields
+      }
+    }
+  }
+}
+
+mutation TestTmdbConnection($input: TestTmdbConnectionInput!) {
+  testTmdbConnection(input: $input) {
+    success
+    message
+    correlationId
+  }
+}
+
+mutation TestOllamaConnection($input: TestOllamaConnectionInput!) {
+  testOllamaConnection(input: $input) {
+    success
+    models
+    error
+  }
+}
+
+mutation TestLlmParser($input: TestLlmParserInput!) {
+  testLlmParser(input: $input) {
+    success
+    regexResult
+    error
+    llmResult {
+      title
+      year
+      showTitle
+      season
+      episode
+      artist
+      album
+      track
+      author
+      book
+      chapter
+      confidence
+      matchSource
+    }
+  }
+}
+
+mutation RecomputeLibraryQualityStatus($libraryId: String!) {
+  recomputeLibraryQualityStatus(libraryId: $libraryId) {
+    success
+    evaluated
+    optimal
+    suboptimal
+    error
+  }
+}
+
+mutation RecacheAllMovieArtwork {
+  recacheAllMovieArtwork
+}

@@ -1,0 +1,26 @@
+query PendingUpgrades($libraryId: String) {
+  pendingUpgrades(libraryId: $libraryId) {
+    ...NotificationFields
+  }
+}
+
+mutation ApproveQualityUpgrade($notificationId: String!) {
+  approveQualityUpgrade(notificationId: $notificationId) {
+    success
+    error
+  }
+}
+
+query UnresolvedScanIssues($limit: Int!, $offset: Int!) {
+  libraryScanIssues(where: { resolvedAt: { isNull: true } }, orderBy: [{ createdAt: DESC }], page: { limit: $limit, offset: $offset }) {
+    edges {
+      node {
+        ...LibraryScanIssueFields
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}

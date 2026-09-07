@@ -1,137 +1,137 @@
 query Sources(
-  $Where: SourceWhereInput
-  $OrderBy: [SourceOrderByInput!]
-  $Page: PageInput
+  $where: SourceWhereInput
+  $orderBy: [SourceOrderByInput!]
+  $page: PageInput
 ) {
-  Sources: sources(where: $Where, orderBy: $OrderBy, page: $Page) {
-    Edges: edges {
-      Node: node {
-        Id
-        Name
-        SourceType
-        DefinitionId
-        Enabled
-        Priority
-        MediaTypes
-        SiteUrl
-        SupportsSearch
-        SupportsTvSearch
-        SupportsMovieSearch
-        SupportsMusicSearch
-        SupportsBookSearch
-        Settings
-        LastError
-        ErrorCount
-        LastSuccessAt
-        LastErrorAt
-        CreatedAt
-        UpdatedAt
+  sources(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        id
+        name
+        sourceType
+        definitionId
+        enabled
+        priority
+        mediaTypes
+        siteUrl
+        supportsSearch
+        supportsTvSearch
+        supportsMovieSearch
+        supportsMusicSearch
+        supportsBookSearch
+        settings
+        lastError
+        errorCount
+        lastSuccessAt
+        lastErrorAt
+        createdAt
+        updatedAt
       }
     }
-    PageInfo: pageInfo {
-      TotalCount: totalCount
-      HasNextPage: hasNextPage
-      HasPreviousPage: hasPreviousPage
+    pageInfo {
+      totalCount
+      hasNextPage
+      hasPreviousPage
     }
   }
 }
 
 query AvailableSourceDefinitions {
-  AvailableSourceDefinitions {
-    Id
-    Name
-    Description
-    SourceType
-    TrackerType
-    Language
-    SiteLink
-    RequiredCredentials
+  availableSourceDefinitions {
+    id
+    name
+    description
+    sourceType
+    trackerType
+    language
+    siteLink
+    requiredCredentials
   }
 }
 
-query SourceSettingDefinitions($DefinitionId: String!) {
-  SourceSettingDefinitions(DefinitionId: $DefinitionId) {
-    Key
-    Label
-    SettingType
-    DefaultValue
-    Options {
-      Value
-      Label
+query SourceSettingDefinitions($definitionId: String!) {
+  sourceSettingDefinitions(definitionId: $definitionId) {
+    key
+    label
+    settingType
+    defaultValue
+    options {
+      value
+      label
     }
   }
 }
 
-query SearchSources($Input: SearchSourcesInput!) {
-  SearchSources(Input: $Input) {
-    Sources {
-      SourceId
-      SourceName
-      Releases {
-        Title
-        Guid
-        Link
-        MagnetUri
-        InfoHash
-        Details
-        PublishDate
-        Categories
-        Size
-        SizeFormatted
-        Seeders
-        Leechers
-        Peers
-        Grabs
-        IsFreeleech
-        ImdbId
-        Poster
-        Description
-        SourceId
-        SourceName
+query SearchSources($input: SearchSourcesInput!) {
+  searchSources(input: $input) {
+    sources {
+      sourceId
+      sourceName
+      releases {
+        title
+        guid
+        link
+        magnetUri
+        infoHash
+        details
+        publishDate
+        categories
+        size
+        sizeFormatted
+        seeders
+        leechers
+        peers
+        grabs
+        isFreeleech
+        imdbId
+        poster
+        description
+        sourceId
+        sourceName
       }
-      ElapsedMs
-      FromCache
-      Error
+      elapsedMs
+      fromCache
+      error
     }
-    TotalReleases
-    TotalElapsedMs
-    SourcesSearched
+    totalReleases
+    totalElapsedMs
+    sourcesSearched
   }
 }
 
-mutation CreateSource($Input: CreateSourceInput!) {
-  CreateSource: createSource(input: $Input) {
-    Success: success
-    Error: error
+mutation CreateSource($input: CreateSourceInput!) {
+  createSource(input: $input) {
+    success
+    error
   }
 }
 
-mutation UpdateSource($Id: String!, $Input: UpdateSourceInput!) {
-  UpdateSource: updateSource(id: $Id, input: $Input) {
-    Success: success
-    Error: error
+mutation UpdateSource($id: String!, $input: UpdateSourceInput!) {
+  updateSource(id: $id, input: $input) {
+    success
+    error
   }
 }
 
-mutation DeleteSource($Id: String!) {
-  DeleteSource: deleteSource(id: $Id) {
-    Success: success
-    Error: error
+mutation DeleteSource($id: String!) {
+  deleteSource(id: $id) {
+    success
+    error
   }
 }
 
-mutation TestSource($Id: String!) {
-  TestSource(Id: $Id) {
-    Success
-    Error
-    ReleasesFound
-    ElapsedMs
+mutation TestSource($id: String!) {
+  testSource(id: $id) {
+    success
+    error
+    releasesFound
+    elapsedMs
   }
 }
 
-mutation UpdateSourcePriorities($Input: UpdateSourcePrioritiesInput!) {
-  UpdateSourcePriorities(Input: $Input) {
-    Success
-    Error
+mutation UpdateSourcePriorities($input: UpdateSourcePrioritiesInput!) {
+  updateSourcePriorities(input: $input) {
+    success
+    error
   }
 }

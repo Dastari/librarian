@@ -71,6 +71,18 @@ const STATE_FILTER_OPTIONS: StateFilterOption[] = [
   { key: "ERROR", label: "Error", color: "danger" },
 ];
 
+function torrentText(value: string | null | undefined): string {
+  return value ?? "";
+}
+
+function torrentState(torrent: DownloadTorrent): string {
+  return torrentText(torrent.state).toUpperCase();
+}
+
+function torrentNumber(value: number | null | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
 export function TorrentTable({
   torrents,
   isLoading = false,
@@ -107,7 +119,8 @@ export function TorrentTable({
   const stateCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const t of torrents) {
-      const state = t.State.toUpperCase();
+      const state = torrentState(t);
+      if (!state) continue;
       counts[state] = (counts[state] || 0) + 1;
     }
     return counts;
@@ -117,7 +130,7 @@ export function TorrentTable({
   const filteredTorrents = useMemo(() => {
     if (!normalizedStateFilter) return torrents;
     return torrents.filter(
-      (t) => t.State.toUpperCase() === normalizedStateFilter,
+      (t) => torrentState(t) === normalizedStateFilter,
     );
   }, [torrents, normalizedStateFilter]);
 
@@ -138,14 +151,14 @@ export function TorrentTable({
             <button
               type="button"
               className="font-medium truncate text-left hover:text-primary transition-colors"
-              title={torrent.Name}
-              onClick={() => onInfo(torrent.InfoHash)}
+              title={torrentText(torrent.name)}
+              onClick={() => onInfo(torrent.infoHash)}
             >
-              {torrent.Name}
+              {torrentText(torrent.name) || "Unnamed torrent"}
             </button>
           </div>
         ),
-        sortFn: (a, b) => a.Name.localeCompare(b.Name),
+        sortFn: (a, b) => torrentText(a.name).localeCompare(torrentText(b.name)),
       },
       {
         key: "Progress",
@@ -158,8 +171,11 @@ export function TorrentTable({
           </div>
         ),
         render: (torrent) => {
-          const state = torrent.State.toUpperCase();
-          const percent = Math.max(0, Math.min(100, torrent.Progress * 100));
+          const state = torrentState(torrent);
+          const percent = Math.max(
+            0,
+            Math.min(100, torrentNumber(torrent.progress) * 100),
+          );
           const labelClass =
             percent >= 18
               ? "text-white/90"
@@ -191,7 +207,8 @@ export function TorrentTable({
             </div>
           );
         },
-        sortFn: (a, b) => a.Progress - b.Progress,
+        sortFn: (a, b) =>
+          torrentNumber(a.progress) - torrentNumber(b.progress),
       },
       {
         key: "TotalBytes",
@@ -201,10 +218,11 @@ export function TorrentTable({
         skeleton: () => <Skeleton className="w-16 h-4 rounded" />,
         render: (torrent) => (
           <span className="text-sm tabular-nums">
-            {formatBytes(torrent.TotalBytes)}
+            {formatBytes(torrent.totalBytes)}
           </span>
         ),
-        sortFn: (a, b) => a.TotalBytes - b.TotalBytes,
+        sortFn: (a, b) =>
+          torrentNumber(a.totalBytes) - torrentNumber(b.totalBytes),
       },
       {
         key: "liveStats",
@@ -213,7 +231,7 @@ export function TorrentTable({
         sortable: false,
         skeleton: () => <Skeleton className="w-24 h-4 rounded" />,
         render: (torrent) => {
-          const stats = liveStatsByInfoHash[torrent.InfoHash];
+          const stats = liveStatsByInfoHash[torrent.infoHash];
           if (!stats) {
             return <span className="text-xs text-default-400">-</span>;
           }
@@ -240,7 +258,7 @@ export function TorrentTable({
         sortable: true,
         skeleton: () => <Skeleton className="w-20 h-5 rounded-full" />,
         render: (torrent) => {
-          const state = torrent.State.toUpperCase();
+          const state = torrentState(torrent);
           const stateInfo =
             TORRENT_STATE_INFO[state as keyof typeof TORRENT_STATE_INFO];
           return (
@@ -253,7 +271,8 @@ export function TorrentTable({
             </Chip>
           );
         },
-        sortFn: (a, b) => a.State.localeCompare(b.State),
+        sortFn: (a, b) =>
+          torrentText(a.state).localeCompare(torrentText(b.state)),
       },
       {
         key: "AddedAt",
@@ -265,19 +284,19 @@ export function TorrentTable({
         render: (torrent) => (
           <Tooltip
             content={
-              torrent.AddedAt
-                ? new Date(torrent.AddedAt).toLocaleString()
+              torrent.addedAt
+                ? new Date(torrent.addedAt).toLocaleString()
                 : "Unknown"
             }
           >
             <span className="text-xs text-default-500 whitespace-nowrap">
-              {formatRelativeTime(torrent.AddedAt)}
+              {formatRelativeTime(torrent.addedAt)}
             </span>
           </Tooltip>
         ),
         sortFn: (a, b) => {
-          const aTime = a.AddedAt ? new Date(a.AddedAt).getTime() : 0;
-          const bTime = b.AddedAt ? new Date(b.AddedAt).getTime() : 0;
+          const aTime = a.addedAt ? new Date(a.addedAt).getTime() : 0;
+          const bTime = b.addedAt ? new Date(b.addedAt).getTime() : 0;
           return bTime - aTime; // Most recent first
         },
       },
@@ -333,14 +352,14 @@ export function TorrentTable({
         label: "Resume",
         icon: <IconPlayerPlay size={16} className="text-green-400" />,
         color: "success",
-        onAction: (items) => onBulkResume(items.map((t) => t.InfoHash)),
+        onAction: (items) => onBulkResume(items.map((t) => t.infoHash)),
       },
       {
         key: "pause",
         label: "Pause",
         icon: <IconPlayerPause size={16} className="text-amber-400" />,
         color: "warning",
-        onAction: (items) => onBulkPause(items.map((t) => t.InfoHash)),
+        onAction: (items) => onBulkPause(items.map((t) => t.infoHash)),
       },
       {
         key: "remove",
@@ -350,7 +369,7 @@ export function TorrentTable({
         isDestructive: true,
         confirm: true,
         confirmMessage: "Remove selected torrents?",
-        onAction: (items) => onBulkRemove(items.map((t) => t.InfoHash)),
+        onAction: (items) => onBulkRemove(items.map((t) => t.infoHash)),
       },
     ],
     [onBulkPause, onBulkResume, onBulkRemove],
@@ -365,8 +384,8 @@ export function TorrentTable({
         icon: <IconPlayerPlay size={16} className="text-green-400" />,
         color: "success",
         inDropdown: false,
-        isVisible: (torrent) => torrent.State.toUpperCase() === "PAUSED",
-        onAction: (torrent) => onResume(torrent.InfoHash),
+        isVisible: (torrent) => torrentState(torrent) === "PAUSED",
+        onAction: (torrent) => onResume(torrent.infoHash),
       },
       {
         key: "pause",
@@ -375,17 +394,17 @@ export function TorrentTable({
         color: "warning",
         inDropdown: false,
         isVisible: (torrent) => {
-          const state = torrent.State.toUpperCase();
+          const state = torrentState(torrent);
           return state === "DOWNLOADING" || state === "SEEDING";
         },
-        onAction: (torrent) => onPause(torrent.InfoHash),
+        onAction: (torrent) => onPause(torrent.infoHash),
       },
       {
         key: "info",
         label: "Info",
         icon: <IconInfoCircle size={16} />,
         inDropdown: true,
-        onAction: (torrent) => onInfo(torrent.InfoHash),
+        onAction: (torrent) => onInfo(torrent.infoHash),
       },
       {
         key: "process",
@@ -393,8 +412,8 @@ export function TorrentTable({
         icon: <IconCopy size={16} className="text-green-400" />,
         inDropdown: true,
         isVisible: (torrent) => {
-          const state = torrent.State.toUpperCase();
-          return state === "SEEDING" || torrent.Progress >= 1;
+          const state = torrentState(torrent);
+          return state === "SEEDING" || torrentNumber(torrent.progress) >= 1;
         },
         onAction: (torrent) => onProcess(torrent),
       },
@@ -404,8 +423,8 @@ export function TorrentTable({
         icon: <IconSearch size={16} className="text-blue-400" />,
         inDropdown: true,
         isVisible: (torrent) => {
-          const state = torrent.State.toUpperCase();
-          return state === "SEEDING" || torrent.Progress >= 1;
+          const state = torrentState(torrent);
+          return state === "SEEDING" || torrentNumber(torrent.progress) >= 1;
         },
         onAction: (torrent) => onMatch(torrent),
       },
@@ -415,8 +434,8 @@ export function TorrentTable({
         icon: <IconLibrary size={16} className="text-blue-400" />,
         inDropdown: true,
         isVisible: (torrent) => {
-          const state = torrent.State.toUpperCase();
-          return state === "SEEDING" || torrent.Progress >= 1;
+          const state = torrentState(torrent);
+          return state === "SEEDING" || torrentNumber(torrent.progress) >= 1;
         },
         onAction: (torrent) => onLinkToLibrary(torrent),
       },
@@ -447,8 +466,8 @@ export function TorrentTable({
   const searchFn = (torrent: DownloadTorrent, term: string) => {
     const lowerTerm = term.toLowerCase();
     return (
-      torrent.Name.toLowerCase().includes(lowerTerm) ||
-      torrent.InfoHash.toLowerCase().includes(lowerTerm)
+      torrentText(torrent.name).toLowerCase().includes(lowerTerm) ||
+      torrentText(torrent.infoHash).toLowerCase().includes(lowerTerm)
     );
   };
 
@@ -471,13 +490,13 @@ export function TorrentTable({
         skeletonDelay={500}
         data={filteredTorrents}
         columns={columns}
-        getRowKey={(torrent) => torrent.Id}
+        getRowKey={(torrent) => torrent.id}
         isLoading={isLoading}
         skeletonRowCount={12}
         selectionMode="multiple"
         checkboxSelectionOnly
         searchFn={searchFn}
-        searchPlaceholder="Search torrents..."
+        toolbarQueryPlaceholder="Search torrents..."
         defaultSortColumn="Name"
         fillHeight
         showViewModeToggle
@@ -499,7 +518,7 @@ export function TorrentTable({
         filterRowContent={filterRowContent}
         toolbarContent={
           <Tooltip content="Add Torrent">
-            <Button isIconOnly color="primary" size="sm" onPress={onAddClick}>
+            <Button isIconOnly color="primary" size="sm" onPress={onAddClick} aria-label="Add torrent">
               <IconPlus size={16} />
             </Button>
           </Tooltip>
@@ -512,12 +531,12 @@ export function TorrentTable({
         onClose={onConfirmClose}
         onConfirm={() => {
           if (torrentToRemove) {
-            onRemove(torrentToRemove.InfoHash);
+            onRemove(torrentToRemove.infoHash);
           }
           onConfirmClose();
         }}
         title="Remove Torrent"
-        message={`Are you sure you want to remove "${torrentToRemove?.Name}"?`}
+        message={`Are you sure you want to remove "${torrentToRemove?.name}"?`}
         description="This will stop the download but will not delete any downloaded files."
         confirmLabel="Remove"
         confirmColor="danger"

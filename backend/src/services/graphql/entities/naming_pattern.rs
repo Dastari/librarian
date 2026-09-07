@@ -11,50 +11,54 @@ use serde::{Deserialize, Serialize};
 #[graphql_entity(
     table = "naming_patterns",
     plural = "NamingPatterns",
-    default_sort = "name"
+    default_sort = "name",
+    unique_composite = "library_type,name",
+    read_policy = "member.read",
+    write_policy = "admin.write"
 )]
 pub struct NamingPattern {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "UserId")]
+    #[graphql(name = "userId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owner.id")]
     pub user_id: String,
 
-    #[graphql(name = "LibraryType")]
+    #[graphql(name = "libraryType")]
     #[filterable(type = "string")]
     #[sortable]
     pub library_type: String,
 
-    #[graphql(name = "Name")]
+    #[graphql(name = "name")]
     #[filterable(type = "string")]
     #[sortable]
     pub name: String,
 
-    #[graphql(name = "Pattern")]
+    #[graphql(name = "pattern")]
     pub pattern: String,
 
-    #[graphql(name = "Description")]
+    #[graphql(name = "description")]
     pub description: Option<String>,
 
-    #[graphql(name = "IsDefault")]
+    #[graphql(name = "isDefault")]
     #[boolean_field]
     #[filterable(type = "boolean")]
     pub is_default: bool,
 
-    #[graphql(name = "IsSystem")]
+    #[graphql(name = "isSystem")]
     #[boolean_field]
     #[filterable(type = "boolean")]
     pub is_system: bool,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,

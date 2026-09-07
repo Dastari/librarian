@@ -19,9 +19,10 @@ use uuid::Uuid;
 
 use crate::db::Database;
 use crate::graphql::entities::{
-    CreateRefreshTokenInput, CreateUserInput, RefreshToken, UpdateRefreshTokenInput,
-    UpdateUserInput, User,
+    CreateRefreshTokenInput, CreateUserInput, InviteToken, RefreshToken, UpdateInviteTokenInput,
+    UpdateRefreshTokenInput, UpdateUserInput, User,
 };
+use crate::services::graphql::auth::Role;
 use crate::services::manager::{Service, ServiceHealth};
 
 #[derive(Debug, Clone)]
@@ -31,19 +32,52 @@ pub struct AuthConfig {
     pub refresh_token_ttl_seconds: i64,
 }
 
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self::from_env()
-    }
-}
+/// Minimum acceptable length (in bytes) for a JWT signing secret.
+const MIN_JWT_SECRET_LEN: usize = 32;
 
 impl AuthConfig {
-    pub fn from_env() -> Self {
+    /// Load the auth config from the environment. Fails startup (rather than
+    /// falling back to an insecure default) if no secret is configured or the
+    /// configured secret is too short to be a meaningful signing key.
+    pub fn from_env() -> Result<Self> {
+        const HELP: &str = "Set LIBRARIAN_JWT_SECRET to a random value of at least 32 bytes \
+            (e.g. run `openssl rand -base64 48` and copy the output) before starting the server. \
+            JWT_SECRET is also accepted as a fallback env var name.";
+
         let jwt_secret = std::env::var("LIBRARIAN_JWT_SECRET")
             .or_else(|_| std::env::var("JWT_SECRET"))
-            .unwrap_or_else(|_| "development-only-librarian-jwt-secret-change-me".to_string());
-        Self {
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+
+        let jwt_secret = match jwt_secret {
+            Some(secret) if secret.len() >= MIN_JWT_SECRET_LEN => secret,
+            Some(_) => {
+                return Err(anyhow!(
+                    "LIBRARIAN_JWT_SECRET (or JWT_SECRET) is set but is shorter than {MIN_JWT_SECRET_LEN} \
+                     bytes, which is not safe as a JWT signing key. {HELP}"
+                ));
+            }
+            None => {
+                return Err(anyhow!(
+                    "LIBRARIAN_JWT_SECRET is not set. Refusing to start with an insecure default \
+                     signing key. {HELP}"
+                ));
+            }
+        };
+
+        Ok(Self {
             jwt_secret,
+            access_token_ttl_seconds: 15 * 60,
+            refresh_token_ttl_seconds: 30 * 24 * 60 * 60,
+        })
+    }
+
+    /// Fixed, non-secret config for tests that don't exercise env-var loading.
+    /// Never used outside `#[cfg(test)]` builds.
+    #[cfg(test)]
+    pub fn for_tests() -> Self {
+        Self {
+            jwt_secret: "test-only-jwt-signing-secret-do-not-use-in-prod".to_string(),
             access_token_ttl_seconds: 15 * 60,
             refresh_token_ttl_seconds: 30 * 24 * 60 * 60,
         }
@@ -59,13 +93,7 @@ impl AuthConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AccessTokenClaims;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RefreshTokenClaims;
-
-#[derive(Debug, Clone, SimpleObject)]
+#[derive(Debug, Clone)]
 pub struct AuthTokens {
     pub access_token: String,
     pub refresh_token: String,
@@ -87,6 +115,58 @@ pub struct RegisterInput {
     pub email: String,
     pub name: String,
     pub password: String,
+    /// Optional invite token value. Required for every registration except the very
+    /// first (see [`AuthService::needs_setup`]), which self-bootstraps the initial admin.
+    pub invite_token: Option<String>,
+}
+
+/// Error message returned (as the `error` field of the register mutation's payload, not
+/// a raw GraphQL error) when registration is attempted without a valid invite token.
+pub const INVITE_TOKEN_REQUIRED_MESSAGE: &str = "Registration requires a valid invite token";
+
+/// Minimal, DB-independent snapshot of an [`InviteToken`] row, used so the redemption
+/// gate below can be unit tested without a `Database`.
+#[derive(Debug, Clone)]
+pub struct InviteTokenState {
+    pub is_active: bool,
+    pub expires_at: Option<OffsetDateTime>,
+    pub use_count: i32,
+    pub max_uses: Option<i32>,
+}
+
+/// Pure gate deciding whether a registration attempt may proceed.
+///
+/// - If no users exist yet (`needs_setup`), registration is always allowed regardless of
+///   `token` - the first user self-bootstraps as admin, matching legacy behavior.
+/// - Otherwise a token must be supplied (`Some`) and must be `is_active`, not expired as
+///   of `now` (an unset `expires_at` never expires), and under its use limit (an unset or
+///   non-positive `max_uses` means unlimited uses).
+pub fn validate_invite_token(
+    needs_setup: bool,
+    token: Option<&InviteTokenState>,
+    now: OffsetDateTime,
+) -> Result<(), String> {
+    if needs_setup {
+        return Ok(());
+    }
+    let Some(state) = token else {
+        return Err(INVITE_TOKEN_REQUIRED_MESSAGE.to_string());
+    };
+    if !state.is_active {
+        return Err(INVITE_TOKEN_REQUIRED_MESSAGE.to_string());
+    }
+    if let Some(expires_at) = state.expires_at
+        && expires_at <= now
+    {
+        return Err(INVITE_TOKEN_REQUIRED_MESSAGE.to_string());
+    }
+    if let Some(max_uses) = state.max_uses
+        && max_uses > 0
+        && state.use_count >= max_uses
+    {
+        return Err(INVITE_TOKEN_REQUIRED_MESSAGE.to_string());
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -121,6 +201,12 @@ impl LibrarianAuthStore {
 }
 
 fn parse_time(value: &str) -> agql_auth::AuthResult<OffsetDateTime> {
+    // Generated ORM timestamps are Unix seconds; older/auth-written fields are
+    // RFC3339. Refresh rotation must be able to read both from the same record.
+    if let Ok(seconds) = value.parse::<i64>() {
+        return OffsetDateTime::from_unix_timestamp(seconds)
+            .map_err(|err| agql_auth::AuthError::Store(err.to_string()));
+    }
     OffsetDateTime::parse(value, &Rfc3339)
         .map_err(|err| agql_auth::AuthError::Store(err.to_string()))
 }
@@ -155,6 +241,7 @@ fn to_stored_refresh_token(token: RefreshToken) -> agql_auth::AuthResult<StoredR
             .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?,
         scopes: token.scopes,
         session: serde_json::from_str(&token.session).unwrap_or_default(),
+        refreshable_metadata: None,
         token_hash: token.token_hash,
         created_at: parse_time(&token.created_at)?,
         expires_at: parse_time(&token.expires_at)?,
@@ -306,6 +393,48 @@ impl RefreshTokenStore for LibrarianAuthStore {
         .map(|_| ())
         .map_err(|err| agql_auth::AuthError::Store(err.to_string()))
     }
+
+    async fn rotate_refresh_token(
+        &self,
+        current_token_id: Uuid,
+        replacement: StoredRefreshToken,
+        rotated_at: OffsetDateTime,
+        ip_address: Option<String>,
+        user_agent: Option<String>,
+    ) -> agql_auth::AuthResult<bool> {
+        let current = RefreshToken::get(self.db.pool(), &current_token_id.to_string())
+            .await
+            .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?;
+        let Some(current) = current else {
+            return Ok(false);
+        };
+        if current.revoked_at.is_some() {
+            return Ok(false);
+        }
+
+        let replacement_id = replacement.id.to_string();
+        self.insert_refresh_token(replacement).await?;
+
+        RefreshToken::update_by_id(
+            &self.db,
+            &current_token_id.to_string(),
+            UpdateRefreshTokenInput {
+                revoked_at: Some(Some(format_time(rotated_at))),
+                replaced_by_token_id: Some(Some(replacement_id)),
+                revocation_reason: Some(Some(format!(
+                    "{:?}",
+                    RefreshTokenRevocationReason::Rotation
+                ))),
+                last_used_at: Some(Some(format_time(rotated_at))),
+                ip_address: Some(ip_address),
+                user_agent: Some(user_agent),
+                ..Default::default()
+            },
+        )
+        .await
+        .map(|_| true)
+        .map_err(|err| agql_auth::AuthError::Store(err.to_string()))
+    }
 }
 
 type InnerAuth = AgqlAuthService<LibrarianAuthStore, LibrarianAuthStore>;
@@ -315,6 +444,7 @@ pub struct AuthService {
     config: AuthConfig,
     db: RwLock<Option<Database>>,
     inner: RwLock<Option<Arc<InnerAuth>>>,
+    login_limiter: crate::services::login_rate_limit::LoginRateLimiter,
 }
 
 impl AuthService {
@@ -324,6 +454,7 @@ impl AuthService {
             config,
             db: RwLock::new(None),
             inner: RwLock::new(None),
+            login_limiter: crate::services::login_rate_limit::LoginRateLimiter::default(),
         }
     }
 
@@ -345,6 +476,10 @@ impl AuthService {
 
     pub fn refresh_token_lifetime_seconds(&self) -> i64 {
         self.config.refresh_token_ttl_seconds
+    }
+
+    pub fn access_token_lifetime_seconds(&self) -> i64 {
+        self.config.access_token_ttl_seconds
     }
 
     pub async fn get_jwt_secret(&self) -> Result<String> {
@@ -369,11 +504,54 @@ impl AuthService {
     pub async fn register(&self, input: RegisterInput) -> Result<LoginResult> {
         let db = self.db().await?;
         let inner = self.inner().await?;
-        let role = if self.needs_setup().await? {
-            "admin"
+        let needs_setup = self.needs_setup().await?;
+
+        // InviteToken's `token` field is `#[graphql_orm(private)]` (not filterable via
+        // the generated WhereInput), so - matching the existing lookup pattern for
+        // RefreshToken's private `token_hash` field in this file - fetch all invite
+        // tokens and match in memory. The table is small (admin-issued invites only).
+        let matched_token = if needs_setup {
+            None
         } else {
-            "member"
+            let raw_token = input
+                .invite_token
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if raw_token.is_empty() {
+                None
+            } else {
+                InviteToken::query(db.pool())
+                    .fetch_all()
+                    .await?
+                    .into_iter()
+                    .find(|candidate| candidate.token == raw_token)
+            }
         };
+
+        let now = OffsetDateTime::now_utc();
+        let token_state = matched_token.as_ref().map(|token| InviteTokenState {
+            is_active: token.is_active,
+            expires_at: token
+                .expires_at
+                .as_deref()
+                .and_then(|value| parse_time(value).ok()),
+            use_count: token.use_count,
+            max_uses: token.max_uses,
+        });
+        validate_invite_token(needs_setup, token_state.as_ref(), now)
+            .map_err(|message| anyhow!(message))?;
+
+        let role = if needs_setup {
+            Role::Admin
+        } else {
+            matched_token
+                .as_ref()
+                .and_then(|token| Role::parse(&token.role))
+                .unwrap_or(Role::Member)
+        };
+
         let password_hash = inner
             .hash_password(&input.password)
             .map_err(|err| anyhow!(err.to_string()))?;
@@ -390,7 +568,7 @@ impl AuthService {
                 username,
                 email: Some(input.email.clone()),
                 password_hash,
-                role: role.to_string(),
+                role: role.as_str().to_string(),
                 display_name: Some(input.name),
                 avatar_url: None,
                 is_active: true,
@@ -398,6 +576,25 @@ impl AuthService {
             },
         )
         .await?;
+
+        if let Some(token) = &matched_token {
+            let new_use_count = token.use_count + 1;
+            let exhausted = token
+                .max_uses
+                .map(|max_uses| max_uses > 0 && new_use_count >= max_uses)
+                .unwrap_or(false);
+            InviteToken::update_by_id(
+                &db,
+                &token.id,
+                UpdateInviteTokenInput {
+                    use_count: Some(new_use_count),
+                    is_active: if exhausted { Some(false) } else { None },
+                    ..UpdateInviteTokenInput::default()
+                },
+            )
+            .await?;
+        }
+
         let payload = inner
             .issue_verified_user_session(
                 user.id.clone(),
@@ -411,12 +608,32 @@ impl AuthService {
     }
 
     pub async fn login(&self, principal: &str, password: &str) -> Result<LoginResult> {
-        let payload = self
+        if self.login_limiter.is_blocked(principal) {
+            return Err(anyhow!(
+                crate::services::login_rate_limit::RATE_LIMITED_MESSAGE
+            ));
+        }
+
+        let login_result = self
             .inner()
             .await?
             .login(principal, password, ClientMetadata::default())
-            .await
-            .map_err(|err| anyhow!(err.to_string()))?;
+            .await;
+        let payload = match login_result {
+            Ok(payload) => {
+                self.login_limiter.clear(principal);
+                payload
+            }
+            Err(err) => {
+                let message = err.to_string();
+                // Throttle/lockout is already a denial; counting it as another
+                // failed password guess extends the lockout.
+                if !crate::services::login_rate_limit::is_rate_limit_message(&message) {
+                    self.login_limiter.record_failure(principal);
+                }
+                return Err(anyhow!(message));
+            }
+        };
         let db = self.db().await?;
         let user = User::get(db.pool(), &payload.user.user_id)
             .await?
@@ -439,7 +656,7 @@ impl AuthService {
             .await?
             .refresh(refresh_token, ClientMetadata::default())
             .await
-            .map_err(|err| anyhow!(err.to_string()))?;
+            .map_err(anyhow::Error::new)?;
         Ok(to_tokens(payload))
     }
 
@@ -528,5 +745,93 @@ impl Service for AuthService {
         } else {
             Ok(ServiceHealth::unhealthy("auth service not started"))
         }
+    }
+}
+
+#[cfg(test)]
+mod invite_token_tests {
+    use super::{INVITE_TOKEN_REQUIRED_MESSAGE, InviteTokenState, validate_invite_token};
+    use time::Duration;
+    use time::OffsetDateTime;
+
+    fn now() -> OffsetDateTime {
+        OffsetDateTime::now_utc()
+    }
+
+    fn valid_state(now: OffsetDateTime) -> InviteTokenState {
+        InviteTokenState {
+            is_active: true,
+            expires_at: Some(now + Duration::days(1)),
+            use_count: 0,
+            max_uses: Some(5),
+        }
+    }
+
+    #[test]
+    fn first_user_bypasses_invite_requirement() {
+        // needs_setup = true, no token at all - still allowed.
+        assert!(validate_invite_token(true, None, now()).is_ok());
+    }
+
+    #[test]
+    fn missing_token_is_required_once_setup_is_complete() {
+        let err = validate_invite_token(false, None, now()).unwrap_err();
+        assert_eq!(err, INVITE_TOKEN_REQUIRED_MESSAGE);
+    }
+
+    #[test]
+    fn valid_token_is_accepted() {
+        let now = now();
+        let state = valid_state(now);
+        assert!(validate_invite_token(false, Some(&state), now).is_ok());
+    }
+
+    #[test]
+    fn expired_token_is_rejected() {
+        let now = now();
+        let mut state = valid_state(now);
+        state.expires_at = Some(now - Duration::seconds(1));
+        let err = validate_invite_token(false, Some(&state), now).unwrap_err();
+        assert_eq!(err, INVITE_TOKEN_REQUIRED_MESSAGE);
+    }
+
+    #[test]
+    fn exhausted_token_is_rejected() {
+        let now = now();
+        let mut state = valid_state(now);
+        state.max_uses = Some(3);
+        state.use_count = 3;
+        let err = validate_invite_token(false, Some(&state), now).unwrap_err();
+        assert_eq!(err, INVITE_TOKEN_REQUIRED_MESSAGE);
+    }
+
+    #[test]
+    fn inactive_token_is_rejected() {
+        let now = now();
+        let mut state = valid_state(now);
+        state.is_active = false;
+        let err = validate_invite_token(false, Some(&state), now).unwrap_err();
+        assert_eq!(err, INVITE_TOKEN_REQUIRED_MESSAGE);
+    }
+
+    #[test]
+    fn unlimited_and_no_expiry_token_is_accepted() {
+        let now = now();
+        let state = InviteTokenState {
+            is_active: true,
+            expires_at: None,
+            use_count: 1000,
+            max_uses: None,
+        };
+        assert!(validate_invite_token(false, Some(&state), now).is_ok());
+    }
+
+    #[test]
+    fn zero_max_uses_means_unlimited() {
+        let now = now();
+        let mut state = valid_state(now);
+        state.max_uses = Some(0);
+        state.use_count = 50;
+        assert!(validate_invite_token(false, Some(&state), now).is_ok());
     }
 }

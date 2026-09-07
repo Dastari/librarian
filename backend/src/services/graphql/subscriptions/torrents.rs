@@ -94,7 +94,7 @@ impl TorrentSubscriptions {
             }
         };
 
-        let rx = match service.subscribe() {
+        let rx = match service.subscribe().await {
             Some(rx) => rx,
             None => {
                 return Box::pin(Box::new(futures::stream::empty::<TorrentProgress>())
@@ -152,7 +152,7 @@ impl TorrentSubscriptions {
             }
         };
 
-        let rx = match service.subscribe() {
+        let rx = match service.subscribe().await {
             Some(rx) => rx,
             None => {
                 return Box::pin(Box::new(futures::stream::empty::<TorrentAddedEvent>())
@@ -202,7 +202,7 @@ impl TorrentSubscriptions {
             }
         };
 
-        let rx = match service.subscribe() {
+        let rx = match service.subscribe().await {
             Some(rx) => rx,
             None => {
                 return Box::pin(Box::new(futures::stream::empty::<TorrentCompletedEvent>())
@@ -252,7 +252,7 @@ impl TorrentSubscriptions {
             }
         };
 
-        let rx = match service.subscribe() {
+        let rx = match service.subscribe().await {
             Some(rx) => rx,
             None => {
                 return Box::pin(Box::new(futures::stream::empty::<TorrentRemovedEvent>())

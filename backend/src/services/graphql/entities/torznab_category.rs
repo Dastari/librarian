@@ -11,25 +11,28 @@ use serde::{Deserialize, Serialize};
 #[graphql_entity(
     table = "torznab_categories",
     plural = "TorznabCategories",
-    default_sort = "id"
+    default_sort = "id",
+    read_policy = "member.read",
+    write_policy = "admin.write"
 )]
 pub struct TorznabCategory {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
+    #[graphql_orm(auto_generated = false)]
     #[filterable(type = "string")]
     #[sortable]
     pub id: String,
 
-    #[graphql(name = "Name")]
+    #[graphql(name = "name")]
     #[filterable(type = "string")]
     #[sortable]
     pub name: String,
 
-    #[graphql(name = "ParentId")]
+    #[graphql(name = "parentId")]
     #[filterable(type = "string")]
     pub parent_id: Option<String>,
 
-    #[graphql(name = "Description")]
+    #[graphql(name = "description")]
     pub description: Option<String>,
 }
 

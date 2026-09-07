@@ -59,7 +59,7 @@ export function NamingPatternSelector({
   autoSelectDefaultForLibraryType = false,
 }: NamingPatternSelectorProps) {
   type NamingPatternRow =
-    OrganizationNamingPatternsQuery["NamingPatterns"]["Edges"][number]["Node"];
+    OrganizationNamingPatternsQuery["namingPatterns"]["edges"][number]["node"];
   const [allPatterns, setAllPatterns] = useState<NamingPatternRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [useCustom, setUseCustom] = useState(false);
@@ -68,7 +68,7 @@ export function NamingPatternSelector({
 
   // Filter patterns by library type
   const patterns = libraryType
-    ? allPatterns.filter((p) => p.LibraryType === libraryType)
+    ? allPatterns.filter((p) => p.libraryType === libraryType)
     : allPatterns;
 
   // Fetch available patterns
@@ -80,23 +80,23 @@ export function NamingPatternSelector({
             query: OrganizationNamingPatternsDocument,
             fetchPolicy: "network-only",
             variables: {
-              OrderBy: [{ Name: "ASC" }],
-              Page: { limit: 200, offset: 0 },
+              orderBy: [{ name: "ASC" }],
+              page: { limit: 200, offset: 0 },
             },
           });
 
-        if (data?.NamingPatterns?.Edges) {
-          const nodes = data.NamingPatterns.Edges.map((e) => e.Node);
+        if (data?.namingPatterns?.edges) {
+          const nodes = data.namingPatterns.edges.map((e) => e.node);
           setAllPatterns(nodes);
 
           // Check if current value matches a preset for this library type.
           // In create flow with auto-select enabled, do not force custom mode.
           if (value) {
             const filteredPatterns = libraryType
-              ? nodes.filter((p) => p.LibraryType === libraryType)
+              ? nodes.filter((p) => p.libraryType === libraryType)
               : nodes;
             const matchingPreset = filteredPatterns.find(
-              (p) => p.Pattern === value,
+              (p) => p.pattern === value,
             );
             if (!matchingPreset && !autoSelectDefaultForLibraryType) {
               setUseCustom(true);
@@ -127,12 +127,12 @@ export function NamingPatternSelector({
     if (!patterns.length) return;
 
     const hasMatchingPreset =
-      !!value && patterns.some((p) => p.Pattern === value);
+      !!value && patterns.some((p) => p.pattern === value);
     if (hasMatchingPreset) return;
 
-    const defaultPattern = patterns.find((p) => p.IsDefault) || patterns[0];
-    if (defaultPattern && defaultPattern.Pattern !== value) {
-      onChange(defaultPattern.Pattern);
+    const defaultPattern = patterns.find((p) => p.isDefault) || patterns[0];
+    if (defaultPattern && defaultPattern.pattern !== value) {
+      onChange(defaultPattern.pattern);
     }
   }, [
     autoSelectDefaultForLibraryType,
@@ -144,7 +144,7 @@ export function NamingPatternSelector({
   ]);
 
   // Find the currently selected pattern ID based on the pattern string
-  const selectedPatternId = patterns.find((p) => p.Pattern === value)?.Id || "";
+  const selectedPatternId = patterns.find((p) => p.pattern === value)?.id || "";
 
   // Get appropriate description and placeholder for this library type
   const variableDescription =
@@ -153,9 +153,9 @@ export function NamingPatternSelector({
     PLACEHOLDER_PATTERNS[libraryType || "tv"] || PLACEHOLDER_PATTERNS.tv;
 
   const handlePatternSelect = (patternId: string) => {
-    const pattern = patterns.find((p) => p.Id === patternId);
+    const pattern = patterns.find((p) => p.id === patternId);
     if (pattern) {
-      onChange(pattern.Pattern);
+      onChange(pattern.pattern);
     }
   };
 
@@ -163,9 +163,9 @@ export function NamingPatternSelector({
     setUseCustom(checked);
     if (!checked) {
       // Switch back to preset - use default pattern
-      const defaultPattern = patterns.find((p) => p.IsDefault) || patterns[0];
+      const defaultPattern = patterns.find((p) => p.isDefault) || patterns[0];
       if (defaultPattern) {
-        onChange(defaultPattern.Pattern);
+        onChange(defaultPattern.pattern);
       }
     } else {
       // Switch to custom - keep current value or use current preset value
@@ -177,6 +177,12 @@ export function NamingPatternSelector({
     setCustomPattern(newPattern);
     onChange(newPattern);
   };
+
+  const getPatternDescription = (pattern: NamingPatternRow) =>
+    pattern.description || pattern.pattern;
+
+  const getPatternPreview = (pattern: NamingPatternRow) =>
+    previewNamingPattern(pattern.pattern, pattern.libraryType || libraryType);
 
   if (isLoading) {
     return (
@@ -237,19 +243,19 @@ export function NamingPatternSelector({
         >
           {patterns.map((pattern) => (
             <SelectItem
-              key={pattern.Id}
-              textValue={pattern.Name}
-              description={pattern.Description || pattern.Pattern}
+              key={pattern.id}
+              textValue={pattern.name}
+              description={getPatternPreview(pattern)}
             >
               <div className="flex flex-col">
                 <span className="font-medium">
-                  {pattern.Name}
-                  {pattern.IsDefault && (
+                  {pattern.name}
+                  {pattern.isDefault && (
                     <span className="ml-2 text-xs text-primary">(Default)</span>
                   )}
                 </span>
                 <span className="text-xs text-default-400 truncate max-w-xs">
-                  {pattern.Description || pattern.Pattern}
+                  {getPatternDescription(pattern)}
                 </span>
               </div>
             </SelectItem>

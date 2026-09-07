@@ -1,73 +1,67 @@
 query NeedsSetup {
-  NeedsSetup
+  needsSetup
 }
 
 query Me {
-  Me {
-    Id
-    Email
-    Username
-    Role
-    DisplayName
+  me {
+    id
+    email
+    username
+    role
+    displayName
   }
 }
 
 mutation Login($input: LoginInput!) {
-  Login(Input: $input) {
-    Success
-    Error
-    User {
-      Id: id
-      Email: email
-      Username: username
-      Role: role
-      DisplayName: displayName
+  login(input: $input) {
+    success
+    error
+    user {
+      id
+      email
+      username
+      role
+      displayName
     }
-    Tokens {
-      AccessToken: accessToken
-      RefreshToken: refreshToken
-      ExpiresIn: expiresIn
-      TokenType: tokenType
+    tokens {
+      expiresIn
+      tokenType
     }
   }
 }
 
 mutation Register($input: RegisterUserInput!) {
-  Register(Input: $input) {
-    Success
-    Error
-    User {
-      Id: id
-      Email: email
-      Username: username
-      Role: role
-      DisplayName: displayName
+  register(input: $input) {
+    success
+    error
+    user {
+      id
+      email
+      username
+      role
+      displayName
     }
-    Tokens {
-      AccessToken: accessToken
-      RefreshToken: refreshToken
-      ExpiresIn: expiresIn
-      TokenType: tokenType
+    tokens {
+      expiresIn
+      tokenType
     }
   }
 }
 
-mutation RefreshToken($input: RefreshTokenInput!) {
-  RefreshToken(Input: $input) {
-    Success
-    Error
-    Tokens {
-      AccessToken: accessToken
-      RefreshToken: refreshToken
-      ExpiresIn: expiresIn
-      TokenType: tokenType
+mutation RefreshToken {
+  refreshToken {
+    success
+    error
+    tokens {
+      expiresIn
+      tokenType
     }
   }
 }
 
-mutation Logout($input: LogoutInput!) {
-  Logout(Input: $input) {
-    Success
-    Error
+mutation Logout {
+  logout {
+    success
+    error
   }
 }

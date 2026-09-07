@@ -1,50 +1,60 @@
-import { Outlet, createRootRouteWithContext, redirect, useRouter, type ErrorComponentProps } from '@tanstack/react-router'
-import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
-import { TanStackDevtools } from '@tanstack/react-devtools'
-import { Button } from '@heroui/button'
-import { Card, CardBody } from '@heroui/card'
-import { IconAlertTriangle } from '@tabler/icons-react'
-import { Navbar } from '../components/Navbar'
-import { NotFound } from '../components/NotFound'
-import { ErrorLogToaster } from '../components/ErrorLogToaster'
-import { GraphQLErrorToaster } from '../components/GraphQLErrorToaster'
-import { PersistentPlayer } from '../components/PersistentPlayer'
-import { PersistentAudioPlayer } from '../components/PersistentAudioPlayer'
-import { ServerDisconnectedOverlay } from '../components/ServerDisconnectedOverlay'
-import { CastControlBar } from '../components/cast'
-import { PlaybackProvider, usePlaybackContext } from '../contexts/PlaybackContext'
-import type { AuthContext } from '../lib/auth-context'
-import { ensureAuthenticated } from '../lib/route-auth'
+import {
+  Outlet,
+  createRootRouteWithContext,
+  redirect,
+  useRouteContext,
+  useRouter,
+  type ErrorComponentProps,
+} from "@tanstack/react-router";
+import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
+import { TanStackDevtools } from "@tanstack/react-devtools";
+import { Button } from "@heroui/button";
+import { Card, CardBody } from "@heroui/card";
+import { IconAlertTriangle } from "@tabler/icons-react";
+import { Navbar } from "../components/Navbar";
+import { NotFound } from "../components/NotFound";
+import { ErrorLogToaster } from "../components/ErrorLogToaster";
+import { GraphQLErrorToaster } from "../components/GraphQLErrorToaster";
+import { PersistentPlayer } from "../components/PersistentPlayer";
+import { PersistentAudioPlayer } from "../components/PersistentAudioPlayer";
+import { ServerDisconnectedOverlay } from "../components/ServerDisconnectedOverlay";
+import { CastControlBar } from "../components/cast";
+import {
+  PlaybackProvider,
+  usePlaybackContext,
+} from "../contexts/PlaybackContext";
+import type { AuthContext } from "../lib/auth-context";
+import { ensureAuthenticated } from "../lib/route-auth";
 
 interface RouterContext {
-  auth: AuthContext
+  auth: AuthContext;
 }
 
 export const Route = createRootRouteWithContext<RouterContext>()({
   beforeLoad: async ({ context, location }) => {
-    const path = location.pathname
-    if (path === '/' || path.startsWith('/auth/login')) {
-      return
+    const path = location.pathname;
+    if (path === "/" || path.startsWith("/auth/login")) {
+      return;
     }
 
-    const ok = await ensureAuthenticated(context.auth)
+    const ok = await ensureAuthenticated(context.auth);
     if (!ok) {
       throw redirect({
-        to: '/',
+        to: "/",
         search: {
           signin: true,
           redirect: location.href,
         },
-      })
+      });
     }
   },
   component: RootLayout,
   notFoundComponent: NotFound,
   errorComponent: RootErrorComponent,
-})
+});
 
 function RootErrorComponent({ error, reset }: ErrorComponentProps) {
-  const router = useRouter()
+  const router = useRouter();
 
   return (
     <>
@@ -53,9 +63,13 @@ function RootErrorComponent({ error, reset }: ErrorComponentProps) {
         <Card className="max-w-lg w-full">
           <CardBody className="text-center space-y-4">
             <IconAlertTriangle size={48} className="text-danger-400 mx-auto" />
-            <h1 className="text-xl font-bold text-danger">Something went wrong</h1>
+            <h1 className="text-xl font-bold text-danger">
+              Something went wrong
+            </h1>
             <p className="text-default-500">
-              {error instanceof Error ? error.message : 'An unexpected error occurred'}
+              {error instanceof Error
+                ? error.message
+                : "An unexpected error occurred"}
             </p>
             {import.meta.env.DEV && error instanceof Error && error.stack && (
               <details className="text-left mt-4">
@@ -71,15 +85,15 @@ function RootErrorComponent({ error, reset }: ErrorComponentProps) {
               <Button
                 color="primary"
                 onPress={() => {
-                  reset()
-                  router.invalidate()
+                  reset();
+                  router.invalidate();
                 }}
               >
                 Try Again
               </Button>
               <Button
                 variant="flat"
-                onPress={() => router.navigate({ to: '/' })}
+                onPress={() => router.navigate({ to: "/" })}
               >
                 Go Home
               </Button>
@@ -88,22 +102,24 @@ function RootErrorComponent({ error, reset }: ErrorComponentProps) {
         </Card>
       </main>
     </>
-  )
+  );
 }
 
 function RootLayoutContent() {
-  const { session } = usePlaybackContext()
-  const contentType = (session?.contentType ?? '').toUpperCase()
-  
+  const { auth } = useRouteContext({ from: "__root__" });
+  const { session } = usePlaybackContext();
+  const contentType = (session?.contentType ?? "").toUpperCase();
+
   // Check if audio player is visible (track or audiobook playing)
-  const isAudioPlayerVisible = contentType === 'TRACK' || contentType === 'AUDIOBOOK'
-  
+  const isAudioPlayerVisible =
+    contentType === "TRACK" || contentType === "AUDIOBOOK";
+
   return (
-    <div className="flex flex-col h-screen">
-      <main 
-        className="flex grow flex-col overflow-y-auto" 
-        style={{ 
-          scrollbarGutter: 'stable',
+    <div className="flex h-screen min-h-0 flex-col">
+      <main
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+        style={{
+          scrollbarGutter: "stable",
           paddingBottom: isAudioPlayerVisible ? 80 : 0,
         }}
       >
@@ -111,40 +127,40 @@ function RootLayoutContent() {
         <Outlet />
       </main>
 
-      {/* Global error log toaster - shows toast for backend errors */}
-      <ErrorLogToaster />
-
       {/* GraphQL error toaster - shows toast for GraphQL/network errors */}
       <GraphQLErrorToaster />
 
-      {/* Persistent video player - shows when video content is playing */}
-      <PersistentPlayer />
+      {auth.isAuthenticated ? (
+        <>
+          {/* Authenticated backend log stream. */}
+          <ErrorLogToaster />
 
-      {/* Persistent audio player - shows when audio content (tracks/audiobooks) is playing */}
-      <PersistentAudioPlayer />
+          {/* Persistent media and casting controls query protected data. */}
+          <PersistentPlayer />
+          <PersistentAudioPlayer />
+          <CastControlBar />
 
-      {/* Cast control bar - shows when casting to a device */}
-      <CastControlBar />
-
-      {/* Full-screen overlay when GraphQL websocket is disconnected */}
-      <ServerDisconnectedOverlay />
+          {/* Authenticated GraphQL websocket health. */}
+          <ServerDisconnectedOverlay />
+        </>
+      ) : null}
 
       {/* Dev tools - only in development */}
-      {import.meta.env.DEV && (
+      {import.meta.env.DEV ? (
         <TanStackDevtools
           config={{
-            position: 'bottom-right',
+            position: "bottom-right",
           }}
           plugins={[
             {
-              name: 'Tanstack Router',
+              name: "Tanstack Router",
               render: <TanStackRouterDevtoolsPanel />,
             },
           ]}
         />
-      )}
+      ) : null}
     </div>
-  )
+  );
 }
 
 function RootLayout() {
@@ -152,5 +168,5 @@ function RootLayout() {
     <PlaybackProvider>
       <RootLayoutContent />
     </PlaybackProvider>
-  )
+  );
 }

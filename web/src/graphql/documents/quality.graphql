@@ -1,0 +1,19 @@
+query QualityProfilesList {
+  qualityProfiles(orderBy: [{ name: ASC }], page: { limit: 100, offset: 0 }) {
+    edges {
+      node {
+        ...QualityProfileFields
+      }
+    }
+  }
+}
+
+query NamingPatternsForType($libraryType: String!) {
+  namingPatterns(where: { libraryType: { eq: $libraryType } }, orderBy: [{ name: ASC }], page: { limit: 100, offset: 0 }) {
+    edges {
+      node {
+        ...NamingPatternFields
+      }
+    }
+  }
+}

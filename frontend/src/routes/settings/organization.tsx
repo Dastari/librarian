@@ -46,7 +46,10 @@ import {
   LlmAppSettingsDocument,
   CreateAppSettingDocument,
   UpdateAppSettingDocument,
+  TestOllamaConnectionDocument,
+  TestLlmParserDocument,
   type LlmAppSettingsQuery,
+  type TestLlmParserMutation,
 } from "../../lib/graphql/generated/graphql";
 import {
   type LlmParserSettings,
@@ -54,7 +57,6 @@ import {
   type FilenameParseResult,
 } from "../../lib/graphql";
 import { apolloClient, useQuery, useMutation } from "../../lib/graphql/client";
-import { authFetch } from "../../lib/api/authFetch";
 import {
   DataTable,
   type DataTableColumn,
@@ -65,7 +67,7 @@ import { previewNamingPattern, sanitizeError } from "../../lib/format";
 import { SettingsHeader } from "../../components/shared";
 
 type NamingPatternRow =
-  OrganizationNamingPatternsQuery["NamingPatterns"]["Edges"][number]["Node"];
+  OrganizationNamingPatternsQuery["namingPatterns"]["edges"][number]["node"];
 
 const LLM_CATEGORY = "llm";
 const LLM_KEYS = {
@@ -131,9 +133,9 @@ const PATTERN_VARIABLES = {
 };
 
 function appSettingsToLlmSettings(
-  edges: LlmAppSettingsQuery["AppSettings"]["Edges"],
+  edges: LlmAppSettingsQuery["appSettings"]["edges"],
 ): LlmParserSettings {
-  const map = new Map(edges.map((e) => [e.Node.Key, e.Node.Value]));
+  const map = new Map(edges.map((e) => [e.node.key, e.node.value]));
   const get = (key: string, fallback: string) => map.get(key) ?? fallback;
   const toNum = (key: string, fallback: number) => {
     const parsed = Number.parseFloat(get(key, String(fallback)));
@@ -165,9 +167,9 @@ function appSettingsToLlmSettings(
 }
 
 function llmSettingsKeyToIdMap(
-  edges: LlmAppSettingsQuery["AppSettings"]["Edges"],
+  edges: LlmAppSettingsQuery["appSettings"]["edges"],
 ): Map<string, string> {
-  return new Map(edges.map((e) => [e.Node.Key, e.Node.Id]));
+  return new Map(edges.map((e) => [e.node.key, e.node.id]));
 }
 
 function buildSimpleFilenameParseResult(filename: string): FilenameParseResult {
@@ -214,6 +216,42 @@ function buildSimpleFilenameParseResult(filename: string): FilenameParseResult {
     edition: null,
     completeSeries: /complete/i.test(clean),
     confidence: seMatch || yearMatch ? 0.7 : 0.45,
+  };
+}
+
+type LlmParserHint = NonNullable<
+  TestLlmParserMutation["testLlmParser"]["llmResult"]
+>;
+
+function llmHintToFilenameParseResult(
+  hint: LlmParserHint,
+  libraryType: string,
+): FilenameParseResult {
+  const title =
+    hint.title ??
+    hint.showTitle ??
+    hint.track ??
+    hint.book ??
+    hint.chapter ??
+    hint.matchSource ??
+    null;
+
+  return {
+    mediaType: libraryType,
+    title,
+    year: hint.year ?? null,
+    season: hint.season ?? null,
+    episode: hint.episode ?? null,
+    episodeEnd: null,
+    resolution: null,
+    source: null,
+    videoCodec: null,
+    audio: null,
+    hdr: null,
+    releaseGroup: null,
+    edition: hint.matchSource ?? null,
+    completeSeries: false,
+    confidence: hint.confidence ?? 0,
   };
 }
 
@@ -296,6 +334,7 @@ function OrganizationSettingsPage() {
   const [testFilename, setTestFilename] = useState(
     "The.Matrix.1999.REMASTERED.2160p.UHD.BluRay.x265.10bit.HDR.TrueHD.7.1.Atmos-FGT",
   );
+  const [testLibraryType, setTestLibraryType] = useState("movies");
   const [parseResult, setParseResult] =
     useState<TestFilenameParserResult | null>(null);
   const [createNamingPattern] = useMutation(
@@ -309,6 +348,8 @@ function OrganizationSettingsPage() {
   );
   const [createAppSetting] = useMutation(CreateAppSettingDocument);
   const [updateAppSetting] = useMutation(UpdateAppSettingDocument);
+  const [testOllamaConnection] = useMutation(TestOllamaConnectionDocument);
+  const [testLlmParser] = useMutation(TestLlmParserDocument);
   const { data: llmSettingsData, loading: llmSettingsLoading } = useQuery(
     LlmAppSettingsDocument,
     {
@@ -363,13 +404,13 @@ function OrganizationSettingsPage() {
           query: OrganizationNamingPatternsDocument,
           fetchPolicy: "network-only",
           variables: {
-            OrderBy: [{ Name: "ASC" }],
-            Page: { limit: 200, offset: 0 },
+            orderBy: [{ name: "ASC" }],
+            page: { limit: 200, offset: 0 },
           },
         });
 
-      if (data?.NamingPatterns?.Edges) {
-        setPatterns(data.NamingPatterns.Edges.map((e) => e.Node));
+      if (data?.namingPatterns?.edges) {
+        setPatterns(data.namingPatterns.edges.map((e) => e.node));
       }
       setPatternsError(null);
     } catch (e) {
@@ -392,7 +433,7 @@ function OrganizationSettingsPage() {
 
   useEffect(() => {
     if (llmSettingsLoading) return;
-    const edges = llmSettingsData?.AppSettings?.Edges ?? [];
+    const edges = llmSettingsData?.appSettings?.edges ?? [];
     const settings = appSettingsToLlmSettings(edges);
     setOriginalLlmSettings(settings);
     setLlmSettingIds(llmSettingsKeyToIdMap(edges));
@@ -429,19 +470,19 @@ function OrganizationSettingsPage() {
     try {
       const { data } = await createNamingPattern({
         variables: {
-          Input: {
-            Name: formData.name.trim(),
-            Pattern: formData.pattern.trim(),
-            Description: formData.description.trim() || null,
-            LibraryType: formData.libraryType,
-            IsDefault: false,
-            IsSystem: false,
-            UserId: "",
+          input: {
+            name: formData.name.trim(),
+            pattern: formData.pattern.trim(),
+            description: formData.description.trim() || null,
+            libraryType: formData.libraryType,
+            isDefault: false,
+            isSystem: false,
+            userId: "",
           },
         },
       });
 
-      if (data?.CreateNamingPattern?.Success) {
+      if (data?.createNamingPattern?.success) {
         addToast({
           title: "Pattern Created",
           description: `"${formData.name}" has been added`,
@@ -457,7 +498,7 @@ function OrganizationSettingsPage() {
         fetchPatterns();
       } else {
         throw new Error(
-          data?.CreateNamingPattern?.Error || "Failed to create pattern",
+          data?.createNamingPattern?.error || "Failed to create pattern",
         );
       }
     } catch (e) {
@@ -487,16 +528,16 @@ function OrganizationSettingsPage() {
     try {
       const { data } = await updateNamingPattern({
         variables: {
-          Id: selectedPattern.Id,
-          Input: {
-            Name: editFormData.name.trim(),
-            Pattern: editFormData.pattern.trim(),
-            Description: editFormData.description.trim() || null,
+          id: selectedPattern.id,
+          input: {
+            name: editFormData.name.trim(),
+            pattern: editFormData.pattern.trim(),
+            description: editFormData.description.trim() || null,
           },
         },
       });
 
-      if (data?.UpdateNamingPattern?.Success) {
+      if (data?.updateNamingPattern?.success) {
         addToast({
           title: "Pattern Updated",
           description: `"${editFormData.name}" has been updated`,
@@ -507,7 +548,7 @@ function OrganizationSettingsPage() {
         fetchPatterns();
       } else {
         throw new Error(
-          data?.UpdateNamingPattern?.Error || "Failed to update pattern",
+          data?.updateNamingPattern?.error || "Failed to update pattern",
         );
       }
     } catch (e) {
@@ -529,14 +570,14 @@ function OrganizationSettingsPage() {
     try {
       const { data } = await deleteNamingPattern({
         variables: {
-          Id: selectedPattern.Id,
+          id: selectedPattern.id,
         },
       });
 
-      if (data?.DeleteNamingPattern?.Success) {
+      if (data?.deleteNamingPattern?.success) {
         addToast({
           title: "Pattern Deleted",
-          description: `"${selectedPattern.Name}" has been removed`,
+          description: `"${selectedPattern.name}" has been removed`,
           color: "success",
         });
         onDeleteClose();
@@ -544,7 +585,7 @@ function OrganizationSettingsPage() {
         fetchPatterns();
       } else {
         throw new Error(
-          data?.DeleteNamingPattern?.Error || "Failed to delete pattern",
+          data?.deleteNamingPattern?.error || "Failed to delete pattern",
         );
       }
     } catch (e) {
@@ -561,43 +602,43 @@ function OrganizationSettingsPage() {
 
   const handleSetDefault = async (pattern: NamingPatternRow) => {
     try {
-      const oldDefault = patterns.find((p) => p.IsDefault);
-      if (oldDefault && oldDefault.Id !== pattern.Id) {
+      const oldDefault = patterns.find((p) => p.isDefault);
+      if (oldDefault && oldDefault.id !== pattern.id) {
         const { data: clearData } = await updateNamingPattern({
           variables: {
-            Id: oldDefault.Id,
-            Input: {
-              IsDefault: false,
+            id: oldDefault.id,
+            input: {
+              isDefault: false,
             },
           },
         });
-        if (!clearData?.UpdateNamingPattern?.Success) {
+        if (!clearData?.updateNamingPattern?.success) {
           throw new Error(
-            clearData?.UpdateNamingPattern?.Error ||
-              "Failed to clear previous default",
+            clearData?.updateNamingPattern?.error ||
+            "Failed to clear previous default",
           );
         }
       }
 
       const { data } = await updateNamingPattern({
         variables: {
-          Id: pattern.Id,
-          Input: {
-            IsDefault: true,
+          id: pattern.id,
+          input: {
+            isDefault: true,
           },
         },
       });
 
-      if (data?.UpdateNamingPattern?.Success) {
+      if (data?.updateNamingPattern?.success) {
         addToast({
           title: "Default Updated",
-          description: `"${pattern.Name}" is now the default pattern`,
+          description: `"${pattern.name}" is now the default pattern`,
           color: "success",
         });
         fetchPatterns();
       } else {
         throw new Error(
-          data?.UpdateNamingPattern?.Error || "Failed to set default",
+          data?.updateNamingPattern?.error || "Failed to set default",
         );
       }
     } catch (e) {
@@ -636,28 +677,28 @@ function OrganizationSettingsPage() {
         if (existingId) {
           const { data } = await updateAppSetting({
             variables: {
-              Id: existingId,
-              Input: { Value: value },
+              id: existingId,
+              input: { value: value },
             },
           });
-          if (!data?.UpdateAppSetting?.Success) {
+          if (!data?.updateAppSetting?.success) {
             throw new Error(
-              data?.UpdateAppSetting?.Error || "Failed to save settings",
+              data?.updateAppSetting?.error || "Failed to save settings",
             );
           }
         } else {
           const { data } = await createAppSetting({
             variables: {
-              Input: {
-                Key: key,
-                Value: value,
-                Category: LLM_CATEGORY,
+              input: {
+                key: key,
+                value: value,
+                category: LLM_CATEGORY,
               },
             },
           });
-          if (!data?.CreateAppSetting?.Success) {
+          if (!data?.createAppSetting?.success) {
             throw new Error(
-              data?.CreateAppSetting?.Error || "Failed to save settings",
+              data?.createAppSetting?.error || "Failed to save settings",
             );
           }
         }
@@ -720,20 +761,18 @@ function OrganizationSettingsPage() {
     setConnectionStatus("untested");
     setConnectionError(null);
     try {
-      const baseUrl = ollamaUrl.replace(/\/$/, "");
-      const response = await authFetch("/api/tags", {
-        baseUrl,
-        includeAuth: false,
+      const { data } = await testOllamaConnection({
+        variables: {
+          input: {
+            ollamaUrl,
+          },
+        },
       });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+      const result = data?.testOllamaConnection;
+      if (!result?.success) {
+        throw new Error(result?.error || "Connection failed");
       }
-      const json = (await response.json()) as {
-        models?: Array<{ name?: string }>;
-      };
-      const models = (json.models ?? [])
-        .map((m) => m.name)
-        .filter((m): m is string => Boolean(m));
+      const models = result.models;
       if (models.length > 0) {
         setConnectionStatus("success");
         setAvailableModels(models);
@@ -772,13 +811,32 @@ function OrganizationSettingsPage() {
       const startedAt = performance.now();
       const regexResult = buildSimpleFilenameParseResult(testFilename);
       const regexTimeMs = Math.round(performance.now() - startedAt);
+      const llmStartedAt = performance.now();
+      const { data } = await testLlmParser({
+        variables: {
+          input: {
+            filename: testFilename,
+            libraryType: testLibraryType,
+          },
+        },
+      });
+      const parserResult = data?.testLlmParser;
+      const backendRegex = parserResult?.regexResult;
       setParseResult({
-        regexResult,
+        regexResult: backendRegex
+          ? {
+              ...regexResult,
+              title: backendRegex,
+            }
+          : regexResult,
         regexTimeMs,
-        llmResult: null,
-        llmTimeMs: null,
-        llmError:
-          "Typed parser-test resolver is unavailable; showing local regex preview.",
+        llmResult: parserResult?.llmResult
+          ? llmHintToFilenameParseResult(parserResult.llmResult, testLibraryType)
+          : null,
+        llmTimeMs: Math.round(performance.now() - llmStartedAt),
+        llmError: parserResult?.success
+          ? null
+          : parserResult?.error || "LLM parser failed",
       });
     } catch (e) {
       addToast({
@@ -804,13 +862,13 @@ function OrganizationSettingsPage() {
       render: (pattern) => (
         <div className="flex items-center gap-2">
           <IconTemplate size={16} className="text-amber-400" />
-          <span className="font-medium">{pattern.Name}</span>
-          {pattern.IsDefault && (
+          <span className="font-medium">{pattern.name}</span>
+          {pattern.isDefault && (
             <Chip size="sm" color="primary" variant="flat">
               Default
             </Chip>
           )}
-          {pattern.IsSystem && (
+          {pattern.isSystem && (
             <Chip size="sm" variant="flat" className="text-default-500">
               System
             </Chip>
@@ -826,7 +884,7 @@ function OrganizationSettingsPage() {
       width: 100,
       render: (pattern) => (
         <span className="text-sm text-default-500 capitalize">
-          {pattern.LibraryType || "tv"}
+          {pattern.libraryType || "tv"}
         </span>
       ),
     },
@@ -840,8 +898,8 @@ function OrganizationSettingsPage() {
               <span className="text-default-500">Example: </span>
               <code className="font-mono">
                 {previewNamingPattern(
-                  pattern.Pattern,
-                  pattern.LibraryType || undefined,
+                  pattern.pattern,
+                  pattern.libraryType || undefined,
                 )}
               </code>
             </div>
@@ -849,7 +907,7 @@ function OrganizationSettingsPage() {
           delay={300}
         >
           <code className="text-xs  px-2 py-1 rounded font-mono text-default-600 break-all cursor-help">
-            {pattern.Pattern}
+            {pattern.pattern}
           </code>
         </Tooltip>
       ),
@@ -864,14 +922,14 @@ function OrganizationSettingsPage() {
       icon: <IconPencil size={16} />,
       color: "primary",
       inDropdown: true,
-      isDisabled: (pattern: NamingPatternRow) => pattern.IsSystem,
+      isDisabled: (pattern: NamingPatternRow) => pattern.isSystem,
       onAction: (pattern: NamingPatternRow) => {
         setSelectedPattern(pattern);
         setEditFormData({
-          name: pattern.Name,
-          pattern: pattern.Pattern,
-          description: pattern.Description || "",
-          libraryType: pattern.LibraryType || "tv",
+          name: pattern.name,
+          pattern: pattern.pattern,
+          description: pattern.description || "",
+          libraryType: pattern.libraryType || "tv",
         });
         onEditOpen();
       },
@@ -882,7 +940,7 @@ function OrganizationSettingsPage() {
       icon: <IconStarFilled size={16} />,
       color: "warning",
       inDropdown: true,
-      isVisible: (pattern: NamingPatternRow) => !pattern.IsDefault,
+      isVisible: (pattern: NamingPatternRow) => !pattern.isDefault,
       onAction: handleSetDefault,
     },
     {
@@ -891,7 +949,7 @@ function OrganizationSettingsPage() {
       icon: <IconTrash size={16} />,
       color: "danger",
       inDropdown: true,
-      isDisabled: (pattern: NamingPatternRow) => pattern.IsSystem,
+      isDisabled: (pattern: NamingPatternRow) => pattern.isSystem,
       onAction: (pattern: NamingPatternRow) => {
         setSelectedPattern(pattern);
         onDeleteOpen();
@@ -910,18 +968,18 @@ function OrganizationSettingsPage() {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-2">
               <IconTemplate size={18} className="text-amber-400" />
-              <span className="font-medium">{item.Name}</span>
-              {item.IsDefault && (
+              <span className="font-medium">{item.name}</span>
+              {item.isDefault && (
                 <Chip size="sm" color="primary" variant="flat">
                   Default
                 </Chip>
               )}
             </div>
             <code className="text-xs bg-default-100 px-2 py-1 rounded font-mono text-default-600 block mb-2 break-all">
-              {item.Pattern}
+              {item.pattern}
             </code>
-            {item.Description && (
-              <p className="text-sm text-default-500">{item.Description}</p>
+            {item.description && (
+              <p className="text-sm text-default-500">{item.description}</p>
             )}
           </div>
           <div className="flex gap-1">
@@ -1006,7 +1064,7 @@ function OrganizationSettingsPage() {
           }
           subtitle="Configure how media files are renamed and organized"
         >
-          <div className="pb-2">
+          <div className="pb-2 flex grow h-[600px]">
             {patternsError ? (
               <div className="text-center py-8">
                 <p className="text-danger mb-4">{patternsError}</p>
@@ -1019,7 +1077,8 @@ function OrganizationSettingsPage() {
                 skeletonDelay={500}
                 data={patterns}
                 columns={columns}
-                getRowKey={(pattern) => pattern.Id}
+                getRowKey={(pattern) => pattern.id}
+                fillHeight
                 rowActions={rowActions}
                 cardRenderer={cardRenderer}
                 removeWrapper
@@ -1470,9 +1529,20 @@ function OrganizationSettingsPage() {
         >
           <div className="space-y-4 pb-2">
             <div className="flex gap-2">
+              <Select
+                label="Type"
+                selectedKeys={[testLibraryType]}
+                onChange={(e) => setTestLibraryType(e.target.value)}
+                className="w-44"
+              >
+                <SelectItem key="movies">Movies</SelectItem>
+                <SelectItem key="tv">TV</SelectItem>
+                <SelectItem key="music">Music</SelectItem>
+                <SelectItem key="audiobooks">Audiobooks</SelectItem>
+              </Select>
               <Input
                 label="Test Filename"
-                placeholder="Movie.Name.2024.1080p.BluRay.x264-GROUP"
+                placeholder="Movie.name.2024.1080p.BluRay.x264-GROUP"
                 value={testFilename}
                 onChange={(e) => setTestFilename(e.target.value)}
                 className="flex-1"
@@ -1673,8 +1743,8 @@ function OrganizationSettingsPage() {
                 <div className="flex flex-wrap gap-2">
                   {getPatternVariables(
                     editFormData.libraryType ||
-                      selectedPattern?.LibraryType ||
-                      "tv",
+                    selectedPattern?.libraryType ||
+                    "tv",
                   ).map((v) => (
                     <Tooltip key={v.var} content={v.desc}>
                       <Button
@@ -1714,7 +1784,7 @@ function OrganizationSettingsPage() {
                   <code className="text-sm font-mono break-all">
                     {previewNamingPattern(
                       editFormData.pattern,
-                      selectedPattern?.LibraryType || undefined,
+                      selectedPattern?.libraryType || undefined,
                     )}
                   </code>
                 </div>
@@ -1746,7 +1816,7 @@ function OrganizationSettingsPage() {
           <ModalBody>
             <p>
               Are you sure you want to delete{" "}
-              <strong>"{selectedPattern?.Name}"</strong>?
+              <strong>"{selectedPattern?.name}"</strong>?
             </p>
             <p className="text-sm text-default-500 mt-2">
               This action cannot be undone. Libraries using this pattern will

@@ -1,0 +1,16 @@
+.git
+.github
+.env
+.env.*
+data
+backend/data
+backend/target
+frontend/dist
+frontend/node_modules
+macros/target
+node_modules
+target
+tmp
+temp
+*.log
+

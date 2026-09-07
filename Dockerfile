@@ -12,12 +12,12 @@
 # ============================================================================
 # Stage 1: Build Frontend
 # ============================================================================
-FROM node:22-alpine AS frontend-builder
+FROM node:24-alpine AS frontend-builder
 
 WORKDIR /frontend
 
 # Install pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@11.25.0 --activate
 
 # Copy package files
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
@@ -38,7 +38,7 @@ RUN pnpm run build
 # ============================================================================
 # Stage 2: Build Backend
 # ============================================================================
-FROM rust:1.83 AS backend-builder
+FROM rust:1.95-bookworm AS backend-builder
 
 WORKDIR /app
 
@@ -50,19 +50,20 @@ RUN apt-get update && apt-get install -y \
 
 # Copy manifests
 COPY backend/Cargo.toml backend/Cargo.lock ./
+COPY vendor/rust_cast /vendor/rust_cast
+COPY vendor/async-graphql /vendor/async-graphql
 
 # Create a dummy main.rs to build dependencies
 RUN mkdir src && echo "fn main() {}" > src/main.rs
 
 # Build dependencies (cached layer) - using sqlite feature
-RUN cargo build --release --features sqlite --no-default-features && rm -rf src
+RUN cargo build --locked --release --features sqlite --no-default-features && rm -rf src
 
 # Copy source code
 COPY backend/src ./src
-COPY backend/migrations_sqlite ./migrations_sqlite
 
 # Build the application with sqlite feature
-RUN touch src/main.rs && cargo build --release --features sqlite --no-default-features
+RUN touch src/main.rs && cargo build --locked --release --features sqlite --no-default-features
 
 # ============================================================================
 # Stage 3: Runtime Image
@@ -84,9 +85,6 @@ RUN apt-get update && apt-get install -y \
 
 # Copy the backend binary
 COPY --from=backend-builder /app/target/release/librarian /app/librarian
-
-# Copy SQLite migrations
-COPY --from=backend-builder /app/migrations_sqlite /app/migrations_sqlite
 
 # Copy frontend static files
 COPY --from=frontend-builder /frontend/dist /app/static

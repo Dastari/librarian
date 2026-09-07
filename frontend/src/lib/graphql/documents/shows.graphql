@@ -1,115 +1,129 @@
-query SearchTvShows($Query: String!) {
-  SearchTvShows(Query: $Query) {
-    Provider
-    ProviderId
-    Name
-    Year
-    Network
-    Overview
-    Status
-    PosterUrl
-    TvdbId
-    ImdbId
-    Score
+query SearchTvShows($query: String!) {
+  searchTvShows(query: $query) {
+    provider
+    providerId
+    name
+    year
+    network
+    overview
+    status
+    posterUrl
+    tvdbId
+    imdbId
+    score
   }
 }
 
-mutation AddTvShow($LibraryId: String!, $Input: AddTvShowInput!) {
-  AddTvShow(LibraryId: $LibraryId, Input: $Input) {
-    Success
-    Show {
-      Id
-      Name
+mutation AddTvShow($libraryId: String!, $input: AddTvShowInput!) {
+  addTvShow(libraryId: $libraryId, input: $input) {
+    success
+    show {
+      id
+      name
     }
-    Error
+    error
   }
 }
 
-subscription ShowChanged($Filter: SubscriptionFilterInput) {
-  ShowChanged: showChanged(filter: $Filter) {
-    Action: action
-    Id: id
-    Show: show {
-      LibraryId
+subscription ShowChanged($filter: SubscriptionFilterInput) {
+  showChanged(filter: $filter) {
+    action
+    id
+    show {
+      libraryId
     }
   }
 }
 
-query ShowDetailRoute($Id: String!) {
-  Show: show(id: $Id) {
-    Id
-    LibraryId
-    Name
-    SortName
-    Year
-    TvmazeId
-    TmdbId
-    TvdbId
-    ImdbId
-    Overview
-    Network
-    PosterUrl
-    BackdropUrl
-    Runtime
-    Genres
-    AutoDownload
-    AutoDownloadMode
-    Path
-    CreatedAt
-    UpdatedAt
-    UserId
-    Episodes: episodes(page: { limit: 2000 }) {
-      Edges: edges {
-        Node: node {
-          Id
-          ShowId
-          Season
-          Episode
-          AbsoluteNumber
-          Title
-          Overview
-          AirDate
-          Runtime
-          TvmazeId
-          TmdbId
-          TvdbId
-          MediaFileId
-          Wanted
-          MediaFile: mediaFile {
-            Id
-            Size
-            Duration
-            Resolution
-            VideoCodec
-            AudioCodec
-            AudioChannels
-            IsHdr
-            HdrType
+query ShowDetailRoute($id: String!) {
+  show(id: $id) {
+    id
+    libraryId
+    name
+    sortName
+    year
+    tvmazeId
+    tmdbId
+    tvdbId
+    imdbId
+    overview
+    network
+    posterUrl
+    backdropUrl
+    runtime
+    genres
+    autoDownload
+    autoDownloadMode
+    qualityProfileId
+    path
+    createdAt
+    updatedAt
+    userId
+    episodes(page: { limit: 2000 }) {
+      edges {
+        node {
+          id
+          showId
+          season
+          episode
+          absoluteNumber
+          title
+          overview
+          airDate
+          runtime
+          tvmazeId
+          tmdbId
+          tvdbId
+          mediaFileId
+          wanted
+          mediaFile {
+            id
+            size
+            duration
+            resolution
+            videoCodec
+            audioCodec
+            audioChannels
+            isHdr
+            hdrType
           }
-          CreatedAt
-          UpdatedAt
+          createdAt
+          updatedAt
         }
       }
     }
   }
 }
 
-mutation RefreshShowRoute($Id: String!) {
-  RefreshShow(Id: $Id) {
-    Success
-    Show {
-      Id
-      Name
-      Overview
+mutation RefreshShowRoute($id: String!) {
+  refreshShow(id: $id) {
+    success
+    show {
+      id
+      name
+      overview
     }
-    Error
+    error
   }
 }
 
-mutation ShowDetailSetEpisodeWanted($ShowId: String!, $Wanted: Boolean!) {
-  UpdateEpisodes: updateEpisodes(
-    where: { ShowId: { eq: $ShowId } }
-    input: { Wanted: $Wanted }
+mutation UpdateShowSettings($id: String!, $input: UpdateShowInput!) {
+  updateShow(id: $id, input: $input) {
+    success
+    error
+    show {
+      id
+      autoDownload
+      autoDownloadMode
+      qualityProfileId
+    }
+  }
+}
+
+mutation ShowDetailSetEpisodeWanted($showId: String!, $wanted: Boolean!) {
+  updateEpisodes(
+    where: { showId: { eq: $showId } }
+    input: { wanted: $wanted }
   ) {
     success
     error

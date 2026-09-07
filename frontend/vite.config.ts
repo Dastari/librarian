@@ -8,32 +8,50 @@ import { fileURLToPath, URL } from 'node:url'
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
-  // Load env vars so we can use VITE_API_URL in the proxy config
   const env = loadEnv(mode, process.cwd(), '')
-  const apiUrl = env.VITE_API_URL || 'http://localhost:3001'
+  // This address is used by the Vite server, never by the visitor's browser.
+  const backendTarget = env.BACKEND_PROXY_TARGET || 'http://127.0.0.1:3001'
+  const publicDevUrl = env.DEV_SERVER_PUBLIC_URL
+    ? new URL(env.DEV_SERVER_PUBLIC_URL)
+    : undefined
 
   return {
     server: {
       host: '0.0.0.0',
       port: 3000,
+      strictPort: true,
+      allowedHosts: ['librarian.dastari.net', ...(publicDevUrl ? [publicDevUrl.hostname] : [])],
+      ws: publicDevUrl ? {
+        protocol: publicDevUrl.protocol === 'https:' ? 'wss' : 'ws',
+        host: publicDevUrl.hostname,
+        clientPort: Number(publicDevUrl.port || (publicDevUrl.protocol === 'https:' ? 443 : 80)),
+      } : undefined,
       proxy: {
-  // Proxy API requests to the backend during development
-        // Uses VITE_API_URL env var (same as GraphQL client) or defaults to localhost:3001
         '/api': {
-          target: apiUrl,
+          target: backendTarget,
           changeOrigin: true,
+        },
+        '/graphql': {
+          target: backendTarget,
+          changeOrigin: true,
+          ws: true,
         },
       },
     },
   plugins: [
-    devtools(),
+    mode === 'development' && devtools({
+      // Upstream console piping hard-codes localhost in its editor links.
+      // Keep browser logs native when accessing Vite through a public origin.
+      consolePiping: { enabled: !publicDevUrl },
+      enhancedLogs: { enabled: !publicDevUrl },
+    }),
     tanstackRouter({
       target: 'react',
       autoCodeSplitting: true,
     }),
     viteReact(),
     tailwindcss(),
-  ],
+  ].filter(Boolean),
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

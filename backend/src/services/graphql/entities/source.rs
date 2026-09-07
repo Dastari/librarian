@@ -5,8 +5,9 @@
 //! as an encrypted JSON blob and are never exposed through GraphQL.
 //!
 //! Standard CRUD (CreateSource, UpdateSource, DeleteSource) is auto-generated
-//! by the #[graphql_entity] macro. Custom operations handle encryption-sensitive
-//! tasks and source-specific queries.
+//! by the #[graphql_entity] macro. The database service installs an ORM write
+//! transform that encrypts credentials before generated CreateSource/UpdateSource
+//! writes persist them.
 
 use std::sync::Arc;
 
@@ -18,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use super::super::auth::AuthExt;
 use crate::db::Database;
 use crate::services::ServicesManager;
+use crate::services::quality;
 use crate::services::sources::definitions::{
     SettingType, get_available_definitions, get_definition_info,
 };
@@ -31,94 +33,99 @@ use crate::services::sources::definitions::{
 )]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
-#[graphql_entity(table = "sources", plural = "Sources", default_sort = "priority")]
+#[graphql_entity(
+    table = "sources",
+    plural = "Sources",
+    default_sort = "priority",
+    read_policy = "admin.read",
+    write_policy = "admin.write"
+)]
 pub struct Source {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "Name")]
+    #[graphql(name = "name")]
     #[filterable(type = "string")]
     #[sortable]
     pub name: String,
 
-    #[graphql(name = "SourceType")]
+    #[graphql(name = "sourceType")]
     #[filterable(type = "string")]
     #[sortable]
     pub source_type: String,
 
-    #[graphql(name = "DefinitionId")]
+    #[graphql(name = "definitionId")]
     #[filterable(type = "string")]
     pub definition_id: String,
 
-    #[graphql(name = "Enabled")]
+    #[graphql(name = "enabled")]
     #[filterable(type = "boolean")]
     pub enabled: bool,
 
-    #[graphql(name = "Priority")]
+    #[graphql(name = "priority")]
     #[filterable(type = "number")]
     #[sortable]
     pub priority: i32,
 
-    #[graphql(name = "MediaTypes")]
+    #[graphql(name = "mediaTypes")]
     #[filterable(type = "string")]
     pub media_types: String,
 
-    #[graphql(name = "SiteUrl")]
+    #[graphql(name = "siteUrl")]
     pub site_url: Option<String>,
 
-    #[graphql(name = "SupportsSearch")]
+    #[graphql(name = "supportsSearch")]
     #[filterable(type = "boolean")]
     pub supports_search: bool,
 
-    #[graphql(name = "SupportsTvSearch")]
+    #[graphql(name = "supportsTvSearch")]
     #[filterable(type = "boolean")]
     pub supports_tv_search: bool,
 
-    #[graphql(name = "SupportsMovieSearch")]
+    #[graphql(name = "supportsMovieSearch")]
     #[filterable(type = "boolean")]
     pub supports_movie_search: bool,
 
-    #[graphql(name = "SupportsMusicSearch")]
+    #[graphql(name = "supportsMusicSearch")]
     #[filterable(type = "boolean")]
     pub supports_music_search: bool,
 
-    #[graphql(name = "SupportsBookSearch")]
+    #[graphql(name = "supportsBookSearch")]
     #[filterable(type = "boolean")]
     pub supports_book_search: bool,
 
     // Credentials stored as encrypted "nonce:ciphertext" (base64).
-    // #[graphql(skip)] hides from query output, #[input_only] keeps in Create/Update inputs,
-    // #[transform(write = "...")] encrypts plaintext JSON before writing to DB.
+    // #[graphql(skip)] hides from query output, #[input_only] keeps in Create/Update inputs.
     #[graphql(skip)]
     #[input_only]
     pub credentials: String,
 
-    #[graphql(name = "Settings")]
+    #[graphql(name = "settings")]
     pub settings: Option<String>,
 
-    #[graphql(name = "LastError")]
+    #[graphql(name = "lastError")]
     pub last_error: Option<String>,
 
-    #[graphql(name = "ErrorCount")]
+    #[graphql(name = "errorCount")]
     #[filterable(type = "number")]
     pub error_count: i32,
 
-    #[graphql(name = "LastSuccessAt")]
+    #[graphql(name = "lastSuccessAt")]
     #[filterable(type = "date")]
     pub last_success_at: Option<String>,
 
-    #[graphql(name = "LastErrorAt")]
+    #[graphql(name = "lastErrorAt")]
     #[filterable(type = "date")]
     pub last_error_at: Option<String>,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,
@@ -129,28 +136,28 @@ pub struct Source {
 pub struct SourceCustomOperations;
 
 // =============================================================================
-// GraphQL Types for Source Operations (PascalCase)
+// GraphQL types for source operations.
 // =============================================================================
 
 /// Information about an available source definition (e.g., IPTorrents)
 #[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceDefinitionInfo")]
 pub struct SourceDefinitionInfoGql {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     pub id: String,
-    #[graphql(name = "Name")]
+    #[graphql(name = "name")]
     pub name: String,
-    #[graphql(name = "Description")]
+    #[graphql(name = "description")]
     pub description: String,
-    #[graphql(name = "SourceType")]
+    #[graphql(name = "sourceType")]
     pub source_type: String,
-    #[graphql(name = "TrackerType")]
+    #[graphql(name = "trackerType")]
     pub tracker_type: String,
-    #[graphql(name = "Language")]
+    #[graphql(name = "language")]
     pub language: String,
-    #[graphql(name = "SiteLink")]
+    #[graphql(name = "siteLink")]
     pub site_link: String,
-    #[graphql(name = "RequiredCredentials")]
+    #[graphql(name = "requiredCredentials")]
     pub required_credentials: Vec<String>,
 }
 
@@ -158,15 +165,15 @@ pub struct SourceDefinitionInfoGql {
 #[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceSettingDefinition")]
 pub struct SourceSettingDefinitionGql {
-    #[graphql(name = "Key")]
+    #[graphql(name = "key")]
     pub key: String,
-    #[graphql(name = "Label")]
+    #[graphql(name = "label")]
     pub label: String,
-    #[graphql(name = "SettingType")]
+    #[graphql(name = "settingType")]
     pub setting_type: String,
-    #[graphql(name = "DefaultValue")]
+    #[graphql(name = "defaultValue")]
     pub default_value: Option<String>,
-    #[graphql(name = "Options")]
+    #[graphql(name = "options")]
     pub options: Option<Vec<SourceSettingOptionGql>>,
 }
 
@@ -174,9 +181,9 @@ pub struct SourceSettingDefinitionGql {
 #[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceSettingOption")]
 pub struct SourceSettingOptionGql {
-    #[graphql(name = "Value")]
+    #[graphql(name = "value")]
     pub value: String,
-    #[graphql(name = "Label")]
+    #[graphql(name = "label")]
     pub label: String,
 }
 
@@ -184,63 +191,135 @@ pub struct SourceSettingOptionGql {
 #[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceReleaseInfo")]
 pub struct SourceReleaseInfoGql {
-    #[graphql(name = "Title")]
+    #[graphql(name = "title")]
     pub title: String,
-    #[graphql(name = "Guid")]
+    #[graphql(name = "guid")]
     pub guid: String,
-    #[graphql(name = "Link")]
+    #[graphql(name = "link")]
     pub link: Option<String>,
-    #[graphql(name = "MagnetUri")]
+    #[graphql(name = "magnetUri")]
     pub magnet_uri: Option<String>,
-    #[graphql(name = "InfoHash")]
+    #[graphql(name = "infoHash")]
     pub info_hash: Option<String>,
-    #[graphql(name = "Details")]
+    #[graphql(name = "details")]
     pub details: Option<String>,
-    #[graphql(name = "PublishDate")]
+    #[graphql(name = "publishDate")]
     pub publish_date: String,
-    #[graphql(name = "Categories")]
+    #[graphql(name = "categories")]
     pub categories: Vec<i32>,
-    #[graphql(name = "Size")]
+    #[graphql(name = "size")]
     pub size: Option<i64>,
-    #[graphql(name = "SizeFormatted")]
+    #[graphql(name = "sizeFormatted")]
     pub size_formatted: Option<String>,
-    #[graphql(name = "Seeders")]
+    #[graphql(name = "seeders")]
     pub seeders: Option<i32>,
-    #[graphql(name = "Leechers")]
+    #[graphql(name = "leechers")]
     pub leechers: Option<i32>,
-    #[graphql(name = "Peers")]
+    #[graphql(name = "peers")]
     pub peers: Option<i32>,
-    #[graphql(name = "Grabs")]
+    #[graphql(name = "grabs")]
     pub grabs: Option<i32>,
-    #[graphql(name = "IsFreeleech")]
+    #[graphql(name = "isFreeleech")]
     pub is_freeleech: bool,
-    #[graphql(name = "ImdbId")]
+    /// Private-tracker minimum share ratio declared for this release.
+    #[graphql(name = "minimumRatio")]
+    pub minimum_ratio: Option<f64>,
+    /// Private-tracker minimum seed time in **seconds**, as Torznab reports
+    /// it. Pass it straight back to `addTorrent`, which converts to minutes.
+    #[graphql(name = "minimumSeedTime")]
+    pub minimum_seed_time: Option<i64>,
+    #[graphql(name = "imdbId")]
     pub imdb_id: Option<String>,
-    #[graphql(name = "Poster")]
+    #[graphql(name = "poster")]
     pub poster: Option<String>,
-    #[graphql(name = "Description")]
+    #[graphql(name = "description")]
     pub description: Option<String>,
-    #[graphql(name = "SourceId")]
+    #[graphql(name = "sourceId")]
     pub source_id: Option<String>,
-    #[graphql(name = "SourceName")]
+    #[graphql(name = "sourceName")]
     pub source_name: Option<String>,
+    /// Quality tags parsed out of the release title.
+    #[graphql(name = "parsed")]
+    pub parsed: ParsedReleaseGql,
+    /// `"optimal"`, `"suboptimal"` or `"rejected"` when the search resolved a
+    /// quality profile (via `qualityProfileId` or a target id); null otherwise.
+    #[graphql(name = "profileMatch")]
+    pub profile_match: Option<String>,
+    /// Why the release is not `optimal` for the resolved profile. Empty when
+    /// no profile was resolved or the release is optimal.
+    #[graphql(name = "rejectReasons")]
+    pub reject_reasons: Vec<String>,
+}
+
+/// Quality tags parsed out of a release title (see
+/// `services::quality::scoring::ParsedRelease`).
+#[derive(Clone, Debug, Default, async_graphql::SimpleObject)]
+#[graphql(name = "ParsedRelease")]
+pub struct ParsedReleaseGql {
+    #[graphql(name = "resolution")]
+    pub resolution: Option<String>,
+    #[graphql(name = "codec")]
+    pub codec: Option<String>,
+    #[graphql(name = "hdrType")]
+    pub hdr_type: Option<String>,
+    #[graphql(name = "sourceType")]
+    pub source_type: Option<String>,
+    #[graphql(name = "audio")]
+    pub audio: Option<String>,
+    #[graphql(name = "releaseGroup")]
+    pub release_group: Option<String>,
+    /// ISO 639-1 codes declared by the title; empty means untagged.
+    #[graphql(name = "languages")]
+    pub languages: Vec<String>,
+    #[graphql(name = "isSeasonPack")]
+    pub is_season_pack: bool,
+    #[graphql(name = "isProper")]
+    pub is_proper: bool,
+    #[graphql(name = "isRepack")]
+    pub is_repack: bool,
+    #[graphql(name = "season")]
+    pub season: Option<i32>,
+    #[graphql(name = "episodes")]
+    pub episodes: Vec<i32>,
+    #[graphql(name = "year")]
+    pub year: Option<i32>,
+}
+
+impl From<&crate::services::quality::scoring::ParsedRelease> for ParsedReleaseGql {
+    fn from(parsed: &crate::services::quality::scoring::ParsedRelease) -> Self {
+        Self {
+            resolution: parsed.resolution.clone(),
+            codec: parsed.codec.clone(),
+            hdr_type: parsed.hdr_type.clone(),
+            source_type: parsed.source_type.clone(),
+            audio: parsed.audio.clone(),
+            release_group: parsed.release_group.clone(),
+            languages: parsed.languages.clone(),
+            is_season_pack: parsed.is_season_pack,
+            is_proper: parsed.is_proper,
+            is_repack: parsed.is_repack,
+            season: parsed.season,
+            episodes: parsed.episodes.clone(),
+            year: parsed.year,
+        }
+    }
 }
 
 /// Results from a single source
 #[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceSearchResultItem")]
 pub struct SourceSearchResultItemGql {
-    #[graphql(name = "SourceId")]
+    #[graphql(name = "sourceId")]
     pub source_id: String,
-    #[graphql(name = "SourceName")]
+    #[graphql(name = "sourceName")]
     pub source_name: String,
-    #[graphql(name = "Releases")]
+    #[graphql(name = "releases")]
     pub releases: Vec<SourceReleaseInfoGql>,
-    #[graphql(name = "ElapsedMs")]
+    #[graphql(name = "elapsedMs")]
     pub elapsed_ms: i64,
-    #[graphql(name = "FromCache")]
+    #[graphql(name = "fromCache")]
     pub from_cache: bool,
-    #[graphql(name = "Error")]
+    #[graphql(name = "error")]
     pub error: Option<String>,
 }
 
@@ -248,13 +327,13 @@ pub struct SourceSearchResultItemGql {
 #[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceSearchResultSet")]
 pub struct SourceSearchResultSetGql {
-    #[graphql(name = "Sources")]
+    #[graphql(name = "sources")]
     pub sources: Vec<SourceSearchResultItemGql>,
-    #[graphql(name = "TotalReleases")]
+    #[graphql(name = "totalReleases")]
     pub total_releases: i32,
-    #[graphql(name = "TotalElapsedMs")]
+    #[graphql(name = "totalElapsedMs")]
     pub total_elapsed_ms: i64,
-    #[graphql(name = "SourcesSearched")]
+    #[graphql(name = "sourcesSearched")]
     pub sources_searched: i32,
 }
 
@@ -262,9 +341,9 @@ pub struct SourceSearchResultSetGql {
 #[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceMutationResult")]
 pub struct SourceMutationResultGql {
-    #[graphql(name = "Success")]
+    #[graphql(name = "success")]
     pub success: bool,
-    #[graphql(name = "Error")]
+    #[graphql(name = "error")]
     pub error: Option<String>,
 }
 
@@ -272,37 +351,71 @@ pub struct SourceMutationResultGql {
 #[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceTestConnectionResult")]
 pub struct SourceTestConnectionResultGql {
-    #[graphql(name = "Success")]
+    #[graphql(name = "success")]
     pub success: bool,
-    #[graphql(name = "Error")]
+    #[graphql(name = "error")]
     pub error: Option<String>,
-    #[graphql(name = "ReleasesFound")]
+    #[graphql(name = "releasesFound")]
     pub releases_found: Option<i32>,
-    #[graphql(name = "ElapsedMs")]
+    #[graphql(name = "elapsedMs")]
     pub elapsed_ms: Option<i64>,
 }
 
 // =============================================================================
-// Input Types (PascalCase)
+// Input types for source operations.
 // =============================================================================
 
-/// Input for searching sources
+/// Input for searching sources.
+///
+/// The id/metadata fields are passed straight through to the Torznab query so
+/// indexers that support id-based search return exact matches instead of
+/// fuzzy text hits. The `*Id` target fields (and `qualityProfileId`) are only
+/// used to resolve a `QualityProfile` for the returned releases' `parsed`,
+/// `profileMatch` and `rejectReasons` fields; they never filter the search.
 #[derive(InputObject, Clone, Debug)]
 #[graphql(name = "SearchSourcesInput")]
 pub struct SearchSourcesInput {
-    #[graphql(name = "Query")]
+    #[graphql(name = "query")]
     pub query: String,
-    #[graphql(name = "SourceIds")]
+    #[graphql(name = "sourceIds")]
     pub source_ids: Option<Vec<String>>,
-    #[graphql(name = "Categories")]
+    #[graphql(name = "categories")]
     pub categories: Option<Vec<i32>>,
-    #[graphql(name = "Season")]
+    #[graphql(name = "season")]
     pub season: Option<i32>,
-    #[graphql(name = "Episode")]
+    #[graphql(name = "episode")]
     pub episode: Option<String>,
-    #[graphql(name = "ImdbId")]
+    #[graphql(name = "imdbId")]
     pub imdb_id: Option<String>,
-    #[graphql(name = "Limit")]
+    #[graphql(name = "tvdbId")]
+    pub tvdb_id: Option<i32>,
+    #[graphql(name = "tmdbId")]
+    pub tmdb_id: Option<i32>,
+    #[graphql(name = "tvmazeId")]
+    pub tvmaze_id: Option<i32>,
+    #[graphql(name = "year")]
+    pub year: Option<i32>,
+    #[graphql(name = "artist")]
+    pub artist: Option<String>,
+    #[graphql(name = "album")]
+    pub album: Option<String>,
+    #[graphql(name = "author")]
+    pub author: Option<String>,
+    #[graphql(name = "title")]
+    pub title: Option<String>,
+    /// Evaluate results against this quality profile. Takes precedence over
+    /// the profile resolved from a target below.
+    #[graphql(name = "qualityProfileId")]
+    pub quality_profile_id: Option<String>,
+    #[graphql(name = "showId")]
+    pub show_id: Option<String>,
+    #[graphql(name = "movieId")]
+    pub movie_id: Option<String>,
+    #[graphql(name = "albumId")]
+    pub album_id: Option<String>,
+    #[graphql(name = "audiobookId")]
+    pub audiobook_id: Option<String>,
+    #[graphql(name = "limit")]
     pub limit: Option<i32>,
 }
 
@@ -311,7 +424,7 @@ pub struct SearchSourcesInput {
 #[graphql(name = "UpdateSourcePrioritiesInput")]
 pub struct UpdateSourcePrioritiesInput {
     /// Source IDs in the desired priority order (first = highest priority)
-    #[graphql(name = "SourceIds")]
+    #[graphql(name = "sourceIds")]
     pub source_ids: Vec<String>,
 }
 
@@ -326,12 +439,12 @@ pub struct SourceCustomQueries;
 #[Object]
 impl SourceCustomQueries {
     /// Get available source definitions (e.g., IPTorrents, Newznab, etc.)
-    #[graphql(name = "AvailableSourceDefinitions")]
+    #[graphql(name = "availableSourceDefinitions")]
     async fn available_source_definitions(
         &self,
         ctx: &Context<'_>,
     ) -> Result<Vec<SourceDefinitionInfoGql>> {
-        let _user = ctx.librarian_auth_user()?;
+        ctx.require_admin()?;
 
         let definitions = get_available_definitions()
             .iter()
@@ -355,13 +468,13 @@ impl SourceCustomQueries {
     }
 
     /// Get setting definitions for a source definition
-    #[graphql(name = "SourceSettingDefinitions")]
+    #[graphql(name = "sourceSettingDefinitions")]
     async fn source_setting_definitions(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "DefinitionId")] definition_id: String,
+        #[graphql(name = "definitionId")] definition_id: String,
     ) -> Result<Vec<SourceSettingDefinitionGql>> {
-        let _user = ctx.librarian_auth_user()?;
+        ctx.require_admin()?;
 
         let info = get_definition_info(&definition_id).ok_or_else(|| {
             async_graphql::Error::new(format!("Unknown source definition: {}", definition_id))
@@ -375,7 +488,6 @@ impl SourceCustomQueries {
                 label: s.label.to_string(),
                 setting_type: match s.setting_type {
                     SettingType::Text => "Text".to_string(),
-                    SettingType::Password => "Password".to_string(),
                     SettingType::Checkbox => "Checkbox".to_string(),
                     SettingType::Select => "Select".to_string(),
                 },
@@ -395,14 +507,18 @@ impl SourceCustomQueries {
     }
 
     /// Search across all enabled sources
-    #[graphql(name = "SearchSources")]
+    #[graphql(name = "searchSources")]
     async fn search_sources(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Input")] input: SearchSourcesInput,
+        #[graphql(name = "input")] input: SearchSourcesInput,
     ) -> Result<SourceSearchResultSetGql> {
-        let _user = ctx.librarian_auth_user()?;
+        ctx.require_member()?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let db = ctx.data::<Database>()?;
+
+        // Optional: the profile to grade every returned release against.
+        let quality_profile = resolve_search_profile(db, &input).await;
 
         let sources_svc = manager
             .get_sources()
@@ -417,18 +533,34 @@ impl SourceCustomQueries {
         use crate::services::sources::{QueryType, SourceQuery};
 
         let query = SourceQuery {
-            query_type: if input.season.is_some() || input.episode.is_some() {
+            query_type: if input.season.is_some()
+                || input.episode.is_some()
+                || input.tvdb_id.is_some()
+                || input.tvmaze_id.is_some()
+            {
                 QueryType::TvSearch
-            } else if input.imdb_id.is_some() {
+            } else if input.artist.is_some() || input.album.is_some() {
+                QueryType::MusicSearch
+            } else if input.author.is_some() {
+                QueryType::BookSearch
+            } else if input.imdb_id.is_some() || input.tmdb_id.is_some() {
                 QueryType::MovieSearch
             } else {
                 QueryType::Search
             },
             search_term: Some(input.query.clone()),
-            categories: input.categories.unwrap_or_default(),
+            categories: input.categories.clone().unwrap_or_default(),
             season: input.season,
-            episode: input.episode,
-            imdb_id: input.imdb_id,
+            episode: input.episode.clone(),
+            imdb_id: input.imdb_id.clone(),
+            tvdb_id: input.tvdb_id,
+            tmdb_id: input.tmdb_id,
+            tvmaze_id: input.tvmaze_id,
+            year: input.year,
+            artist: input.artist.clone(),
+            album: input.album.clone(),
+            author: input.author.clone(),
+            title: input.title.clone(),
             limit: input.limit,
             cache: true,
             ..Default::default()
@@ -451,6 +583,30 @@ impl SourceCustomQueries {
                     .iter()
                     .map(|rel| {
                         total_releases += 1;
+                        let parsed = quality::scoring::parse_release(&rel.title);
+                        let (profile_match, reject_reasons) = match quality_profile.as_ref() {
+                            Some(profile) => {
+                                // Size limits are per episode; for a season
+                                // pack the episode count is unknown here, so
+                                // the size check is skipped rather than
+                                // wrongly rejecting a large (correct) pack.
+                                let facts = quality::profile::ReleaseFacts {
+                                    size_bytes: if parsed.is_season_pack {
+                                        None
+                                    } else {
+                                        rel.size
+                                    },
+                                    seeders: rel.seeders,
+                                    publish_date: Some(rel.publish_date),
+                                    episode_count: 1,
+                                    now: chrono::Utc::now(),
+                                };
+                                let (class, reasons) =
+                                    quality::profile::match_release(&parsed, profile, &facts);
+                                (Some(class.as_str().to_string()), reasons)
+                            }
+                            None => (None, Vec::new()),
+                        };
                         SourceReleaseInfoGql {
                             title: rel.title.clone(),
                             guid: rel.guid.clone(),
@@ -467,11 +623,16 @@ impl SourceCustomQueries {
                             peers: rel.peers,
                             grabs: rel.grabs,
                             is_freeleech: rel.is_freeleech(),
+                            minimum_ratio: rel.minimum_ratio,
+                            minimum_seed_time: rel.minimum_seed_time,
                             imdb_id: rel.imdb.map(|id| format!("tt{:07}", id)),
                             poster: rel.poster.clone(),
                             description: rel.description.clone(),
                             source_id: rel.source_id.clone(),
                             source_name: rel.source_name.clone(),
+                            parsed: ParsedReleaseGql::from(&parsed),
+                            profile_match,
+                            reject_reasons,
                         }
                     })
                     .collect();
@@ -498,13 +659,66 @@ impl SourceCustomQueries {
     }
 }
 
+/// Resolve the quality profile `searchSources` should grade releases against:
+/// an explicit `qualityProfileId` wins, otherwise the effective profile of the
+/// named target (per-entity override > library > seeded default). Returns
+/// `None` when the caller named neither, in which case releases come back
+/// without `profileMatch`.
+async fn resolve_search_profile(
+    db: &Database,
+    input: &SearchSourcesInput,
+) -> Option<QualityProfile> {
+    if let Some(id) = input.quality_profile_id.as_deref()
+        && let Ok(Some(profile)) = QualityProfile::get(db.pool(), &id.to_string()).await
+    {
+        return Some(profile);
+    }
+
+    let resolved = if let Some(id) = input.show_id.as_deref() {
+        match Show::get(db.pool(), &id.to_string()).await {
+            Ok(Some(show)) => Some((show.quality_profile_id, show.library_id)),
+            _ => None,
+        }
+    } else if let Some(id) = input.movie_id.as_deref() {
+        match Movie::get(db.pool(), &id.to_string()).await {
+            Ok(Some(movie)) => Some((movie.quality_profile_id, movie.library_id)),
+            _ => None,
+        }
+    } else if let Some(id) = input.album_id.as_deref() {
+        match Album::get(db.pool(), &id.to_string()).await {
+            Ok(Some(album)) => Some((album.quality_profile_id, album.library_id)),
+            _ => None,
+        }
+    } else if let Some(id) = input.audiobook_id.as_deref() {
+        match Audiobook::get(db.pool(), &id.to_string()).await {
+            Ok(Some(audiobook)) => Some((audiobook.quality_profile_id, audiobook.library_id)),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    let (override_id, library_id) = resolved?;
+    match quality::profile::resolve_profile(db, override_id.as_deref(), &library_id).await {
+        Ok(profile) => Some(profile),
+        Err(error) => {
+            tracing::warn!(
+                library_id = %library_id,
+                error = %error,
+                "searchSources: failed to resolve the quality profile for the target"
+            );
+            None
+        }
+    }
+}
+
 // =============================================================================
 // Custom Mutation Operations
 // =============================================================================
 
 /// Custom mutation operations for sources.
 /// Standard CRUD (CreateSource, UpdateSource, DeleteSource) is handled by the macro.
-/// Credentials are encrypted via the #[transform(write = "...")] hook in CreateSource/UpdateSource.
+/// Credentials are encrypted by the database write transform in CreateSource/UpdateSource.
 /// These mutations handle source-specific operations like testing and priority reordering.
 #[derive(Default)]
 pub struct SourceCustomMutations;
@@ -512,13 +726,13 @@ pub struct SourceCustomMutations;
 #[Object]
 impl SourceCustomMutations {
     /// Test a source connection
-    #[graphql(name = "TestSource")]
+    #[graphql(name = "testSource")]
     async fn test_source(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Id")] id: String,
+        #[graphql(name = "id")] id: String,
     ) -> Result<SourceTestConnectionResultGql> {
-        let _user = ctx.librarian_auth_user()?;
+        ctx.require_admin()?;
         let db = ctx.data::<Database>()?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
 
@@ -543,14 +757,32 @@ impl SourceCustomMutations {
 
         let start = std::time::Instant::now();
 
-        match sources_manager.test_source(&id).await {
+        let test_result = match sources_manager.test_source(&id).await {
+            Err(error) if error.to_string().contains("Source not loaded") && source.enabled => {
+                tracing::info!(
+                    source_id = %id,
+                    source_name = %source.name,
+                    "Source was not loaded before test; reloading sources from database"
+                );
+                sources_svc.reload().await.map_err(|reload_error| {
+                    async_graphql::Error::new(format!(
+                        "Failed to reload sources before test: {}",
+                        reload_error
+                    ))
+                })?;
+                sources_manager.test_source(&id).await
+            }
+            result => result,
+        };
+
+        match test_result {
             Ok(true) => {
                 // Test search to verify full functionality
                 use crate::services::sources::SourceQuery;
                 let query = SourceQuery::search("");
 
                 match sources_manager
-                    .search_sources(&[id.clone()], &query)
+                    .search_sources(std::slice::from_ref(&id), &query)
                     .await
                     .first()
                 {
@@ -626,15 +858,14 @@ impl SourceCustomMutations {
     }
 
     /// Update source priorities (reorder)
-    #[graphql(name = "UpdateSourcePriorities")]
+    #[graphql(name = "updateSourcePriorities")]
     async fn update_source_priorities(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Input")] input: UpdateSourcePrioritiesInput,
+        #[graphql(name = "input")] input: UpdateSourcePrioritiesInput,
     ) -> Result<SourceMutationResultGql> {
-        let _user = ctx.librarian_auth_user()?;
+        ctx.require_admin()?;
         let db = ctx.data::<Database>()?;
-        let manager = ctx.data::<Arc<ServicesManager>>()?;
 
         for (index, source_id) in input.source_ids.iter().enumerate() {
             let priority = (index + 1) as i32;
@@ -663,19 +894,6 @@ impl SourceCustomMutations {
                 },
             )
             .await?;
-        }
-
-        // Reload sources
-        if let Some(sources_svc) = manager.get_sources().await {
-            if let Err(e) = sources_svc.reload().await {
-                tracing::warn!(
-                    error = %e,
-                    source_count = input.source_ids.len(),
-                    "Failed to reload sources after priority update: source_count={}, error={}",
-                    input.source_ids.len(),
-                    e
-                );
-            }
         }
 
         Ok(SourceMutationResultGql {

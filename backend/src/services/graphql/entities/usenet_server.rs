@@ -11,80 +11,82 @@ use serde::{Deserialize, Serialize};
 #[graphql_entity(
     table = "usenet_servers",
     plural = "UsenetServers",
-    default_sort = "priority"
+    default_sort = "priority",
+    read_policy = "admin.read",
+    write_policy = "admin.write"
 )]
 pub struct UsenetServer {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "UserId")]
+    #[graphql(name = "userId")]
     #[filterable(type = "string")]
     pub user_id: String,
 
-    #[graphql(name = "Name")]
+    #[graphql(name = "name")]
     #[filterable(type = "string")]
     #[sortable]
     pub name: String,
 
-    #[graphql(name = "Host")]
+    #[graphql(name = "host")]
     #[filterable(type = "string")]
     pub host: String,
 
-    #[graphql(name = "Port")]
+    #[graphql(name = "port")]
     #[filterable(type = "number")]
     pub port: i32,
 
-    #[graphql(name = "UseSsl")]
+    #[graphql(name = "useSsl")]
     #[boolean_field]
     #[filterable(type = "boolean")]
     pub use_ssl: bool,
 
-    #[graphql(name = "Username")]
+    #[graphql(name = "username")]
     pub username: Option<String>,
 
-    #[graphql(name = "EncryptedPassword")]
+    #[graphql_orm(private)]
     pub encrypted_password: Option<String>,
 
-    #[graphql(name = "PasswordNonce")]
+    #[graphql_orm(private)]
     pub password_nonce: Option<String>,
 
-    #[graphql(name = "Connections")]
+    #[graphql(name = "connections")]
     #[filterable(type = "number")]
     pub connections: i32,
 
-    #[graphql(name = "Priority")]
+    #[graphql(name = "priority")]
     #[filterable(type = "number")]
     #[sortable]
     pub priority: i32,
 
-    #[graphql(name = "RetentionDays")]
+    #[graphql(name = "retentionDays")]
     #[filterable(type = "number")]
     pub retention_days: Option<i32>,
 
-    #[graphql(name = "Enabled")]
+    #[graphql(name = "enabled")]
     #[boolean_field]
     #[filterable(type = "boolean")]
     pub enabled: bool,
 
-    #[graphql(name = "LastError")]
+    #[graphql(name = "lastError")]
     pub last_error: Option<String>,
 
-    #[graphql(name = "ErrorCount")]
+    #[graphql(name = "errorCount")]
     #[filterable(type = "number")]
     pub error_count: i32,
 
-    #[graphql(name = "LastSuccessAt")]
+    #[graphql(name = "lastSuccessAt")]
     #[filterable(type = "date")]
     pub last_success_at: Option<String>,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,

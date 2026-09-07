@@ -64,7 +64,7 @@ import {
   type UpdateLibraryInput,
 } from "../../lib/graphql";
 
-type LibraryRouteData = NonNullable<LibraryDetailRouteQuery["Library"]>;
+type LibraryRouteData = NonNullable<LibraryDetailRouteQuery["library"]>;
 
 // Context for sharing library data with subroutes
 export interface LibraryContextValue {
@@ -144,12 +144,12 @@ function LibraryDetailLayout() {
   } = useQuery<LibraryDetailRouteQuery, LibraryDetailRouteQueryVariables>(
     LibraryDetailRouteDocument,
     {
-    variables: { Id: libraryId },
+    variables: { id: libraryId },
     fetchPolicy: "cache-and-network",
     },
   );
 
-  const library = libraryData?.Library ?? previousLibraryData?.Library ?? null;
+  const library = libraryData?.library ?? previousLibraryData?.library ?? null;
 
   const refetchAll = useCallback(() => {
     void refetchLibrary();
@@ -176,7 +176,7 @@ function LibraryDetailLayout() {
     ShowChangedSubscriptionVariables
   >(ShowChangedDocument, {
     skip: !library,
-    variables: { Filter: { actions: ["CREATED", "UPDATED", "DELETED"] } },
+    variables: { filter: { actions: ["CREATED", "UPDATED", "DELETED"] } },
   });
 
   // Determine active tab from URL
@@ -195,7 +195,7 @@ function LibraryDetailLayout() {
     if (path.endsWith("/authors")) return "authors";
 
     if (library) {
-      switch (library.LibraryType) {
+      switch (library.libraryType) {
         case "MOVIES":
           return "movies";
         case "TV":
@@ -213,17 +213,17 @@ function LibraryDetailLayout() {
 
   // Sync scanning state
   useEffect(() => {
-    if (library && !library.Scanning && isScanning) {
+    if (library && !library.scanning && isScanning) {
       setIsScanning(false);
-    } else if (library?.Scanning && !isScanning) {
+    } else if (library?.scanning && !isScanning) {
       setIsScanning(true);
     }
-  }, [library?.Scanning, isScanning, library]);
+  }, [library?.scanning, isScanning, library]);
 
   // Update page title
   useEffect(() => {
     if (library) {
-      document.title = `Librarian - ${library.Name}`;
+      document.title = `Librarian - ${library.name}`;
     }
     return () => {
       document.title = "Librarian";
@@ -245,23 +245,23 @@ function LibraryDetailLayout() {
   });
 
   // Track previous scanning state for toast notifications
-  const prevScanningRef = useRef(library?.Scanning);
+  const prevScanningRef = useRef(library?.scanning);
 
   useEffect(() => {
     if (!library) return;
 
-    const event = libraryChangedData?.LibraryChanged;
-    if (!event || event.Id !== library.Id || !event.Library) return;
+    const event = libraryChangedData?.libraryChanged;
+    if (!event || event.id !== library.id || !event.library) return;
 
     const wasScanning = prevScanningRef.current;
-    const nowScanning = event.Library.Scanning;
+    const nowScanning = event.library.scanning;
     prevScanningRef.current = nowScanning;
 
     if (wasScanning && !nowScanning) {
       setIsScanning(false);
       addToast({
         title: "Scan Complete",
-        description: `Finished scanning ${library.Name}`,
+        description: `Finished scanning ${library.name}`,
         color: "success",
       });
     } else if (!wasScanning && nowScanning) {
@@ -273,9 +273,9 @@ function LibraryDetailLayout() {
 
   useEffect(() => {
     if (!library) return;
-    const event = showChangedData?.ShowChanged;
+    const event = showChangedData?.showChanged;
     if (!event) return;
-    if (event.Show?.LibraryId && event.Show.LibraryId !== library.Id) return;
+    if (event.show?.libraryId && event.show.libraryId !== library.id) return;
 
     setMediaRefreshToken((v) => v + 1);
   }, [library, showChangedData]);
@@ -292,13 +292,13 @@ function LibraryDetailLayout() {
     if (!showToDelete) return;
 
     try {
-      const { data } = await deleteShow({ variables: { Id: showToDelete.id } });
+      const { data } = await deleteShow({ variables: { id: showToDelete.id } });
 
-      if (!data?.DeleteShow.Success) {
+      if (!data?.deleteShow.success) {
         addToast({
           title: "Error",
           description: sanitizeError(
-            data?.DeleteShow.Error || "Failed to delete show",
+            data?.deleteShow.error || "Failed to delete show",
           ),
           color: "danger",
         });
@@ -326,15 +326,15 @@ function LibraryDetailLayout() {
       try {
         const { data } = await updateLibraryMutation({
           variables: {
-            Id: library.Id,
-            Input: input,
+            id: library.id,
+            input: input,
           },
         });
 
-        if (!data?.UpdateLibrary.Success) {
+        if (!data?.updateLibrary.success) {
           addToast({
             title: "Error",
-            description: `Failed to update library: ${data?.UpdateLibrary.Error || "Unknown error"}`,
+            description: `Failed to update library: ${data?.updateLibrary.error || "Unknown error"}`,
             color: "danger",
           });
           return;
@@ -386,8 +386,8 @@ function LibraryDetailLayout() {
 
   if (!library) return null;
 
-  const typeInfo = getLibraryTypeInfo(library.LibraryType as LibraryType);
-  const scanningActive = isScanning || library.Scanning;
+  const typeInfo = getLibraryTypeInfo(library.libraryType as LibraryType);
+  const scanningActive = isScanning || library.scanning;
 
   const contextValue: LibraryContextValue = {
     library,
@@ -403,20 +403,20 @@ function LibraryDetailLayout() {
 
   return (
     <LibraryContext.Provider value={contextValue}>
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col grow">
-        <div className="mb-6">
+      <div className="container mx-auto flex h-full min-h-0 flex-1 flex-col overflow-hidden px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mb-6 shrink-0">
           <Breadcrumbs className="mb-2">
-            <BreadcrumbItem href="/libraries">Libraries</BreadcrumbItem>
-            <BreadcrumbItem isCurrent>{library.Name}</BreadcrumbItem>
+            <BreadcrumbItem><Link to="/libraries">Libraries</Link></BreadcrumbItem>
+            <BreadcrumbItem isCurrent>{library.name}</BreadcrumbItem>
           </Breadcrumbs>
 
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-4">
-              <typeInfo.Icon className="w-10 h-10" />
+              <typeInfo.icon className="w-10 h-10" />
               <div>
-                <h1 className="text-2xl font-bold">{library.Name}</h1>
+                <h1 className="text-2xl font-bold">{library.name}</h1>
                 <div className="flex items-center gap-3 text-sm text-default-500 mt-1">
-                  <span className="font-mono text-xs">{library.Path}</span>
+                  <span className="font-mono text-xs">{library.path}</span>
                 </div>
               </div>
             </div>
@@ -439,7 +439,7 @@ function LibraryDetailLayout() {
         <LibraryLayout
           activeTab={getActiveTab()}
           libraryId={libraryId}
-          libraryType={library.LibraryType as LibraryType}
+          libraryType={library.libraryType as LibraryType}
         >
           <Outlet />
         </LibraryLayout>
@@ -458,7 +458,8 @@ function LibraryDetailLayout() {
           isOpen={isScanOpen}
           onClose={onScanClose}
           libraryId={libraryId}
-          libraryName={library.Name}
+          libraryName={library.name}
+          libraryType={library.libraryType}
           onScanStarted={() => {
             setIsScanning(true);
             refetchAll();

@@ -1,18 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const authMock = vi.hoisted(() => ({
-  accessToken: null as string | null,
-}));
-
-vi.mock("../../src/lib/auth", () => ({
-  getAccessToken: () => authMock.accessToken,
-}));
-
 import { authFetch, buildApiUrl } from "../../src/lib/api/authFetch";
 
 describe("authFetch", () => {
   beforeEach(() => {
-    authMock.accessToken = null;
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve(new Response("ok", { status: 200 }))),
@@ -31,9 +22,7 @@ describe("authFetch", () => {
     );
   });
 
-  it("adds bearer auth and include credentials by default", async () => {
-    authMock.accessToken = "access-token";
-
+  it("includes HttpOnly cookies without synthesizing an auth header", async () => {
     await authFetch("/api/artwork/1", {
       baseUrl: "http://backend.test",
       method: "POST",
@@ -46,27 +35,18 @@ describe("authFetch", () => {
 
     expect(url).toBe("http://backend.test/api/artwork/1");
     expect(init).toMatchObject({ credentials: "include", method: "POST" });
-    expect(headers.get("Authorization")).toBe("Bearer access-token");
+    expect(headers.has("Authorization")).toBe(false);
     expect(headers.get("X-Request-Id")).toBe("request-1");
   });
 
-  it("does not override explicit Authorization or add auth when disabled", async () => {
-    authMock.accessToken = "access-token";
-
+  it("preserves explicitly supplied headers", async () => {
     await authFetch("/api/media", {
       baseUrl: "http://backend.test",
       headers: { Authorization: "Bearer explicit-token" },
     });
-    await authFetch("/api/media", {
-      baseUrl: "http://backend.test",
-      includeAuth: false,
-    });
 
     const firstHeaders = vi.mocked(fetch).mock.calls[0][1]?.headers as Headers;
-    const secondHeaders = vi.mocked(fetch).mock.calls[1][1]?.headers as Headers;
 
     expect(firstHeaders.get("Authorization")).toBe("Bearer explicit-token");
-    expect(secondHeaders.has("Authorization")).toBe(false);
   });
 });
-

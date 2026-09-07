@@ -24,13 +24,13 @@ function ShowsPage() {
   }, []);
 
   useEffect(() => {
-    if (!library?.Id) return;
+    if (!library?.id) return;
     refreshShowsRef.current?.();
-  }, [library?.Id, mediaRefreshToken]);
+  }, [library?.id, mediaRefreshToken]);
 
   return (
     <LibraryShowsTab
-      libraryId={library.Id}
+      libraryId={library.id}
       loading={loading}
       onDeleteShow={handleDeleteShowClick}
       onAddShow={onOpenAddShow}

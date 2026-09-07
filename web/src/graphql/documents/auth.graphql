@@ -1,0 +1,67 @@
+query NeedsSetup {
+  needsSetup
+}
+
+query CurrentUser {
+  me {
+    id
+    email
+    username
+    role
+    displayName
+  }
+}
+
+mutation Login($input: LoginInput!) {
+  login(input: $input) {
+    success
+    error
+    user {
+      id
+      email
+      username
+      role
+      displayName
+    }
+    tokens {
+      expiresIn
+      tokenType
+    }
+  }
+}
+
+mutation Register($input: RegisterUserInput!) {
+  register(input: $input) {
+    success
+    error
+    user {
+      id
+      email
+      username
+      role
+      displayName
+    }
+    tokens {
+      expiresIn
+      tokenType
+    }
+  }
+}
+
+mutation RefreshSession {
+  refreshToken {
+    success
+    error
+    tokens {
+      expiresIn
+      tokenType
+    }
+  }
+}
+
+mutation Logout {
+  logout {
+    success
+    error
+  }
+}

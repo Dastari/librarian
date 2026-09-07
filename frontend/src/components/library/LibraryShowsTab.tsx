@@ -12,9 +12,13 @@ import {
   type RowAction,
   type CardRendererProps,
 } from "../data-table";
-import type { Show } from "../../lib/graphql/generated/graphql";
-import { TV_SHOWS_CONNECTION_QUERY } from "../../lib/graphql";
-import { useQuery, gql } from "../../lib/graphql/client";
+import {
+  LibraryShowsTabDocument,
+  type OrderDirection,
+  type Show,
+  type ShowOrderByInput,
+} from "../../lib/graphql/generated/graphql";
+import { useQuery } from "../../lib/graphql/client";
 import {
   IconPlus,
   IconTrash,
@@ -43,14 +47,14 @@ interface LibraryShowsTabProps {
 // ============================================================================
 
 interface TvShowsConnectionResponse {
-  Shows: {
-    Edges: Array<{ Node: Show; Cursor: string }>;
-    PageInfo: {
-      HasNextPage: boolean;
-      HasPreviousPage: boolean;
-      StartCursor: string | null;
-      EndCursor: string | null;
-      TotalCount: number | null;
+  shows: {
+    edges: Array<{ node: Show; cursor: string }>;
+    pageInfo: {
+      hasNextPage: boolean;
+      hasPreviousPage: boolean;
+      startCursor: string | null;
+      endCursor: string | null;
+      totalCount: number | null;
     };
   };
 }
@@ -60,14 +64,11 @@ interface TvShowsConnectionResponse {
 // ============================================================================
 
 // Map column keys to GraphQL ShowOrderByInput field names
-const SORT_FIELD_MAP: Record<string, string> = {
-  name: "SortName",
-  year: "Year",
-  createdAt: "CreatedAt",
+const SORT_FIELD_MAP: Record<string, keyof ShowOrderByInput> = {
+  name: "sortName",
+  year: "year",
+  createdAt: "createdAt",
 };
-const SHOWS_QUERY = gql`
-  ${TV_SHOWS_CONNECTION_QUERY}
-`;
 
 export function LibraryShowsTab({
   libraryId,
@@ -109,15 +110,14 @@ export function LibraryShowsTab({
     [setSortColumn, setSortDirection],
   );
 
-  // Build filter variables for GraphQL query (PascalCase schema)
+  // Build filter variables for GraphQL query.
   const queryVariables = useMemo(() => {
-    const where: Record<string, unknown> = { LibraryId: { eq: libraryId } };
-    if (searchTerm) where.Name = { contains: searchTerm };
-    const graphqlField = SORT_FIELD_MAP[sortColumn || "name"] || "SortName";
-    const orderBy = [
-      { [graphqlField]: sortDirection === "asc" ? "ASC" : "DESC" },
-    ];
-    return { Where: where, Page: { limit: 5000 }, OrderBy: orderBy };
+    const where: Record<string, unknown> = { libraryId: { eq: libraryId } };
+    if (searchTerm) where.name = { contains: searchTerm };
+    const graphqlField = SORT_FIELD_MAP[sortColumn || "name"] || "sortName";
+    const direction: OrderDirection = sortDirection === "asc" ? "ASC" : "DESC";
+    const orderBy: ShowOrderByInput[] = [{ [graphqlField]: direction }];
+    return { where: where, page: { limit: 5000 }, orderBy: orderBy };
   }, [libraryId, searchTerm, sortColumn, sortDirection]);
 
   const {
@@ -125,7 +125,7 @@ export function LibraryShowsTab({
     previousData,
     loading: queryLoading,
     refetch,
-  } = useQuery<TvShowsConnectionResponse>(SHOWS_QUERY, {
+  } = useQuery<TvShowsConnectionResponse>(LibraryShowsTabDocument, {
     variables: queryVariables,
     skip: shouldSkipQueries,
     fetchPolicy: "cache-and-network",
@@ -134,15 +134,15 @@ export function LibraryShowsTab({
 
   const shows = useMemo(
     () =>
-      (data?.Shows?.Edges ?? previousData?.Shows?.Edges ?? []).map(
-        (edge) => edge.Node,
+      (data?.shows?.edges ?? previousData?.shows?.edges ?? []).map(
+        (edge) => edge.node,
       ),
-    [data?.Shows?.Edges, previousData?.Shows?.Edges],
+    [data?.shows?.edges, previousData?.shows?.edges],
   );
 
   const totalCount =
-    data?.Shows?.PageInfo?.TotalCount ??
-    previousData?.Shows?.PageInfo?.TotalCount ??
+    data?.shows?.pageInfo?.totalCount ??
+    previousData?.shows?.pageInfo?.totalCount ??
     null;
 
   // Provide refresh function to parent for subscription updates
@@ -158,7 +158,7 @@ export function LibraryShowsTab({
   const availableLetters = useMemo(() => {
     const letters = new Set<string>();
     shows.forEach((show) => {
-      letters.add(getFirstLetter(show.Name));
+      letters.add(getFirstLetter(show.name));
     });
     return letters;
   }, [shows]);
@@ -167,7 +167,7 @@ export function LibraryShowsTab({
   const filteredShows = useMemo(() => {
     if (!normalizedLetter) return shows;
     return shows.filter(
-      (show) => getFirstLetter(show.Name) === normalizedLetter,
+      (show) => getFirstLetter(show.name) === normalizedLetter,
     );
   }, [shows, normalizedLetter]);
 
@@ -197,13 +197,13 @@ export function LibraryShowsTab({
         render: (show) => (
           <Link
             to="/shows/$showId"
-            params={{ showId: show.Id }}
+            params={{ showId: show.id }}
             className="flex items-center gap-3 hover:opacity-80"
           >
-            {show.PosterUrl ? (
+            {show.posterUrl ? (
               <Image
-                src={show.PosterUrl}
-                alt={show.Name}
+                src={show.posterUrl}
+                alt={show.name}
                 className="w-10 h-14 object-cover rounded"
                 loading="lazy"
               />
@@ -213,7 +213,7 @@ export function LibraryShowsTab({
               </div>
             )}
             <div>
-              <p className="font-medium">{show.Name}</p>
+              <p className="font-medium">{show.name}</p>
             </div>
           </Link>
         ),
@@ -222,14 +222,14 @@ export function LibraryShowsTab({
         key: "year",
         label: "YEAR",
         width: 80,
-        render: (show) => <span>{show.Year ?? "—"}</span>,
+        render: (show) => <span>{show.year ?? "—"}</span>,
       },
       {
         key: "network",
         label: "NETWORK",
         width: 150,
         sortable: false,
-        render: (show) => <span>{show.Network ?? "—"}</span>,
+        render: (show) => <span>{show.network ?? "—"}</span>,
       },
     ],
     [],
@@ -251,7 +251,7 @@ export function LibraryShowsTab({
         icon: <IconTrash size={16} className="text-red-400" />,
         isDestructive: true,
         inDropdown: true,
-        onAction: (show) => onDeleteShow(show.Id, show.Name),
+        onAction: (show) => onDeleteShow(show.id, show.name),
       },
     ],
     [onDeleteShow],
@@ -262,22 +262,22 @@ export function LibraryShowsTab({
     ({ item }: CardRendererProps<Show>) => (
       <TvShowCard
         show={item}
-        onDelete={() => onDeleteShow(item.Id, item.Name)}
+        onDelete={() => onDeleteShow(item.id, item.name)}
       />
     ),
     [onDeleteShow],
   );
 
   return (
-    <div className="flex flex-col grow w-full">
-      <div className="flex-1 min-h-0">
+    <div className="flex h-full min-h-0 flex-1 flex-col w-full">
+      <div className="flex min-h-0 flex-1 flex-col">
         <DataTable
           stateKey="library-shows"
           skeletonDelay={500}
           data={filteredShows}
           columns={columns}
-          getRowKey={(show) => show.Id}
-          searchPlaceholder="Search shows..."
+          getRowKey={(show) => show.id}
+          toolbarQueryPlaceholder="Search shows..."
           sortColumn={sortColumn || "name"}
           sortDirection={sortDirection}
           onSortChange={handleSortChange}

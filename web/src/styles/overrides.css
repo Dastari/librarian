@@ -1,0 +1,65 @@
+/*
+ * Small adjustments to third-party defaults so they inherit Librarian tokens.
+ * Keep this file short; prefer tokens over selector overrides.
+ */
+
+/* Toasts sit above the player dock on phones. */
+[data-slot="toast-region"] {
+  padding-bottom: calc(var(--safe-bottom) + var(--dock-height));
+}
+
+/* Media elements never show the native focus outline; we draw our own. */
+video:focus,
+audio:focus {
+  outline: none;
+}
+
+/* Hide the number spinner and search cancel buttons; we render our own controls. */
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-decoration {
+  -webkit-appearance: none;
+}
+
+/*
+ * Liquid-glass fields. HeroUI's text, search, select, number and textarea fields share one
+ * recipe: translucent fill, specular rim, soft inner shadow and a brand ring on focus.
+ */
+.input,
+.textarea,
+.search-field__group,
+.select__trigger,
+.number-field__group {
+  background: var(--glass-fill) !important;
+  border: 1px solid var(--glass-rim) !important;
+  border-top-color: var(--glass-rim-top) !important;
+  box-shadow: inset 0 1px 0 0 var(--glass-reflection), inset 0 -3px 8px -6px var(--glass-inner-shadow) !important;
+  -webkit-backdrop-filter: blur(var(--glass-blur-control)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur-control)) saturate(var(--glass-saturate));
+}
+
+.search-field__group .input,
+.number-field__group .input,
+.input-group .input {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.input:hover,
+.textarea:hover,
+.search-field__group:hover,
+.select__trigger:hover,
+.number-field__group:hover {
+  background: var(--glass-fill-strong) !important;
+}
+
+.input:focus-visible,
+.textarea:focus-visible,
+.search-field__group:focus-within,
+.select__trigger[data-focus-visible],
+.number-field__group:focus-within {
+  border-color: color-mix(in oklab, var(--brand) 70%, transparent) !important;
+  box-shadow: inset 0 1px 0 0 var(--glass-reflection), 0 0 0 3px color-mix(in oklab, var(--brand) 28%, transparent) !important;
+}

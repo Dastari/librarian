@@ -22,7 +22,7 @@ import type { CreateLibraryInput } from "../../lib/graphql/generated/graphql";
 
 export type CreateLibraryFormInput = Omit<
   CreateLibraryInput,
-  "UserId" | "CreatedAt" | "UpdatedAt" | "Scanning" | "LastScannedAt"
+  "userId" | "createdAt" | "updatedAt" | "scanning" | "lastScannedAt"
 >;
 
 export interface AddLibraryModalProps {
@@ -73,21 +73,21 @@ export function AddLibraryModal({
 
   const handleSubmit = async () => {
     if (!isFormValid) return;
-    let finalPath = formValues.Path;
-    const pathLooksUnc = /^\\\\|^\/\//.test(formValues.Path.trim());
+    let finalPath = formValues.path;
+    const pathLooksUnc = /^\\\\|^\/\//.test(formValues.path.trim());
 
     if (runtimeInfo && pathLooksUnc) {
-      const isWindows = runtimeInfo.Platform === "windows";
-      const isLinux = runtimeInfo.Platform === "linux";
+      const isWindows = runtimeInfo.platform === "windows";
+      const isLinux = runtimeInfo.platform === "linux";
       const shouldConfigureWindows =
         isWindows &&
         (formValues.NetworkAuthEnabled ||
           Boolean(formValues.NetworkUsername || formValues.NetworkPassword));
-      const shouldConfigureLinux = isLinux && runtimeInfo.SupportsSambaMount;
+      const shouldConfigureLinux = isLinux && runtimeInfo.supportsSambaMount;
 
       if (shouldConfigureWindows || shouldConfigureLinux) {
         const configured = await configureNetworkPath({
-          path: formValues.Path,
+          path: formValues.path,
           username: formValues.NetworkUsername || undefined,
           password: formValues.NetworkPassword || undefined,
           mountPoint: shouldConfigureLinux
@@ -110,14 +110,14 @@ export function AddLibraryModal({
     }
 
     await onAdd({
-      Name: formValues.Name,
-      Path: finalPath,
-      LibraryType: formValues.LibraryType,
-      AutoScan: formValues.AutoScan,
-      ScanIntervalMinutes: formValues.ScanIntervalMinutes,
-      WatchForChanges: formValues.WatchForChanges,
-      AutoOrganize: formValues.AutoOrganize,
-      NamingPattern: formValues.NamingPattern ?? "",
+      name: formValues.name,
+      path: finalPath,
+      libraryType: formValues.libraryType,
+      autoScan: formValues.autoScan,
+      scanIntervalMinutes: formValues.scanIntervalMinutes,
+      watchForChanges: formValues.watchForChanges,
+      autoOrganize: formValues.autoOrganize,
+      namingPattern: formValues.namingPattern ?? "",
     });
 
     // Reset form
@@ -150,10 +150,10 @@ export function AddLibraryModal({
             mode="create"
             useCards={false}
             closeSignal={closeSignal}
-            runtimePlatform={runtimeInfo?.Platform}
-            supportsUncCredentials={runtimeInfo?.SupportsUncCredentials}
-            supportsSambaMount={runtimeInfo?.SupportsSambaMount}
-            defaultLinuxMountBase={runtimeInfo?.DefaultLinuxMountBase}
+            runtimePlatform={runtimeInfo?.platform}
+            supportsUncCredentials={runtimeInfo?.supportsUncCredentials}
+            supportsSambaMount={runtimeInfo?.supportsSambaMount}
+            defaultLinuxMountBase={runtimeInfo?.defaultLinuxMountBase}
           />
         </ModalBody>
         <ModalFooter>

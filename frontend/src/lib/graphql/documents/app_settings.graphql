@@ -1,83 +1,122 @@
-query PlaybackSyncInterval($Key: String!) {
-  AppSettings: appSettings(
-    where: { Key: { eq: $Key } }
+query PlaybackSyncInterval($key: String!) {
+  appSettings(
+    where: { key: { eq: $key } }
     page: { limit: 1, offset: 0 }
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        Key
-        Value
+    edges {
+      node {
+        id
+        key
+        value
       }
     }
   }
 }
 
 query TorrentAppSettings {
-  AppSettings: appSettings(
-    where: { Category: { eq: "torrent" } }
+  appSettings(
+    where: { category: { eq: "torrent" } }
     page: { limit: 20, offset: 0 }
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        Key
-        Value
+    edges {
+      node {
+        id
+        key
+        value
       }
     }
   }
 }
 
 query MetadataAppSettings {
-  AppSettings: appSettings(
-    where: { Category: { eq: "metadata" } }
+  appSettings(
+    where: { category: { eq: "metadata" } }
     page: { limit: 50, offset: 0 }
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        Key
-        Value
+    edges {
+      node {
+        id
+        key
+        value
       }
     }
+  }
+}
+
+mutation TestTmdbConnection($input: TestTmdbConnectionInput!) {
+  testTmdbConnection(input: $input) {
+    success
+    message
+    correlationId
   }
 }
 
 query LlmAppSettings {
-  AppSettings: appSettings(
-    where: { Category: { eq: "llm" } }
+  appSettings(
+    where: { category: { eq: "llm" } }
     page: { limit: 100, offset: 0 }
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        Key
-        Value
+    edges {
+      node {
+        id
+        key
+        value
       }
     }
   }
 }
 
-mutation CreateAppSetting($Input: CreateAppSettingInput!) {
-  CreateAppSetting: createAppSetting(input: $Input) {
-    Success: success
-    Error: error
-    AppSetting: appSetting {
-      Id
-      Key
-      Value
+mutation CreateAppSetting($input: CreateAppSettingInput!) {
+  createAppSetting(input: $input) {
+    success
+    error
+    appSetting {
+      id
+      key
+      value
     }
   }
 }
 
-mutation UpdateAppSetting($Id: String!, $Input: UpdateAppSettingInput!) {
-  UpdateAppSetting: updateAppSetting(id: $Id, input: $Input) {
-    Success: success
-    Error: error
-    AppSetting: appSetting {
-      Id
-      Key
-      Value
+mutation UpdateAppSetting($id: String!, $input: UpdateAppSettingInput!) {
+  updateAppSetting(id: $id, input: $input) {
+    success
+    error
+    appSetting {
+      id
+      key
+      value
+    }
+  }
+}
+
+mutation TestOllamaConnection($input: TestOllamaConnectionInput!) {
+  testOllamaConnection(input: $input) {
+    success
+    models
+    error
+  }
+}
+
+mutation TestLlmParser($input: TestLlmParserInput!) {
+  testLlmParser(input: $input) {
+    success
+    regexResult
+    error
+    llmResult {
+      title
+      year
+      showTitle
+      season
+      episode
+      artist
+      album
+      track
+      author
+      book
+      chapter
+      confidence
+      matchSource
     }
   }
 }

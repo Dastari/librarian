@@ -138,4 +138,5 @@ alwaysApply: true
 - Foreign keys: `{table}_id` (e.g., `user_id`)
 
 ### GraphQL
-- `PascalCase` for fields, types, operations, inputs, and enum values
+- `camelCase` for resolver fields, query/mutation/subscription fields, input fields, and payload fields
+- `PascalCase` for GraphQL type names

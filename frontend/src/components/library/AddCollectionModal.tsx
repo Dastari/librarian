@@ -30,7 +30,7 @@ export function AddCollectionModal({
   libraryId,
   onAdded,
 }: AddCollectionModalProps) {
-  type CollectionResult = SearchMovieCollectionsQuery["SearchMovieCollections"][number];
+  type CollectionResult = SearchMovieCollectionsQuery["searchMovieCollections"][number];
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CollectionResult[]>([]);
@@ -45,7 +45,7 @@ export function AddCollectionModal({
   const selectedCollection = useMemo(
     () =>
       selectedCollectionId != null
-        ? results.find((item) => item.CollectionId === selectedCollectionId) ?? null
+        ? results.find((item) => item.collectionId === selectedCollectionId) ?? null
         : null,
     [results, selectedCollectionId],
   );
@@ -54,7 +54,7 @@ export function AddCollectionModal({
     if (!query.trim()) return;
     try {
       const { data, error } = await searchCollections({
-        variables: { Query: query.trim() },
+        variables: { query: query.trim() },
       });
       if (error) {
         addToast({
@@ -64,8 +64,8 @@ export function AddCollectionModal({
         });
         return;
       }
-      setResults(data?.SearchMovieCollections ?? []);
-      if (!data?.SearchMovieCollections?.some((c) => c.CollectionId === selectedCollectionId)) {
+      setResults(data?.searchMovieCollections ?? []);
+      if (!data?.searchMovieCollections?.some((c) => c.collectionId === selectedCollectionId)) {
         setSelectedCollectionId(null);
       }
     } catch (error) {
@@ -82,28 +82,28 @@ export function AddCollectionModal({
     try {
       const { data, error } = await addCollection({
         variables: {
-          LibraryId: libraryId,
-          Input: {
-            CollectionId: selectedCollection.CollectionId,
-            WantedMissing: wantedMissing,
+          libraryId: libraryId,
+          input: {
+            collectionId: selectedCollection.collectionId,
+            wantedMissing: wantedMissing,
           },
         },
       });
 
-      if (error || !data?.AddMovieCollection.Success) {
+      if (error || !data?.addMovieCollection.success) {
         addToast({
           title: "Error",
           description: sanitizeError(
-            data?.AddMovieCollection.Error || error || "Failed to add collection",
+            data?.addMovieCollection.error || error || "Failed to add collection",
           ),
           color: "danger",
         });
         return;
       }
 
-      const importedCount = data.AddMovieCollection.ImportedCount;
-      const existingCount = data.AddMovieCollection.ExistingCount;
-      const wantedUpdatedCount = data.AddMovieCollection.WantedUpdatedCount;
+      const importedCount = data.addMovieCollection.importedCount;
+      const existingCount = data.addMovieCollection.existingCount;
+      const wantedUpdatedCount = data.addMovieCollection.wantedUpdatedCount;
 
       addToast({
         title: "Collection Imported",
@@ -137,14 +137,14 @@ export function AddCollectionModal({
       render: (collection) => (
         <div className="flex items-center gap-3">
           <CollectionPoster
-            posterUrl={collection.PosterUrl ?? null}
-            name={collection.Name}
+            posterUrl={collection.posterUrl ?? null}
+            name={collection.name}
             imageClassName="w-10 h-14 object-cover rounded"
             fallbackClassName="w-10 h-14 bg-default-200 rounded flex items-center justify-center"
           />
           <div>
-            <p className="font-medium">{collection.Name}</p>
-            <p className="text-xs text-default-500">TMDB #{collection.CollectionId}</p>
+            <p className="font-medium">{collection.name}</p>
+            <p className="text-xs text-default-500">TMDB #{collection.collectionId}</p>
           </div>
         </div>
       ),
@@ -155,7 +155,7 @@ export function AddCollectionModal({
       sortable: false,
       render: (collection) => (
         <p className="text-sm text-default-500 line-clamp-2">
-          {collection.Overview || "No description available"}
+          {collection.overview || "No description available"}
         </p>
       ),
     },
@@ -193,9 +193,10 @@ export function AddCollectionModal({
             stateKey="add-collection-modal-search"
             data={results}
             columns={columns}
-            getRowKey={(collection) => String(collection.CollectionId)}
+            getRowKey={(collection) => String(collection.collectionId)}
+            fillHeight={false}
             ariaLabel="Collection search results"
-            searchPlaceholder="Filter results..."
+            toolbarQueryPlaceholder="Filter results..."
             isLoading={searching}
             selectionMode="single"
             selectedKeys={selectedKeys}
@@ -229,7 +230,7 @@ export function AddCollectionModal({
           {selectedCollection && (
             <div className="flex items-center gap-2">
               <Chip color="primary" variant="flat">
-                Selected: {selectedCollection.Name}
+                Selected: {selectedCollection.name}
               </Chip>
             </div>
           )}

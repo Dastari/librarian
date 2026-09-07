@@ -62,7 +62,7 @@ function HomePage() {
   
   // Dashboard data with caching - loads instantly from cache while fetching fresh data
   const { 
-    data: { libraries, recentShows, libraryUpcoming, globalUpcoming },
+    data: { libraries, recentMedia, libraryUpcoming, globalUpcoming },
     isLoading,
     isStale,
     isFetching,
@@ -191,13 +191,13 @@ function HomePage() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {libraryUpcoming.slice(0, 8).map((ep) => (
-              <Card key={ep.Id} className="bg-content1 overflow-hidden w-full">
+              <Card key={ep.id} className="bg-content1 overflow-hidden w-full">
                 <div className="flex gap-3 p-3">
                   <div className="w-16 h-24 shrink-0 rounded-md overflow-hidden bg-default-200">
-                    {ep.ShowPosterUrl ? (
+                    {ep.showPosterUrl ? (
                       <Image
-                        src={ep.ShowPosterUrl}
-                        alt={ep.ShowName}
+                        src={ep.showPosterUrl}
+                        alt={ep.showName}
                         classNames={{
                           wrapper: "w-full h-full",
                           img: "w-full h-full object-cover",
@@ -212,19 +212,19 @@ function HomePage() {
                     )}
                   </div>
                   <div className="flex-1 min-w-0 text-left flex flex-col">
-                    <p className="font-semibold truncate">{ep.ShowName}</p>
+                    <p className="font-semibold truncate">{ep.showName}</p>
                     <p className="text-sm text-default-500 grow">
-                      S{ep.Season.toString().padStart(2, "0")}E
-                      {ep.EpisodeNumber.toString().padStart(2, "0")}
-                      {ep.EpisodeName && `: ${ep.EpisodeName}`}
+                      S{ep.season.toString().padStart(2, "0")}E
+                      {ep.episodeNumber.toString().padStart(2, "0")}
+                      {ep.episodeName && `: ${ep.episodeName}`}
                     </p>
                     <div className="flex items-center gap-2">
                       <Chip size="sm" variant="flat" color="primary">
-                        {formatAirDate(ep.AirDate)}
+                        {formatAirDate(ep.airDate)}
                       </Chip>
-                      {ep.ShowNetwork && (
+                      {ep.showNetwork && (
                         <span className="text-xs text-default-400">
-                          {ep.ShowNetwork}
+                          {ep.showNetwork}
                         </span>
                       )}
                     </div>
@@ -236,11 +236,11 @@ function HomePage() {
         </section>
       )}
 
-      {/* Recently Added Shows */}
-      {recentShows.length > 0 && (
+      {/* Recently Added */}
+      {recentMedia.length > 0 && (
         <section className="mb-8">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold">Recently Added Shows</h2>
+            <h2 className="text-xl font-semibold">Recently Added</h2>
             <Link to="/libraries">
               <Button variant="light" color="primary" size="sm">
                 View All →
@@ -248,24 +248,22 @@ function HomePage() {
             </Link>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-            {recentShows.map((show) => (
+            {recentMedia.map((item) => (
               <Link
-                key={show.Id}
-                to="/shows/$showId"
-                params={{ showId: show.Id }}
+                key={item.id}
+                to={item.href}
               >
                 <div className="aspect-[2/3]">
                   <Card
-                    isPressable
                     isHoverable
                     className="bg-content1 overflow-hidden h-full w-full relative"
                   >
                     <div className="absolute inset-0">
-                      {show.PosterUrl ? (
+                      {item.imageUrl ? (
                         <>
                           <Image
-                            src={show.PosterUrl}
-                            alt={show.Name}
+                            src={item.imageUrl}
+                            alt={item.title}
                             classNames={{
                               wrapper:
                                 "absolute inset-0 w-full h-full !max-w-full",
@@ -286,11 +284,10 @@ function HomePage() {
                     </div>
                     <div className="absolute bottom-0 left-0 right-0 p-2 bg-black/50 backdrop-blur-sm">
                       <p className="text-sm font-medium truncate text-white">
-                        {show.Name}
+                        {item.title}
                       </p>
                       <p className="text-xs text-white/70">
-                        {show.Year ?? "Unknown year"}
-                        {show.Network && ` • ${show.Network}`}
+                        {item.kind}
                       </p>
                     </div>
                   </Card>
@@ -315,7 +312,7 @@ function HomePage() {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
             {globalUpcoming.map((ep) => (
               <div
-                key={`${ep.TvmazeShowId}-${ep.Season}-${ep.EpisodeNumber}`}
+                key={`${ep.tvmazeShowId}-${ep.season}-${ep.episodeNumber}`}
                 className="aspect-[2/3]"
               >
                 <Card
@@ -323,11 +320,11 @@ function HomePage() {
                   className="bg-content1 overflow-hidden h-full w-full relative"
                 >
                   <div className="absolute inset-0">
-                    {ep.ShowPosterUrl ? (
+                    {ep.showPosterUrl ? (
                       <>
                         <Image
-                          src={ep.ShowPosterUrl}
-                          alt={ep.ShowName}
+                          src={ep.showPosterUrl}
+                          alt={ep.showName}
                           classNames={{
                             wrapper:
                               "absolute inset-0 w-full h-full !max-w-full",
@@ -348,17 +345,17 @@ function HomePage() {
                   </div>
                   <div className="absolute top-2 right-2 z-10">
                     <Chip size="sm" variant="solid" className="bg-black/70">
-                      {formatAirDate(ep.AirDate)}
+                      {formatAirDate(ep.airDate)}
                     </Chip>
                   </div>
                   <div className="absolute bottom-0 left-0 right-0 p-2 bg-black/50 backdrop-blur-sm">
                     <p className="text-sm font-medium truncate text-white">
-                      {ep.ShowName}
+                      {ep.showName}
                     </p>
                     <p className="text-xs text-white/70">
-                      S{ep.Season.toString().padStart(2, "0")}E
-                      {ep.EpisodeNumber.toString().padStart(2, "0")}
-                      {ep.ShowNetwork && ` • ${ep.ShowNetwork}`}
+                      S{ep.season.toString().padStart(2, "0")}E
+                      {ep.episodeNumber.toString().padStart(2, "0")}
+                      {ep.showNetwork && ` • ${ep.showNetwork}`}
                     </p>
                   </div>
                 </Card>
@@ -369,7 +366,7 @@ function HomePage() {
       )}
 
       {/* Empty state when no recent content but has libraries */}
-      {recentShows.length === 0 &&
+      {recentMedia.length === 0 &&
         libraryUpcoming.length === 0 &&
         libraries.length > 0 &&
         !isLoading && (

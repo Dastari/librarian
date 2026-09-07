@@ -1,111 +1,207 @@
-query LibraryAlbumsTab($LibraryId: String!) {
-  Albums: albums(
-    where: { LibraryId: { eq: $LibraryId } }
+query LibraryAlbumsTab($libraryId: String!) {
+  albums(
+    where: { libraryId: { eq: $libraryId } }
     page: { limit: 5000, offset: 0 }
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        ArtistId
-        LibraryId
-        Name
-        SortName
-        Year
-        MusicbrainzId
-        AlbumType
-        Genres
-        Label
-        Country
-        ReleaseDate
-        CoverUrl
-        TrackCount
-        DiscCount
-        TotalDurationSecs
-        HasFiles
-        SizeBytes
-        Path
+    edges {
+      node {
+        id
+        artistId
+        libraryId
+        name
+        sortName
+        year
+        musicbrainzId
+        albumType
+        genres
+        label
+        country
+        releaseDate
+        coverUrl
+        trackCount
+        discCount
+        totalDurationSecs
+        hasFiles
+        sizeBytes
+        path
       }
     }
   }
 }
 
-query LibraryArtistsTab($LibraryId: String!) {
-  Artists: artists(
-    where: { LibraryId: { eq: $LibraryId } }
+query LibraryArtistsTab($libraryId: String!) {
+  artists(
+    where: { libraryId: { eq: $libraryId } }
     page: { limit: 5000, offset: 0 }
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        LibraryId
-        Name
-        SortName
-        MusicbrainzId
+    edges {
+      node {
+        id
+        libraryId
+        name
+        sortName
+        musicbrainzId
       }
     }
   }
 }
 
-query LibraryAudiobooksTab($LibraryId: String!) {
-  Audiobooks: audiobooks(
-    where: { LibraryId: { eq: $LibraryId } }
+query LibraryMoviesTab(
+  $where: MovieWhereInput
+  $page: PageInput
+  $orderBy: [MovieOrderByInput!]
+) {
+  movies(where: $where, page: $page, orderBy: $orderBy) {
+    edges {
+      node {
+        id
+        libraryId
+        title
+        sortTitle
+        originalTitle
+        year
+        tmdbId
+        imdbId
+        overview
+        runtime
+        genres
+        director
+        collectionPosterUrl
+        monitored
+        mediaFileId
+        wanted
+        tmdbRating
+        releaseDate
+      }
+      cursor
+    }
+    pageInfo {
+      hasNextPage
+      hasPreviousPage
+      startCursor
+      endCursor
+      totalCount
+    }
+  }
+}
+
+query LibraryShowsTab(
+  $where: ShowWhereInput
+  $page: PageInput
+  $orderBy: [ShowOrderByInput!]
+) {
+  shows(where: $where, page: $page, orderBy: $orderBy) {
+    edges {
+      node {
+        id
+        libraryId
+        name
+        sortName
+        year
+        posterUrl
+        backdropUrl
+        autoDownload
+      }
+      cursor
+    }
+    pageInfo {
+      hasNextPage
+      hasPreviousPage
+      startCursor
+      endCursor
+      totalCount
+    }
+  }
+}
+
+query LibraryTracksTab(
+  $where: TrackWhereInput
+  $orderBy: [TrackOrderByInput!]
+  $page: PageInput
+) {
+  tracks(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        id
+        albumId
+        libraryId
+        title
+        trackNumber
+        discNumber
+        durationSecs
+        explicit
+        artistName
+        artistId
+        mediaFileId
+      }
+      cursor
+    }
+    pageInfo {
+      totalCount
+    }
+  }
+}
+
+query LibraryAudiobooksTab($libraryId: String!) {
+  audiobooks(
+    where: { libraryId: { eq: $libraryId } }
     page: { limit: 5000, offset: 0 }
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        LibraryId
-        Title
-        SortTitle
-        Isbn
-        Description
-        Publisher
-        Language
-        Narrators
-        CoverUrl
-        HasFiles
-        SizeBytes
-        Path
-        ChapterCount
-        TotalDurationSecs
-        AuthorName
+    edges {
+      node {
+        id
+        libraryId
+        title
+        sortTitle
+        isbn
+        description
+        publisher
+        language
+        narrators
+        coverUrl
+        hasFiles
+        sizeBytes
+        path
+        chapterCount
+        totalDurationSecs
+        authorName
       }
     }
   }
 }
 
-query LibraryUnmatchedMediaFilesTab($LibraryId: String!) {
-  MediaFiles: mediaFiles(
+query LibraryUnmatchedMediaFilesTab($libraryId: String!) {
+  mediaFiles(
     where: {
-      LibraryId: { eq: $LibraryId }
-      EpisodeId: { isNull: true }
-      MovieId: { isNull: true }
-      TrackId: { isNull: true }
-      ChapterId: { isNull: true }
+      libraryId: { eq: $libraryId }
+      episodeId: { isNull: true }
+      movieId: { isNull: true }
+      trackId: { isNull: true }
+      chapterId: { isNull: true }
     }
-    orderBy: [{ AddedAt: DESC }]
+    orderBy: [{ addedAt: DESC }]
     page: { limit: 2000, offset: 0 }
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        LibraryId
-        Path
-        RelativePath
-        OriginalName
-        Size
-        Container
-        VideoCodec
-        AudioCodec
-        Resolution
-        IsHdr
-        HdrType
-        Width
-        Height
-        Duration
-        EpisodeId
-        ChapterId
-        AddedAt
+    edges {
+      node {
+        id
+        libraryId
+        path
+        relativePath
+        originalName
+        size
+        container
+        videoCodec
+        audioCodec
+        resolution
+        isHdr
+        hdrType
+        width
+        height
+        duration
+        episodeId
+        chapterId
+        addedAt
       }
     }
   }

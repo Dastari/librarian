@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use async_graphql::{Request, Variables};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -23,8 +24,30 @@ use tracing_subscriber::layer::Context;
 use uuid::Uuid;
 
 use crate::db::Database;
+use crate::services::graphql::AuthUser;
 use crate::services::graphql::entities::{AppLog, CreateAppLogInput};
 use crate::services::manager::{Service, ServiceHealth};
+
+/// Default retention window (in days) for `app_log` rows, used when
+/// `LIBRARIAN_LOG_RETENTION_DAYS` is unset or unparsable. A value of `0` disables
+/// the retention sweep entirely.
+const DEFAULT_LOG_RETENTION_DAYS: u32 = 30;
+
+/// How long to wait after the service starts before the first retention sweep
+/// (avoids competing with startup work for DB/GraphQL resources).
+const RETENTION_STARTUP_DELAY: Duration = Duration::from_secs(60);
+
+/// How often the retention sweep runs once started.
+const RETENTION_SWEEP_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Read `LIBRARIAN_LOG_RETENTION_DAYS` from the environment (default
+/// [DEFAULT_LOG_RETENTION_DAYS]; `0` disables the retention sweep).
+fn log_retention_days_from_env() -> u32 {
+    std::env::var("LIBRARIAN_LOG_RETENTION_DAYS")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(DEFAULT_LOG_RETENTION_DAYS)
+}
 
 /// Shared state for the optional DB layer. Main builds the subscriber with [OptionalDbLayer] using
 /// this state; the logging service sets [Some] when it starts and [None] when it stops.
@@ -46,10 +69,10 @@ where
     S: Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
     fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
-        if let Ok(guard) = self.0.lock() {
-            if let Some(ref inner) = *guard {
-                inner.on_event(event, ctx);
-            }
+        if let Ok(guard) = self.0.lock()
+            && let Some(ref inner) = *guard
+        {
+            inner.on_event(event, ctx);
         }
     }
 }
@@ -64,6 +87,10 @@ pub struct LoggingServiceConfig {
     /// If set, the logging service will set the inner DB layer when it starts and clear it when
     /// it stops. Main adds [OptionalDbLayer] with this state to the subscriber at init.
     pub db_layer_state: Option<DbLayerState>,
+    /// Days of `app_log` history to keep; rows older than this are purged by a background
+    /// sweep every 24h (see [RETENTION_SWEEP_INTERVAL]). `0` disables the sweep. Defaults to
+    /// [DEFAULT_LOG_RETENTION_DAYS], overridable via `LIBRARIAN_LOG_RETENTION_DAYS`.
+    pub log_retention_days: u32,
 }
 
 impl std::fmt::Debug for LoggingServiceConfig {
@@ -77,6 +104,7 @@ impl std::fmt::Debug for LoggingServiceConfig {
                 "db_layer_state",
                 &self.db_layer_state.as_ref().map(|_| "..."),
             )
+            .field("log_retention_days", &self.log_retention_days)
             .finish()
     }
 }
@@ -89,12 +117,10 @@ impl Default for LoggingServiceConfig {
             flush_interval_ms: 2000,
             broadcast_capacity: 1000,
             db_layer_state: None,
+            log_retention_days: log_retention_days_from_env(),
         }
     }
 }
-
-/// Alias for backward compatibility.
-pub type DatabaseLoggerConfig = LoggingServiceConfig;
 
 /// Log event for broadcasting to subscribers (e.g. GraphQL).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,6 +146,10 @@ pub struct LoggingService {
     writer_handle: parking_lot::RwLock<Option<tokio::task::JoinHandle<()>>>,
     /// Shared state to inject/clear the DB layer when this service starts/stops.
     db_layer_state: Option<DbLayerState>,
+    /// Used in stop() to signal the retention sweep task.
+    retention_shutdown_tx: parking_lot::RwLock<Option<oneshot::Sender<()>>>,
+    /// Retention sweep task handle for orderly shutdown.
+    retention_handle: parking_lot::RwLock<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl LoggingService {
@@ -134,6 +164,8 @@ impl LoggingService {
             layer: parking_lot::RwLock::new(None),
             shutdown_tx: parking_lot::RwLock::new(None),
             writer_handle: parking_lot::RwLock::new(None),
+            retention_shutdown_tx: parking_lot::RwLock::new(None),
+            retention_handle: parking_lot::RwLock::new(None),
         }
     }
 
@@ -155,10 +187,21 @@ impl Service for LoggingService {
     }
 
     fn dependencies(&self) -> Vec<String> {
-        vec!["database".to_string()]
+        // "graphql" is needed by the retention sweep, which deletes old app_log rows via the
+        // deleteAppLogs mutation (see run_log_retention_sweep) rather than raw SQL.
+        vec!["database".to_string(), "graphql".to_string()]
     }
 
     async fn start(&self) -> Result<()> {
+        if self.config.batch_size == 0 {
+            anyhow::bail!("Logging batch size must be greater than zero");
+        }
+        if self.config.flush_interval_ms == 0 {
+            anyhow::bail!("Logging flush interval must be greater than zero");
+        }
+        if self.config.broadcast_capacity == 0 {
+            anyhow::bail!("Logging broadcast capacity must be greater than zero");
+        }
         tracing::info!(
             service = "logging",
             min_level = ?self.config.min_level,
@@ -204,11 +247,22 @@ impl Service for LoggingService {
             let _ = state.lock().map(|mut g| *g = Some(Arc::clone(&layer)));
         }
 
+        let (retention_shutdown_tx, retention_shutdown_rx) = oneshot::channel();
+        let retention_handle = tokio::spawn(log_retention_task(
+            Arc::clone(&self.services),
+            self.config.log_retention_days,
+            retention_shutdown_rx,
+        ));
+        *self.retention_shutdown_tx.write() = Some(retention_shutdown_tx);
+        *self.retention_handle.write() = Some(retention_handle);
+
         tracing::info!(
             service = "logging",
             min_level = ?self.config.min_level,
-            "Logging service started: min_level={:?}",
-            self.config.min_level
+            log_retention_days = self.config.log_retention_days,
+            "Logging service started: min_level={:?}, log_retention_days={}",
+            self.config.min_level,
+            self.config.log_retention_days
         );
         Ok(())
     }
@@ -225,21 +279,48 @@ impl Service for LoggingService {
         if let Some(h) = handle {
             let _ = h.await;
         }
+
+        let retention_handle = self.retention_handle.write().take();
+        let _ = self.retention_shutdown_tx.write().take();
+        if let Some(h) = retention_handle {
+            let _ = h.await;
+        }
+
         tracing::info!(
             service = "logging",
-            "Logging service stopped: tracing layer detached and writer task shut down"
+            "Logging service stopped: tracing layer detached, writer task and retention sweep shut down"
         );
         Ok(())
     }
 
     async fn health(&self) -> Result<ServiceHealth> {
-        if self.layer.read().is_some() {
-            Ok(ServiceHealth::healthy())
-        } else {
-            Ok(ServiceHealth::unhealthy(
+        if self.layer.read().is_none() {
+            return Ok(ServiceHealth::unhealthy(
                 "logging layer not initialized (start not called)",
-            ))
+            ));
         }
+        if self
+            .writer_handle
+            .read()
+            .as_ref()
+            .is_none_or(tokio::task::JoinHandle::is_finished)
+        {
+            return Ok(ServiceHealth::unhealthy(
+                "database log writer exited unexpectedly",
+            ));
+        }
+        if self.config.log_retention_days > 0
+            && self
+                .retention_handle
+                .read()
+                .as_ref()
+                .is_none_or(tokio::task::JoinHandle::is_finished)
+        {
+            return Ok(ServiceHealth::degraded(
+                "log retention worker exited unexpectedly",
+            ));
+        }
+        Ok(ServiceHealth::healthy())
     }
 }
 
@@ -314,6 +395,131 @@ async fn insert_app_logs_batch(db: &Database, logs: &[AppLog]) -> Result<()> {
         )
         .await?;
     }
+
+    Ok(())
+}
+
+/// Background task: waits [RETENTION_STARTUP_DELAY], then runs the `app_log` retention sweep
+/// every [RETENTION_SWEEP_INTERVAL] until `shutdown_rx` fires. A `retention_days` of `0`
+/// disables the sweep (the task still runs so it observes shutdown, but never deletes).
+async fn log_retention_task(
+    services: Arc<crate::services::manager::ServicesManager>,
+    retention_days: u32,
+    mut shutdown_rx: oneshot::Receiver<()>,
+) {
+    tokio::select! {
+        _ = &mut shutdown_rx => return,
+        _ = tokio::time::sleep(RETENTION_STARTUP_DELAY) => {}
+    }
+
+    if retention_days == 0 {
+        tracing::info!(
+            service = "logging",
+            "App log retention sweep disabled (LIBRARIAN_LOG_RETENTION_DAYS=0)"
+        );
+        return;
+    }
+
+    let mut interval = tokio::time::interval(RETENTION_SWEEP_INTERVAL);
+    // The first tick fires immediately; consume it since RETENTION_STARTUP_DELAY already
+    // served as the initial delay, then run the sweep once before waiting a full interval.
+    interval.tick().await;
+
+    loop {
+        if let Err(e) = run_log_retention_sweep(&services, retention_days).await {
+            tracing::error!(
+                error = %e,
+                retention_days,
+                "App log retention sweep failed: retention_days={}, error={}",
+                retention_days,
+                e
+            );
+        }
+
+        tokio::select! {
+            _ = &mut shutdown_rx => break,
+            _ = interval.tick() => {}
+        }
+    }
+}
+
+/// Compute the RFC3339 cutoff timestamp for `app_log` retention: rows with `timestamp` older
+/// than the returned value are outside the retention window and eligible for deletion.
+fn retention_cutoff_iso(now: OffsetDateTime, retention_days: u32) -> String {
+    let cutoff = now - time::Duration::days(retention_days as i64);
+    cutoff
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_default()
+}
+
+/// Delete `app_log` rows older than `retention_days` via the generated `deleteAppLogs`
+/// mutation (never raw SQL, per the entity single-source-of-truth rule), logging the
+/// deleted count on success.
+async fn run_log_retention_sweep(
+    services: &Arc<crate::services::manager::ServicesManager>,
+    retention_days: u32,
+) -> Result<()> {
+    let cutoff = retention_cutoff_iso(OffsetDateTime::now_utc(), retention_days);
+
+    let graphql = services
+        .get_graphql()
+        .await
+        .ok_or_else(|| anyhow::anyhow!("graphql service not available"))?;
+    let schema = graphql
+        .schema()
+        .await
+        .ok_or_else(|| anyhow::anyhow!("graphql schema not available"))?;
+
+    let auth_user = AuthUser::system_admin();
+    let request = Request::new(
+        r#"mutation DeleteOldAppLogs($where: AppLogWhereInput!) {
+            deleteAppLogs(where: $where) { success error deletedCount }
+        }"#,
+    )
+    .variables(Variables::from_json(serde_json::json!({
+        "where": { "timestamp": { "lt": cutoff } }
+    })))
+    .data(auth_user.clone())
+    .data(auth_user.user_id.clone());
+
+    let response = schema.execute(request).await;
+    if !response.errors.is_empty() {
+        let msg = response
+            .errors
+            .iter()
+            .map(|e| e.message.clone())
+            .collect::<Vec<_>>()
+            .join("; ");
+        anyhow::bail!("deleteAppLogs mutation failed: {msg}");
+    }
+
+    let data = serde_json::to_value(&response.data)?;
+    let payload = data.get("deleteAppLogs");
+    let success = payload
+        .and_then(|v| v.get("success"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !success {
+        let err = payload
+            .and_then(|v| v.get("error"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown error");
+        anyhow::bail!("deleteAppLogs mutation returned failure: {err}");
+    }
+    let deleted_count = payload
+        .and_then(|v| v.get("deletedCount"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+
+    tracing::info!(
+        deleted_count,
+        retention_days,
+        cutoff = %cutoff,
+        "App log retention sweep deleted {} log row(s) older than {} day(s) (cutoff: {})",
+        deleted_count,
+        retention_days,
+        cutoff
+    );
 
     Ok(())
 }
@@ -504,5 +710,39 @@ where
         };
 
         let _ = self.db_tx.try_send(app_log);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use time::{Date, Month, Time};
+
+    fn utc_datetime(year: i32, month: Month, day: u8, hour: u8, minute: u8) -> OffsetDateTime {
+        Date::from_calendar_date(year, month, day)
+            .expect("valid test date")
+            .with_time(Time::from_hms(hour, minute, 0).expect("valid test time"))
+            .assume_utc()
+    }
+
+    #[test]
+    fn retention_cutoff_iso_subtracts_retention_days() {
+        let now = utc_datetime(2026, Month::January, 31, 12, 30);
+        let cutoff = retention_cutoff_iso(now, 30);
+        assert_eq!(cutoff, "2026-01-01T12:30:00Z");
+    }
+
+    #[test]
+    fn retention_cutoff_iso_zero_days_is_now() {
+        let now = utc_datetime(2026, Month::July, 5, 0, 0);
+        let cutoff = retention_cutoff_iso(now, 0);
+        assert_eq!(cutoff, "2026-07-05T00:00:00Z");
+    }
+
+    #[test]
+    fn retention_cutoff_iso_crosses_month_and_year_boundary() {
+        let now = utc_datetime(2026, Month::January, 10, 0, 0);
+        let cutoff = retention_cutoff_iso(now, 15);
+        assert_eq!(cutoff, "2025-12-26T00:00:00Z");
     }
 }

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+dev-dist/
+coverage/
+*.log
+.env
+.env.local
+.env.*.local
+src/graphql/generated/
+src/routeTree.gen.ts
+public/icons/
+public/favicon.ico
+public/apple-touch-icon.png

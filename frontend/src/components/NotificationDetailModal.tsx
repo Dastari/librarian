@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { useNavigate } from "@tanstack/react-router";
 import {
   Modal,
@@ -42,8 +43,8 @@ interface NotificationItem {
   id: string;
   title: string;
   message: string;
-  notificationType: NotificationType;
-  category: NotificationCategory;
+  notificationType: string;
+  category: string;
   libraryId: string | null;
   torrentId: string | null;
   mediaFileId: string | null;
@@ -63,6 +64,9 @@ interface NotificationDetailModalProps {
   onResolve: (id: string, resolution: NotificationResolution) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onMarkRead?: (id: string) => Promise<void>;
+  /** Q38: approve a quality-upgrade notification (`approveQualityUpgrade`
+   * mutation). Only rendered when `actionType === "quality_upgrade"`. */
+  onApproveQualityUpgrade?: (id: string) => Promise<void>;
 }
 
 // Notification type info for display
@@ -84,6 +88,30 @@ const NOTIFICATION_TYPE_INFO: Record<
   ERROR: { color: "danger", label: "Error" },
   ACTION_REQUIRED: { color: "secondary", label: "Action Required" },
 };
+
+const FALLBACK_NOTIFICATION_TYPE_INFO = {
+  color: "default" as const,
+  label: "Notification",
+};
+
+function formatUnknownLabel(value: string | null | undefined): string {
+  if (!value) return "Unknown";
+  return value
+    .toLowerCase()
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function getNotificationTypeInfo(type: string) {
+  return (
+    NOTIFICATION_TYPE_INFO[type as NotificationType] ?? {
+      ...FALLBACK_NOTIFICATION_TYPE_INFO,
+      label: formatUnknownLabel(type),
+    }
+  );
+}
 
 // Category labels and settings routes
 const CATEGORY_INFO: Record<
@@ -127,27 +155,34 @@ const CATEGORY_INFO: Record<
   },
 };
 
-// Get specific resolve actions based on notification content
-function getResolveActions(notification: NotificationItem): Array<{
+function getCategoryInfo(category: string) {
+  return (
+    CATEGORY_INFO[category as NotificationCategory] ?? {
+      label: formatUnknownLabel(category),
+      description: "Notification category",
+    }
+  );
+}
+
+interface ResolveAction {
   key: string;
   label: string;
   description: string;
   route?: string;
   section?: string;
   resolution?: NotificationResolution;
+  /** Q38: approve a quality-upgrade notification — calls
+   * `onApproveQualityUpgrade` (the `approveQualityUpgrade` mutation) instead
+   * of the generic `onResolve`/`updateNotification` path, since approving
+   * has a real side effect (replacing the file on disk). */
+  approveUpgrade?: boolean;
   color?: "primary" | "success" | "warning" | "danger" | "default";
   icon?: React.ReactNode;
-}> {
-  const actions: Array<{
-    key: string;
-    label: string;
-    description: string;
-    route?: string;
-    section?: string;
-    resolution?: NotificationResolution;
-    color?: "primary" | "success" | "warning" | "danger" | "default";
-    icon?: React.ReactNode;
-  }> = [];
+}
+
+// Get specific resolve actions based on notification content
+function getResolveActions(notification: NotificationItem): ResolveAction[] {
+  const actions: ResolveAction[] = [];
 
   // Check notification title/message for specific actions
   const title = notification.title.toLowerCase();
@@ -231,6 +266,19 @@ function getResolveActions(notification: NotificationItem): Array<{
 
   // Quality category
   if (notification.category === "QUALITY") {
+    // Q38/Q44: a higher-quality file was found for an already-imported file.
+    // Approving replaces the file on disk (never automatic) via the
+    // `approveQualityUpgrade` mutation.
+    if (notification.actionType === "quality_upgrade") {
+      actions.push({
+        key: "approve-quality-upgrade",
+        label: "Approve Upgrade",
+        description: "Replace the existing file with the higher quality version",
+        approveUpgrade: true,
+        icon: <IconCheck size={16} />,
+        color: "success",
+      });
+    }
     if (notification.libraryId) {
       actions.push({
         key: "view-library",
@@ -256,7 +304,7 @@ function getResolveActions(notification: NotificationItem): Array<{
   return actions;
 }
 
-const getNotificationIcon = (type: NotificationType) => {
+const getNotificationIcon = (type: string) => {
   switch (type) {
     case "ERROR":
       return <IconAlertCircle size={20} className="text-red-400" />;
@@ -276,20 +324,19 @@ export function NotificationDetailModal({
   onResolve,
   onDelete,
   onMarkRead,
+  onApproveQualityUpgrade,
 }: NotificationDetailModalProps) {
   const navigate = useNavigate();
 
   if (!notification) return null;
 
-  const categoryInfo = CATEGORY_INFO[notification.category];
-  const typeInfo = NOTIFICATION_TYPE_INFO[notification.notificationType];
+  const categoryInfo = getCategoryInfo(notification.category);
+  const typeInfo = getNotificationTypeInfo(notification.notificationType);
   const resolveActions = notification.resolvedAt
     ? []
     : getResolveActions(notification);
 
-  const handleAction = async (
-    action: ReturnType<typeof getResolveActions>[0],
-  ) => {
+  const handleAction = async (action: ResolveAction) => {
     // Mark as read first if needed
     if (!notification.readAt && onMarkRead) {
       await onMarkRead(notification.id);
@@ -302,6 +349,11 @@ export function NotificationDetailModal({
         : action.route;
       onClose();
       navigate({ to: url });
+    } else if (action.approveUpgrade) {
+      if (onApproveQualityUpgrade) {
+        await onApproveQualityUpgrade(notification.id);
+      }
+      onClose();
     } else if (action.resolution) {
       // Resolve the notification
       await onResolve(notification.id, action.resolution);
@@ -362,13 +414,13 @@ export function NotificationDetailModal({
 
           {/* Timestamps */}
           <div className="text-sm text-default-500 space-y-1">
-            <p>Created: {new Date(notification.createdAt).toLocaleString()}</p>
+            <p>Created: {formatDateTime(notification.createdAt)}</p>
             {notification.readAt && (
-              <p>Read: {new Date(notification.readAt).toLocaleString()}</p>
+              <p>Read: {formatDateTime(notification.readAt)}</p>
             )}
             {notification.resolvedAt && (
               <p>
-                Resolved: {new Date(notification.resolvedAt).toLocaleString()}
+                Resolved: {formatDateTime(notification.resolvedAt)}
                 {notification.resolution &&
                   ` (${notification.resolution.toLowerCase().replace("_", " ")})`}
               </p>

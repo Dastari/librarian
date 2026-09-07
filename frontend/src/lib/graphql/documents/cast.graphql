@@ -1,158 +1,163 @@
 query CastDevices(
-  $Where: CastDeviceWhereInput
-  $OrderBy: [CastDeviceOrderByInput!]
-  $Page: PageInput
+  $where: CastDeviceWhereInput
+  $orderBy: [CastDeviceOrderByInput!]
+  $page: PageInput
 ) {
-  CastDevices: castDevices(where: $Where, orderBy: $OrderBy, page: $Page) {
-    Edges: edges {
-      Node: node {
-        Id
-        Name
-        Address
-        Port
-        Model
-        DeviceType
-        IsFavorite
-        IsManual
-        LastSeenAt
+  castDevices(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        id
+        name
+        address
+        port
+        model
+        deviceType
+        isFavorite
+        isManual
+        enabled
+        playbackSupported
+        discoveryOrigin
+        lastSeenAt
       }
-      Cursor: cursor
+      cursor
     }
-    PageInfo: pageInfo {
-      HasNextPage: hasNextPage
-      TotalCount: totalCount
+    pageInfo {
+      hasNextPage
+      totalCount
     }
   }
 }
 
 query CastSessions(
-  $Where: CastSessionWhereInput
-  $OrderBy: [CastSessionOrderByInput!]
-  $Page: PageInput
+  $where: CastSessionWhereInput
+  $orderBy: [CastSessionOrderByInput!]
+  $page: PageInput
 ) {
-  CastSessions: castSessions(where: $Where, orderBy: $OrderBy, page: $Page) {
-    Edges: edges {
-      Node: node {
-        Id
-        DeviceId
-        MediaFileId
-        EpisodeId
-        StreamUrl
-        PlayerState
-        CurrentPosition
-        Duration
-        Volume
-        IsMuted
-        StartedAt
+  castSessions(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        id
+        deviceId
+        mediaFileId
+        episodeId
+        playerState
+        currentPosition
+        duration
+        volume
+        isMuted
+        startedAt
+        lastError
+        playbackDecision
+        playbackReason
       }
-      Cursor: cursor
+      cursor
     }
-    PageInfo: pageInfo {
-      HasNextPage: hasNextPage
-      TotalCount: totalCount
+    pageInfo {
+      hasNextPage
+      totalCount
     }
   }
 }
 
 query CastSettings(
-  $Where: CastSettingWhereInput
-  $OrderBy: [CastSettingOrderByInput!]
-  $Page: PageInput
+  $where: CastSettingWhereInput
+  $orderBy: [CastSettingOrderByInput!]
+  $page: PageInput
 ) {
-  CastSettings: castSettings(where: $Where, orderBy: $OrderBy, page: $Page) {
-    Edges: edges {
-      Node: node {
-        Id
-        AutoDiscoveryEnabled
-        DiscoveryIntervalSeconds
-        DefaultVolume
-        TranscodeIncompatible
-        PreferredQuality
+  castSettings(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        id
+        autoDiscoveryEnabled
+        discoveryIntervalSeconds
+        defaultVolume
+        transcodeIncompatible
+        preferredQuality
       }
-      Cursor: cursor
+      cursor
     }
-    PageInfo: pageInfo {
-      HasNextPage: hasNextPage
-      TotalCount: totalCount
-    }
-  }
-}
-
-mutation CreateCastDevice($Input: CreateCastDeviceInput!) {
-  CreateCastDevice: createCastDevice(input: $Input) {
-    Success: success
-    Error: error
-    CastDevice: castDevice {
-      Id
-      Name
-      Address
-      Port
-      Model
-      DeviceType
-      IsFavorite
-      IsManual
-      LastSeenAt
+    pageInfo {
+      hasNextPage
+      totalCount
     }
   }
 }
 
-mutation UpdateCastDevice($Id: String!, $Input: UpdateCastDeviceInput!) {
-  UpdateCastDevice: updateCastDevice(id: $Id, input: $Input) {
-    Success: success
-    Error: error
-    CastDevice: castDevice {
-      Id
-      Name
-      Address
-      Port
-      Model
-      DeviceType
-      IsFavorite
-      IsManual
-      LastSeenAt
+mutation CreateCastDevice($input: CreateCastDeviceInput!) {
+  createCastDevice(input: $input) {
+    success
+    error
+    castDevice {
+      id
+      name
+      address
+      port
+      model
+      deviceType
+      isFavorite
+      isManual
+      lastSeenAt
     }
   }
 }
 
-mutation DeleteCastDevice($Id: String!) {
-  DeleteCastDevice: deleteCastDevice(id: $Id) {
-    Success: success
-    Error: error
-  }
-}
-
-mutation CreateCastSetting($Input: CreateCastSettingInput!) {
-  CreateCastSetting: createCastSetting(input: $Input) {
-    Success: success
-    Error: error
-    CastSetting: castSetting {
-      Id
-      AutoDiscoveryEnabled
-      DiscoveryIntervalSeconds
-      DefaultVolume
-      TranscodeIncompatible
-      PreferredQuality
+mutation UpdateCastDevice($id: String!, $input: UpdateCastDeviceInput!) {
+  updateCastDevice(id: $id, input: $input) {
+    success
+    error
+    castDevice {
+      id
+      name
+      address
+      port
+      model
+      deviceType
+      isFavorite
+      isManual
+      lastSeenAt
     }
   }
 }
 
-mutation UpdateCastSetting($Id: String!, $Input: UpdateCastSettingInput!) {
-  UpdateCastSetting: updateCastSetting(id: $Id, input: $Input) {
-    Success: success
-    Error: error
-    CastSetting: castSetting {
-      Id
-      AutoDiscoveryEnabled
-      DiscoveryIntervalSeconds
-      DefaultVolume
-      TranscodeIncompatible
-      PreferredQuality
+mutation DeleteCastDevice($id: String!) {
+  deleteCastDevice(id: $id) {
+    success
+    error
+  }
+}
+
+mutation CreateCastSetting($input: CreateCastSettingInput!) {
+  createCastSetting(input: $input) {
+    success
+    error
+    castSetting {
+      id
+      autoDiscoveryEnabled
+      discoveryIntervalSeconds
+      defaultVolume
+      transcodeIncompatible
+      preferredQuality
+    }
+  }
+}
+
+mutation UpdateCastSetting($id: String!, $input: UpdateCastSettingInput!) {
+  updateCastSetting(id: $id, input: $input) {
+    success
+    error
+    castSetting {
+      id
+      autoDiscoveryEnabled
+      discoveryIntervalSeconds
+      defaultVolume
+      transcodeIncompatible
+      preferredQuality
     }
   }
 }
 
 mutation DiscoverCastDevicesOp {
-  DiscoverCastDevices {
+  discoverCastDevices {
     id
     name
     address
@@ -161,13 +166,16 @@ mutation DiscoverCastDevicesOp {
     deviceType
     isFavorite
     isManual
-    isConnected
-    lastSeenAt
+      isConnected
+      enabled
+      playbackSupported
+      discoveryOrigin
+      lastSeenAt
   }
 }
 
 mutation CastMediaOp($input: CastMediaInput!) {
-  CastMedia(input: $input) {
+  castMedia(input: $input) {
     success
     session {
       id
@@ -175,20 +183,22 @@ mutation CastMediaOp($input: CastMediaInput!) {
       deviceName
       mediaFileId
       episodeId
-      streamUrl
       playerState
       currentTime
       duration
       volume
       isMuted
       startedAt
+      lastError
+      playbackDecision
+      playbackReason
     }
     error
   }
 }
 
 mutation CastPlayOp($sessionId: String!) {
-  CastPlay(sessionId: $sessionId) {
+  castPlay(sessionId: $sessionId) {
     success
     session {
       id
@@ -200,7 +210,7 @@ mutation CastPlayOp($sessionId: String!) {
 }
 
 mutation CastPauseOp($sessionId: String!) {
-  CastPause(sessionId: $sessionId) {
+  castPause(sessionId: $sessionId) {
     success
     session {
       id
@@ -212,14 +222,14 @@ mutation CastPauseOp($sessionId: String!) {
 }
 
 mutation CastStopOp($sessionId: String!) {
-  CastStop(sessionId: $sessionId) {
+  castStop(sessionId: $sessionId) {
     success
     error
   }
 }
 
 mutation CastSeekOp($sessionId: String!, $position: Float!) {
-  CastSeek(sessionId: $sessionId, position: $position) {
+  castSeek(sessionId: $sessionId, position: $position) {
     success
     session {
       id
@@ -231,7 +241,7 @@ mutation CastSeekOp($sessionId: String!, $position: Float!) {
 }
 
 mutation CastSetVolumeOp($sessionId: String!, $volume: Float!) {
-  CastSetVolume(sessionId: $sessionId, volume: $volume) {
+  castSetVolume(sessionId: $sessionId, volume: $volume) {
     success
     session {
       id
@@ -243,7 +253,7 @@ mutation CastSetVolumeOp($sessionId: String!, $volume: Float!) {
 }
 
 mutation CastSetMutedOp($sessionId: String!, $muted: Boolean!) {
-  CastSetMuted(sessionId: $sessionId, muted: $muted) {
+  castSetMuted(sessionId: $sessionId, muted: $muted) {
     success
     session {
       id

@@ -8,8 +8,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use backoff::ExponentialBackoff;
-use backoff::backoff::Backoff;
 use governor::{
     Quota, RateLimiter,
     clock::DefaultClock,
@@ -38,7 +36,8 @@ impl Default for RateLimitConfig {
 
 /// A rate-limited HTTP client wrapper
 pub struct RateLimitedClient {
-    client: Client,
+    client: Option<Client>,
+    initialization_error: Option<Arc<str>>,
     limiter: Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
     name: String,
 }
@@ -53,11 +52,15 @@ impl RateLimitedClient {
 
         let limiter = Arc::new(RateLimiter::direct(quota));
 
+        let (client, initialization_error) = match crate::services::http_client::outbound_client(
+            crate::services::http_client::OutboundHttpProfile::Metadata,
+        ) {
+            Ok(client) => (Some(client), None),
+            Err(error) => (None, Some(Arc::<str>::from(error.to_string()))),
+        };
         Self {
-            client: Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build()
-                .expect("Failed to create HTTP client"),
+            client,
+            initialization_error,
             limiter,
             name: name.to_string(),
         }
@@ -71,66 +74,6 @@ impl RateLimitedClient {
             RateLimitConfig {
                 requests_per_second: 2,
                 burst_size: 5,
-            },
-        )
-    }
-
-    /// Create a client for TMDB API
-    pub fn for_tmdb() -> Self {
-        // TMDB guidance indicates soft limits around 40 rps.
-        // Stay conservative and rely on retries when 429 appears.
-        Self::new(
-            "tmdb",
-            RateLimitConfig {
-                requests_per_second: 12,
-                burst_size: 24,
-            },
-        )
-    }
-
-    /// Create a client for MusicBrainz API
-    pub fn for_musicbrainz() -> Self {
-        // MusicBrainz requires max 1 request per second
-        Self::new(
-            "musicbrainz",
-            RateLimitConfig {
-                requests_per_second: 1,
-                burst_size: 1,
-            },
-        )
-    }
-
-    /// Create a client for Audible API
-    pub fn for_audible() -> Self {
-        // Conservative rate for Audible (no official limits published)
-        Self::new(
-            "audible",
-            RateLimitConfig {
-                requests_per_second: 2,
-                burst_size: 5,
-            },
-        )
-    }
-
-    /// Create a client for OpenSubtitles API
-    pub fn for_opensubtitles() -> Self {
-        // OpenSubtitles REST API has rate limits
-        Self::new(
-            "opensubtitles",
-            RateLimitConfig {
-                requests_per_second: 2,
-                burst_size: 5,
-            },
-        )
-    }
-
-    /// Create a client for RSS feed fetching (more lenient)
-    pub fn for_rss() -> Self {
-        Self::new(
-            "rss",
-            RateLimitConfig {
-                requests_per_second: 5,
-                burst_size: 10,
             },
         )
     }
@@ -149,17 +92,26 @@ impl RateLimitedClient {
 
     /// Create a client for torrent indexers with a fixed minimum delay between requests.
     pub fn for_indexer_with_request_delay(request_delay: Duration) -> Self {
-        let quota = Quota::with_period(request_delay)
-            .expect("request_delay must be non-zero")
-            .allow_burst(NonZeroU32::MIN);
+        let (quota, interval_error) = match Quota::with_period(request_delay) {
+            Some(quota) => (quota.allow_burst(NonZeroU32::MIN), None),
+            None => (
+                Quota::per_second(NonZeroU32::MIN),
+                Some(Arc::<str>::from(
+                    "Indexer request delay must be greater than zero",
+                )),
+            ),
+        };
 
         let limiter = Arc::new(RateLimiter::direct(quota));
-
+        let (client, client_error) = match crate::services::http_client::outbound_client(
+            crate::services::http_client::OutboundHttpProfile::Indexer,
+        ) {
+            Ok(client) => (Some(client), None),
+            Err(error) => (None, Some(Arc::<str>::from(error.to_string()))),
+        };
         Self {
-            client: Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build()
-                .expect("Failed to create HTTP client"),
+            client,
+            initialization_error: interval_error.or(client_error),
             limiter,
             name: "indexer".to_string(),
         }
@@ -168,9 +120,10 @@ impl RateLimitedClient {
     /// Wait for rate limit and make a GET request
     pub async fn get(&self, url: &str) -> Result<Response> {
         self.wait_for_permit().await;
-        debug!(client = %self.name, url = %url, "Making rate-limited GET request");
+        let target = crate::services::http_client::sanitized_request_target(url);
+        debug!(client = %self.name, target, "Making rate-limited GET request");
 
-        self.client
+        self.client()?
             .get(url)
             .send()
             .await
@@ -184,9 +137,10 @@ impl RateLimitedClient {
         query: &T,
     ) -> Result<Response> {
         self.wait_for_permit().await;
-        debug!(client = %self.name, url = %url, "Making rate-limited GET request with query");
+        let target = crate::services::http_client::sanitized_request_target(url);
+        debug!(client = %self.name, target, "Making rate-limited GET request with query");
 
-        self.client
+        self.client()?
             .get(url)
             .query(query)
             .send()
@@ -202,9 +156,10 @@ impl RateLimitedClient {
         query: &T,
     ) -> Result<Response> {
         self.wait_for_permit().await;
-        debug!(client = %self.name, url = %url, "Making rate-limited GET request with headers and query");
+        let target = crate::services::http_client::sanitized_request_target(url);
+        debug!(client = %self.name, target, "Making rate-limited GET request with headers and query");
 
-        let mut request = self.client.get(url);
+        let mut request = self.client()?.get(url);
         for (key, value) in headers {
             request = request.header(*key, *value);
         }
@@ -215,10 +170,15 @@ impl RateLimitedClient {
             .context("HTTP request failed")
     }
 
-    /// Get a reference to the underlying client for custom requests
-    /// (caller is responsible for calling wait_for_permit first)
-    pub fn inner(&self) -> &Client {
-        &self.client
+    fn client(&self) -> Result<&Client> {
+        self.client.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "{}",
+                self.initialization_error
+                    .as_deref()
+                    .unwrap_or("HTTP client is unavailable")
+            )
+        })
     }
 
     /// Wait for a rate limit permit
@@ -252,15 +212,17 @@ impl Default for RetryConfig {
 }
 
 impl RetryConfig {
-    /// Create an ExponentialBackoff from this config
-    pub fn to_backoff(&self) -> ExponentialBackoff {
-        ExponentialBackoff {
-            initial_interval: self.initial_interval,
-            max_interval: self.max_interval,
-            multiplier: self.multiplier,
-            max_elapsed_time: Some(Duration::from_secs(120)),
-            ..Default::default()
-        }
+    fn delay_after(&self, failed_attempt: u32) -> Duration {
+        let exponent = failed_attempt.saturating_sub(1).min(63);
+        let multiplier = if self.multiplier.is_finite() && self.multiplier >= 1.0 {
+            self.multiplier
+        } else {
+            1.0
+        };
+        let seconds = self.initial_interval.as_secs_f64() * multiplier.powf(f64::from(exponent));
+        Duration::try_from_secs_f64(seconds)
+            .unwrap_or(self.max_interval)
+            .min(self.max_interval)
     }
 }
 
@@ -276,7 +238,6 @@ where
     E: std::fmt::Display,
 {
     let mut attempts = 0;
-    let mut backoff = config.to_backoff();
 
     loop {
         attempts += 1;
@@ -296,46 +257,22 @@ where
                     return Err(e);
                 }
 
-                if let Some(duration) = backoff.next_backoff() {
-                    let retry_ms: u128 = duration.as_millis();
-                    warn!(
-                        operation = %operation_name,
-                        attempt = attempts,
-                        error = %format!("{:#}", e),
-                        retry_in_ms = retry_ms,
-                        "Operation failed, retrying: operation='{}', attempt={}, retry_in_ms={}, error={:#}",
-                        operation_name,
-                        attempts,
-                        retry_ms,
-                        e
-                    );
-                    tokio::time::sleep(duration).await;
-                } else {
-                    return Err(e);
-                }
+                let duration = config.delay_after(attempts);
+                let retry_ms: u128 = duration.as_millis();
+                warn!(
+                    operation = %operation_name,
+                    attempt = attempts,
+                    error = %format!("{:#}", e),
+                    retry_in_ms = retry_ms,
+                    "Operation failed, retrying: operation='{}', attempt={}, retry_in_ms={}, error={:#}",
+                    operation_name,
+                    attempts,
+                    retry_ms,
+                    e
+                );
+                tokio::time::sleep(duration).await;
             }
         }
-    }
-}
-
-/// Helper trait for retrying HTTP responses that might indicate rate limiting
-pub trait ResponseExt {
-    /// Check if the response indicates rate limiting (429)
-    fn is_rate_limited(&self) -> bool;
-
-    /// Check if the response indicates a transient error that should be retried
-    fn is_transient_error(&self) -> bool;
-}
-
-impl ResponseExt for Response {
-    fn is_rate_limited(&self) -> bool {
-        self.status().as_u16() == 429
-    }
-
-    fn is_transient_error(&self) -> bool {
-        let status = self.status().as_u16();
-        // 429 (rate limit), 500-599 (server errors), 408 (timeout)
-        status == 429 || status == 408 || (500..600).contains(&status)
     }
 }
 
@@ -354,5 +291,18 @@ mod tests {
     fn test_retry_config_default() {
         let config = RetryConfig::default();
         assert_eq!(config.max_retries, 3);
+        assert_eq!(config.delay_after(1), Duration::from_millis(500));
+        assert_eq!(config.delay_after(2), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn retry_delay_caps_at_max_interval() {
+        let config = RetryConfig {
+            initial_interval: Duration::from_secs(10),
+            max_interval: Duration::from_secs(30),
+            multiplier: 10.0,
+            ..Default::default()
+        };
+        assert_eq!(config.delay_after(3), Duration::from_secs(30));
     }
 }

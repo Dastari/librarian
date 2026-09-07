@@ -40,10 +40,8 @@ pub async fn embedded_fallback(uri: Uri) -> impl IntoResponse {
     }
 
     let is_asset_request = path.contains('.');
-    if !is_asset_request {
-        if let Some(response) = asset_response("index.html") {
-            return response;
-        }
+    if !is_asset_request && let Some(response) = asset_response("index.html") {
+        return response;
     }
 
     StatusCode::NOT_FOUND.into_response()

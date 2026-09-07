@@ -60,7 +60,7 @@ interface Episode {
   name: string | null;
 }
 
-type Movie = ManualMatchMoviesByLibraryQuery["Movies"]["Edges"][number]["Node"];
+type Movie = ManualMatchMoviesByLibraryQuery["movies"]["edges"][number]["node"];
 
 interface Album {
   id: string;
@@ -71,7 +71,7 @@ interface Album {
 }
 
 type AlbumTrackNode =
-  ManualMatchAlbumsByLibraryQuery["Tracks"]["Edges"][number]["Node"];
+  ManualMatchAlbumsByLibraryQuery["tracks"]["edges"][number]["node"];
 
 interface Track {
   id: string;
@@ -93,7 +93,7 @@ interface Chapter {
 }
 
 type MatchableMediaFile =
-  LibraryUnmatchedMediaFilesTabQuery["MediaFiles"]["Edges"][number]["Node"];
+  LibraryUnmatchedMediaFilesTabQuery["mediaFiles"]["edges"][number]["node"];
 
 export interface ManualMatchModalProps {
   isOpen: boolean;
@@ -153,23 +153,23 @@ export function ManualMatchModal({
           const result =
             await apolloClient.query<ManualMatchShowsByLibraryQuery>({
               query: ManualMatchShowsByLibraryDocument,
-              variables: { LibraryId: libraryId },
+              variables: { libraryId: libraryId },
               fetchPolicy: "network-only",
             });
 
-          if (result.data?.Shows?.Edges) {
-            const list: TvShow[] = result.data.Shows.Edges.map((e) => {
-              const n = e.Node;
+          if (result.data?.shows?.edges) {
+            const list: TvShow[] = result.data.shows.edges.map((e) => {
+              const n = e.node;
               const bySeason = new Map<number, Episode[]>();
-              for (const episodeEdge of n.Episodes?.Edges ?? []) {
-                const ep = episodeEdge.Node;
-                const list = bySeason.get(ep.Season) ?? [];
+              for (const episodeEdge of n.episodes?.edges ?? []) {
+                const ep = episodeEdge.node;
+                const list = bySeason.get(ep.season) ?? [];
                 list.push({
-                  id: ep.Id,
-                  episodeNumber: ep.Episode,
-                  name: ep.Title ?? null,
+                  id: ep.id,
+                  episodeNumber: ep.episode,
+                  name: ep.title ?? null,
                 });
-                bySeason.set(ep.Season, list);
+                bySeason.set(ep.season, list);
               }
               const seasons: Season[] = Array.from(bySeason.entries())
                 .sort((a, b) => a[0] - b[0])
@@ -182,9 +182,9 @@ export function ManualMatchModal({
                   ),
                 }));
               return {
-                id: n.Id,
-                name: n.Name,
-                year: n.Year ?? null,
+                id: n.id,
+                name: n.name,
+                year: n.year ?? null,
                 seasons,
               };
             });
@@ -194,43 +194,43 @@ export function ManualMatchModal({
           const result =
             await apolloClient.query<ManualMatchMoviesByLibraryQuery>({
               query: ManualMatchMoviesByLibraryDocument,
-              variables: { LibraryId: libraryId },
+              variables: { libraryId: libraryId },
               fetchPolicy: "network-only",
             });
 
-          if (result.data?.Movies?.Edges) {
-            setMovies(result.data.Movies.Edges.map((e) => e.Node));
+          if (result.data?.movies?.edges) {
+            setMovies(result.data.movies.edges.map((e) => e.node));
           }
         } else if (normalizedType === "MUSIC") {
           const result =
             await apolloClient.query<ManualMatchAlbumsByLibraryQuery>({
               query: ManualMatchAlbumsByLibraryDocument,
-              variables: { LibraryId: libraryId },
+              variables: { libraryId: libraryId },
               fetchPolicy: "network-only",
             });
 
-          if (result.data?.Albums?.Edges) {
+          if (result.data?.albums?.edges) {
             const tracksByAlbum = new Map<string, AlbumTrackNode[]>();
-            for (const edge of result.data.Tracks?.Edges ?? []) {
-              const track = edge.Node;
-              const tracks = tracksByAlbum.get(track.AlbumId) ?? [];
+            for (const edge of result.data.tracks?.edges ?? []) {
+              const track = edge.node;
+              const tracks = tracksByAlbum.get(track.albumId) ?? [];
               tracks.push(track);
-              tracksByAlbum.set(track.AlbumId, tracks);
+              tracksByAlbum.set(track.albumId, tracks);
             }
             setAlbums(
-              result.data.Albums.Edges.map((edge) => ({
-                id: edge.Node.Id,
-                name: edge.Node.Name,
-                year: edge.Node.Year ?? null,
+              result.data.albums.edges.map((edge) => ({
+                id: edge.node.id,
+                name: edge.node.name,
+                year: edge.node.year ?? null,
                 artist:
                   tracksByAlbum
-                    .get(edge.Node.Id)
-                    ?.find((t) => Boolean(t.ArtistName))?.ArtistName ?? null,
-                tracks: (tracksByAlbum.get(edge.Node.Id) ?? []).map(
+                    .get(edge.node.id)
+                    ?.find((t) => Boolean(t.artistName))?.artistName ?? null,
+                tracks: (tracksByAlbum.get(edge.node.id) ?? []).map(
                   (track) => ({
-                    id: track.Id,
-                    trackNumber: track.TrackNumber,
-                    title: track.Title ?? null,
+                    id: track.id,
+                    trackNumber: track.trackNumber,
+                    title: track.title ?? null,
                   }),
                 ),
               })),
@@ -240,20 +240,20 @@ export function ManualMatchModal({
           const result =
             await apolloClient.query<ManualMatchAudiobooksByLibraryQuery>({
               query: ManualMatchAudiobooksByLibraryDocument,
-              variables: { LibraryId: libraryId },
+              variables: { libraryId: libraryId },
               fetchPolicy: "network-only",
             });
 
-          if (result.data?.Audiobooks?.Edges) {
+          if (result.data?.audiobooks?.edges) {
             setAudiobooks(
-              result.data.Audiobooks.Edges.map((edge) => ({
-                id: edge.Node.Id,
-                title: edge.Node.Title,
-                author: edge.Node.AuthorName ?? null,
-                chapters: (edge.Node.Chapters?.Edges ?? []).map((ch) => ({
-                  id: ch.Node.Id,
-                  chapterNumber: ch.Node.ChapterNumber,
-                  title: ch.Node.Title ?? null,
+              result.data.audiobooks.edges.map((edge) => ({
+                id: edge.node.id,
+                title: edge.node.title,
+                author: edge.node.authorName ?? null,
+                chapters: (edge.node.chapters?.edges ?? []).map((ch) => ({
+                  id: ch.node.id,
+                  chapterNumber: ch.node.chapterNumber,
+                  title: ch.node.title ?? null,
                 })),
               })),
             );
@@ -317,7 +317,7 @@ export function ManualMatchModal({
   const filteredMovies = useMemo(() => {
     if (!searchQuery) return movies;
     const q = searchQuery.toLowerCase();
-    return movies.filter((m) => m.Title.toLowerCase().includes(q));
+    return movies.filter((m) => m.title.toLowerCase().includes(q));
   }, [movies, searchQuery]);
 
   const filteredAlbums = useMemo(() => {
@@ -363,18 +363,18 @@ export function ManualMatchModal({
     try {
       const result = await manualMatchFile({
         variables: {
-          Input: {
-            MediaFileId: mediaFile.Id,
-            LibraryId: libraryId || undefined,
-            EpisodeId: selectedEpisodeId || undefined,
-            MovieId: selectedMovieId || undefined,
-            TrackId: selectedTrackId || undefined,
-            ChapterId: selectedChapterId || undefined,
+          input: {
+            mediaFileId: mediaFile.id,
+            libraryId: libraryId || undefined,
+            episodeId: selectedEpisodeId || undefined,
+            movieId: selectedMovieId || undefined,
+            trackId: selectedTrackId || undefined,
+            chapterId: selectedChapterId || undefined,
           },
         },
       });
 
-      if (result.data?.MatchMediaFile?.Success) {
+      if (result.data?.matchMediaFile?.success) {
         addToast({
           title: "File Matched",
           description:
@@ -384,7 +384,7 @@ export function ManualMatchModal({
         onMatched();
         onClose();
       } else {
-        setError(result.data?.MatchMediaFile?.Reason || "Failed to match file");
+        setError(result.data?.matchMediaFile?.reason || "Failed to match file");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
@@ -417,23 +417,23 @@ export function ManualMatchModal({
                   />
                   <div className="min-w-0">
                     <p className="font-medium truncate">
-                      {getFileName(mediaFile.Path)}
+                      {getFileName(mediaFile.path)}
                     </p>
                     <p className="text-sm text-default-500 truncate">
-                      {mediaFile.Path}
+                      {mediaFile.path}
                     </p>
                     <div className="flex items-center gap-2 mt-1">
                       <Chip size="sm" variant="flat">
-                        {formatBytes(mediaFile.Size)}
+                        {formatBytes(mediaFile.size)}
                       </Chip>
-                      {mediaFile.Resolution && (
+                      {mediaFile.resolution && (
                         <Chip size="sm" variant="flat" color="primary">
-                          {mediaFile.Resolution}
+                          {mediaFile.resolution}
                         </Chip>
                       )}
-                      {mediaFile.VideoCodec && (
+                      {mediaFile.videoCodec && (
                         <Chip size="sm" variant="flat">
-                          {mediaFile.VideoCodec}
+                          {mediaFile.videoCodec}
                         </Chip>
                       )}
                     </div>
@@ -561,8 +561,8 @@ export function ManualMatchModal({
                   }
                 >
                   {filteredMovies.map((movie) => (
-                    <SelectItem key={movie.Id} textValue={movie.Title}>
-                      {movie.Title} {movie.Year && `(${movie.Year})`}
+                    <SelectItem key={movie.id} textValue={movie.title}>
+                      {movie.title} {movie.year && `(${movie.year})`}
                     </SelectItem>
                   ))}
                 </Select>

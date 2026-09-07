@@ -11,87 +11,89 @@ use serde::{Deserialize, Serialize};
 #[graphql_entity(
     table = "video_streams",
     plural = "VideoStreams",
-    default_sort = "stream_index"
+    default_sort = "stream_index",
+    read_policy = "member.read",
+    write_policy = "admin.write"
 )]
 pub struct VideoStream {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "MediaFileId")]
+    #[graphql(name = "mediaFileId")]
     #[filterable(type = "string")]
     pub media_file_id: String,
 
-    #[graphql(name = "StreamIndex")]
+    #[graphql(name = "streamIndex")]
     #[filterable(type = "number")]
     #[sortable]
     pub stream_index: i32,
 
-    #[graphql(name = "Codec")]
+    #[graphql(name = "codec")]
     #[filterable(type = "string")]
     pub codec: String,
 
-    #[graphql(name = "CodecLongName")]
+    #[graphql(name = "codecLongName")]
     pub codec_long_name: Option<String>,
 
-    #[graphql(name = "Width")]
+    #[graphql(name = "width")]
     #[filterable(type = "number")]
     pub width: i32,
 
-    #[graphql(name = "Height")]
+    #[graphql(name = "height")]
     #[filterable(type = "number")]
     pub height: i32,
 
-    #[graphql(name = "AspectRatio")]
+    #[graphql(name = "aspectRatio")]
     pub aspect_ratio: Option<String>,
 
-    #[graphql(name = "FrameRate")]
+    #[graphql(name = "frameRate")]
     pub frame_rate: Option<String>,
 
-    #[graphql(name = "AvgFrameRate")]
+    #[graphql(name = "avgFrameRate")]
     pub avg_frame_rate: Option<String>,
 
-    #[graphql(name = "Bitrate")]
+    #[graphql(name = "bitrate")]
     #[filterable(type = "number")]
     pub bitrate: Option<i32>,
 
-    #[graphql(name = "PixelFormat")]
+    #[graphql(name = "pixelFormat")]
     pub pixel_format: Option<String>,
 
-    #[graphql(name = "ColorSpace")]
+    #[graphql(name = "colorSpace")]
     pub color_space: Option<String>,
 
-    #[graphql(name = "ColorTransfer")]
+    #[graphql(name = "colorTransfer")]
     pub color_transfer: Option<String>,
 
-    #[graphql(name = "ColorPrimaries")]
+    #[graphql(name = "colorPrimaries")]
     pub color_primaries: Option<String>,
 
-    #[graphql(name = "HdrType")]
+    #[graphql(name = "hdrType")]
     #[filterable(type = "string")]
     pub hdr_type: Option<String>,
 
-    #[graphql(name = "BitDepth")]
+    #[graphql(name = "bitDepth")]
     #[filterable(type = "number")]
     pub bit_depth: Option<i32>,
 
-    #[graphql(name = "Language")]
+    #[graphql(name = "language")]
     #[filterable(type = "string")]
     pub language: Option<String>,
 
-    #[graphql(name = "Title")]
+    #[graphql(name = "title")]
     pub title: Option<String>,
 
-    #[graphql(name = "IsDefault")]
+    #[graphql(name = "isDefault")]
     #[boolean_field]
     #[filterable(type = "boolean")]
     pub is_default: bool,
 
-    #[graphql(name = "Metadata")]
+    #[graphql(name = "metadata")]
     pub metadata: Option<String>,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,

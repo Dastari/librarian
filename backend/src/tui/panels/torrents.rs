@@ -128,13 +128,6 @@ pub fn spawn_torrent_updater(torrent_service: Arc<TorrentService>, stats: Shared
 }
 
 impl Panel for TorrentsPanel {
-    fn title(&self) -> &str {
-        "torrents"
-    }
-    fn kind(&self) -> PanelKind {
-        PanelKind::Torrents
-    }
-
     fn render(&self, frame: &mut Frame, area: Rect, focused: bool) {
         let stats = self.get_stats();
         let torrents = &stats.torrents;
@@ -271,7 +264,7 @@ impl Panel for TorrentsPanel {
             .collect();
 
         let list = List::new(items).highlight_style(Theme::selected());
-        let mut state = self.list_state.clone();
+        let mut state = self.list_state;
         frame.render_stateful_widget(list, list_area, &mut state);
     }
 
@@ -282,17 +275,17 @@ impl Panel for TorrentsPanel {
         }
         match action {
             Action::ScrollUp => {
-                if let Some(s) = self.list_state.selected() {
-                    if s > 0 {
-                        self.list_state.select(Some(s - 1));
-                    }
+                if let Some(s) = self.list_state.selected()
+                    && s > 0
+                {
+                    self.list_state.select(Some(s - 1));
                 }
             }
             Action::ScrollDown => {
-                if let Some(s) = self.list_state.selected() {
-                    if s + 1 < len {
-                        self.list_state.select(Some(s + 1));
-                    }
+                if let Some(s) = self.list_state.selected()
+                    && s + 1 < len
+                {
+                    self.list_state.select(Some(s + 1));
                 }
             }
             Action::Home => {
@@ -306,15 +299,6 @@ impl Panel for TorrentsPanel {
     }
 
     fn update(&mut self) {}
-
-    fn scroll_position(&self) -> Option<(usize, usize)> {
-        let t = self.get_stats().torrents;
-        if t.is_empty() {
-            None
-        } else {
-            self.list_state.selected().map(|p| (p + 1, t.len()))
-        }
-    }
 }
 
 /// Render braille rate graph with stats panel on right

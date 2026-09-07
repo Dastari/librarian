@@ -1,0 +1,192 @@
+/*
+ * Liquid glass.
+ *
+ * One optical recipe, three tiers. Every translucent surface in the app uses one of these
+ * utilities, so glass feels the same in a dialog, the navigation rail, a button or a switch.
+ *
+ *   glass-chrome   navigation rail, top bar, player dock            (deep blur, long panels)
+ *   glass-surface  dialogs, popovers, cards, panels                 (medium blur, readable text)
+ *   glass-control  buttons, inputs, tracks, chips, tabs             (light blur, crisp rim)
+ *
+ * The stack (see STYLE_GUIDE.md):
+ *   1. refraction: an SVG turbulence displacement filter (#liquid-refraction, mounted once by
+ *      <GlassFilters/>) warps the backdrop like a fluid lens; browsers without
+ *      `backdrop-filter: url()` fall back to the same blur + saturation without the warp
+ *   2. saturation: 160–190% so background colour glows through instead of washing to grey
+ *   3. directional rim: a brighter top edge (light from above) and a dimmer bottom edge
+ *   4. volume: a top inner reflection and a bottom inner shadow plus a soft outer shadow
+ *
+ * Tokens come from tokens.css so themes can tune fill, rim and reflection strength.
+ */
+
+@utility glass-chrome {
+  position: relative;
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-rim);
+  box-shadow:
+    inset 0 1px 0 0 var(--glass-reflection),
+    inset 0 12px 28px -18px var(--glass-reflection),
+    inset 0 -8px 20px -16px var(--glass-inner-shadow),
+    var(--glass-drop-shadow);
+  -webkit-backdrop-filter: blur(var(--glass-blur-chrome)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur-chrome)) saturate(var(--glass-saturate));
+  [data-refraction="true"] & {
+    -webkit-backdrop-filter: url(#liquid-refraction) blur(var(--glass-blur-chrome)) saturate(var(--glass-saturate));
+    backdrop-filter: url(#liquid-refraction) blur(var(--glass-blur-chrome)) saturate(var(--glass-saturate));
+  }
+}
+
+@utility glass-surface {
+  position: relative;
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-rim);
+  border-top-color: var(--glass-rim-top);
+  box-shadow:
+    inset 0 1px 0 0 var(--glass-reflection),
+    inset 0 10px 24px -16px var(--glass-reflection),
+    inset 0 -6px 16px -12px var(--glass-inner-shadow),
+    var(--glass-drop-shadow);
+  -webkit-backdrop-filter: blur(var(--glass-blur-surface)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur-surface)) saturate(var(--glass-saturate));
+  [data-refraction="true"] & {
+    -webkit-backdrop-filter: url(#liquid-refraction) blur(var(--glass-blur-surface)) saturate(var(--glass-saturate));
+    backdrop-filter: url(#liquid-refraction) blur(var(--glass-blur-surface)) saturate(var(--glass-saturate));
+  }
+}
+
+@utility glass-control {
+  position: relative;
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-rim);
+  border-top-color: var(--glass-rim-top);
+  box-shadow:
+    inset 0 1px 0 0 var(--glass-reflection),
+    inset 0 -3px 8px -6px var(--glass-inner-shadow),
+    0 4px 14px -8px var(--glass-inner-shadow);
+  -webkit-backdrop-filter: blur(var(--glass-blur-control)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur-control)) saturate(var(--glass-saturate));
+  [data-refraction="true"] & {
+    -webkit-backdrop-filter: url(#liquid-refraction-fine) blur(var(--glass-blur-control)) saturate(var(--glass-saturate));
+    backdrop-filter: url(#liquid-refraction-fine) blur(var(--glass-blur-control)) saturate(var(--glass-saturate));
+  }
+}
+
+/* Stronger fill for surfaces that must stay readable over busy artwork. */
+@utility glass-opaque {
+  background: var(--glass-fill-strong);
+}
+
+/* Brand-tinted control (primary buttons, active pills, checked switches). */
+@utility glass-brand {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--brand) 88%, white 12%), color-mix(in oklab, var(--brand) 92%, black 8%));
+  border-color: color-mix(in oklab, var(--brand) 60%, white 40%);
+  border-top-color: color-mix(in oklab, var(--brand) 40%, white 60%);
+  color: var(--brand-foreground);
+  box-shadow:
+    inset 0 1px 0 0 oklch(1 0 0 / 0.55),
+    inset 0 -4px 10px -6px oklch(0 0 0 / 0.35),
+    0 8px 22px -10px color-mix(in oklab, var(--brand) 70%, transparent);
+}
+
+/* Danger-tinted control. */
+@utility glass-danger {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--danger) 30%, var(--glass-fill)), color-mix(in oklab, var(--danger) 18%, var(--glass-fill)));
+  border-color: color-mix(in oklab, var(--danger) 55%, transparent);
+  color: var(--foreground);
+}
+
+/* Thin specular sweep across the top of large surfaces (hero cards, dialogs). */
+@utility glass-highlight {
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(165deg, var(--glass-reflection) 0%, transparent 32%, transparent 70%, color-mix(in oklab, var(--glass-reflection) 40%, transparent) 100%);
+    opacity: 0.55;
+    mask-image: linear-gradient(180deg, #000 0, transparent 75%);
+  }
+}
+
+/* Refractive thumb for switches and sliders. */
+@utility glass-thumb {
+  position: relative;
+  background: radial-gradient(120% 120% at 30% 20%, oklch(1 0 0 / 0.96), oklch(0.93 0.01 286 / 0.8) 45%, oklch(0.82 0.01 286 / 0.6) 100%);
+  box-shadow: 0 2px 6px -1px oklch(0 0 0 / 0.45), inset 0 1px 1px oklch(1 0 0 / 0.9), inset 0 -2px 4px oklch(0 0 0 / 0.14);
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 12% 22% 55% 22%;
+    border-radius: inherit;
+    background: linear-gradient(180deg, oklch(1 0 0 / 0.9), transparent);
+    pointer-events: none;
+  }
+}
+
+/* Active pill inside a segmented control. */
+@utility glass-pill-active {
+  background: linear-gradient(180deg, var(--glass-reflection), color-mix(in oklab, var(--glass-reflection) 35%, transparent));
+  box-shadow: inset 0 1px 0 var(--glass-reflection), inset 0 -1px 0 var(--glass-inner-shadow), 0 6px 18px -8px var(--glass-inner-shadow);
+}
+
+/* Native range inputs (volume). */
+@utility glass-range {
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-rim);
+  box-shadow: inset 0 1px 0 0 var(--glass-reflection);
+  &::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    background: radial-gradient(120% 120% at 30% 20%, oklch(1 0 0 / 0.95), oklch(0.92 0.01 286 / 0.75) 45%, oklch(0.8 0.01 286 / 0.55) 100%);
+    box-shadow: 0 2px 6px -1px oklch(0 0 0 / 0.45), inset 0 1px 1px oklch(1 0 0 / 0.9);
+  }
+  &::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border: 0;
+    border-radius: 999px;
+    background: radial-gradient(120% 120% at 30% 20%, oklch(1 0 0 / 0.95), oklch(0.92 0.01 286 / 0.75) 45%, oklch(0.8 0.01 286 / 0.55) 100%);
+    box-shadow: 0 2px 6px -1px oklch(0 0 0 / 0.45), inset 0 1px 1px oklch(1 0 0 / 0.9);
+  }
+}
+
+/* Legacy aliases kept for components not yet migrated. */
+@utility glass {
+  @apply glass-surface;
+}
+@utility glass-strong {
+  @apply glass-surface glass-opaque;
+}
+@utility glass-track {
+  @apply glass-control;
+}
+@utility topbar-glass {
+  @apply glass-chrome;
+  border-width: 0;
+  box-shadow: none;
+  background: linear-gradient(180deg, color-mix(in oklab, var(--background) 50%, transparent), color-mix(in oklab, var(--background) 15%, transparent));
+}
+
+/* Ambient background: soft colour fields behind everything so glass has something to bend. */
+@utility ambient-canvas {
+  background:
+    radial-gradient(60% 50% at 12% 8%, color-mix(in oklab, var(--ambient-a) 60%, transparent), transparent 70%),
+    radial-gradient(50% 45% at 88% 18%, color-mix(in oklab, var(--ambient-b) 55%, transparent), transparent 70%),
+    radial-gradient(55% 55% at 50% 100%, color-mix(in oklab, var(--ambient-c) 50%, transparent), transparent 70%),
+    var(--background);
+}
+
+/* Container for legacy <LiquidGlass/> children. */
+.liquid-glass {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+.liquid-glass__content {
+  position: relative;
+  z-index: 1;
+}

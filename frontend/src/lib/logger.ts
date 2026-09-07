@@ -8,7 +8,7 @@
  *   import { logger } from '../lib/logger'
  *   logger.log('Debug info:', data)
  *   logger.warn('Warning:', message)
- *   logger.error('Error:', error)
+ *   logger.error('error:', error)
  *   logger.debug('Verbose debug info:', data)
  */
 

@@ -13,6 +13,7 @@
 pub mod iptorrents;
 pub mod limetorrents;
 pub mod thepiratebay;
+pub mod torznab;
 #[path = "1337x.rs"]
 pub mod x1337;
 pub mod yts;
@@ -57,7 +58,6 @@ pub struct SettingDefinition {
 #[derive(Debug, Clone, Copy)]
 pub enum SettingType {
     Text,
-    Password,
     Checkbox,
     Select,
 }
@@ -145,6 +145,23 @@ pub static AVAILABLE_DEFINITIONS: Lazy<Vec<SourceDefinitionInfo>> = Lazy::new(||
             site_link: "https://yts.mx/",
             required_credentials: &[],
             optional_settings: &[],
+        },
+        SourceDefinitionInfo {
+            id: "torznab",
+            name: "Torznab/Newznab",
+            description: "Generic client for any Torznab-compatible torrent indexer API (e.g. via Jackett or Prowlarr). Requires the indexer's Torznab base URL and API key.",
+            source_type: SourceType::TorrentIndexer,
+            tracker_type: "Private",
+            language: "en-US",
+            site_link: "",
+            required_credentials: &["ApiKey"],
+            optional_settings: &[SettingDefinition {
+                key: "DefaultCategories",
+                label: "Default categories (comma-separated Torznab category IDs)",
+                setting_type: SettingType::Text,
+                default_value: None,
+                options: None,
+            }],
         },
     ]
 });

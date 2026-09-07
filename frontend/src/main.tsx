@@ -1,3 +1,5 @@
+import { startSessionRenewal } from "./lib/sessionRenewal";
+import { refreshSession } from "./lib/refreshSession";
 import { StrictMode, useState, useEffect, useMemo, useCallback } from "react";
 import ReactDOM from "react-dom/client";
 import { RouterProvider, createRouter } from "@tanstack/react-router";
@@ -10,17 +12,15 @@ import { NuqsAdapter } from "nuqs/adapters/react";
 import { routeTree } from "./routeTree.gen";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import type { AuthContext } from "./lib/auth-context";
-import type { AuthSession, AuthUser } from "./lib/auth";
+import type { AuthUser } from "./lib/auth";
 import {
   getSession,
   hasValidToken,
   isTokenExpired,
-  setTokens,
   clearTokens,
 } from "./lib/auth";
 import { apolloClient } from "./lib/graphql";
 import {
-  RefreshTokenDocument,
   MeDocument,
 } from "./lib/graphql/generated/graphql";
 import { initializeTheme } from "./hooks/useTheme";
@@ -67,32 +67,16 @@ function InnerApp() {
   // Refresh the access token using the refresh token
   const refreshAccessToken = useCallback(async (): Promise<boolean> => {
     try {
-      const result = await apolloClient.mutate({
-        mutation: RefreshTokenDocument,
-        variables: { input: { RefreshToken: "" } },
-      });
-      const payload = result.data?.RefreshToken;
-      if (payload?.Success && payload.Tokens) {
-        const tokens = payload.Tokens;
-        const existingSession = getSession();
-        if (existingSession) {
-          const newSession: AuthSession = {
-            accessToken: tokens.AccessToken,
-            expiresAt: Date.now() + tokens.ExpiresIn * 1000,
-            user: existingSession.user,
-          };
-          setTokens(newSession);
-          setAuth({
-            isAuthenticated: true,
-            isLoading: false,
-            session: newSession,
-            user: newSession.user,
-          });
-          return true;
-        }
+      const newSession = await refreshSession();
+      if (newSession) {
+        setAuth({isAuthenticated: true, isLoading: false, session: newSession, user: newSession.user});
+        return true;
       }
     } catch (err) {
-      console.error("[Auth] Token refresh failed:", err);
+      console.warn("[Auth] Token refresh temporarily unavailable; will retry", err);
+      const existing = getSession();
+      setAuth({ isAuthenticated: !!existing, isLoading: false, session: existing, user: existing?.user ?? null });
+      return false;
     }
 
     // Refresh failed, clear everything
@@ -110,17 +94,13 @@ function InnerApp() {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        // Check for existing session in localStorage
+        // Check for existing non-secret session state.
         const existingSession = getSession();
 
         if (!existingSession) {
-          // No stored session
-          setAuth({
-            isAuthenticated: false,
-            isLoading: false,
-            session: null,
-            user: null,
-          });
+          // HttpOnly cookies remain the source of truth after reopening the app,
+          // even if the browser has lost its non-secret display metadata.
+          await refreshAccessToken();
           return;
         }
 
@@ -139,14 +119,14 @@ function InnerApp() {
               query: MeDocument,
               fetchPolicy: "network-only",
             });
-            if (result.data?.Me) {
-              const meUser = result.data.Me;
+            if (result.data?.me) {
+              const meUser = result.data.me;
               const authUser: AuthUser = {
-                id: meUser.Id,
-                email: meUser.Email || undefined,
-                username: meUser.Username,
-                role: meUser.Role,
-                displayName: meUser.DisplayName || undefined,
+                id: meUser.id,
+                email: meUser.email || undefined,
+                username: meUser.username,
+                role: meUser.role,
+                displayName: meUser.displayName || undefined,
               };
               setAuth({
                 isAuthenticated: true,
@@ -177,19 +157,8 @@ function InnerApp() {
     initAuth();
   }, [refreshAccessToken]);
 
-  // Set up token refresh interval
-  useEffect(() => {
-    if (!auth.session) return;
-
-    // Check token expiration every minute
-    const interval = setInterval(() => {
-      if (isTokenExpired()) {
-        refreshAccessToken();
-      }
-    }, 60000);
-
-    return () => clearInterval(interval);
-  }, [auth.session, refreshAccessToken]);
+  // Renew early during playback and immediately after sleep or reconnection.
+  useEffect(() => startSessionRenewal(refreshAccessToken), [refreshAccessToken]);
 
   // Listen for auth changes from other components (e.g., SignInModal, Navbar signOut)
   useEffect(() => {

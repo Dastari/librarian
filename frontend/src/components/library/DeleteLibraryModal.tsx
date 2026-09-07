@@ -66,14 +66,14 @@ export function DeleteLibraryModal({
     try {
       setIsDeleting(true);
       const { data, error } = await deleteLibrary({
-        variables: { Id: libraryId },
+        variables: { id: libraryId },
       });
 
-      if (error || !data?.DeleteLibrary.Success) {
+      if (error || !data?.deleteLibrary.success) {
         addToast({
           title: "Error",
           description:
-            data?.DeleteLibrary.Error ||
+            data?.deleteLibrary.error ||
             error?.message ||
             "Failed to delete library",
           color: "danger",

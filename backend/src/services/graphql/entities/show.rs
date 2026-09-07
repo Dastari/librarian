@@ -41,92 +41,109 @@ use crate::services::metadata::providers::{AddTvShowOptions, MetadataProvider, M
 #[graphql(complex)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
-#[graphql_entity(table = "shows", plural = "Shows", default_sort = "name")]
+#[graphql_entity(
+    table = "shows",
+    plural = "Shows",
+    default_sort = "name",
+    unique_composite = "library_id,tvmaze_id",
+    unique_composite = "library_id,tmdb_id",
+    unique_composite = "library_id,tvdb_id",
+    unique_index = "library_id,tvmaze_id",
+    unique_index = "library_id,tmdb_id",
+    unique_index = "library_id,tvdb_id",
+    upsert = "library_id,tvmaze_id"
+)]
 pub struct Show {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "LibraryId")]
+    #[graphql(name = "libraryId")]
     #[filterable(type = "string")]
     pub library_id: String,
 
-    #[graphql(name = "UserId")]
+    #[graphql(name = "userId")]
     #[filterable(type = "string")]
     pub user_id: String,
 
-    #[graphql(name = "Name")]
+    #[graphql(name = "name")]
     #[filterable(type = "string")]
     #[sortable]
     pub name: String,
 
-    #[graphql(name = "SortName")]
+    #[graphql(name = "sortName")]
     #[sortable]
     pub sort_name: Option<String>,
 
-    #[graphql(name = "Year")]
+    #[graphql(name = "year")]
     #[filterable(type = "number")]
     #[sortable]
     pub year: Option<i32>,
 
-    #[graphql(name = "TvmazeId")]
+    #[graphql(name = "tvmazeId")]
     #[filterable(type = "number")]
     pub tvmaze_id: Option<i32>,
 
-    #[graphql(name = "TmdbId")]
+    #[graphql(name = "tmdbId")]
     #[filterable(type = "number")]
     pub tmdb_id: Option<i32>,
 
-    #[graphql(name = "TvdbId")]
+    #[graphql(name = "tvdbId")]
     #[filterable(type = "number")]
     pub tvdb_id: Option<i32>,
 
-    #[graphql(name = "ImdbId")]
+    #[graphql(name = "imdbId")]
     #[filterable(type = "string")]
     pub imdb_id: Option<String>,
 
-    #[graphql(name = "Overview")]
+    #[graphql(name = "overview")]
     pub overview: Option<String>,
 
-    #[graphql(name = "Network")]
+    #[graphql(name = "network")]
     #[filterable(type = "string")]
     pub network: Option<String>,
 
-    #[graphql(name = "Runtime")]
+    #[graphql(name = "runtime")]
     #[filterable(type = "number")]
     pub runtime: Option<i32>,
 
-    #[graphql(name = "Genres")]
+    #[graphql(name = "genres")]
     #[json_field]
     pub genres: Vec<String>,
 
-    #[graphql(name = "PosterUrl")]
+    #[graphql(name = "posterUrl")]
     pub poster_url: Option<String>,
 
-    #[graphql(name = "BackdropUrl")]
+    #[graphql(name = "backdropUrl")]
     pub backdrop_url: Option<String>,
 
-    #[graphql(name = "ContentRating")]
+    #[graphql(name = "contentRating")]
     #[filterable(type = "string")]
     pub content_rating: Option<String>,
 
-    #[graphql(name = "AutoDownload")]
+    #[graphql(name = "autoDownload")]
     #[filterable(type = "boolean")]
     pub auto_download: bool,
 
-    #[graphql(name = "AutoDownloadMode")]
+    #[graphql(name = "autoDownloadMode")]
     pub auto_download_mode: AutoDownloadMode,
 
-    #[graphql(name = "Path")]
+    /// Optional quality profile override; falls back to
+    /// `Library.qualityProfileId` (then the seeded default) when unset.
+    #[graphql(name = "qualityProfileId")]
+    #[filterable(type = "string")]
+    pub quality_profile_id: Option<String>,
+
+    #[graphql(name = "path")]
     pub path: Option<String>,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,
@@ -143,7 +160,12 @@ pub struct Show {
     #[graphql(skip)]
     #[serde(skip)]
     #[skip_db]
-    #[relation(target = "Library", from = "library_id", to = "id")]
+    #[relation(
+        target = "Library",
+        from = "library_id",
+        to = "id",
+        on_delete = "cascade"
+    )]
     pub library: Option<Library>,
 
     /// Episodes in this show
@@ -160,11 +182,11 @@ pub struct ShowCustomOperations;
 #[async_graphql::Object]
 impl ShowCustomOperations {
     /// Search for TV shows on TVMaze
-    #[graphql(name = "SearchTvShows")]
+    #[graphql(name = "searchTvShows")]
     async fn search_tv_shows(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Query")] query: String,
+        #[graphql(name = "query")] query: String,
     ) -> async_graphql::Result<Vec<TvShowSearchResultGql>> {
         let _user = ctx.librarian_auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
@@ -206,7 +228,7 @@ impl ShowCustomOperations {
 #[derive(Debug, InputObject)]
 #[graphql(name = "SearchTvShowsInput")]
 pub struct SearchTvShowsInput {
-    #[graphql(name = "Query")]
+    #[graphql(name = "query")]
     pub query: String,
 }
 
@@ -215,13 +237,13 @@ pub struct SearchTvShowsInput {
 #[graphql(name = "AddTvShowInput")]
 pub struct AddTvShowInput {
     /// TVMaze show ID
-    #[graphql(name = "TvmazeId")]
+    #[graphql(name = "tvmazeId")]
     pub tvmaze_id: i32,
     /// Auto-download mode for episodes
-    #[graphql(name = "AutoDownloadMode")]
+    #[graphql(name = "autoDownloadMode")]
     pub auto_download_mode: Option<AutoDownloadMode>,
     /// Optional path override for the show
-    #[graphql(name = "Path")]
+    #[graphql(name = "path")]
     pub path: Option<String>,
 }
 
@@ -229,27 +251,27 @@ pub struct AddTvShowInput {
 #[derive(Debug, Clone, async_graphql::SimpleObject)]
 #[graphql(name = "TvShowSearchResult")]
 pub struct TvShowSearchResultGql {
-    #[graphql(name = "Provider")]
+    #[graphql(name = "provider")]
     pub provider: String,
-    #[graphql(name = "ProviderId")]
+    #[graphql(name = "providerId")]
     pub provider_id: i32,
-    #[graphql(name = "Name")]
+    #[graphql(name = "name")]
     pub name: String,
-    #[graphql(name = "Year")]
+    #[graphql(name = "year")]
     pub year: Option<i32>,
-    #[graphql(name = "Status")]
+    #[graphql(name = "status")]
     pub status: Option<String>,
-    #[graphql(name = "Network")]
+    #[graphql(name = "network")]
     pub network: Option<String>,
-    #[graphql(name = "Overview")]
+    #[graphql(name = "overview")]
     pub overview: Option<String>,
-    #[graphql(name = "PosterUrl")]
+    #[graphql(name = "posterUrl")]
     pub poster_url: Option<String>,
-    #[graphql(name = "TvdbId")]
+    #[graphql(name = "tvdbId")]
     pub tvdb_id: Option<i32>,
-    #[graphql(name = "ImdbId")]
+    #[graphql(name = "imdbId")]
     pub imdb_id: Option<String>,
-    #[graphql(name = "Score")]
+    #[graphql(name = "score")]
     pub score: Option<f64>,
 }
 
@@ -257,11 +279,11 @@ pub struct TvShowSearchResultGql {
 #[derive(Debug, async_graphql::SimpleObject)]
 #[graphql(name = "TvShowOperationResult")]
 pub struct TvShowOperationResult {
-    #[graphql(name = "Success")]
+    #[graphql(name = "success")]
     pub success: bool,
-    #[graphql(name = "Show")]
+    #[graphql(name = "show")]
     pub show: Option<Show>,
-    #[graphql(name = "Error")]
+    #[graphql(name = "error")]
     pub error: Option<String>,
 }
 
@@ -272,12 +294,12 @@ pub struct ShowMetadataMutations;
 #[Object]
 impl ShowMetadataMutations {
     /// Add a TV show to a library by fetching metadata from TVMaze
-    #[graphql(name = "AddTvShow")]
+    #[graphql(name = "addTvShow")]
     async fn add_tv_show(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "LibraryId")] library_id: String,
-        #[graphql(name = "Input")] input: AddTvShowInput,
+        #[graphql(name = "libraryId")] library_id: String,
+        #[graphql(name = "input")] input: AddTvShowInput,
     ) -> async_graphql::Result<TvShowOperationResult> {
         let user = ctx.librarian_auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
@@ -314,11 +336,11 @@ impl ShowMetadataMutations {
     }
 
     /// Refresh a show's metadata and artwork from TVMaze.
-    #[graphql(name = "RefreshShow")]
+    #[graphql(name = "refreshShow")]
     async fn refresh_show(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Id")] id: String,
+        #[graphql(name = "id")] id: String,
     ) -> async_graphql::Result<TvShowOperationResult> {
         let user = ctx.librarian_auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();

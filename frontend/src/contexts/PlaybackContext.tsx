@@ -34,6 +34,8 @@ import {
 import {
   AlbumDetailRouteDocument,
   AudiobookDetailRouteDocument,
+  ContentStatusesDocument,
+  ContentStatusType,
   CreatePlaybackProgressContextDocument,
   CreatePlaybackSessionContextDocument,
   MeDocument,
@@ -49,47 +51,47 @@ import type { Movie } from "../lib/graphql/generated/graphql";
 
 /** Map GraphQL PlaybackSessions node (PascalCase) to app PlaybackSession (camelCase) */
 function mapNodeToSession(node: {
-  Id: string;
-  UserId: string;
-  MediaFileId?: string | null;
-  CurrentPosition: number;
-  Duration?: number | null;
-  Volume: number;
-  IsMuted: boolean;
-  IsPlaying: boolean;
-  StartedAt: string;
-  LastUpdatedAt: string;
-  CompletedAt?: string | null;
-  CreatedAt: string;
-  UpdatedAt: string;
-  ContentType?: string | null;
-  EpisodeId?: string | null;
-  MovieId?: string | null;
-  TrackId?: string | null;
-  AudiobookId?: string | null;
-  TvShowId?: string | null;
-  AlbumId?: string | null;
+  id: string;
+  userId: string;
+  mediaFileId?: string | null;
+  currentPosition: number;
+  duration?: number | null;
+  volume: number;
+  isMuted: boolean;
+  isPlaying: boolean;
+  startedAt: string;
+  lastUpdatedAt: string;
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  contentType?: string | null;
+  episodeId?: string | null;
+  movieId?: string | null;
+  trackId?: string | null;
+  audiobookId?: string | null;
+  tvShowId?: string | null;
+  albumId?: string | null;
 }): PlaybackSession {
-  const ct = node.ContentType?.toUpperCase() as PlaybackContentType | undefined;
+  const ct = node.contentType?.toUpperCase() as PlaybackContentType | undefined;
   return {
-    id: node.Id,
-    userId: node.UserId,
+    id: node.id,
+    userId: node.userId,
     contentType: ct ?? null,
-    mediaFileId: node.MediaFileId ?? null,
-    contentId: node.EpisodeId ?? node.MovieId ?? node.TrackId ?? null,
-    episodeId: node.EpisodeId ?? null,
-    movieId: node.MovieId ?? null,
-    trackId: node.TrackId ?? null,
-    audiobookId: node.AudiobookId ?? null,
-    tvShowId: node.TvShowId ?? null,
-    albumId: node.AlbumId ?? null,
-    currentPosition: node.CurrentPosition,
-    duration: node.Duration ?? null,
-    volume: node.Volume,
-    isMuted: node.IsMuted,
-    isPlaying: node.IsPlaying,
-    startedAt: node.StartedAt,
-    lastUpdatedAt: node.LastUpdatedAt,
+    mediaFileId: node.mediaFileId ?? null,
+    contentId: node.episodeId ?? node.movieId ?? node.trackId ?? null,
+    episodeId: node.episodeId ?? null,
+    movieId: node.movieId ?? null,
+    trackId: node.trackId ?? null,
+    audiobookId: node.audiobookId ?? null,
+    tvShowId: node.tvShowId ?? null,
+    albumId: node.albumId ?? null,
+    currentPosition: node.currentPosition,
+    duration: node.duration ?? null,
+    volume: node.volume,
+    isMuted: node.isMuted,
+    isPlaying: node.isPlaying,
+    startedAt: node.startedAt,
+    lastUpdatedAt: node.lastUpdatedAt,
   };
 }
 
@@ -194,12 +196,12 @@ interface PlaybackContextValue {
 
 const PlaybackContext = createContext<PlaybackContextValue | null>(null);
 type PlaybackProgressNode =
-  PlaybackProgressByMediaFileContextQuery["PlaybackProgresses"]["Edges"][number]["Node"];
-type AlbumDetailNode = NonNullable<AlbumDetailRouteQuery["Album"]>;
-type AlbumTrackNode = AlbumDetailRouteQuery["Tracks"]["Edges"][number]["Node"];
-type AudiobookDetailNode = NonNullable<AudiobookDetailRouteQuery["Audiobook"]>;
+  PlaybackProgressByMediaFileContextQuery["playbackProgresses"]["edges"][number]["node"];
+type AlbumDetailNode = NonNullable<AlbumDetailRouteQuery["album"]>;
+type AlbumTrackNode = AlbumDetailRouteQuery["tracks"]["edges"][number]["node"];
+type AudiobookDetailNode = NonNullable<AudiobookDetailRouteQuery["audiobook"]>;
 type AudiobookChapterNode =
-  AudiobookDetailNode["Chapters"]["Edges"][number]["Node"];
+  AudiobookDetailNode["chapters"]["edges"][number]["node"];
 
 export function PlaybackProvider({ children }: { children: ReactNode }) {
   // Get auth context from router - only fetch playback session if authenticated
@@ -261,7 +263,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       query: MeDocument,
       fetchPolicy: "network-only",
     });
-    const userId = meResult.data?.Me?.Id ?? null;
+    const userId = meResult.data?.me?.id ?? null;
     userIdRef.current = userId;
     return userId;
   }, []);
@@ -274,17 +276,17 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       const result = await apolloClient.query({
         query: PlaybackProgressByMediaFileContextDocument,
         variables: {
-          Where: {
-            UserId: { eq: userId },
-            MediaFileId: { eq: mediaFileId },
+          where: {
+            userId: { eq: userId },
+            mediaFileId: { eq: mediaFileId },
           },
-          Page: { limit: 1, offset: 0 },
-          OrderBy: [{ UpdatedAt: "DESC" }],
+          page: { limit: 1, offset: 0 },
+          orderBy: [{ updatedAt: "DESC" }],
         },
         fetchPolicy: "network-only",
       });
 
-      return result.data?.PlaybackProgresses?.Edges?.[0]?.Node ?? null;
+      return result.data?.playbackProgresses?.edges?.[0]?.node ?? null;
     },
     [],
   );
@@ -314,13 +316,13 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       if (!existingId) {
         existing = await fetchPlaybackProgress(userId, mediaFileId);
         if (existing) {
-          existingId = existing.Id;
-          playbackProgressIdsRef.current.set(mediaFileId, existing.Id);
+          existingId = existing.id;
+          playbackProgressIdsRef.current.set(mediaFileId, existing.id);
         }
       }
 
-      if (!safeDuration && existing?.Duration && existing.Duration > 0) {
-        safeDuration = existing.Duration;
+      if (!safeDuration && existing?.duration && existing.duration > 0) {
+        safeDuration = existing.duration;
       }
 
       const progressPercent = safeDuration
@@ -331,56 +333,56 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
       if (existingId) {
         const updateResult = await apolloClient.mutate<{
-          UpdatePlaybackProgress?: {
-            Success: boolean;
-            PlaybackProgress?: PlaybackProgressNode | null;
+          updatePlaybackProgress?: {
+            success: boolean;
+            playbackProgress?: PlaybackProgressNode | null;
           };
         }>({
           mutation: UpdatePlaybackProgressContextDocument,
           variables: {
-            Id: existingId,
-            Input: {
-              CurrentPosition: safePosition,
-              Duration: safeDuration,
-              ProgressPercent: progressPercent,
-              IsWatched: isWatched,
-              WatchedAt: watchedAt,
+            id: existingId,
+            input: {
+              currentPosition: safePosition,
+              duration: safeDuration,
+              progressPercent: progressPercent,
+              isWatched: isWatched,
+              watchedAt: watchedAt,
             },
           },
         });
 
         const updated =
-          updateResult.data?.UpdatePlaybackProgress?.PlaybackProgress;
-        if (updated?.Id) {
-          playbackProgressIdsRef.current.set(mediaFileId, updated.Id);
+          updateResult.data?.updatePlaybackProgress?.playbackProgress;
+        if (updated?.id) {
+          playbackProgressIdsRef.current.set(mediaFileId, updated.id);
         }
         return;
       }
 
       const createResult = await apolloClient.mutate<{
-        CreatePlaybackProgress?: {
-          Success: boolean;
-          PlaybackProgress?: PlaybackProgressNode | null;
+        createPlaybackProgress?: {
+          success: boolean;
+          playbackProgress?: PlaybackProgressNode | null;
         };
       }>({
         mutation: CreatePlaybackProgressContextDocument,
         variables: {
-          Input: {
-            UserId: userId,
-            MediaFileId: mediaFileId,
-            CurrentPosition: safePosition,
-            Duration: safeDuration,
-            ProgressPercent: progressPercent,
-            IsWatched: isWatched,
-            WatchedAt: watchedAt,
+          input: {
+            userId: userId,
+            mediaFileId: mediaFileId,
+            currentPosition: safePosition,
+            duration: safeDuration,
+            progressPercent: progressPercent,
+            isWatched: isWatched,
+            watchedAt: watchedAt,
           },
         },
       });
 
       const created =
-        createResult.data?.CreatePlaybackProgress?.PlaybackProgress;
-      if (created?.Id) {
-        playbackProgressIdsRef.current.set(mediaFileId, created.Id);
+        createResult.data?.createPlaybackProgress?.playbackProgress;
+      if (created?.id) {
+        playbackProgressIdsRef.current.set(mediaFileId, created.id);
       }
     },
     [fetchPlaybackProgress, resolveCurrentUserId],
@@ -392,7 +394,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         query: MeDocument,
         fetchPolicy: "network-only",
       });
-      const userId = meResult.data?.Me?.Id;
+      const userId = meResult.data?.me?.id;
       if (!userId) {
         clearAllState();
         setIsLoading(false);
@@ -403,13 +405,13 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       const result = await apolloClient.query({
         query: PlaybackSessionsDocument,
         variables: {
-          Where: { UserId: { eq: userId } },
-          OrderBy: [{ LastUpdatedAt: "DESC" }],
-          Page: { limit: 1, offset: 0 },
+          where: { userId: { eq: userId } },
+          orderBy: [{ lastUpdatedAt: "DESC" }],
+          page: { limit: 1, offset: 0 },
         },
         fetchPolicy: "network-only",
       });
-      const node = result.data?.PlaybackSessions?.Edges?.[0]?.Node;
+      const node = result.data?.playbackSessions?.edges?.[0]?.node;
       if (node) {
         const session = mapNodeToSession(node);
         setSession(session);
@@ -421,69 +423,80 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
           session.trackId
         ) {
           try {
-            const toTrackStatus = (
-              mediaFileId: string | null | undefined,
-              wanted: boolean,
-            ): import("../lib/graphql").TrackStatus => {
-              if (mediaFileId) return "downloaded";
-              return wanted ? "wanted" : "missing";
-            };
-
             const albumResult = await apolloClient.query({
               query: AlbumDetailRouteDocument,
-              variables: { Id: session.albumId },
+              variables: { id: session.albumId },
               fetchPolicy: "network-only",
             });
 
-            if (albumResult.data?.Album) {
-              const albumNode: AlbumDetailNode = albumResult.data.Album;
-              const trackEdges = albumResult.data.Tracks?.Edges ?? [];
+            if (albumResult.data?.album) {
+              const albumNode: AlbumDetailNode = albumResult.data.album;
+              const trackEdges = albumResult.data.tracks?.edges ?? [];
+              const statusResult = await apolloClient.query({
+                query: ContentStatusesDocument,
+                variables: {
+                  inputs: trackEdges.map((edge) => ({
+                    contentType: ContentStatusType.TRACK,
+                    id: edge.node.id,
+                  })),
+                },
+                fetchPolicy: "network-only",
+              });
+              const statusById = new Map(
+                (statusResult.data?.contentStatuses ?? []).map((item) => [
+                  item.id,
+                  item.status,
+                ]),
+              );
               const album: AlbumWithTracks["album"] = {
-                id: albumNode.Id,
-                artistId: albumNode.ArtistId,
-                libraryId: albumNode.LibraryId,
-                name: albumNode.Name,
-                sortName: albumNode.SortName ?? null,
-                year: albumNode.Year ?? null,
-                musicbrainzId: albumNode.MusicbrainzId ?? null,
-                albumType: albumNode.AlbumType ?? null,
-                genres: albumNode.Genres,
-                label: albumNode.Label ?? null,
-                country: albumNode.Country ?? null,
-                releaseDate: albumNode.ReleaseDate ?? null,
-                coverUrl: albumNode.CoverUrl ?? null,
-                trackCount: albumNode.TrackCount ?? null,
-                discCount: albumNode.DiscCount ?? null,
-                totalDurationSecs: albumNode.TotalDurationSecs ?? null,
-                hasFiles: albumNode.HasFiles,
-                sizeBytes: albumNode.SizeBytes ?? null,
-                path: albumNode.Path ?? null,
+                id: albumNode.id,
+                artistId: albumNode.artistId,
+                libraryId: albumNode.libraryId,
+                name: albumNode.name,
+                sortName: albumNode.sortName ?? null,
+                year: albumNode.year ?? null,
+                musicbrainzId: albumNode.musicbrainzId ?? null,
+                albumType: albumNode.albumType ?? null,
+                genres: albumNode.genres,
+                label: albumNode.label ?? null,
+                country: albumNode.country ?? null,
+                releaseDate: albumNode.releaseDate ?? null,
+                coverUrl: albumNode.coverUrl ?? null,
+                trackCount: albumNode.trackCount ?? null,
+                discCount: albumNode.discCount ?? null,
+                totalDurationSecs: albumNode.totalDurationSecs ?? null,
+                hasFiles: albumNode.hasFiles,
+                sizeBytes: albumNode.sizeBytes ?? null,
+                path: albumNode.path ?? null,
                 downloadedTrackCount: null,
               };
               const tracks: AlbumWithTracks["tracks"] = trackEdges.map(
-                (edge: { Node: AlbumTrackNode }) => ({
+                (edge: { node: AlbumTrackNode }) => ({
                   track: {
-                    id: edge.Node.Id,
-                    albumId: edge.Node.AlbumId,
-                    libraryId: edge.Node.LibraryId,
-                    title: edge.Node.Title,
-                    trackNumber: edge.Node.TrackNumber,
-                    discNumber: edge.Node.DiscNumber ?? 1,
-                    musicbrainzId: edge.Node.MusicbrainzId ?? null,
-                    isrc: edge.Node.Isrc ?? null,
-                    durationSecs: edge.Node.DurationSecs ?? null,
-                    explicit: edge.Node.Explicit,
-                    artistName: edge.Node.ArtistName ?? null,
-                    artistId: edge.Node.ArtistId ?? null,
-                    mediaFileId: edge.Node.MediaFileId ?? null,
-                    hasFile: Boolean(edge.Node.MediaFileId),
-                    status: toTrackStatus(
-                      edge.Node.MediaFileId,
-                      edge.Node.Wanted,
-                    ),
+                    id: edge.node.id,
+                    albumId: edge.node.albumId,
+                    libraryId: edge.node.libraryId,
+                    title: edge.node.title,
+                    trackNumber: edge.node.trackNumber,
+                    discNumber: edge.node.discNumber ?? 1,
+                    musicbrainzId: edge.node.musicbrainzId ?? null,
+                    isrc: edge.node.isrc ?? null,
+                    durationSecs: edge.node.durationSecs ?? null,
+                    explicit: edge.node.explicit,
+                    artistName: edge.node.artistName ?? null,
+                    artistId: edge.node.artistId ?? null,
+                    mediaFileId: edge.node.mediaFileId ?? null,
+                    hasFile: Boolean(edge.node.mediaFileId),
+                    status:
+                      statusById.get(edge.node.id) ??
+                      (edge.node.mediaFileId
+                        ? "AVAILABLE"
+                        : edge.node.wanted
+                          ? "WANTED"
+                          : "MISSING"),
                     downloadProgress: null,
                   },
-                  hasFile: Boolean(edge.Node.MediaFileId),
+                  hasFile: Boolean(edge.node.mediaFileId),
                   filePath: null,
                   fileSize: null,
                   audioCodec: null,
@@ -532,61 +545,74 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
           }
         } else if (session.contentType === "AUDIOBOOK" && session.audiobookId) {
           try {
-            const toChapterStatus = (
-              mediaFileId: string | null | undefined,
-              wanted: boolean,
-            ): import("../lib/graphql").ChapterStatus => {
-              if (mediaFileId) return "downloaded";
-              return wanted ? "wanted" : "missing";
-            };
             const audiobookResult = await apolloClient.query({
               query: AudiobookDetailRouteDocument,
-              variables: { Id: session.audiobookId },
+              variables: { id: session.audiobookId },
               fetchPolicy: "network-only",
             });
 
-            if (audiobookResult.data?.Audiobook) {
+            if (audiobookResult.data?.audiobook) {
               const audiobookNode: AudiobookDetailNode =
-                audiobookResult.data.Audiobook;
+                audiobookResult.data.audiobook;
+              const chapterEdges = audiobookNode.chapters?.edges ?? [];
+              const statusResult = await apolloClient.query({
+                query: ContentStatusesDocument,
+                variables: {
+                  inputs: chapterEdges.map((edge) => ({
+                    contentType: ContentStatusType.CHAPTER,
+                    id: edge.node.id,
+                  })),
+                },
+                fetchPolicy: "network-only",
+              });
+              const statusById = new Map(
+                (statusResult.data?.contentStatuses ?? []).map((item) => [
+                  item.id,
+                  item.status,
+                ]),
+              );
               const audiobook: AudiobookWithChapters["audiobook"] = {
-                id: audiobookNode.Id,
+                id: audiobookNode.id,
                 authorId: null,
-                libraryId: audiobookNode.LibraryId,
-                title: audiobookNode.Title,
-                sortTitle: audiobookNode.SortTitle ?? null,
+                libraryId: audiobookNode.libraryId,
+                title: audiobookNode.title,
+                sortTitle: audiobookNode.sortTitle ?? null,
                 subtitle: null,
                 openlibraryId: null,
-                isbn: audiobookNode.Isbn ?? null,
-                description: audiobookNode.Description ?? null,
-                publisher: audiobookNode.Publisher ?? null,
-                language: audiobookNode.Language ?? null,
-                narrators: audiobookNode.Narrators,
+                isbn: audiobookNode.isbn ?? null,
+                description: audiobookNode.description ?? null,
+                publisher: audiobookNode.publisher ?? null,
+                language: audiobookNode.language ?? null,
+                narrators: audiobookNode.narrators,
                 seriesName: null,
-                durationSecs: audiobookNode.TotalDurationSecs ?? null,
-                coverUrl: audiobookNode.CoverUrl ?? null,
-                hasFiles: audiobookNode.HasFiles,
-                sizeBytes: audiobookNode.SizeBytes ?? null,
-                path: audiobookNode.Path ?? null,
+                durationSecs: audiobookNode.totalDurationSecs ?? null,
+                coverUrl: audiobookNode.coverUrl ?? null,
+                hasFiles: audiobookNode.hasFiles,
+                sizeBytes: audiobookNode.sizeBytes ?? null,
+                path: audiobookNode.path ?? null,
                 chapterCount: null,
                 downloadedChapterCount: null,
               };
-              const chapters = (audiobookNode.Chapters?.Edges ?? []).map(
-                (edge: { Node: AudiobookChapterNode }) => ({
-                  id: edge.Node.Id,
-                  audiobookId: edge.Node.AudiobookId,
-                  chapterNumber: edge.Node.ChapterNumber,
-                  title: edge.Node.Title ?? null,
-                  startSecs: Math.floor(edge.Node.StartTimeSecs),
+              const chapters = chapterEdges.map(
+                (edge: { node: AudiobookChapterNode }) => ({
+                  id: edge.node.id,
+                  audiobookId: edge.node.audiobookId,
+                  chapterNumber: edge.node.chapterNumber,
+                  title: edge.node.title ?? null,
+                  startSecs: Math.floor(edge.node.startTimeSecs),
                   endSecs:
-                    edge.Node.EndTimeSecs != null
-                      ? Math.floor(edge.Node.EndTimeSecs)
+                    edge.node.endTimeSecs != null
+                      ? Math.floor(edge.node.endTimeSecs)
                       : 0,
-                  durationSecs: edge.Node.DurationSecs ?? null,
-                  mediaFileId: edge.Node.MediaFileId ?? null,
-                  status: toChapterStatus(
-                    edge.Node.MediaFileId,
-                    edge.Node.Wanted,
-                  ),
+                  durationSecs: edge.node.durationSecs ?? null,
+                  mediaFileId: edge.node.mediaFileId ?? null,
+                  status:
+                    statusById.get(edge.node.id) ??
+                    (edge.node.mediaFileId
+                      ? "AVAILABLE"
+                      : edge.node.wanted
+                        ? "WANTED"
+                        : "MISSING"),
                   downloadProgress: null,
                 }),
               );
@@ -662,7 +688,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
           query: MeDocument,
           fetchPolicy: "network-only",
         });
-        const userId = meResult.data?.Me?.Id;
+        const userId = meResult.data?.me?.id;
         if (!userId) {
           console.error("Failed to start playback: no authenticated user");
           return false;
@@ -679,154 +705,154 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
             userId,
             input.mediaFileId,
           );
-          if (existingProgress?.Id) {
+          if (existingProgress?.id) {
             playbackProgressIdsRef.current.set(
               input.mediaFileId,
-              existingProgress.Id,
+              existingProgress.id,
             );
           }
           if (
             existingProgress &&
-            !existingProgress.IsWatched &&
-            existingProgress.CurrentPosition > 0
+            !existingProgress.isWatched &&
+            existingProgress.currentPosition > 0
           ) {
-            currentPosition = existingProgress.CurrentPosition;
+            currentPosition = existingProgress.currentPosition;
           }
         }
         const baseInput = {
-          ContentType: input.contentType,
-          MediaFileId: input.mediaFileId,
-          CurrentPosition: currentPosition,
-          Duration: input.duration,
-          Volume: session?.volume ?? 1,
-          IsMuted: session?.isMuted ?? false,
-          IsPlaying: true,
-          LastUpdatedAt: now,
+          contentType: input.contentType,
+          mediaFileId: input.mediaFileId,
+          currentPosition: currentPosition,
+          duration: input.duration,
+          volume: session?.volume ?? 1,
+          isMuted: session?.isMuted ?? false,
+          isPlaying: true,
+          lastUpdatedAt: now,
         } as Record<string, unknown>;
 
         if (input.contentType === "EPISODE") {
-          baseInput.EpisodeId = input.contentId;
-          baseInput.TvShowId = input.parentId;
+          baseInput.episodeId = input.contentId;
+          baseInput.tvShowId = input.parentId;
         } else if (input.contentType === "MOVIE") {
-          baseInput.MovieId = input.contentId;
+          baseInput.movieId = input.contentId;
         } else if (input.contentType === "TRACK") {
-          baseInput.TrackId = input.contentId;
-          baseInput.AlbumId = input.parentId;
+          baseInput.trackId = input.contentId;
+          baseInput.albumId = input.parentId;
         } else if (input.contentType === "AUDIOBOOK") {
-          baseInput.AudiobookId = input.contentId;
+          baseInput.audiobookId = input.contentId;
         }
 
         let success = false;
         let errorMessage: string | undefined;
         let nextSessionNode:
           | {
-              Id: string;
-              UserId: string;
-              MediaFileId?: string | null;
-              CurrentPosition: number;
-              Duration?: number | null;
-              Volume: number;
-              IsMuted: boolean;
-              IsPlaying: boolean;
-              StartedAt: string;
-              LastUpdatedAt: string;
-              CompletedAt?: string | null;
-              CreatedAt: string;
-              UpdatedAt: string;
-              ContentType?: string | null;
-              EpisodeId?: string | null;
-              MovieId?: string | null;
-              TrackId?: string | null;
-              AudiobookId?: string | null;
-              TvShowId?: string | null;
-              AlbumId?: string | null;
+              id: string;
+              userId: string;
+              mediaFileId?: string | null;
+              currentPosition: number;
+              duration?: number | null;
+              volume: number;
+              isMuted: boolean;
+              isPlaying: boolean;
+              startedAt: string;
+              lastUpdatedAt: string;
+              completedAt?: string | null;
+              createdAt: string;
+              updatedAt: string;
+              contentType?: string | null;
+              episodeId?: string | null;
+              movieId?: string | null;
+              trackId?: string | null;
+              audiobookId?: string | null;
+              tvShowId?: string | null;
+              albumId?: string | null;
             }
           | null
           | undefined;
 
         if (session?.id) {
           const updateResult = await apolloClient.mutate<{
-            UpdatePlaybackSession: {
-              Success: boolean;
-              Error?: string | null;
-              PlaybackSession?: {
-                Id: string;
-                UserId: string;
-                MediaFileId?: string | null;
-                CurrentPosition: number;
-                Duration?: number | null;
-                Volume: number;
-                IsMuted: boolean;
-                IsPlaying: boolean;
-                StartedAt: string;
-                LastUpdatedAt: string;
-                CompletedAt?: string | null;
-                CreatedAt: string;
-                UpdatedAt: string;
-                ContentType?: string | null;
-                EpisodeId?: string | null;
-                MovieId?: string | null;
-                TrackId?: string | null;
-                AudiobookId?: string | null;
-                TvShowId?: string | null;
-                AlbumId?: string | null;
+            updatePlaybackSession: {
+              success: boolean;
+              error?: string | null;
+              playbackSession?: {
+                id: string;
+                userId: string;
+                mediaFileId?: string | null;
+                currentPosition: number;
+                duration?: number | null;
+                volume: number;
+                isMuted: boolean;
+                isPlaying: boolean;
+                startedAt: string;
+                lastUpdatedAt: string;
+                completedAt?: string | null;
+                createdAt: string;
+                updatedAt: string;
+                contentType?: string | null;
+                episodeId?: string | null;
+                movieId?: string | null;
+                trackId?: string | null;
+                audiobookId?: string | null;
+                tvShowId?: string | null;
+                albumId?: string | null;
               } | null;
             };
           }>({
             mutation: UpdatePlaybackSessionContextDocument,
             variables: {
-              Id: session.id,
-              Input: baseInput,
+              id: session.id,
+              input: baseInput,
             },
           });
-          success = Boolean(updateResult.data?.UpdatePlaybackSession?.Success);
+          success = Boolean(updateResult.data?.updatePlaybackSession?.success);
           errorMessage =
-            updateResult.data?.UpdatePlaybackSession?.Error || undefined;
+            updateResult.data?.updatePlaybackSession?.error || undefined;
           nextSessionNode =
-            updateResult.data?.UpdatePlaybackSession?.PlaybackSession;
+            updateResult.data?.updatePlaybackSession?.playbackSession;
         } else {
           const createResult = await apolloClient.mutate<{
-            CreatePlaybackSession: {
-              Success: boolean;
-              Error?: string | null;
-              PlaybackSession?: {
-                Id: string;
-                UserId: string;
-                MediaFileId?: string | null;
-                CurrentPosition: number;
-                Duration?: number | null;
-                Volume: number;
-                IsMuted: boolean;
-                IsPlaying: boolean;
-                StartedAt: string;
-                LastUpdatedAt: string;
-                CompletedAt?: string | null;
-                CreatedAt: string;
-                UpdatedAt: string;
-                ContentType?: string | null;
-                EpisodeId?: string | null;
-                MovieId?: string | null;
-                TrackId?: string | null;
-                AudiobookId?: string | null;
-                TvShowId?: string | null;
-                AlbumId?: string | null;
+            createPlaybackSession: {
+              success: boolean;
+              error?: string | null;
+              playbackSession?: {
+                id: string;
+                userId: string;
+                mediaFileId?: string | null;
+                currentPosition: number;
+                duration?: number | null;
+                volume: number;
+                isMuted: boolean;
+                isPlaying: boolean;
+                startedAt: string;
+                lastUpdatedAt: string;
+                completedAt?: string | null;
+                createdAt: string;
+                updatedAt: string;
+                contentType?: string | null;
+                episodeId?: string | null;
+                movieId?: string | null;
+                trackId?: string | null;
+                audiobookId?: string | null;
+                tvShowId?: string | null;
+                albumId?: string | null;
               } | null;
             };
           }>({
             mutation: CreatePlaybackSessionContextDocument,
             variables: {
-              Input: {
+              input: {
                 ...baseInput,
-                UserId: userId,
-                StartedAt: now,
+                userId: userId,
+                startedAt: now,
               },
             },
           });
-          success = Boolean(createResult.data?.CreatePlaybackSession?.Success);
+          success = Boolean(createResult.data?.createPlaybackSession?.success);
           errorMessage =
-            createResult.data?.CreatePlaybackSession?.Error || undefined;
+            createResult.data?.createPlaybackSession?.error || undefined;
           nextSessionNode =
-            createResult.data?.CreatePlaybackSession?.PlaybackSession;
+            createResult.data?.createPlaybackSession?.playbackSession;
         }
 
         if (!success) {
@@ -916,9 +942,9 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       const metadata: CurrentContentMetadata | undefined = movie
         ? {
             contentType: "MOVIE",
-            title: movie.Title,
-            subtitle: movie.Year != null ? `${movie.Year}` : undefined,
-            posterUrl: movie.CollectionPosterUrl ?? undefined,
+            title: movie.title,
+            subtitle: movie.year != null ? `${movie.year}` : undefined,
+            posterUrl: movie.collectionPosterUrl ?? undefined,
             backdropUrl: undefined,
           }
         : undefined;
@@ -956,53 +982,53 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       try {
         const now = new Date().toISOString();
         const result = await apolloClient.mutate<{
-          UpdatePlaybackSession: {
-            Success: boolean;
-            Error?: string | null;
-            PlaybackSession?: {
-              Id: string;
-              UserId: string;
-              MediaFileId?: string | null;
-              CurrentPosition: number;
-              Duration?: number | null;
-              Volume: number;
-              IsMuted: boolean;
-              IsPlaying: boolean;
-              StartedAt: string;
-              LastUpdatedAt: string;
-              CompletedAt?: string | null;
-              CreatedAt: string;
-              UpdatedAt: string;
-              ContentType?: string | null;
-              EpisodeId?: string | null;
-              MovieId?: string | null;
-              TrackId?: string | null;
-              AudiobookId?: string | null;
-              TvShowId?: string | null;
-              AlbumId?: string | null;
+          updatePlaybackSession: {
+            success: boolean;
+            error?: string | null;
+            playbackSession?: {
+              id: string;
+              userId: string;
+              mediaFileId?: string | null;
+              currentPosition: number;
+              duration?: number | null;
+              volume: number;
+              isMuted: boolean;
+              isPlaying: boolean;
+              startedAt: string;
+              lastUpdatedAt: string;
+              completedAt?: string | null;
+              createdAt: string;
+              updatedAt: string;
+              contentType?: string | null;
+              episodeId?: string | null;
+              movieId?: string | null;
+              trackId?: string | null;
+              audiobookId?: string | null;
+              tvShowId?: string | null;
+              albumId?: string | null;
             } | null;
           };
         }>({
           mutation: UpdatePlaybackSessionContextDocument,
           variables: {
-            Id: session.id,
-            Input: {
-              CurrentPosition: input.currentPosition,
-              Duration: input.duration,
-              IsPlaying: input.isPlaying,
-              IsMuted: input.isMuted,
-              Volume: input.volume,
-              LastUpdatedAt: now,
+            id: session.id,
+            input: {
+              currentPosition: input.currentPosition,
+              duration: input.duration,
+              isPlaying: input.isPlaying,
+              isMuted: input.isMuted,
+              volume: input.volume,
+              lastUpdatedAt: now,
             },
           },
         });
 
         if (
-          result.data?.UpdatePlaybackSession?.Success &&
-          result.data.UpdatePlaybackSession.PlaybackSession
+          result.data?.updatePlaybackSession?.success &&
+          result.data.updatePlaybackSession.playbackSession
         ) {
           const updatedSession = mapNodeToSession(
-            result.data.UpdatePlaybackSession.PlaybackSession,
+            result.data.updatePlaybackSession.playbackSession,
           );
           setSession(updatedSession);
           const shouldSyncProgress = Boolean(
@@ -1028,10 +1054,10 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
           }
           return true;
         }
-        if (result.data?.UpdatePlaybackSession?.Error) {
+        if (result.data?.updatePlaybackSession?.error) {
           console.error(
             "Failed to update playback:",
-            result.data.UpdatePlaybackSession.Error,
+            result.data.updatePlaybackSession.error,
           );
         }
         return false;
@@ -1075,33 +1101,33 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
           );
         }
         const result = await apolloClient.mutate<{
-          UpdatePlaybackSession: {
-            Success: boolean;
-            Error?: string | null;
+          updatePlaybackSession: {
+            success: boolean;
+            error?: string | null;
           };
         }>({
           mutation: UpdatePlaybackSessionContextDocument,
           variables: {
-            Id: session.id,
-            Input: {
-              CurrentPosition: positionToPersist,
-              Duration: durationToPersist,
-              IsPlaying: false,
-              CompletedAt: now,
-              LastUpdatedAt: now,
+            id: session.id,
+            input: {
+              currentPosition: positionToPersist,
+              duration: durationToPersist,
+              isPlaying: false,
+              completedAt: now,
+              lastUpdatedAt: now,
             },
           },
         });
 
-        if (result.data?.UpdatePlaybackSession?.Success) {
+        if (result.data?.updatePlaybackSession?.success) {
           clearAllState();
           lastSyncedPosition.current = 0;
           return true;
         }
-        if (result.data?.UpdatePlaybackSession?.Error) {
+        if (result.data?.updatePlaybackSession?.error) {
           console.error(
             "Failed to stop playback:",
-            result.data.UpdatePlaybackSession.Error,
+            result.data.updatePlaybackSession.error,
           );
         }
         return false;

@@ -7,8 +7,8 @@ import { Skeleton } from '@heroui/skeleton'
  */
 export function MediaCardSkeleton() {
   return (
-    <div className="aspect-[2/3]">
-      <Card className="relative overflow-hidden h-full w-full border-none bg-content2">
+    <div className="aspect-[2/3] w-full">
+      <Card className="relative isolate overflow-hidden h-full w-full border-none bg-content2">
         {/* Background skeleton */}
         <Skeleton className="absolute inset-0 w-full h-full rounded-none" />
 
@@ -18,7 +18,7 @@ export function MediaCardSkeleton() {
         </div>
 
         {/* Bottom content skeleton */}
-        <div className="absolute bottom-0 left-0 right-0 z-10 p-3 bg-black/50 h-20 flex flex-col gap-2">
+        <div className="absolute bottom-0 left-0 right-0 z-10 h-20 overflow-hidden rounded-b-[inherit] bg-black/50 p-3 flex flex-col gap-2">
           {/* Title skeleton */}
           <Skeleton className="w-3/4 h-4 rounded" />
           {/* Subtitle skeleton */}
@@ -34,13 +34,13 @@ export function MediaCardSkeleton() {
  */
 export function SquareCardSkeleton() {
   return (
-    <div className="aspect-square">
-      <Card className="relative overflow-hidden h-full w-full border-none bg-content2">
+    <div className="aspect-square w-full">
+      <Card className="relative isolate overflow-hidden h-full w-full border-none bg-content2">
         {/* Background skeleton */}
         <Skeleton className="absolute inset-0 w-full h-full rounded-none" />
 
         {/* Bottom content skeleton */}
-        <div className="absolute bottom-0 left-0 right-0 z-10 p-3 bg-black/50 h-16 flex flex-col gap-2">
+        <div className="absolute bottom-0 left-0 right-0 z-10 h-16 overflow-hidden rounded-b-[inherit] bg-black/50 p-3 flex flex-col gap-2">
           {/* Title skeleton */}
           <Skeleton className="w-3/4 h-4 rounded" />
           {/* Subtitle skeleton */}

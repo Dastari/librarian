@@ -59,10 +59,10 @@ export function DestinationPickerModal({
     setBrowseError(null)
     try {
       const result = await browseDirectory(path, true)
-      setCurrentPath(result.CurrentPath || '/')
-      setParentPath(result.ParentPath ?? null)
-      setEntries(result.Entries ?? [])
-      setQuickPaths(result.QuickPaths ?? [])
+      setCurrentPath(result.currentPath || '/')
+      setParentPath(result.parentPath ?? null)
+      setEntries(result.entries ?? [])
+      setQuickPaths(result.quickPaths ?? [])
       return true
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : String(e)
@@ -115,8 +115,8 @@ export function DestinationPickerModal({
 
   // Sort entries: directories first, then alphabetically
   const sortedEntries = [...entries]
-    .filter((e) => e.IsDir)
-    .sort((a, b) => a.Name.localeCompare(b.Name))
+    .filter((e) => e.isDir)
+    .sort((a, b) => a.name.localeCompare(b.name))
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="2xl" scrollBehavior="inside">
@@ -162,8 +162,8 @@ export function DestinationPickerModal({
           {quickPaths.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-4">
               {quickPaths.map((qp) => (
-                <Button key={qp.Path} size="sm" variant="flat" onPress={() => browse(qp.Path)}>
-                  {qp.Name}
+                <Button key={qp.path} size="sm" variant="flat" onPress={() => browse(qp.path)}>
+                  {qp.name}
                 </Button>
               ))}
             </div>
@@ -197,22 +197,22 @@ export function DestinationPickerModal({
               {/* Directory entries - only show writable directories */}
               {sortedEntries.map((entry) => (
                 <Button
-                  key={entry.Path}
+                  key={entry.path}
                   variant="light"
-                  onPress={() => entry.Readable && browse(entry.Path)}
+                  onPress={() => entry.readable && browse(entry.path)}
                   className={`w-full justify-start px-3 py-2 h-auto ${
-                    !entry.Readable ? 'opacity-50' : ''
+                    !entry.readable ? 'opacity-50' : ''
                   }`}
-                  isDisabled={!entry.Readable}
+                  isDisabled={!entry.readable}
                 >
                   <IconFolder size={20} className="text-amber-400" />
-                  <span className="flex-1 truncate text-left">{entry.Name}</span>
-                  {entry.Writable && (
+                  <span className="flex-1 truncate text-left">{entry.name}</span>
+                  {entry.writable && (
                     <Chip size="sm" color="success" variant="flat">
                       writable
                     </Chip>
                   )}
-                  {!entry.Writable && entry.Readable && (
+                  {!entry.writable && entry.readable && (
                     <Chip size="sm" color="warning" variant="flat">
                       read-only
                     </Chip>

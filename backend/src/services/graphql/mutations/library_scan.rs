@@ -1,7 +1,9 @@
 use async_graphql::{Context, Enum, InputObject, Object, SimpleObject};
+use serde::Deserialize;
 
 use crate::services::graphql::auth::AuthExt;
 use crate::services::library_scan::{MatchMethod, MatchRequest, MatchWantedPolicy};
+use crate::services::ollama::OllamaParsedHint;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
 #[graphql(name = "MatchMethod")]
@@ -41,120 +43,210 @@ impl From<MatchWantedPolicyGql> for MatchWantedPolicy {
 
 #[derive(Debug, Clone, InputObject)]
 #[graphql(name = "MatchMediaFileInput")]
+#[graphql(rename_fields = "camelCase")]
 pub struct MatchMediaFileInput {
-    #[graphql(name = "MediaFileId")]
     pub media_file_id: String,
-    #[graphql(name = "LibraryId")]
     pub library_id: Option<String>,
-    #[graphql(name = "EpisodeId")]
     pub episode_id: Option<String>,
-    #[graphql(name = "MovieId")]
     pub movie_id: Option<String>,
-    #[graphql(name = "TrackId")]
     pub track_id: Option<String>,
-    #[graphql(name = "ChapterId")]
     pub chapter_id: Option<String>,
-    #[graphql(name = "Methods")]
     pub methods: Option<Vec<MatchMethodGql>>,
-    #[graphql(name = "Force")]
     pub force: Option<bool>,
-    #[graphql(name = "AutoMatch")]
     pub auto_match: Option<bool>,
-    #[graphql(name = "CandidateLimit")]
     pub candidate_limit: Option<i32>,
-    #[graphql(name = "AllowProviderFallback")]
     pub allow_provider_fallback: Option<bool>,
-    #[graphql(name = "WantedPolicy")]
     pub wanted_policy: Option<MatchWantedPolicyGql>,
 }
 
 #[derive(Debug, Clone, InputObject)]
 #[graphql(name = "OrganizeMediaFileInput")]
+#[graphql(rename_fields = "camelCase")]
 pub struct OrganizeMediaFileInput {
-    #[graphql(name = "MediaFileId")]
     pub media_file_id: String,
 }
 
 #[derive(Debug, Clone, SimpleObject)]
 #[graphql(name = "ScanLibraryResult")]
+#[graphql(rename_fields = "camelCase")]
 pub struct ScanLibraryResult {
-    #[graphql(name = "Success")]
     pub success: bool,
-    #[graphql(name = "Status")]
     pub status: String,
-    #[graphql(name = "Message")]
     pub message: Option<String>,
+    pub scan_run_id: Option<String>,
 }
 
 #[derive(Debug, Clone, SimpleObject)]
 #[graphql(name = "AnalyzeMediaFileResult")]
+#[graphql(rename_fields = "camelCase")]
 pub struct AnalyzeMediaFileResult {
-    #[graphql(name = "Success")]
     pub success: bool,
-    #[graphql(name = "Queued")]
     pub queued: bool,
-    #[graphql(name = "Message")]
     pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "ScanIssueActionResult")]
+#[graphql(rename_fields = "camelCase")]
+pub struct ScanIssueActionResult {
+    pub success: bool,
+    pub queued: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "TrashDuplicateResult")]
+#[graphql(rename_fields = "camelCase")]
+pub struct TrashDuplicateResult {
+    pub success: bool,
+    pub message: String,
+    pub old_path: Option<String>,
+    pub trash_path: Option<String>,
+}
+
+#[derive(Debug, Clone, InputObject)]
+#[graphql(name = "TestTmdbConnectionInput")]
+#[graphql(rename_fields = "camelCase")]
+pub struct TestTmdbConnectionInput {
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "TestTmdbConnectionResult")]
+#[graphql(rename_fields = "camelCase")]
+pub struct TestTmdbConnectionResult {
+    pub success: bool,
+    pub message: String,
+    pub correlation_id: Option<String>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
 #[graphql(name = "MatchCandidate")]
+#[graphql(rename_fields = "camelCase")]
 pub struct MatchCandidateGql {
-    #[graphql(name = "TargetType")]
     pub target_type: String,
-    #[graphql(name = "TargetId")]
     pub target_id: String,
-    #[graphql(name = "TargetName")]
     pub target_name: Option<String>,
-    #[graphql(name = "Score")]
     pub score: f64,
-    #[graphql(name = "Reason")]
     pub reason: Option<String>,
-    #[graphql(name = "Wanted")]
     pub wanted: Option<bool>,
 }
 
 #[derive(Debug, Clone, SimpleObject)]
 #[graphql(name = "MatchMediaFileResult")]
+#[graphql(rename_fields = "camelCase")]
 pub struct MatchMediaFileResult {
-    #[graphql(name = "Success")]
     pub success: bool,
-    #[graphql(name = "AutoMatched")]
     pub auto_matched: bool,
-    #[graphql(name = "AlreadyMatched")]
     pub already_matched: bool,
-    #[graphql(name = "MatchedType")]
     pub matched_type: Option<String>,
-    #[graphql(name = "MatchedId")]
     pub matched_id: Option<String>,
-    #[graphql(name = "Confidence")]
     pub confidence: f64,
-    #[graphql(name = "Reason")]
     pub reason: Option<String>,
-    #[graphql(name = "Candidates")]
     pub candidates: Vec<MatchCandidateGql>,
 }
 
 #[derive(Debug, Clone, SimpleObject)]
 #[graphql(name = "UnmatchMediaFileResult")]
+#[graphql(rename_fields = "camelCase")]
 pub struct UnmatchMediaFileResult {
-    #[graphql(name = "Success")]
     pub success: bool,
-    #[graphql(name = "Reason")]
     pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, SimpleObject)]
 #[graphql(name = "OrganizeMediaFileResult")]
+#[graphql(rename_fields = "camelCase")]
 pub struct OrganizeMediaFileResult {
-    #[graphql(name = "Success")]
     pub success: bool,
-    #[graphql(name = "OldPath")]
     pub old_path: Option<String>,
-    #[graphql(name = "NewPath")]
     pub new_path: Option<String>,
-    #[graphql(name = "Reason")]
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, InputObject)]
+#[graphql(name = "TestOllamaConnectionInput")]
+#[graphql(rename_fields = "camelCase")]
+pub struct TestOllamaConnectionInput {
+    pub ollama_url: Option<String>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "OllamaConnectionResult")]
+#[graphql(rename_fields = "camelCase")]
+pub struct OllamaConnectionResult {
+    pub success: bool,
+    pub models: Vec<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, InputObject)]
+#[graphql(name = "TestLlmParserInput")]
+#[graphql(rename_fields = "camelCase")]
+pub struct TestLlmParserInput {
+    pub filename: String,
+    pub library_type: String,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "LlmParsedHintResult")]
+#[graphql(rename_fields = "camelCase")]
+pub struct LlmParsedHintResult {
+    pub title: Option<String>,
+    pub year: Option<i32>,
+    pub show_title: Option<String>,
+    pub season: Option<i32>,
+    pub episode: Option<i32>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub track: Option<String>,
+    pub author: Option<String>,
+    pub book: Option<String>,
+    pub chapter: Option<String>,
+    pub confidence: Option<f64>,
+    pub match_source: Option<String>,
+}
+
+impl LlmParsedHintResult {
+    fn from_hint(hint: OllamaParsedHint, library_type: &str) -> Self {
+        let match_source = hint.to_match_source(library_type);
+        Self {
+            title: hint.title,
+            year: hint.year,
+            show_title: hint.show_name,
+            season: hint.season,
+            episode: hint.episode,
+            artist: hint.artist_name,
+            album: hint.album_name,
+            track: hint.track_title,
+            author: hint.author_name,
+            book: hint.audiobook_title,
+            chapter: hint.chapter_title,
+            confidence: hint.confidence,
+            match_source,
+        }
+    }
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "LlmParserTestResult")]
+#[graphql(rename_fields = "camelCase")]
+pub struct LlmParserTestResult {
+    pub success: bool,
+    pub regex_result: Option<String>,
+    pub llm_result: Option<LlmParsedHintResult>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaTagsResponse {
+    #[serde(default)]
+    models: Vec<OllamaModelTag>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaModelTag {
+    name: String,
 }
 
 #[derive(Default)]
@@ -162,13 +254,53 @@ pub struct LibraryScanMutations;
 
 #[Object]
 impl LibraryScanMutations {
-    #[graphql(name = "ScanLibrary")]
+    #[graphql(name = "testTmdbConnection")]
+    async fn test_tmdb_connection(
+        &self,
+        ctx: &Context<'_>,
+        input: TestTmdbConnectionInput,
+    ) -> async_graphql::Result<TestTmdbConnectionResult> {
+        ctx.require_admin()?;
+        let key = input.api_key.trim();
+        if key.is_empty() {
+            return Ok(TestTmdbConnectionResult {
+                success: false,
+                message: "Enter a TMDB API key before testing.".to_string(),
+                correlation_id: None,
+            });
+        }
+        let client = crate::services::metadata::tmdb::TmdbClient::new(key.to_string());
+        match client.search_movies("The Matrix", Some(1999)).await {
+            Ok(_) => Ok(TestTmdbConnectionResult {
+                success: true,
+                message: "TMDB accepted the key and responded successfully.".to_string(),
+                correlation_id: None,
+            }),
+            Err(error) => {
+                let correlation_id = uuid::Uuid::new_v4().to_string();
+                tracing::warn!(
+                    correlation_id,
+                    error = %error,
+                    "TMDB connection test failed"
+                );
+                Ok(TestTmdbConnectionResult {
+                    success: false,
+                    message:
+                        "TMDB did not accept the key or could not be reached. Check the key and network."
+                            .to_string(),
+                    correlation_id: Some(correlation_id),
+                })
+            }
+        }
+    }
+
+    #[graphql(name = "scanLibrary")]
     async fn scan_library(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Id")] id: String,
+        #[graphql(name = "id")] id: String,
     ) -> async_graphql::Result<ScanLibraryResult> {
-        let _user = ctx.librarian_auth_user()?;
+        ctx.require_admin()?;
         let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
         let scan_service = services
             .get_library_scan()
@@ -176,35 +308,43 @@ impl LibraryScanMutations {
             .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
 
         match scan_service.queue_scan(&id).await {
-            Ok(started) => Ok(ScanLibraryResult {
+            Ok(outcome) => Ok(ScanLibraryResult {
                 success: true,
-                status: if started {
+                status: if outcome.queued {
                     "queued".to_string()
                 } else {
                     "already_scanning".to_string()
                 },
-                message: Some(if started {
+                message: Some(if outcome.queued {
                     "Library scan queued".to_string()
                 } else {
                     "Library is already scanning".to_string()
                 }),
+                scan_run_id: outcome.scan_run_id,
             }),
-            Err(e) => Ok(ScanLibraryResult {
-                success: false,
-                status: "error".to_string(),
-                message: Some(e.to_string()),
-            }),
+            Err(error) => {
+                tracing::error!(library_id = %id, error = %error, "Failed to queue library scan");
+                Ok(ScanLibraryResult {
+                    success: false,
+                    status: "error".to_string(),
+                    message: Some(
+                        "The library scan could not be queued. Review server health and retry."
+                            .to_string(),
+                    ),
+                    scan_run_id: None,
+                })
+            }
         }
     }
 
-    #[graphql(name = "AnalyzeMediaFile")]
+    #[graphql(name = "analyzeMediaFile")]
     async fn analyze_media_file(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "MediaFileId")] media_file_id: String,
-        #[graphql(name = "Path")] path: String,
+        #[graphql(name = "mediaFileId")] media_file_id: String,
+        #[graphql(name = "path")] path: String,
     ) -> async_graphql::Result<AnalyzeMediaFileResult> {
-        let _user = ctx.librarian_auth_user()?;
+        ctx.require_admin()?;
         let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
         let scan_service = services
             .get_library_scan()
@@ -229,13 +369,122 @@ impl LibraryScanMutations {
         }
     }
 
-    #[graphql(name = "MatchMediaFile")]
+    #[graphql(name = "retryScanIssue")]
+    async fn retry_scan_issue(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "issueId")] issue_id: String,
+    ) -> async_graphql::Result<ScanIssueActionResult> {
+        ctx.require_admin()?;
+        let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
+        let scan_service = services
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+        match scan_service.retry_analysis_issue(&issue_id).await {
+            Ok(queued) => Ok(ScanIssueActionResult {
+                success: true,
+                queued,
+                message: if queued {
+                    "Analysis retry queued.".to_string()
+                } else {
+                    "Analysis is already queued or the file is already analyzed.".to_string()
+                },
+            }),
+            Err(error) => {
+                tracing::warn!(
+                    scan_issue_id = %issue_id,
+                    error = %error,
+                    "Failed to retry scan issue"
+                );
+                Ok(ScanIssueActionResult {
+                    success: false,
+                    queued: false,
+                    message: "The analysis retry could not be queued. Review server health and the issue details.".to_string(),
+                })
+            }
+        }
+    }
+
+    #[graphql(name = "resolveScanIssue")]
+    async fn resolve_scan_issue(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "issueId")] issue_id: String,
+        resolution: String,
+    ) -> async_graphql::Result<ScanIssueActionResult> {
+        ctx.require_admin()?;
+        let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
+        let scan_service = services
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+        match scan_service
+            .resolve_scan_issue(&issue_id, &resolution)
+            .await
+        {
+            Ok(()) => Ok(ScanIssueActionResult {
+                success: true,
+                queued: false,
+                message: "Scan issue marked resolved.".to_string(),
+            }),
+            Err(error) => {
+                tracing::warn!(
+                    scan_issue_id = %issue_id,
+                    error = %error,
+                    "Failed to resolve scan issue"
+                );
+                Ok(ScanIssueActionResult {
+                    success: false,
+                    queued: false,
+                    message: "The scan issue could not be resolved.".to_string(),
+                })
+            }
+        }
+    }
+
+    #[graphql(name = "trashDuplicateScanIssue")]
+    async fn trash_duplicate_scan_issue(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "issueId")] issue_id: String,
+    ) -> async_graphql::Result<TrashDuplicateResult> {
+        ctx.require_admin()?;
+        let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
+        let scan_service = services
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+        match scan_service.trash_duplicate_issue(&issue_id).await {
+            Ok(result) => Ok(TrashDuplicateResult {
+                success: true,
+                message: "The duplicate was moved to recoverable library trash.".to_string(),
+                old_path: Some(result.old_path),
+                trash_path: Some(result.trash_path),
+            }),
+            Err(error) => {
+                tracing::warn!(
+                    scan_issue_id = %issue_id,
+                    error = %error,
+                    "Failed to move duplicate scan issue to trash"
+                );
+                Ok(TrashDuplicateResult {
+                    success: false,
+                    message: "The duplicate was not changed. Rescan it and review server logs before retrying.".to_string(),
+                    old_path: None,
+                    trash_path: None,
+                })
+            }
+        }
+    }
+
+    #[graphql(name = "matchMediaFile")]
     async fn match_media_file(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Input")] input: MatchMediaFileInput,
+        #[graphql(name = "input")] input: MatchMediaFileInput,
     ) -> async_graphql::Result<MatchMediaFileResult> {
-        let _user = ctx.librarian_auth_user()?;
+        let auth_user = ctx.require_member()?.clone();
         let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
         let scan_service = services
             .get_library_scan()
@@ -258,6 +507,7 @@ impl LibraryScanMutations {
                 track_id: input.track_id,
                 chapter_id: input.chapter_id,
                 methods,
+                requested_by_user_id: Some(auth_user.user_id),
                 force: input.force.unwrap_or(false),
                 auto_match: input.auto_match.unwrap_or(true),
                 candidate_limit: input.candidate_limit.unwrap_or(10).max(0) as usize,
@@ -303,13 +553,13 @@ impl LibraryScanMutations {
         }
     }
 
-    #[graphql(name = "OrganizeMediaFile")]
+    #[graphql(name = "organizeMediaFile")]
     async fn organize_media_file(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Input")] input: OrganizeMediaFileInput,
+        #[graphql(name = "input")] input: OrganizeMediaFileInput,
     ) -> async_graphql::Result<OrganizeMediaFileResult> {
-        let _user = ctx.librarian_auth_user()?;
+        ctx.require_member()?;
         let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
         let scan_service = services
             .get_library_scan()
@@ -332,13 +582,13 @@ impl LibraryScanMutations {
         }
     }
 
-    #[graphql(name = "UnmatchMediaFile")]
+    #[graphql(name = "unmatchMediaFile")]
     async fn unmatch_media_file(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "MediaFileId")] media_file_id: String,
+        #[graphql(name = "mediaFileId")] media_file_id: String,
     ) -> async_graphql::Result<UnmatchMediaFileResult> {
-        let _user = ctx.librarian_auth_user()?;
+        ctx.require_member()?;
         let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
         let scan_service = services
             .get_library_scan()
@@ -353,6 +603,100 @@ impl LibraryScanMutations {
             Err(e) => Ok(UnmatchMediaFileResult {
                 success: false,
                 reason: Some(e.to_string()),
+            }),
+        }
+    }
+
+    #[graphql(name = "testOllamaConnection")]
+    async fn test_ollama_connection(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "input")] input: TestOllamaConnectionInput,
+    ) -> async_graphql::Result<OllamaConnectionResult> {
+        ctx.require_admin()?;
+        let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
+        let scan_service = services
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+
+        let url = match input.ollama_url {
+            Some(url) if !url.trim().is_empty() => url,
+            _ => scan_service
+                .load_ollama_settings("movies")
+                .await
+                .map(|settings| settings.ollama_url)
+                .unwrap_or_else(|_| "http://localhost:11434".to_string()),
+        };
+        let endpoint = format!("{}/api/tags", url.trim_end_matches('/'));
+
+        let client = crate::services::http_client::outbound_client(
+            crate::services::http_client::OutboundHttpProfile::LocalService,
+        )
+        .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+
+        match client.get(endpoint).send().await {
+            Ok(response) if response.status().is_success() => {
+                match response.json::<OllamaTagsResponse>().await {
+                    Ok(tags) => Ok(OllamaConnectionResult {
+                        success: true,
+                        models: tags.models.into_iter().map(|model| model.name).collect(),
+                        error: None,
+                    }),
+                    Err(error) => Ok(OllamaConnectionResult {
+                        success: false,
+                        models: Vec::new(),
+                        error: Some(format!("Failed to parse Ollama model list: {error}")),
+                    }),
+                }
+            }
+            Ok(response) => Ok(OllamaConnectionResult {
+                success: false,
+                models: Vec::new(),
+                error: Some(format!("Ollama returned HTTP {}", response.status())),
+            }),
+            Err(error) => Ok(OllamaConnectionResult {
+                success: false,
+                models: Vec::new(),
+                error: Some(error.to_string()),
+            }),
+        }
+    }
+
+    #[graphql(name = "testLlmParser")]
+    async fn test_llm_parser(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "input")] input: TestLlmParserInput,
+    ) -> async_graphql::Result<LlmParserTestResult> {
+        ctx.require_admin()?;
+        let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
+        let scan_service = services
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+
+        let regex_result =
+            crate::services::library_scan::LibraryScanService::deterministic_parser_preview(
+                &input.library_type,
+                &input.filename,
+            );
+
+        match scan_service
+            .test_ollama_parser(&input.library_type, &input.filename)
+            .await
+        {
+            Ok(hint) => Ok(LlmParserTestResult {
+                success: true,
+                regex_result,
+                llm_result: Some(LlmParsedHintResult::from_hint(hint, &input.library_type)),
+                error: None,
+            }),
+            Err(error) => Ok(LlmParserTestResult {
+                success: false,
+                regex_result,
+                llm_result: None,
+                error: Some(error.to_string()),
             }),
         }
     }

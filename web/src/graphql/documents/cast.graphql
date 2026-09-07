@@ -1,0 +1,131 @@
+mutation DiscoverCastDevices {
+  discoverCastDevices {
+    id
+    name
+    address
+    port
+    model
+    deviceType
+    isFavorite
+    isManual
+    isConnected
+    enabled
+    playbackSupported
+    discoveryOrigin
+    lastSeenAt
+  }
+}
+
+mutation AddCastDevice($input: LegacyAddCastDeviceInput!) {
+  addCastDevice(input: $input) {
+    success
+    error
+    device {
+      id
+      name
+      address
+      port
+    }
+  }
+}
+
+mutation RemoveCastDevice($id: String!) {
+  removeCastDevice(id: $id) {
+    success
+    error
+  }
+}
+
+mutation CastMedia($input: CastMediaInput!) {
+  castMedia(input: $input) {
+    success
+    error
+    session {
+      ...LegacyCastSessionFields
+    }
+  }
+}
+
+mutation CastPlay($sessionId: String!) {
+  castPlay(sessionId: $sessionId) {
+    success
+    error
+    session {
+      ...LegacyCastSessionFields
+    }
+  }
+}
+
+mutation CastPause($sessionId: String!) {
+  castPause(sessionId: $sessionId) {
+    success
+    error
+    session {
+      ...LegacyCastSessionFields
+    }
+  }
+}
+
+mutation CastSeek($sessionId: String!, $position: Float!) {
+  castSeek(sessionId: $sessionId, position: $position) {
+    success
+    error
+    session {
+      ...LegacyCastSessionFields
+    }
+  }
+}
+
+mutation CastSetVolume($sessionId: String!, $volume: Float!) {
+  castSetVolume(sessionId: $sessionId, volume: $volume) {
+    success
+    error
+    session {
+      ...LegacyCastSessionFields
+    }
+  }
+}
+
+mutation CastSetMuted($sessionId: String!, $muted: Boolean!) {
+  castSetMuted(sessionId: $sessionId, muted: $muted) {
+    success
+    error
+    session {
+      ...LegacyCastSessionFields
+    }
+  }
+}
+
+mutation CastStop($sessionId: String!) {
+  castStop(sessionId: $sessionId) {
+    success
+    error
+  }
+}
+
+fragment LegacyCastSessionFields on LegacyCastSession {
+  id
+  deviceId
+  deviceName
+  mediaFileId
+  episodeId
+  playerState
+  currentTime
+  duration
+  volume
+  isMuted
+  startedAt
+  lastError
+  playbackDecision
+  playbackReason
+}
+
+query ActiveCastSessions {
+  castSessions(where: { endedAt: { isNull: true } }, orderBy: [{ startedAt: DESC }], page: { limit: 10, offset: 0 }) {
+    edges {
+      node {
+        ...CastSessionFields
+      }
+    }
+  }
+}

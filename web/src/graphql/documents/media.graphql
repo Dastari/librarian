@@ -1,0 +1,324 @@
+# Movie detail with the library and file relation, plus cast credits.
+query MovieDetail($id: String!) {
+  movie(id: $id) {
+    ...MovieFields
+    library {
+      id
+      name
+      libraryType
+    }
+    mediaFile {
+      ...MediaFileFields
+    }
+  }
+}
+
+query MovieCastCredits($movieId: String!) {
+  movieCastCredits(where: { movieId: { eq: $movieId } }, orderBy: [{ castOrder: ASC }], page: { limit: 30, offset: 0 }) {
+    edges {
+      node {
+        id
+        characterName
+        castOrder
+        person {
+          id
+          name
+          profileUrl
+          tmdbPersonId
+        }
+      }
+    }
+  }
+}
+
+query MediaFileStreams($mediaFileId: String!) {
+  videoStreams(where: { mediaFileId: { eq: $mediaFileId } }, orderBy: [{ streamIndex: ASC }], page: { limit: 20, offset: 0 }) {
+    edges {
+      node {
+        ...VideoStreamFields
+      }
+    }
+  }
+  audioStreams(where: { mediaFileId: { eq: $mediaFileId } }, orderBy: [{ streamIndex: ASC }], page: { limit: 20, offset: 0 }) {
+    edges {
+      node {
+        ...AudioStreamFields
+      }
+    }
+  }
+  subtitles(where: { mediaFileId: { eq: $mediaFileId } }, orderBy: [{ createdAt: ASC }], page: { limit: 50, offset: 0 }) {
+    edges {
+      node {
+        ...SubtitleFields
+      }
+    }
+  }
+  mediaChapters(where: { mediaFileId: { eq: $mediaFileId } }, orderBy: [{ chapterIndex: ASC }], page: { limit: 100, offset: 0 }) {
+    edges {
+      node {
+        ...MediaChapterFields
+      }
+    }
+  }
+}
+
+query ShowDetail($id: String!) {
+  show(id: $id) {
+    ...ShowFields
+    library {
+      id
+      name
+      libraryType
+    }
+  }
+}
+
+query ShowEpisodes($showId: String!) {
+  episodes(where: { showId: { eq: $showId } }, orderBy: [{ season: ASC }, { episode: ASC }], page: { limit: 100, offset: 0 }) {
+    edges {
+      node {
+        ...EpisodeFields
+        mediaFile {
+          id
+          duration
+          resolution
+          videoCodec
+          audioCodec
+          size
+          qualityStatus
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+query ShowEpisodesPage($showId: String!, $offset: Int!) {
+  episodes(where: { showId: { eq: $showId } }, orderBy: [{ season: ASC }, { episode: ASC }], page: { limit: 100, offset: $offset }) {
+    edges {
+      node {
+        ...EpisodeFields
+        mediaFile {
+          id
+          duration
+          resolution
+          videoCodec
+          audioCodec
+          size
+          qualityStatus
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+query EpisodeDetail($id: String!) {
+  episode(id: $id) {
+    ...EpisodeFields
+    show {
+      ...ShowFields
+    }
+    mediaFile {
+      ...MediaFileFields
+    }
+  }
+}
+
+query AlbumDetail($id: String!) {
+  album(id: $id) {
+    ...AlbumFields
+    library {
+      id
+      name
+      libraryType
+    }
+    tracks(orderBy: { trackNumber: ASC }, page: { limit: 100, offset: 0 }) {
+      edges {
+        node {
+          ...TrackFields
+          mediaFile {
+            id
+            duration
+            audioCodec
+            bitrate
+            size
+          }
+        }
+      }
+      pageInfo {
+        totalCount
+      }
+    }
+  }
+}
+
+query ArtistDetail($id: String!) {
+  artist(id: $id) {
+    ...ArtistFields
+    library {
+      id
+      name
+      libraryType
+    }
+    albums(orderBy: { year: DESC }, page: { limit: 100, offset: 0 }) {
+      edges {
+        node {
+          ...AlbumFields
+        }
+      }
+    }
+  }
+}
+
+query AudiobookDetail($id: String!) {
+  audiobook(id: $id) {
+    ...AudiobookFields
+    library {
+      id
+      name
+      libraryType
+    }
+    chapters(orderBy: { chapterNumber: ASC }, page: { limit: 100, offset: 0 }) {
+      edges {
+        node {
+          ...ChapterFields
+          mediaFile {
+            id
+            duration
+            audioCodec
+            size
+          }
+        }
+      }
+      pageInfo {
+        totalCount
+      }
+    }
+  }
+}
+
+query CollectionDetail($id: String!) {
+  collection(id: $id) {
+    ...CollectionFields
+    library {
+      id
+      name
+      libraryType
+    }
+    movies(orderBy: { releaseDate: ASC }, page: { limit: 100, offset: 0 }) {
+      edges {
+        node {
+          ...MovieFields
+        }
+      }
+    }
+  }
+}
+
+query MovieCollectionDetails($collectionId: Int!, $libraryId: String!) {
+  movieCollectionDetails(collectionId: $collectionId, libraryId: $libraryId) {
+    collectionId
+    name
+    overview
+    posterUrl
+    backdropUrl
+    movies {
+      tmdbId
+      title
+      year
+      posterUrl
+      libraryMovieId
+      mediaFileId
+      fileSizeBytes
+      resolution
+      videoCodec
+      audioCodec
+      audioChannels
+      wanted
+    }
+  }
+}
+
+mutation RefreshMovie($id: String!) {
+  refreshMovie(id: $id) {
+    success
+    error
+    movie {
+      ...MovieFields
+    }
+  }
+}
+
+mutation RefreshShow($id: String!) {
+  refreshShow(id: $id) {
+    success
+    error
+    show {
+      ...ShowFields
+    }
+  }
+}
+
+mutation RecacheMovieArtwork($movieId: String!) {
+  recacheMovieArtwork(movieId: $movieId)
+}
+
+mutation EvaluateMediaFileQuality($mediaFileId: String!) {
+  evaluateMediaFileQuality(mediaFileId: $mediaFileId) {
+    success
+    qualityStatus
+    reasons
+    error
+  }
+}
+
+mutation MatchMediaFile($input: MatchMediaFileInput!) {
+  matchMediaFile(input: $input) {
+    success
+    autoMatched
+    alreadyMatched
+    matchedType
+    matchedId
+    confidence
+    reason
+    candidates {
+      targetType
+      targetId
+      targetName
+      score
+      reason
+      wanted
+    }
+  }
+}
+
+mutation UnmatchMediaFile($mediaFileId: String!) {
+  unmatchMediaFile(mediaFileId: $mediaFileId) {
+    success
+    reason
+  }
+}
+
+mutation OrganizeMediaFile($input: OrganizeMediaFileInput!) {
+  organizeMediaFile(input: $input) {
+    success
+    oldPath
+    newPath
+    reason
+  }
+}
+
+mutation AnalyzeMediaFile($mediaFileId: String!, $path: String!) {
+  analyzeMediaFile(mediaFileId: $mediaFileId, path: $path) {
+    success
+    queued
+    message
+  }
+}

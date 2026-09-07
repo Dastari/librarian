@@ -1,11 +1,7 @@
-use crate::graphql::entities::*;
-use async_graphql::SimpleObject;
-use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use graphql_orm::{GraphQLEntity, GraphQLOperations};
 use serde::{Deserialize, Serialize};
 
-#[derive(
-    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
-)]
+#[derive(GraphQLEntity, GraphQLOperations, Clone, Debug, Serialize, Deserialize)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
@@ -14,59 +10,47 @@ use serde::{Deserialize, Serialize};
     default_sort = "created_at"
 )]
 pub struct ArtworkCache {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "EntityType")]
+    #[graphql(name = "entityType")]
     #[filterable(type = "string")]
     #[sortable]
     pub entity_type: String,
 
-    #[graphql(name = "EntityId")]
+    #[graphql(name = "entityId")]
     #[filterable(type = "string")]
     pub entity_id: String,
 
-    #[graphql(name = "ArtworkType")]
+    #[graphql(name = "artworkType")]
     #[filterable(type = "string")]
     #[sortable]
     pub artwork_type: String,
 
-    #[graphql(name = "ContentHash")]
+    #[graphql(name = "storageObjectId")]
+    #[graphql_orm(default = "''")]
     #[filterable(type = "string")]
-    pub content_hash: String,
+    pub storage_object_id: String,
 
-    #[graphql(name = "MimeType")]
-    #[filterable(type = "string")]
-    pub mime_type: String,
-
-    #[graphql(skip)]
-    #[serde(skip)]
-    pub data: Vec<u8>,
-
-    #[graphql(name = "SizeBytes")]
-    #[filterable(type = "number")]
-    #[sortable]
-    pub size_bytes: i64,
-
-    #[graphql(name = "SourceUrl")]
+    #[graphql(name = "sourceUrl")]
     pub source_url: Option<String>,
 
-    #[graphql(name = "Width")]
+    #[graphql(name = "width")]
     #[filterable(type = "number")]
     pub width: Option<i32>,
 
-    #[graphql(name = "Height")]
+    #[graphql(name = "height")]
     #[filterable(type = "number")]
     pub height: Option<i32>,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,

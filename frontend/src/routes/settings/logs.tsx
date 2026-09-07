@@ -70,30 +70,30 @@ interface LogEntry {
 }
 
 function appLogNodeToEntry(node: {
-  Id: string;
-  Timestamp: string;
-  Level: string;
-  Target: string;
-  Message: string;
-  Fields?: string | null;
-  SpanName?: string | null;
+  id: string;
+  timestamp: string;
+  level: string;
+  target: string;
+  message: string;
+  fields?: string | null;
+  spanName?: string | null;
 }): LogEntry {
   let fields: Record<string, unknown> | null = null;
-  if (node.Fields) {
+  if (node.fields) {
     try {
-      fields = JSON.parse(node.Fields) as Record<string, unknown>;
+      fields = JSON.parse(node.fields) as Record<string, unknown>;
     } catch {
       fields = null;
     }
   }
   return {
-    id: node.Id,
-    timestamp: node.Timestamp,
-    level: node.Level as LogLevel,
-    target: node.Target,
-    message: node.Message,
+    id: node.id,
+    timestamp: node.timestamp,
+    level: node.level as LogLevel,
+    target: node.target,
+    message: node.message,
     fields,
-    spanName: node.SpanName ?? null,
+    spanName: node.spanName ?? null,
   };
 }
 
@@ -240,7 +240,7 @@ function LogsSettingsPage() {
 
       const currentSource = selectedSourceRef.current;
       const where: AppLogWhereInput | undefined = currentSource
-        ? { Target: { eq: currentSource } }
+        ? { target: { eq: currentSource } }
         : undefined;
 
       const currentSortColumn = sortColumnRef.current;
@@ -249,7 +249,7 @@ function LogsSettingsPage() {
         currentSortColumn === "timestamp"
           ? [
               {
-                Timestamp:
+                timestamp:
                   currentOrderDirection === "desc"
                     ? OrderDirection.DESC
                     : OrderDirection.ASC,
@@ -258,7 +258,7 @@ function LogsSettingsPage() {
           : currentSortColumn === "level"
             ? [
                 {
-                  Level:
+                  level:
                     currentOrderDirection === "desc"
                       ? OrderDirection.DESC
                       : OrderDirection.ASC,
@@ -266,7 +266,7 @@ function LogsSettingsPage() {
               ]
             : [
                 {
-                  Target:
+                  target:
                     currentOrderDirection === "desc"
                       ? OrderDirection.DESC
                       : OrderDirection.ASC,
@@ -276,30 +276,30 @@ function LogsSettingsPage() {
       const result = await apolloClient.query({
         query: AppLogsDocument,
         variables: {
-          Where: where,
-          OrderBy: orderBy,
-          Page: { limit: pageSize, offset: offsetRef.current },
+          where: where,
+          orderBy: orderBy,
+          page: { limit: pageSize, offset: offsetRef.current },
         },
         fetchPolicy: "network-only",
         errorPolicy: "all",
       });
 
-      if (result.data?.AppLogs) {
-        const connection = result.data.AppLogs;
-        const nodes = connection.Edges.map((e) => e.Node);
+      if (result.data?.appLogs) {
+        const connection = result.data.appLogs;
+        const nodes = connection.edges.map((e) => e.node);
         const newEntries = nodes.map(appLogNodeToEntry);
         if (reset) {
           setLogs(newEntries);
           setSources((prev) => {
             const merged = new Set(prev);
-            nodes.forEach((n) => merged.add(n.Target));
+            nodes.forEach((n) => merged.add(n.target));
             return Array.from(merged).sort();
           });
         } else {
           setLogs((prev) => [...prev, ...newEntries]);
         }
-        setTotalCount(connection.PageInfo.TotalCount ?? 0);
-        setHasMore(connection.PageInfo.HasNextPage);
+        setTotalCount(connection.pageInfo.totalCount ?? 0);
+        setHasMore(connection.pageInfo.hasNextPage);
         offsetRef.current += newEntries.length;
       }
       if (result.error) {
@@ -359,17 +359,17 @@ function LogsSettingsPage() {
       {},
     ).subscribe({
       next: (result) => {
-        const event = result.data?.AppLogChanged;
-        if (!event || event.Action !== ChangeAction.CREATED || !event.AppLog)
+        const event = result.data?.appLogChanged;
+        if (!event || event.action !== ChangeAction.CREATED || !event.appLog)
           return;
 
-        const node = event.AppLog;
+        const node = event.appLog;
 
         // Filter by source if selected
         if (
           selectedSource &&
-          node.Target !== selectedSource &&
-          !node.Target.includes(selectedSource)
+          node.target !== selectedSource &&
+          !node.target.includes(selectedSource)
         ) {
           return;
         }
@@ -380,7 +380,7 @@ function LogsSettingsPage() {
         setLiveEventCount((prev) => prev + 1);
         setTotalCount((prev) => prev + 1);
         setSources((prev) =>
-          prev.includes(node.Target) ? prev : [...prev, node.Target].sort(),
+          prev.includes(node.target) ? prev : [...prev, node.target].sort(),
         );
       },
     });
@@ -400,14 +400,14 @@ function LogsSettingsPage() {
         try {
           const result = await deleteAppLogs({
             variables: {
-              Where: { Timestamp: { gte: "1970-01-01T00:00:00.000Z" } },
+              where: { timestamp: { gte: "1970-01-01T00:00:00.000Z" } },
             },
           });
-          const payload = result.data?.DeleteAppLogs;
+          const payload = result.data?.deleteAppLogs;
           if (payload?.success) {
             addToast({
               title: "Logs Cleared",
-              description: `Deleted ${payload.DeletedCount} logs`,
+              description: `Deleted ${payload.deletedCount} logs`,
               color: "success",
             });
             setLogs([]);
@@ -445,14 +445,14 @@ function LogsSettingsPage() {
     try {
       const result = await deleteAppLogs({
         variables: {
-          Where: { Timestamp: { lt: isoBefore } },
+          where: { timestamp: { lt: isoBefore } },
         },
       });
-      const payload = result.data?.DeleteAppLogs;
+      const payload = result.data?.deleteAppLogs;
       if (payload?.success) {
         addToast({
           title: "Old Logs Cleared",
-          description: `Deleted ${payload.DeletedCount} logs older than ${days} days`,
+          description: `Deleted ${payload.deletedCount} logs older than ${days} days`,
           color: "success",
         });
         fetchLogsWithCurrentSource(true);
@@ -551,7 +551,8 @@ function LogsSettingsPage() {
       {
         key: "message",
         label: "MESSAGE",
-        // No width specified - will grow to fill remaining space
+        // A minimum only keeps this as the flexible column in fill layout.
+        width: { minWidth: 320 },
         sortable: false, // Message is not sortable
         skeleton: () => <Skeleton className="w-full h-4 rounded" />,
         render: (log) => (
@@ -790,7 +791,7 @@ function LogsSettingsPage() {
         skeletonRowCount={15}
         selectionMode="multiple"
         searchFn={searchFn}
-        searchPlaceholder="Search logs..."
+        toolbarQueryPlaceholder="Search logs..."
         rowActions={rowActions}
         isCompact
         fillHeight={true}

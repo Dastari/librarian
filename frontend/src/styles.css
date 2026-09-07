@@ -6,6 +6,89 @@
 @custom-variant dark (&:is(.dark *));
 @custom-variant light (&:is(.light *));
 
+/*
+ * data-table-pro/heroui is built against the newer HeroUI semantic CSS tokens.
+ * This app still uses the existing HeroUI v2 theme plugin, so provide the
+ * adapter tokens here instead of falling back to Tailwind/currentColor values.
+ */
+:root,
+.light {
+  --surface: #ffffff;
+  --surface-foreground: #0f172a;
+  --surface-secondary: #f8fafc;
+  --overlay: #ffffff;
+  --overlay-foreground: #0f172a;
+  --field-background: #ffffff;
+  --field-foreground: #0f172a;
+  --field-placeholder: #64748b;
+  --field-border: #cbd5e1;
+  --separator: #cbd5e1;
+  --border: #cbd5e1;
+  --muted: #64748b;
+  --accent: #2563eb;
+  --accent-foreground: #ffffff;
+  --accent-soft: rgb(37 99 235 / 0.12);
+  --default: #f1f5f9;
+  --default-foreground: #0f172a;
+  --danger: #dc2626;
+  --danger-soft: rgb(220 38 38 / 0.12);
+  --focus: #2563eb;
+  --surface-shadow: 0 1px 2px rgb(15 23 42 / 0.08);
+  --overlay-shadow: 0 16px 32px rgb(15 23 42 / 0.16);
+  --field-shadow: none;
+
+  --color-surface: var(--surface);
+  --color-surface-foreground: var(--surface-foreground);
+  --color-surface-secondary: var(--surface-secondary);
+  --color-overlay: var(--overlay);
+  --color-overlay-foreground: var(--overlay-foreground);
+  --color-field: var(--field-background);
+  --color-field-foreground: var(--field-foreground);
+  --color-field-placeholder: var(--field-placeholder);
+  --color-field-border: var(--field-border);
+  --color-separator: var(--separator);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-soft: var(--accent-soft);
+  --color-default: var(--default);
+  --color-default-foreground: var(--default-foreground);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-focus: var(--focus);
+  --shadow-surface: var(--surface-shadow);
+  --shadow-overlay: var(--overlay-shadow);
+  --shadow-field: var(--field-shadow);
+}
+
+html.dark,
+.dark {
+  --surface: #0f172a;
+  --surface-foreground: #f8fafc;
+  --surface-secondary: #0f172a;
+  --overlay: #0f172a;
+  --overlay-foreground: #f8fafc;
+  --field-background: #020617;
+  --field-foreground: #f8fafc;
+  --field-placeholder: #94a3b8;
+  --field-border: #0f172a;
+  --separator: #334155;
+  --border: #334155;
+  --muted: #94a3b8;
+  --accent: #3b82f6;
+  --accent-foreground: #ffffff;
+  --accent-soft: rgb(59 130 246 / 0.16);
+  --default: #1e293b;
+  --default-foreground: #f8fafc;
+  --danger: #f87171;
+  --danger-soft: rgb(248 113 113 / 0.14);
+  --focus: #3b82f6;
+  --surface-shadow: none;
+  --overlay-shadow: 0 18px 36px rgb(0 0 0 / 0.34);
+  --field-shadow: none;
+}
+
 .data-table-container-query {
   container-type: inline-size;
   container-name: data-table;
@@ -263,4 +346,186 @@ html {
 .checkbox-selection-only tr td:not(:first-child) select {
   pointer-events: auto;
   cursor: pointer;
+}
+
+/*
+ * HeroUI v2 emits --heroui-divider as foreground in the generated dark theme
+ * unless it is overridden late. data-table-pro/heroui uses border-separator;
+ * keep the generated token stable and map table borders below to field borders.
+ */
+html.dark,
+html.dark body,
+.dark,
+[data-theme="dark"] {
+  --heroui-divider: 215.29 25% 26.67% !important;
+  --separator: var(--field-border);
+  --border: var(--field-border);
+  --color-separator: var(--color-field-border);
+  --color-border: var(--color-field-border);
+}
+
+html.light,
+html.light body,
+.light,
+[data-theme="light"] {
+  --heroui-divider: 213 26.8% 83.9% !important;
+  --separator: var(--field-border);
+  --border: var(--field-border);
+  --color-separator: var(--color-field-border);
+  --color-border: var(--color-field-border);
+}
+
+/*
+ * Tailwind is not currently emitting data-table-pro's adapter-only semantic
+ * utilities from node_modules. Define the tokens the HeroUI adapter applies so
+ * those classes do not fall back to currentColor.
+ */
+.dtp-heroui [class*="border-separator"],
+.dtp-heroui thead tr,
+.dtp-heroui tbody tr,
+.dtp-heroui tfoot tr {
+  border-color: var(--color-field-border) !important;
+}
+
+.dtp-heroui [class~="border-field-border"] {
+  border-color: var(--color-field-border) !important;
+}
+
+.dtp-heroui [class~="bg-surface"] {
+  background-color: var(--color-surface) !important;
+}
+
+.dtp-heroui [class~="bg-surface/95"] {
+  background-color: color-mix(in srgb, var(--color-surface) 95%, transparent) !important;
+}
+
+.dtp-heroui [class~="bg-surface-secondary"] {
+  background-color: var(--color-surface-secondary) !important;
+}
+
+.dtp-heroui [class~="bg-overlay"] {
+  background-color: var(--color-overlay) !important;
+}
+
+.dtp-heroui [class~="bg-field"] {
+  background-color: var(--color-field) !important;
+}
+
+.dtp-heroui [class~="bg-default"] {
+  background-color: var(--color-default) !important;
+}
+
+.dtp-heroui [class~="bg-muted"],
+.dtp-heroui [class~="bg-muted/50"] {
+  background-color: color-mix(in srgb, var(--color-muted) 16%, transparent) !important;
+}
+
+.dtp-heroui [class~="bg-separator"],
+.dtp-heroui [class*="after:bg-separator"]::after {
+  background-color: var(--color-field-border) !important;
+}
+
+.dtp-heroui [class~="bg-accent"],
+.dtp-heroui [class*="hover:after:bg-accent"]:hover::after {
+  background-color: var(--color-accent) !important;
+}
+
+.dtp-heroui [class~="bg-accent-soft"] {
+  background-color: var(--color-accent-soft) !important;
+}
+
+.dtp-heroui [class~="bg-danger-soft"] {
+  background-color: var(--color-danger-soft) !important;
+}
+
+.dtp-heroui [class~="text-surface-foreground"] {
+  color: var(--color-surface-foreground) !important;
+}
+
+.dtp-heroui [class~="text-overlay-foreground"] {
+  color: var(--color-overlay-foreground) !important;
+}
+
+.dtp-heroui [class~="text-field-foreground"] {
+  color: var(--color-field-foreground) !important;
+}
+
+.dtp-heroui [class~="text-muted"],
+.dtp-heroui [class~="text-muted-foreground"],
+.dtp-heroui [class~="placeholder:text-field-placeholder"]::placeholder {
+  color: var(--color-muted) !important;
+}
+
+.dtp-heroui [class~="text-default-foreground"] {
+  color: var(--color-default-foreground) !important;
+}
+
+.dtp-heroui [class~="text-accent-foreground"] {
+  color: var(--color-accent-foreground) !important;
+}
+
+.dtp-heroui [class~="text-danger"] {
+  color: var(--color-danger) !important;
+}
+
+.dtp-heroui [class~="ring-separator"] {
+  --tw-ring-color: var(--color-field-border) !important;
+}
+
+/*
+ * data-table-pro's HeroUI card view currently renders card rows as flex-wrap
+ * cards without forwarding our legacy cardGridClassName. Give the Libraries
+ * card view explicit responsive bases so aspect-ratio cards cannot collapse.
+ */
+.library-cards-table [data-radix-scroll-area-viewport]>div>.flex.flex-wrap {
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 0.25rem;
+}
+
+.library-cards-table [data-radix-scroll-area-viewport]>div>.flex.flex-wrap>[data-slot="card"] {
+  flex: 0 0 calc((100% - 1rem) / 2);
+  max-width: calc((100% - 1rem) / 2);
+  min-width: 0;
+  width: calc((100% - 1rem) / 2);
+}
+
+.library-cards-table [data-radix-scroll-area-viewport]>div>.flex.flex-wrap>[data-slot="card"]>.flex {
+  width: 100%;
+}
+
+.library-cards-table [data-radix-scroll-area-viewport]>div>.flex.flex-wrap>[data-slot="card"]>.flex>* {
+  width: 100%;
+}
+
+@media (min-width: 640px) {
+  .library-cards-table [data-radix-scroll-area-viewport]>div>.flex.flex-wrap>[data-slot="card"] {
+    flex-basis: calc((100% - 2rem) / 3);
+    max-width: calc((100% - 2rem) / 3);
+    width: calc((100% - 2rem) / 3);
+  }
+}
+
+@media (min-width: 768px) {
+  .library-cards-table [data-radix-scroll-area-viewport]>div>.flex.flex-wrap>[data-slot="card"] {
+    flex-basis: calc((100% - 3rem) / 4);
+    max-width: calc((100% - 3rem) / 4);
+    width: calc((100% - 3rem) / 4);
+  }
+}
+
+@media (min-width: 1024px) {
+  .library-cards-table [data-radix-scroll-area-viewport]>div>.flex.flex-wrap>[data-slot="card"] {
+    flex-basis: calc((100% - 4rem) / 5);
+    max-width: calc((100% - 4rem) / 5);
+    width: calc((100% - 4rem) / 5);
+  }
+}
+
+@media (min-width: 1280px) {
+  .library-cards-table [data-radix-scroll-area-viewport]>div>.flex.flex-wrap>[data-slot="card"] {
+    flex-basis: calc((100% - 5rem) / 6);
+    max-width: calc((100% - 5rem) / 6);
+    width: calc((100% - 5rem) / 6);
+  }
 }

@@ -14,30 +14,30 @@ export interface LibraryCardProps {
 export function LibraryCard({ library, onScan, onEdit, onDelete }: LibraryCardProps) {
   const navigate = useNavigate()
   const typeInfo =
-    LIBRARY_TYPES.find((t) => t.value === library.LibraryType) || LIBRARY_TYPES[4]
+    LIBRARY_TYPES.find((t) => t.value === library.libraryType) || LIBRARY_TYPES[4]
 
   return (
     <Card className="bg-content1">
       <CardHeader className="flex justify-between items-start">
         <div className="flex items-center gap-3">
-          <typeInfo.Icon className="w-8 h-8" />
+          <typeInfo.icon className="w-8 h-8" />
           <div>
-            <h3 className="text-lg font-semibold">{library.Name}</h3>
+            <h3 className="text-lg font-semibold">{library.name}</h3>
             <p className="text-default-500 text-sm">{typeInfo.label}</p>
           </div>
         </div>
         <div className="flex gap-2">
-          {library.WatchForChanges && (
+          {library.watchForChanges && (
             <Chip size="sm" color="secondary" variant="flat">
               Watching
             </Chip>
           )}
           <Chip
             size="sm"
-            color={library.AutoScan ? 'success' : 'default'}
+            color={library.autoScan ? 'success' : 'default'}
             variant="flat"
           >
-            {library.AutoScan ? 'Auto-scan' : 'Manual'}
+            {library.autoScan ? 'Auto-scan' : 'Manual'}
           </Chip>
         </div>
       </CardHeader>
@@ -46,15 +46,15 @@ export function LibraryCard({ library, onScan, onEdit, onDelete }: LibraryCardPr
           <div className="text-sm">
             <span className="text-default-500">Path:</span>
             <span className="ml-2 text-default-400 font-mono text-xs">
-              {library.Path}
+              {library.path}
             </span>
           </div>
 
-          {library.LastScannedAt && (
+          {library.lastScannedAt && (
             <div className="text-sm">
               <span className="text-default-500">Last scan:</span>
               <span className="ml-2 text-default-400">
-                {new Date(library.LastScannedAt).toLocaleString()}
+                {new Date(library.lastScannedAt).toLocaleString()}
               </span>
             </div>
           )}
@@ -66,11 +66,11 @@ export function LibraryCard({ library, onScan, onEdit, onDelete }: LibraryCardPr
             <Button size="sm" variant="flat" onPress={onEdit}>
               Settings
             </Button>
-            {library.LibraryType === 'TV' && (
+            {library.libraryType === 'TV' && (
               <Button
                 size="sm"
                 variant="flat"
-                onPress={() => navigate({ to: '/libraries/$libraryId', params: { libraryId: library.Id } })}
+                onPress={() => navigate({ to: '/libraries/$libraryId', params: { libraryId: library.id } })}
               >
                 View Shows
               </Button>

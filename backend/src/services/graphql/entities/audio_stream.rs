@@ -11,70 +11,72 @@ use serde::{Deserialize, Serialize};
 #[graphql_entity(
     table = "audio_streams",
     plural = "AudioStreams",
-    default_sort = "stream_index"
+    default_sort = "stream_index",
+    read_policy = "member.read",
+    write_policy = "admin.write"
 )]
 pub struct AudioStream {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "MediaFileId")]
+    #[graphql(name = "mediaFileId")]
     #[filterable(type = "string")]
     pub media_file_id: String,
 
-    #[graphql(name = "StreamIndex")]
+    #[graphql(name = "streamIndex")]
     #[filterable(type = "number")]
     #[sortable]
     pub stream_index: i32,
 
-    #[graphql(name = "Codec")]
+    #[graphql(name = "codec")]
     #[filterable(type = "string")]
     pub codec: String,
 
-    #[graphql(name = "CodecLongName")]
+    #[graphql(name = "codecLongName")]
     pub codec_long_name: Option<String>,
 
-    #[graphql(name = "Channels")]
+    #[graphql(name = "channels")]
     #[filterable(type = "number")]
     pub channels: i32,
 
-    #[graphql(name = "ChannelLayout")]
+    #[graphql(name = "channelLayout")]
     pub channel_layout: Option<String>,
 
-    #[graphql(name = "SampleRate")]
+    #[graphql(name = "sampleRate")]
     #[filterable(type = "number")]
     pub sample_rate: Option<i32>,
 
-    #[graphql(name = "Bitrate")]
+    #[graphql(name = "bitrate")]
     #[filterable(type = "number")]
     pub bitrate: Option<i32>,
 
-    #[graphql(name = "BitDepth")]
+    #[graphql(name = "bitDepth")]
     #[filterable(type = "number")]
     pub bit_depth: Option<i32>,
 
-    #[graphql(name = "Language")]
+    #[graphql(name = "language")]
     #[filterable(type = "string")]
     pub language: Option<String>,
 
-    #[graphql(name = "Title")]
+    #[graphql(name = "title")]
     pub title: Option<String>,
 
-    #[graphql(name = "IsDefault")]
+    #[graphql(name = "isDefault")]
     #[boolean_field]
     #[filterable(type = "boolean")]
     pub is_default: bool,
 
-    #[graphql(name = "IsCommentary")]
+    #[graphql(name = "isCommentary")]
     #[boolean_field]
     #[filterable(type = "boolean")]
     pub is_commentary: bool,
 
-    #[graphql(name = "Metadata")]
+    #[graphql(name = "metadata")]
     pub metadata: Option<String>,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,

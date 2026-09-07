@@ -1,67 +1,122 @@
 query Notifications(
-  $Where: NotificationWhereInput
-  $OrderBy: [NotificationOrderByInput!]
-  $Page: PageInput
+  $where: NotificationWhereInput
+  $orderBy: [NotificationOrderByInput!]
+  $page: PageInput
 ) {
-  Notifications: notifications(where: $Where, orderBy: $OrderBy, page: $Page) {
-    Edges: edges {
-      Node: node {
-        Id
-        UserId
-        NotificationType
-        Category
-        Title
-        Message
-        LibraryId
-        TorrentId
-        MediaFileId
-        PendingMatchId
-        ActionType
-        ActionData
-        ReadAt
-        ResolvedAt
-        Resolution
-        CreatedAt
-        UpdatedAt
+  notifications(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        id
+        userId
+        notificationType
+        category
+        title
+        message
+        libraryId
+        torrentId
+        mediaFileId
+        pendingMatchId
+        actionType
+        actionData
+        readAt
+        resolvedAt
+        resolution
+        createdAt
+        updatedAt
       }
-      Cursor: cursor
+      cursor
     }
-    PageInfo: pageInfo {
-      HasNextPage: hasNextPage
-      TotalCount: totalCount
-    }
-  }
-}
-
-subscription NotificationChanged($Filter: SubscriptionFilterInput) {
-  NotificationChanged: notificationChanged(filter: $Filter) {
-    Action: action
-    Id: id
-    Notification: notification {
-      Id
-      ReadAt
-      ResolvedAt
-      Resolution
+    pageInfo {
+      hasNextPage
+      totalCount
     }
   }
 }
 
-mutation UpdateNotification($Id: String!, $Input: UpdateNotificationInput!) {
-  UpdateNotification: updateNotification(id: $Id, input: $Input) {
-    Success: success
-    Error: error
-    Notification: notification {
-      Id
-      ReadAt
-      ResolvedAt
-      Resolution
+subscription NotificationChanged($filter: SubscriptionFilterInput) {
+  notificationChanged(filter: $filter) {
+    action
+    id
+    notification {
+      id
+      readAt
+      resolvedAt
+      resolution
     }
   }
 }
 
-mutation DeleteNotification($Id: String!) {
-  DeleteNotification: deleteNotification(id: $Id) {
-    Success: success
-    Error: error
+mutation UpdateNotification($id: String!, $input: UpdateNotificationInput!) {
+  updateNotification(id: $id, input: $input) {
+    success
+    error
+    notification {
+      id
+      readAt
+      resolvedAt
+      resolution
+    }
+  }
+}
+
+mutation DeleteNotification($id: String!) {
+  deleteNotification(id: $id) {
+    success
+    error
+  }
+}
+
+query UnresolvedLibraryScanIssues(
+  $page: PageInput
+  $where: LibraryScanIssueWhereInput = { resolvedAt: { isNull: true } }
+) {
+  libraryScanIssues(
+    where: $where
+    orderBy: [{ createdAt: DESC }]
+    page: $page
+  ) {
+    edges {
+      node {
+        id
+        scanRunId
+        libraryId
+        mediaFileId
+        stage
+        issueCode
+        severity
+        message
+        remediation
+        detailsJson
+        occurrenceCount
+        readAt
+        createdAt
+      }
+      cursor
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+subscription LibraryScanIssueNotificationChanged(
+  $filter: SubscriptionFilterInput
+) {
+  libraryScanIssueChanged(filter: $filter) {
+    action
+    id
+    libraryScanIssue {
+      id
+      resolvedAt
+      readAt
+    }
+  }
+}
+
+mutation MarkAllNotificationsRead {
+  markAllNotificationsRead {
+    notificationCount
+    scanIssueCount
   }
 }

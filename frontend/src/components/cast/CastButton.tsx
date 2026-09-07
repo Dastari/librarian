@@ -109,8 +109,15 @@ export function CastButton({
               <DropdownItem
                 key={device.id}
                 startContent={getDeviceIcon(device)}
-                description={device.model || device.address}
+                description={
+                  !device.playbackSupported
+                    ? "Discovery only — playback is not supported for this receiver type"
+                    : !device.enabled
+                      ? "This receiver is disabled by an administrator"
+                      : device.model || device.address
+                }
                 onPress={() => handleCast(device)}
+                isDisabled={!device.enabled || !device.playbackSupported}
               >
                 <div className="flex items-center gap-2">
                   {device.name}

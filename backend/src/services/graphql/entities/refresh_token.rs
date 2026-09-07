@@ -11,66 +11,68 @@ use serde::{Deserialize, Serialize};
 #[graphql_entity(
     table = "refresh_tokens",
     plural = "RefreshTokens",
-    default_sort = "created_at"
+    default_sort = "created_at",
+    read_policy = "admin.read",
+    write_policy = "admin.write"
 )]
 pub struct RefreshToken {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[graphql_orm(auto_generated = false)]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "UserId")]
+    #[graphql(name = "userId")]
     #[filterable(type = "string")]
     pub user_id: String,
 
-    #[graphql(name = "TokenHash")]
+    #[graphql_orm(private)]
     #[filterable(type = "string")]
     pub token_hash: String,
 
-    #[graphql(name = "SessionId")]
+    #[graphql(name = "sessionId")]
     #[filterable(type = "string")]
     pub session_id: String,
 
-    #[graphql(name = "SessionFamilyId")]
+    #[graphql(name = "sessionFamilyId")]
     #[filterable(type = "string")]
     pub session_family_id: String,
 
-    #[graphql(name = "Scopes")]
+    #[graphql(name = "scopes")]
     #[json_field]
     pub scopes: Vec<String>,
 
-    #[graphql(name = "Session")]
+    #[graphql_orm(private)]
     pub session: String,
 
-    #[graphql(name = "IpAddress")]
+    #[graphql_orm(private)]
     pub ip_address: Option<String>,
 
-    #[graphql(name = "UserAgent")]
+    #[graphql_orm(private)]
     pub user_agent: Option<String>,
 
-    #[graphql(name = "ExpiresAt")]
+    #[graphql(name = "expiresAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub expires_at: String,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "LastUsedAt")]
+    #[graphql(name = "lastUsedAt")]
     #[filterable(type = "date")]
     pub last_used_at: Option<String>,
 
-    #[graphql(name = "RevokedAt")]
+    #[graphql(name = "revokedAt")]
     #[filterable(type = "date")]
     pub revoked_at: Option<String>,
 
-    #[graphql(name = "ReplacedByTokenId")]
+    #[graphql(name = "replacedByTokenId")]
     pub replaced_by_token_id: Option<String>,
 
-    #[graphql(name = "RevocationReason")]
+    #[graphql(name = "revocationReason")]
     pub revocation_reason: Option<String>,
 }
 

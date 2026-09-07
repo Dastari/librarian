@@ -22,7 +22,7 @@ import { ErrorState } from "../shared";
 import { ManualMatchModal } from "./ManualMatchModal";
 
 type MediaFileNode =
-  LibraryUnmatchedMediaFilesTabQuery["MediaFiles"]["Edges"][number]["Node"];
+  LibraryUnmatchedMediaFilesTabQuery["mediaFiles"]["edges"][number]["node"];
 
 interface LibraryUnmatchedFilesTabProps {
   libraryId: string;
@@ -50,12 +50,12 @@ export function LibraryUnmatchedFilesTab({
     try {
       const result = await apolloClient.query({
         query: LibraryUnmatchedMediaFilesTabDocument,
-        variables: { LibraryId: libraryId },
+        variables: { libraryId: libraryId },
         fetchPolicy: "network-only",
       });
 
-      const edges = result.data?.MediaFiles?.Edges ?? [];
-      setFiles(edges.map((edge) => edge.Node));
+      const edges = result.data?.mediaFiles?.edges ?? [];
+      setFiles(edges.map((edge) => edge.node));
     } catch (err) {
       setError(sanitizeError(err));
     } finally {
@@ -73,12 +73,12 @@ export function LibraryUnmatchedFilesTab({
   };
 
   const getRelativePath = (file: MediaFileNode) => {
-    if (file.RelativePath) return file.RelativePath;
+    if (file.relativePath) return file.relativePath;
     // Try to extract relative path from full path
-    if (file.Path.startsWith(libraryPath)) {
-      return file.Path.slice(libraryPath.length + 1);
+    if (file.path.startsWith(libraryPath)) {
+      return file.path.slice(libraryPath.length + 1);
     }
-    return file.Path;
+    return file.path;
   };
 
   if (isLoading) {
@@ -105,7 +105,7 @@ export function LibraryUnmatchedFilesTab({
         <div>
           <h2 className="text-xl font-semibold">Unmatched Files</h2>
           <p className="text-sm text-default-500">
-            Files found in the library that couldn't be matched to a show (
+            Files found in the library that haven't been matched to media (
             {files.length} files)
           </p>
         </div>
@@ -130,7 +130,7 @@ export function LibraryUnmatchedFilesTab({
             />
             <h3 className="text-lg font-semibold mb-2">No unmatched files</h3>
             <p className="text-default-500 mb-4">
-              All files in this library have been matched to shows.
+              All files in this library have been matched to media.
             </p>
             <p className="text-xs text-default-400">
               Library path:{" "}
@@ -143,7 +143,7 @@ export function LibraryUnmatchedFilesTab({
       ) : (
         <div className="space-y-2">
           {files.map((file) => (
-            <Card key={file.Id} className="bg-content2">
+            <Card key={file.id} className="bg-content2">
               <CardBody className="py-3">
                 <div className="flex items-start gap-3">
                   <div className="p-2 bg-content3 rounded-lg">
@@ -153,39 +153,39 @@ export function LibraryUnmatchedFilesTab({
                     <div className="flex items-center gap-2 mb-1">
                       <p
                         className="font-medium truncate"
-                        title={getFileName(file.Path)}
+                        title={getFileName(file.path)}
                       >
-                        {file.OriginalName || getFileName(file.Path)}
+                        {file.originalName || getFileName(file.path)}
                       </p>
-                      {file.Resolution && (
+                      {file.resolution && (
                         <Chip size="sm" variant="flat" color="primary">
-                          {file.Resolution}
+                          {file.resolution}
                         </Chip>
                       )}
-                      {file.IsHdr && (
+                      {file.isHdr && (
                         <Chip size="sm" variant="flat" color="warning">
-                          {file.HdrType || "HDR"}
+                          {file.hdrType || "HDR"}
                         </Chip>
                       )}
-                      {file.VideoCodec && (
+                      {file.videoCodec && (
                         <Chip size="sm" variant="flat" color="default">
-                          {file.VideoCodec}
+                          {file.videoCodec}
                         </Chip>
                       )}
                     </div>
                     <p
                       className="text-xs text-default-400 truncate"
-                      title={file.Path}
+                      title={file.path}
                     >
                       {getRelativePath(file)}
                     </p>
                     <div className="flex items-center gap-4 mt-2 text-xs text-default-500">
-                      <span>{formatBytes(file.Size)}</span>
-                      {file.Container && <span>.{file.Container}</span>}
-                      {file.AudioCodec && <span>{file.AudioCodec}</span>}
-                      {file.Duration && (
+                      <span>{formatBytes(file.size)}</span>
+                      {file.container && <span>.{file.container}</span>}
+                      {file.audioCodec && <span>{file.audioCodec}</span>}
+                      {file.duration && (
                         <span>
-                          {Math.floor(file.Duration / 60)}m {file.Duration % 60}
+                          {Math.floor(file.duration / 60)}m {file.duration % 60}
                           s
                         </span>
                       )}

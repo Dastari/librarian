@@ -38,21 +38,16 @@ use anyhow::Result;
 use async_graphql::async_trait::async_trait;
 
 /// The type of source
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum SourceType {
     /// Torrent indexer (e.g., IPTorrents, public trackers)
+    #[default]
     TorrentIndexer,
     /// Usenet indexer (Newznab-compatible)
     UsenetIndexer,
     /// RSS/Atom feed
     RssFeed,
-}
-
-impl Default for SourceType {
-    fn default() -> Self {
-        Self::TorrentIndexer
-    }
 }
 
 impl std::fmt::Display for SourceType {
@@ -79,21 +74,16 @@ impl std::str::FromStr for SourceType {
 }
 
 /// Type of tracker (affects how releases are handled)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum TrackerType {
     /// Private tracker - requires account, don't share magnets
+    #[default]
     Private,
     /// Public tracker - no account needed
     Public,
     /// Semi-private - may require registration but is open
     SemiPrivate,
-}
-
-impl Default for TrackerType {
-    fn default() -> Self {
-        Self::Private
-    }
 }
 
 impl std::fmt::Display for TrackerType {

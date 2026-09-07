@@ -70,7 +70,12 @@ export function TorrentCard({
   onRemove,
   showCheckboxSpace = false,
 }: TorrentCardProps) {
-  const state = torrent.State.toUpperCase() as TorrentStateKey;
+  const name = torrent.name ?? "Unnamed torrent";
+  const state = (torrent.state ?? "QUEUED").toUpperCase() as TorrentStateKey;
+  const progress = Number.isFinite(torrent.progress) ? torrent.progress : 0;
+  const totalBytes = Number.isFinite(torrent.totalBytes)
+    ? torrent.totalBytes
+    : 0;
   const isPaused = state === "PAUSED";
   const isSeeding = state === "SEEDING";
   const isError = state === "ERROR";
@@ -103,27 +108,27 @@ export function TorrentCard({
         isOpen={isConfirmOpen}
         onClose={onConfirmClose}
         onConfirm={() => {
-          onRemove(torrent.InfoHash);
+          onRemove(torrent.infoHash);
           onConfirmClose();
         }}
         title="Remove Torrent"
-        message={`Are you sure you want to remove "${torrent.Name}"?`}
+        message={`Are you sure you want to remove "${name}"?`}
         description="This will stop the download but will not delete any downloaded files."
         confirmLabel="Remove"
         confirmColor="danger"
       />
-      <Card>
+      <Card className="w-full">
         <CardBody>
           <div className="flex items-start justify-between mb-3">
             <div
               className={`flex-1 min-w-0 mr-4 ${showCheckboxSpace ? "ml-8" : ""}`}
             >
-              <h3 className="font-semibold truncate" title={torrent.Name}>
-                {torrent.Name}
+              <h3 className="font-semibold truncate" title={name}>
+                {name}
               </h3>
               <div className="flex items-center gap-2 mt-1">
                 <span className="text-sm text-default-500">
-                  {formatBytes(torrent.TotalBytes)}
+                  {formatBytes(totalBytes)}
                 </span>
                 <Chip size="sm" color={stateInfo.color} variant="flat">
                   {stateInfo.label}
@@ -138,7 +143,7 @@ export function TorrentCard({
                     size="sm"
                     variant="light"
                     color="success"
-                    onPress={() => onResume(torrent.InfoHash)}
+                    onPress={() => onResume(torrent.infoHash)}
                     aria-label="Resume torrent"
                   >
                     <IconPlayerPlay size={16} />
@@ -151,7 +156,7 @@ export function TorrentCard({
                     size="sm"
                     variant="light"
                     color="warning"
-                    onPress={() => onPause(torrent.InfoHash)}
+                    onPress={() => onPause(torrent.infoHash)}
                     aria-label="Pause torrent"
                   >
                     <IconPlayerPause size={16} />
@@ -174,7 +179,7 @@ export function TorrentCard({
           </div>
 
           <Progress
-            value={torrent.Progress * 100}
+            value={progress * 100}
             color={progressColor}
             size="md"
             className="mb-2"
@@ -182,7 +187,7 @@ export function TorrentCard({
           />
 
           <div className="flex justify-between text-sm text-default-500">
-            <span>{(torrent.Progress * 100).toFixed(1)}%</span>
+            <span>{(progress * 100).toFixed(1)}%</span>
           </div>
         </CardBody>
       </Card>

@@ -1,0 +1,6 @@
+{
+  "model": "qwen2.5-coder:7b",
+  "created_at": "2026-05-26T00:00:00Z",
+  "response": "{\"mediaType\":\"tv\",\"showName\":\"Chicago Fire\",\"season\":14,\"episode\":8,\"confidence\":0.94}",
+  "done": true
+}

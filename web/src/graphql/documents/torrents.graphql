@@ -1,0 +1,122 @@
+fragment LiveTorrentFields on LiveTorrent {
+  id
+  infoHash
+  name
+  state
+  progress
+  size
+  downloaded
+  uploaded
+  downloadSpeed
+  uploadSpeed
+  peers
+  savePath
+}
+
+query LiveTorrents {
+  liveTorrents {
+    ...LiveTorrentFields
+    files {
+      index
+      path
+      size
+      progress
+    }
+  }
+}
+
+query LiveTorrent($id: Int!) {
+  liveTorrent(id: $id) {
+    ...LiveTorrentFields
+    files {
+      index
+      path
+      size
+      progress
+    }
+  }
+}
+
+subscription TorrentProgress {
+  torrentProgress {
+    id
+    infoHash
+    progress
+    downloadSpeed
+    uploadSpeed
+    peers
+    state
+  }
+}
+
+subscription TorrentAdded {
+  torrentAdded {
+    id
+    name
+    infoHash
+  }
+}
+
+subscription TorrentCompleted {
+  torrentCompleted {
+    id
+    name
+    infoHash
+  }
+}
+
+subscription TorrentRemoved {
+  torrentRemoved {
+    id
+    infoHash
+  }
+}
+
+mutation AddTorrent($input: AddTorrentInput!) {
+  addTorrent(input: $input) {
+    success
+    error
+    torrent {
+      ...LiveTorrentFields
+    }
+  }
+}
+
+mutation PauseTorrent($id: Int!) {
+  pauseTorrent(id: $id) {
+    success
+    error
+  }
+}
+
+mutation ResumeTorrent($id: Int!) {
+  resumeTorrent(id: $id) {
+    success
+    error
+  }
+}
+
+mutation RemoveTorrent($id: Int!, $deleteFiles: Boolean!) {
+  removeTorrent(id: $id, deleteFiles: $deleteFiles) {
+    success
+    error
+  }
+}
+
+mutation ProcessSource($sourceId: String!, $sourceType: String!) {
+  processSource(sourceId: $sourceId, sourceType: $sourceType) {
+    success
+    filesProcessed
+    filesFailed
+    messages
+    error
+  }
+}
+
+mutation RematchSource($sourceId: String!, $sourceType: String!, $libraryId: String) {
+  rematchSource(sourceId: $sourceId, sourceType: $sourceType, libraryId: $libraryId) {
+    success
+    matchCount
+    error
+  }
+}

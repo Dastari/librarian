@@ -11,59 +11,62 @@ use serde::{Deserialize, Serialize};
 #[graphql_entity(
     table = "torrent_files",
     plural = "TorrentFiles",
-    default_sort = "file_index"
+    default_sort = "file_index",
+    index = "torrent_id",
+    read_policy = "member.read",
+    write_policy = "admin.write"
 )]
 pub struct TorrentFile {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "TorrentId")]
+    #[graphql(name = "torrentId")]
     #[filterable(type = "string")]
     pub torrent_id: String,
 
-    #[graphql(name = "FileIndex")]
+    #[graphql(name = "fileIndex")]
     #[filterable(type = "number")]
     #[sortable]
     pub file_index: i32,
 
-    #[graphql(name = "FilePath")]
+    #[graphql(name = "filePath")]
     #[filterable(type = "string")]
     pub file_path: String,
 
-    #[graphql(name = "RelativePath")]
+    #[graphql(name = "relativePath")]
     #[filterable(type = "string")]
     pub relative_path: String,
 
-    #[graphql(name = "FileSize")]
+    #[graphql(name = "fileSize")]
     #[filterable(type = "number")]
     #[sortable]
     pub file_size: i64,
 
-    #[graphql(name = "DownloadedBytes")]
+    #[graphql(name = "downloadedBytes")]
     #[filterable(type = "number")]
     pub downloaded_bytes: i64,
 
-    #[graphql(name = "Progress")]
+    #[graphql(name = "progress")]
     #[filterable(type = "number")]
     #[sortable]
     pub progress: f64,
 
-    #[graphql(name = "MediaFileId")]
+    #[graphql(name = "mediaFileId")]
     #[filterable(type = "string")]
     pub media_file_id: Option<String>,
 
-    #[graphql(name = "IsExcluded")]
+    #[graphql(name = "isExcluded")]
     #[filterable(type = "boolean")]
     pub is_excluded: bool,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,

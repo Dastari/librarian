@@ -1,5 +1,12 @@
+import { ScanIssuesPanel } from "../components/ScanIssuesPanel";
+import {
+  useNotificationOwner,
+  useNotificationRefresh,
+  useMarkAllNotificationsRead,
+} from "../hooks/useNotificationFeed";
+import { parseTimestamp } from "../lib/format";
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { Button } from "@heroui/button";
 import { Chip } from "@heroui/chip";
 import { Checkbox } from "@heroui/checkbox";
@@ -16,6 +23,8 @@ import {
 } from "@tabler/icons-react";
 import {
   NotificationsDocument,
+  UnresolvedLibraryScanIssuesDocument,
+  LibraryScanIssueNotificationChangedDocument,
   NotificationChangedDocument,
   UpdateNotificationDocument,
   DeleteNotificationDocument,
@@ -27,17 +36,18 @@ import {
   type DeleteNotificationMutationVariables,
 } from "../lib/graphql/generated/graphql";
 import {
-  apolloClient,
-  useMutation,
-  useQuery,
-  useSubscription,
-} from "../lib/graphql/client";
+  APPROVE_QUALITY_UPGRADE_MUTATION,
+  type ApproveQualityUpgradeMutation,
+  type ApproveQualityUpgradeMutationVariables,
+} from "../lib/graphql/qualityProfiles";
+import { useMutation, useQuery, useSubscription } from "../lib/graphql/client";
 import {
   DataTable,
   type DataTableColumn,
   type RowAction,
 } from "../components/data-table";
 import { NotificationDetailModal } from "../components/NotificationDetailModal";
+import { sanitizeError } from "../lib/format";
 
 export const Route = createFileRoute("/notifications")({
   component: NotificationsPage,
@@ -52,17 +62,14 @@ type NotificationCategory =
   | "EXTRACTION"
   | "CONFIGURATION";
 type NotificationResolution =
-  | "ACCEPTED"
-  | "REJECTED"
-  | "DISMISSED"
-  | "AUTO_RESOLVED";
+  "ACCEPTED" | "REJECTED" | "DISMISSED" | "AUTO_RESOLVED";
 
 interface NotificationItem {
   id: string;
   title: string;
   message: string;
-  notificationType: NotificationType;
-  category: NotificationCategory;
+  notificationType: string;
+  category: string;
   libraryId: string | null;
   torrentId: string | null;
   mediaFileId: string | null;
@@ -76,57 +83,51 @@ interface NotificationItem {
 }
 
 type NotificationNode =
-  NotificationsQuery["Notifications"]["Edges"][number]["Node"];
+  NotificationsQuery["notifications"]["edges"][number]["node"];
 
 function nodeToNotification(node: NotificationNode): NotificationItem {
   let actionData: Record<string, unknown> | null = null;
-  if (node.ActionData) {
+  if (node.actionData) {
     try {
-      actionData = JSON.parse(node.ActionData) as Record<string, unknown>;
+      actionData = JSON.parse(node.actionData) as Record<string, unknown>;
     } catch {
       actionData = null;
     }
   }
 
   return {
-    id: node.Id,
-    title: node.Title,
-    message: node.Message,
-    notificationType: node.NotificationType as NotificationType,
-    category: node.Category as NotificationCategory,
-    libraryId: node.LibraryId ?? null,
-    torrentId: node.TorrentId ?? null,
-    mediaFileId: node.MediaFileId ?? null,
-    pendingMatchId: node.PendingMatchId ?? null,
-    actionType: node.ActionType ?? null,
+    id: node.id,
+    title: node.title,
+    message: node.message,
+    notificationType: node.notificationType as NotificationType,
+    category: node.category as NotificationCategory,
+    libraryId: node.libraryId ?? null,
+    torrentId: node.torrentId ?? null,
+    mediaFileId: node.mediaFileId ?? null,
+    pendingMatchId: node.pendingMatchId ?? null,
+    actionType: node.actionType ?? null,
     actionData,
-    readAt: node.ReadAt ?? null,
-    resolvedAt: node.ResolvedAt ?? null,
-    resolution: (node.Resolution as NotificationResolution) ?? null,
-    createdAt: node.CreatedAt,
+    readAt: node.readAt ?? null,
+    resolvedAt: node.resolvedAt ?? null,
+    resolution: (node.resolution as NotificationResolution) ?? null,
+    createdAt: node.createdAt,
   };
 }
 
-const UNREAD_WHERE = { ReadAt: { isNull: true } } as const;
+const UNREAD_WHERE = { readAt: { isNull: true } } as const;
 const ACTION_REQUIRED_WHERE = {
-  NotificationType: { eq: "ACTION_REQUIRED" },
-  ResolvedAt: { isNull: true },
+  notificationType: { eq: "ACTION_REQUIRED" },
+  resolvedAt: { isNull: true },
 } as const;
-const ORDER_BY_RECENT = [{ CreatedAt: OrderDirection.DESC }];
+const ORDER_BY_RECENT = [{ createdAt: OrderDirection.DESC }];
 const NOTIFICATIONS_PAGE_SIZE = 50;
-const BATCH_PAGE_SIZE = 100;
 
 // Notification type info for display
 const NOTIFICATION_TYPE_INFO: Record<
   NotificationType,
   {
     color:
-      | "default"
-      | "primary"
-      | "success"
-      | "warning"
-      | "danger"
-      | "secondary";
+      "default" | "primary" | "success" | "warning" | "danger" | "secondary";
     label: string;
   }
 > = {
@@ -135,6 +136,30 @@ const NOTIFICATION_TYPE_INFO: Record<
   ERROR: { color: "danger", label: "Error" },
   ACTION_REQUIRED: { color: "secondary", label: "Action Required" },
 };
+
+const FALLBACK_NOTIFICATION_TYPE_INFO = {
+  color: "default" as const,
+  label: "Notification",
+};
+
+function formatUnknownLabel(value: string | null | undefined): string {
+  if (!value) return "Unknown";
+  return value
+    .toLowerCase()
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function getNotificationTypeInfo(type: string) {
+  return (
+    NOTIFICATION_TYPE_INFO[type as NotificationType] ?? {
+      ...FALLBACK_NOTIFICATION_TYPE_INFO,
+      label: formatUnknownLabel(type),
+    }
+  );
+}
 
 // Category labels
 const CATEGORY_LABELS: Record<NotificationCategory, string> = {
@@ -146,7 +171,14 @@ const CATEGORY_LABELS: Record<NotificationCategory, string> = {
   CONFIGURATION: "Configuration",
 };
 
-const getNotificationIcon = (type: NotificationType) => {
+function getCategoryLabel(category: string): string {
+  return (
+    CATEGORY_LABELS[category as NotificationCategory] ??
+    formatUnknownLabel(category)
+  );
+}
+
+const getNotificationIcon = (type: string) => {
   switch (type) {
     case "ERROR":
       return <IconAlertCircle size={16} className="text-red-400" />;
@@ -160,7 +192,8 @@ const getNotificationIcon = (type: NotificationType) => {
 };
 
 function formatTimestamp(isoString: string): string {
-  const date = new Date(isoString);
+  const date = parseTimestamp(isoString);
+  if (!date) return "Unknown date";
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffMins = Math.floor(diffMs / 60000);
@@ -180,9 +213,11 @@ function formatTimestamp(isoString: string): string {
   });
 }
 
-type TabKey = "all" | "unread" | "action_required";
+type TabKey = "all" | "unread" | "action_required" | "scan_issues";
 
 function NotificationsPage() {
+  const owner = useNotificationOwner();
+  const { handleMarkAllRead, markingAllRead } = useMarkAllNotificationsRead();
   const [selectedNotification, setSelectedNotification] =
     useState<NotificationItem | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("all");
@@ -204,37 +239,81 @@ function NotificationsPage() {
     return undefined;
   }, [activeTab]);
 
-  const notificationsQuery = useQuery(NotificationsDocument, {
+  const [pageIndex, setPageIndex] = useState(0);
+  useEffect(() => {
+    setPageIndex(0);
+    setSelectedIds(new Set());
+  }, [activeTab]);
+
+  const unreadQuery = useQuery(NotificationsDocument, {
     variables: {
-      Where: notificationsFilter,
-      OrderBy: ORDER_BY_RECENT,
-      Page: { limit: NOTIFICATIONS_PAGE_SIZE, offset: 0 },
+      where: { ...owner, ...UNREAD_WHERE },
+      page: { limit: 1, offset: 0 },
     },
     fetchPolicy: "cache-and-network",
   });
 
-  useSubscription(NotificationChangedDocument, {
-    variables: {},
-    onData: () => {
-      void notificationsQuery.refetch();
+  const unreadScanIssuesQuery = useQuery(UnresolvedLibraryScanIssuesDocument, {
+    variables: {
+      where: {
+        ...owner,
+        resolvedAt: { isNull: true },
+        readAt: { isNull: true },
+      },
+      page: { limit: 1, offset: 0 },
     },
+    fetchPolicy: "cache-and-network",
+  });
+  const refreshScanIssues = useNotificationRefresh(() =>
+    unreadScanIssuesQuery.refetch(),
+  );
+  useSubscription(LibraryScanIssueNotificationChangedDocument, {
+    fetchPolicy: "no-cache",
+    ignoreResults: true,
+    onData: refreshScanIssues,
+  });
+  const unreadScanIssueCount =
+    unreadScanIssuesQuery.data?.libraryScanIssues.pageInfo.totalCount ?? 0;
+
+  const notificationsQuery = useQuery(NotificationsDocument, {
+    variables: {
+      where: { ...owner, ...notificationsFilter },
+      orderBy: ORDER_BY_RECENT,
+      page: {
+        limit: NOTIFICATIONS_PAGE_SIZE,
+        offset: pageIndex * NOTIFICATIONS_PAGE_SIZE,
+      },
+    },
+    fetchPolicy: "cache-and-network",
+  });
+
+  const refreshNotifications = useNotificationRefresh(() =>
+    Promise.all([notificationsQuery.refetch(), unreadQuery.refetch()]),
+  );
+  useSubscription(NotificationChangedDocument, {
+    fetchPolicy: "no-cache",
+    ignoreResults: true,
+    onData: refreshNotifications,
   });
 
   const notifications = useMemo(() => {
     const edges =
-      notificationsQuery.data?.Notifications?.Edges ??
-      notificationsQuery.previousData?.Notifications?.Edges ??
+      notificationsQuery.data?.notifications?.edges ??
+      notificationsQuery.previousData?.notifications?.edges ??
       [];
     return edges
-      .map((edge) => edge?.Node)
+      .map((edge) => edge?.node)
       .filter((node): node is NotificationNode => Boolean(node))
       .map((node) => nodeToNotification(node));
   }, [notificationsQuery.data, notificationsQuery.previousData]);
   const totalCount =
-    notificationsQuery.data?.Notifications?.PageInfo?.TotalCount ??
-    notificationsQuery.previousData?.Notifications?.PageInfo?.TotalCount ??
+    notificationsQuery.data?.notifications?.pageInfo?.totalCount ??
+    notificationsQuery.previousData?.notifications?.pageInfo?.totalCount ??
     0;
-  const isLoading = notificationsQuery.loading;
+  const isLoading =
+    notificationsQuery.loading &&
+    !notificationsQuery.data &&
+    !notificationsQuery.previousData;
 
   const [updateNotification] = useMutation<
     UpdateNotificationMutation,
@@ -244,57 +323,27 @@ function NotificationsPage() {
     DeleteNotificationMutation,
     DeleteNotificationMutationVariables
   >(DeleteNotificationDocument);
+  const [approveQualityUpgrade] = useMutation<
+    ApproveQualityUpgradeMutation,
+    ApproveQualityUpgradeMutationVariables
+  >(APPROVE_QUALITY_UPGRADE_MUTATION);
 
   const fetchNotifications = useCallback(() => {
     void notificationsQuery.refetch();
   }, [notificationsQuery]);
 
-  const fetchAllUnreadNotificationIds = useCallback(async (): Promise<
-    string[]
-  > => {
-    const ids: string[] = [];
-    let offset = 0;
-
-    while (true) {
-      const result = await apolloClient.query({
-        query: NotificationsDocument,
-        variables: {
-          Where: UNREAD_WHERE,
-          OrderBy: ORDER_BY_RECENT,
-          Page: { limit: BATCH_PAGE_SIZE, offset: offset },
-        },
-        fetchPolicy: "network-only",
-      });
-
-      const edges = result.data?.Notifications?.Edges ?? [];
-      if (edges.length === 0) {
-        break;
-      }
-
-      ids.push(...edges.map((edge) => edge.Node.Id));
-
-      const hasNextPage = result.data?.Notifications?.PageInfo?.HasNextPage;
-      if (!hasNextPage) {
-        break;
-      }
-      offset += BATCH_PAGE_SIZE;
-    }
-
-    return ids;
-  }, []);
-
   const handleMarkRead = async (id: string) => {
     try {
       const result = await updateNotification({
         variables: {
-          Id: id,
-          Input: { ReadAt: new Date().toISOString() },
+          id: id,
+          input: { readAt: new Date().toISOString() },
         },
       });
 
-      if (!result.data?.UpdateNotification.Success) {
+      if (!result.data?.updateNotification.success) {
         throw new Error(
-          result.data?.UpdateNotification.Error ?? "Mutation failed",
+          result.data?.updateNotification.error ?? "Mutation failed",
         );
       }
 
@@ -308,41 +357,6 @@ function NotificationsPage() {
     }
   };
 
-  const handleMarkAllRead = async () => {
-    try {
-      const unreadIds = await fetchAllUnreadNotificationIds();
-
-      if (unreadIds.length === 0) {
-        return;
-      }
-
-      const now = new Date().toISOString();
-      for (const id of unreadIds) {
-        const result = await updateNotification({
-          variables: { Id: id, Input: { ReadAt: now } },
-        });
-        if (!result.data?.UpdateNotification.Success) {
-          throw new Error(
-            result.data?.UpdateNotification.Error ?? "Mutation failed",
-          );
-        }
-      }
-
-      fetchNotifications();
-      addToast({
-        title: "Success",
-        description: `Marked ${unreadIds.length} notifications as read`,
-        color: "success",
-      });
-    } catch (error) {
-      addToast({
-        title: "Error",
-        description: "Failed to mark all as read",
-        color: "danger",
-      });
-    }
-  };
-
   const handleResolve = async (
     id: string,
     resolution: NotificationResolution,
@@ -351,18 +365,18 @@ function NotificationsPage() {
       const now = new Date().toISOString();
       const result = await updateNotification({
         variables: {
-          Id: id,
-          Input: {
-            ResolvedAt: now,
-            Resolution: resolution,
-            ReadAt: now,
+          id: id,
+          input: {
+            resolvedAt: now,
+            resolution: resolution,
+            readAt: now,
           },
         },
       });
 
-      if (!result.data?.UpdateNotification.Success) {
+      if (!result.data?.updateNotification.success) {
         throw new Error(
-          result.data?.UpdateNotification.Error ?? "Mutation failed",
+          result.data?.updateNotification.error ?? "Mutation failed",
         );
       }
 
@@ -386,10 +400,10 @@ function NotificationsPage() {
 
   const handleDelete = async (id: string) => {
     try {
-      const result = await deleteNotification({ variables: { Id: id } });
-      if (!result.data?.DeleteNotification.Success) {
+      const result = await deleteNotification({ variables: { id: id } });
+      if (!result.data?.deleteNotification.success) {
         throw new Error(
-          result.data?.DeleteNotification.Error ?? "Mutation failed",
+          result.data?.deleteNotification.error ?? "Mutation failed",
         );
       }
       fetchNotifications();
@@ -402,6 +416,32 @@ function NotificationsPage() {
         color: "danger",
       });
     }
+  };
+
+  const handleApproveQualityUpgrade = async (id: string) => {
+    try {
+      const result = await approveQualityUpgrade({
+        variables: { notificationId: id },
+      });
+      if (!result.data?.approveQualityUpgrade.success) {
+        throw new Error(
+          result.data?.approveQualityUpgrade.error ??
+            "Failed to approve upgrade",
+        );
+      }
+      addToast({
+        title: "Upgrade approved",
+        description: "File replaced; re-analyzing.",
+        color: "success",
+      });
+    } catch (error) {
+      addToast({
+        title: "Error",
+        description: sanitizeError(error),
+        color: "danger",
+      });
+    }
+    fetchNotifications();
   };
 
   const handleViewDetails = (notification: NotificationItem) => {
@@ -419,8 +459,8 @@ function NotificationsPage() {
     let deletedCount = 0;
     for (const id of selectedIds) {
       try {
-        const result = await deleteNotification({ variables: { Id: id } });
-        if (result.data?.DeleteNotification.Success) {
+        const result = await deleteNotification({ variables: { id: id } });
+        if (result.data?.deleteNotification.success) {
           deletedCount++;
         }
       } catch {
@@ -493,9 +533,9 @@ function NotificationsPage() {
           <Chip
             size="sm"
             variant="flat"
-            color={NOTIFICATION_TYPE_INFO[notification.notificationType].color}
+            color={getNotificationTypeInfo(notification.notificationType).color}
           >
-            {NOTIFICATION_TYPE_INFO[notification.notificationType].label}
+            {getNotificationTypeInfo(notification.notificationType).label}
           </Chip>
         </div>
       ),
@@ -522,7 +562,7 @@ function NotificationsPage() {
       width: 120,
       render: (notification) => (
         <Chip size="sm" variant="flat">
-          {CATEGORY_LABELS[notification.category]}
+          {getCategoryLabel(notification.category)}
         </Chip>
       ),
     },
@@ -596,15 +636,16 @@ function NotificationsPage() {
     },
   ];
 
-  const unreadCount = notifications.filter((n) => !n.readAt).length;
+  const unreadCount = unreadQuery.data?.notifications.pageInfo.totalCount ?? 0;
 
   // Header content for the DataTable
   const headerContent = (
-    <div className="flex items-center justify-between w-full">
+    <div className="flex flex-wrap items-center justify-between gap-3 w-full">
       <div>
         <h1 className="text-2xl font-bold">Notifications</h1>
         <p className="text-default-500">
-          {totalCount} total, {unreadCount} unread
+          {totalCount} notifications, {unreadCount} unread ·{" "}
+          {unreadScanIssueCount} unread scan issues
         </p>
       </div>
       <div className="flex gap-2">
@@ -623,13 +664,18 @@ function NotificationsPage() {
           variant="flat"
           startContent={<IconRefresh size={16} />}
           onPress={fetchNotifications}
-          isLoading={isLoading}
+          isLoading={notificationsQuery.loading}
           aria-label="Refresh notifications"
         >
           Refresh
         </Button>
-        {unreadCount > 0 && (
-          <Button color="primary" variant="flat" onPress={handleMarkAllRead}>
+        {unreadCount + unreadScanIssueCount > 0 && (
+          <Button
+            color="primary"
+            variant="flat"
+            onPress={handleMarkAllRead}
+            isLoading={markingAllRead}
+          >
             Mark All Read
           </Button>
         )}
@@ -648,32 +694,78 @@ function NotificationsPage() {
       <Tab key="all" title="All" />
       <Tab key="unread" title="Unread" />
       <Tab key="action_required" title="Action Required" />
+      <Tab key="scan_issues" title="Scan Issues" />
     </Tabs>
   );
 
   return (
     <div className="container mx-auto p-6 max-w-6xl">
-      <DataTable
-        stateKey="notifications"
-        data={notifications}
-        columns={columns}
-        rowActions={rowActions}
-        onRowClick={handleViewDetails}
-        isLoading={isLoading}
-        skeletonRowCount={5}
-        skeletonDelay={300}
-        headerContent={headerContent}
-        filterRowContent={filterRowContent}
-        hideToolbar
-        ariaLabel="Notifications list"
-        emptyContent={
-          <div className="text-center text-default-500 py-8">
-            No notifications
-          </div>
-        }
-        getRowKey={(notification) => notification.id}
-      />
+      <div className="mb-4">{headerContent}</div>
+      <div className="mb-4">{filterRowContent}</div>
+      {activeTab === "scan_issues" ? (
+        <ScanIssuesPanel />
+      ) : (
+        <>
+          <DataTable
+            paginationMode="none"
+            stateKey="notifications"
+            data={notifications}
+            columns={columns}
+            rowActions={rowActions}
+            onRowClick={handleViewDetails}
+            isLoading={isLoading}
+            skeletonRowCount={5}
+            skeletonDelay={300}
+            hideToolbar
+            ariaLabel="Notifications list"
+            emptyContent={
+              <div className="text-center text-default-500 py-8">
+                No notifications
+              </div>
+            }
+            getRowKey={(notification) => notification.id}
+            fillHeight={false}
+          />
 
+          <div
+            className="mt-4 flex flex-wrap items-center justify-between gap-3"
+            aria-label="Notification pagination"
+          >
+            <span className="text-sm text-default-500">
+              {totalCount === 0 ? 0 : pageIndex * NOTIFICATIONS_PAGE_SIZE + 1}–
+              {Math.min((pageIndex + 1) * NOTIFICATIONS_PAGE_SIZE, totalCount)}{" "}
+              of {totalCount}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="flat"
+                isDisabled={pageIndex === 0 || notificationsQuery.loading}
+                onPress={() => {
+                  setSelectedIds(new Set());
+                  setPageIndex((page) => page - 1);
+                }}
+              >
+                Previous
+              </Button>
+              <Button
+                size="sm"
+                variant="flat"
+                isDisabled={
+                  notificationsQuery.loading ||
+                  (pageIndex + 1) * NOTIFICATIONS_PAGE_SIZE >= totalCount
+                }
+                onPress={() => {
+                  setSelectedIds(new Set());
+                  setPageIndex((page) => page + 1);
+                }}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
       {/* Notification Detail Modal */}
       <NotificationDetailModal
         notification={selectedNotification}
@@ -682,6 +774,7 @@ function NotificationsPage() {
         onResolve={handleResolve}
         onDelete={handleDelete}
         onMarkRead={handleMarkRead}
+        onApproveQualityUpgrade={handleApproveQualityUpgrade}
       />
     </div>
   );

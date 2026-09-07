@@ -57,6 +57,9 @@ pub mod source_priority_rule;
 // Other entities
 pub mod artwork_cache;
 pub mod notification;
+pub mod quality_profile;
+pub mod release_blocklist;
+pub mod storage_object;
 pub mod torznab_category;
 
 // Higher-level entities with multiple relations
@@ -64,6 +67,8 @@ pub mod album;
 pub mod artist;
 pub mod audiobook;
 pub mod library;
+pub mod library_scan_issue;
+pub mod library_scan_run;
 pub mod torrent;
 
 // Re-export all entity types
@@ -84,6 +89,8 @@ pub use common::*;
 pub use episode::*;
 pub use invite_token::*;
 pub use library::*;
+pub use library_scan_issue::*;
+pub use library_scan_run::*;
 pub use media_chapter::*;
 pub use media_file::*;
 pub use metadata_cache::*;
@@ -95,7 +102,9 @@ pub use pending_file_match::*;
 pub use person::*;
 pub use playback_progress::*;
 pub use playback_session::*;
+pub use quality_profile::*;
 pub use refresh_token::*;
+pub use release_blocklist::*;
 pub use rss_feed::*;
 pub use rss_feed_item::*;
 pub use schedule_cache::*;
@@ -103,6 +112,7 @@ pub use schedule_sync_state::*;
 pub use show::*;
 pub use source::*;
 pub use source_priority_rule::*;
+pub use storage_object::*;
 pub use subtitle::*;
 pub use torrent::*;
 pub use torrent_file::*;

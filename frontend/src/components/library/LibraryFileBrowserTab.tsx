@@ -35,7 +35,6 @@ import {
   IconCopy,
   IconArrowRight,
   IconTrash,
-  IconSearch,
   IconInfoCircle,
   IconRefresh,
   IconFolderOpen,
@@ -113,11 +112,11 @@ export function LibraryFileBrowserTab({
     try {
       setLoading(true);
       const data = await browseDirectory(path, false);
-      setCurrentPath(data.CurrentPath);
-      setInputPath(data.CurrentPath);
-      setParentPath(data.ParentPath ?? null);
-      setEntries(data.Entries ?? []);
-      setQuickPaths(data.QuickPaths ?? []);
+      setCurrentPath(data.currentPath);
+      setInputPath(data.currentPath);
+      setParentPath(data.parentPath ?? null);
+      setEntries(data.entries ?? []);
+      setQuickPaths(data.quickPaths ?? []);
     } catch (err) {
       console.error("Failed to browse directory:", err);
       addToast({
@@ -148,22 +147,22 @@ export function LibraryFileBrowserTab({
   // Prepend parent directory as a synthetic entry if it exists
   const sortedEntries = useMemo(() => {
     const sorted = [...entries].sort((a, b) => {
-      if (a.IsDir !== b.IsDir) return a.IsDir ? -1 : 1;
-      return a.Name.localeCompare(b.Name);
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      return a.name.localeCompare(b.name);
     });
 
     // Add parent directory as the first entry
     if (parentPath) {
       const parentEntry: BrowseDirectoryEntry = {
-        Name: "..",
-        Path: parentPath,
-        IsDir: true,
-        Readable: true,
-        Writable: false,
-        Size: 0,
-        SizeFormatted: "-",
-        MimeType: null,
-        ModifiedAt: null,
+        name: "..",
+        path: parentPath,
+        isDir: true,
+        readable: true,
+        writable: false,
+        size: 0,
+        sizeFormatted: "-",
+        mimeType: null,
+        modifiedAt: null,
       };
       return [parentEntry, ...sorted];
     }
@@ -256,32 +255,24 @@ export function LibraryFileBrowserTab({
     }
   };
 
-  const handleMatch = (paths: string[]) => {
-    addToast({
-      title: "Match",
-      description: `Matching ${paths.length} item(s)... (not implemented)`,
-      color: "primary",
-    });
-  };
-
   // Check if file is a video file
   const handleProperties = async (entry: BrowseDirectoryEntry) => {
     // For any file (not directory), try to look up in the database
-    if (!entry.IsDir) {
+    if (!entry.isDir) {
       const result = await apolloClient.query<
         MediaFileByPathLookupQuery,
         MediaFileByPathLookupQueryVariables
       >({
         query: MediaFileByPathLookupDocument,
-        variables: { Path: entry.Path },
+        variables: { path: entry.path },
         fetchPolicy: "network-only",
       });
 
-      const mediaFileId = result.data?.MediaFiles?.Edges?.[0]?.Node?.Id;
+      const mediaFileId = result.data?.mediaFiles?.edges?.[0]?.node?.id;
       if (mediaFileId) {
         // File is in the database, show detailed properties modal
         setPropertiesMediaFileId(mediaFileId);
-        setPropertiesFileName(entry.Name);
+        setPropertiesFileName(entry.name);
         onPropertiesOpen();
         return;
       }
@@ -290,8 +281,8 @@ export function LibraryFileBrowserTab({
 
     // For directories or files not in database, show basic info toast
     addToast({
-      title: entry.Name,
-      description: `Path: ${entry.Path}\nSize: ${formatBytes(entry.Size)}\nType: ${entry.IsDir ? "Directory" : "File"}`,
+      title: entry.name,
+      description: `Path: ${entry.path}\nSize: ${formatBytes(entry.size)}\nType: ${entry.isDir ? "Directory" : "File"}`,
       color: "default",
     });
   };
@@ -304,24 +295,24 @@ export function LibraryFileBrowserTab({
         label: "NAME",
         sortable: true,
         render: (entry) => {
-          const isParent = entry.Name === "..";
-          const icon = renderFileIcon(entry.Name, entry.IsDir);
+          const isParent = entry.name === "..";
+          const icon = renderFileIcon(entry.name, entry.isDir);
 
           return (
             <Button
               variant="light"
               onPress={() =>
-                entry.IsDir && entry.Readable && navigateTo(entry.Path)
+                entry.isDir && entry.readable && navigateTo(entry.path)
               }
               className={`
                 flex items-center gap-3 text-left min-w-0 w-full justify-start px-2
-                ${!entry.Readable ? "opacity-50" : ""}
+                ${!entry.readable ? "opacity-50" : ""}
                 ${isParent ? "text-default-500" : ""}
               `}
-              isDisabled={!entry.IsDir || !entry.Readable}
+              isDisabled={!entry.isDir || !entry.readable}
             >
               <span className="flex-shrink-0">{icon}</span>
-              <span className="flex-1 truncate">{entry.Name}</span>
+              <span className="flex-1 truncate">{entry.name}</span>
             </Button>
           );
         },
@@ -333,11 +324,11 @@ export function LibraryFileBrowserTab({
         ),
         sortFn: (a, b) => {
           // Parent directory always first
-          if (a.Name === "..") return -1;
-          if (b.Name === "..") return 1;
+          if (a.name === "..") return -1;
+          if (b.name === "..") return 1;
           // Directories first
-          if (a.IsDir !== b.IsDir) return a.IsDir ? -1 : 1;
-          return a.Name.localeCompare(b.Name);
+          if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+          return a.name.localeCompare(b.name);
         },
       },
       {
@@ -347,11 +338,11 @@ export function LibraryFileBrowserTab({
         sortable: true,
         render: (entry) => (
           <span className="text-xs text-default-400 tabular-nums">
-            {!entry.IsDir ? formatBytes(entry.Size) : "—"}
+            {!entry.isDir ? formatBytes(entry.size) : "—"}
           </span>
         ),
         skeleton: () => <Skeleton className="w-12 h-3 rounded" />,
-        sortFn: (a, b) => (a.Size || 0) - (b.Size || 0),
+        sortFn: (a, b) => (a.size || 0) - (b.size || 0),
       },
       {
         key: "type",
@@ -360,16 +351,16 @@ export function LibraryFileBrowserTab({
         sortable: true,
         render: (entry) => (
           <span className="text-xs text-default-400">
-            {entry.IsDir
+            {entry.isDir
               ? "Folder"
-              : entry.Name.split(".").pop()?.toUpperCase() || "File"}
+              : entry.name.split(".").pop()?.toUpperCase() || "File"}
           </span>
         ),
         skeleton: () => <Skeleton className="w-10 h-3 rounded" />,
         sortFn: (a, b) => {
-          if (a.IsDir !== b.IsDir) return a.IsDir ? -1 : 1;
-          const extA = a.Name.split(".").pop() || "";
-          const extB = b.Name.split(".").pop() || "";
+          if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+          const extA = a.name.split(".").pop() || "";
+          const extB = b.name.split(".").pop() || "";
           return extA.localeCompare(extB);
         },
       },
@@ -379,12 +370,12 @@ export function LibraryFileBrowserTab({
         width: 100,
         render: (entry) => (
           <>
-            {entry.IsDir && entry.Writable && (
+            {entry.isDir && entry.writable && (
               <Chip size="sm" color="success" variant="flat">
                 writable
               </Chip>
             )}
-            {entry.IsDir && !entry.Writable && entry.Readable && (
+            {entry.isDir && !entry.writable && entry.readable && (
               <Chip size="sm" color="warning" variant="flat">
                 read-only
               </Chip>
@@ -404,19 +395,13 @@ export function LibraryFileBrowserTab({
         key: "copy",
         label: "Copy",
         icon: <IconCopy size={16} />,
-        onAction: (items) => handleCopy(items.map((e) => e.Path)),
+        onAction: (items) => handleCopy(items.map((e) => e.path)),
       },
       {
         key: "move",
         label: "Move",
         icon: <IconArrowRight size={16} />,
-        onAction: (items) => handleMove(items.map((e) => e.Path)),
-      },
-      {
-        key: "match",
-        label: "Match",
-        icon: <IconSearch size={16} />,
-        onAction: (items) => handleMatch(items.map((e) => e.Path)),
+        onAction: (items) => handleMove(items.map((e) => e.path)),
       },
       {
         key: "delete",
@@ -424,14 +409,14 @@ export function LibraryFileBrowserTab({
         icon: <IconTrash size={16} className="text-red-400" />,
         color: "danger",
         isDestructive: true,
-        onAction: (items) => handleDeleteClick(items.map((e) => e.Path)),
+        onAction: (items) => handleDeleteClick(items.map((e) => e.path)),
       },
     ],
     [],
   );
 
   // Helper to check if entry is parent directory
-  const isParentEntry = (entry: BrowseDirectoryEntry) => entry.Name === "..";
+  const isParentEntry = (entry: BrowseDirectoryEntry) => entry.name === "..";
 
   // Row actions - hidden for parent directory
   const rowActions: RowAction<BrowseDirectoryEntry>[] = useMemo(
@@ -442,7 +427,7 @@ export function LibraryFileBrowserTab({
         icon: <IconCopy size={16} />,
         inDropdown: true,
         isVisible: (entry) => !isParentEntry(entry),
-        onAction: (entry) => handleCopy([entry.Path]),
+        onAction: (entry) => handleCopy([entry.path]),
       },
       {
         key: "move",
@@ -450,15 +435,7 @@ export function LibraryFileBrowserTab({
         icon: <IconArrowRight size={16} />,
         inDropdown: true,
         isVisible: (entry) => !isParentEntry(entry),
-        onAction: (entry) => handleMove([entry.Path]),
-      },
-      {
-        key: "match",
-        label: "Match to Show",
-        icon: <IconSearch size={16} />,
-        inDropdown: true,
-        isVisible: (entry) => !isParentEntry(entry),
-        onAction: (entry) => handleMatch([entry.Path]),
+        onAction: (entry) => handleMove([entry.path]),
       },
       {
         key: "properties",
@@ -475,7 +452,7 @@ export function LibraryFileBrowserTab({
         isDestructive: true,
         inDropdown: true,
         isVisible: (entry) => !isParentEntry(entry),
-        onAction: (entry) => handleDeleteClick([entry.Path]),
+        onAction: (entry) => handleDeleteClick([entry.path]),
       },
     ],
     [],
@@ -483,15 +460,15 @@ export function LibraryFileBrowserTab({
 
   // Search function - exclude parent directory from search
   const searchFn = (entry: BrowseDirectoryEntry, term: string) => {
-    if (entry.Name === "..") return true; // Always show parent directory
-    return entry.Name.toLowerCase().includes(term.toLowerCase());
+    if (entry.name === "..") return true; // Always show parent directory
+    return entry.name.toLowerCase().includes(term.toLowerCase());
   };
 
   // Only show loading spinner if we don't have skeleton support (legacy fallback)
   // Now the DataTable handles showing skeletons during initial load
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full min-h-0 flex-1 flex-col">
       {/* Fixed Header */}
       <div className="flex-shrink-0 space-y-4 pb-4">
         <div className="flex items-center justify-between">
@@ -555,12 +532,12 @@ export function LibraryFileBrowserTab({
             </Button>
             {quickPaths.map((qp) => (
               <Button
-                key={qp.Path}
+                key={qp.path}
                 size="sm"
                 variant="flat"
-                onPress={() => navigateTo(qp.Path)}
+                onPress={() => navigateTo(qp.path)}
               >
-                {qp.Name}
+                {qp.name}
               </Button>
             ))}
           </div>
@@ -576,14 +553,14 @@ export function LibraryFileBrowserTab({
           skeletonDelay={500}
           data={sortedEntries}
           columns={columns}
-          getRowKey={(entry) => entry.Path}
+          getRowKey={(entry) => entry.path}
           isLoading={parentLoading || loading}
           selectionMode="multiple"
-          isRowSelectable={(entry) => entry.Name !== ".."}
+          isRowSelectable={(entry) => entry.name !== ".."}
           checkboxSelectionOnly
-          isPinned={(entry) => entry.Name === ".."}
+          isPinned={(entry) => entry.name === ".."}
           searchFn={searchFn}
-          searchPlaceholder="Search files..."
+          toolbarQueryPlaceholder="Search files..."
           bulkActions={bulkActions}
           rowActions={rowActions}
           fillHeight
@@ -605,7 +582,7 @@ export function LibraryFileBrowserTab({
           }
           ariaLabel="File browser"
           classNames={{
-            wrapper: "flex flex-col h-full",
+            wrapper: "flex h-full min-h-0 flex-1 flex-col",
           }}
         />
       </div>

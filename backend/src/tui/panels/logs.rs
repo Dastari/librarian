@@ -109,10 +109,10 @@ impl LogsPanel {
             .iter()
             .filter(|log| {
                 // Level filter
-                if let Some(ref level) = self.level_filter {
-                    if !log.level.eq_ignore_ascii_case(level) {
-                        return false;
-                    }
+                if let Some(ref level) = self.level_filter
+                    && !log.level.eq_ignore_ascii_case(level)
+                {
+                    return false;
                 }
                 // Search filter
                 if let Some(ref search) = self.search_filter {
@@ -144,12 +144,6 @@ impl LogsPanel {
         }
     }
 
-    /// Set level filter
-    #[allow(dead_code)]
-    pub fn set_level_filter(&mut self, level: Option<String>) {
-        self.level_filter = level;
-    }
-
     /// Toggle a level filter (on if off, off if on)
     pub fn toggle_level_filter(&mut self, level: &str) {
         if self.level_filter.as_deref() == Some(level) {
@@ -158,12 +152,6 @@ impl LogsPanel {
             self.level_filter = Some(level.to_string());
         }
         self.list_state.select(Some(0));
-    }
-
-    /// Set search filter
-    #[allow(dead_code)]
-    pub fn set_search_filter(&mut self, search: Option<String>) {
-        self.search_filter = search;
     }
 
     /// Clear all logs
@@ -176,7 +164,7 @@ impl LogsPanel {
     fn poll_logs(&mut self) {
         if self.paused {
             // Drain so we don't lag the channel
-            while let Ok(_) = self.log_rx.try_recv() {}
+            while self.log_rx.try_recv().is_ok() {}
             return;
         }
 
@@ -259,14 +247,6 @@ impl LogsPanel {
 }
 
 impl Panel for LogsPanel {
-    fn title(&self) -> &str {
-        "logs"
-    }
-
-    fn kind(&self) -> PanelKind {
-        PanelKind::Logs
-    }
-
     fn render(&self, frame: &mut Frame, area: Rect, focused: bool) {
         let filtered = self.filtered_logs();
         let selected = self.list_state.selected();
@@ -402,7 +382,7 @@ impl Panel for LogsPanel {
             .highlight_style(Theme::selected());
 
         // Clone state for rendering
-        let mut state = self.list_state.clone();
+        let mut state = self.list_state;
         frame.render_stateful_widget(list, area, &mut state);
         self.last_render_offset.set(state.offset());
     }
@@ -413,10 +393,10 @@ impl Panel for LogsPanel {
         match action {
             Action::ScrollUp => {
                 self.auto_scroll = false;
-                if let Some(selected) = self.list_state.selected() {
-                    if selected > 0 {
-                        self.list_state.select(Some(selected - 1));
-                    }
+                if let Some(selected) = self.list_state.selected()
+                    && selected > 0
+                {
+                    self.list_state.select(Some(selected - 1));
                 }
             }
             Action::ScrollDown => {
@@ -474,11 +454,6 @@ impl Panel for LogsPanel {
 
     fn update(&mut self) {
         self.poll_logs();
-    }
-
-    fn scroll_position(&self) -> Option<(usize, usize)> {
-        let total = self.filtered_logs().len();
-        self.list_state.selected().map(|pos| (pos + 1, total))
     }
 }
 

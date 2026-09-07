@@ -22,6 +22,7 @@ import { useDisclosure } from "@heroui/modal";
 import { useState, useEffect } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { useTheme } from "../hooks/useTheme";
+import { isAdmin } from "../lib/auth";
 import { IconSearch, IconSun, IconMoon } from "@tabler/icons-react";
 import { SearchModal } from "./SearchModal";
 import { NotificationIcon } from "./NotificationIcon";
@@ -45,6 +46,9 @@ export function Navbar() {
   } = useDisclosure();
   const location = useLocation();
   const navigate = useNavigate();
+  const visibleNavItems = navItems.filter(
+    (item) => item.to !== "/settings" || isAdmin(user)
+  );
 
   // Keyboard shortcut for search (Cmd/Ctrl + K)
   useEffect(() => {
@@ -114,7 +118,7 @@ export function Navbar() {
       {/* Desktop navigation */}
       {user && (
         <NavbarContent className="hidden sm:flex gap-1" justify="center">
-          {navItems.map((item) => (
+          {visibleNavItems.map((item) => (
             <NavbarItem key={item.to} isActive={isActive(item.to)}>
               <Button
                 className="text-sm font-semibold"
@@ -223,12 +227,14 @@ export function Navbar() {
                 >
                   Notifications
                 </DropdownItem>
-                <DropdownItem
-                  key="settings"
-                  onPress={() => navigate({ to: "/settings" })}
-                >
-                  Settings
-                </DropdownItem>
+                {isAdmin(user) ? (
+                  <DropdownItem
+                    key="settings"
+                    onPress={() => navigate({ to: "/settings" })}
+                  >
+                    Settings
+                  </DropdownItem>
+                ) : null}
                 <DropdownItem
                   key="logout"
                   color="danger"
@@ -256,7 +262,7 @@ export function Navbar() {
       {/* Mobile menu */}
       <NavbarMenu>
         {user &&
-          navItems.map((item) => (
+          visibleNavItems.map((item) => (
             <NavbarMenuItem key={item.to}>
               <Link
                 to={item.to}

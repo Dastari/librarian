@@ -1,0 +1,29 @@
+/*
+ * Librarian design system entry point.
+ *
+ * Layer order: HeroUI (which pulls in Tailwind v4) -> Librarian tokens.
+ * Every colour, radius, shadow and motion value used by the app is defined here as a CSS
+ * variable so components never hard-code visual decisions. See STYLE_GUIDE.md.
+ */
+@import "@heroui/styles";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/outfit";
+
+@import "./tokens.css";
+@import "./typography.css";
+@import "./glass.css";
+@import "./motion.css";
+@import "./utilities.css";
+@import "./overrides.css";
+
+/* Tailwind scans the HeroUI runtime because it composes utility classes at render time. */
+@source "../../node_modules/@heroui/react/dist";
+
+/* Input-mode variants. `data-input-mode` is set on <html> by the InputModeProvider. */
+@custom-variant tv (&:where([data-input-mode="tv"], [data-input-mode="tv"] *));
+@custom-variant pointer (&:where([data-input-mode="pointer"], [data-input-mode="pointer"] *));
+@custom-variant touch (&:where([data-input-mode="touch"], [data-input-mode="touch"] *));
+@custom-variant standalone (@media (display-mode: standalone));
+@custom-variant hover-capable (@media (hover: hover) and (pointer: fine));
+/* react-aria press state (mouse down / touch / Enter held). */
+@custom-variant pressed (&[data-pressed]);

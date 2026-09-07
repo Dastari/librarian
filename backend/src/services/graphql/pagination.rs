@@ -13,19 +13,19 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 #[graphql(name = "PageInfo")]
 pub struct PageInfo {
     /// When paginating forwards, are there more items?
-    #[graphql(name = "HasNextPage")]
+    #[graphql(name = "hasNextPage")]
     pub has_next_page: bool,
     /// When paginating backwards, are there more items?
-    #[graphql(name = "HasPreviousPage")]
+    #[graphql(name = "hasPreviousPage")]
     pub has_previous_page: bool,
     /// Cursor of the first item in this page
-    #[graphql(name = "StartCursor")]
+    #[graphql(name = "startCursor")]
     pub start_cursor: Option<String>,
     /// Cursor of the last item in this page
-    #[graphql(name = "EndCursor")]
+    #[graphql(name = "endCursor")]
     pub end_cursor: Option<String>,
     /// Total count of items (if available)
-    #[graphql(name = "TotalCount")]
+    #[graphql(name = "totalCount")]
     pub total_count: Option<i64>,
 }
 

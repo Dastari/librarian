@@ -1,148 +1,175 @@
 query Libraries(
-  $Where: LibraryWhereInput
-  $OrderBy: [LibraryOrderByInput!]
-  $Page: PageInput
+  $where: LibraryWhereInput
+  $orderBy: [LibraryOrderByInput!]
+  $page: PageInput
 ) {
-  Libraries: libraries(where: $Where, orderBy: $OrderBy, page: $Page) {
-    Edges: edges {
-      Node: node {
-        Id
-        UserId
-        Name
-        Path
-        LibraryType
-        Icon
-        Color
-        AutoScan
-        ScanIntervalMinutes
-        WatchForChanges
-        AutoOrganize
-        NamingPattern
-        Scanning
-        LastScannedAt
-        CreatedAt
-        UpdatedAt
-        Shows: shows {
-          PageInfo: pageInfo {
-            TotalCount: totalCount
+  libraries(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        id
+        userId
+        name
+        path
+        libraryType
+        icon
+        color
+        autoScan
+        scanIntervalMinutes
+        watchForChanges
+        autoOrganize
+        namingPattern
+        scanning
+        lastScannedAt
+        createdAt
+        updatedAt
+        shows {
+          pageInfo {
+            totalCount
           }
         }
-        ShowArtwork: shows(
-          orderBy: { UpdatedAt: DESC }
+        showArtwork: shows(
+          orderBy: { updatedAt: DESC }
           page: { limit: 8, offset: 0 }
         ) {
-          Edges: edges {
-            Node: node {
-              Id
-              PosterUrl
+          edges {
+            node {
+              id
+              posterUrl
             }
           }
         }
-        Movies: movies {
-          PageInfo: pageInfo {
-            TotalCount: totalCount
+        movies {
+          pageInfo {
+            totalCount
           }
         }
-        MovieArtwork: movies(
-          orderBy: { UpdatedAt: DESC }
+        movieArtwork: movies(
+          orderBy: { updatedAt: DESC }
           page: { limit: 8, offset: 0 }
         ) {
-          Edges: edges {
-            Node: node {
-              Id
-              CollectionPosterUrl
+          edges {
+            node {
+              id
+              collectionPosterUrl
             }
           }
         }
-        Albums: albums {
-          PageInfo: pageInfo {
-            TotalCount: totalCount
+        albums {
+          pageInfo {
+            totalCount
           }
         }
-        AlbumArtwork: albums(
-          orderBy: { UpdatedAt: DESC }
+        albumArtwork: albums(
+          orderBy: { updatedAt: DESC }
           page: { limit: 8, offset: 0 }
         ) {
-          Edges: edges {
-            Node: node {
-              Id
-              CoverUrl
+          edges {
+            node {
+              id
+              coverUrl
             }
           }
         }
-        Audiobooks: audiobooks {
-          PageInfo: pageInfo {
-            TotalCount: totalCount
+        audiobooks {
+          pageInfo {
+            totalCount
           }
         }
-        AudiobookArtwork: audiobooks(
-          orderBy: { UpdatedAt: DESC }
+        audiobookArtwork: audiobooks(
+          orderBy: { updatedAt: DESC }
           page: { limit: 8, offset: 0 }
         ) {
-          Edges: edges {
-            Node: node {
-              Id
-              CoverUrl
+          edges {
+            node {
+              id
+              coverUrl
             }
           }
         }
       }
-      Cursor: cursor
+      cursor
     }
-    PageInfo: pageInfo {
-      HasNextPage: hasNextPage
-      TotalCount: totalCount
-    }
-  }
-}
-
-subscription LibraryChanged($Filter: SubscriptionFilterInput) {
-  LibraryChanged: libraryChanged(filter: $Filter) {
-    Action: action
-    Id: id
-    Library: library {
-      Id
-      Name
-      Path
-      LibraryType
-      Icon
-      Color
-      AutoScan
-      ScanIntervalMinutes
-      WatchForChanges
-      Scanning
-      LastScannedAt
-      CreatedAt
-      UpdatedAt
+    pageInfo {
+      hasNextPage
+      totalCount
     }
   }
 }
 
-mutation CreateLibrary($Input: CreateLibraryInput!) {
-  CreateLibrary: createLibrary(input: $Input) {
-    Success: success
-    Error: error
-    Library: library {
-      Id
-      Name
-      Path
-      LibraryType
-      Icon
-      Color
+subscription LibraryChanged($filter: SubscriptionFilterInput) {
+  libraryChanged(filter: $filter) {
+    action
+    id
+    library {
+      id
+      name
+      path
+      libraryType
+      icon
+      color
+      autoScan
+      scanIntervalMinutes
+      watchForChanges
+      scanning
+      lastScannedAt
+      createdAt
+      updatedAt
     }
   }
 }
 
-mutation DeleteLibrary($Id: String!) {
-  DeleteLibrary: deleteLibrary(id: $Id) {
-    Success: success
-    Error: error
+mutation CreateLibrary($input: CreateLibraryInput!) {
+  createLibrary(input: $input) {
+    success
+    error
+    library {
+      id
+      name
+      path
+      libraryType
+      icon
+      color
+    }
   }
 }
 
-mutation ScanLibrary($Id: String!) {
-  ScanLibrary(Id: $Id) {
-    Success
-    Message
+mutation DeleteLibrary($id: String!) {
+  deleteLibrary(id: $id) {
+    success
+    error
+  }
+}
+
+mutation ScanLibrary($id: String!) {
+  scanLibrary(id: $id) {
+    success
+    status
+    message
+    scanRunId
+  }
+}
+
+mutation RetryScanIssue($issueId: String!) {
+  retryScanIssue(issueId: $issueId) {
+    success
+    queued
+    message
+  }
+}
+
+mutation ResolveScanIssue($issueId: String!, $resolution: String!) {
+  resolveScanIssue(issueId: $issueId, resolution: $resolution) {
+    success
+    queued
+    message
+  }
+}
+
+mutation TrashDuplicateScanIssue($issueId: String!) {
+  trashDuplicateScanIssue(issueId: $issueId) {
+    success
+    message
+    oldPath
+    trashPath
   }
 }

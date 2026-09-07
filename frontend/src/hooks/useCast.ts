@@ -42,13 +42,13 @@ import type {
 } from "../lib/graphql/generated/graphql";
 import { apolloClient, useMutation } from "../lib/graphql/client";
 
-type DeviceNode = CastDevicesQuery["CastDevices"]["Edges"][0]["Node"];
-type SessionNode = CastSessionsQuery["CastSessions"]["Edges"][0]["Node"];
-type SettingNode = CastSettingsQuery["CastSettings"]["Edges"][0]["Node"];
+type DeviceNode = CastDevicesQuery["castDevices"]["edges"][0]["node"];
+type SessionNode = CastSessionsQuery["castSessions"]["edges"][0]["node"];
+type SettingNode = CastSettingsQuery["castSettings"]["edges"][0]["node"];
 export type CastDevice =
-  DiscoverCastDevicesOpMutation["DiscoverCastDevices"][number];
+  DiscoverCastDevicesOpMutation["discoverCastDevices"][number];
 export type CastSession = NonNullable<
-  CastMediaOpMutation["CastMedia"]["session"]
+  CastMediaOpMutation["castMedia"]["session"]
 >;
 export type CastSessionResult = {
   success: boolean;
@@ -65,48 +65,53 @@ export type CastSettings = {
 
 function deviceNodeToApp(node: DeviceNode): CastDevice {
   return {
-    id: node.Id,
-    name: node.Name,
-    address: node.Address,
-    port: node.Port,
-    model: node.Model ?? null,
-    deviceType: node.DeviceType as CastDevice["deviceType"],
-    isFavorite: node.IsFavorite,
-    isManual: node.IsManual,
+    id: node.id,
+    name: node.name,
+    address: node.address,
+    port: node.port,
+    model: node.model ?? null,
+    deviceType: node.deviceType as CastDevice["deviceType"],
+    isFavorite: node.isFavorite,
+    isManual: node.isManual,
     isConnected: false,
-    lastSeenAt: node.LastSeenAt ?? null,
+    enabled: node.enabled ?? true,
+    playbackSupported: node.playbackSupported ?? false,
+    discoveryOrigin: node.discoveryOrigin ?? null,
+    lastSeenAt: node.lastSeenAt ?? null,
   };
 }
 
 function sessionNodeToApp(node: SessionNode): CastSession {
   return {
-    id: node.Id,
-    deviceId: node.DeviceId ?? null,
+    id: node.id,
+    deviceId: node.deviceId ?? null,
     deviceName: null,
-    mediaFileId: node.MediaFileId ?? null,
-    episodeId: node.EpisodeId ?? null,
-    streamUrl: node.StreamUrl,
-    playerState: node.PlayerState as CastSession["playerState"],
-    currentTime: node.CurrentPosition,
-    duration: node.Duration ?? null,
-    volume: node.Volume,
-    isMuted: node.IsMuted,
-    startedAt: node.StartedAt,
+    mediaFileId: node.mediaFileId ?? null,
+    episodeId: node.episodeId ?? null,
+    playerState: node.playerState as CastSession["playerState"],
+    currentTime: node.currentPosition,
+    duration: node.duration ?? null,
+    volume: node.volume,
+    isMuted: node.isMuted,
+    startedAt: node.startedAt,
+    lastError: node.lastError ?? null,
+    playbackDecision: node.playbackDecision ?? null,
+    playbackReason: node.playbackReason ?? null,
   };
 }
 
 function settingNodeToApp(node: SettingNode): CastSettings {
   return {
-    autoDiscoveryEnabled: node.AutoDiscoveryEnabled,
-    discoveryIntervalSeconds: node.DiscoveryIntervalSeconds,
-    defaultVolume: node.DefaultVolume,
-    transcodeIncompatible: node.TranscodeIncompatible,
-    preferredQuality: node.PreferredQuality ?? null,
+    autoDiscoveryEnabled: node.autoDiscoveryEnabled,
+    discoveryIntervalSeconds: node.discoveryIntervalSeconds,
+    defaultVolume: node.defaultVolume,
+    transcodeIncompatible: node.transcodeIncompatible,
+    preferredQuality: node.preferredQuality ?? null,
   };
 }
 
 function normalizeDiscoveredDevice(
-  device: DiscoverCastDevicesOpMutation["DiscoverCastDevices"][number],
+  device: DiscoverCastDevicesOpMutation["discoverCastDevices"][number],
 ): CastDevice {
   return {
     id: device.id,
@@ -118,12 +123,15 @@ function normalizeDiscoveredDevice(
     isFavorite: device.isFavorite,
     isManual: device.isManual,
     isConnected: device.isConnected ?? false,
+    enabled: device.enabled,
+    playbackSupported: device.playbackSupported,
+    discoveryOrigin: device.discoveryOrigin ?? null,
     lastSeenAt: device.lastSeenAt ?? null,
   };
 }
 
 function normalizeCastSession(
-  session: NonNullable<CastMediaOpMutation["CastMedia"]["session"]>,
+  session: NonNullable<CastMediaOpMutation["castMedia"]["session"]>,
 ): CastSession {
   return {
     id: session.id,
@@ -131,13 +139,15 @@ function normalizeCastSession(
     deviceName: session.deviceName ?? null,
     mediaFileId: session.mediaFileId ?? null,
     episodeId: session.episodeId ?? null,
-    streamUrl: session.streamUrl,
     playerState: session.playerState as CastSession["playerState"],
     currentTime: session.currentTime,
     duration: session.duration ?? null,
     volume: session.volume,
     isMuted: session.isMuted,
     startedAt: session.startedAt,
+    lastError: session.lastError ?? null,
+    playbackDecision: session.playbackDecision ?? null,
+    playbackReason: session.playbackReason ?? null,
   };
 }
 
@@ -209,29 +219,40 @@ export function useCast(): UseCastResult {
         }),
         apolloClient.query({
           query: CastSessionsDocument,
+          variables: {
+            orderBy: [{ startedAt: "DESC" }],
+            page: { limit: 20, offset: 0 },
+          },
           fetchPolicy: "network-only",
         }),
         apolloClient.query({
           query: CastSettingsDocument,
-          variables: { Page: { limit: 1, offset: 0 } },
+          variables: { page: { limit: 1, offset: 0 } },
           fetchPolicy: "network-only",
         }),
       ]);
 
-      if (devicesRes.data?.CastDevices?.Edges) {
+      if (devicesRes.data?.castDevices?.edges) {
         setDevices(
-          devicesRes.data.CastDevices.Edges.map((e) => deviceNodeToApp(e.Node)),
+          devicesRes.data.castDevices.edges.map((e) => deviceNodeToApp(e.node)),
         );
       }
-      if (sessionsRes.data?.CastSessions?.Edges) {
-        const sessions = sessionsRes.data.CastSessions.Edges.map((e) =>
-          sessionNodeToApp(e.Node),
+      if (sessionsRes.data?.castSessions?.edges) {
+        const sessions = sessionsRes.data.castSessions.edges.map((e) =>
+          sessionNodeToApp(e.node),
         );
-        setActiveSession(sessions[0] ?? null);
+        setActiveSession(
+          sessions.find(
+            (session) =>
+              !["ENDED", "IDLE"].includes(
+                session.playerState,
+              ),
+          ) ?? null,
+        );
       }
-      if (settingsRes.data?.CastSettings?.Edges?.length) {
+      if (settingsRes.data?.castSettings?.edges?.length) {
         setSettings(
-          settingNodeToApp(settingsRes.data.CastSettings.Edges[0].Node),
+          settingNodeToApp(settingsRes.data.castSettings.edges[0].node),
         );
       }
     } catch (e) {
@@ -245,13 +266,19 @@ export function useCast(): UseCastResult {
     refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if (!activeSession) return;
+    const timer = window.setInterval(() => void refresh(), 5000);
+    return () => window.clearInterval(timer);
+  }, [activeSession?.id, refresh]);
+
   const discoverDevices = useCallback(async () => {
     setIsDiscovering(true);
     try {
       const result = await discoverCastDevices();
-      if (result.data?.DiscoverCastDevices) {
+      if (result.data?.discoverCastDevices) {
         setDevices(
-          result.data.DiscoverCastDevices.map(normalizeDiscoveredDevice),
+          result.data.discoverCastDevices.map(normalizeDiscoveredDevice),
         );
       } else {
         await refresh();
@@ -267,11 +294,11 @@ export function useCast(): UseCastResult {
     async (input: CastMediaInput): Promise<CastSessionResult> => {
       try {
         const result = await castMediaMutation({ variables: { input } });
-        if (result.data?.CastMedia.success && result.data.CastMedia.session) {
-          setActiveSession(normalizeCastSession(result.data.CastMedia.session));
+        if (result.data?.castMedia.success && result.data.castMedia.session) {
+          setActiveSession(normalizeCastSession(result.data.castMedia.session));
         }
 
-        const castResult = result.data?.CastMedia;
+        const castResult = result.data?.castMedia;
         return (
           (castResult
             ? {
@@ -304,8 +331,8 @@ export function useCast(): UseCastResult {
       const result = await castPlayMutation({
         variables: { sessionId: activeSession.id },
       });
-      if (result.data?.CastPlay?.session) {
-        const patch = result.data.CastPlay.session;
+      if (result.data?.castPlay?.session) {
+        const patch = result.data.castPlay.session;
         setActiveSession((prev) =>
           prev
             ? {
@@ -328,8 +355,8 @@ export function useCast(): UseCastResult {
       const result = await castPauseMutation({
         variables: { sessionId: activeSession.id },
       });
-      if (result.data?.CastPause?.session) {
-        const patch = result.data.CastPause.session;
+      if (result.data?.castPause?.session) {
+        const patch = result.data.castPause.session;
         setActiveSession((prev) =>
           prev
             ? {
@@ -348,6 +375,10 @@ export function useCast(): UseCastResult {
 
   const stop = useCallback(async () => {
     if (!activeSession) return;
+    if (["FAILED", "DISCONNECTED", "ENDED", "IDLE"].includes(activeSession.playerState)) {
+      setActiveSession(null);
+      return;
+    }
     try {
       await castStopMutation({ variables: { sessionId: activeSession.id } });
       setActiveSession(null);
@@ -366,8 +397,8 @@ export function useCast(): UseCastResult {
             position,
           },
         });
-        if (result.data?.CastSeek?.session) {
-          const patch = result.data.CastSeek.session;
+        if (result.data?.castSeek?.session) {
+          const patch = result.data.castSeek.session;
           setActiveSession((prev) =>
             prev
               ? {
@@ -396,8 +427,8 @@ export function useCast(): UseCastResult {
             volume,
           },
         });
-        if (result.data?.CastSetVolume?.session) {
-          const patch = result.data.CastSetVolume.session;
+        if (result.data?.castSetVolume?.session) {
+          const patch = result.data.castSetVolume.session;
           setActiveSession((prev) =>
             prev
               ? {
@@ -426,8 +457,8 @@ export function useCast(): UseCastResult {
             muted,
           },
         });
-        if (result.data?.CastSetMuted?.session) {
-          const patch = result.data.CastSetMuted.session;
+        if (result.data?.castSetMuted?.session) {
+          const patch = result.data.castSetMuted.session;
           setActiveSession((prev) =>
             prev
               ? {

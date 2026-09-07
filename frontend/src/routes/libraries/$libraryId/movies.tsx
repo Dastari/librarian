@@ -44,16 +44,16 @@ function MoviesPage() {
     MovieChangedDocument,
     {
       variables: {
-        Filter: {
+        filter: {
           actions: [ChangeAction.CREATED, ChangeAction.UPDATED, ChangeAction.DELETED],
         },
       },
       onData: ({ data }) => {
-        const event = data.data?.MovieChanged;
+        const event = data.data?.movieChanged;
         if (!event) return;
 
         // SubscriptionFilterInput only supports Id/Actions, so filter by library in client.
-        if (event.Movie?.LibraryId && event.Movie.LibraryId !== library.Id) return;
+        if (event.movie?.libraryId && event.movie.libraryId !== library.id) return;
 
         // Refresh the movies list on any change
         if (refreshMoviesRef.current) {
@@ -79,7 +79,7 @@ function MoviesPage() {
   return (
     <>
       <LibraryMoviesTab
-        libraryId={library.Id}
+        libraryId={library.id}
         loading={loading}
         onDeleteMovie={handleDeleteMovieClick}
         onAddMovie={onAddOpen}
@@ -90,7 +90,7 @@ function MoviesPage() {
       <AddMovieModal
         isOpen={isAddOpen}
         onClose={onAddClose}
-        libraryId={library.Id}
+        libraryId={library.id}
         onAdded={handleMoviesUpdated}
       />
 

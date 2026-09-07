@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react'
-import { TORRENT_COMPLETED_SUBSCRIPTION } from '../lib/graphql'
+import { TorrentCompletedDocument } from '../lib/graphql/generated/graphql'
 import { subscriptionStream } from '../lib/graphql/client'
 
 /**
@@ -11,8 +11,8 @@ export function useTorrentCompletionRefresh(onComplete: () => void) {
   callbackRef.current = onComplete
 
   useEffect(() => {
-    const sub = subscriptionStream<{ TorrentCompleted: { Id: number; Name: string } }>(
-      TORRENT_COMPLETED_SUBSCRIPTION,
+    const sub = subscriptionStream<{ torrentCompleted: { id: number; name: string } }>(
+      TorrentCompletedDocument,
       {}
     ).subscribe({
       next: () => {

@@ -1,17 +1,23 @@
 //! Health check endpoints
 
-use axum::{Json, Router, routing::get};
+use axum::{Json, Router, extract::State, http::HeaderMap, routing::get};
 use serde::Serialize;
 
 use crate::AppState;
+use crate::api::auth_guard::require_authenticated_user;
 use crate::services::graphql::filesystem_network;
 
 #[derive(Serialize)]
 pub struct HealthResponse {
     pub status: &'static str,
     pub version: &'static str,
-    pub platform: String,
-    pub network_paths: Vec<NetworkPathHealth>,
+    /// Platform/network-path details are only populated for authenticated callers —
+    /// they reveal filesystem layout and configured network mounts, which is unnecessary
+    /// information for anonymous health probes (load balancers etc. only need `status`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_paths: Option<Vec<NetworkPathHealth>>,
 }
 
 #[derive(Serialize)]
@@ -27,10 +33,23 @@ pub struct NetworkPathHealth {
     pub message: Option<String>,
 }
 
-/// Health check - always returns OK if the server is running
-async fn healthz(
-    axum::extract::State(state): axum::extract::State<AppState>,
-) -> Json<HealthResponse> {
+/// Health check - always returns OK if the server is running. Bare `status`/`version` for
+/// anonymous callers; authenticated callers additionally get platform/network-path details
+/// (previously always exposed, which leaked filesystem/network config to anyone).
+async fn healthz(State(state): State<AppState>, headers: HeaderMap) -> Json<HealthResponse> {
+    let authenticated = require_authenticated_user(&state, &headers, None)
+        .await
+        .is_ok();
+
+    if !authenticated {
+        return Json(HealthResponse {
+            status: "healthy",
+            version: env!("CARGO_PKG_VERSION"),
+            platform: None,
+            network_paths: None,
+        });
+    }
+
     let mut network_paths = Vec::new();
     if let Ok(configs) = filesystem_network::load_saved_network_configs(&state.db).await {
         for cfg in configs {
@@ -52,8 +71,8 @@ async fn healthz(
     Json(HealthResponse {
         status: "healthy",
         version: env!("CARGO_PKG_VERSION"),
-        platform: filesystem_network::current_platform(),
-        network_paths,
+        platform: Some(filesystem_network::current_platform()),
+        network_paths: Some(network_paths),
     })
 }
 

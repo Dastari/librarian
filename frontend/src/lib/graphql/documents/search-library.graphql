@@ -1,27 +1,27 @@
 query LibrarySearchShows {
-  Shows: shows {
-    Edges: edges {
-      Node: node {
-        Id
-        LibraryId
-        Name
-        Year
-        PosterUrl
+  shows {
+    edges {
+      node {
+        id
+        libraryId
+        name
+        year
+        posterUrl
       }
     }
   }
 }
 
 query LibrarySearchMovies {
-  Movies: movies {
-    Edges: edges {
-      Node: node {
-        Id
-        LibraryId
-        Title
-        Year
-        MediaFileId
-        Wanted
+  movies {
+    edges {
+      node {
+        id
+        libraryId
+        title
+        year
+        mediaFileId
+        wanted
       }
     }
   }

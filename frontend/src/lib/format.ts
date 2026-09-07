@@ -49,14 +49,24 @@ export function formatDuration(seconds: number | null | undefined): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
+/** Parse entity Unix seconds and RFC3339 timestamps without producing Invalid Date. */
+export function parseTimestamp(value: string | null | undefined): Date | null {
+  if (!value?.trim()) return null
+  const normalized = value.trim()
+  const date = /^-?\d+$/.test(normalized)
+    ? new Date(Number(normalized) * 1000)
+    : new Date(normalized)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
 /**
  * Format a date string for display (e.g., "Jan 9, 2026")
  * @param dateStr - The date string to format
  * @param fallback - Text to show when date is null/undefined (default: "Never")
  */
 export function formatDate(dateStr: string | null | undefined, fallback: string = 'Never'): string {
-  if (!dateStr) return fallback
-  const date = new Date(dateStr)
+  const date = parseTimestamp(dateStr)
+  if (!date) return fallback
   return date.toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'short',
@@ -68,8 +78,8 @@ export function formatDate(dateStr: string | null | undefined, fallback: string 
  * Format a date string with time (e.g., "Jan 9, 2026, 3:45 PM")
  */
 export function formatDateTime(dateStr: string | null | undefined): string {
-  if (!dateStr) return 'Never'
-  const date = new Date(dateStr)
+  const date = parseTimestamp(dateStr)
+  if (!date) return 'Never'
   return date.toLocaleString('en-US', {
     year: 'numeric',
     month: 'short',
@@ -83,8 +93,8 @@ export function formatDateTime(dateStr: string | null | undefined): string {
  * Format a date as relative time (e.g., "2 hours ago", "in 3 days")
  */
 export function formatRelativeTime(dateStr: string | null | undefined): string {
-  if (!dateStr) return 'Never'
-  const date = new Date(dateStr)
+  const date = parseTimestamp(dateStr)
+  if (!date) return 'Never'
   const now = new Date()
   const diffMs = now.getTime() - date.getTime()
   const diffSecs = Math.floor(diffMs / 1000)

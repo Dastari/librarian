@@ -19,7 +19,8 @@ import {
 import { usePlaybackContext } from "../contexts/PlaybackContext";
 import { CastButton } from "./cast";
 import { VolumeControl } from "./VolumeControl";
-import { getMediaStreamUrl } from "./VideoPlayer";
+import { resolveMediaPlaybackSource } from "./VideoPlayer";
+import { useHlsMediaSource } from "../hooks/useHlsMediaSource";
 import { apolloClient } from "../lib/graphql/client";
 import {
   PlaybackSyncIntervalDocument,
@@ -73,12 +74,20 @@ export function PersistentPlayer() {
   const [isMuted, setIsMuted] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [videoReady, setVideoReady] = useState(false);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [retryAttempt, setRetryAttempt] = useState(0);
   const [syncInterval, setSyncInterval] = useState(DEFAULT_SYNC_INTERVAL);
   const [isPaused, setIsPaused] = useState(true);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const sourceDurationRef = useRef<number | undefined>(undefined);
   const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Resolve the supported format before attaching the media source.
+  const [playbackSrc, setPlaybackSrc] = useState<string | undefined>(
+    undefined,
+  );
 
   // Only handle video content (EPISODE, MOVIE), not audio (TRACK, AUDIOBOOK).
   // Normalize to uppercase to tolerate old/lowercase stored values during migration.
@@ -92,16 +101,48 @@ export function PersistentPlayer() {
   const isCastingPlaying =
     isCastingThisMedia && castSession?.playerState === "PLAYING";
 
+  // Resolve the direct-vs-HLS playback URL whenever the media file changes.
+  useEffect(() => {
+    if (!isVideoSession || !session?.mediaFileId) {
+      setPlaybackSrc(undefined);
+      return;
+    }
+    const mediaFileId = session.mediaFileId;
+    setPlaybackSrc(undefined);
+    sourceDurationRef.current = undefined;
+    setDuration(0);
+    setVideoReady(false);
+    setPlaybackError(null);
+    let cancelled = false;
+    resolveMediaPlaybackSource(mediaFileId).then((source) => {
+      if (!cancelled) {
+        sourceDurationRef.current = source.duration;
+        setDuration(source.duration ?? 0);
+        setPlaybackSrc(source.url);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.mediaFileId, isVideoSession, retryAttempt]);
+
+  // Attaches hls.js (or native Safari HLS) when playbackSrc is an HLS
+  // playlist, or assigns it directly for a browser-compatible file.
+  useHlsMediaSource(videoRef, playbackSrc, () => {
+    setVideoReady(false);
+    setPlaybackError("Playback could not start. Try again or choose another file.");
+  });
+
   // Fetch playback sync interval from app settings
   useEffect(() => {
     apolloClient
       .query({
         query: PlaybackSyncIntervalDocument,
-        variables: { Key: "playback_sync_interval" },
+        variables: { key: "playback_sync_interval" },
         fetchPolicy: "network-only",
       })
       .then((result) => {
-        const value = result.data?.AppSettings?.Edges?.[0]?.Node?.Value;
+        const value = result.data?.appSettings?.edges?.[0]?.node?.value;
         if (value != null) {
           const seconds = Number(value);
           if (Number.isFinite(seconds)) setSyncInterval(seconds * 1000);
@@ -126,32 +167,32 @@ export function PersistentPlayer() {
       apolloClient
         .query({
           query: ShowDetailRouteDocument,
-          variables: { Id: session.tvShowId },
+          variables: { id: session.tvShowId },
         })
         .then((result) => {
-          const showNode = result.data?.Show;
+          const showNode = result.data?.show;
           if (showNode) {
             setCurrentShow(
               showNode as unknown as Parameters<typeof setCurrentShow>[0],
             );
           }
           const mappedEpisodes: Episode[] = (
-            showNode?.Episodes?.Edges ?? []
+            showNode?.episodes?.edges ?? []
           ).map((edge) => ({
-            id: edge.Node.Id,
-            tvShowId: edge.Node.ShowId,
-            season: edge.Node.Season,
-            episode: edge.Node.Episode,
-            absoluteNumber: edge.Node.AbsoluteNumber ?? null,
-            title: edge.Node.Title ?? null,
-            overview: edge.Node.Overview ?? null,
-            airDate: edge.Node.AirDate ?? null,
-            runtime: edge.Node.Runtime ?? null,
-            tvmazeId: edge.Node.TvmazeId ?? null,
-            tmdbId: edge.Node.TmdbId ?? null,
-            tvdbId: edge.Node.TvdbId ?? null,
-            mediaFileId: edge.Node.MediaFileId ?? null,
-            wanted: edge.Node.Wanted,
+            id: edge.node.id,
+            tvShowId: edge.node.showId,
+            season: edge.node.season,
+            episode: edge.node.episode,
+            absoluteNumber: edge.node.absoluteNumber ?? null,
+            title: edge.node.title ?? null,
+            overview: edge.node.overview ?? null,
+            airDate: edge.node.airDate ?? null,
+            runtime: edge.node.runtime ?? null,
+            tvmazeId: edge.node.tvmazeId ?? null,
+            tmdbId: edge.node.tmdbId ?? null,
+            tvdbId: edge.node.tvdbId ?? null,
+            mediaFileId: edge.node.mediaFileId ?? null,
+            wanted: edge.node.wanted,
             resolution: null,
             videoCodec: null,
             audioCodec: null,
@@ -216,7 +257,7 @@ export function PersistentPlayer() {
         if (videoRef.current) {
           updatePlayback({
             currentPosition: videoRef.current.currentTime,
-            duration: videoRef.current.duration || undefined,
+            duration: sourceDurationRef.current ?? (videoRef.current.duration || undefined),
             isPlaying: !videoRef.current.paused,
           });
         }
@@ -247,7 +288,7 @@ export function PersistentPlayer() {
         video.load(); // Abort any in-flight network requests
       }
     };
-  }, [session?.mediaFileId, isVideoSession]);
+  }, [session?.mediaFileId, isVideoSession, retryAttempt]);
 
   // Sync isPaused state with actual video state
   const syncPausedState = useCallback(() => {
@@ -265,7 +306,7 @@ export function PersistentPlayer() {
 
   const handleLoadedMetadata = useCallback(() => {
     if (videoRef.current) {
-      setDuration(videoRef.current.duration);
+      setDuration(sourceDurationRef.current ?? videoRef.current.duration);
       if (session?.currentPosition)
         videoRef.current.currentTime = session.currentPosition;
       syncPausedState();
@@ -274,6 +315,7 @@ export function PersistentPlayer() {
 
   const handleCanPlay = useCallback(() => {
     setVideoReady(true);
+    setPlaybackError(null);
     syncPausedState();
   }, [syncPausedState]);
 
@@ -323,7 +365,7 @@ export function PersistentPlayer() {
       return;
     }
     const finalPosition = videoRef.current?.currentTime ?? currentTime;
-    const finalDuration = videoRef.current?.duration || duration || undefined;
+    const finalDuration = sourceDurationRef.current ?? (videoRef.current?.duration || duration || undefined);
     // Stop the video and release resources
     if (videoRef.current) {
       videoRef.current.pause();
@@ -517,7 +559,7 @@ export function PersistentPlayer() {
     : "Episode";
   const isMovieSession = contentType === "MOVIE";
   const displayTitle = isMovieSession
-    ? currentMovie?.Title || currentContent?.title || "Movie"
+    ? currentMovie?.title || currentContent?.title || "Movie"
     : currentShow?.name || currentContent?.title || "Show";
   const displaySubtitle = isMovieSession
     ? currentContent?.subtitle || ""
@@ -557,15 +599,17 @@ export function PersistentPlayer() {
             {/* Video element - SINGLE instance */}
             <video
               ref={videoRef}
-              src={getMediaStreamUrl(session.mediaFileId!)}
               className={`w-full ${isExpanded ? "h-full object-contain" : "h-40 object-cover cursor-pointer"}`}
               onTimeUpdate={handleTimeUpdate}
               onLoadedMetadata={handleLoadedMetadata}
               onCanPlay={handleCanPlay}
+              onDurationChange={() => {
+                if (!sourceDurationRef.current && videoRef.current && Number.isFinite(videoRef.current.duration)) setDuration(videoRef.current.duration);
+              }}
               onPlay={handlePlay}
               onPause={handlePause}
               onEnded={handleStop}
-              onError={() => setVideoReady(false)}
+              onError={() => { setVideoReady(false); setPlaybackError("This file could not be played."); }}
               onClick={isExpanded ? undefined : () => setIsExpanded(true)}
               playsInline
               muted={isMuted}
@@ -576,7 +620,12 @@ export function PersistentPlayer() {
               <div
                 className={`absolute inset-0 flex items-center justify-center bg-black/60 ${isExpanded ? "" : "h-40"}`}
               >
-                <Spinner size="lg" color="white" />
+                {playbackError ? (
+                  <div className="p-4 text-center text-white" role="alert">
+                    <p className="mb-3 text-sm">{playbackError}</p>
+                    <Button size="sm" onPress={() => setRetryAttempt((value) => value + 1)}>Retry playback</Button>
+                  </div>
+                ) : <Spinner size="lg" color="white" label="Preparing playback" />}
               </div>
             )}
             {isCastingThisMedia && (

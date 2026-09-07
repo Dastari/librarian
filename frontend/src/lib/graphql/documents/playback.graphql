@@ -1,187 +1,187 @@
 query PlaybackSessions(
-  $Where: PlaybackSessionWhereInput
-  $OrderBy: [PlaybackSessionOrderByInput!]
-  $Page: PageInput
+  $where: PlaybackSessionWhereInput
+  $orderBy: [PlaybackSessionOrderByInput!]
+  $page: PageInput
 ) {
-  PlaybackSessions: playbackSessions(
-    where: $Where
-    orderBy: $OrderBy
-    page: $Page
+  playbackSessions(
+    where: $where
+    orderBy: $orderBy
+    page: $page
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        UserId
-        MediaFileId
-        CurrentPosition
-        Duration
-        Volume
-        IsMuted
-        IsPlaying
-        StartedAt
-        LastUpdatedAt
-        CompletedAt
-        CreatedAt
-        UpdatedAt
+    edges {
+      node {
+        id
+        userId
+        mediaFileId
+        currentPosition
+        duration
+        volume
+        isMuted
+        isPlaying
+        startedAt
+        lastUpdatedAt
+        completedAt
+        createdAt
+        updatedAt
       }
-      Cursor: cursor
+      cursor
     }
-    PageInfo: pageInfo {
-      HasNextPage: hasNextPage
-      TotalCount: totalCount
+    pageInfo {
+      hasNextPage
+      totalCount
     }
   }
 }
 
 query ShowPlaybackProgressByMedia(
-  $Where: PlaybackProgressWhereInput
-  $Page: PageInput
-  $OrderBy: [PlaybackProgressOrderByInput!]
+  $where: PlaybackProgressWhereInput
+  $page: PageInput
+  $orderBy: [PlaybackProgressOrderByInput!]
 ) {
-  PlaybackProgresses: playbackProgresses(
-    where: $Where
-    page: $Page
-    orderBy: $OrderBy
+  playbackProgresses(
+    where: $where
+    page: $page
+    orderBy: $orderBy
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        MediaFileId
-        CurrentPosition
-        Duration
-        ProgressPercent
-        IsWatched
-        UpdatedAt
+    edges {
+      node {
+        id
+        mediaFileId
+        currentPosition
+        duration
+        progressPercent
+        isWatched
+        updatedAt
       }
     }
   }
 }
 
 query PlaybackProgressByMediaFileContext(
-  $Where: PlaybackProgressWhereInput
-  $Page: PageInput
-  $OrderBy: [PlaybackProgressOrderByInput!]
+  $where: PlaybackProgressWhereInput
+  $page: PageInput
+  $orderBy: [PlaybackProgressOrderByInput!]
 ) {
-  PlaybackProgresses: playbackProgresses(
-    where: $Where
-    page: $Page
-    orderBy: $OrderBy
+  playbackProgresses(
+    where: $where
+    page: $page
+    orderBy: $orderBy
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        UserId
-        MediaFileId
-        CurrentPosition
-        Duration
-        ProgressPercent
-        IsWatched
-        WatchedAt
-        CreatedAt
-        UpdatedAt
+    edges {
+      node {
+        id
+        userId
+        mediaFileId
+        currentPosition
+        duration
+        progressPercent
+        isWatched
+        watchedAt
+        createdAt
+        updatedAt
       }
     }
   }
 }
 
-mutation CreatePlaybackSessionContext($Input: CreatePlaybackSessionInput!) {
-  CreatePlaybackSession: createPlaybackSession(input: $Input) {
-    Success: success
-    Error: error
-    PlaybackSession: playbackSession {
-      Id
-      UserId
-      ContentType
-      MediaFileId
-      EpisodeId
-      MovieId
-      TrackId
-      AudiobookId
-      TvShowId
-      AlbumId
-      CurrentPosition
-      Duration
-      Volume
-      IsMuted
-      IsPlaying
-      StartedAt
-      LastUpdatedAt
-      CompletedAt
-      CreatedAt
-      UpdatedAt
+mutation CreatePlaybackSessionContext($input: CreatePlaybackSessionInput!) {
+  createPlaybackSession(input: $input) {
+    success
+    error
+    playbackSession {
+      id
+      userId
+      contentType
+      mediaFileId
+      episodeId
+      movieId
+      trackId
+      audiobookId
+      tvShowId
+      albumId
+      currentPosition
+      duration
+      volume
+      isMuted
+      isPlaying
+      startedAt
+      lastUpdatedAt
+      completedAt
+      createdAt
+      updatedAt
     }
   }
 }
 
 mutation UpdatePlaybackSessionContext(
-  $Id: String!
-  $Input: UpdatePlaybackSessionInput!
+  $id: String!
+  $input: UpdatePlaybackSessionInput!
 ) {
-  UpdatePlaybackSession: updatePlaybackSession(id: $Id, input: $Input) {
-    Success: success
-    Error: error
-    PlaybackSession: playbackSession {
-      Id
-      UserId
-      ContentType
-      MediaFileId
-      EpisodeId
-      MovieId
-      TrackId
-      AudiobookId
-      TvShowId
-      AlbumId
-      CurrentPosition
-      Duration
-      Volume
-      IsMuted
-      IsPlaying
-      StartedAt
-      LastUpdatedAt
-      CompletedAt
-      CreatedAt
-      UpdatedAt
+  updatePlaybackSession(id: $id, input: $input) {
+    success
+    error
+    playbackSession {
+      id
+      userId
+      contentType
+      mediaFileId
+      episodeId
+      movieId
+      trackId
+      audiobookId
+      tvShowId
+      albumId
+      currentPosition
+      duration
+      volume
+      isMuted
+      isPlaying
+      startedAt
+      lastUpdatedAt
+      completedAt
+      createdAt
+      updatedAt
     }
   }
 }
 
-mutation CreatePlaybackProgressContext($Input: CreatePlaybackProgressInput!) {
-  CreatePlaybackProgress: createPlaybackProgress(input: $Input) {
-    Success: success
-    Error: error
-    PlaybackProgress: playbackProgress {
-      Id
-      UserId
-      MediaFileId
-      CurrentPosition
-      Duration
-      ProgressPercent
-      IsWatched
-      WatchedAt
-      CreatedAt
-      UpdatedAt
+mutation CreatePlaybackProgressContext($input: CreatePlaybackProgressInput!) {
+  createPlaybackProgress(input: $input) {
+    success
+    error
+    playbackProgress {
+      id
+      userId
+      mediaFileId
+      currentPosition
+      duration
+      progressPercent
+      isWatched
+      watchedAt
+      createdAt
+      updatedAt
     }
   }
 }
 
 mutation UpdatePlaybackProgressContext(
-  $Id: String!
-  $Input: UpdatePlaybackProgressInput!
+  $id: String!
+  $input: UpdatePlaybackProgressInput!
 ) {
-  UpdatePlaybackProgress: updatePlaybackProgress(id: $Id, input: $Input) {
-    Success: success
-    Error: error
-    PlaybackProgress: playbackProgress {
-      Id
-      UserId
-      MediaFileId
-      CurrentPosition
-      Duration
-      ProgressPercent
-      IsWatched
-      WatchedAt
-      CreatedAt
-      UpdatedAt
+  updatePlaybackProgress(id: $id, input: $input) {
+    success
+    error
+    playbackProgress {
+      id
+      userId
+      mediaFileId
+      currentPosition
+      duration
+      progressPercent
+      isWatched
+      watchedAt
+      createdAt
+      updatedAt
     }
   }
 }

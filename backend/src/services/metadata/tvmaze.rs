@@ -99,6 +99,7 @@ pub struct TvMazeEpisode {
     pub id: u32,
     pub name: String,
     pub season: u32,
+    #[serde(default, deserialize_with = "nullable_episode_number")]
     pub number: u32,
     #[serde(rename = "type")]
     pub episode_type: Option<String>,
@@ -112,47 +113,43 @@ pub struct TvMazeEpisode {
     pub rating: Option<TvMazeRating>,
 }
 
-/// Schedule entry from TVMaze (episode with embedded show)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Broadcast schedules embed `show`; streaming schedules use `_embedded.show`.
+#[derive(Debug, Clone, Deserialize)]
 pub struct TvMazeScheduleEntry {
-    pub id: u32,
-    pub name: String,
-    /// Season number - can be null for specials
-    pub season: Option<u32>,
-    /// Episode number - can be null for specials
-    pub number: Option<u32>,
-    #[serde(rename = "type")]
-    pub episode_type: Option<String>,
-    pub airdate: Option<String>,
-    pub airtime: Option<String>,
-    #[serde(rename = "airstamp")]
-    pub air_stamp: Option<String>,
-    pub runtime: Option<u32>,
-    pub image: Option<TvMazeImage>,
-    pub summary: Option<String>,
-    pub rating: Option<TvMazeRating>,
-    /// The show this episode belongs to
+    #[serde(flatten)]
+    pub episode: TvMazeEpisode,
+    pub show: Option<TvMazeShow>,
+    #[serde(rename = "_embedded")]
+    pub embedded: Option<TvMazeScheduleEmbedded>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TvMazeScheduleEmbedded {
     pub show: TvMazeShow,
 }
 
-/// Season from TVMaze (for future season-level features)
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TvMazeSeason {
-    pub id: u32,
-    pub number: u32,
-    pub name: Option<String>,
-    #[serde(rename = "episodeOrder")]
-    pub episode_order: Option<u32>,
-    #[serde(rename = "premiereDate")]
-    pub premiere_date: Option<String>,
-    #[serde(rename = "endDate")]
-    pub end_date: Option<String>,
-    pub image: Option<TvMazeImage>,
-    pub summary: Option<String>,
+impl TvMazeScheduleEntry {
+    pub fn show(&self) -> Option<&TvMazeShow> {
+        self.show
+            .as_ref()
+            .or_else(|| self.embedded.as_ref().map(|embedded| &embedded.show))
+    }
+}
+
+fn nullable_episode_number<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<u32, D::Error> {
+    Ok(Option::<u32>::deserialize(deserializer)?.unwrap_or(0))
 }
 
 impl TvMazeClient {
+    #[cfg(test)]
+    pub(crate) fn with_test_url(base_url: String) -> Self {
+        let mut client = Self::new();
+        client.base_url = base_url;
+        client.retry_config.max_retries = 0;
+        client
+    }
     pub fn new() -> Self {
         Self {
             client: Arc::new(RateLimitedClient::for_tvmaze()),
@@ -164,6 +161,40 @@ impl TvMazeClient {
                 multiplier: 2.0,
             },
         }
+    }
+
+    pub async fn schedule(
+        &self,
+        country: &str,
+        date: chrono::NaiveDate,
+        streaming: bool,
+    ) -> Result<Vec<TvMazeScheduleEntry>> {
+        let path = if streaming {
+            "schedule/web"
+        } else {
+            "schedule"
+        };
+        let url = format!("{}/{path}", self.base_url);
+        let params = [("country", country.to_string()), ("date", date.to_string())];
+        retry_async(
+            || async {
+                let response = self.client.get_with_query(&url, &params).await?;
+                if !response.status().is_success() {
+                    anyhow::bail!(
+                        "TVmaze {path} for country={country} date={date} failed: {}",
+                        response.status()
+                    );
+                }
+                crate::services::http_client::response_json_limited(
+                    response,
+                    crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                )
+                .await
+            },
+            &self.retry_config,
+            "tvmaze_schedule",
+        )
+        .await
     }
 
     /// Search for shows by name (with rate limiting and retry)
@@ -195,8 +226,11 @@ impl TvMazeClient {
                         anyhow::bail!("TVMaze search failed with status: {}", response.status());
                     }
 
-                    let results: Vec<TvMazeSearchResult> = response
-                        .json()
+                    let results: Vec<TvMazeSearchResult> =
+                        crate::services::http_client::response_json_limited(
+                            response,
+                            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                        )
                         .await
                         .context("Failed to parse TVMaze search results")?;
 
@@ -239,8 +273,11 @@ impl TvMazeClient {
                         anyhow::bail!("TVMaze get show failed with status: {}", response.status());
                     }
 
-                    let show: TvMazeShow = response
-                        .json()
+                    let show: TvMazeShow =
+                        crate::services::http_client::response_json_limited(
+                            response,
+                            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                        )
                         .await
                         .context("Failed to parse TVMaze show")?;
 
@@ -283,8 +320,11 @@ impl TvMazeClient {
                         );
                     }
 
-                    let episodes: Vec<TvMazeEpisode> = response
-                        .json()
+                    let episodes: Vec<TvMazeEpisode> =
+                        crate::services::http_client::response_json_limited(
+                            response,
+                            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                        )
                         .await
                         .context("Failed to parse TVMaze episodes")?;
 
@@ -299,350 +339,6 @@ impl TvMazeClient {
         debug!(count = result.len(), "TVMaze returned episodes");
         Ok(result)
     }
-
-    /// Get seasons for a show (for future season-level features)
-    #[allow(dead_code)]
-    pub async fn get_seasons(&self, tvmaze_id: u32) -> Result<Vec<TvMazeSeason>> {
-        debug!("Fetching seasons from TVMaze for show {}", tvmaze_id);
-
-        let url = format!("{}/shows/{}/seasons", self.base_url, tvmaze_id);
-        let client = self.client.clone();
-        let retry_config = self.retry_config.clone();
-
-        let result = retry_async(
-            || {
-                let url = url.clone();
-                let client = client.clone();
-                async move {
-                    let response = client.get(&url).await?;
-
-                    if response.status().as_u16() == 429 {
-                        anyhow::bail!("Rate limited (429)");
-                    }
-
-                    if !response.status().is_success() {
-                        anyhow::bail!(
-                            "TVMaze get seasons failed with status: {}",
-                            response.status()
-                        );
-                    }
-
-                    let seasons: Vec<TvMazeSeason> = response
-                        .json()
-                        .await
-                        .context("Failed to parse TVMaze seasons")?;
-
-                    Ok(seasons)
-                }
-            },
-            &retry_config,
-            "tvmaze_get_seasons",
-        )
-        .await?;
-
-        debug!(count = result.len(), "TVMaze returned seasons");
-        Ok(result)
-    }
-
-    /// Search for a single show (returns best match) - for future use
-    #[allow(dead_code)]
-    pub async fn search_single(&self, query: &str) -> Result<Option<TvMazeShow>> {
-        let url = format!("{}/singlesearch/shows", self.base_url);
-        let client = self.client.clone();
-        let query_owned = query.to_string();
-        let retry_config = self.retry_config.clone();
-
-        retry_async(
-            || {
-                let url = url.clone();
-                let client = client.clone();
-                let q = query_owned.clone();
-                async move {
-                    let response = client.get_with_query(&url, &[("q", &q)]).await?;
-
-                    if response.status().is_client_error() && response.status().as_u16() != 429 {
-                        return Ok(None);
-                    }
-
-                    if response.status().as_u16() == 429 {
-                        anyhow::bail!("Rate limited (429)");
-                    }
-
-                    if !response.status().is_success() {
-                        anyhow::bail!(
-                            "TVMaze single search failed with status: {}",
-                            response.status()
-                        );
-                    }
-
-                    let show: TvMazeShow = response
-                        .json()
-                        .await
-                        .context("Failed to parse TVMaze show")?;
-
-                    Ok(Some(show))
-                }
-            },
-            &retry_config,
-            "tvmaze_search_single",
-        )
-        .await
-    }
-
-    /// Look up show by TVDB ID - for future cross-provider matching
-    #[allow(dead_code)]
-    pub async fn lookup_by_tvdb(&self, tvdb_id: u32) -> Result<Option<TvMazeShow>> {
-        let url = format!("{}/lookup/shows", self.base_url);
-        let client = self.client.clone();
-        let retry_config = self.retry_config.clone();
-
-        retry_async(
-            || {
-                let url = url.clone();
-                let client = client.clone();
-                let tvdb = tvdb_id.to_string();
-                async move {
-                    let response = client.get_with_query(&url, &[("thetvdb", &tvdb)]).await?;
-
-                    if response.status().is_client_error() && response.status().as_u16() != 429 {
-                        return Ok(None);
-                    }
-
-                    if response.status().as_u16() == 429 {
-                        anyhow::bail!("Rate limited (429)");
-                    }
-
-                    if !response.status().is_success() {
-                        anyhow::bail!(
-                            "TVMaze TVDB lookup failed with status: {}",
-                            response.status()
-                        );
-                    }
-
-                    let show: TvMazeShow = response
-                        .json()
-                        .await
-                        .context("Failed to parse TVMaze show")?;
-
-                    Ok(Some(show))
-                }
-            },
-            &retry_config,
-            "tvmaze_lookup_tvdb",
-        )
-        .await
-    }
-
-    /// Look up show by IMDB ID - for future cross-provider matching
-    #[allow(dead_code)]
-    pub async fn lookup_by_imdb(&self, imdb_id: &str) -> Result<Option<TvMazeShow>> {
-        let url = format!("{}/lookup/shows", self.base_url);
-        let client = self.client.clone();
-        let imdb_owned = imdb_id.to_string();
-        let retry_config = self.retry_config.clone();
-
-        retry_async(
-            || {
-                let url = url.clone();
-                let client = client.clone();
-                let imdb = imdb_owned.clone();
-                async move {
-                    let response = client.get_with_query(&url, &[("imdb", &imdb)]).await?;
-
-                    if response.status().is_client_error() && response.status().as_u16() != 429 {
-                        return Ok(None);
-                    }
-
-                    if response.status().as_u16() == 429 {
-                        anyhow::bail!("Rate limited (429)");
-                    }
-
-                    if !response.status().is_success() {
-                        anyhow::bail!(
-                            "TVMaze IMDB lookup failed with status: {}",
-                            response.status()
-                        );
-                    }
-
-                    let show: TvMazeShow = response
-                        .json()
-                        .await
-                        .context("Failed to parse TVMaze show")?;
-
-                    Ok(Some(show))
-                }
-            },
-            &retry_config,
-            "tvmaze_lookup_imdb",
-        )
-        .await
-    }
-
-    /// Get TV schedule for a specific date (with rate limiting and retry)
-    ///
-    /// Returns all episodes airing on the given date.
-    /// If no date is provided, defaults to today.
-    pub async fn get_schedule(
-        &self,
-        date: Option<&str>,
-        country: Option<&str>,
-    ) -> Result<Vec<TvMazeScheduleEntry>> {
-        debug!(date = ?date, country = ?country, "Fetching TV schedule from TVMaze");
-
-        let url = format!("{}/schedule", self.base_url);
-        let client = self.client.clone();
-        let date_owned = date.map(String::from);
-        let country_owned = country.map(String::from);
-        let retry_config = self.retry_config.clone();
-
-        let result = retry_async(
-            || {
-                let url = url.clone();
-                let client = client.clone();
-                let d = date_owned.clone();
-                let c = country_owned.clone();
-                async move {
-                    let mut query_params: Vec<(&str, String)> = Vec::new();
-                    if let Some(ref date) = d {
-                        query_params.push(("date", date.clone()));
-                    }
-                    if let Some(ref country) = c {
-                        query_params.push(("country", country.clone()));
-                    }
-
-                    let response = if query_params.is_empty() {
-                        client.get(&url).await?
-                    } else {
-                        client.get_with_query(&url, &query_params).await?
-                    };
-
-                    if response.status().as_u16() == 429 {
-                        anyhow::bail!("Rate limited (429)");
-                    }
-
-                    if !response.status().is_success() {
-                        anyhow::bail!(
-                            "TVMaze schedule request failed with status: {}",
-                            response.status()
-                        );
-                    }
-
-                    let schedule: Vec<TvMazeScheduleEntry> = response
-                        .json()
-                        .await
-                        .context("Failed to parse TVMaze schedule")?;
-
-                    Ok(schedule)
-                }
-            },
-            &retry_config,
-            "tvmaze_get_schedule",
-        )
-        .await?;
-
-        debug!(count = result.len(), "TVMaze schedule returned episodes");
-        Ok(result)
-    }
-
-    /// Get upcoming episodes for the next N days (with rate limiting)
-    ///
-    /// Fetches schedules for multiple days and combines them.
-    /// Rate limiting ensures we don't overwhelm the API.
-    pub async fn get_upcoming_schedule(
-        &self,
-        days: u32,
-        country: Option<&str>,
-    ) -> Result<Vec<TvMazeScheduleEntry>> {
-        debug!(
-            "Fetching {} day TV schedule from TVMaze for {}",
-            days,
-            country.unwrap_or("US")
-        );
-
-        let today = chrono::Utc::now().date_naive();
-        let mut all_episodes = Vec::new();
-
-        for day_offset in 0..days {
-            let date = today + chrono::Duration::days(day_offset as i64);
-            let date_str = date.format("%Y-%m-%d").to_string();
-
-            match self.get_schedule(Some(&date_str), country).await {
-                Ok(episodes) => {
-                    all_episodes.extend(episodes);
-                }
-                Err(e) => {
-                    debug!(date = %date_str, error = %e, "Failed to fetch schedule for date, continuing");
-                }
-            }
-
-            // Small delay between day fetches to be extra nice to the API
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-
-        debug!(
-            count = all_episodes.len(),
-            "TVMaze returned total upcoming episodes"
-        );
-        Ok(all_episodes)
-    }
-
-    /// Get web channel schedule (streaming services)
-    ///
-    /// Returns episodes from streaming platforms like Netflix, Hulu, etc.
-    #[allow(dead_code)]
-    pub async fn get_web_schedule(&self, date: Option<&str>) -> Result<Vec<TvMazeScheduleEntry>> {
-        debug!(
-            "Fetching web schedule from TVMaze for {}",
-            date.unwrap_or("today")
-        );
-
-        let url = format!("{}/schedule/web", self.base_url);
-        let client = self.client.clone();
-        let date_owned = date.map(String::from);
-        let retry_config = self.retry_config.clone();
-
-        let result = retry_async(
-            || {
-                let url = url.clone();
-                let client = client.clone();
-                let d = date_owned.clone();
-                async move {
-                    let response = if let Some(ref date) = d {
-                        client.get_with_query(&url, &[("date", date)]).await?
-                    } else {
-                        client.get(&url).await?
-                    };
-
-                    if response.status().as_u16() == 429 {
-                        anyhow::bail!("Rate limited (429)");
-                    }
-
-                    if !response.status().is_success() {
-                        anyhow::bail!(
-                            "TVMaze web schedule request failed with status: {}",
-                            response.status()
-                        );
-                    }
-
-                    let schedule: Vec<TvMazeScheduleEntry> = response
-                        .json()
-                        .await
-                        .context("Failed to parse TVMaze web schedule")?;
-
-                    Ok(schedule)
-                }
-            },
-            &retry_config,
-            "tvmaze_get_web_schedule",
-        )
-        .await?;
-
-        debug!(
-            count = result.len(),
-            "TVMaze web schedule returned episodes"
-        );
-        Ok(result)
-    }
 }
 
 impl Default for TvMazeClient {
@@ -652,65 +348,28 @@ impl Default for TvMazeClient {
 }
 
 impl TvMazeShow {
-    /// Get the premiere year from the premiered date
-    pub fn premiere_year(&self) -> Option<i32> {
-        self.premiered
-            .as_ref()
-            .and_then(|p| p.split('-').next().and_then(|y| y.parse().ok()))
-    }
-
-    /// Get the network name
-    pub fn network_name(&self) -> Option<&str> {
-        self.network
-            .as_ref()
-            .map(|n| n.name.as_str())
-            .or_else(|| self.web_channel.as_ref().map(|w| w.name.as_str()))
-    }
-
-    /// Get the poster URL (medium size)
-    pub fn poster_url(&self) -> Option<&str> {
-        self.image.as_ref().and_then(|i| i.medium.as_deref())
-    }
-
-    /// Get the poster URL (original/large size)
-    pub fn poster_url_original(&self) -> Option<&str> {
-        self.image.as_ref().and_then(|i| i.original.as_deref())
-    }
-
     /// Get clean summary (strip HTML tags)
     pub fn clean_summary(&self) -> Option<String> {
-        self.summary.as_ref().map(|s| {
-            // Simple HTML tag stripping
-            let re = regex::Regex::new(r"<[^>]+>").unwrap();
-            re.replace_all(s, "").trim().to_string()
-        })
-    }
-
-    /// Get TVDB ID if available
-    pub fn tvdb_id(&self) -> Option<u32> {
-        self.externals.as_ref().and_then(|e| e.thetvdb)
-    }
-
-    /// Get IMDB ID if available
-    pub fn imdb_id(&self) -> Option<&str> {
-        self.externals.as_ref().and_then(|e| e.imdb.as_deref())
+        self.summary
+            .as_ref()
+            .map(|summary| strip_summary_html(summary))
     }
 }
 
 impl TvMazeEpisode {
-    /// Parse air date to NaiveDate - for future date-based matching
-    #[allow(dead_code)]
-    pub fn air_date(&self) -> Option<chrono::NaiveDate> {
-        self.airdate
-            .as_ref()
-            .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
-    }
-
     /// Get clean summary (strip HTML tags)
     pub fn clean_summary(&self) -> Option<String> {
-        self.summary.as_ref().map(|s| {
-            let re = regex::Regex::new(r"<[^>]+>").unwrap();
-            re.replace_all(s, "").trim().to_string()
-        })
+        self.summary
+            .as_ref()
+            .map(|summary| strip_summary_html(summary))
     }
+}
+
+fn strip_summary_html(summary: &str) -> String {
+    static HTML_TAG: std::sync::LazyLock<Result<regex::Regex, regex::Error>> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"<[^>]+>"));
+    HTML_TAG
+        .as_ref()
+        .map(|html_tag| html_tag.replace_all(summary, "").trim().to_string())
+        .unwrap_or_else(|_| summary.trim().to_string())
 }

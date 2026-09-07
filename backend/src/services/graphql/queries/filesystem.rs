@@ -1,5 +1,5 @@
 //! GraphQL resolvers for filesystem operations (directory browsing).
-//! Exposes BrowseDirectory with PascalCase types for the codegen frontend.
+//! BrowseDirectory is legacy schema surface and still needs the camelCase resolver migration.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -7,74 +7,74 @@ use std::sync::Arc;
 use async_graphql::{Context, InputObject, Object, Result, SimpleObject};
 use tokio::fs;
 
-use crate::services::graphql::auth::AuthUser;
+use crate::services::graphql::auth::AuthExt;
 use crate::services::graphql::filesystem_network;
 use crate::{db::Database, services::manager::ServicesManager};
 
-/// Input for the BrowseDirectory query (PascalCase for GraphQL).
+/// Input for the legacy BrowseDirectory query.
 #[derive(Default, InputObject)]
 #[graphql(name = "BrowseDirectoryInput")]
 pub struct BrowseDirectoryInput {
     /// Path to browse (defaults to root or home).
-    #[graphql(name = "Path")]
+    #[graphql(name = "path")]
     pub path: Option<String>,
     /// Only show directories.
-    #[graphql(name = "DirsOnly")]
+    #[graphql(name = "dirsOnly")]
     pub dirs_only: bool,
     /// Include hidden entries (files/dirs starting with .).
-    #[graphql(name = "ShowHidden")]
+    #[graphql(name = "showHidden")]
     pub show_hidden: bool,
 }
 
-/// A single file or directory entry (PascalCase for GraphQL).
+/// A single file or directory entry.
 #[derive(SimpleObject)]
 #[graphql(name = "BrowseDirectoryEntry")]
 pub struct BrowseDirectoryEntry {
-    #[graphql(name = "Name")]
+    #[graphql(name = "name")]
     pub name: String,
-    #[graphql(name = "Path")]
+    #[graphql(name = "path")]
     pub path: String,
-    #[graphql(name = "IsDir")]
+    #[graphql(name = "isDir")]
     pub is_dir: bool,
-    #[graphql(name = "Size")]
+    #[graphql(name = "size")]
     pub size: u64,
-    #[graphql(name = "SizeFormatted")]
+    #[graphql(name = "sizeFormatted")]
     pub size_formatted: String,
-    #[graphql(name = "Readable")]
+    #[graphql(name = "readable")]
     pub readable: bool,
-    #[graphql(name = "Writable")]
+    #[graphql(name = "writable")]
     pub writable: bool,
-    #[graphql(name = "MimeType")]
+    #[graphql(name = "mimeType")]
     pub mime_type: Option<String>,
-    #[graphql(name = "ModifiedAt")]
+    #[graphql(name = "modifiedAt")]
     pub modified_at: Option<String>,
 }
 
-/// Quick-access path shortcut (PascalCase for GraphQL).
+/// Quick-access path shortcut.
 #[derive(SimpleObject)]
 #[graphql(name = "BrowseQuickPath")]
 pub struct BrowseQuickPath {
-    #[graphql(name = "Name")]
+    #[graphql(name = "name")]
     pub name: String,
-    #[graphql(name = "Path")]
+    #[graphql(name = "path")]
     pub path: String,
 }
 
-/// Result of browsing a directory (PascalCase for GraphQL).
+/// Result of browsing a directory.
 #[derive(SimpleObject)]
 #[graphql(name = "BrowseDirectoryResult")]
 pub struct BrowseDirectoryResult {
-    #[graphql(name = "CurrentPath")]
+    #[graphql(name = "currentPath")]
     pub current_path: String,
-    #[graphql(name = "ParentPath")]
+    #[graphql(name = "parentPath")]
     pub parent_path: Option<String>,
-    #[graphql(name = "Entries")]
+    #[graphql(name = "entries")]
     pub entries: Vec<BrowseDirectoryEntry>,
-    #[graphql(name = "QuickPaths")]
+    #[graphql(name = "quickPaths")]
     pub quick_paths: Vec<BrowseQuickPath>,
-    #[graphql(name = "IsLibraryPath")]
+    #[graphql(name = "isLibraryPath")]
     pub is_library_path: bool,
-    #[graphql(name = "LibraryId")]
+    #[graphql(name = "libraryId")]
     pub library_id: Option<String>,
 }
 
@@ -82,43 +82,43 @@ pub struct BrowseDirectoryResult {
 #[derive(SimpleObject)]
 #[graphql(name = "FilesystemRuntimeInfo")]
 pub struct FilesystemRuntimeInfo {
-    #[graphql(name = "Platform")]
+    #[graphql(name = "platform")]
     pub platform: String,
-    #[graphql(name = "SupportsUncCredentials")]
+    #[graphql(name = "supportsUncCredentials")]
     pub supports_unc_credentials: bool,
-    #[graphql(name = "SupportsSambaMount")]
+    #[graphql(name = "supportsSambaMount")]
     pub supports_samba_mount: bool,
-    #[graphql(name = "DefaultLinuxMountBase")]
+    #[graphql(name = "defaultLinuxMountBase")]
     pub default_linux_mount_base: Option<String>,
 }
 
 #[derive(InputObject)]
 #[graphql(name = "LibraryPathAvailabilityInput")]
 pub struct LibraryPathAvailabilityInput {
-    #[graphql(name = "Paths")]
+    #[graphql(name = "paths")]
     pub paths: Vec<String>,
-    #[graphql(name = "AttemptReconnect")]
+    #[graphql(name = "attemptReconnect")]
     pub attempt_reconnect: Option<bool>,
 }
 
 #[derive(SimpleObject)]
 #[graphql(name = "LibraryPathAvailability")]
 pub struct LibraryPathAvailability {
-    #[graphql(name = "Path")]
+    #[graphql(name = "path")]
     pub path: String,
-    #[graphql(name = "Reachable")]
+    #[graphql(name = "reachable")]
     pub reachable: bool,
-    #[graphql(name = "Exists")]
+    #[graphql(name = "exists")]
     pub exists: bool,
-    #[graphql(name = "IsDirectory")]
+    #[graphql(name = "isDirectory")]
     pub is_directory: bool,
-    #[graphql(name = "NeedsReconnect")]
+    #[graphql(name = "needsReconnect")]
     pub needs_reconnect: bool,
-    #[graphql(name = "ReconnectAttempted")]
+    #[graphql(name = "reconnectAttempted")]
     pub reconnect_attempted: bool,
-    #[graphql(name = "ReconnectSucceeded")]
+    #[graphql(name = "reconnectSucceeded")]
     pub reconnect_succeeded: bool,
-    #[graphql(name = "Message")]
+    #[graphql(name = "message")]
     pub message: Option<String>,
 }
 
@@ -232,11 +232,9 @@ pub struct FilesystemQueries;
 
 #[Object]
 impl FilesystemQueries {
-    #[graphql(name = "FilesystemRuntimeInfo")]
+    #[graphql(name = "filesystemRuntimeInfo")]
     async fn filesystem_runtime_info(&self, ctx: &Context<'_>) -> Result<FilesystemRuntimeInfo> {
-        let _user = ctx.data_opt::<AuthUser>().ok_or_else(|| {
-            async_graphql::Error::new("Authentication required to fetch runtime info")
-        })?;
+        ctx.require_admin()?;
 
         Ok(FilesystemRuntimeInfo {
             platform: filesystem_network::current_platform(),
@@ -247,15 +245,13 @@ impl FilesystemQueries {
         })
     }
 
-    #[graphql(name = "LibraryPathAvailability")]
+    #[graphql(name = "libraryPathAvailability")]
     async fn library_path_availability(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Input")] input: LibraryPathAvailabilityInput,
+        #[graphql(name = "input")] input: LibraryPathAvailabilityInput,
     ) -> Result<Vec<LibraryPathAvailability>> {
-        let _user = ctx.data_opt::<AuthUser>().ok_or_else(|| {
-            async_graphql::Error::new("Authentication required to check path availability")
-        })?;
+        ctx.require_admin()?;
 
         let db = ctx.data::<Database>()?;
         let services = ctx.data::<Arc<ServicesManager>>()?;
@@ -282,15 +278,13 @@ impl FilesystemQueries {
     }
 
     /// Browse a directory on the server. Requires authentication.
-    #[graphql(name = "BrowseDirectory")]
+    #[graphql(name = "browseDirectory")]
     async fn browse_directory(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Input")] input: Option<BrowseDirectoryInput>,
+        #[graphql(name = "input")] input: Option<BrowseDirectoryInput>,
     ) -> Result<BrowseDirectoryResult> {
-        let _user = ctx.data_opt::<AuthUser>().ok_or_else(|| {
-            async_graphql::Error::new("Authentication required to browse directories")
-        })?;
+        ctx.require_admin()?;
 
         let path = input.as_ref().and_then(|i| i.path.as_deref());
         let dirs_only = input.as_ref().map(|i| i.dirs_only).unwrap_or(true);
@@ -311,8 +305,11 @@ impl FilesystemQueries {
             Ok(p) => p,
             Err(_) => {
                 let mut path = requested_path;
-                while !path.exists() && path.parent().is_some() {
-                    path = path.parent().unwrap().to_path_buf();
+                while !path.exists() {
+                    let Some(parent) = path.parent() else {
+                        break;
+                    };
+                    path = parent.to_path_buf();
                 }
                 if path.exists() {
                     path.canonicalize().unwrap_or_else(|_| PathBuf::from("/"))
@@ -385,7 +382,7 @@ impl FilesystemQueries {
             _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
         });
 
-        let parent_path = canonical_path.parent().map(|p| display_path(p));
+        let parent_path = canonical_path.parent().map(display_path);
 
         Ok(BrowseDirectoryResult {
             current_path: display_path(&canonical_path),

@@ -31,19 +31,17 @@ export async function ensureAuthenticated(
   try {
     const result = await apolloClient.mutate({
       mutation: RefreshTokenDocument,
-      variables: { input: { RefreshToken: "" } },
     });
 
-    const payload = result.data?.RefreshToken;
-    if (!payload?.Success || !payload.Tokens) {
+    const payload = result.data?.refreshToken;
+    if (!payload?.success || !payload.tokens) {
       clearTokens();
       return false;
     }
 
-    const tokens = payload.Tokens;
+    const tokens = payload.tokens;
     const newSession: AuthSession = {
-      accessToken: tokens.AccessToken,
-      expiresAt: Date.now() + tokens.ExpiresIn * 1000,
+      expiresAt: Math.floor(Date.now() / 1000) + tokens.expiresIn,
       user: existingSession.user,
     };
     setTokens(newSession);

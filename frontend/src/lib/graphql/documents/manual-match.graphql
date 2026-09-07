@@ -1,17 +1,17 @@
-query ManualMatchShowsByLibrary($LibraryId: String!) {
-  Shows: shows(where: { LibraryId: { eq: $LibraryId } }) {
-    Edges: edges {
-      Node: node {
-        Id
-        Name
-        Year
-        Episodes: episodes {
-          Edges: edges {
-            Node: node {
-              Id
-              Season
-              Episode
-              Title
+query ManualMatchShowsByLibrary($libraryId: String!) {
+  shows(where: { libraryId: { eq: $libraryId } }) {
+    edges {
+      node {
+        id
+        name
+        year
+        episodes {
+          edges {
+            node {
+              id
+              season
+              episode
+              title
             }
           }
         }
@@ -20,63 +20,63 @@ query ManualMatchShowsByLibrary($LibraryId: String!) {
   }
 }
 
-query ManualMatchMoviesByLibrary($LibraryId: String!) {
-  Movies: movies(where: { LibraryId: { eq: $LibraryId } }) {
-    Edges: edges {
-      Node: node {
-        Id
-        Title
-        Year
+query ManualMatchMoviesByLibrary($libraryId: String!) {
+  movies(where: { libraryId: { eq: $libraryId } }) {
+    edges {
+      node {
+        id
+        title
+        year
       }
     }
   }
 }
 
-query ManualMatchAlbumsByLibrary($LibraryId: String!) {
-  Albums: albums(
-    where: { LibraryId: { eq: $LibraryId } }
+query ManualMatchAlbumsByLibrary($libraryId: String!) {
+  albums(
+    where: { libraryId: { eq: $libraryId } }
     page: { limit: 500, offset: 0 }
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        Name
-        Year
+    edges {
+      node {
+        id
+        name
+        year
       }
     }
   }
-  Tracks: tracks(
-    where: { LibraryId: { eq: $LibraryId } }
+  tracks(
+    where: { libraryId: { eq: $libraryId } }
     page: { limit: 5000, offset: 0 }
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        AlbumId
-        ArtistName
-        TrackNumber
-        Title
+    edges {
+      node {
+        id
+        albumId
+        artistName
+        trackNumber
+        title
       }
     }
   }
 }
 
-query ManualMatchAudiobooksByLibrary($LibraryId: String!) {
-  Audiobooks: audiobooks(
-    where: { LibraryId: { eq: $LibraryId } }
+query ManualMatchAudiobooksByLibrary($libraryId: String!) {
+  audiobooks(
+    where: { libraryId: { eq: $libraryId } }
     page: { limit: 500, offset: 0 }
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        Title
-        AuthorName
-        Chapters: chapters {
-          Edges: edges {
-            Node: node {
-              Id
-              ChapterNumber
-              Title
+    edges {
+      node {
+        id
+        title
+        authorName
+        chapters {
+          edges {
+            node {
+              id
+              chapterNumber
+              title
             }
           }
         }
@@ -85,12 +85,12 @@ query ManualMatchAudiobooksByLibrary($LibraryId: String!) {
   }
 }
 
-mutation ManualMatchFile($Input: MatchMediaFileInput!) {
-  MatchMediaFile(Input: $Input) {
-    Success
-    Confidence
-    MatchedId
-    MatchedType
-    Reason
+mutation ManualMatchFile($input: MatchMediaFileInput!) {
+  matchMediaFile(input: $input) {
+    success
+    confidence
+    matchedId
+    matchedType
+    reason
   }
 }

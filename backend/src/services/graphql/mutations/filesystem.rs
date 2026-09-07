@@ -1,4 +1,5 @@
-//! GraphQL filesystem mutations (PascalCase): CreateDirectory, DeleteFiles, CopyFiles, MoveFiles, RenameFile.
+//! GraphQL filesystem mutations currently exposed through legacy root fields:
+//! CreateDirectory, DeleteFiles, CopyFiles, MoveFiles, RenameFile.
 //! CreateDirectory is implemented with tokio::fs; others return "Filesystem service not configured"
 //! until Arc<FilesystemService> (or inline impl) is added.
 //! When implementing real ops, get FilesystemChangeBroker from ctx and call .send(FilesystemChangeEvent { ... })
@@ -10,7 +11,7 @@ use std::sync::Arc;
 use async_graphql::{Context, InputObject, Object, Result};
 use tokio::fs;
 
-use crate::services::graphql::auth::AuthUser;
+use crate::services::graphql::auth::AuthExt;
 use crate::services::graphql::filesystem_network;
 use crate::{db::Database, services::manager::ServicesManager};
 
@@ -49,103 +50,103 @@ impl FileOperationResult {
     }
 }
 
-/// Payload returned by all filesystem mutations (PascalCase).
+/// Payload returned by all filesystem mutations.
 #[derive(Clone)]
 pub struct FileOperationPayload(FileOperationResult);
 
 #[Object]
 impl FileOperationPayload {
-    #[graphql(name = "Success")]
+    #[graphql(name = "success")]
     async fn success(&self) -> bool {
         self.0.success
     }
 
-    #[graphql(name = "Error")]
+    #[graphql(name = "error")]
     async fn error(&self) -> Option<&str> {
         self.0.error.as_deref()
     }
 
-    #[graphql(name = "AffectedCount")]
+    #[graphql(name = "affectedCount")]
     async fn affected_count(&self) -> i32 {
         self.0.affected_count
     }
 
-    #[graphql(name = "Messages")]
+    #[graphql(name = "messages")]
     async fn messages(&self) -> &[String] {
         &self.0.messages
     }
 
-    #[graphql(name = "Path")]
+    #[graphql(name = "path")]
     async fn path(&self) -> Option<&str> {
         self.0.path.as_deref()
     }
 }
 
 // ---------------------------------------------------------------------------
-// Input types (PascalCase)
+// Input types for the current filesystem schema surface.
 // ---------------------------------------------------------------------------
 
 #[derive(InputObject)]
 #[graphql(name = "CreateDirectoryInput")]
 pub struct CreateDirectoryInput {
-    #[graphql(name = "Path")]
+    #[graphql(name = "path")]
     pub path: String,
 }
 
 #[derive(InputObject)]
 #[graphql(name = "DeleteFilesInput")]
 pub struct DeleteFilesInput {
-    #[graphql(name = "Paths")]
+    #[graphql(name = "paths")]
     pub paths: Vec<String>,
-    #[graphql(name = "Recursive")]
+    #[graphql(name = "recursive")]
     pub recursive: Option<bool>,
 }
 
 #[derive(InputObject)]
 #[graphql(name = "CopyFilesInput")]
 pub struct CopyFilesInput {
-    #[graphql(name = "Sources")]
+    #[graphql(name = "sources")]
     pub sources: Vec<String>,
-    #[graphql(name = "Destination")]
+    #[graphql(name = "destination")]
     pub destination: String,
-    #[graphql(name = "Overwrite")]
+    #[graphql(name = "overwrite")]
     pub overwrite: Option<bool>,
 }
 
 #[derive(InputObject)]
 #[graphql(name = "MoveFilesInput")]
 pub struct MoveFilesInput {
-    #[graphql(name = "Sources")]
+    #[graphql(name = "sources")]
     pub sources: Vec<String>,
-    #[graphql(name = "Destination")]
+    #[graphql(name = "destination")]
     pub destination: String,
-    #[graphql(name = "Overwrite")]
+    #[graphql(name = "overwrite")]
     pub overwrite: Option<bool>,
 }
 
 #[derive(InputObject)]
 #[graphql(name = "RenameFileInput")]
 pub struct RenameFileInput {
-    #[graphql(name = "Path")]
+    #[graphql(name = "path")]
     pub path: String,
-    #[graphql(name = "NewName")]
+    #[graphql(name = "newName")]
     pub new_name: String,
 }
 
 #[derive(InputObject)]
 #[graphql(name = "ConfigureNetworkPathInput")]
 pub struct ConfigureNetworkPathInput {
-    #[graphql(name = "Path")]
+    #[graphql(name = "path")]
     pub path: String,
-    #[graphql(name = "Username")]
+    #[graphql(name = "username")]
     pub username: Option<String>,
-    #[graphql(name = "Password")]
+    #[graphql(name = "password")]
     pub password: Option<String>,
-    #[graphql(name = "MountPoint")]
+    #[graphql(name = "mountPoint")]
     pub mount_point: Option<String>,
-    #[graphql(name = "Persist")]
+    #[graphql(name = "persist")]
     pub persist: Option<bool>,
-    #[graphql(name = "AttemptConnect")]
+    #[graphql(name = "attemptConnect")]
     pub attempt_connect: Option<bool>,
 }
 
@@ -161,32 +162,32 @@ pub struct NetworkPathConfigPayload {
 
 #[Object]
 impl NetworkPathConfigPayload {
-    #[graphql(name = "Success")]
+    #[graphql(name = "success")]
     async fn success(&self) -> bool {
         self.success
     }
 
-    #[graphql(name = "Error")]
+    #[graphql(name = "error")]
     async fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
 
-    #[graphql(name = "ResolvedPath")]
+    #[graphql(name = "resolvedPath")]
     async fn resolved_path(&self) -> &str {
         &self.resolved_path
     }
 
-    #[graphql(name = "Connected")]
+    #[graphql(name = "connected")]
     async fn connected(&self) -> bool {
         self.connected
     }
 
-    #[graphql(name = "Stored")]
+    #[graphql(name = "stored")]
     async fn stored(&self) -> bool {
         self.stored
     }
 
-    #[graphql(name = "Message")]
+    #[graphql(name = "message")]
     async fn message(&self) -> Option<&str> {
         self.message.as_deref()
     }
@@ -201,75 +202,63 @@ pub struct FilesystemMutations;
 
 #[Object]
 impl FilesystemMutations {
-    #[graphql(name = "CreateDirectory")]
+    #[graphql(name = "createDirectory")]
     async fn create_directory(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Input")] input: CreateDirectoryInput,
+        #[graphql(name = "input")] input: CreateDirectoryInput,
     ) -> Result<FileOperationPayload> {
-        let _user = ctx
-            .data_opt::<AuthUser>()
-            .ok_or_else(|| async_graphql::Error::new("Authentication required"))?;
+        ctx.require_admin()?;
         run_create_directory(ctx, &input).await
     }
 
-    #[graphql(name = "DeleteFiles")]
+    #[graphql(name = "deleteFiles")]
     async fn delete_files(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Input")] input: DeleteFilesInput,
+        #[graphql(name = "input")] input: DeleteFilesInput,
     ) -> Result<FileOperationPayload> {
-        let _user = ctx
-            .data_opt::<AuthUser>()
-            .ok_or_else(|| async_graphql::Error::new("Authentication required"))?;
+        ctx.require_admin()?;
         run_delete_files(ctx, &input).await
     }
 
-    #[graphql(name = "CopyFiles")]
+    #[graphql(name = "copyFiles")]
     async fn copy_files(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Input")] input: CopyFilesInput,
+        #[graphql(name = "input")] input: CopyFilesInput,
     ) -> Result<FileOperationPayload> {
-        let _user = ctx
-            .data_opt::<AuthUser>()
-            .ok_or_else(|| async_graphql::Error::new("Authentication required"))?;
+        ctx.require_admin()?;
         run_copy_files(ctx, &input).await
     }
 
-    #[graphql(name = "MoveFiles")]
+    #[graphql(name = "moveFiles")]
     async fn move_files(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Input")] input: MoveFilesInput,
+        #[graphql(name = "input")] input: MoveFilesInput,
     ) -> Result<FileOperationPayload> {
-        let _user = ctx
-            .data_opt::<AuthUser>()
-            .ok_or_else(|| async_graphql::Error::new("Authentication required"))?;
+        ctx.require_admin()?;
         run_move_files(ctx, &input).await
     }
 
-    #[graphql(name = "RenameFile")]
+    #[graphql(name = "renameFile")]
     async fn rename_file(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Input")] input: RenameFileInput,
+        #[graphql(name = "input")] input: RenameFileInput,
     ) -> Result<FileOperationPayload> {
-        let _user = ctx
-            .data_opt::<AuthUser>()
-            .ok_or_else(|| async_graphql::Error::new("Authentication required"))?;
+        ctx.require_admin()?;
         run_rename_file(ctx, &input).await
     }
 
-    #[graphql(name = "ConfigureNetworkPath")]
+    #[graphql(name = "configureNetworkPath")]
     async fn configure_network_path(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Input")] input: ConfigureNetworkPathInput,
+        #[graphql(name = "input")] input: ConfigureNetworkPathInput,
     ) -> Result<NetworkPathConfigPayload> {
-        let _user = ctx
-            .data_opt::<AuthUser>()
-            .ok_or_else(|| async_graphql::Error::new("Authentication required"))?;
+        ctx.require_admin()?;
 
         let db = ctx.data::<Database>()?;
         let services = ctx.data::<Arc<ServicesManager>>()?;
@@ -298,15 +287,13 @@ impl FilesystemMutations {
         })
     }
 
-    #[graphql(name = "ReconnectLibraryPath")]
+    #[graphql(name = "reconnectLibraryPath")]
     async fn reconnect_library_path(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Path")] path: String,
+        #[graphql(name = "path")] path: String,
     ) -> Result<NetworkPathConfigPayload> {
-        let _user = ctx
-            .data_opt::<AuthUser>()
-            .ok_or_else(|| async_graphql::Error::new("Authentication required"))?;
+        ctx.require_admin()?;
 
         let db = ctx.data::<Database>()?;
         let services = ctx.data::<Arc<ServicesManager>>()?;

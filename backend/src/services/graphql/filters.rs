@@ -10,7 +10,7 @@
 //! - Similar (fuzzy text matching with Levenshtein distance)
 //! - Date arithmetic (DaysAgo, DaysFromNow, Today, InPast, InFuture)
 //!
-//! All field names use PascalCase per the graphql-naming-convention.
+//! New GraphQL field names should follow the camelCase resolver naming convention.
 
 use async_graphql::InputObject;
 
@@ -23,11 +23,11 @@ use async_graphql::InputObject;
 #[graphql(name = "SimilarFilter")]
 pub struct SimilarFilter {
     /// The text to match against
-    #[graphql(name = "Value")]
+    #[graphql(name = "value")]
     pub value: String,
     /// Minimum similarity threshold (0.0-1.0, default 0.6)
     /// 1.0 = exact match, 0.0 = any match
-    #[graphql(name = "Threshold")]
+    #[graphql(name = "threshold")]
     pub threshold: Option<f64>,
 }
 
@@ -63,13 +63,13 @@ impl SimilarFilter {
 #[graphql(name = "RelativeDate")]
 pub struct RelativeDate {
     /// Number of days ago (positive = past)
-    #[graphql(name = "DaysAgo")]
+    #[graphql(name = "daysAgo")]
     pub days_ago: Option<i32>,
     /// Number of days from now (positive = future)
-    #[graphql(name = "DaysFromNow")]
+    #[graphql(name = "daysFromNow")]
     pub days_from_now: Option<i32>,
     /// Use today's date
-    #[graphql(name = "Today")]
+    #[graphql(name = "today")]
     pub today: Option<bool>,
 }
 
@@ -118,32 +118,32 @@ impl RelativeDate {
 #[graphql(name = "StringFilter")]
 pub struct StringFilter {
     /// Equals
-    #[graphql(name = "Eq")]
+    #[graphql(name = "eq")]
     pub eq: Option<String>,
     /// Not equals
-    #[graphql(name = "Ne")]
+    #[graphql(name = "ne")]
     pub ne: Option<String>,
     /// Contains substring (case-insensitive)
-    #[graphql(name = "Contains")]
+    #[graphql(name = "contains")]
     pub contains: Option<String>,
     /// Starts with
-    #[graphql(name = "StartsWith")]
+    #[graphql(name = "startsWith")]
     pub starts_with: Option<String>,
     /// Ends with
-    #[graphql(name = "EndsWith")]
+    #[graphql(name = "endsWith")]
     pub ends_with: Option<String>,
     /// In list
-    #[graphql(name = "In")]
+    #[graphql(name = "in")]
     pub in_list: Option<Vec<String>>,
     /// Not in list
-    #[graphql(name = "NotIn")]
+    #[graphql(name = "notIn")]
     pub not_in: Option<Vec<String>>,
     /// Is null
-    #[graphql(name = "IsNull")]
+    #[graphql(name = "isNull")]
     pub is_null: Option<bool>,
     /// Fuzzy/similar match with optional threshold (0.0-1.0, default 0.6)
     /// Uses normalized Levenshtein distance for scoring
-    #[graphql(name = "Similar")]
+    #[graphql(name = "similar")]
     pub similar: Option<SimilarFilter>,
 }
 
@@ -152,31 +152,31 @@ pub struct StringFilter {
 #[graphql(name = "IntFilter")]
 pub struct IntFilter {
     /// Equals
-    #[graphql(name = "Eq")]
+    #[graphql(name = "eq")]
     pub eq: Option<i32>,
     /// Not equals
-    #[graphql(name = "Ne")]
+    #[graphql(name = "ne")]
     pub ne: Option<i32>,
     /// Less than
-    #[graphql(name = "Lt")]
+    #[graphql(name = "lt")]
     pub lt: Option<i32>,
     /// Less than or equal
-    #[graphql(name = "Lte")]
+    #[graphql(name = "lte")]
     pub lte: Option<i32>,
     /// Greater than
-    #[graphql(name = "Gt")]
+    #[graphql(name = "gt")]
     pub gt: Option<i32>,
     /// Greater than or equal
-    #[graphql(name = "Gte")]
+    #[graphql(name = "gte")]
     pub gte: Option<i32>,
     /// In list
-    #[graphql(name = "In")]
+    #[graphql(name = "in")]
     pub in_list: Option<Vec<i32>>,
     /// Not in list
-    #[graphql(name = "NotIn")]
+    #[graphql(name = "notIn")]
     pub not_in: Option<Vec<i32>>,
     /// Is null
-    #[graphql(name = "IsNull")]
+    #[graphql(name = "isNull")]
     pub is_null: Option<bool>,
 }
 
@@ -185,13 +185,13 @@ pub struct IntFilter {
 #[graphql(name = "BoolFilter")]
 pub struct BoolFilter {
     /// Equals
-    #[graphql(name = "Eq")]
+    #[graphql(name = "eq")]
     pub eq: Option<bool>,
     /// Not equals (opposite of eq)
-    #[graphql(name = "Ne")]
+    #[graphql(name = "ne")]
     pub ne: Option<bool>,
     /// Is null
-    #[graphql(name = "IsNull")]
+    #[graphql(name = "isNull")]
     pub is_null: Option<bool>,
 }
 
@@ -200,10 +200,10 @@ pub struct BoolFilter {
 #[graphql(name = "DateRange")]
 pub struct DateRange {
     /// Start of range (inclusive)
-    #[graphql(name = "Start")]
+    #[graphql(name = "start")]
     pub start: Option<String>,
     /// End of range (inclusive)
-    #[graphql(name = "End")]
+    #[graphql(name = "end")]
     pub end: Option<String>,
 }
 
@@ -212,53 +212,53 @@ pub struct DateRange {
 #[graphql(name = "DateFilter")]
 pub struct DateFilter {
     /// Equals
-    #[graphql(name = "Eq")]
+    #[graphql(name = "eq")]
     pub eq: Option<String>,
     /// Not equals
-    #[graphql(name = "Ne")]
+    #[graphql(name = "ne")]
     pub ne: Option<String>,
     /// Before (less than)
-    #[graphql(name = "Lt")]
+    #[graphql(name = "lt")]
     pub lt: Option<String>,
     /// Before or on (less than or equal)
-    #[graphql(name = "Lte")]
+    #[graphql(name = "lte")]
     pub lte: Option<String>,
     /// After (greater than)
-    #[graphql(name = "Gt")]
+    #[graphql(name = "gt")]
     pub gt: Option<String>,
     /// After or on (greater than or equal)
-    #[graphql(name = "Gte")]
+    #[graphql(name = "gte")]
     pub gte: Option<String>,
     /// Between two dates (inclusive)
-    #[graphql(name = "Between")]
+    #[graphql(name = "between")]
     pub between: Option<DateRange>,
     /// Is null
-    #[graphql(name = "IsNull")]
+    #[graphql(name = "isNull")]
     pub is_null: Option<bool>,
 
     // ========================================================================
     // Date Arithmetic Operators
     // ========================================================================
     /// In the past (before today)
-    #[graphql(name = "InPast")]
+    #[graphql(name = "inPast")]
     pub in_past: Option<bool>,
     /// In the future (after today)
-    #[graphql(name = "InFuture")]
+    #[graphql(name = "inFuture")]
     pub in_future: Option<bool>,
     /// Is today
-    #[graphql(name = "IsToday")]
+    #[graphql(name = "isToday")]
     pub is_today: Option<bool>,
     /// Within the last N days (inclusive of today)
-    #[graphql(name = "RecentDays")]
+    #[graphql(name = "recentDays")]
     pub recent_days: Option<i32>,
     /// Within the next N days (inclusive of today)
-    #[graphql(name = "WithinDays")]
+    #[graphql(name = "withinDays")]
     pub within_days: Option<i32>,
     /// Greater than or equal to relative date
-    #[graphql(name = "GteRelative")]
+    #[graphql(name = "gteRelative")]
     pub gte_relative: Option<RelativeDate>,
     /// Less than or equal to relative date
-    #[graphql(name = "LteRelative")]
+    #[graphql(name = "lteRelative")]
     pub lte_relative: Option<RelativeDate>,
 }
 

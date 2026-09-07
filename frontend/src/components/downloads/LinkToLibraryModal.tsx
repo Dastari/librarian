@@ -138,11 +138,11 @@ export function LinkToLibraryModal({
 
   // Get the selected library
   const selectedLibrary = useMemo(() => {
-    return libraries.find((l) => l.Id === selectedLibraryId);
+    return libraries.find((l) => l.id === selectedLibraryId);
   }, [libraries, selectedLibraryId]);
 
   // Check if selected library is music
-  const isMusicLibrary = selectedLibrary?.LibraryType === "MUSIC";
+  const isMusicLibrary = selectedLibrary?.libraryType === "MUSIC";
 
   // Fetch libraries
   useEffect(() => {
@@ -158,7 +158,7 @@ export function LinkToLibraryModal({
           variables: {},
         })
         .then((result) => {
-          setLibraries(result.data?.Libraries.Edges.map((e) => e.Node) ?? []);
+          setLibraries(result.data?.libraries.edges.map((e) => e.node) ?? []);
         })
         .finally(() => setLoading(false));
     }
@@ -173,15 +173,15 @@ export function LinkToLibraryModal({
         .query<ManualMatchAlbumsByLibraryQuery>({
           query: ManualMatchAlbumsByLibraryDocument,
           fetchPolicy: "network-only",
-          variables: { LibraryId: selectedLibraryId },
+          variables: { libraryId: selectedLibraryId },
         })
         .then((result) => {
-          if (result.data?.Albums?.Edges) {
+          if (result.data?.albums?.edges) {
             setAlbums(
-              result.data.Albums.Edges.map((e) => ({
-                id: e.Node.Id,
-                name: e.Node.Name,
-                year: e.Node.Year ?? null,
+              result.data.albums.edges.map((e) => ({
+                id: e.node.id,
+                name: e.node.name,
+                year: e.node.year ?? null,
               })),
             );
           }
@@ -196,7 +196,7 @@ export function LinkToLibraryModal({
   // Detect recommended library type
   const recommendedType = useMemo(() => {
     if (!torrent) return null;
-    return detectMediaType(torrent.Name);
+    return detectMediaType(torrent.name);
   }, [torrent]);
 
   // Sort libraries - recommended type first
@@ -204,13 +204,13 @@ export function LinkToLibraryModal({
     if (!recommendedType) return libraries;
     return [...libraries].sort((a, b) => {
       if (
-        a.LibraryType === recommendedType &&
-        b.LibraryType !== recommendedType
+        a.libraryType === recommendedType &&
+        b.libraryType !== recommendedType
       )
         return -1;
       if (
-        b.LibraryType === recommendedType &&
-        a.LibraryType !== recommendedType
+        b.libraryType === recommendedType &&
+        a.libraryType !== recommendedType
       )
         return 1;
       return 0;
@@ -233,14 +233,14 @@ export function LinkToLibraryModal({
     try {
       const result = await linkTorrentToLibrary({
         variables: {
-          Id: torrent.Id,
-          Input: {
-            LibraryId: selectedLibraryId,
+          id: torrent.id,
+          input: {
+            libraryId: selectedLibraryId,
           },
         },
       });
 
-      if (result.data?.UpdateTorrent?.Success) {
+      if (result.data?.updateTorrent?.success) {
         const albumNote =
           isMusicLibrary && selectedAlbumId
             ? " Album linking will be applied in post-processing."
@@ -256,7 +256,7 @@ export function LinkToLibraryModal({
         addToast({
           title: "Link Failed",
           description:
-            result.data?.UpdateTorrent?.Error || "Failed to link torrent",
+            result.data?.updateTorrent?.error || "Failed to link torrent",
           color: "danger",
         });
       }
@@ -278,7 +278,7 @@ export function LinkToLibraryModal({
           <div>Link to Library</div>
           {torrent && (
             <div className="text-sm font-normal text-default-500 line-clamp-1">
-              {torrent.Name}
+              {torrent.name}
             </div>
           )}
         </ModalHeader>
@@ -299,29 +299,29 @@ export function LinkToLibraryModal({
                 matched and organized based on the library settings.
               </p>
               {sortedLibraries.map((library) => {
-                const Icon = getLibraryIcon(library.LibraryType);
-                const isSelected = selectedLibraryId === library.Id;
-                const isRecommended = library.LibraryType === recommendedType;
+                const Icon = getLibraryIcon(library.libraryType);
+                const isSelected = selectedLibraryId === library.id;
+                const isRecommended = library.libraryType === recommendedType;
 
                 return (
                   <Card
-                    key={library.Id}
+                    key={library.id}
                     isPressable
                     className={`transition-all ${
                       isSelected
                         ? "ring-2 ring-primary bg-primary/10"
                         : "hover:bg-content2"
                     }`}
-                    onPress={() => setSelectedLibraryId(library.Id)}
+                    onPress={() => setSelectedLibraryId(library.id)}
                   >
                     <CardBody className="flex-row items-center gap-3 py-3">
                       <Icon
                         size={24}
-                        className={getLibraryColor(library.LibraryType)}
+                        className={getLibraryColor(library.libraryType)}
                       />
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
-                          <span className="font-medium">{library.Name}</span>
+                          <span className="font-medium">{library.name}</span>
                           {isRecommended && (
                             <span className="text-xs px-1.5 py-0.5 rounded bg-primary/20 text-primary">
                               Recommended
@@ -329,7 +329,7 @@ export function LinkToLibraryModal({
                           )}
                         </div>
                         <div className="text-xs text-default-500">
-                          {library.LibraryType} • {library.Path}
+                          {library.libraryType} • {library.path}
                         </div>
                       </div>
                       {isSelected && (

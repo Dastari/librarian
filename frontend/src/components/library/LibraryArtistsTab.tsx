@@ -40,11 +40,11 @@ interface ArtistCardProps {
 
 function ArtistCard({ artist, albumCount, onSelect }: ArtistCardProps) {
   return (
-    <div className="aspect-square">
+    <div className="aspect-square w-full">
       <Card
         isPressable={!!onSelect}
         onPress={onSelect}
-        className="relative overflow-hidden h-full w-full group border-none bg-content2"
+        className="relative isolate overflow-hidden h-full w-full group border-none bg-content2"
       >
         {/* Background with gradient */}
         <div className="absolute inset-0 bg-gradient-to-br from-green-900 via-emerald-800 to-teal-900">
@@ -64,7 +64,7 @@ function ArtistCard({ artist, albumCount, onSelect }: ArtistCardProps) {
         )}
 
         {/* Bottom content */}
-        <div className="absolute bottom-0 left-0 right-0 z-10 p-3 pointer-events-none bg-black/50 backdrop-blur-sm h-16 flex flex-col justify-center">
+        <div className="absolute bottom-0 left-0 right-0 z-10 h-16 overflow-hidden rounded-b-[inherit] bg-black/50 p-3 pointer-events-none backdrop-blur-sm flex flex-col justify-center">
           <h3 className="text-sm font-bold text-white mb-0.5 line-clamp-2 drop-shadow-lg">
             {artist.name}
           </h3>
@@ -132,32 +132,32 @@ export function LibraryArtistsTab({
       try {
         const result = await apolloClient.query({
           query: LibraryAlbumsTabDocument,
-          variables: { LibraryId: libraryId },
+          variables: { libraryId: libraryId },
           fetchPolicy: "network-only",
         });
 
-        const edges = result.data?.Albums?.Edges ?? [];
+        const edges = result.data?.albums?.edges ?? [];
         setAlbums(
           edges.map((e) => ({
-            id: e.Node.Id,
-            artistId: e.Node.ArtistId,
-            libraryId: e.Node.LibraryId,
-            name: e.Node.Name,
-            sortName: e.Node.SortName ?? null,
-            year: e.Node.Year ?? null,
-            musicbrainzId: e.Node.MusicbrainzId ?? null,
-            albumType: e.Node.AlbumType ?? null,
-            genres: e.Node.Genres,
-            label: e.Node.Label ?? null,
-            country: e.Node.Country ?? null,
-            releaseDate: e.Node.ReleaseDate ?? null,
-            coverUrl: e.Node.CoverUrl ?? null,
-            trackCount: e.Node.TrackCount ?? null,
-            discCount: e.Node.DiscCount ?? null,
-            totalDurationSecs: e.Node.TotalDurationSecs ?? null,
-            hasFiles: e.Node.HasFiles,
-            sizeBytes: e.Node.SizeBytes ?? null,
-            path: e.Node.Path ?? null,
+            id: e.node.id,
+            artistId: e.node.artistId,
+            libraryId: e.node.libraryId,
+            name: e.node.name,
+            sortName: e.node.sortName ?? null,
+            year: e.node.year ?? null,
+            musicbrainzId: e.node.musicbrainzId ?? null,
+            albumType: e.node.albumType ?? null,
+            genres: e.node.genres,
+            label: e.node.label ?? null,
+            country: e.node.country ?? null,
+            releaseDate: e.node.releaseDate ?? null,
+            coverUrl: e.node.coverUrl ?? null,
+            trackCount: e.node.trackCount ?? null,
+            discCount: e.node.discCount ?? null,
+            totalDurationSecs: e.node.totalDurationSecs ?? null,
+            hasFiles: e.node.hasFiles,
+            sizeBytes: e.node.sizeBytes ?? null,
+            path: e.node.path ?? null,
             downloadedTrackCount: null,
           })),
         );
@@ -172,18 +172,18 @@ export function LibraryArtistsTab({
       try {
         const result = await apolloClient.query({
           query: LibraryArtistsTabDocument,
-          variables: { LibraryId: libraryId },
+          variables: { libraryId: libraryId },
           fetchPolicy: "network-only",
         });
 
-        const edges = result.data?.Artists?.Edges ?? [];
+        const edges = result.data?.artists?.edges ?? [];
         setArtists(
           edges.map((e) => ({
-            id: e.Node.Id,
-            libraryId: e.Node.LibraryId,
-            name: e.Node.Name,
-            sortName: e.Node.SortName ?? null,
-            musicbrainzId: e.Node.MusicbrainzId ?? null,
+            id: e.node.id,
+            libraryId: e.node.libraryId,
+            name: e.node.name,
+            sortName: e.node.sortName ?? null,
+            musicbrainzId: e.node.musicbrainzId ?? null,
           })),
         );
       } catch (err) {
@@ -311,15 +311,15 @@ export function LibraryArtistsTab({
   );
 
   return (
-    <div className="flex flex-col grow w-full">
-      <div className="flex-1 min-h-0">
+    <div className="flex h-full min-h-0 flex-1 flex-col w-full">
+      <div className="flex min-h-0 flex-1 flex-col">
         <DataTable
           stateKey="library-artists"
           skeletonDelay={500}
           data={filteredArtists}
           columns={columns}
           getRowKey={(artist) => artist.id}
-          searchPlaceholder="Search artists..."
+          toolbarQueryPlaceholder="Search artists..."
           sortColumn={sortColumn || "name"}
           sortDirection={sortDirection}
           onSortChange={handleSortChange}

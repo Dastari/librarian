@@ -110,50 +110,50 @@ export function LibraryAlbumsTab({
           const [albumsResult, artistsResult] = await Promise.all([
             apolloClient.query({
               query: LibraryAlbumsTabDocument,
-              variables: { LibraryId: libraryId },
+              variables: { libraryId: libraryId },
               fetchPolicy: "network-only",
             }),
             apolloClient.query({
               query: LibraryArtistsTabDocument,
-              variables: { LibraryId: libraryId },
+              variables: { libraryId: libraryId },
               fetchPolicy: "network-only",
             }),
           ]);
 
-          const albumEdges = albumsResult.data?.Albums?.Edges ?? [];
+          const albumEdges = albumsResult.data?.albums?.edges ?? [];
           setAlbums(
             albumEdges.map((e) => ({
-              id: e.Node.Id,
-              artistId: e.Node.ArtistId,
-              libraryId: e.Node.LibraryId,
-              name: e.Node.Name,
-              sortName: e.Node.SortName ?? null,
-              year: e.Node.Year ?? null,
-              musicbrainzId: e.Node.MusicbrainzId ?? null,
-              albumType: e.Node.AlbumType ?? null,
-              genres: e.Node.Genres,
-              label: e.Node.Label ?? null,
-              country: e.Node.Country ?? null,
-              releaseDate: e.Node.ReleaseDate ?? null,
-              coverUrl: e.Node.CoverUrl ?? null,
-              trackCount: e.Node.TrackCount ?? null,
-              discCount: e.Node.DiscCount ?? null,
-              totalDurationSecs: e.Node.TotalDurationSecs ?? null,
-              hasFiles: e.Node.HasFiles,
-              sizeBytes: e.Node.SizeBytes ?? null,
-              path: e.Node.Path ?? null,
+              id: e.node.id,
+              artistId: e.node.artistId,
+              libraryId: e.node.libraryId,
+              name: e.node.name,
+              sortName: e.node.sortName ?? null,
+              year: e.node.year ?? null,
+              musicbrainzId: e.node.musicbrainzId ?? null,
+              albumType: e.node.albumType ?? null,
+              genres: e.node.genres,
+              label: e.node.label ?? null,
+              country: e.node.country ?? null,
+              releaseDate: e.node.releaseDate ?? null,
+              coverUrl: e.node.coverUrl ?? null,
+              trackCount: e.node.trackCount ?? null,
+              discCount: e.node.discCount ?? null,
+              totalDurationSecs: e.node.totalDurationSecs ?? null,
+              hasFiles: e.node.hasFiles,
+              sizeBytes: e.node.sizeBytes ?? null,
+              path: e.node.path ?? null,
               downloadedTrackCount: null,
             })),
           );
 
-          const artistEdges = artistsResult.data?.Artists?.Edges ?? [];
+          const artistEdges = artistsResult.data?.artists?.edges ?? [];
           setArtists(
             artistEdges.map((e) => ({
-              id: e.Node.Id,
-              libraryId: e.Node.LibraryId,
-              name: e.Node.Name,
-              sortName: e.Node.SortName ?? null,
-              musicbrainzId: e.Node.MusicbrainzId ?? null,
+              id: e.node.id,
+              libraryId: e.node.libraryId,
+              name: e.node.name,
+              sortName: e.node.sortName ?? null,
+              musicbrainzId: e.node.musicbrainzId ?? null,
             })),
           );
         } catch (err) {
@@ -401,15 +401,15 @@ export function LibraryAlbumsTab({
   );
 
   return (
-    <div className="flex flex-col grow w-full">
-      <div className="flex-1 min-h-0">
+    <div className="flex h-full min-h-0 flex-1 flex-col w-full">
+      <div className="flex min-h-0 flex-1 flex-col">
         <DataTable
           stateKey="library-albums"
           skeletonDelay={500}
           data={visibleAlbums}
           columns={columns}
           getRowKey={(album) => album.id}
-          searchPlaceholder="Search albums..."
+          toolbarQueryPlaceholder="Search albums..."
           sortColumn={sortColumn || "name"}
           sortDirection={sortDirection}
           onSortChange={handleSortChange}

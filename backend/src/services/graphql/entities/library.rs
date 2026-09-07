@@ -35,71 +35,79 @@ use super::show::Show;
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(table = "libraries", plural = "Libraries", default_sort = "name")]
 pub struct Library {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     #[sortable]
     pub id: String,
 
-    #[graphql(name = "UserId")]
+    #[graphql(name = "userId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owner.id")]
     pub user_id: String,
 
-    #[graphql(name = "Name")]
+    #[graphql(name = "name")]
     #[filterable(type = "string")]
     #[sortable]
     pub name: String,
 
-    #[graphql(name = "Path")]
+    #[graphql(name = "path")]
     #[filterable(type = "string")]
     pub path: String,
 
-    #[graphql(name = "LibraryType")]
+    #[graphql(name = "libraryType")]
     #[filterable(type = "string")]
     #[sortable]
     pub library_type: String,
 
-    #[graphql(name = "Icon")]
+    #[graphql(name = "icon")]
     pub icon: Option<String>,
 
-    #[graphql(name = "Color")]
+    #[graphql(name = "color")]
     pub color: Option<String>,
 
-    #[graphql(name = "AutoScan")]
+    #[graphql(name = "autoScan")]
     #[filterable(type = "boolean")]
     pub auto_scan: bool,
 
-    #[graphql(name = "AutoOrganize")]
+    #[graphql(name = "autoOrganize")]
     #[filterable(type = "boolean")]
     pub auto_organize: bool,
 
-    #[graphql(name = "NamingPattern")]
+    #[graphql(name = "namingPattern")]
     #[filterable(type = "string")]
     pub naming_pattern: String,
 
-    #[graphql(name = "ScanIntervalMinutes")]
+    #[graphql(name = "scanIntervalMinutes")]
     #[filterable(type = "number")]
     pub scan_interval_minutes: i32,
 
-    #[graphql(name = "WatchForChanges")]
+    #[graphql(name = "watchForChanges")]
     #[filterable(type = "boolean")]
     pub watch_for_changes: bool,
 
-    #[graphql(name = "Scanning")]
+    #[graphql(name = "scanning")]
     #[filterable(type = "boolean")]
     pub scanning: bool,
 
-    #[graphql(name = "LastScannedAt")]
+    #[graphql(name = "lastScannedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub last_scanned_at: Option<String>,
 
-    #[graphql(name = "CreatedAt")]
+    /// Primary quality profile for this library (docs/tier1-features-plan.md
+    /// §2). Resolution precedence: per-entity override (Show/Movie/Album/
+    /// Audiobook) > this field > seeded default profile.
+    #[graphql(name = "qualityProfileId")]
+    #[filterable(type = "string")]
+    pub quality_profile_id: Option<String>,
+
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,

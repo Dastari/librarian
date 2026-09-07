@@ -24,6 +24,15 @@ for (const generatedPath of generatedFiles) {
     'import type { TypedDocumentNode as DocumentNode } from "$2";',
   );
 
+  // The SDL loader preserves the JSON scalar description while the
+  // introspection-snapshot loader currently drops it. Normalize that one
+  // cosmetic difference so source-SDL and offline-snapshot codegen are
+  // byte-for-byte identical.
+  content = content.replace(
+    /^  \/\*\* A scalar that can represent any JSON value\. \*\/\n(?=  JSON:)/m,
+    "",
+  );
+
   // The current codegen stack can emit a second schema/input type block before
   // operation types. Keep the canonical schema block from the TypeScript plugin
   // and drop the duplicate block to avoid duplicate identifiers.

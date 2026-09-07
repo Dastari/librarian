@@ -34,6 +34,8 @@ import {
   AlbumDetailRouteDocument,
   DeleteAlbumRouteDocument,
   LibraryDetailRouteDocument,
+  ContentStatusType,
+  type ContentStatus,
   type AlbumDetailRouteQuery,
 } from "../../lib/graphql/generated/graphql";
 import {
@@ -59,6 +61,7 @@ import { TrackStatusChip, PlayPauseIndicator } from "../../components/shared";
 import { usePlaybackContext } from "../../contexts/PlaybackContext";
 import { useDataReactivity } from "../../hooks/useSubscription";
 import { DetailItemsTable } from "../../components/media/DetailItemsTable";
+import { useContentStatuses } from "../../hooks/useContentStatuses";
 
 export const Route = createFileRoute("/albums/$albumId")({
   beforeLoad: ({ context, location }) => {
@@ -76,10 +79,8 @@ export const Route = createFileRoute("/albums/$albumId")({
   errorComponent: RouteError,
 });
 
-type AlbumDetailNode = NonNullable<AlbumDetailRouteQuery["Album"]>;
-type AlbumTrackNode = AlbumDetailRouteQuery["Tracks"]["Edges"][number]["Node"];
-type TrackStatusView = "missing" | "wanted" | "downloading" | "downloaded";
-
+type AlbumDetailNode = NonNullable<AlbumDetailRouteQuery["album"]>;
+type AlbumTrackNode = AlbumDetailRouteQuery["tracks"]["edges"][number]["node"];
 interface TrackWithStatus {
   track: {
     id: string;
@@ -96,7 +97,7 @@ interface TrackWithStatus {
     artistId: string | null;
     mediaFileId: string | null;
     hasFile: boolean;
-    status: TrackStatusView;
+    status: ContentStatus;
     wanted: boolean;
     downloadProgress: number | null;
   };
@@ -255,6 +256,7 @@ const trackColumns: DataTableColumn<TrackWithStatus>[] = [
     sortable: true,
     render: (t) => (
       <TrackStatusChip
+        status={t.track.status}
         mediaFileId={t.track.mediaFileId}
         downloadProgress={t.track.downloadProgress}
         wanted={t.track.wanted}
@@ -308,7 +310,9 @@ function TrackTable({
       color: "default",
       inDropdown: false,
       isVisible: (t) =>
-        t.track.status === "downloaded" &&
+        ["AVAILABLE", "UPGRADABLE", "PLAYING", "PAUSED"].includes(
+          t.track.status,
+        ) &&
         !!t.track.mediaFileId &&
         currentlyPlayingTrackId === t.track.id &&
         isPlaying,
@@ -322,7 +326,9 @@ function TrackTable({
       color: "success",
       inDropdown: false,
       isVisible: (t) =>
-        t.track.status === "downloaded" &&
+        ["AVAILABLE", "UPGRADABLE", "PLAYING", "PAUSED"].includes(
+          t.track.status,
+        ) &&
         !!t.track.mediaFileId &&
         !(currentlyPlayingTrackId === t.track.id && isPlaying),
       onAction: (t) => onPlay(t),
@@ -335,7 +341,7 @@ function TrackTable({
       inDropdown: false,
       // Show search for missing or wanted tracks (not downloading or downloaded)
       isVisible: (t) =>
-        t.track.status === "missing" || t.track.status === "wanted",
+        ["MISSING", "WANTED", "UPCOMING", "FAILED"].includes(t.track.status),
       onAction: (t) => onSearch(t),
     },
     {
@@ -346,7 +352,9 @@ function TrackTable({
       inDropdown: true,
       // Only show properties for downloaded tracks with a media file
       isVisible: (t) =>
-        t.track.status === "downloaded" && !!t.track.mediaFileId,
+        ["AVAILABLE", "UPGRADABLE", "PLAYING", "PAUSED"].includes(
+          t.track.status,
+        ) && !!t.track.mediaFileId,
       onAction: (t) => onShowProperties(t),
     },
   ];
@@ -427,55 +435,57 @@ function AlbumDetailPage() {
     loading: isLoading,
     refetch: refetchAlbum,
   } = useQuery(AlbumDetailRouteDocument, {
-    variables: { Id: albumId },
+    variables: { id: albumId },
     fetchPolicy: "cache-and-network",
   });
 
-  const toTrackStatus = useCallback(
-    (
-      mediaFileId: string | null | undefined,
-      wanted: boolean,
-      backendStatus?: string | null,
-    ): TrackWithStatus["track"]["status"] => {
-      if (mediaFileId) return "downloaded";
-      const normalized = backendStatus?.toLowerCase() ?? "";
-      if (normalized === "downloading") return "downloading";
-      return wanted ? "wanted" : "missing";
-    },
-    [],
-  );
-
   const albumNode: AlbumDetailNode | null =
-    albumQueryData?.Album ?? previousAlbumQueryData?.Album ?? null;
+    albumQueryData?.album ?? previousAlbumQueryData?.album ?? null;
   const albumTrackEdges =
-    albumQueryData?.Tracks?.Edges ??
-    previousAlbumQueryData?.Tracks?.Edges ??
+    albumQueryData?.tracks?.edges ??
+    previousAlbumQueryData?.tracks?.edges ??
     [];
+  const trackStatusTargets = useMemo(
+    () =>
+      albumTrackEdges.map((edge) => ({
+        contentType: ContentStatusType.TRACK,
+        id: edge.node.id,
+      })),
+    [albumTrackEdges],
+  );
+  const { getStatus: getTrackStatus } =
+    useContentStatuses(trackStatusTargets);
 
   const albumData = useMemo<AlbumWithTracks | null>(() => {
     if (!albumNode) return null;
     const tracks: TrackWithStatus[] = albumTrackEdges.map(
-      (edge: { Node: AlbumTrackNode }) => ({
+      (edge: { node: AlbumTrackNode }) => ({
         track: {
-          id: edge.Node.Id,
-          albumId: edge.Node.AlbumId,
-          libraryId: edge.Node.LibraryId,
-          title: edge.Node.Title,
-          trackNumber: edge.Node.TrackNumber,
-          discNumber: edge.Node.DiscNumber ?? 1,
-          musicbrainzId: edge.Node.MusicbrainzId ?? null,
-          isrc: edge.Node.Isrc ?? null,
-          durationSecs: edge.Node.DurationSecs ?? null,
-          explicit: edge.Node.Explicit,
-          artistName: edge.Node.ArtistName ?? null,
-          artistId: edge.Node.ArtistId ?? null,
-          mediaFileId: edge.Node.MediaFileId ?? null,
-          hasFile: Boolean(edge.Node.MediaFileId),
-          status: toTrackStatus(edge.Node.MediaFileId, edge.Node.Wanted),
-          wanted: edge.Node.Wanted,
+          id: edge.node.id,
+          albumId: edge.node.albumId,
+          libraryId: edge.node.libraryId,
+          title: edge.node.title,
+          trackNumber: edge.node.trackNumber,
+          discNumber: edge.node.discNumber ?? 1,
+          musicbrainzId: edge.node.musicbrainzId ?? null,
+          isrc: edge.node.isrc ?? null,
+          durationSecs: edge.node.durationSecs ?? null,
+          explicit: edge.node.explicit,
+          artistName: edge.node.artistName ?? null,
+          artistId: edge.node.artistId ?? null,
+          mediaFileId: edge.node.mediaFileId ?? null,
+          hasFile: Boolean(edge.node.mediaFileId),
+          status:
+            getTrackStatus(ContentStatusType.TRACK, edge.node.id) ??
+            (edge.node.mediaFileId
+              ? "AVAILABLE"
+              : edge.node.wanted
+                ? "WANTED"
+                : "MISSING"),
+          wanted: edge.node.wanted,
           downloadProgress: null,
         },
-        hasFile: Boolean(edge.Node.MediaFileId),
+        hasFile: Boolean(edge.node.mediaFileId),
         filePath: null,
         fileSize: null,
         audioCodec: null,
@@ -489,49 +499,49 @@ function AlbumDetailPage() {
       tracks.length > 0 ? (tracksWithFiles / tracks.length) * 100 : 0;
     return {
       album: {
-        id: albumNode.Id,
-        artistId: albumNode.ArtistId,
-        libraryId: albumNode.LibraryId,
-        name: albumNode.Name,
-        sortName: albumNode.SortName ?? null,
-        year: albumNode.Year ?? null,
-        musicbrainzId: albumNode.MusicbrainzId ?? null,
-        albumType: albumNode.AlbumType ?? null,
-        genres: albumNode.Genres,
-        label: albumNode.Label ?? null,
-        country: albumNode.Country ?? null,
-        releaseDate: albumNode.ReleaseDate ?? null,
-        coverUrl: albumNode.CoverUrl ?? null,
-        trackCount: albumNode.TrackCount ?? null,
-        discCount: albumNode.DiscCount ?? null,
-        totalDurationSecs: albumNode.TotalDurationSecs ?? null,
-        hasFiles: albumNode.HasFiles,
-        sizeBytes: albumNode.SizeBytes ?? null,
-        path: albumNode.Path ?? null,
+        id: albumNode.id,
+        artistId: albumNode.artistId,
+        libraryId: albumNode.libraryId,
+        name: albumNode.name,
+        sortName: albumNode.sortName ?? null,
+        year: albumNode.year ?? null,
+        musicbrainzId: albumNode.musicbrainzId ?? null,
+        albumType: albumNode.albumType ?? null,
+        genres: albumNode.genres,
+        label: albumNode.label ?? null,
+        country: albumNode.country ?? null,
+        releaseDate: albumNode.releaseDate ?? null,
+        coverUrl: albumNode.coverUrl ?? null,
+        trackCount: albumNode.trackCount ?? null,
+        discCount: albumNode.discCount ?? null,
+        totalDurationSecs: albumNode.totalDurationSecs ?? null,
+        hasFiles: albumNode.hasFiles,
+        sizeBytes: albumNode.sizeBytes ?? null,
+        path: albumNode.path ?? null,
         downloadedTrackCount: tracksWithFiles,
       },
       artistName:
         tracks.find((t) => Boolean(t.track.artistName))?.track.artistName ??
         null,
       tracks,
-      trackCount: albumNode.TrackCount ?? tracks.length,
+      trackCount: albumNode.trackCount ?? tracks.length,
       tracksWithFiles,
       missingTracks,
       completionPercent,
     };
-  }, [albumNode, albumTrackEdges, toTrackStatus]);
+  }, [albumNode, albumTrackEdges, getTrackStatus]);
 
   const {
     data: libraryData,
     previousData: previousLibraryData,
     refetch: refetchLibrary,
   } = useQuery(LibraryDetailRouteDocument, {
-    variables: { Id: albumData?.album.libraryId ?? "" },
+    variables: { id: albumData?.album.libraryId ?? "" },
     skip: !albumData?.album.libraryId,
     fetchPolicy: "cache-and-network",
   });
 
-  const library = libraryData?.Library ?? previousLibraryData?.Library ?? null;
+  const library = libraryData?.library ?? previousLibraryData?.library ?? null;
   const error = !isLoading && !albumData ? "Album not found" : null;
 
   const fetchAlbum = useCallback(() => {
@@ -597,10 +607,10 @@ function AlbumDetailPage() {
     if (!albumData) return;
     try {
       const result = await deleteAlbum({
-        variables: { Id: albumData.album.id },
+        variables: { id: albumData.album.id },
       });
 
-      if (result.data?.DeleteAlbum?.Success) {
+      if (result.data?.deleteAlbum?.success) {
         addToast({
           title: "Album deleted",
           description: `${albumData.album.name} has been removed.`,
@@ -614,7 +624,7 @@ function AlbumDetailPage() {
         addToast({
           title: "Delete failed",
           description:
-            result.data?.DeleteAlbum?.Error || "Failed to delete album",
+            result.data?.deleteAlbum?.error || "Failed to delete album",
           color: "danger",
         });
       }
@@ -642,13 +652,13 @@ function AlbumDetailPage() {
 
       try {
         const { data } = await setTracksWanted({
-          variables: { AlbumId: albumData.album.id, Wanted: wanted },
+          variables: { albumId: albumData.album.id, wanted: wanted },
         });
-        if (!data?.UpdateTracks?.success) {
+        if (!data?.updateTracks?.success) {
           addToast({
             title: "Error",
             description:
-              data?.UpdateTracks?.error ||
+              data?.updateTracks?.error ||
               "Failed to update wanted status for tracks",
             color: "danger",
           });
@@ -658,8 +668,8 @@ function AlbumDetailPage() {
         addToast({
           title: wanted ? "Marked as wanted" : "Removed wanted",
           description: wanted
-            ? `${data.UpdateTracks.affectedCount} tracks marked as wanted`
-            : `${data.UpdateTracks.affectedCount} tracks removed from wanted`,
+            ? `${data.updateTracks.affectedCount} tracks marked as wanted`
+            : `${data.updateTracks.affectedCount} tracks removed from wanted`,
           color: "success",
         });
 
@@ -697,7 +707,10 @@ function AlbumDetailPage() {
   const playableTracks = useMemo(() => {
     if (!albumData) return [];
     return albumData.tracks.filter(
-      (t) => t.track.status === "downloaded" && t.track.mediaFileId,
+      (t) =>
+        ["AVAILABLE", "UPGRADABLE", "PLAYING", "PAUSED"].includes(
+          t.track.status,
+        ) && t.track.mediaFileId,
     );
   }, [albumData]);
 
@@ -755,8 +768,8 @@ function AlbumDetailPage() {
         </BreadcrumbItem>
         {library ? (
           <BreadcrumbItem>
-            <Link to="/libraries/$libraryId" params={{ libraryId: library.Id }}>
-              {library.Name}
+            <Link to="/libraries/$libraryId" params={{ libraryId: library.id }}>
+              {library.name}
             </Link>
           </BreadcrumbItem>
         ) : (

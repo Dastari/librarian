@@ -1,139 +1,158 @@
-query SearchMovies($Query: String!, $Year: Int) {
-  SearchMovies(Query: $Query, Year: $Year) {
-    Provider
-    ProviderId
-    Title
-    OriginalTitle
-    Year
-    Overview
-    PosterUrl
-    BackdropUrl
-    ImdbId
-    VoteAverage
-    Popularity
+query SearchMovies($query: String!, $year: Int) {
+  searchMovies(query: $query, year: $year) {
+    provider
+    providerId
+    title
+    originalTitle
+    year
+    overview
+    posterUrl
+    backdropUrl
+    imdbId
+    voteAverage
+    popularity
   }
 }
 
-query SearchMovieCollections($Query: String!) {
-  SearchMovieCollections(Query: $Query) {
-    Provider
-    CollectionId
-    Name
-    Overview
-    PosterUrl
-    BackdropUrl
+query SearchMovieCollections($query: String!) {
+  searchMovieCollections(query: $query) {
+    provider
+    collectionId
+    name
+    overview
+    posterUrl
+    backdropUrl
   }
 }
 
-mutation AddMovie($LibraryId: String!, $Input: AddMovieInput!) {
-  AddMovie(LibraryId: $LibraryId, Input: $Input) {
-    Success
-    Movie {
-      Id
-      LibraryId
-      Title
-      Year
-      TmdbId
-      ImdbId
-      Overview
-      Monitored
-      MediaFileId
+mutation AddMovie($libraryId: String!, $input: AddMovieInput!) {
+  addMovie(libraryId: $libraryId, input: $input) {
+    success
+    movie {
+      id
+      libraryId
+      title
+      year
+      tmdbId
+      imdbId
+      overview
+      monitored
+      mediaFileId
     }
-    Error
+    error
   }
 }
 
 mutation AddMovieCollection(
-  $LibraryId: String!
-  $Input: AddMovieCollectionInput!
+  $libraryId: String!
+  $input: AddMovieCollectionInput!
 ) {
-  AddMovieCollection(LibraryId: $LibraryId, Input: $Input) {
-    Success
-    CollectionId
-    CollectionName
-    ImportedCount
-    ExistingCount
-    WantedUpdatedCount
-    Error
+  addMovieCollection(libraryId: $libraryId, input: $input) {
+    success
+    collectionId
+    collectionName
+    importedCount
+    existingCount
+    wantedUpdatedCount
+    error
   }
 }
 
-subscription MovieChanged($Filter: SubscriptionFilterInput) {
-  MovieChanged: movieChanged(filter: $Filter) {
-    Action: action
-    Id: id
-    Movie: movie {
-      LibraryId
+subscription MovieChanged($filter: SubscriptionFilterInput) {
+  movieChanged(filter: $filter) {
+    action
+    id
+    movie {
+      libraryId
     }
   }
 }
 
-query MovieDetailRoute($Id: String!) {
-  Movie: movie(id: $Id) {
-    Id
-    LibraryId
-    Title
-    SortTitle
-    OriginalTitle
-    Year
-    TmdbId
-    ImdbId
-    Overview
-    Tagline
-    Runtime
-    Genres
-    Director
-    CastNames
-    Monitored
-    MediaFileId
-    CollectionId
-    CollectionName
-    CollectionPosterUrl
-    PosterUrl: CollectionPosterUrl
-    TmdbRating
-    TmdbVoteCount
-    Certification
-    ReleaseDate
-    ProductionCountries
-    SpokenLanguages
-    Wanted
-    MediaFile: mediaFile {
-      Id
-      Size
-      Duration
+query MovieDetailRoute($id: String!) {
+  movie(id: $id) {
+    id
+    libraryId
+    title
+    sortTitle
+    originalTitle
+    year
+    tmdbId
+    imdbId
+    overview
+    tagline
+    runtime
+    genres
+    director
+    castNames
+    monitored
+    mediaFileId
+    collectionId
+    collectionName
+    collectionPosterUrl
+    posterUrl: collectionPosterUrl
+    tmdbRating
+    tmdbVoteCount
+    certification
+    releaseDate
+    productionCountries
+    spokenLanguages
+    wanted
+    mediaFile {
+      id
+      size
+      duration
     }
   }
 }
 
-mutation MovieDetailSetWanted($Id: String!, $Wanted: Boolean!) {
-  UpdateMovie: updateMovie(id: $Id, input: { Wanted: $Wanted }) {
-    Success: success
-    Error: error
-    Movie: movie {
-      Id
-      Wanted
+mutation MovieDetailSetWanted($id: String!, $wanted: Boolean!) {
+  updateMovie(id: $id, input: { wanted: $wanted }) {
+    success
+    error
+    movie {
+      id
+      wanted
     }
   }
 }
 
-mutation RefreshMovieRoute($Id: String!) {
-  RefreshMovie(Id: $Id) {
-    Success
-    Error
-    Movie {
-      Id
-      Title
-      Overview
-      Tagline
-      TmdbRating
-      TmdbVoteCount
+mutation RefreshMovieRoute($id: String!) {
+  refreshMovie(id: $id) {
+    success
+    error
+    movie {
+      id
+      title
+      overview
+      tagline
+      tmdbRating
+      tmdbVoteCount
     }
   }
 }
 
-mutation DeleteMovieModal($Id: String!) {
-  DeleteMovie: deleteMovie(id: $Id) {
-    Success: success
-    Error: error
+mutation DeleteMovieModal($id: String!) {
+  deleteMovie(id: $id) {
+    success
+    error
+  }
+}
+
+query MovieCollectionPeersRoute($libraryId: String!, $collectionId: Int!) {
+  movieCollectionDetails(libraryId: $libraryId, collectionId: $collectionId) {
+    movies {
+      tmdbId
+      title
+      year
+      posterUrl
+      libraryMovieId
+      mediaFileId
+      fileSizeBytes
+      resolution
+      videoCodec
+      audioCodec
+      audioChannels
+      wanted
+    }
   }
 }

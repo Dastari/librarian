@@ -1,3 +1,9 @@
+mod grant;
 pub mod service;
 
-pub use service::{CastDeviceType, CastService, CastServiceConfig, DiscoveredCastDevice};
+pub use grant::{CastGrantClaims, CastGrantSigner};
+
+pub use service::{
+    CastDeviceType, CastPlaybackDecision, CastPlaybackMode, CastRemoteStatus, CastService,
+    CastServiceConfig, DiscoveredCastDevice,
+};

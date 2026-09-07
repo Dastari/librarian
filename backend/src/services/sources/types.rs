@@ -251,7 +251,13 @@ impl SourceQuery {
     pub fn get_episode_string(&self) -> Option<String> {
         self.season.map(|s| {
             if let Some(ref ep) = self.episode {
-                format!("S{:02}E{}", s, ep)
+                // Episode inputs from GraphQL and acquisition jobs are unpadded.
+                // Indexers match release tokens such as S01E04, not S01E4.
+                let episode = ep
+                    .parse::<u32>()
+                    .map(|number| format!("{number:02}"))
+                    .unwrap_or_else(|_| ep.clone());
+                format!("S{:02}E{}", s, episode)
             } else {
                 format!("S{:02}", s)
             }
@@ -278,7 +284,7 @@ impl SourceQuery {
         use sha2::{Digest, Sha256};
         let json = serde_json::to_string(self).unwrap_or_default();
         let hash = Sha256::digest(json.as_bytes());
-        format!("{:x}", hash)
+        hex::encode(hash)
     }
 }
 
@@ -408,5 +414,36 @@ impl SourceRelease {
 impl Default for SourceRelease {
     fn default() -> Self {
         Self::new(String::new(), String::new(), Utc::now())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SourceQuery;
+
+    #[test]
+    fn episode_search_formats_numeric_episodes_and_preserves_other_tokens() {
+        for (episode, expected) in [
+            ("4", "S01E04"),
+            ("04", "S01E04"),
+            ("12", "S01E12"),
+            ("123", "S01E123"),
+            ("0", "S01E00"),
+            ("04-E05", "S01E04-E05"),
+        ] {
+            let query = SourceQuery {
+                season: Some(1),
+                episode: Some(episode.into()),
+                ..Default::default()
+            };
+            assert_eq!(query.get_episode_string().as_deref(), Some(expected));
+        }
+        let mut query = SourceQuery {
+            season: Some(1),
+            ..Default::default()
+        };
+        assert_eq!(query.get_episode_string().as_deref(), Some("S01"));
+        query.season = None;
+        assert_eq!(query.get_episode_string(), None);
     }
 }

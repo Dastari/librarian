@@ -8,74 +8,80 @@ use serde::{Deserialize, Serialize};
 )]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
-#[graphql_entity(table = "subtitles", plural = "Subtitles", default_sort = "created_at")]
+#[graphql_entity(
+    table = "subtitles",
+    plural = "Subtitles",
+    default_sort = "created_at",
+    read_policy = "member.read",
+    write_policy = "admin.write"
+)]
 pub struct Subtitle {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "MediaFileId")]
+    #[graphql(name = "mediaFileId")]
     #[filterable(type = "string")]
     pub media_file_id: String,
 
-    #[graphql(name = "SourceType")]
+    #[graphql(name = "sourceType")]
     #[filterable(type = "string")]
     pub source_type: String,
 
-    #[graphql(name = "StreamIndex")]
+    #[graphql(name = "streamIndex")]
     #[filterable(type = "number")]
     pub stream_index: Option<i32>,
 
-    #[graphql(name = "FilePath")]
+    #[graphql(name = "filePath")]
     pub file_path: Option<String>,
 
-    #[graphql(name = "Codec")]
+    #[graphql(name = "codec")]
     #[filterable(type = "string")]
     pub codec: Option<String>,
 
-    #[graphql(name = "CodecLongName")]
+    #[graphql(name = "codecLongName")]
     pub codec_long_name: Option<String>,
 
-    #[graphql(name = "Language")]
+    #[graphql(name = "language")]
     #[filterable(type = "string")]
     pub language: Option<String>,
 
-    #[graphql(name = "Title")]
+    #[graphql(name = "title")]
     pub title: Option<String>,
 
-    #[graphql(name = "IsDefault")]
+    #[graphql(name = "isDefault")]
     #[boolean_field]
     #[filterable(type = "boolean")]
     pub is_default: bool,
 
-    #[graphql(name = "IsForced")]
+    #[graphql(name = "isForced")]
     #[boolean_field]
     #[filterable(type = "boolean")]
     pub is_forced: bool,
 
-    #[graphql(name = "IsHearingImpaired")]
+    #[graphql(name = "isHearingImpaired")]
     #[boolean_field]
     #[filterable(type = "boolean")]
     pub is_hearing_impaired: bool,
 
-    #[graphql(name = "OpensubtitlesId")]
+    #[graphql(name = "opensubtitlesId")]
     #[filterable(type = "string")]
     pub opensubtitles_id: Option<String>,
 
-    #[graphql(name = "DownloadedAt")]
+    #[graphql(name = "downloadedAt")]
     #[filterable(type = "date")]
     pub downloaded_at: Option<String>,
 
-    #[graphql(name = "Metadata")]
+    #[graphql(name = "metadata")]
     pub metadata: Option<String>,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,

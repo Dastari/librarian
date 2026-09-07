@@ -18,7 +18,7 @@ interface DetailItemsTableProps<T> {
   selectionMode?: "none" | "single" | "multiple";
   defaultSortColumn?: string;
   defaultSortDirection?: "asc" | "desc";
-  searchPlaceholder?: string;
+  toolbarQueryPlaceholder?: string;
   headerContent?: ReactNode;
   emptyContent?: ReactNode;
   isLoading?: boolean;
@@ -45,7 +45,7 @@ export function DetailItemsTable<T>({
   selectionMode = "none",
   defaultSortColumn,
   defaultSortDirection = "asc",
-  searchPlaceholder,
+  toolbarQueryPlaceholder,
   headerContent,
   emptyContent,
   isLoading = false,
@@ -67,13 +67,14 @@ export function DetailItemsTable<T>({
       data={data}
       columns={columns}
       getRowKey={getRowKey}
+      fillHeight={false}
       ariaLabel={ariaLabel}
       rowActions={rowActions}
       selectedKeys={selectedKeys}
       selectionMode={selectionMode}
       defaultSortColumn={defaultSortColumn}
       defaultSortDirection={defaultSortDirection}
-      searchPlaceholder={searchPlaceholder}
+      toolbarQueryPlaceholder={toolbarQueryPlaceholder}
       headerContent={headerContent}
       emptyContent={emptyContent}
       isLoading={isLoading}

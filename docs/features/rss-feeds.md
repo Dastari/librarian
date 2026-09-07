@@ -75,7 +75,7 @@ RSS feed URL
   -> RssFeedItemSource searches local cache
   -> SourceRelease candidates
   -> AutoDownloadService chooses release
-  -> AddTorrent / source authenticated download
+  -> addTorrent / source authenticated download
   -> media pipeline links downloaded files
 ```
 
@@ -240,7 +240,7 @@ RSS item links may be:
 
 The first implementation should support:
 
-- magnet links directly through `AddTorrent`;
+- magnet links directly through `addTorrent`;
 - direct `.torrent` links through the matching source authentication path if the feed is tied to a configured source;
 - direct unauthenticated `.torrent` links as a fallback.
 

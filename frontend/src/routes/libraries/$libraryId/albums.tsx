@@ -12,20 +12,15 @@ import { Button } from "@heroui/button";
 import { addToast } from "@heroui/toast";
 import { useLibraryContext } from "../$libraryId";
 import { LibraryAlbumsTab, AddAlbumModal } from "../../../components/library";
-import { useMutation, gql } from "../../../lib/graphql/client";
+import { useMutation } from "../../../lib/graphql/client";
+import {
+  DeleteAlbumRouteDocument,
+  type DeleteAlbumRouteMutation,
+} from "../../../lib/graphql/generated/graphql";
 
 export const Route = createFileRoute("/libraries/$libraryId/albums")({
   component: AlbumsPage,
 });
-
-const DELETE_ALBUM = gql`
-  mutation DeleteAlbum($Id: String!) {
-    DeleteAlbum: deleteAlbum(id: $Id) {
-      Success: success
-      Error: error
-    }
-  }
-`;
 
 function AlbumsPage() {
   const { library, loading } = useLibraryContext();
@@ -37,9 +32,8 @@ function AlbumsPage() {
     name: string;
   } | null>(null);
 
-  const [deleteAlbum, { loading: isDeleting }] = useMutation<{
-    DeleteAlbum: { Success: boolean; Error?: string };
-  }>(DELETE_ALBUM);
+  const [deleteAlbum, { loading: isDeleting }] =
+    useMutation<DeleteAlbumRouteMutation>(DeleteAlbumRouteDocument);
 
   const handleAlbumsRefreshReady = useCallback((refreshFn: () => void) => {
     refreshAlbumsRef.current = refreshFn;
@@ -62,10 +56,10 @@ function AlbumsPage() {
 
     try {
       const { data } = await deleteAlbum({
-        variables: { Id: deleteTarget.id },
+        variables: { id: deleteTarget.id },
       });
 
-      if (data?.DeleteAlbum.Success) {
+      if (data?.deleteAlbum.success) {
         addToast({
           title: "Album deleted",
           description: `${deleteTarget.name} has been removed from the library.`,
@@ -75,7 +69,7 @@ function AlbumsPage() {
       } else {
         addToast({
           title: "Delete failed",
-          description: data?.DeleteAlbum.Error || "Failed to delete album",
+          description: data?.deleteAlbum.error || "Failed to delete album",
           color: "danger",
         });
       }
@@ -94,7 +88,7 @@ function AlbumsPage() {
   return (
     <>
       <LibraryAlbumsTab
-        libraryId={library.Id}
+        libraryId={library.id}
         loading={loading}
         onAddAlbum={onOpen}
         onDeleteAlbum={handleDeleteAlbum}
@@ -103,7 +97,7 @@ function AlbumsPage() {
       <AddAlbumModal
         isOpen={isOpen}
         onClose={onClose}
-        libraryId={library.Id}
+        libraryId={library.id}
         onAlbumAdded={handleAlbumAdded}
       />
 

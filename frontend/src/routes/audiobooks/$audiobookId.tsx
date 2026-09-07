@@ -34,6 +34,8 @@ import {
   AudiobookDetailRouteDocument,
   DeleteAudiobookRouteDocument,
   LibraryDetailRouteDocument,
+  ContentStatusType,
+  type ContentStatus,
   type AudiobookDetailRouteQuery,
 } from "../../lib/graphql/generated/graphql";
 import {
@@ -59,6 +61,7 @@ import { FilePropertiesModal } from "../../components/FilePropertiesModal";
 import { usePlaybackContext } from "../../contexts/PlaybackContext";
 import { useDataReactivity } from "../../hooks/useSubscription";
 import { DetailItemsTable } from "../../components/media/DetailItemsTable";
+import { useContentStatuses } from "../../hooks/useContentStatuses";
 
 export const Route = createFileRoute("/audiobooks/$audiobookId")({
   beforeLoad: ({ context, location }) => {
@@ -76,11 +79,9 @@ export const Route = createFileRoute("/audiobooks/$audiobookId")({
   errorComponent: RouteError,
 });
 
-type AudiobookDetailNode = NonNullable<AudiobookDetailRouteQuery["Audiobook"]>;
+type AudiobookDetailNode = NonNullable<AudiobookDetailRouteQuery["audiobook"]>;
 type AudiobookChapterNode =
-  AudiobookDetailNode["Chapters"]["Edges"][number]["Node"];
-type ChapterStatusView = "missing" | "wanted" | "downloading" | "downloaded";
-
+  AudiobookDetailNode["chapters"]["edges"][number]["node"];
 interface AudiobookChapter {
   id: string;
   audiobookId: string;
@@ -90,7 +91,7 @@ interface AudiobookChapter {
   endSecs: number;
   durationSecs: number | null;
   mediaFileId: string | null;
-  status: ChapterStatusView;
+  status: ContentStatus;
   wanted: boolean;
   downloadProgress: number | null;
 }
@@ -166,6 +167,7 @@ const chapterColumns: DataTableColumn<AudiobookChapter>[] = [
     sortable: true,
     render: (ch) => (
       <ChapterStatusChip
+        status={ch.status}
         mediaFileId={ch.mediaFileId}
         downloadProgress={ch.downloadProgress}
         wanted={ch.wanted}
@@ -222,7 +224,7 @@ function ChapterTable({
       color: "default",
       inDropdown: false,
       isVisible: (ch) =>
-        ch.status === "downloaded" &&
+        ["AVAILABLE", "UPGRADABLE", "PLAYING", "PAUSED"].includes(ch.status) &&
         !!ch.mediaFileId &&
         currentlyPlayingChapterId === ch.id &&
         isPlaying,
@@ -236,7 +238,7 @@ function ChapterTable({
       color: "success",
       inDropdown: false,
       isVisible: (ch) =>
-        ch.status === "downloaded" &&
+        ["AVAILABLE", "UPGRADABLE", "PLAYING", "PAUSED"].includes(ch.status) &&
         !!ch.mediaFileId &&
         !(currentlyPlayingChapterId === ch.id && isPlaying),
       onAction: (ch) => onPlay(ch),
@@ -247,7 +249,8 @@ function ChapterTable({
       icon: <IconSearch size={16} />,
       color: "default",
       inDropdown: false,
-      isVisible: (ch) => ch.status === "missing" || ch.status === "wanted",
+      isVisible: (ch) =>
+        ["MISSING", "WANTED", "UPCOMING", "FAILED"].includes(ch.status),
       onAction: (ch) => onSearch(ch),
     },
   ];
@@ -327,44 +330,46 @@ function AudiobookDetailPage() {
     loading: isLoading,
     refetch: refetchAudiobook,
   } = useQuery(AudiobookDetailRouteDocument, {
-    variables: { Id: audiobookId },
+    variables: { id: audiobookId },
     fetchPolicy: "cache-and-network",
   });
 
   const audiobookNode: AudiobookDetailNode | null =
-    audiobookQueryData?.Audiobook ??
-    previousAudiobookQueryData?.Audiobook ??
+    audiobookQueryData?.audiobook ??
+    previousAudiobookQueryData?.audiobook ??
     null;
-
-  const toChapterStatus = useCallback(
-    (
-      mediaFileId: string | null | undefined,
-      wanted: boolean,
-      backendStatus?: string | null,
-    ): AudiobookChapter["status"] => {
-      if (mediaFileId) return "downloaded";
-      const normalized = backendStatus?.toLowerCase() ?? "";
-      if (normalized === "downloading") return "downloading";
-      return wanted ? "wanted" : "missing";
-    },
-    [],
+  const chapterStatusTargets = useMemo(
+    () =>
+      (audiobookNode?.chapters?.edges ?? []).map((edge) => ({
+        contentType: ContentStatusType.CHAPTER,
+        id: edge.node.id,
+      })),
+    [audiobookNode?.chapters?.edges],
   );
+  const { getStatus: getChapterStatus } =
+    useContentStatuses(chapterStatusTargets);
 
   const audiobookData = useMemo<AudiobookWithChapters | null>(() => {
     if (!audiobookNode) return null;
-    const chapters = (audiobookNode.Chapters?.Edges ?? []).map(
-      (edge: { Node: AudiobookChapterNode }) => ({
-        id: edge.Node.Id,
-        audiobookId: edge.Node.AudiobookId,
-        chapterNumber: edge.Node.ChapterNumber,
-        title: edge.Node.Title ?? null,
-        startSecs: Math.floor(edge.Node.StartTimeSecs),
+    const chapters = (audiobookNode.chapters?.edges ?? []).map(
+      (edge: { node: AudiobookChapterNode }) => ({
+        id: edge.node.id,
+        audiobookId: edge.node.audiobookId,
+        chapterNumber: edge.node.chapterNumber,
+        title: edge.node.title ?? null,
+        startSecs: Math.floor(edge.node.startTimeSecs),
         endSecs:
-          edge.Node.EndTimeSecs != null ? Math.floor(edge.Node.EndTimeSecs) : 0,
-        durationSecs: edge.Node.DurationSecs ?? null,
-        mediaFileId: edge.Node.MediaFileId ?? null,
-        status: toChapterStatus(edge.Node.MediaFileId, edge.Node.Wanted),
-        wanted: edge.Node.Wanted,
+          edge.node.endTimeSecs != null ? Math.floor(edge.node.endTimeSecs) : 0,
+        durationSecs: edge.node.durationSecs ?? null,
+        mediaFileId: edge.node.mediaFileId ?? null,
+        status:
+          getChapterStatus(ContentStatusType.CHAPTER, edge.node.id) ??
+          (edge.node.mediaFileId
+            ? "AVAILABLE"
+            : edge.node.wanted
+              ? "WANTED"
+              : "MISSING"),
+        wanted: edge.node.wanted,
         downloadProgress: null,
       }),
     );
@@ -378,24 +383,24 @@ function AudiobookDetailPage() {
         : 0;
     return {
       audiobook: {
-        id: audiobookNode.Id,
+        id: audiobookNode.id,
         authorId: null,
-        libraryId: audiobookNode.LibraryId,
-        title: audiobookNode.Title,
-        sortTitle: audiobookNode.SortTitle ?? null,
+        libraryId: audiobookNode.libraryId,
+        title: audiobookNode.title,
+        sortTitle: audiobookNode.sortTitle ?? null,
         subtitle: null,
         openlibraryId: null,
-        isbn: audiobookNode.Isbn ?? null,
-        description: audiobookNode.Description ?? null,
-        publisher: audiobookNode.Publisher ?? null,
-        language: audiobookNode.Language ?? null,
-        narrators: audiobookNode.Narrators,
+        isbn: audiobookNode.isbn ?? null,
+        description: audiobookNode.description ?? null,
+        publisher: audiobookNode.publisher ?? null,
+        language: audiobookNode.language ?? null,
+        narrators: audiobookNode.narrators,
         seriesName: null,
-        durationSecs: audiobookNode.TotalDurationSecs ?? null,
-        coverUrl: audiobookNode.CoverUrl ?? null,
-        hasFiles: audiobookNode.HasFiles,
-        sizeBytes: audiobookNode.SizeBytes ?? null,
-        path: audiobookNode.Path ?? null,
+        durationSecs: audiobookNode.totalDurationSecs ?? null,
+        coverUrl: audiobookNode.coverUrl ?? null,
+        hasFiles: audiobookNode.hasFiles,
+        sizeBytes: audiobookNode.sizeBytes ?? null,
+        path: audiobookNode.path ?? null,
         chapterCount: chapters.length,
         downloadedChapterCount: chaptersWithFiles,
       },
@@ -406,19 +411,19 @@ function AudiobookDetailPage() {
       missingChapters,
       completionPercent,
     };
-  }, [audiobookNode, toChapterStatus]);
+  }, [audiobookNode, getChapterStatus]);
 
   const {
     data: libraryData,
     previousData: previousLibraryData,
     refetch: refetchLibrary,
   } = useQuery(LibraryDetailRouteDocument, {
-    variables: { Id: audiobookData?.audiobook.libraryId ?? "" },
+    variables: { id: audiobookData?.audiobook.libraryId ?? "" },
     skip: !audiobookData?.audiobook.libraryId,
     fetchPolicy: "cache-and-network",
   });
 
-  const library = libraryData?.Library ?? previousLibraryData?.Library ?? null;
+  const library = libraryData?.library ?? previousLibraryData?.library ?? null;
   const error = !isLoading && !audiobookData ? "Audiobook not found" : null;
 
   const fetchAudiobook = useCallback(() => {
@@ -457,9 +462,9 @@ function AudiobookDetailPage() {
   const handleDelete = useCallback(async () => {
     if (!audiobookData) return;
     try {
-      const result = await deleteAudiobook({ variables: { Id: audiobookId } });
+      const result = await deleteAudiobook({ variables: { id: audiobookId } });
 
-      if (result.data?.DeleteAudiobook?.Success) {
+      if (result.data?.deleteAudiobook?.success) {
         addToast({
           title: "Audiobook deleted",
           description: `${audiobookData.audiobook.title} has been removed.`,
@@ -473,7 +478,7 @@ function AudiobookDetailPage() {
         addToast({
           title: "Delete failed",
           description:
-            result.data?.DeleteAudiobook?.Error || "Failed to delete audiobook",
+            result.data?.deleteAudiobook?.error || "Failed to delete audiobook",
           color: "danger",
         });
       }
@@ -531,15 +536,15 @@ function AudiobookDetailPage() {
       try {
         const { data } = await setChaptersWanted({
           variables: {
-            AudiobookId: audiobookData.audiobook.id,
-            Wanted: wanted,
+            audiobookId: audiobookData.audiobook.id,
+            wanted: wanted,
           },
         });
-        if (!data?.UpdateChapters?.success) {
+        if (!data?.updateChapters?.success) {
           addToast({
             title: "Error",
             description:
-              data?.UpdateChapters?.error ||
+              data?.updateChapters?.error ||
               "Failed to update wanted status for chapters",
             color: "danger",
           });
@@ -549,8 +554,8 @@ function AudiobookDetailPage() {
         addToast({
           title: wanted ? "Marked as wanted" : "Removed wanted",
           description: wanted
-            ? `${data.UpdateChapters.affectedCount} chapters marked as wanted`
-            : `${data.UpdateChapters.affectedCount} chapters removed from wanted`,
+            ? `${data.updateChapters.affectedCount} chapters marked as wanted`
+            : `${data.updateChapters.affectedCount} chapters removed from wanted`,
           color: "success",
         });
 
@@ -626,8 +631,8 @@ function AudiobookDetailPage() {
         </BreadcrumbItem>
         {library ? (
           <BreadcrumbItem>
-            <Link to="/libraries/$libraryId" params={{ libraryId: library.Id }}>
-              {library.Name}
+            <Link to="/libraries/$libraryId" params={{ libraryId: library.id }}>
+              {library.name}
             </Link>
           </BreadcrumbItem>
         ) : (

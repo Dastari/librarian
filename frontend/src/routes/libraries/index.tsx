@@ -10,9 +10,8 @@ import { Card, CardBody } from "@heroui/card";
 import { useDisclosure } from "@heroui/modal";
 import { Skeleton } from "@heroui/skeleton";
 import { addToast } from "@heroui/toast";
-import { IconPlus } from "@tabler/icons-react";
-import { IconRefresh } from "@tabler/icons-react";
 import { Image } from "@heroui/image";
+import { IconPlus } from "@tabler/icons-react";
 
 import { RouteError } from "../../components/RouteError";
 import { DataTable } from "../../components/data-table/DataTable";
@@ -49,7 +48,7 @@ import {
 } from "../../lib/graphql";
 import { useAuth } from "@/hooks/useAuth";
 
-type LibraryListNode = LibrariesQuery["Libraries"]["Edges"][number]["Node"];
+type LibraryListNode = LibrariesQuery["libraries"]["edges"][number]["node"];
 
 export const Route = createFileRoute("/libraries/")({
   beforeLoad: ({ context, location }) => {
@@ -97,11 +96,11 @@ function LibrariesPage() {
   const [scanTargetLibrary, setScanTargetLibrary] = useState<{
     id: string;
     name: string;
+    libraryType: string;
   } | null>(null);
   const [pathAvailability, setPathAvailability] = useState<
     Record<string, LibraryPathAvailabilityStatus>
   >({});
-  const [isRecheckingOffline, setIsRecheckingOffline] = useState(false);
 
   // Query libraries
   const {
@@ -115,14 +114,14 @@ function LibrariesPage() {
   });
   const libraries = useMemo(
     () =>
-      (librariesData?.Libraries ?? previousLibrariesData?.Libraries)?.Edges.map(
-        (edge) => edge.Node
+      (librariesData?.libraries ?? previousLibrariesData?.libraries)?.edges.map(
+        (edge) => edge.node
       ) ?? [],
-    [librariesData?.Libraries, previousLibrariesData?.Libraries]
+    [librariesData?.libraries, previousLibrariesData?.libraries]
   );
 
   const uniqueLibraryPaths = useMemo(
-    () => Array.from(new Set(libraries.map((lib) => lib.Path).filter(Boolean))).sort(),
+    () => Array.from(new Set(libraries.map((lib) => lib.path).filter(Boolean))).sort(),
     [libraries]
   );
   const libraryPathsKey = useMemo(() => uniqueLibraryPaths.join("|"), [uniqueLibraryPaths]);
@@ -156,7 +155,7 @@ function LibrariesPage() {
         if (!active) return;
         const map: Record<string, LibraryPathAvailabilityStatus> = {};
         statuses.forEach((s) => {
-          map[s.Path] = s;
+          map[s.path] = s;
         });
         setPathAvailability(map);
       })
@@ -180,10 +179,10 @@ function LibrariesPage() {
     LibraryChangedDocument,
     {
       onData: ({ data }) => {
-        const event = data.data?.LibraryChanged;
+        const event = data.data?.libraryChanged;
         if (!event) return;
 
-        switch (event.Action) {
+        switch (event.action) {
           case ChangeAction.CREATED:
           case ChangeAction.UPDATED:
             // Refetch to get updated counts
@@ -212,13 +211,13 @@ function LibrariesPage() {
     MovieChangedDocument,
     {
       variables: {
-        Filter: {
+        filter: {
           actions: [ChangeAction.CREATED, ChangeAction.UPDATED, ChangeAction.DELETED],
         },
       },
       onData: ({ data }) => {
-        const event = data.data?.MovieChanged;
-        if (!event?.Movie?.LibraryId) return;
+        const event = data.data?.movieChanged;
+        if (!event?.movie?.libraryId) return;
         scheduleLibrariesRefetch();
       },
     }
@@ -228,13 +227,13 @@ function LibrariesPage() {
     ShowChangedDocument,
     {
       variables: {
-        Filter: {
+        filter: {
           actions: [ChangeAction.CREATED, ChangeAction.UPDATED, ChangeAction.DELETED],
         },
       },
       onData: ({ data }) => {
-        const event = data.data?.ShowChanged;
-        if (!event?.Show?.LibraryId) return;
+        const event = data.data?.showChanged;
+        if (!event?.show?.libraryId) return;
         scheduleLibrariesRefetch();
       },
     }
@@ -242,19 +241,19 @@ function LibrariesPage() {
 
   // Handlers
   const handleAddLibrary = async (input: CreateLibraryFormInput) => {
-    const Input: CreateLibraryInput = {
+    const createInput: CreateLibraryInput = {
       ...input,
-      Scanning: false,
-      UserId: user?.id ?? "",
+      scanning: false,
+      userId: user?.id ?? "",
     };
 
     try {
-      const { data } = await createLibrary({ variables: { Input } });
+      const { data } = await createLibrary({ variables: { input: createInput } });
 
-      if (!data?.CreateLibrary.Success) {
+      if (!data?.createLibrary.success) {
         addToast({
           title: "Error",
-          description: data?.CreateLibrary.Error || "Unknown error",
+          description: data?.createLibrary.error || "Unknown error",
           color: "danger",
         });
         return;
@@ -262,7 +261,7 @@ function LibrariesPage() {
 
       addToast({
         title: "Success",
-        description: `Library "${input.Name}" created`,
+        description: `Library "${input.name}" created`,
         color: "success",
       });
 
@@ -283,8 +282,8 @@ function LibrariesPage() {
     onDeleteOpen();
   };
 
-  const handleScanClick = (id: string, name: string) => {
-    setScanTargetLibrary({ id, name });
+  const handleScanClick = (id: string, name: string, libraryType: string) => {
+    setScanTargetLibrary({ id, name, libraryType });
     onScanOpen();
   };
 
@@ -312,46 +311,6 @@ function LibrariesPage() {
     }
   };
 
-  const recheckOfflineLibraries = async () => {
-    const offlinePaths = Object.values(pathAvailability)
-      .filter((s) => !s.Reachable)
-      .map((s) => s.Path);
-    if (offlinePaths.length === 0) return;
-
-    setIsRecheckingOffline(true);
-    try {
-      const statuses = await getLibraryPathAvailability(offlinePaths, true);
-      const next = { ...pathAvailability };
-      statuses.forEach((s) => {
-        next[s.Path] = s;
-      });
-      setPathAvailability(next);
-
-      const stillOffline = statuses.filter((s) => !s.Reachable).length;
-      if (stillOffline === 0) {
-        addToast({
-          title: "Libraries Reconnected",
-          description: "All previously offline libraries are now reachable",
-          color: "success",
-        });
-      } else {
-        addToast({
-          title: "Recheck Complete",
-          description: `${stillOffline} library path(s) remain offline`,
-          color: "warning",
-        });
-      }
-    } catch (err) {
-      addToast({
-        title: "Recheck Failed",
-        description: err instanceof Error ? err.message : "Failed to recheck offline libraries",
-        color: "danger",
-      });
-    } finally {
-      setIsRecheckingOffline(false);
-    }
-  };
-
   // Empty state
   const emptyContent = (
     <Card className="bg-content1/50 border-default-300 border-dashed border-2">
@@ -373,7 +332,7 @@ function LibrariesPage() {
 
   // Card skeleton
   const cardSkeleton = () => (
-    <Card className="relative overflow-hidden aspect-2/3 bg-content2">
+    <Card className="relative aspect-2/3 w-full overflow-hidden bg-content2">
       <Skeleton className="absolute inset-0 w-full h-full" />
       <div className="absolute bottom-0 left-0 right-0 p-3 bg-black/50">
         <Skeleton className="h-4 w-3/4 mb-2 rounded" />
@@ -383,65 +342,64 @@ function LibrariesPage() {
   );
 
   return (
-    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <DataTable
-        stateKey="libraries"
-        data={libraries}
-        columns={[]}
-        getRowKey={(lib: LibraryListNode) => lib.Id}
-        isLoading={librariesLoading && libraries.length === 0}
-        skeletonDelay={300}
-        emptyContent={emptyContent}
-        // Card view only
-        defaultViewMode="cards"
-        cardRenderer={({ item }) => (
-          <LibraryGridCard
-            library={item}
-            onScan={() => handleScanClick(item.Id, item.Name)}
-            onDelete={() => handleDeleteClick(item.Id, item.Name)}
-            pathStatus={pathAvailability[item.Path]}
-            onReconnect={() => handleReconnect(item.Path)}
-          />
-        )}
-        cardSkeleton={cardSkeleton}
-        skeletonCardCount={6}
-        cardGridClassName="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
-        headerContent={
-          <div className="flex items-start justify-between mb-6">
-            <div>
-              <h1 className="text-2xl font-bold">Libraries</h1>
-              <p className="text-default-500">
-                Organize and manage your media collections
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="flat"
-                startContent={<IconRefresh size={16} />}
-                isLoading={isRecheckingOffline}
-                isDisabled={
-                  isRecheckingOffline ||
-                  !Object.values(pathAvailability).some((s) => !s.Reachable)
-                }
-                onPress={() => void recheckOfflineLibraries()}
-              >
-                Recheck Offline
-              </Button>
-              <Button
-                color="primary"
-                size="sm"
-                startContent={<IconPlus size={16} />}
-                onPress={onAddOpen}
-              >
-                Add Library
-              </Button>
-            </div>
-          </div>
-        }
-        hideToolbar
-        showItemCount={false}
-      />
+    <div className="container mx-auto flex h-full min-h-0 flex-1 flex-col overflow-hidden px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mb-6 shrink-0">
+        <h1 className="text-2xl font-bold">Libraries</h1>
+        <p className="text-default-500">
+          Organize and manage your media collections
+        </p>
+      </div>
+
+      <section className="flex h-0 min-h-0 flex-1 flex-col">
+        <DataTable
+          stateKey="libraries"
+          data={libraries}
+          columns={[]}
+          getRowKey={(lib: LibraryListNode) => lib.id}
+          isLoading={librariesLoading && libraries.length === 0}
+          skeletonDelay={300}
+          fillHeight={true}
+          emptyContent={emptyContent}
+          // Card view only
+          defaultViewMode="cards"
+          cardRenderer={({ item }) => (
+            <LibraryGridCard
+              library={item}
+              onScan={() =>
+                handleScanClick(item.id, item.name, item.libraryType)
+              }
+              onDelete={() => handleDeleteClick(item.id, item.name)}
+              pathStatus={pathAvailability[item.path]}
+              onReconnect={() => handleReconnect(item.path)}
+            />
+          )}
+          cardSkeleton={cardSkeleton}
+          skeletonCardCount={6}
+          cardGridClassName="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
+          toolbarActions={[
+            {
+              key: "add-library",
+              label: "Add Library",
+              icon: IconPlus,
+              onAction: () => onAddOpen(),
+              variant: "default",
+            },
+          ]}
+          toolbarVisibility={{
+            title: false,
+            search: false,
+            actions: true,
+            trailingActions: false,
+            options: false,
+            viewToggle: false,
+            customToolbar: false,
+          }}
+          classNames={{
+            wrapper: "flex h-full min-h-0 flex-1 flex-col",
+          }}
+          showItemCount={false}
+        />
+      </section>
 
       <AddLibraryModal
         isOpen={isAddOpen}
@@ -463,6 +421,7 @@ function LibrariesPage() {
         onClose={onScanClose}
         libraryId={scanTargetLibrary?.id ?? null}
         libraryName={scanTargetLibrary?.name ?? null}
+        libraryType={scanTargetLibrary?.libraryType ?? null}
         onScanStarted={refetch}
       />
 

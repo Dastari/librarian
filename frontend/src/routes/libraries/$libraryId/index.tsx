@@ -13,11 +13,11 @@ export const Route = createFileRoute('/libraries/$libraryId/')({
       LibraryDetailRouteQueryVariables
     >({
       query: LibraryDetailRouteDocument,
-      variables: { Id: params.libraryId },
+      variables: { id: params.libraryId },
       fetchPolicy: 'network-only',
     })
 
-    const library = result.data?.Library ?? null
+    const library = result.data?.library ?? null
     if (!library) {
       throw redirect({
         to: '/libraries/$libraryId/shows',
@@ -25,7 +25,7 @@ export const Route = createFileRoute('/libraries/$libraryId/')({
       })
     }
 
-    switch (library.LibraryType) {
+    switch (library.libraryType) {
       case 'MOVIES':
         throw redirect({
           to: '/libraries/$libraryId/movies',

@@ -1,5 +1,5 @@
 ---
-description: Enforce PascalCase for all GraphQL resolvers, queries, mutations, subscriptions, types, and fields; apply on create and when editing existing definitions. Rust source may remain snake_case internally but must expose PascalCase via GraphQL attributes and Serde.
+description: Enforce camelCase for GraphQL resolver fields, query/mutation/subscription fields, input fields, and selection fields; PascalCase GraphQL resolver naming is legacy and should not be added.
 globs:
   - "**/*.graphql"
   - "**/*.gql"
@@ -7,34 +7,60 @@ globs:
 alwaysApply: true
 ---
 
-You must enforce PascalCase (regex ^[A-Z][A-Za-z0-9]\*$) for every GraphQL-exposed name: operation names, root fields on Query/Mutation/Subscription, object/interface/input fields, type names, union members, enum variants, scalars, and directives. This applies when creating new items and when modifying existing items in .rs, .graphql, and .gql files.
+# GraphQL Naming Convention
 
-Rust-specific rules:
-• Internal Rust identifiers may remain snake_case.
-• For every GraphQL-exposed item defined in Rust, set an explicit PascalCase name using #[graphql(name = "PascalCaseName")].
-• When exposing structs or payloads as JSON through GraphQL, ensure serde uses PascalCase via #[serde(rename_all = "PascalCase")] or per-field #[serde(rename = "PascalCaseName")] so the resulting GraphQL JSON matches PascalCase.
+GraphQL resolver names are camelCase. PascalCase resolver fields were the old convention and should be treated as legacy surface area to migrate away from when touched.
 
-SDL-specific rules:
-• In .graphql/.gql SDL, all names and fields must be PascalCase.
-• Operation documents intended for the server must use PascalCase operation names.
+## Resolver And Field Names
 
-Validation:
-• Reject or rewrite any GraphQL-exposed name that does not match ^[A-Z][A-Za-z0-9]\*$.
-• Disallow underscores, hyphens, spaces, and leading lowercase for GraphQL-exposed names.
-• Ensure root operation type fields and nested fields are PascalCase.
-• Ensure resolver map keys and export identifiers match the PascalCase GraphQL names.
+Use camelCase for every GraphQL-exposed resolver field:
 
-Autofix procedure:
+- Root `Query`, `Mutation`, and `Subscription` fields.
+- Object fields.
+- Input object fields.
+- Payload/result fields.
+- Field aliases in `.graphql` documents when aliases are needed.
 
-1. Identify non-PascalCase GraphQL-exposed names in touched files and linked modules.
-2. Compute consistent PascalCase replacements.
-3. In Rust, add or update #[graphql(name = "PascalCase")] on fields, resolvers, objects, and enums; update resolver maps to the PascalCase keys.
-4. Add or update #[serde(rename_all = "PascalCase")] on structs returned through GraphQL, or apply #[serde(rename = "...")] per field to achieve PascalCase.
-5. In SDL files, rename definitions and fields to PascalCase and update all references.
-6. Perform project-wide renames for imported symbols and tests, regenerate codegen if present, and ensure types build cleanly.
+Examples:
 
-Edge cases:
-• If legacy names exist, perform strict rename to PascalCase and update tests, mocks, fixtures, and docs. Do not introduce aliases with different casing.
-• Generated code must not introduce non-PascalCase GraphQL-exposed names.
+- `movies`, `movie`, `createMovie`, `updateMovie`, `deleteMovie`
+- `scanLibrary`, `matchMediaFile`, `organizeMediaFile`
+- `id`, `libraryId`, `mediaFileId`, `createdAt`
+- `success`, `error`, `affectedCount`
 
-Output from the agent must not introduce new non-PascalCase GraphQL-exposed names under any circumstances.
+## Type Names
+
+Use standard GraphQL type casing:
+
+- Object, input, enum, interface, union, and scalar type names: `PascalCase`.
+- Enum values: keep the schema's generated convention unless a type is being intentionally migrated.
+- Rust identifiers remain idiomatic Rust (`snake_case` functions/fields, `PascalCase` types).
+- TypeScript identifiers remain idiomatic TypeScript (`camelCase` values/functions, `PascalCase` components/types).
+
+## Rust Rules
+
+- For every GraphQL-exposed resolver or field defined in Rust, use `#[graphql(name = "camelCaseName")]` when the default output would not be camelCase.
+- Prefer `#[graphql(rename_fields = "camelCase")]` for GraphQL object fields where supported.
+- Do not add new `#[graphql(name = "PascalCaseName")]` for resolver or field names.
+- Serde casing is not a substitute for GraphQL resolver naming. Use serde renames only for JSON payloads that intentionally require a specific external shape.
+
+## SDL And Operation Documents
+
+- `.graphql` and `.gql` documents must query schema fields using camelCase.
+- GraphQL document operation names may remain descriptive `PascalCase` identifiers because they are client-side operation labels, not resolver fields.
+- Do not introduce aliases solely to preserve old PascalCase response keys.
+
+## Validation
+
+- Reject or rewrite any new GraphQL resolver/field name that is PascalCase, snake_case, kebab-case, or contains spaces.
+- Ensure root operation fields and nested selection fields are camelCase.
+- Ensure generated code, tests, mocks, fixtures, and docs use camelCase field names for new or touched GraphQL resolver surface.
+
+## Migration Procedure
+
+1. Identify PascalCase GraphQL resolver or field names in touched files and linked modules.
+2. Compute camelCase replacements.
+3. In Rust, add or update `#[graphql(name = "camelCase")]` and resolver method names where needed.
+4. In `.graphql` documents, update field selections, variables that mirror input field names, aliases, mocks, and tests.
+5. Regenerate frontend GraphQL types/codegen after schema changes.
+6. Prefer one-way migration. Do not add duplicate PascalCase and camelCase aliases unless an explicit compatibility window is required.

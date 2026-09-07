@@ -1,131 +1,131 @@
-query MediaFileProperties($Id: String!) {
-  MediaFile: mediaFile(id: $Id) {
-    Id
-    LibraryId
-    Path
-    RelativePath
-    OriginalName
-    Size
-    Container
-    VideoCodec
-    AudioCodec
-    Resolution
-    IsHdr
-    HdrType
-    Width
-    Height
-    Duration
-    Bitrate
-    AudioChannels
-    EpisodeId
-    MovieId
-    TrackId
-    ContentType
-    AddedAt
+query MediaFileProperties($id: String!) {
+  mediaFile(id: $id) {
+    id
+    libraryId
+    path
+    relativePath
+    originalName
+    size
+    container
+    videoCodec
+    audioCodec
+    resolution
+    isHdr
+    hdrType
+    width
+    height
+    duration
+    bitrate
+    audioChannels
+    episodeId
+    movieId
+    trackId
+    contentType
+    addedAt
   }
-  VideoStreams: videoStreams(
-    where: { MediaFileId: { eq: $Id } }
-    orderBy: [{ StreamIndex: ASC }]
+  videoStreams(
+    where: { mediaFileId: { eq: $id } }
+    orderBy: [{ streamIndex: ASC }]
     page: { limit: 200, offset: 0 }
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        StreamIndex
-        Codec
-        CodecLongName
-        Width
-        Height
-        AspectRatio
-        FrameRate
-        Bitrate
-        PixelFormat
-        HdrType
-        BitDepth
-        Language
-        Title
-        IsDefault
+    edges {
+      node {
+        id
+        streamIndex
+        codec
+        codecLongName
+        width
+        height
+        aspectRatio
+        frameRate
+        bitrate
+        pixelFormat
+        hdrType
+        bitDepth
+        language
+        title
+        isDefault
       }
     }
   }
-  AudioStreams: audioStreams(
-    where: { MediaFileId: { eq: $Id } }
-    orderBy: [{ StreamIndex: ASC }]
+  audioStreams(
+    where: { mediaFileId: { eq: $id } }
+    orderBy: [{ streamIndex: ASC }]
     page: { limit: 200, offset: 0 }
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        StreamIndex
-        Codec
-        CodecLongName
-        Channels
-        ChannelLayout
-        SampleRate
-        Bitrate
-        BitDepth
-        Language
-        Title
-        IsDefault
-        IsCommentary
+    edges {
+      node {
+        id
+        streamIndex
+        codec
+        codecLongName
+        channels
+        channelLayout
+        sampleRate
+        bitrate
+        bitDepth
+        language
+        title
+        isDefault
+        isCommentary
       }
     }
   }
-  Subtitles: subtitles(
-    where: { MediaFileId: { eq: $Id } }
-    orderBy: [{ CreatedAt: ASC }]
+  subtitles(
+    where: { mediaFileId: { eq: $id } }
+    orderBy: [{ createdAt: ASC }]
     page: { limit: 200, offset: 0 }
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        StreamIndex
-        SourceType
-        Codec
-        CodecLongName
-        Language
-        Title
-        IsDefault
-        IsForced
-        IsHearingImpaired
-        FilePath
+    edges {
+      node {
+        id
+        streamIndex
+        sourceType
+        codec
+        codecLongName
+        language
+        title
+        isDefault
+        isForced
+        isHearingImpaired
+        filePath
       }
     }
   }
-  MediaChapters: mediaChapters(
-    where: { MediaFileId: { eq: $Id } }
-    orderBy: [{ ChapterIndex: ASC }]
+  mediaChapters(
+    where: { mediaFileId: { eq: $id } }
+    orderBy: [{ chapterIndex: ASC }]
     page: { limit: 500, offset: 0 }
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        ChapterIndex
-        StartSecs
-        EndSecs
-        Title
+    edges {
+      node {
+        id
+        chapterIndex
+        startSecs
+        endSecs
+        title
       }
     }
   }
 }
 
-query MediaFileByPathLookup($Path: String!) {
-  MediaFiles: mediaFiles(
-    where: { Path: { eq: $Path } }
+query MediaFileByPathLookup($path: String!) {
+  mediaFiles(
+    where: { path: { eq: $path } }
     page: { limit: 1, offset: 0 }
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        Path
+    edges {
+      node {
+        id
+        path
       }
     }
   }
 }
 
-query MediaFileMetadata($Id: String!) {
-  MediaFile: mediaFile(id: $Id) {
-    Id
-    Metadata
+query MediaFileMetadata($id: String!) {
+  mediaFile(id: $id) {
+    id
+    metadata
   }
 }

@@ -1,0 +1,196 @@
+# List documents for the library browser. Each includes the linked file so tables can show
+# quality and size without a second round trip.
+
+fragment MediaFileSummary on MediaFile {
+  id
+  size
+  duration
+  resolution
+  videoCodec
+  audioCodec
+  audioChannels
+  isHdr
+  hdrType
+  qualityStatus
+  container
+}
+
+query LibraryMovies($where: MovieWhereInput, $orderBy: [MovieOrderByInput!], $page: PageInput) {
+  movies(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        ...MovieFields
+        mediaFile {
+          ...MediaFileSummary
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+query LibraryShows($where: ShowWhereInput, $orderBy: [ShowOrderByInput!], $page: PageInput) {
+  shows(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        ...ShowFields
+        episodes(page: { limit: 1, offset: 0 }) {
+          pageInfo {
+            totalCount
+          }
+        }
+        downloaded: episodes(where: { mediaFileId: { isNull: false } }, page: { limit: 1, offset: 0 }) {
+          pageInfo {
+            totalCount
+          }
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+query LibraryCollections($where: CollectionWhereInput, $orderBy: [CollectionOrderByInput!], $page: PageInput) {
+  collections(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        ...CollectionFields
+        owned: movies(where: { hasFile: { eq: true } }, page: { limit: 1, offset: 0 }) {
+          pageInfo {
+            totalCount
+          }
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+query LibraryAlbums($where: AlbumWhereInput, $orderBy: [AlbumOrderByInput!], $page: PageInput) {
+  albums(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        ...AlbumFields
+        downloaded: tracks(where: { mediaFileId: { isNull: false } }, page: { limit: 1, offset: 0 }) {
+          pageInfo {
+            totalCount
+          }
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+query LibraryArtists($where: ArtistWhereInput, $orderBy: [ArtistOrderByInput!], $page: PageInput) {
+  artists(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        ...ArtistFields
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+query LibraryTracks($where: TrackWhereInput, $orderBy: [TrackOrderByInput!], $page: PageInput) {
+  tracks(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        ...TrackFields
+        album {
+          id
+          name
+          coverUrl
+        }
+        mediaFile {
+          ...MediaFileSummary
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+query LibraryAudiobooks($where: AudiobookWhereInput, $orderBy: [AudiobookOrderByInput!], $page: PageInput) {
+  audiobooks(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        ...AudiobookFields
+        downloaded: chapters(where: { mediaFileId: { isNull: false } }, page: { limit: 1, offset: 0 }) {
+          pageInfo {
+            totalCount
+          }
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+query LibraryMediaFiles($where: MediaFileWhereInput, $orderBy: [MediaFileOrderByInput!], $page: PageInput) {
+  mediaFiles(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        ...MediaFileFields
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+query LibraryScanRuns($libraryId: String!, $page: PageInput) {
+  libraryScanRuns(where: { libraryId: { eq: $libraryId } }, orderBy: [{ createdAt: DESC }], page: $page) {
+    edges {
+      node {
+        ...LibraryScanRunFields
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+query LibraryScanIssues($libraryId: String!, $unresolvedOnly: Boolean!, $page: PageInput) {
+  libraryScanIssues(
+    where: { libraryId: { eq: $libraryId }, resolvedAt: { isNull: $unresolvedOnly } }
+    orderBy: [{ createdAt: DESC }]
+    page: $page
+  ) {
+    edges {
+      node {
+        ...LibraryScanIssueFields
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}

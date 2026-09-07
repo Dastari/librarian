@@ -1,67 +1,67 @@
 query ActiveDownloadCount {
-  ActiveDownloadCount
+  activeDownloadCount
 }
 
-query TorrentModalMediaFilesByPaths($Paths: [String!]!) {
-  MediaFiles: mediaFiles(
-    where: { Path: { inList: $Paths } }
+query TorrentModalMediaFilesByPaths($paths: [String!]!) {
+  mediaFiles(
+    where: { path: { inList: $paths } }
     page: { limit: 1000, offset: 0 }
   ) {
-    Edges: edges {
-      Node: node {
-        Id
-        Path
-        Metadata
+    edges {
+      node {
+        id
+        path
+        metadata
       }
     }
   }
 }
 
-query DownloadsTorrents($Where: TorrentWhereInput, $Page: PageInput) {
-  Torrents: torrents(where: $Where, page: $Page) {
-    Edges: edges {
-      Node: node {
-        Id
-        InfoHash
-        Name
-        State
-        Progress
-        TotalBytes
-        DownloadedBytes
-        UploadedBytes
-        SavePath
-        AddedAt
+query DownloadsTorrents($where: TorrentWhereInput, $page: PageInput) {
+  torrents(where: $where, page: $page) {
+    edges {
+      node {
+        id
+        infoHash
+        name
+        state
+        progress
+        totalBytes
+        downloadedBytes
+        uploadedBytes
+        savePath
+        addedAt
       }
     }
-    PageInfo: pageInfo {
-      TotalCount: totalCount
-      HasNextPage: hasNextPage
+    pageInfo {
+      totalCount
+      hasNextPage
     }
   }
 }
 
-query TorrentByInfoHashWithFiles($Where: TorrentWhereInput, $Page: PageInput) {
-  Torrents: torrents(where: $Where, page: $Page) {
-    Edges: edges {
-      Node: node {
-        Id
-        InfoHash
-        Name
-        State
-        Progress
-        TotalBytes
-        DownloadedBytes
-        UploadedBytes
-        SavePath
-        AddedAt
-        Files: files(page: { limit: 500 }) {
-          Edges: edges {
-            Node: node {
-              FileIndex
-              FilePath
-              FileSize
-              DownloadedBytes
-              Progress
+query TorrentByInfoHashWithFiles($where: TorrentWhereInput, $page: PageInput) {
+  torrents(where: $where, page: $page) {
+    edges {
+      node {
+        id
+        infoHash
+        name
+        state
+        progress
+        totalBytes
+        downloadedBytes
+        uploadedBytes
+        savePath
+        addedAt
+        files(page: { limit: 500 }) {
+          edges {
+            node {
+              fileIndex
+              filePath
+              fileSize
+              downloadedBytes
+              progress
             }
           }
         }
@@ -71,115 +71,301 @@ query TorrentByInfoHashWithFiles($Where: TorrentWhereInput, $Page: PageInput) {
 }
 
 query PendingFileMatchesBySource(
-  $Where: PendingFileMatchWhereInput
-  $Page: PageInput
+  $where: PendingFileMatchWhereInput
+  $page: PageInput
 ) {
-  PendingFileMatches: pendingFileMatches(where: $Where, page: $Page) {
-    Edges: edges {
-      Node: node {
-        Id
-        SourceType
-        SourceId
-        SourceFileIndex
-        SourcePath
-        FileSize
-        EpisodeId
-        MovieId
-        TrackId
-        ChapterId
-        MatchType
-        MatchConfidence
-        ParsedResolution
-        ParsedCodec
-        ParsedSource
-        ParsedAudio
-        CopiedAt
-        CopyError
+  pendingFileMatches(where: $where, page: $page) {
+    edges {
+      node {
+        id
+        sourceType
+        sourceId
+        sourceFileIndex
+        sourcePath
+        fileSize
+        episodeId
+        movieId
+        trackId
+        chapterId
+        matchType
+        matchConfidence
+        parsedResolution
+        parsedCodec
+        parsedSource
+        parsedAudio
+        copiedAt
+        copyError
       }
     }
   }
 }
 
-mutation PauseTorrentByInfoHash($InfoHash: String!) {
-  PauseTorrentByInfoHash(InfoHash: $InfoHash) {
-    Success
-    Error
+mutation PauseTorrentByInfoHash($infoHash: String!) {
+  pauseTorrentByInfoHash(infoHash: $infoHash) {
+    success
+    error
   }
 }
 
-mutation ResumeTorrentByInfoHash($InfoHash: String!) {
-  ResumeTorrentByInfoHash(InfoHash: $InfoHash) {
-    Success
-    Error
+mutation ResumeTorrentByInfoHash($infoHash: String!) {
+  resumeTorrentByInfoHash(infoHash: $infoHash) {
+    success
+    error
   }
 }
 
-mutation RemoveTorrentByInfoHash($InfoHash: String!, $DeleteFiles: Boolean) {
-  RemoveTorrentByInfoHash(InfoHash: $InfoHash, DeleteFiles: $DeleteFiles) {
-    Success
-    Error
+mutation RemoveTorrentByInfoHash($infoHash: String!, $deleteFiles: Boolean) {
+  removeTorrentByInfoHash(infoHash: $infoHash, deleteFiles: $deleteFiles) {
+    success
+    error
   }
 }
 
-mutation ProcessSource($SourceType: String!, $SourceId: String!) {
-  ProcessSource(SourceType: $SourceType, SourceId: $SourceId) {
-    Success
-    FilesProcessed
-    FilesFailed
-    Messages
-    Error
+mutation ProcessSource($sourceType: String!, $sourceId: String!) {
+  processSource(sourceType: $sourceType, sourceId: $sourceId) {
+    success
+    filesProcessed
+    filesFailed
+    messages
+    error
   }
 }
 
 mutation RematchSource(
-  $SourceType: String!
-  $SourceId: String!
-  $LibraryId: String
+  $sourceType: String!
+  $sourceId: String!
+  $libraryId: String
 ) {
-  RematchSource(
-    SourceType: $SourceType
-    SourceId: $SourceId
-    LibraryId: $LibraryId
+  rematchSource(
+    sourceType: $sourceType
+    sourceId: $sourceId
+    libraryId: $libraryId
   ) {
-    Success
-    MatchCount
-    Error
+    success
+    matchCount
+    error
   }
 }
 
-mutation LinkTorrentToLibrary($Id: String!, $Input: UpdateTorrentInput!) {
-  UpdateTorrent: updateTorrent(id: $Id, input: $Input) {
-    Success: success
-    Error: error
-    Torrent: torrent {
-      Id
-      LibraryId
+mutation LinkTorrentToLibrary($id: String!, $input: UpdateTorrentInput!) {
+  updateTorrent(id: $id, input: $input) {
+    success
+    error
+    torrent {
+      id
+      libraryId
     }
   }
 }
 
-subscription TorrentChanged {
-  TorrentChanged: torrentProgress {
-    Id: id
+subscription TorrentProgress {
+  torrentProgress {
+    id
+    infoHash
+    progress
+    downloadSpeed
+    uploadSpeed
+    peers
+    state
   }
 }
 
-mutation CreateUnmatchedMediaFileFromTorrent($Input: CreateMediaFileInput!) {
-  CreateMediaFile: createMediaFile(input: $Input) {
-    Success: success
-    Error: error
-    MediaFile: mediaFile {
-      Id
-      Path
-      Metadata
+subscription TorrentAdded {
+  torrentAdded {
+    id
+    name
+    infoHash
+  }
+}
+
+subscription TorrentRemoved {
+  torrentRemoved {
+    id
+    infoHash
+  }
+}
+
+subscription TorrentCompleted {
+  torrentCompleted {
+    id
+    name
+    infoHash
+  }
+}
+
+subscription TorrentFileChanged($filter: SubscriptionFilterInput) {
+  torrentFileChanged(filter: $filter) {
+    action
+    id
+    torrentFile {
+      torrentId
+      fileIndex
+      filePath
+      fileSize
+      downloadedBytes
+      progress
     }
   }
 }
 
-mutation AnalyzeMediaFileForTorrent($MediaFileId: String!, $Path: String!) {
-  AnalyzeMediaFile(MediaFileId: $MediaFileId, Path: $Path) {
-    Success
-    Queued
-    Message
+mutation CreateUnmatchedMediaFileFromTorrent($input: CreateMediaFileInput!) {
+  createMediaFile(input: $input) {
+    success
+    error
+    mediaFile {
+      id
+      path
+      metadata
+    }
+  }
+}
+
+query TorrentMatchLibrariesRuntime {
+  libraries(page: { limit: 1000, offset: 0 }) {
+    edges {
+      node {
+        id
+        name
+        libraryType
+      }
+    }
+  }
+}
+
+query TorrentMatchMediaFilesByPathsRuntime($paths: [String!]!) {
+  mediaFiles(
+    where: { path: { inList: $paths } }
+    page: { limit: 1000, offset: 0 }
+  ) {
+    edges {
+      node {
+        id
+        path
+        metadata
+        libraryId
+        episodeId
+        movieId
+        trackId
+        chapterId
+      }
+    }
+  }
+}
+
+mutation TorrentFindMatchForMediaFileRuntime($input: MatchMediaFileInput!) {
+  matchMediaFile(input: $input) {
+    success
+    autoMatched
+    alreadyMatched
+    matchedType
+    matchedId
+    confidence
+    reason
+    candidates {
+      targetType
+      targetId
+      targetName
+      score
+      reason
+      wanted
+    }
+  }
+}
+
+mutation TorrentUnmatchMediaFileRuntime($mediaFileId: String!) {
+  unmatchMediaFile(mediaFileId: $mediaFileId) {
+    success
+    reason
+  }
+}
+
+query TorrentMatchCandidateArtworkRuntime(
+  $movieIds: [String!]!
+  $episodeIds: [String!]!
+  $showIds: [String!]!
+  $trackIds: [String!]!
+  $albumIds: [String!]!
+  $chapterIds: [String!]!
+  $audiobookIds: [String!]!
+) {
+  movies(where: { id: { inList: $movieIds } }, page: { limit: 1000, offset: 0 }) {
+    edges {
+      node {
+        id
+        posterUrl: collectionPosterUrl
+      }
+    }
+  }
+  episodes(
+    where: { id: { inList: $episodeIds } }
+    page: { limit: 1000, offset: 0 }
+  ) {
+    edges {
+      node {
+        id
+        showId
+      }
+    }
+  }
+  shows(where: { id: { inList: $showIds } }, page: { limit: 1000, offset: 0 }) {
+    edges {
+      node {
+        id
+        posterUrl
+      }
+    }
+  }
+  tracks(where: { id: { inList: $trackIds } }, page: { limit: 1000, offset: 0 }) {
+    edges {
+      node {
+        id
+        albumId
+      }
+    }
+  }
+  albums(where: { id: { inList: $albumIds } }, page: { limit: 1000, offset: 0 }) {
+    edges {
+      node {
+        id
+        coverUrl
+      }
+    }
+  }
+  chapters(
+    where: { id: { inList: $chapterIds } }
+    page: { limit: 1000, offset: 0 }
+  ) {
+    edges {
+      node {
+        id
+        audiobookId
+      }
+    }
+  }
+  audiobooks(
+    where: { id: { inList: $audiobookIds } }
+    page: { limit: 1000, offset: 0 }
+  ) {
+    edges {
+      node {
+        id
+        coverUrl
+      }
+    }
+  }
+}
+
+mutation DeletePendingFileMatchFromTorrentModal($id: String!) {
+  deletePendingFileMatch(id: $id) {
+    success
+    error
+  }
+}
+
+mutation AnalyzeMediaFileForTorrent($mediaFileId: String!, $path: String!) {
+  analyzeMediaFile(mediaFileId: $mediaFileId, path: $path) {
+    success
+    queued
+    message
   }
 }

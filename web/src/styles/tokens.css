@@ -1,0 +1,414 @@
+/*
+ * Design tokens. HeroUI reads the `--background`, `--surface`, `--accent`, ... variables;
+ * Librarian adds layout, glass, poster and motion tokens on top. Themes are switched by
+ * `data-theme` on <html>. Dark ("cinema") is the default.
+ */
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Outfit Variable", "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  /* Semantic colours exposed to Tailwind (bg-brand, text-brand-foreground, ...). */
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-soft: var(--brand-soft);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-soft: var(--info-soft);
+  --color-glass: var(--glass-fill);
+  --color-glass-fill: var(--glass-fill);
+  --color-glass-fill-strong: var(--glass-fill-strong);
+  --color-glass-border: var(--glass-border);
+  --color-glass-rim: var(--glass-rim);
+  --color-rail: var(--rail);
+  --color-rail-foreground: var(--rail-foreground);
+  --color-scrim: var(--scrim);
+
+  /* Media-type accents. */
+  --color-media-movies: var(--media-movies);
+  --color-media-tv: var(--media-tv);
+  --color-media-music: var(--media-music);
+  --color-media-audiobooks: var(--media-audiobooks);
+  --color-media-other: var(--media-other);
+
+  /* Status colours reused for chips, rows and progress. */
+  --color-status-available: var(--success);
+  --color-status-wanted: var(--warning);
+  --color-status-downloading: var(--info);
+  --color-status-failed: var(--danger);
+  --color-status-missing: var(--muted);
+
+  --shadow-poster: var(--poster-shadow);
+  --shadow-poster-hover: var(--poster-shadow-hover);
+  --shadow-glass: var(--glass-shadow);
+  --shadow-dock: var(--dock-shadow);
+
+  --radius-poster: var(--poster-radius);
+  --radius-card: var(--card-radius);
+  --radius-pill: 999px;
+
+  --spacing-rail: var(--rail-width);
+  --spacing-rail-expanded: var(--rail-width-expanded);
+  --spacing-topbar: var(--topbar-height);
+  --spacing-dock: var(--dock-height);
+  --spacing-tabbar: var(--tabbar-height);
+  --spacing-gutter: var(--page-gutter);
+
+  --ease-fluid: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-snap: cubic-bezier(0.2, 0.9, 0.3, 1.1);
+
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-fade-in: fade-in 240ms var(--ease-fluid) both;
+  --animate-rise-in: rise-in 360ms var(--ease-fluid) both;
+  --animate-pulse-soft: pulse-soft 2.4s ease-in-out infinite;
+}
+
+:root {
+  /* Layout rhythm. Every page uses these; no ad-hoc paddings. */
+  --page-gutter: clamp(1rem, 3vw, 3rem);
+  --rail-width: 4.5rem;
+  --rail-width-expanded: 15rem;
+  --topbar-height: 3.75rem;
+  --dock-height: 4.5rem;
+  --tabbar-height: 3.75rem;
+
+  /* Safe areas for notched phones, iPad full screen and TV overscan. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
+  /* Shape. HeroUI derives its component radii from --radius. */
+  --radius: 0.75rem;
+  --card-radius: 1.125rem;
+  --poster-radius: 0.875rem;
+
+  /* Poster grid sizing. */
+  --poster-min: 9.5rem;
+  --poster-max: 13rem;
+  --poster-gap: 1rem;
+
+  /* Motion. */
+  --duration-fast: 140ms;
+  --duration-base: 240ms;
+  --duration-slow: 420ms;
+
+  /* Focus ring for keyboard, remote and gamepad users. */
+  --nav-focus-width: 3px;
+  --nav-focus-offset: 3px;
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Cinema (dark) theme: default                                                              */
+/* ---------------------------------------------------------------------------------------- */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --background: oklch(0.155 0.012 285);
+  --foreground: oklch(0.975 0.004 286);
+  --background-secondary: oklch(0.185 0.012 285);
+  --background-tertiary: oklch(0.215 0.012 285);
+  --background-inverse: var(--foreground);
+
+  --surface: oklch(0.205 0.012 285);
+  --surface-foreground: var(--foreground);
+  --surface-secondary: oklch(0.245 0.012 285);
+  --surface-secondary-foreground: var(--foreground);
+  --surface-tertiary: oklch(0.285 0.012 285);
+  --surface-tertiary-foreground: var(--foreground);
+  --surface-hover: oklch(0.255 0.014 285);
+
+  --overlay: oklch(0.225 0.014 285 / 0.92);
+  --overlay-foreground: var(--foreground);
+
+  --muted: oklch(0.68 0.016 286);
+  --default: oklch(0.29 0.012 285);
+  --default-foreground: var(--foreground);
+  --default-hover: oklch(0.33 0.012 285);
+
+  /* Brand gold doubles as HeroUI's accent so primary buttons, switches and focus share it. */
+  --brand: oklch(0.8 0.15 74);
+  --brand-foreground: oklch(0.22 0.04 60);
+  --brand-soft: oklch(0.8 0.15 74 / 0.16);
+  --accent: var(--brand);
+  --accent-foreground: var(--brand-foreground);
+  --accent-hover: oklch(0.84 0.15 74);
+
+  --info: oklch(0.72 0.15 250);
+  --info-foreground: oklch(0.985 0 0);
+  --info-soft: oklch(0.72 0.15 250 / 0.16);
+
+  --success: oklch(0.76 0.17 152);
+  --success-foreground: oklch(0.18 0.04 152);
+  --warning: oklch(0.82 0.16 80);
+  --warning-foreground: oklch(0.22 0.05 80);
+  --danger: oklch(0.66 0.21 24);
+  --danger-foreground: oklch(0.985 0 0);
+
+  --field-background: oklch(0.235 0.012 285);
+  --field-foreground: var(--foreground);
+  --field-placeholder: oklch(0.6 0.012 285);
+  --field-border: oklch(1 0 0 / 0.08);
+
+  --border: oklch(1 0 0 / 0.09);
+  --separator: oklch(1 0 0 / 0.07);
+  --focus: var(--brand);
+  --link: var(--brand);
+  --nav-focus-color: var(--brand);
+  --backdrop: oklch(0.08 0.01 285 / 0.72);
+  --scrim: oklch(0.1 0.01 285 / 0.86);
+
+  --segment: oklch(0.3 0.012 285);
+  --segment-foreground: var(--foreground);
+
+  --rail: oklch(0.13 0.012 285 / 0.86);
+  --rail-foreground: oklch(0.86 0.01 286);
+
+  --media-movies: oklch(0.7 0.19 300);
+  --media-tv: oklch(0.72 0.16 235);
+  --media-music: oklch(0.76 0.17 158);
+  --media-audiobooks: oklch(0.78 0.16 62);
+  --media-other: oklch(0.7 0.02 286);
+
+  --glass-fill: oklch(1 0 0 / 0.075);
+  --glass-fill-strong: oklch(0.22 0.012 285 / 0.72);
+  --glass-rim: oklch(1 0 0 / 0.16);
+  --glass-rim-top: oklch(1 0 0 / 0.42);
+  --glass-reflection: oklch(1 0 0 / 0.28);
+  --glass-inner-shadow: oklch(0 0 0 / 0.45);
+  --glass-drop-shadow: 0 16px 40px -18px oklch(0 0 0 / 0.75);
+  --glass-blur-chrome: 26px;
+  --glass-blur-surface: 20px;
+  --glass-blur-control: 12px;
+  --glass-saturate: 1.8;
+  --glass-border: var(--glass-rim);
+  --glass-highlight: var(--glass-reflection);
+  --glass-shadow: var(--glass-drop-shadow);
+  --glass-blur: var(--glass-blur-surface);
+
+  --ambient-a: oklch(0.42 0.12 290);
+  --ambient-b: oklch(0.38 0.1 230);
+  --ambient-c: oklch(0.4 0.1 60);
+
+  --logo-from: oklch(0.72 0.17 255);
+  --logo-to: oklch(0.6 0.2 300);
+
+  --poster-shadow: 0 8px 24px -10px oklch(0 0 0 / 0.7);
+  --poster-shadow-hover: 0 22px 44px -14px oklch(0 0 0 / 0.8), 0 0 0 1px oklch(1 0 0 / 0.12);
+  --dock-shadow: 0 -12px 40px -16px oklch(0 0 0 / 0.75);
+
+  --surface-shadow: 0 1px 2px 0 oklch(0 0 0 / 0.3), 0 8px 24px -16px oklch(0 0 0 / 0.5);
+  --overlay-shadow: 0 24px 64px -24px oklch(0 0 0 / 0.8), 0 0 0 1px oklch(1 0 0 / 0.08);
+  --field-shadow: none;
+
+  --skeleton-animation: shimmer;
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Daylight (light) theme                                                                    */
+/* ---------------------------------------------------------------------------------------- */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --background: oklch(0.975 0.004 286);
+  --foreground: oklch(0.2 0.01 285);
+  --background-secondary: oklch(0.955 0.004 286);
+  --background-tertiary: oklch(0.93 0.004 286);
+  --background-inverse: var(--foreground);
+
+  --surface: oklch(1 0 0);
+  --surface-foreground: var(--foreground);
+  --surface-secondary: oklch(0.965 0.004 286);
+  --surface-secondary-foreground: var(--foreground);
+  --surface-tertiary: oklch(0.94 0.004 286);
+  --surface-tertiary-foreground: var(--foreground);
+  --surface-hover: oklch(0.955 0.006 286);
+
+  --overlay: oklch(1 0 0 / 0.94);
+  --overlay-foreground: var(--foreground);
+
+  --muted: oklch(0.5 0.014 286);
+  --default: oklch(0.93 0.004 286);
+  --default-foreground: var(--foreground);
+  --default-hover: oklch(0.9 0.004 286);
+
+  --brand: oklch(0.62 0.15 60);
+  --brand-foreground: oklch(0.99 0 0);
+  --brand-soft: oklch(0.62 0.15 60 / 0.14);
+  --accent: var(--brand);
+  --accent-foreground: var(--brand-foreground);
+  --accent-hover: oklch(0.58 0.15 60);
+
+  --info: oklch(0.56 0.16 250);
+  --info-foreground: oklch(0.99 0 0);
+  --info-soft: oklch(0.56 0.16 250 / 0.14);
+
+  --success: oklch(0.62 0.17 152);
+  --success-foreground: oklch(0.99 0 0);
+  --warning: oklch(0.74 0.16 78);
+  --warning-foreground: oklch(0.22 0.05 80);
+  --danger: oklch(0.6 0.21 26);
+  --danger-foreground: oklch(0.99 0 0);
+
+  --field-background: oklch(1 0 0);
+  --field-foreground: var(--foreground);
+  --field-placeholder: oklch(0.55 0.012 285);
+  --field-border: oklch(0 0 0 / 0.1);
+
+  --border: oklch(0 0 0 / 0.09);
+  --separator: oklch(0 0 0 / 0.07);
+  --focus: var(--accent);
+  --link: var(--accent);
+  --backdrop: oklch(0.2 0.01 285 / 0.45);
+  --scrim: oklch(0.15 0.01 285 / 0.8);
+
+  --segment: oklch(1 0 0);
+  --segment-foreground: var(--foreground);
+
+  --rail: oklch(0.985 0.003 286 / 0.9);
+  --rail-foreground: oklch(0.3 0.01 285);
+
+  --media-movies: oklch(0.55 0.2 300);
+  --media-tv: oklch(0.56 0.17 240);
+  --media-music: oklch(0.6 0.17 158);
+  --media-audiobooks: oklch(0.66 0.16 60);
+  --media-other: oklch(0.5 0.02 286);
+
+  --glass-fill: oklch(1 0 0 / 0.42);
+  --glass-fill-strong: oklch(1 0 0 / 0.78);
+  --glass-rim: oklch(1 0 0 / 0.55);
+  --glass-rim-top: oklch(1 0 0 / 0.9);
+  --glass-reflection: oklch(1 0 0 / 0.75);
+  --glass-inner-shadow: oklch(0.3 0.03 270 / 0.18);
+  --glass-drop-shadow: 0 16px 40px -20px oklch(0.3 0.05 270 / 0.35);
+  --glass-blur-chrome: 28px;
+  --glass-blur-surface: 22px;
+  --glass-blur-control: 14px;
+  --glass-saturate: 1.7;
+  --glass-border: var(--glass-rim);
+  --glass-highlight: var(--glass-reflection);
+  --glass-shadow: var(--glass-drop-shadow);
+  --glass-blur: var(--glass-blur-surface);
+
+  --ambient-a: oklch(0.86 0.06 290);
+  --ambient-b: oklch(0.88 0.05 230);
+  --ambient-c: oklch(0.9 0.06 70);
+
+  --logo-from: oklch(0.58 0.18 255);
+  --logo-to: oklch(0.5 0.2 300);
+
+  --poster-shadow: 0 8px 24px -12px oklch(0 0 0 / 0.35);
+  --poster-shadow-hover: 0 22px 44px -18px oklch(0 0 0 / 0.4), 0 0 0 1px oklch(0 0 0 / 0.06);
+  --dock-shadow: 0 -12px 40px -20px oklch(0 0 0 / 0.3);
+
+  --surface-shadow: 0 1px 2px 0 oklch(0 0 0 / 0.05), 0 8px 24px -16px oklch(0 0 0 / 0.12);
+  --overlay-shadow: 0 24px 64px -28px oklch(0 0 0 / 0.35), 0 0 0 1px oklch(0 0 0 / 0.05);
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Midnight: cool blue-black with an ice accent                                              */
+/* ---------------------------------------------------------------------------------------- */
+[data-theme="midnight"] {
+  color-scheme: dark;
+  --background: oklch(0.14 0.03 255);
+  --background-secondary: oklch(0.17 0.03 255);
+  --background-tertiary: oklch(0.2 0.03 255);
+  --surface: oklch(0.19 0.035 255);
+  --surface-secondary: oklch(0.23 0.035 255);
+  --surface-tertiary: oklch(0.27 0.035 255);
+  --surface-hover: oklch(0.24 0.04 255);
+  --overlay: oklch(0.21 0.035 255 / 0.92);
+  --default: oklch(0.28 0.03 255);
+  --default-hover: oklch(0.32 0.03 255);
+  --brand: oklch(0.82 0.11 210);
+  --brand-foreground: oklch(0.2 0.05 230);
+  --brand-soft: oklch(0.82 0.11 210 / 0.16);
+  --accent: var(--brand);
+  --accent-foreground: var(--brand-foreground);
+  --accent-hover: oklch(0.86 0.11 210);
+  --info: oklch(0.74 0.14 265);
+  --rail: oklch(0.12 0.03 255 / 0.86);
+  --field-background: oklch(0.22 0.03 255);
+  --ambient-a: oklch(0.38 0.12 260);
+  --ambient-b: oklch(0.36 0.1 200);
+  --ambient-c: oklch(0.3 0.08 300);
+  --logo-from: oklch(0.82 0.11 210);
+  --logo-to: oklch(0.62 0.16 265);
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Ember: warm charcoal with a coral accent                                                  */
+/* ---------------------------------------------------------------------------------------- */
+[data-theme="ember"] {
+  color-scheme: dark;
+  --background: oklch(0.16 0.015 40);
+  --background-secondary: oklch(0.19 0.015 40);
+  --background-tertiary: oklch(0.22 0.015 40);
+  --surface: oklch(0.21 0.02 40);
+  --surface-secondary: oklch(0.25 0.02 40);
+  --surface-tertiary: oklch(0.29 0.02 40);
+  --surface-hover: oklch(0.26 0.025 40);
+  --overlay: oklch(0.23 0.02 40 / 0.92);
+  --default: oklch(0.3 0.02 40);
+  --default-hover: oklch(0.34 0.02 40);
+  --brand: oklch(0.74 0.17 35);
+  --brand-foreground: oklch(0.99 0 0);
+  --brand-soft: oklch(0.74 0.17 35 / 0.16);
+  --accent: var(--brand);
+  --accent-foreground: var(--brand-foreground);
+  --accent-hover: oklch(0.78 0.17 35);
+  --info: oklch(0.76 0.12 80);
+  --rail: oklch(0.14 0.015 40 / 0.86);
+  --field-background: oklch(0.24 0.02 40);
+  --ambient-a: oklch(0.42 0.14 30);
+  --ambient-b: oklch(0.4 0.12 60);
+  --ambient-c: oklch(0.35 0.1 350);
+  --logo-from: oklch(0.8 0.16 60);
+  --logo-to: oklch(0.66 0.2 25);
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Forest: deep green with a mint accent                                                     */
+/* ---------------------------------------------------------------------------------------- */
+[data-theme="forest"] {
+  color-scheme: dark;
+  --background: oklch(0.15 0.025 160);
+  --background-secondary: oklch(0.18 0.025 160);
+  --background-tertiary: oklch(0.21 0.025 160);
+  --surface: oklch(0.2 0.03 160);
+  --surface-secondary: oklch(0.24 0.03 160);
+  --surface-tertiary: oklch(0.28 0.03 160);
+  --surface-hover: oklch(0.25 0.035 160);
+  --overlay: oklch(0.22 0.03 160 / 0.92);
+  --default: oklch(0.29 0.025 160);
+  --default-hover: oklch(0.33 0.025 160);
+  --brand: oklch(0.82 0.15 160);
+  --brand-foreground: oklch(0.2 0.05 160);
+  --brand-soft: oklch(0.82 0.15 160 / 0.16);
+  --accent: var(--brand);
+  --accent-foreground: var(--brand-foreground);
+  --accent-hover: oklch(0.86 0.15 160);
+  --info: oklch(0.76 0.12 200);
+  --rail: oklch(0.13 0.025 160 / 0.86);
+  --field-background: oklch(0.23 0.03 160);
+  --ambient-a: oklch(0.4 0.12 160);
+  --ambient-b: oklch(0.36 0.1 200);
+  --ambient-c: oklch(0.42 0.1 110);
+  --logo-from: oklch(0.82 0.15 160);
+  --logo-to: oklch(0.62 0.14 210);
+}
+
+/* TV / remote-control mode: larger targets, larger type, no hover affordances. */
+[data-input-mode="tv"] {
+  --page-gutter: clamp(2.5rem, 4vw, 5rem);
+  --rail-width: 5.5rem;
+  --rail-width-expanded: 18rem;
+  --topbar-height: 4.5rem;
+  --poster-min: 12rem;
+  --poster-max: 16rem;
+  --poster-gap: 1.5rem;
+  --nav-focus-width: 4px;
+  --nav-focus-offset: 4px;
+  font-size: 118%;
+}

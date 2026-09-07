@@ -27,111 +27,128 @@ use crate::{
 #[graphql(complex)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
-#[graphql_entity(table = "albums", plural = "Albums", default_sort = "name")]
-
+#[graphql_entity(
+    table = "albums",
+    plural = "Albums",
+    default_sort = "name",
+    index = "library_id"
+)]
 pub struct Album {
-    #[graphql(name = "Id")]
+    #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
     pub id: String,
 
-    #[graphql(name = "ArtistId")]
+    #[graphql(name = "artistId")]
     #[filterable(type = "string")]
     pub artist_id: String,
 
-    #[graphql(name = "LibraryId")]
+    #[graphql(name = "libraryId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub library_id: String,
 
-    #[graphql(name = "UserId")]
+    #[graphql(name = "userId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owner.id")]
     pub user_id: String,
 
-    #[graphql(name = "Name")]
+    #[graphql(name = "name")]
     #[filterable(type = "string")]
     #[sortable]
     pub name: String,
 
-    #[graphql(name = "SortName")]
+    #[graphql(name = "sortName")]
     #[sortable]
     pub sort_name: Option<String>,
 
-    #[graphql(name = "Year")]
+    #[graphql(name = "year")]
     #[filterable(type = "number")]
     #[sortable]
     pub year: Option<i32>,
 
-    #[graphql(name = "MusicbrainzId")]
+    #[graphql(name = "musicbrainzId")]
     #[filterable(type = "string")]
     pub musicbrainz_id: Option<String>,
 
-    #[graphql(name = "AlbumType")]
+    #[graphql(name = "albumType")]
     #[filterable(type = "string")]
     pub album_type: Option<String>,
 
-    #[graphql(name = "Genres")]
+    #[graphql(name = "genres")]
     #[json_field]
     pub genres: Vec<String>,
 
-    #[graphql(name = "Label")]
+    #[graphql(name = "label")]
     #[filterable(type = "string")]
     pub label: Option<String>,
 
-    #[graphql(name = "Country")]
+    #[graphql(name = "country")]
     #[filterable(type = "string")]
     pub country: Option<String>,
 
-    #[graphql(name = "ReleaseDate")]
+    #[graphql(name = "releaseDate")]
     #[filterable(type = "date")]
     #[sortable]
     pub release_date: Option<String>,
 
-    #[graphql(name = "CoverUrl")]
+    #[graphql(name = "coverUrl")]
     pub cover_url: Option<String>,
 
-    #[graphql(name = "TrackCount")]
+    #[graphql(name = "trackCount")]
     #[filterable(type = "number")]
     pub track_count: Option<i32>,
 
-    #[graphql(name = "DiscCount")]
+    #[graphql(name = "discCount")]
     #[filterable(type = "number")]
     pub disc_count: Option<i32>,
 
-    #[graphql(name = "TotalDurationSecs")]
+    #[graphql(name = "totalDurationSecs")]
     #[filterable(type = "number")]
     pub total_duration_secs: Option<i32>,
 
-    #[graphql(name = "AutoDownload")]
+    #[graphql(name = "autoDownload")]
     #[filterable(type = "boolean")]
     pub auto_download: bool,
 
-    #[graphql(name = "AutoDownloadMode")]
+    #[graphql(name = "autoDownloadMode")]
     pub auto_download_mode: AutoDownloadMode,
 
-    #[graphql(name = "HasFiles")]
+    /// Optional quality profile override; falls back to
+    /// `Library.qualityProfileId` (then the seeded default) when unset.
+    #[graphql(name = "qualityProfileId")]
+    #[filterable(type = "string")]
+    pub quality_profile_id: Option<String>,
+
+    #[graphql(name = "hasFiles")]
     #[filterable(type = "boolean")]
     pub has_files: bool,
 
-    #[graphql(name = "SizeBytes")]
+    #[graphql(name = "sizeBytes")]
     #[filterable(type = "number")]
     #[sortable]
     pub size_bytes: Option<i64>,
 
-    #[graphql(name = "Path")]
+    #[graphql(name = "path")]
     pub path: Option<String>,
 
-    #[graphql(name = "CreatedAt")]
+    #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
 
-    #[graphql(name = "UpdatedAt")]
+    #[graphql(name = "updatedAt")]
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,
     #[graphql(skip)]
     #[serde(skip)]
-    #[relation(target = "Library", from = "library_id", to = "id")]
+    #[relation(
+        target = "Library",
+        from = "library_id",
+        to = "id",
+        on_delete = "cascade"
+    )]
     pub library: Option<Library>,
 
     /// Tracks in this album
@@ -148,37 +165,38 @@ pub struct AlbumCustomOperations;
 #[derive(Debug, Clone, async_graphql::SimpleObject)]
 #[graphql(name = "AlbumSearchResult")]
 pub struct AlbumSearchResultGql {
-    #[graphql(name = "Provider")]
+    #[graphql(name = "provider")]
     pub provider: String,
-    #[graphql(name = "ProviderId")]
+    #[graphql(name = "providerId")]
     pub provider_id: String,
-    #[graphql(name = "Title")]
+    #[graphql(name = "title")]
     pub title: String,
-    #[graphql(name = "ArtistName")]
+    #[graphql(name = "artistName")]
     pub artist_name: Option<String>,
-    #[graphql(name = "Year")]
+    #[graphql(name = "year")]
     pub year: Option<i32>,
-    #[graphql(name = "AlbumType")]
+    #[graphql(name = "albumType")]
     pub album_type: Option<String>,
-    #[graphql(name = "CoverUrl")]
+    #[graphql(name = "coverUrl")]
     pub cover_url: Option<String>,
-    #[graphql(name = "Score")]
+    #[graphql(name = "score")]
     pub score: Option<f64>,
 }
 
 #[Object]
 impl AlbumCustomOperations {
     /// Search albums on MusicBrainz.
-    #[graphql(name = "SearchAlbums")]
+    #[graphql(name = "searchAlbums")]
+    #[allow(clippy::too_many_arguments)]
     async fn search_albums(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Query")] query: String,
-        #[graphql(name = "IncludeEps", default = false)] include_eps: bool,
-        #[graphql(name = "IncludeSingles", default = false)] include_singles: bool,
-        #[graphql(name = "IncludeCompilations", default = false)] include_compilations: bool,
-        #[graphql(name = "IncludeLive", default = false)] include_live: bool,
-        #[graphql(name = "IncludeSoundtracks", default = false)] include_soundtracks: bool,
+        #[graphql(name = "query")] query: String,
+        #[graphql(name = "includeEps", default = false)] include_eps: bool,
+        #[graphql(name = "includeSingles", default = false)] include_singles: bool,
+        #[graphql(name = "includeCompilations", default = false)] include_compilations: bool,
+        #[graphql(name = "includeLive", default = false)] include_live: bool,
+        #[graphql(name = "includeSoundtracks", default = false)] include_soundtracks: bool,
     ) -> Result<Vec<AlbumSearchResultGql>> {
         let _user = ctx.librarian_auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
@@ -221,20 +239,27 @@ impl AlbumCustomOperations {
 #[derive(Debug, InputObject)]
 #[graphql(name = "AddAlbumInput")]
 pub struct AddAlbumInput {
-    #[graphql(name = "LibraryId")]
+    #[graphql(name = "libraryId")]
     pub library_id: String,
-    #[graphql(name = "MusicbrainzId")]
+    #[graphql(name = "musicbrainzId")]
     pub musicbrainz_id: String,
+    /// Enable auto-download for the album. Ignored when `autoDownloadMode` is
+    /// given explicitly. Defaults to false (mode `NONE`).
+    #[graphql(name = "autoDownload")]
+    pub auto_download: Option<bool>,
+    /// Auto-download mode for the album's tracks. Defaults to `NONE`.
+    #[graphql(name = "autoDownloadMode")]
+    pub auto_download_mode: Option<AutoDownloadMode>,
 }
 
 #[derive(Debug, async_graphql::SimpleObject)]
 #[graphql(name = "AlbumOperationResult")]
 pub struct AlbumOperationResult {
-    #[graphql(name = "Success")]
+    #[graphql(name = "success")]
     pub success: bool,
-    #[graphql(name = "Album")]
+    #[graphql(name = "album")]
     pub album: Option<Album>,
-    #[graphql(name = "Error")]
+    #[graphql(name = "error")]
     pub error: Option<String>,
 }
 
@@ -244,11 +269,11 @@ pub struct AlbumMetadataMutations;
 #[Object]
 impl AlbumMetadataMutations {
     /// Add an album to a library by fetching metadata from MusicBrainz.
-    #[graphql(name = "AddAlbum")]
+    #[graphql(name = "addAlbum")]
     async fn add_album(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Input")] input: AddAlbumInput,
+        #[graphql(name = "input")] input: AddAlbumInput,
     ) -> Result<AlbumOperationResult> {
         let user = ctx.librarian_auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
@@ -258,12 +283,21 @@ impl AlbumMetadataMutations {
         let user_id = uuid::Uuid::parse_str(&user.user_id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
 
+        let monitor_type = input.auto_download_mode.unwrap_or({
+            if input.auto_download.unwrap_or(false) {
+                AutoDownloadMode::All
+            } else {
+                AutoDownloadMode::None
+            }
+        });
+
         match metadata
             .add_album_from_provider(AddAlbumOptions {
                 provider: MetadataProvider::Musicbrainz,
                 provider_id: input.musicbrainz_id,
                 library_id,
                 user_id,
+                monitor_type,
             })
             .await
         {

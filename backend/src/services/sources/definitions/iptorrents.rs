@@ -21,6 +21,7 @@
 //! - `Sort`: Sort order (time, size, seeders, name)
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use async_graphql::async_trait::async_trait;
@@ -41,14 +42,12 @@ pub struct IPTorrentsSource {
     /// Unique instance ID
     id: String,
     /// Display name
-    #[allow(dead_code)]
     name: String,
     /// Site URL
     site_link: String,
     /// HTTP client
     client: Client,
     /// Session cookie (stored for reference)
-    #[allow(dead_code)]
     cookie: String,
     /// Settings
     settings: HashMap<String, String>,
@@ -96,11 +95,15 @@ impl IPTorrentsSource {
             }
         }
 
-        let client = Client::builder()
-            .default_headers(headers)
-            .cookie_store(true)
-            .gzip(true)
-            .build()?;
+        let client = crate::services::http_client::outbound_client_builder(
+            crate::services::http_client::OutboundHttpProfile::Indexer,
+        )
+        .default_headers(headers)
+        .cookie_store(true)
+        .gzip(true)
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(10))
+        .build()?;
 
         let capabilities = Self::build_capabilities();
 
@@ -279,11 +282,12 @@ impl IPTorrentsSource {
         url.push_str(&format!("o={}&", sort));
 
         // Pagination
-        if let (Some(limit), Some(offset)) = (query.limit, query.offset) {
-            if limit > 0 && offset > 0 {
-                let page = offset / limit + 1;
-                url.push_str(&format!("p={}", page));
-            }
+        if let (Some(limit), Some(offset)) = (query.limit, query.offset)
+            && limit > 0
+            && offset > 0
+        {
+            let page = offset / limit + 1;
+            url.push_str(&format!("p={}", page));
         }
 
         url.trim_end_matches('&').to_string()
@@ -295,28 +299,28 @@ impl IPTorrentsSource {
         let now = Utc::now();
 
         let parts: Vec<&str> = time_str.split_whitespace().collect();
-        if parts.len() >= 2 {
-            if let Ok(num) = parts[0].parse::<i64>() {
-                let unit = parts[1];
-                let duration = if unit.starts_with("second") {
-                    chrono::Duration::seconds(num)
-                } else if unit.starts_with("minute") {
-                    chrono::Duration::minutes(num)
-                } else if unit.starts_with("hour") {
-                    chrono::Duration::hours(num)
-                } else if unit.starts_with("day") {
-                    chrono::Duration::days(num)
-                } else if unit.starts_with("week") {
-                    chrono::Duration::weeks(num)
-                } else if unit.starts_with("month") {
-                    chrono::Duration::days(num * 30)
-                } else if unit.starts_with("year") {
-                    chrono::Duration::days(num * 365)
-                } else {
-                    chrono::Duration::zero()
-                };
-                return now - duration;
-            }
+        if parts.len() >= 2
+            && let Ok(num) = parts[0].parse::<i64>()
+        {
+            let unit = parts[1];
+            let duration = if unit.starts_with("second") {
+                chrono::Duration::seconds(num)
+            } else if unit.starts_with("minute") {
+                chrono::Duration::minutes(num)
+            } else if unit.starts_with("hour") {
+                chrono::Duration::hours(num)
+            } else if unit.starts_with("day") {
+                chrono::Duration::days(num)
+            } else if unit.starts_with("week") {
+                chrono::Duration::weeks(num)
+            } else if unit.starts_with("month") {
+                chrono::Duration::days(num * 30)
+            } else if unit.starts_with("year") {
+                chrono::Duration::days(num * 365)
+            } else {
+                chrono::Duration::zero()
+            };
+            return now - duration;
         }
 
         now
@@ -327,18 +331,18 @@ impl IPTorrentsSource {
         let size_str = size_str.trim().to_uppercase();
         let parts: Vec<&str> = size_str.split_whitespace().collect();
 
-        if parts.len() >= 2 {
-            if let Ok(num) = parts[0].replace(',', "").parse::<f64>() {
-                let multiplier = match parts[1] {
-                    "B" | "BYTES" => 1.0,
-                    "KB" | "KIB" => 1024.0,
-                    "MB" | "MIB" => 1024.0 * 1024.0,
-                    "GB" | "GIB" => 1024.0 * 1024.0 * 1024.0,
-                    "TB" | "TIB" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
-                    _ => return None,
-                };
-                return Some((num * multiplier) as i64);
-            }
+        if parts.len() >= 2
+            && let Ok(num) = parts[0].replace(',', "").parse::<f64>()
+        {
+            let multiplier = match parts[1] {
+                "B" | "BYTES" => 1.0,
+                "KB" | "KIB" => 1024.0,
+                "MB" | "MIB" => 1024.0 * 1024.0,
+                "GB" | "GIB" => 1024.0 * 1024.0 * 1024.0,
+                "TB" | "TIB" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+                _ => return None,
+            };
+            return Some((num * multiplier) as i64);
         }
 
         None
@@ -403,7 +407,11 @@ impl Source for IPTorrentsSource {
 
         self.rate_limiter.wait_for_permit().await;
         let response = self.client.get(&url).send().await?;
-        let text = response.text().await?;
+        let text = crate::services::http_client::response_text_limited(
+            response,
+            crate::services::http_client::INDEXER_RESPONSE_LIMIT,
+        )
+        .await?;
 
         let is_logged_in = text.contains("/lout.php");
 
@@ -428,7 +436,11 @@ impl Source for IPTorrentsSource {
             .send()
             .await?;
 
-        let text = response.text().await?;
+        let text = crate::services::http_client::response_text_limited(
+            response,
+            crate::services::http_client::INDEXER_RESPONSE_LIMIT,
+        )
+        .await?;
 
         // Check if logged in
         if !text.contains("/lout.php") {
@@ -455,11 +467,11 @@ impl Source for IPTorrentsSource {
 
         let mut table_element = None;
         for sel in &table_selectors {
-            if let Ok(selector) = Selector::parse(sel) {
-                if let Some(table) = document.select(&selector).next() {
-                    table_element = Some(table);
-                    break;
-                }
+            if let Ok(selector) = Selector::parse(sel)
+                && let Some(table) = document.select(&selector).next()
+            {
+                table_element = Some(table);
+                break;
             }
         }
 
@@ -484,8 +496,12 @@ impl Source for IPTorrentsSource {
             return Ok(vec![]);
         }
 
-        let link_selector = Selector::parse("a").unwrap();
-        let free_selector = Selector::parse("span.free").unwrap();
+        let link_selector = Selector::parse("a")
+            .map_err(|error| anyhow::anyhow!("Invalid IPTorrents link selector: {error}"))?;
+        let free_selector = Selector::parse("span.free")
+            .map_err(|error| anyhow::anyhow!("Invalid IPTorrents freeleech selector: {error}"))?;
+        let cell_selector = Selector::parse("td")
+            .map_err(|error| anyhow::anyhow!("Invalid IPTorrents cell selector: {error}"))?;
 
         let mut releases = Vec::new();
 
@@ -516,18 +532,18 @@ impl Source for IPTorrentsSource {
             }
 
             // Skip if title doesn't match query (for non-ID searches)
-            if query.imdb_id.is_none() && query.genre.is_none() {
-                if let Some(ref term) = query.search_term {
-                    if !term.is_empty() {
-                        let term_lower = term.to_lowercase();
-                        let title_lower = title.to_lowercase();
-                        if !term_lower
-                            .split_whitespace()
-                            .all(|word| title_lower.contains(word))
-                        {
-                            continue;
-                        }
-                    }
+            if query.imdb_id.is_none()
+                && query.genre.is_none()
+                && let Some(ref term) = query.search_term
+                && !term.is_empty()
+            {
+                let term_lower = term.to_lowercase();
+                let title_lower = title.to_lowercase();
+                if !term_lower
+                    .split_whitespace()
+                    .all(|word| title_lower.contains(word))
+                {
+                    continue;
                 }
             }
 
@@ -549,7 +565,7 @@ impl Source for IPTorrentsSource {
             }
             let link = download_url;
 
-            let cells: Vec<_> = row.select(&Selector::parse("td").unwrap()).collect();
+            let cells: Vec<_> = row.select(&cell_selector).collect();
 
             // Get category
             let cat_selector = Selector::parse("td:first-child a[href^='?']").ok();
@@ -687,7 +703,11 @@ impl Source for IPTorrentsSource {
             ));
         }
 
-        let bytes = response.bytes().await?;
+        let bytes = crate::services::http_client::response_bytes_limited(
+            response,
+            crate::services::http_client::DOWNLOAD_RESPONSE_LIMIT,
+        )
+        .await?;
         Ok(bytes.to_vec())
     }
 }
@@ -720,6 +740,31 @@ mod tests {
             IPTorrentsSource::parse_size("1 TB"),
             Some(1_099_511_627_776)
         );
+    }
+
+    #[test]
+    fn episode_search_uses_the_release_episode_token() {
+        let source = IPTorrentsSource::new(
+            "test".into(),
+            "IPTorrents".into(),
+            None,
+            "test=cookie",
+            "Librarian test",
+            HashMap::new(),
+        )
+        .unwrap();
+        let query = SourceQuery {
+            query_type: QueryType::TvSearch,
+            search_term: Some("Fallout".into()),
+            season: Some(1),
+            episode: Some("4".into()),
+            categories: vec![cats::TV],
+            ..Default::default()
+        };
+        let url = reqwest::Url::parse(&source.build_search_url(&query)).unwrap();
+        let search = url.query_pairs().find(|(key, _)| key == "q").unwrap().1;
+        assert!(search.contains("Fallout"));
+        assert!(search.contains("S01E04"));
     }
 
     #[test]

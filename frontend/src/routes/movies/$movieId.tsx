@@ -5,7 +5,7 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import { useEffect, useCallback, useMemo } from "react";
-import { useQuery, useMutation, gql } from "../../lib/graphql/client";
+import { useQuery, useMutation } from "../../lib/graphql/client";
 import { Button } from "@heroui/button";
 import {
   Dropdown,
@@ -25,10 +25,13 @@ import { sanitizeError, formatBytes } from "../../lib/format";
 import {
   LibraryDetailRouteDocument,
   MeDocument,
+  MovieCollectionPeersRouteDocument,
   MovieDetailSetWantedDocument,
   MovieDetailRouteDocument,
   RefreshMovieRouteDocument,
   ShowPlaybackProgressByMediaDocument,
+  ContentStatusType,
+  type MovieCollectionPeersRouteQuery,
   type MovieDetailRouteQuery,
 } from "../../lib/graphql/generated/graphql";
 import {
@@ -50,6 +53,8 @@ import { DeleteMovieModal } from "../../components/library";
 import { FilePropertiesModal } from "../../components/FilePropertiesModal";
 import { usePlaybackContext } from "../../contexts/PlaybackContext";
 import { CollectionMoviesTable } from "../../components/library/CollectionMoviesTable";
+import { MediaItemStatusChip } from "../../components/shared";
+import { useContentStatuses } from "../../hooks/useContentStatuses";
 
 export const Route = createFileRoute("/movies/$movieId")({
   beforeLoad: ({ context, location }) => {
@@ -67,49 +72,7 @@ export const Route = createFileRoute("/movies/$movieId")({
   errorComponent: RouteError,
 });
 
-type MovieNode = NonNullable<MovieDetailRouteQuery["Movie"]>;
-
-interface RelatedCollectionMovie {
-  TmdbId: number;
-  Title: string;
-  Year: number | null;
-  PosterUrl: string | null;
-  LibraryMovieId: string | null;
-  MediaFileId: string | null;
-  FileSizeBytes: number | null;
-  Resolution: string | null;
-  VideoCodec: string | null;
-  AudioCodec: string | null;
-  AudioChannels: string | null;
-  Wanted: boolean;
-}
-
-interface MovieCollectionPeersQueryData {
-  MovieCollectionDetails: {
-    Movies: RelatedCollectionMovie[];
-  } | null;
-}
-
-const MOVIE_COLLECTION_PEERS_QUERY = gql`
-  query MovieCollectionPeersRoute($LibraryId: String!, $CollectionId: Int!) {
-    MovieCollectionDetails(LibraryId: $LibraryId, CollectionId: $CollectionId) {
-      Movies {
-        TmdbId
-        Title
-        Year
-        PosterUrl
-        LibraryMovieId
-        MediaFileId
-        FileSizeBytes
-        Resolution
-        VideoCodec
-        AudioCodec
-        AudioChannels
-        Wanted
-      }
-    }
-  }
-`;
+type MovieNode = NonNullable<MovieDetailRouteQuery["movie"]>;
 
 function MovieDetailPage() {
   const { movieId } = Route.useParams();
@@ -133,75 +96,81 @@ function MovieDetailPage() {
     loading: movieLoading,
     refetch,
   } = useQuery(MovieDetailRouteDocument, {
-    variables: { Id: movieId },
+    variables: { id: movieId },
     fetchPolicy: "cache-and-network",
   });
   const movie: MovieNode | null =
-    movieData?.Movie ?? previousMovieData?.Movie ?? null;
+    movieData?.movie ?? previousMovieData?.movie ?? null;
+  const movieStatusTargets = useMemo(
+    () => [{ contentType: ContentStatusType.MOVIE, id: movieId }],
+    [movieId],
+  );
+  const { getStatus: getMovieStatus } =
+    useContentStatuses(movieStatusTargets);
   const { data: libraryData } = useQuery(LibraryDetailRouteDocument, {
-    variables: { Id: movie?.LibraryId ?? "" },
-    skip: !movie?.LibraryId,
+    variables: { id: movie?.libraryId ?? "" },
+    skip: !movie?.libraryId,
     fetchPolicy: "cache-and-network",
   });
   const { data: meData } = useQuery(MeDocument, {
     fetchPolicy: "cache-first",
   });
-  const userId = meData?.Me?.Id;
+  const userId = meData?.me?.id;
   const { data: movieProgressData, previousData: previousMovieProgressData } =
     useQuery(ShowPlaybackProgressByMediaDocument, {
       variables: {
-        Where: {
-          UserId: { eq: userId },
-          MediaFileId: { eq: movie?.MediaFileId ?? "" },
+        where: {
+          userId: { eq: userId },
+          mediaFileId: { eq: movie?.mediaFileId ?? "" },
         },
-        Page: { limit: 1, offset: 0 },
-        OrderBy: [{ UpdatedAt: "DESC" }],
+        page: { limit: 1, offset: 0 },
+        orderBy: [{ updatedAt: "DESC" }],
       },
-      skip: !userId || !movie?.MediaFileId,
+      skip: !userId || !movie?.mediaFileId,
       fetchPolicy: "cache-and-network",
     });
   const movieProgressEdge =
-    movieProgressData?.PlaybackProgresses?.Edges?.[0] ??
-    previousMovieProgressData?.PlaybackProgresses?.Edges?.[0];
-  const movieProgressNode = movieProgressEdge?.Node;
-  const movieWatchPosition = movieProgressNode?.CurrentPosition ?? 0;
+    movieProgressData?.playbackProgresses?.edges?.[0] ??
+    previousMovieProgressData?.playbackProgresses?.edges?.[0];
+  const movieProgressNode = movieProgressEdge?.node;
+  const movieWatchPosition = movieProgressNode?.currentPosition ?? 0;
   const hasResumeProgress =
-    !movieProgressNode?.IsWatched && movieWatchPosition > 0;
+    !movieProgressNode?.isWatched && movieWatchPosition > 0;
 
   const {
     data: collectionPeersData,
     previousData: previousCollectionPeersData,
-  } = useQuery<MovieCollectionPeersQueryData>(MOVIE_COLLECTION_PEERS_QUERY, {
+  } = useQuery<MovieCollectionPeersRouteQuery>(MovieCollectionPeersRouteDocument, {
     variables: {
-      LibraryId: movie?.LibraryId ?? "",
-      CollectionId: movie?.CollectionId ?? -1,
+      libraryId: movie?.libraryId ?? "",
+      collectionId: movie?.collectionId ?? -1,
     },
-    skip: !movie?.LibraryId || !movie?.CollectionId,
+    skip: !movie?.libraryId || !movie?.collectionId,
     fetchPolicy: "cache-and-network",
   });
   const collectionMovies = useMemo(
     () =>
-      collectionPeersData?.MovieCollectionDetails?.Movies ??
-      previousCollectionPeersData?.MovieCollectionDetails?.Movies ??
+      collectionPeersData?.movieCollectionDetails?.movies ??
+      previousCollectionPeersData?.movieCollectionDetails?.movies ??
       [],
     [
-      collectionPeersData?.MovieCollectionDetails?.Movies,
-      previousCollectionPeersData?.MovieCollectionDetails?.Movies,
+      collectionPeersData?.movieCollectionDetails?.movies,
+      previousCollectionPeersData?.movieCollectionDetails?.movies,
     ],
   );
   const otherCollectionMovies = useMemo(
     () =>
       collectionMovies.filter((relatedMovie) => {
         if (
-          relatedMovie.LibraryMovieId &&
-          relatedMovie.LibraryMovieId === movieId
+          relatedMovie.libraryMovieId &&
+          relatedMovie.libraryMovieId === movieId
         )
           return false;
-        if (movie?.TmdbId != null && relatedMovie.TmdbId === movie.TmdbId)
+        if (movie?.tmdbId != null && relatedMovie.tmdbId === movie.tmdbId)
           return false;
         return true;
       }),
-    [collectionMovies, movie?.TmdbId, movieId],
+    [collectionMovies, movie?.tmdbId, movieId],
   );
 
   // Mutations
@@ -211,7 +180,7 @@ function MovieDetailPage() {
   // Update page title
   useEffect(() => {
     if (movie) {
-      document.title = `Librarian - ${movie.Title}`;
+      document.title = `Librarian - ${movie.title}`;
     }
     return () => {
       document.title = "Librarian";
@@ -220,7 +189,7 @@ function MovieDetailPage() {
 
   const handlePlay = useCallback(
     async (startFromBeginning = false) => {
-      if (!movie?.MediaFileId) {
+      if (!movie?.mediaFileId) {
         addToast({
           title: "No media file",
           description: "No playable media file found for this movie",
@@ -233,11 +202,11 @@ function MovieDetailPage() {
         const startPosition =
           !startFromBeginning && hasResumeProgress ? movieWatchPosition : 0;
         await startMoviePlayback(
-          movie.Id,
-          movie.MediaFileId,
+          movie.id,
+          movie.mediaFileId,
           movie as unknown as Parameters<typeof startMoviePlayback>[2],
           startPosition,
-          movie.MediaFile?.Duration || movie.Runtime || undefined,
+          movie.mediaFile?.duration || movie.runtime || undefined,
         );
       } catch (err) {
         console.error("Failed to start playback:", err);
@@ -253,12 +222,12 @@ function MovieDetailPage() {
 
   const handleRefresh = async () => {
     try {
-      const { data } = await refreshMovie({ variables: { Id: movieId } });
-      if (!data?.RefreshMovie?.Success) {
+      const { data } = await refreshMovie({ variables: { id: movieId } });
+      if (!data?.refreshMovie?.success) {
         addToast({
           title: "Error",
           description: sanitizeError(
-            data?.RefreshMovie?.Error || "Failed to refresh metadata",
+            data?.refreshMovie?.error || "Failed to refresh metadata",
           ),
           color: "danger",
         });
@@ -284,13 +253,13 @@ function MovieDetailPage() {
     async (wanted: boolean) => {
       try {
         const { data } = await setMovieWanted({
-          variables: { Id: movieId, Wanted: wanted },
+          variables: { id: movieId, wanted: wanted },
         });
-        if (!data?.UpdateMovie?.Success) {
+        if (!data?.updateMovie?.success) {
           addToast({
             title: "Error",
             description: sanitizeError(
-              data?.UpdateMovie?.Error || "Failed to update wanted status",
+              data?.updateMovie?.error || "Failed to update wanted status",
             ),
             color: "danger",
           });
@@ -320,7 +289,7 @@ function MovieDetailPage() {
     // Navigate back to library after deletion
     navigate({
       to: "/libraries/$libraryId",
-      params: { libraryId: movie?.LibraryId || "" },
+      params: { libraryId: movie?.libraryId || "" },
     });
   };
 
@@ -363,10 +332,10 @@ function MovieDetailPage() {
       <div className="flex flex-col md:flex-row gap-6 mb-8">
         {/* Poster */}
         <div className="shrink-0 relative group">
-          {movie.PosterUrl ? (
+          {movie.posterUrl ? (
             <Image
-              src={movie.PosterUrl}
-              alt={movie.Title}
+              src={movie.posterUrl}
+              alt={movie.title}
               className="w-64 h-96 object-cover rounded-lg shadow-lg"
             />
           ) : (
@@ -374,7 +343,7 @@ function MovieDetailPage() {
               <IconMovie size={64} className="text-purple-400" />
             </div>
           )}
-          {movie.MediaFileId && movie.MediaFile && (
+          {movie.mediaFileId && movie.mediaFile && (
             <button
               onClick={() => {
                 if (isThisMoviePlaying) {
@@ -402,22 +371,24 @@ function MovieDetailPage() {
         {/* Details */}
         <div className="flex-1">
           <Breadcrumbs className="mb-2">
-            <BreadcrumbItem href="/libraries">Libraries</BreadcrumbItem>
-            <BreadcrumbItem href={`/libraries/${movie.LibraryId}`}>
-              {libraryData?.Library?.Name || "Library"}
+            <BreadcrumbItem><Link to="/libraries">Libraries</Link></BreadcrumbItem>
+            <BreadcrumbItem>
+              <Link to="/libraries/$libraryId" params={{ libraryId: movie.libraryId }}>
+                {libraryData?.library?.name || "Library"}
+              </Link>
             </BreadcrumbItem>
-            <BreadcrumbItem isCurrent>{movie.Title}</BreadcrumbItem>
+            <BreadcrumbItem isCurrent>{movie.title}</BreadcrumbItem>
           </Breadcrumbs>
 
           <div className="flex items-start justify-between gap-4 mb-2">
             <h1 className="text-3xl font-bold">
-              {movie.Title}
-              {movie.Year && (
-                <span className="text-default-500 ml-2">({movie.Year})</span>
+              {movie.title}
+              {movie.year && (
+                <span className="text-default-500 ml-2">({movie.year})</span>
               )}
             </h1>
             <div className="flex items-center gap-2">
-              {movie.MediaFileId ? (
+              {movie.mediaFileId ? (
                 <Button
                   color={isThisMoviePlaying ? "warning" : "primary"}
                   variant="solid"
@@ -443,7 +414,7 @@ function MovieDetailPage() {
                       : "Play"}
                 </Button>
               ) : null}
-              {movie.MediaFileId && hasResumeProgress && !isThisMoviePlaying ? (
+              {movie.mediaFileId && hasResumeProgress && !isThisMoviePlaying ? (
                 <Button
                   color="default"
                   variant="flat"
@@ -497,18 +468,18 @@ function MovieDetailPage() {
                   <DropdownItem
                     key="wanted-on"
                     startContent={<IconCheck size={16} />}
-                    isDisabled={movie.Wanted}
+                    isDisabled={movie.wanted}
                   >
                     Mark as Wanted
                   </DropdownItem>
                   <DropdownItem
                     key="wanted-off"
                     startContent={<IconX size={16} />}
-                    isDisabled={!movie.Wanted}
+                    isDisabled={!movie.wanted}
                   >
                     Remove as Wanted
                   </DropdownItem>
-                  {movie.MediaFileId ? (
+                  {movie.mediaFileId ? (
                     <DropdownItem
                       key="properties"
                       startContent={<IconInfoCircle size={16} />}
@@ -532,83 +503,64 @@ function MovieDetailPage() {
           </div>
 
           {/* Tagline */}
-          {movie.Tagline && (
-            <p className="text-default-500 italic mb-4">"{movie.Tagline}"</p>
+          {movie.tagline && (
+            <p className="text-default-500 italic mb-4">"{movie.tagline}"</p>
           )}
 
           {/* Chips */}
           <div className="flex flex-wrap gap-2 mb-4">
             {/* File status */}
-            <Chip
-              size="sm"
-              color={
-                movie.MediaFileId
-                  ? "success"
-                  : movie.Wanted
-                    ? "warning"
-                    : "danger"
-              }
-              variant="flat"
-              startContent={
-                movie.MediaFileId ? (
-                  <IconCheck size={14} />
-                ) : (
-                  <IconX size={14} />
-                )
-              }
-            >
-              {movie.MediaFileId
-                ? "Downloaded"
-                : movie.Wanted
-                  ? "Wanted"
-                  : "Missing"}
-            </Chip>
+            <MediaItemStatusChip
+              status={getMovieStatus(ContentStatusType.MOVIE, movie.id)}
+              mediaFileId={movie.mediaFileId}
+              wanted={movie.wanted}
+            />
 
             {/* Rating */}
-            {movie.TmdbRating && Number(movie.TmdbRating) > 0 && (
+            {movie.tmdbRating && Number(movie.tmdbRating) > 0 && (
               <Chip
                 size="sm"
                 variant="flat"
                 color={
-                  Number(movie.TmdbRating) >= 7
+                  Number(movie.tmdbRating) >= 7
                     ? "success"
-                    : Number(movie.TmdbRating) >= 5
+                    : Number(movie.tmdbRating) >= 5
                       ? "warning"
                       : "danger"
                 }
                 startContent={<IconStar size={14} />}
               >
-                {Number(movie.TmdbRating).toFixed(1)} (
-                {movie.TmdbVoteCount?.toLocaleString()} votes)
+                {Number(movie.tmdbRating).toFixed(1)} (
+                {movie.tmdbVoteCount?.toLocaleString()} votes)
               </Chip>
             )}
 
             {/* Certification */}
-            {movie.Certification && (
+            {movie.certification && (
               <Chip size="sm" variant="flat">
-                {movie.Certification}
+                {movie.certification}
               </Chip>
             )}
 
             {/* Runtime */}
-            {movie.Runtime && (
+            {movie.runtime && (
               <Chip
                 size="sm"
                 variant="flat"
                 startContent={<IconClock size={14} />}
               >
-                {Math.floor(movie.Runtime / 60)}h {movie.Runtime % 60}m
+                {Math.floor(movie.runtime / 60)}h {movie.runtime % 60}m
               </Chip>
             )}
 
             {/* Release date */}
-            {movie.ReleaseDate && (
+            {movie.releaseDate && (
               <Chip
                 size="sm"
                 variant="flat"
                 startContent={<IconCalendar size={14} />}
               >
-                {new Date(movie.ReleaseDate).toLocaleDateString()}
+                {new Date(movie.releaseDate).toLocaleDateString()}
               </Chip>
             )}
 
@@ -616,16 +568,16 @@ function MovieDetailPage() {
             <Chip
               size="sm"
               variant="flat"
-              color={movie.Monitored ? "success" : "default"}
+              color={movie.monitored ? "success" : "default"}
             >
-              {movie.Monitored ? "Monitored" : "Unmonitored"}
+              {movie.monitored ? "Monitored" : "Unmonitored"}
             </Chip>
           </div>
 
           {/* Genres */}
-          {movie.Genres.length > 0 && (
+          {movie.genres.length > 0 && (
             <div className="flex flex-wrap gap-1 mb-4">
-              {movie.Genres.map((genre: string, index: number) => (
+              {movie.genres.map((genre: string, index: number) => (
                 <Chip
                   key={`${genre}-${index}`}
                   size="sm"
@@ -639,36 +591,36 @@ function MovieDetailPage() {
           )}
 
           {/* Overview */}
-          {movie.Overview && (
+          {movie.overview && (
             <p className="text-default-600 mb-4 line-clamp-4">
-              {movie.Overview}
+              {movie.overview}
             </p>
           )}
 
           {/* Credits */}
           <div className="flex gap-8 text-sm mb-4">
-            {movie.Director && (
+            {movie.director && (
               <div>
                 <span className="text-default-500">Director:</span>{" "}
-                <span className="font-medium">{movie.Director}</span>
+                <span className="font-medium">{movie.director}</span>
               </div>
             )}
-            {movie.CastNames.length > 0 && (
+            {movie.castNames.length > 0 && (
               <div>
                 <span className="text-default-500">Cast:</span>{" "}
                 <span className="font-medium">
-                  {movie.CastNames.slice(0, 3).join(", ")}
+                  {movie.castNames.slice(0, 3).join(", ")}
                 </span>
               </div>
             )}
           </div>
 
           {/* Stats */}
-          {movie.MediaFile && movie.MediaFile.Size > 0 && (
+          {movie.mediaFile && movie.mediaFile.size > 0 && (
             <div className="flex gap-4 text-sm text-default-500 mb-4">
               <div>
                 <span className="font-semibold text-foreground">
-                  {formatBytes(movie.MediaFile.Size)}
+                  {formatBytes(movie.mediaFile.size)}
                 </span>
                 <span> on disk</span>
               </div>
@@ -678,17 +630,17 @@ function MovieDetailPage() {
       </div>
 
       {/* Collection peers */}
-      {movie.CollectionName && (
+      {movie.collectionName && (
         <>
           {otherCollectionMovies.length > 0 && (
             <CollectionMoviesTable
-              stateKey={`movie-collection-peers-${movie.Id}`}
+              stateKey={`movie-collection-peers-${movie.id}`}
               movies={otherCollectionMovies}
               ariaLabel="Also in this collection"
-              searchPlaceholder="Search collection movies..."
+              toolbarQueryPlaceholder="Search collection movies..."
               headerContent={
                 <div className="px-2 py-1 text-sm text-default-600">
-                  Also in {movie.CollectionName}
+                  Also in {movie.collectionName}
                 </div>
               }
             />
@@ -700,14 +652,14 @@ function MovieDetailPage() {
       <DeleteMovieModal
         isOpen={isDeleteOpen}
         onClose={onDeleteClose}
-        movie={movie ? { id: movie.Id, title: movie.Title } : null}
+        movie={movie ? { id: movie.id, title: movie.title } : null}
         onDeleted={handleDeleted}
       />
       <FilePropertiesModal
         isOpen={isPropertiesOpen}
         onClose={onPropertiesClose}
-        mediaFileId={movie.MediaFileId ?? null}
-        title={movie ? movie.Title : undefined}
+        mediaFileId={movie.mediaFileId ?? null}
+        title={movie ? movie.title : undefined}
       />
     </div>
   );

@@ -48,26 +48,26 @@ pub fn spawn_libraries_updater(schema: LibrarianSchema, libraries: SharedLibrari
 async fn fetch_library_stats(schema: &LibrarianSchema) -> Vec<LibraryStats> {
     let query = r#"
         query TuiLibraries {
-            Libraries(Page: { Limit: 1000, Offset: 0 }, OrderBy: [{ Name: Asc }]) {
-                Edges {
-                    Node {
+            Libraries: libraries(page: { limit: 1000, offset: 0 }, orderBy: [{ Name: ASC }]) {
+                Edges: edges {
+                    Node: node {
                         Name
                         Path
                         LibraryType
-                        Movies {
-                            PageInfo { TotalCount }
+                        Movies: movies {
+                            PageInfo: pageInfo { TotalCount: totalCount }
                         }
-                        MoviesMissing: Movies(Where: { HasFile: { Eq: false } }) {
-                            PageInfo { TotalCount }
+                        MoviesMissing: movies(where: { HasFile: { eq: false } }) {
+                            PageInfo: pageInfo { TotalCount: totalCount }
                         }
-                        Shows {
-                            PageInfo { TotalCount }
+                        Shows: shows {
+                            PageInfo: pageInfo { TotalCount: totalCount }
                         }
-                        Albums {
-                            PageInfo { TotalCount }
+                        Albums: albums {
+                            PageInfo: pageInfo { TotalCount: totalCount }
                         }
-                        Audiobooks {
-                            PageInfo { TotalCount }
+                        Audiobooks: audiobooks {
+                            PageInfo: pageInfo { TotalCount: totalCount }
                         }
                     }
                 }
@@ -201,13 +201,6 @@ impl LibrariesPanel {
 }
 
 impl Panel for LibrariesPanel {
-    fn title(&self) -> &str {
-        "libs"
-    }
-    fn kind(&self) -> PanelKind {
-        PanelKind::Libraries
-    }
-
     fn render(&self, frame: &mut Frame, area: Rect, focused: bool) {
         let libs = self.get_libraries();
         let border_style = if focused {
@@ -306,7 +299,7 @@ impl Panel for LibrariesPanel {
             .collect();
 
         let list = List::new(items).highlight_style(Theme::selected());
-        let mut state = self.list_state.clone();
+        let mut state = self.list_state;
         frame.render_stateful_widget(list, inner, &mut state);
     }
 
@@ -317,17 +310,17 @@ impl Panel for LibrariesPanel {
         }
         match action {
             Action::ScrollUp => {
-                if let Some(s) = self.list_state.selected() {
-                    if s > 0 {
-                        self.list_state.select(Some(s - 1));
-                    }
+                if let Some(s) = self.list_state.selected()
+                    && s > 0
+                {
+                    self.list_state.select(Some(s - 1));
                 }
             }
             Action::ScrollDown => {
-                if let Some(s) = self.list_state.selected() {
-                    if s + 1 < len {
-                        self.list_state.select(Some(s + 1));
-                    }
+                if let Some(s) = self.list_state.selected()
+                    && s + 1 < len
+                {
+                    self.list_state.select(Some(s + 1));
                 }
             }
             Action::Home => {
@@ -341,15 +334,6 @@ impl Panel for LibrariesPanel {
     }
 
     fn update(&mut self) {}
-
-    fn scroll_position(&self) -> Option<(usize, usize)> {
-        let libs = self.get_libraries();
-        if libs.is_empty() {
-            None
-        } else {
-            self.list_state.selected().map(|p| (p + 1, libs.len()))
-        }
-    }
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {

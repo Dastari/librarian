@@ -15,6 +15,7 @@ import {
   MetadataAppSettingsDocument,
   UpdateAppSettingDocument,
   CreateAppSettingDocument,
+  TestTmdbConnectionDocument,
   type MetadataAppSettingsQuery,
 } from "../../lib/graphql/generated/graphql";
 import {
@@ -74,10 +75,6 @@ const METADATA_KEYS = {
   tvmaze_cache_days: "metadata.cache_days.tvmaze",
   musicbrainz_cache_days: "metadata.cache_days.musicbrainz",
   openlibrary_cache_days: "metadata.cache_days.openlibrary",
-  opensubtitles_api_key: "metadata.opensubtitles_api_key",
-  opensubtitles_username: "metadata.opensubtitles_username",
-  opensubtitles_password: "metadata.opensubtitles_password",
-  opensubtitles_enabled: "metadata.opensubtitles_enabled",
 } as const;
 
 /** Shape used by the form and for change detection (from AppSettings key/value store). */
@@ -91,16 +88,12 @@ interface MetadataSettingsShape {
   tvmazeCacheDays: number;
   musicbrainzCacheDays: number;
   openlibraryCacheDays: number;
-  opensubtitlesApiKey: string;
-  opensubtitlesUsername: string;
-  opensubtitlesPassword: string;
-  opensubtitlesEnabled: boolean;
 }
 
 function appSettingsToMetadataSettings(
-  edges: MetadataAppSettingsQuery["AppSettings"]["Edges"],
+  edges: MetadataAppSettingsQuery["appSettings"]["edges"],
 ): MetadataSettingsShape {
-  const map = new Map(edges.map((e) => [e.Node.Key, e.Node.Value]));
+  const map = new Map(edges.map((e) => [e.node.key, e.node.value]));
   // Treat the literal string "null" as empty (legacy data issue)
   const get = (k: string, def: string) => {
     const val = map.get(k);
@@ -130,18 +123,14 @@ function appSettingsToMetadataSettings(
     tvmazeCacheDays: getInt(METADATA_KEYS.tvmaze_cache_days, 7),
     musicbrainzCacheDays: getInt(METADATA_KEYS.musicbrainz_cache_days, 7),
     openlibraryCacheDays: getInt(METADATA_KEYS.openlibrary_cache_days, 7),
-    opensubtitlesApiKey: get(METADATA_KEYS.opensubtitles_api_key, ""),
-    opensubtitlesUsername: get(METADATA_KEYS.opensubtitles_username, ""),
-    opensubtitlesPassword: get(METADATA_KEYS.opensubtitles_password, ""),
-    opensubtitlesEnabled: getBool(METADATA_KEYS.opensubtitles_enabled, false),
   };
 }
 
 /** Map from app setting key to node Id (for updates). */
 function keyToIdMap(
-  edges: MetadataAppSettingsQuery["AppSettings"]["Edges"],
+  edges: MetadataAppSettingsQuery["appSettings"]["edges"],
 ): Map<string, string> {
-  return new Map(edges.map((e) => [e.Node.Key, e.Node.Id]));
+  return new Map(edges.map((e) => [e.node.key, e.node.id]));
 }
 
 function buildParsePreview(input: string): ParseAndIdentifyResult {
@@ -205,14 +194,11 @@ function MetadataSettingsPage() {
     tvmazeCacheDays: 7,
     musicbrainzCacheDays: 7,
     openlibraryCacheDays: 7,
-    opensubtitlesApiKey: "",
-    opensubtitlesUsername: "",
-    opensubtitlesPassword: "",
-    opensubtitlesEnabled: false,
   });
   const [initialSettings, setInitialSettings] =
     useState<MetadataSettingsShape | null>(null);
   const [saving, setSaving] = useState(false);
+  const [testingTmdb, setTestingTmdb] = useState(false);
   const [keyToId, setKeyToId] = useState<Map<string, string>>(new Map());
 
   // Parser test state
@@ -234,16 +220,17 @@ function MetadataSettingsPage() {
   });
   const [updateAppSetting] = useMutation(UpdateAppSettingDocument);
   const [createAppSetting] = useMutation(CreateAppSettingDocument);
+  const [testTmdbConnection] = useMutation(TestTmdbConnectionDocument);
 
   useEffect(() => {
-    if (!settingsData?.AppSettings?.Edges) return;
+    if (!settingsData?.appSettings?.edges) return;
     if (initialSettings !== null) return;
 
     const newSettings = appSettingsToMetadataSettings(
-      settingsData.AppSettings.Edges,
+      settingsData.appSettings.edges,
     );
     setSettings(newSettings);
-    setKeyToId(keyToIdMap(settingsData.AppSettings.Edges));
+    setKeyToId(keyToIdMap(settingsData.appSettings.edges));
     setInitialSettings({ ...newSettings });
   }, [initialSettings, settingsData]);
 
@@ -269,19 +256,65 @@ function MetadataSettingsPage() {
       settings.tmdbCacheDays !== initialSettings.tmdbCacheDays ||
       settings.tvmazeCacheDays !== initialSettings.tvmazeCacheDays ||
       settings.musicbrainzCacheDays !== initialSettings.musicbrainzCacheDays ||
-      settings.openlibraryCacheDays !== initialSettings.openlibraryCacheDays ||
-      settings.opensubtitlesApiKey !== initialSettings.opensubtitlesApiKey ||
-      settings.opensubtitlesUsername !==
-        initialSettings.opensubtitlesUsername ||
-      settings.opensubtitlesPassword !==
-        initialSettings.opensubtitlesPassword ||
-      settings.opensubtitlesEnabled !== initialSettings.opensubtitlesEnabled
+      settings.openlibraryCacheDays !== initialSettings.openlibraryCacheDays
     );
   }, [settings, initialSettings]);
+
+  const verifyTmdbKey = async (showSuccess = true): Promise<boolean> => {
+    if (!settings.tmdbApiKey.trim()) {
+      addToast({
+        title: "TMDB key required",
+        description: "Enter a TMDB API key before testing.",
+        color: "warning",
+      });
+      return false;
+    }
+    setTestingTmdb(true);
+    try {
+      const { data } = await testTmdbConnection({
+        variables: { input: { apiKey: settings.tmdbApiKey.trim() } },
+      });
+      const result = data?.testTmdbConnection;
+      if (!result?.success) {
+        addToast({
+          title: "TMDB test failed",
+          description: result?.message ?? "TMDB could not validate this key.",
+          color: "danger",
+        });
+        return false;
+      }
+      if (showSuccess) {
+        addToast({
+          title: "TMDB connected",
+          description: result.message,
+          color: "success",
+        });
+      }
+      return true;
+    } catch {
+      addToast({
+        title: "TMDB test failed",
+        description: "TMDB could not be reached. Check the server network.",
+        color: "danger",
+      });
+      return false;
+    } finally {
+      setTestingTmdb(false);
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
     try {
+      const keyChanged =
+        settings.tmdbApiKey !== (initialSettings?.tmdbApiKey ?? "");
+      if (
+        settings.tmdbEnabled &&
+        keyChanged &&
+        !(await verifyTmdbKey(false))
+      ) {
+        return;
+      }
       const settingsToSave = [
         { key: METADATA_KEYS.tmdb_api_key, value: settings.tmdbApiKey },
         {
@@ -316,22 +349,6 @@ function MetadataSettingsPage() {
           key: METADATA_KEYS.openlibrary_cache_days,
           value: String(settings.openlibraryCacheDays),
         },
-        {
-          key: METADATA_KEYS.opensubtitles_api_key,
-          value: settings.opensubtitlesApiKey,
-        },
-        {
-          key: METADATA_KEYS.opensubtitles_username,
-          value: settings.opensubtitlesUsername,
-        },
-        {
-          key: METADATA_KEYS.opensubtitles_password,
-          value: settings.opensubtitlesPassword,
-        },
-        {
-          key: METADATA_KEYS.opensubtitles_enabled,
-          value: String(settings.opensubtitlesEnabled),
-        },
       ];
 
       for (const { key, value } of settingsToSave) {
@@ -341,15 +358,15 @@ function MetadataSettingsPage() {
           // Update existing setting using UpdateAppSetting mutation
           const { data } = await updateAppSetting({
             variables: {
-              Id: existingId,
-              Input: { Value: value },
+              id: existingId,
+              input: { value: value },
             },
           });
-          if (!data?.UpdateAppSetting?.Success) {
+          if (!data?.updateAppSetting?.success) {
             addToast({
               title: "Error",
               description: sanitizeError(
-                data?.UpdateAppSetting?.Error ?? `Failed to save ${key}`,
+                data?.updateAppSetting?.error ?? `Failed to save ${key}`,
               ),
               color: "danger",
             });
@@ -359,18 +376,18 @@ function MetadataSettingsPage() {
           // Create new setting
           const { data } = await createAppSetting({
             variables: {
-              Input: {
-                Key: key,
-                Value: value,
-                Category: "metadata",
+              input: {
+                key: key,
+                value: value,
+                category: "metadata",
               },
             },
           });
-          if (!data?.CreateAppSetting?.Success) {
+          if (!data?.createAppSetting?.success) {
             addToast({
               title: "Error",
               description: sanitizeError(
-                data?.CreateAppSetting?.Error ?? `Failed to create ${key}`,
+                data?.createAppSetting?.error ?? `Failed to create ${key}`,
               ),
               color: "danger",
             });
@@ -381,13 +398,13 @@ function MetadataSettingsPage() {
 
       // Refetch settings to get updated IDs and values
       const refreshed = await refetchSettings();
-      if (refreshed.data?.AppSettings?.Edges) {
+      if (refreshed.data?.appSettings?.edges) {
         const newSettings = appSettingsToMetadataSettings(
-          refreshed.data.AppSettings.Edges,
+          refreshed.data.appSettings.edges,
         );
         setSettings(newSettings);
         setInitialSettings({ ...newSettings });
-        setKeyToId(keyToIdMap(refreshed.data.AppSettings.Edges));
+        setKeyToId(keyToIdMap(refreshed.data.appSettings.edges));
       }
 
       addToast({
@@ -581,36 +598,49 @@ function MetadataSettingsPage() {
                 </div>
               </div>
               {settings.tmdbEnabled && (
-                <Input
-                  label="TMDB API Key"
-                  labelPlacement="inside"
-                  variant="flat"
-                  placeholder="Enter your TMDB API key"
-                  value={settings.tmdbApiKey}
-                  onValueChange={(v) =>
-                    setSettings((prev) => ({ ...prev, tmdbApiKey: v }))
-                  }
-                  type="password"
-                  startContent={
-                    <IconKey size={16} className="text-default-400" />
-                  }
-                  classNames={{
-                    label: "text-sm font-medium text-primary!",
-                  }}
-                  description={
-                    <span>
-                      Get a free API key at{" "}
-                      <a
-                        href="https://www.themoviedb.org/settings/api"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary hover:underline"
-                      >
-                        themoviedb.org
-                      </a>
-                    </span>
-                  }
-                />
+                <div className="flex items-start gap-2">
+                  <Input
+                    label="TMDB API Key"
+                    labelPlacement="inside"
+                    variant="flat"
+                    placeholder="Enter your TMDB API key"
+                    value={settings.tmdbApiKey}
+                    onValueChange={(v) =>
+                      setSettings((prev) => ({ ...prev, tmdbApiKey: v }))
+                    }
+                    type="password"
+                    startContent={
+                      <IconKey size={16} className="text-default-400" />
+                    }
+                    classNames={{
+                      label: "text-sm font-medium text-primary!",
+                    }}
+                    description={
+                      <span>
+                        Get a free API key at{" "}
+                        <a
+                          href="https://www.themoviedb.org/settings/api"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-primary hover:underline"
+                        >
+                          themoviedb.org
+                        </a>
+                      </span>
+                    }
+                  />
+                  <Button
+                    className="mt-1 shrink-0"
+                    variant="flat"
+                    color="primary"
+                    isLoading={testingTmdb}
+                    isDisabled={!settings.tmdbApiKey.trim()}
+                    startContent={!testingTmdb && <IconTestPipe size={16} />}
+                    onPress={() => void verifyTmdbKey()}
+                  >
+                    Test key
+                  </Button>
+                </div>
               )}
             </div>
             <div className="p-3 bg-content2 rounded-lg">
@@ -782,117 +812,24 @@ function MetadataSettingsPage() {
               <span className="font-semibold">Subtitles</span>
             </div>
           }
-          subtitle="Automatic subtitle downloads"
+          subtitle="Embedded subtitle cataloging only"
         >
           <div className="space-y-4 pb-2">
-            <div className="p-3 bg-content2 rounded-lg space-y-3">
-              <div className="flex items-center justify-between">
+            <div className="rounded-lg border border-warning-300/40 bg-warning-50/10 p-3">
+              <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="font-medium">OpenSubtitles</p>
+                  <p className="font-medium">Subtitle acquisition unavailable</p>
                   <p className="text-sm text-default-500">
-                    Large subtitle database. Requires free account.
+                    Librarian catalogs embedded subtitle streams reported by
+                    ffprobe. Provider download, extraction, conversion, and
+                    authenticated subtitle serving are not yet supported, so
+                    credentials cannot be entered here.
                   </p>
                 </div>
-                <div className="flex items-center gap-3">
-                  <Chip
-                    color={
-                      settings.opensubtitlesEnabled &&
-                      settings.opensubtitlesApiKey
-                        ? "success"
-                        : settings.opensubtitlesEnabled
-                          ? "warning"
-                          : "default"
-                    }
-                    variant="flat"
-                    size="sm"
-                  >
-                    {settings.opensubtitlesEnabled
-                      ? settings.opensubtitlesApiKey
-                        ? "Configured"
-                        : "Missing Credentials"
-                      : "Disabled"}
-                  </Chip>
-                  <Switch
-                    isSelected={settings.opensubtitlesEnabled}
-                    onValueChange={(v) =>
-                      setSettings((prev) => ({
-                        ...prev,
-                        opensubtitlesEnabled: v,
-                      }))
-                    }
-                  />
-                </div>
+                <Chip color="warning" variant="flat" size="sm">
+                  Catalog only
+                </Chip>
               </div>
-              {settings.opensubtitlesEnabled && (
-                <div className="space-y-3">
-                  <Input
-                    label="API Key"
-                    labelPlacement="inside"
-                    variant="flat"
-                    placeholder="Enter your OpenSubtitles API key"
-                    value={settings.opensubtitlesApiKey}
-                    onValueChange={(v) =>
-                      setSettings((prev) => ({
-                        ...prev,
-                        opensubtitlesApiKey: v,
-                      }))
-                    }
-                    type="password"
-                    startContent={
-                      <IconKey size={16} className="text-default-400" />
-                    }
-                    classNames={{
-                      label: "text-sm font-medium text-primary!",
-                    }}
-                  />
-                  <div className="grid grid-cols-2 gap-3">
-                    <Input
-                      label="Username"
-                      labelPlacement="inside"
-                      variant="flat"
-                      placeholder="OpenSubtitles username"
-                      value={settings.opensubtitlesUsername}
-                      onValueChange={(v) =>
-                        setSettings((prev) => ({
-                          ...prev,
-                          opensubtitlesUsername: v,
-                        }))
-                      }
-                      classNames={{
-                        label: "text-sm font-medium text-primary!",
-                      }}
-                    />
-                    <Input
-                      label="Password"
-                      labelPlacement="inside"
-                      variant="flat"
-                      placeholder="OpenSubtitles password"
-                      value={settings.opensubtitlesPassword}
-                      onValueChange={(v) =>
-                        setSettings((prev) => ({
-                          ...prev,
-                          opensubtitlesPassword: v,
-                        }))
-                      }
-                      type="password"
-                      classNames={{
-                        label: "text-sm font-medium text-primary!",
-                      }}
-                    />
-                  </div>
-                  <p className="text-xs text-default-400">
-                    Create a free account at{" "}
-                    <a
-                      href="https://www.opensubtitles.com"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline"
-                    >
-                      opensubtitles.com
-                    </a>
-                  </p>
-                </div>
-              )}
             </div>
           </div>
         </AccordionItem>
@@ -907,7 +844,7 @@ function MetadataSettingsPage() {
               <span className="font-semibold">Test Filename Parser</span>
             </div>
           }
-          subtitle="Test how filenames are parsed and matched"
+          subtitle="Preview filename parsing"
         >
           <div className="space-y-4 pb-2">
             <p className="text-sm text-default-500">
@@ -1029,7 +966,7 @@ function MetadataSettingsPage() {
                 {/* Matches */}
                 <div>
                   <h3 className="text-sm font-medium text-default-500 mb-2">
-                    Matches ({testResult.matches.length})
+                    Metadata lookup
                   </h3>
                   {testResult.matches.length > 0 ? (
                     <div className="space-y-2">
@@ -1069,7 +1006,7 @@ function MetadataSettingsPage() {
                     </div>
                   ) : (
                     <p className="text-default-500 text-sm">
-                      No matches found. Try a different filename.
+                      Metadata lookup is not performed by this preview.
                     </p>
                   )}
                 </div>

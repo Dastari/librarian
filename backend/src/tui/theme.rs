@@ -7,7 +7,6 @@ pub struct Theme;
 
 impl Theme {
     // Base colors
-    pub const BG: Color = Color::Reset;
     pub const FG: Color = Color::White;
     pub const DIM: Color = Color::DarkGray;
     pub const BORDER: Color = Color::Rgb(60, 60, 60);
@@ -21,8 +20,6 @@ impl Theme {
 
     // Status colors
     pub const SUCCESS: Color = Color::Rgb(74, 222, 128); // Green-400
-    pub const PROGRESS: Color = Color::Rgb(96, 165, 250); // Blue-400
-    pub const PAUSED: Color = Color::Rgb(251, 191, 36); // Amber-400
 
     // Graph colors - pastel versions
     pub const CPU_GRAPH: Color = Color::Rgb(199, 210, 254); // Indigo-200 pastel
@@ -82,19 +79,6 @@ impl Theme {
         Style::default().fg(color)
     }
 
-    /// Style for log level badge (inverted)
-    pub fn log_level_badge(level: &str) -> Style {
-        let color = match level.to_uppercase().as_str() {
-            "TRACE" => Self::TRACE,
-            "DEBUG" => Self::DEBUG,
-            "INFO" => Self::INFO,
-            "WARN" | "WARNING" => Self::WARN,
-            "ERROR" => Self::ERROR,
-            _ => Self::FG,
-        };
-        Style::default().fg(Color::Black).bg(color)
-    }
-
     /// Style for selected/highlighted items
     pub fn selected() -> Style {
         Style::default()
@@ -129,11 +113,6 @@ impl Theme {
         Style::default().fg(Color::Rgb(100, 149, 237)) // Cornflower blue
     }
 
-    /// Style for progress bar (incomplete portion)
-    pub fn progress_incomplete() -> Style {
-        Style::default().fg(Self::DIM)
-    }
-
     /// Style for sparkline graphs
     pub fn sparkline_cpu() -> Style {
         Style::default().fg(Self::CPU_GRAPH)
@@ -152,11 +131,6 @@ impl Theme {
     /// Style for keyboard shortcut key (pastel red for action keys)
     pub fn keybind_key() -> Style {
         Style::default().fg(Color::Rgb(251, 146, 146)) // Pastel red
-    }
-
-    /// Style for title decorators (┓ ┍)
-    pub fn title_decorator(panel: PanelKind) -> Style {
-        Self::border(panel)
     }
 
     /// Download graph color (magenta/pink like btop)
@@ -189,17 +163,6 @@ impl PanelKind {
             PanelKind::System => "³",
             PanelKind::Libraries => "⁴",
             PanelKind::Database => "⁵",
-        }
-    }
-
-    /// Get the number key for this panel
-    pub fn key(&self) -> char {
-        match self {
-            PanelKind::Logs => '1',
-            PanelKind::Torrents => '2',
-            PanelKind::System => '3',
-            PanelKind::Libraries => '4',
-            PanelKind::Database => '5',
         }
     }
 }

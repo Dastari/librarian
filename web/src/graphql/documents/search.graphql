@@ -1,0 +1,269 @@
+# Provider search (add to library) and source search (acquire releases).
+
+query SearchMovies($query: String!, $year: Int) {
+  searchMovies(query: $query, year: $year) {
+    provider
+    providerId
+    title
+    originalTitle
+    year
+    overview
+    posterUrl
+    backdropUrl
+    imdbId
+    voteAverage
+    popularity
+  }
+}
+
+query SearchTvShows($query: String!) {
+  searchTvShows(query: $query) {
+    provider
+    providerId
+    name
+    year
+    status
+    network
+    overview
+    posterUrl
+    tvdbId
+    imdbId
+    score
+  }
+}
+
+query SearchAlbums($query: String!, $includeSingles: Boolean!, $includeEps: Boolean!, $includeCompilations: Boolean!, $includeLive: Boolean!, $includeSoundtracks: Boolean!) {
+  searchAlbums(
+    query: $query
+    includeSingles: $includeSingles
+    includeEps: $includeEps
+    includeCompilations: $includeCompilations
+    includeLive: $includeLive
+    includeSoundtracks: $includeSoundtracks
+  ) {
+    provider
+    providerId
+    title
+    artistName
+    year
+    albumType
+    coverUrl
+    score
+  }
+}
+
+query SearchAudiobooks($query: String!) {
+  searchAudiobooks(query: $query) {
+    provider
+    providerId
+    title
+    authorName
+    year
+    coverUrl
+    isbn
+    description
+  }
+}
+
+query SearchMovieCollections($query: String!) {
+  searchMovieCollections(query: $query) {
+    provider
+    collectionId
+    name
+    overview
+    posterUrl
+    backdropUrl
+  }
+}
+
+query SearchSources($input: SearchSourcesInput!) {
+  searchSources(input: $input) {
+    totalReleases
+    totalElapsedMs
+    sourcesSearched
+    sources {
+      sourceId
+      sourceName
+      elapsedMs
+      fromCache
+      error
+      releases {
+        title
+        guid
+        link
+        magnetUri
+        infoHash
+        details
+        publishDate
+        categories
+        size
+        sizeFormatted
+        seeders
+        leechers
+        peers
+        grabs
+        isFreeleech
+        imdbId
+        poster
+        description
+        sourceId
+        sourceName
+        profileMatch
+        rejectReasons
+        parsed {
+          resolution
+          codec
+          hdrType
+          sourceType
+          audio
+          releaseGroup
+          languages
+          isSeasonPack
+          isProper
+          isRepack
+          season
+          episodes
+          year
+        }
+      }
+    }
+  }
+}
+
+# Library search: one query per type, matched on title with the backend's similarity filter.
+query LibrarySearch($needle: String!, $limit: Int!) {
+  movies(where: { title: { contains: $needle } }, orderBy: [{ title: ASC }], page: { limit: $limit, offset: 0 }) {
+    edges {
+      node {
+        ...MovieFields
+      }
+    }
+    pageInfo {
+      totalCount
+    }
+  }
+  shows(where: { name: { contains: $needle } }, orderBy: [{ name: ASC }], page: { limit: $limit, offset: 0 }) {
+    edges {
+      node {
+        ...ShowFields
+      }
+    }
+    pageInfo {
+      totalCount
+    }
+  }
+  albums(where: { name: { contains: $needle } }, orderBy: [{ name: ASC }], page: { limit: $limit, offset: 0 }) {
+    edges {
+      node {
+        ...AlbumFields
+      }
+    }
+    pageInfo {
+      totalCount
+    }
+  }
+  artists(where: { name: { contains: $needle } }, orderBy: [{ name: ASC }], page: { limit: $limit, offset: 0 }) {
+    edges {
+      node {
+        ...ArtistFields
+      }
+    }
+    pageInfo {
+      totalCount
+    }
+  }
+  audiobooks(where: { title: { contains: $needle } }, orderBy: [{ title: ASC }], page: { limit: $limit, offset: 0 }) {
+    edges {
+      node {
+        ...AudiobookFields
+      }
+    }
+    pageInfo {
+      totalCount
+    }
+  }
+  episodes(where: { title: { contains: $needle } }, orderBy: [{ airDate: DESC }], page: { limit: $limit, offset: 0 }) {
+    edges {
+      node {
+        ...EpisodeFields
+        show {
+          id
+          name
+          posterUrl
+        }
+      }
+    }
+    pageInfo {
+      totalCount
+    }
+  }
+}
+
+mutation AddMovie($libraryId: String!, $input: AddMovieInput!) {
+  addMovie(libraryId: $libraryId, input: $input) {
+    success
+    error
+    movie {
+      ...MovieFields
+    }
+  }
+}
+
+mutation AddTvShow($libraryId: String!, $input: AddTvShowInput!) {
+  addTvShow(libraryId: $libraryId, input: $input) {
+    success
+    error
+    show {
+      ...ShowFields
+    }
+  }
+}
+
+mutation AddAlbum($input: AddAlbumInput!) {
+  addAlbum(input: $input) {
+    success
+    error
+    album {
+      ...AlbumFields
+    }
+  }
+}
+
+mutation AddAudiobook($input: AddAudiobookInput!) {
+  addAudiobook(input: $input) {
+    success
+    error
+    audiobook {
+      ...AudiobookFields
+    }
+  }
+}
+
+mutation AddMovieCollection($libraryId: String!, $input: AddMovieCollectionInput!) {
+  addMovieCollection(libraryId: $libraryId, input: $input) {
+    success
+    error
+  }
+}
+
+mutation TriggerAutoDownload($libraryId: String) {
+  triggerAutoDownload(libraryId: $libraryId) {
+    success
+    candidatesConsidered
+    searched
+    grabbed
+    errors
+    error
+  }
+}
+
+# Hunt for the missing children of one target (or a whole library) right now, ignoring the
+# per-target search backoff.
+mutation SearchMissing($input: SearchMissingInput!) {
+  searchMissing(input: $input) {
+    success
+    error
+    queued
+    searched
+  }
+}

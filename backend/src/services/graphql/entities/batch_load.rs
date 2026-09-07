@@ -34,6 +34,8 @@ impl_string_pk_batch_load!(
     super::Episode,
     super::InviteToken,
     super::Library,
+    super::LibraryScanIssue,
+    super::LibraryScanRun,
     super::MediaChapter,
     super::MediaFile,
     super::MetadataCache,
@@ -53,6 +55,7 @@ impl_string_pk_batch_load!(
     super::Show,
     super::Source,
     super::SourcePriorityRule,
+    super::StorageObject,
     super::Subtitle,
     super::Torrent,
     super::TorrentFile,
@@ -64,3 +67,5 @@ impl_string_pk_batch_load!(
 );
 
 impl_string_pk_batch_load!(super::TorznabCategory);
+impl_string_pk_batch_load!(super::QualityProfile);
+impl_string_pk_batch_load!(super::ReleaseBlocklist);

@@ -99,7 +99,7 @@ fn normalize_path_key(path: &str) -> String {
     let normalized = path.trim().to_ascii_lowercase();
     let mut hasher = Sha256::new();
     hasher.update(normalized.as_bytes());
-    format!("{}{:x}", CONFIG_KEY_PREFIX, hasher.finalize())
+    format!("{}{}", CONFIG_KEY_PREFIX, hex::encode(hasher.finalize()))
 }
 
 fn normalize_unc_for_windows(path: &str) -> String {
@@ -317,10 +317,7 @@ async fn run_command(cmd: &str, args: &[String]) -> Result<String> {
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
     } else {
-        Err(anyhow!(
-            "{}",
-            String::from_utf8_lossy(&out.stderr).to_string()
-        ))
+        Err(anyhow!("{}", String::from_utf8_lossy(&out.stderr)))
     }
 }
 

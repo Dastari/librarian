@@ -9,48 +9,44 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as SearchRouteImport } from './routes/search'
-import { Route as NotificationsRouteImport } from './routes/notifications'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as SettingsIndexRouteImport } from './routes/settings/index'
-import { Route as LibrariesIndexRouteImport } from './routes/libraries/index'
-import { Route as DownloadsIndexRouteImport } from './routes/downloads/index'
-import { Route as ShowsShowIdRouteImport } from './routes/shows/$showId'
-import { Route as SettingsUsenetRouteImport } from './routes/settings/usenet'
-import { Route as SettingsTorrentRouteImport } from './routes/settings/torrent'
-import { Route as SettingsSourcesRouteImport } from './routes/settings/sources'
-import { Route as SettingsOrganizationRouteImport } from './routes/settings/organization'
-import { Route as SettingsMetadataRouteImport } from './routes/settings/metadata'
-import { Route as SettingsLogsRouteImport } from './routes/settings/logs'
-import { Route as SettingsCastingRouteImport } from './routes/settings/casting'
-import { Route as MoviesMovieIdRouteImport } from './routes/movies/$movieId'
-import { Route as LibrariesLibraryIdRouteImport } from './routes/libraries/$libraryId'
-import { Route as CollectionsCollectionIdRouteImport } from './routes/collections/$collectionId'
-import { Route as AuthLoginRouteImport } from './routes/auth/login'
-import { Route as AudiobooksAudiobookIdRouteImport } from './routes/audiobooks/$audiobookId'
+import { Route as NotificationsRouteImport } from './routes/notifications'
+import { Route as SearchRouteImport } from './routes/search'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as AlbumsAlbumIdRouteImport } from './routes/albums/$albumId'
+import { Route as AudiobooksAudiobookIdRouteImport } from './routes/audiobooks/$audiobookId'
+import { Route as AuthLoginRouteImport } from './routes/auth/login'
+import { Route as CollectionsCollectionIdRouteImport } from './routes/collections/$collectionId'
+import { Route as DownloadsIndexRouteImport } from './routes/downloads/index'
+import { Route as LibrariesIndexRouteImport } from './routes/libraries/index'
+import { Route as LibrariesLibraryIdRouteImport } from './routes/libraries/$libraryId'
+import { Route as MoviesMovieIdRouteImport } from './routes/movies/$movieId'
+import { Route as SettingsIndexRouteImport } from './routes/settings/index'
+import { Route as SettingsBackupRouteImport } from './routes/settings/backup'
+import { Route as SettingsCastingRouteImport } from './routes/settings/casting'
+import { Route as SettingsLogsRouteImport } from './routes/settings/logs'
+import { Route as SettingsMetadataRouteImport } from './routes/settings/metadata'
+import { Route as SettingsOrganizationRouteImport } from './routes/settings/organization'
+import { Route as SettingsQualityProfilesRouteImport } from './routes/settings/quality-profiles'
+import { Route as SettingsSourcesRouteImport } from './routes/settings/sources'
+import { Route as SettingsTorrentRouteImport } from './routes/settings/torrent'
+import { Route as ShowsShowIdRouteImport } from './routes/shows/$showId'
 import { Route as LibrariesLibraryIdIndexRouteImport } from './routes/libraries/$libraryId/index'
-import { Route as LibrariesLibraryIdUnmatchedRouteImport } from './routes/libraries/$libraryId/unmatched'
-import { Route as LibrariesLibraryIdTracksRouteImport } from './routes/libraries/$libraryId/tracks'
-import { Route as LibrariesLibraryIdShowsRouteImport } from './routes/libraries/$libraryId/shows'
-import { Route as LibrariesLibraryIdSettingsRouteImport } from './routes/libraries/$libraryId/settings'
-import { Route as LibrariesLibraryIdMoviesRouteImport } from './routes/libraries/$libraryId/movies'
-import { Route as LibrariesLibraryIdCollectionsRouteImport } from './routes/libraries/$libraryId/collections'
-import { Route as LibrariesLibraryIdBrowserRouteImport } from './routes/libraries/$libraryId/browser'
-import { Route as LibrariesLibraryIdBooksRouteImport } from './routes/libraries/$libraryId/books'
-import { Route as LibrariesLibraryIdAuthorsRouteImport } from './routes/libraries/$libraryId/authors'
-import { Route as LibrariesLibraryIdArtistsRouteImport } from './routes/libraries/$libraryId/artists'
 import { Route as LibrariesLibraryIdAlbumsRouteImport } from './routes/libraries/$libraryId/albums'
+import { Route as LibrariesLibraryIdArtistsRouteImport } from './routes/libraries/$libraryId/artists'
+import { Route as LibrariesLibraryIdAuthorsRouteImport } from './routes/libraries/$libraryId/authors'
+import { Route as LibrariesLibraryIdBooksRouteImport } from './routes/libraries/$libraryId/books'
+import { Route as LibrariesLibraryIdBrowserRouteImport } from './routes/libraries/$libraryId/browser'
+import { Route as LibrariesLibraryIdCollectionsRouteImport } from './routes/libraries/$libraryId/collections'
+import { Route as LibrariesLibraryIdMoviesRouteImport } from './routes/libraries/$libraryId/movies'
+import { Route as LibrariesLibraryIdSettingsRouteImport } from './routes/libraries/$libraryId/settings'
+import { Route as LibrariesLibraryIdShowsRouteImport } from './routes/libraries/$libraryId/shows'
+import { Route as LibrariesLibraryIdTracksRouteImport } from './routes/libraries/$libraryId/tracks'
+import { Route as LibrariesLibraryIdUnmatchedRouteImport } from './routes/libraries/$libraryId/unmatched'
 
-const SettingsRoute = SettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SearchRoute = SearchRouteImport.update({
-  id: '/search',
-  path: '/search',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const NotificationsRoute = NotificationsRouteImport.update({
@@ -58,89 +54,14 @@ const NotificationsRoute = NotificationsRouteImport.update({
   path: '/notifications',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const SearchRoute = SearchRouteImport.update({
+  id: '/search',
+  path: '/search',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SettingsIndexRoute = SettingsIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => SettingsRoute,
-} as any)
-const LibrariesIndexRoute = LibrariesIndexRouteImport.update({
-  id: '/libraries/',
-  path: '/libraries/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DownloadsIndexRoute = DownloadsIndexRouteImport.update({
-  id: '/downloads/',
-  path: '/downloads/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ShowsShowIdRoute = ShowsShowIdRouteImport.update({
-  id: '/shows/$showId',
-  path: '/shows/$showId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsUsenetRoute = SettingsUsenetRouteImport.update({
-  id: '/usenet',
-  path: '/usenet',
-  getParentRoute: () => SettingsRoute,
-} as any)
-const SettingsTorrentRoute = SettingsTorrentRouteImport.update({
-  id: '/torrent',
-  path: '/torrent',
-  getParentRoute: () => SettingsRoute,
-} as any)
-const SettingsSourcesRoute = SettingsSourcesRouteImport.update({
-  id: '/sources',
-  path: '/sources',
-  getParentRoute: () => SettingsRoute,
-} as any)
-const SettingsOrganizationRoute = SettingsOrganizationRouteImport.update({
-  id: '/organization',
-  path: '/organization',
-  getParentRoute: () => SettingsRoute,
-} as any)
-const SettingsMetadataRoute = SettingsMetadataRouteImport.update({
-  id: '/metadata',
-  path: '/metadata',
-  getParentRoute: () => SettingsRoute,
-} as any)
-const SettingsLogsRoute = SettingsLogsRouteImport.update({
-  id: '/logs',
-  path: '/logs',
-  getParentRoute: () => SettingsRoute,
-} as any)
-const SettingsCastingRoute = SettingsCastingRouteImport.update({
-  id: '/casting',
-  path: '/casting',
-  getParentRoute: () => SettingsRoute,
-} as any)
-const MoviesMovieIdRoute = MoviesMovieIdRouteImport.update({
-  id: '/movies/$movieId',
-  path: '/movies/$movieId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LibrariesLibraryIdRoute = LibrariesLibraryIdRouteImport.update({
-  id: '/libraries/$libraryId',
-  path: '/libraries/$libraryId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CollectionsCollectionIdRoute = CollectionsCollectionIdRouteImport.update({
-  id: '/collections/$collectionId',
-  path: '/collections/$collectionId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AuthLoginRoute = AuthLoginRouteImport.update({
-  id: '/auth/login',
-  path: '/auth/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AudiobooksAudiobookIdRoute = AudiobooksAudiobookIdRouteImport.update({
-  id: '/audiobooks/$audiobookId',
-  path: '/audiobooks/$audiobookId',
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AlbumsAlbumIdRoute = AlbumsAlbumIdRouteImport.update({
@@ -148,61 +69,100 @@ const AlbumsAlbumIdRoute = AlbumsAlbumIdRouteImport.update({
   path: '/albums/$albumId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AudiobooksAudiobookIdRoute = AudiobooksAudiobookIdRouteImport.update({
+  id: '/audiobooks/$audiobookId',
+  path: '/audiobooks/$audiobookId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthLoginRoute = AuthLoginRouteImport.update({
+  id: '/auth/login',
+  path: '/auth/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CollectionsCollectionIdRoute = CollectionsCollectionIdRouteImport.update({
+  id: '/collections/$collectionId',
+  path: '/collections/$collectionId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DownloadsIndexRoute = DownloadsIndexRouteImport.update({
+  id: '/downloads/',
+  path: '/downloads/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LibrariesIndexRoute = LibrariesIndexRouteImport.update({
+  id: '/libraries/',
+  path: '/libraries/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LibrariesLibraryIdRoute = LibrariesLibraryIdRouteImport.update({
+  id: '/libraries/$libraryId',
+  path: '/libraries/$libraryId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MoviesMovieIdRoute = MoviesMovieIdRouteImport.update({
+  id: '/movies/$movieId',
+  path: '/movies/$movieId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsIndexRoute = SettingsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsBackupRoute = SettingsBackupRouteImport.update({
+  id: '/backup',
+  path: '/backup',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsCastingRoute = SettingsCastingRouteImport.update({
+  id: '/casting',
+  path: '/casting',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsLogsRoute = SettingsLogsRouteImport.update({
+  id: '/logs',
+  path: '/logs',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsMetadataRoute = SettingsMetadataRouteImport.update({
+  id: '/metadata',
+  path: '/metadata',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsOrganizationRoute = SettingsOrganizationRouteImport.update({
+  id: '/organization',
+  path: '/organization',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsQualityProfilesRoute = SettingsQualityProfilesRouteImport.update({
+  id: '/quality-profiles',
+  path: '/quality-profiles',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsSourcesRoute = SettingsSourcesRouteImport.update({
+  id: '/sources',
+  path: '/sources',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsTorrentRoute = SettingsTorrentRouteImport.update({
+  id: '/torrent',
+  path: '/torrent',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const ShowsShowIdRoute = ShowsShowIdRouteImport.update({
+  id: '/shows/$showId',
+  path: '/shows/$showId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LibrariesLibraryIdIndexRoute = LibrariesLibraryIdIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => LibrariesLibraryIdRoute,
 } as any)
-const LibrariesLibraryIdUnmatchedRoute =
-  LibrariesLibraryIdUnmatchedRouteImport.update({
-    id: '/unmatched',
-    path: '/unmatched',
-    getParentRoute: () => LibrariesLibraryIdRoute,
-  } as any)
-const LibrariesLibraryIdTracksRoute =
-  LibrariesLibraryIdTracksRouteImport.update({
-    id: '/tracks',
-    path: '/tracks',
-    getParentRoute: () => LibrariesLibraryIdRoute,
-  } as any)
-const LibrariesLibraryIdShowsRoute = LibrariesLibraryIdShowsRouteImport.update({
-  id: '/shows',
-  path: '/shows',
-  getParentRoute: () => LibrariesLibraryIdRoute,
-} as any)
-const LibrariesLibraryIdSettingsRoute =
-  LibrariesLibraryIdSettingsRouteImport.update({
-    id: '/settings',
-    path: '/settings',
-    getParentRoute: () => LibrariesLibraryIdRoute,
-  } as any)
-const LibrariesLibraryIdMoviesRoute =
-  LibrariesLibraryIdMoviesRouteImport.update({
-    id: '/movies',
-    path: '/movies',
-    getParentRoute: () => LibrariesLibraryIdRoute,
-  } as any)
-const LibrariesLibraryIdCollectionsRoute =
-  LibrariesLibraryIdCollectionsRouteImport.update({
-    id: '/collections',
-    path: '/collections',
-    getParentRoute: () => LibrariesLibraryIdRoute,
-  } as any)
-const LibrariesLibraryIdBrowserRoute =
-  LibrariesLibraryIdBrowserRouteImport.update({
-    id: '/browser',
-    path: '/browser',
-    getParentRoute: () => LibrariesLibraryIdRoute,
-  } as any)
-const LibrariesLibraryIdBooksRoute = LibrariesLibraryIdBooksRouteImport.update({
-  id: '/books',
-  path: '/books',
-  getParentRoute: () => LibrariesLibraryIdRoute,
-} as any)
-const LibrariesLibraryIdAuthorsRoute =
-  LibrariesLibraryIdAuthorsRouteImport.update({
-    id: '/authors',
-    path: '/authors',
+const LibrariesLibraryIdAlbumsRoute =
+  LibrariesLibraryIdAlbumsRouteImport.update({
+    id: '/albums',
+    path: '/albums',
     getParentRoute: () => LibrariesLibraryIdRoute,
   } as any)
 const LibrariesLibraryIdArtistsRoute =
@@ -211,10 +171,56 @@ const LibrariesLibraryIdArtistsRoute =
     path: '/artists',
     getParentRoute: () => LibrariesLibraryIdRoute,
   } as any)
-const LibrariesLibraryIdAlbumsRoute =
-  LibrariesLibraryIdAlbumsRouteImport.update({
-    id: '/albums',
-    path: '/albums',
+const LibrariesLibraryIdAuthorsRoute =
+  LibrariesLibraryIdAuthorsRouteImport.update({
+    id: '/authors',
+    path: '/authors',
+    getParentRoute: () => LibrariesLibraryIdRoute,
+  } as any)
+const LibrariesLibraryIdBooksRoute = LibrariesLibraryIdBooksRouteImport.update({
+  id: '/books',
+  path: '/books',
+  getParentRoute: () => LibrariesLibraryIdRoute,
+} as any)
+const LibrariesLibraryIdBrowserRoute =
+  LibrariesLibraryIdBrowserRouteImport.update({
+    id: '/browser',
+    path: '/browser',
+    getParentRoute: () => LibrariesLibraryIdRoute,
+  } as any)
+const LibrariesLibraryIdCollectionsRoute =
+  LibrariesLibraryIdCollectionsRouteImport.update({
+    id: '/collections',
+    path: '/collections',
+    getParentRoute: () => LibrariesLibraryIdRoute,
+  } as any)
+const LibrariesLibraryIdMoviesRoute =
+  LibrariesLibraryIdMoviesRouteImport.update({
+    id: '/movies',
+    path: '/movies',
+    getParentRoute: () => LibrariesLibraryIdRoute,
+  } as any)
+const LibrariesLibraryIdSettingsRoute =
+  LibrariesLibraryIdSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => LibrariesLibraryIdRoute,
+  } as any)
+const LibrariesLibraryIdShowsRoute = LibrariesLibraryIdShowsRouteImport.update({
+  id: '/shows',
+  path: '/shows',
+  getParentRoute: () => LibrariesLibraryIdRoute,
+} as any)
+const LibrariesLibraryIdTracksRoute =
+  LibrariesLibraryIdTracksRouteImport.update({
+    id: '/tracks',
+    path: '/tracks',
+    getParentRoute: () => LibrariesLibraryIdRoute,
+  } as any)
+const LibrariesLibraryIdUnmatchedRoute =
+  LibrariesLibraryIdUnmatchedRouteImport.update({
+    id: '/unmatched',
+    path: '/unmatched',
     getParentRoute: () => LibrariesLibraryIdRoute,
   } as any)
 
@@ -229,13 +235,14 @@ export interface FileRoutesByFullPath {
   '/collections/$collectionId': typeof CollectionsCollectionIdRoute
   '/libraries/$libraryId': typeof LibrariesLibraryIdRouteWithChildren
   '/movies/$movieId': typeof MoviesMovieIdRoute
+  '/settings/backup': typeof SettingsBackupRoute
   '/settings/casting': typeof SettingsCastingRoute
   '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
   '/settings/organization': typeof SettingsOrganizationRoute
+  '/settings/quality-profiles': typeof SettingsQualityProfilesRoute
   '/settings/sources': typeof SettingsSourcesRoute
   '/settings/torrent': typeof SettingsTorrentRoute
-  '/settings/usenet': typeof SettingsUsenetRoute
   '/shows/$showId': typeof ShowsShowIdRoute
   '/downloads/': typeof DownloadsIndexRoute
   '/libraries/': typeof LibrariesIndexRoute
@@ -262,13 +269,14 @@ export interface FileRoutesByTo {
   '/auth/login': typeof AuthLoginRoute
   '/collections/$collectionId': typeof CollectionsCollectionIdRoute
   '/movies/$movieId': typeof MoviesMovieIdRoute
+  '/settings/backup': typeof SettingsBackupRoute
   '/settings/casting': typeof SettingsCastingRoute
   '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
   '/settings/organization': typeof SettingsOrganizationRoute
+  '/settings/quality-profiles': typeof SettingsQualityProfilesRoute
   '/settings/sources': typeof SettingsSourcesRoute
   '/settings/torrent': typeof SettingsTorrentRoute
-  '/settings/usenet': typeof SettingsUsenetRoute
   '/shows/$showId': typeof ShowsShowIdRoute
   '/downloads': typeof DownloadsIndexRoute
   '/libraries': typeof LibrariesIndexRoute
@@ -298,13 +306,14 @@ export interface FileRoutesById {
   '/collections/$collectionId': typeof CollectionsCollectionIdRoute
   '/libraries/$libraryId': typeof LibrariesLibraryIdRouteWithChildren
   '/movies/$movieId': typeof MoviesMovieIdRoute
+  '/settings/backup': typeof SettingsBackupRoute
   '/settings/casting': typeof SettingsCastingRoute
   '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
   '/settings/organization': typeof SettingsOrganizationRoute
+  '/settings/quality-profiles': typeof SettingsQualityProfilesRoute
   '/settings/sources': typeof SettingsSourcesRoute
   '/settings/torrent': typeof SettingsTorrentRoute
-  '/settings/usenet': typeof SettingsUsenetRoute
   '/shows/$showId': typeof ShowsShowIdRoute
   '/downloads/': typeof DownloadsIndexRoute
   '/libraries/': typeof LibrariesIndexRoute
@@ -335,13 +344,14 @@ export interface FileRouteTypes {
     | '/collections/$collectionId'
     | '/libraries/$libraryId'
     | '/movies/$movieId'
+    | '/settings/backup'
     | '/settings/casting'
     | '/settings/logs'
     | '/settings/metadata'
     | '/settings/organization'
+    | '/settings/quality-profiles'
     | '/settings/sources'
     | '/settings/torrent'
-    | '/settings/usenet'
     | '/shows/$showId'
     | '/downloads/'
     | '/libraries/'
@@ -368,13 +378,14 @@ export interface FileRouteTypes {
     | '/auth/login'
     | '/collections/$collectionId'
     | '/movies/$movieId'
+    | '/settings/backup'
     | '/settings/casting'
     | '/settings/logs'
     | '/settings/metadata'
     | '/settings/organization'
+    | '/settings/quality-profiles'
     | '/settings/sources'
     | '/settings/torrent'
-    | '/settings/usenet'
     | '/shows/$showId'
     | '/downloads'
     | '/libraries'
@@ -403,13 +414,14 @@ export interface FileRouteTypes {
     | '/collections/$collectionId'
     | '/libraries/$libraryId'
     | '/movies/$movieId'
+    | '/settings/backup'
     | '/settings/casting'
     | '/settings/logs'
     | '/settings/metadata'
     | '/settings/organization'
+    | '/settings/quality-profiles'
     | '/settings/sources'
     | '/settings/torrent'
-    | '/settings/usenet'
     | '/shows/$showId'
     | '/downloads/'
     | '/libraries/'
@@ -446,18 +458,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/search': {
-      id: '/search'
-      path: '/search'
-      fullPath: '/search'
-      preLoaderRoute: typeof SearchRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/notifications': {
@@ -467,123 +472,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof NotificationsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/search': {
+      id: '/search'
+      path: '/search'
+      fullPath: '/search'
+      preLoaderRoute: typeof SearchRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/settings/': {
-      id: '/settings/'
-      path: '/'
-      fullPath: '/settings/'
-      preLoaderRoute: typeof SettingsIndexRouteImport
-      parentRoute: typeof SettingsRoute
-    }
-    '/libraries/': {
-      id: '/libraries/'
-      path: '/libraries'
-      fullPath: '/libraries/'
-      preLoaderRoute: typeof LibrariesIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/downloads/': {
-      id: '/downloads/'
-      path: '/downloads'
-      fullPath: '/downloads/'
-      preLoaderRoute: typeof DownloadsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/shows/$showId': {
-      id: '/shows/$showId'
-      path: '/shows/$showId'
-      fullPath: '/shows/$showId'
-      preLoaderRoute: typeof ShowsShowIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings/usenet': {
-      id: '/settings/usenet'
-      path: '/usenet'
-      fullPath: '/settings/usenet'
-      preLoaderRoute: typeof SettingsUsenetRouteImport
-      parentRoute: typeof SettingsRoute
-    }
-    '/settings/torrent': {
-      id: '/settings/torrent'
-      path: '/torrent'
-      fullPath: '/settings/torrent'
-      preLoaderRoute: typeof SettingsTorrentRouteImport
-      parentRoute: typeof SettingsRoute
-    }
-    '/settings/sources': {
-      id: '/settings/sources'
-      path: '/sources'
-      fullPath: '/settings/sources'
-      preLoaderRoute: typeof SettingsSourcesRouteImport
-      parentRoute: typeof SettingsRoute
-    }
-    '/settings/organization': {
-      id: '/settings/organization'
-      path: '/organization'
-      fullPath: '/settings/organization'
-      preLoaderRoute: typeof SettingsOrganizationRouteImport
-      parentRoute: typeof SettingsRoute
-    }
-    '/settings/metadata': {
-      id: '/settings/metadata'
-      path: '/metadata'
-      fullPath: '/settings/metadata'
-      preLoaderRoute: typeof SettingsMetadataRouteImport
-      parentRoute: typeof SettingsRoute
-    }
-    '/settings/logs': {
-      id: '/settings/logs'
-      path: '/logs'
-      fullPath: '/settings/logs'
-      preLoaderRoute: typeof SettingsLogsRouteImport
-      parentRoute: typeof SettingsRoute
-    }
-    '/settings/casting': {
-      id: '/settings/casting'
-      path: '/casting'
-      fullPath: '/settings/casting'
-      preLoaderRoute: typeof SettingsCastingRouteImport
-      parentRoute: typeof SettingsRoute
-    }
-    '/movies/$movieId': {
-      id: '/movies/$movieId'
-      path: '/movies/$movieId'
-      fullPath: '/movies/$movieId'
-      preLoaderRoute: typeof MoviesMovieIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/libraries/$libraryId': {
-      id: '/libraries/$libraryId'
-      path: '/libraries/$libraryId'
-      fullPath: '/libraries/$libraryId'
-      preLoaderRoute: typeof LibrariesLibraryIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/collections/$collectionId': {
-      id: '/collections/$collectionId'
-      path: '/collections/$collectionId'
-      fullPath: '/collections/$collectionId'
-      preLoaderRoute: typeof CollectionsCollectionIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/auth/login': {
-      id: '/auth/login'
-      path: '/auth/login'
-      fullPath: '/auth/login'
-      preLoaderRoute: typeof AuthLoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/audiobooks/$audiobookId': {
-      id: '/audiobooks/$audiobookId'
-      path: '/audiobooks/$audiobookId'
-      fullPath: '/audiobooks/$audiobookId'
-      preLoaderRoute: typeof AudiobooksAudiobookIdRouteImport
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/albums/$albumId': {
@@ -593,81 +493,130 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AlbumsAlbumIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/audiobooks/$audiobookId': {
+      id: '/audiobooks/$audiobookId'
+      path: '/audiobooks/$audiobookId'
+      fullPath: '/audiobooks/$audiobookId'
+      preLoaderRoute: typeof AudiobooksAudiobookIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth/login': {
+      id: '/auth/login'
+      path: '/auth/login'
+      fullPath: '/auth/login'
+      preLoaderRoute: typeof AuthLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/collections/$collectionId': {
+      id: '/collections/$collectionId'
+      path: '/collections/$collectionId'
+      fullPath: '/collections/$collectionId'
+      preLoaderRoute: typeof CollectionsCollectionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/downloads/': {
+      id: '/downloads/'
+      path: '/downloads'
+      fullPath: '/downloads/'
+      preLoaderRoute: typeof DownloadsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/libraries/': {
+      id: '/libraries/'
+      path: '/libraries'
+      fullPath: '/libraries/'
+      preLoaderRoute: typeof LibrariesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/libraries/$libraryId': {
+      id: '/libraries/$libraryId'
+      path: '/libraries/$libraryId'
+      fullPath: '/libraries/$libraryId'
+      preLoaderRoute: typeof LibrariesLibraryIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/movies/$movieId': {
+      id: '/movies/$movieId'
+      path: '/movies/$movieId'
+      fullPath: '/movies/$movieId'
+      preLoaderRoute: typeof MoviesMovieIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/': {
+      id: '/settings/'
+      path: '/'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof SettingsIndexRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/backup': {
+      id: '/settings/backup'
+      path: '/backup'
+      fullPath: '/settings/backup'
+      preLoaderRoute: typeof SettingsBackupRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/casting': {
+      id: '/settings/casting'
+      path: '/casting'
+      fullPath: '/settings/casting'
+      preLoaderRoute: typeof SettingsCastingRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/logs': {
+      id: '/settings/logs'
+      path: '/logs'
+      fullPath: '/settings/logs'
+      preLoaderRoute: typeof SettingsLogsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/metadata': {
+      id: '/settings/metadata'
+      path: '/metadata'
+      fullPath: '/settings/metadata'
+      preLoaderRoute: typeof SettingsMetadataRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/organization': {
+      id: '/settings/organization'
+      path: '/organization'
+      fullPath: '/settings/organization'
+      preLoaderRoute: typeof SettingsOrganizationRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/quality-profiles': {
+      id: '/settings/quality-profiles'
+      path: '/quality-profiles'
+      fullPath: '/settings/quality-profiles'
+      preLoaderRoute: typeof SettingsQualityProfilesRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/sources': {
+      id: '/settings/sources'
+      path: '/sources'
+      fullPath: '/settings/sources'
+      preLoaderRoute: typeof SettingsSourcesRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/torrent': {
+      id: '/settings/torrent'
+      path: '/torrent'
+      fullPath: '/settings/torrent'
+      preLoaderRoute: typeof SettingsTorrentRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/shows/$showId': {
+      id: '/shows/$showId'
+      path: '/shows/$showId'
+      fullPath: '/shows/$showId'
+      preLoaderRoute: typeof ShowsShowIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/libraries/$libraryId/': {
       id: '/libraries/$libraryId/'
       path: '/'
       fullPath: '/libraries/$libraryId/'
       preLoaderRoute: typeof LibrariesLibraryIdIndexRouteImport
-      parentRoute: typeof LibrariesLibraryIdRoute
-    }
-    '/libraries/$libraryId/unmatched': {
-      id: '/libraries/$libraryId/unmatched'
-      path: '/unmatched'
-      fullPath: '/libraries/$libraryId/unmatched'
-      preLoaderRoute: typeof LibrariesLibraryIdUnmatchedRouteImport
-      parentRoute: typeof LibrariesLibraryIdRoute
-    }
-    '/libraries/$libraryId/tracks': {
-      id: '/libraries/$libraryId/tracks'
-      path: '/tracks'
-      fullPath: '/libraries/$libraryId/tracks'
-      preLoaderRoute: typeof LibrariesLibraryIdTracksRouteImport
-      parentRoute: typeof LibrariesLibraryIdRoute
-    }
-    '/libraries/$libraryId/shows': {
-      id: '/libraries/$libraryId/shows'
-      path: '/shows'
-      fullPath: '/libraries/$libraryId/shows'
-      preLoaderRoute: typeof LibrariesLibraryIdShowsRouteImport
-      parentRoute: typeof LibrariesLibraryIdRoute
-    }
-    '/libraries/$libraryId/settings': {
-      id: '/libraries/$libraryId/settings'
-      path: '/settings'
-      fullPath: '/libraries/$libraryId/settings'
-      preLoaderRoute: typeof LibrariesLibraryIdSettingsRouteImport
-      parentRoute: typeof LibrariesLibraryIdRoute
-    }
-    '/libraries/$libraryId/movies': {
-      id: '/libraries/$libraryId/movies'
-      path: '/movies'
-      fullPath: '/libraries/$libraryId/movies'
-      preLoaderRoute: typeof LibrariesLibraryIdMoviesRouteImport
-      parentRoute: typeof LibrariesLibraryIdRoute
-    }
-    '/libraries/$libraryId/collections': {
-      id: '/libraries/$libraryId/collections'
-      path: '/collections'
-      fullPath: '/libraries/$libraryId/collections'
-      preLoaderRoute: typeof LibrariesLibraryIdCollectionsRouteImport
-      parentRoute: typeof LibrariesLibraryIdRoute
-    }
-    '/libraries/$libraryId/browser': {
-      id: '/libraries/$libraryId/browser'
-      path: '/browser'
-      fullPath: '/libraries/$libraryId/browser'
-      preLoaderRoute: typeof LibrariesLibraryIdBrowserRouteImport
-      parentRoute: typeof LibrariesLibraryIdRoute
-    }
-    '/libraries/$libraryId/books': {
-      id: '/libraries/$libraryId/books'
-      path: '/books'
-      fullPath: '/libraries/$libraryId/books'
-      preLoaderRoute: typeof LibrariesLibraryIdBooksRouteImport
-      parentRoute: typeof LibrariesLibraryIdRoute
-    }
-    '/libraries/$libraryId/authors': {
-      id: '/libraries/$libraryId/authors'
-      path: '/authors'
-      fullPath: '/libraries/$libraryId/authors'
-      preLoaderRoute: typeof LibrariesLibraryIdAuthorsRouteImport
-      parentRoute: typeof LibrariesLibraryIdRoute
-    }
-    '/libraries/$libraryId/artists': {
-      id: '/libraries/$libraryId/artists'
-      path: '/artists'
-      fullPath: '/libraries/$libraryId/artists'
-      preLoaderRoute: typeof LibrariesLibraryIdArtistsRouteImport
       parentRoute: typeof LibrariesLibraryIdRoute
     }
     '/libraries/$libraryId/albums': {
@@ -677,28 +626,100 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LibrariesLibraryIdAlbumsRouteImport
       parentRoute: typeof LibrariesLibraryIdRoute
     }
+    '/libraries/$libraryId/artists': {
+      id: '/libraries/$libraryId/artists'
+      path: '/artists'
+      fullPath: '/libraries/$libraryId/artists'
+      preLoaderRoute: typeof LibrariesLibraryIdArtistsRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/authors': {
+      id: '/libraries/$libraryId/authors'
+      path: '/authors'
+      fullPath: '/libraries/$libraryId/authors'
+      preLoaderRoute: typeof LibrariesLibraryIdAuthorsRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/books': {
+      id: '/libraries/$libraryId/books'
+      path: '/books'
+      fullPath: '/libraries/$libraryId/books'
+      preLoaderRoute: typeof LibrariesLibraryIdBooksRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/browser': {
+      id: '/libraries/$libraryId/browser'
+      path: '/browser'
+      fullPath: '/libraries/$libraryId/browser'
+      preLoaderRoute: typeof LibrariesLibraryIdBrowserRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/collections': {
+      id: '/libraries/$libraryId/collections'
+      path: '/collections'
+      fullPath: '/libraries/$libraryId/collections'
+      preLoaderRoute: typeof LibrariesLibraryIdCollectionsRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/movies': {
+      id: '/libraries/$libraryId/movies'
+      path: '/movies'
+      fullPath: '/libraries/$libraryId/movies'
+      preLoaderRoute: typeof LibrariesLibraryIdMoviesRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/settings': {
+      id: '/libraries/$libraryId/settings'
+      path: '/settings'
+      fullPath: '/libraries/$libraryId/settings'
+      preLoaderRoute: typeof LibrariesLibraryIdSettingsRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/shows': {
+      id: '/libraries/$libraryId/shows'
+      path: '/shows'
+      fullPath: '/libraries/$libraryId/shows'
+      preLoaderRoute: typeof LibrariesLibraryIdShowsRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/tracks': {
+      id: '/libraries/$libraryId/tracks'
+      path: '/tracks'
+      fullPath: '/libraries/$libraryId/tracks'
+      preLoaderRoute: typeof LibrariesLibraryIdTracksRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/unmatched': {
+      id: '/libraries/$libraryId/unmatched'
+      path: '/unmatched'
+      fullPath: '/libraries/$libraryId/unmatched'
+      preLoaderRoute: typeof LibrariesLibraryIdUnmatchedRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
   }
 }
 
 interface SettingsRouteChildren {
+  SettingsBackupRoute: typeof SettingsBackupRoute
   SettingsCastingRoute: typeof SettingsCastingRoute
   SettingsLogsRoute: typeof SettingsLogsRoute
   SettingsMetadataRoute: typeof SettingsMetadataRoute
   SettingsOrganizationRoute: typeof SettingsOrganizationRoute
+  SettingsQualityProfilesRoute: typeof SettingsQualityProfilesRoute
   SettingsSourcesRoute: typeof SettingsSourcesRoute
   SettingsTorrentRoute: typeof SettingsTorrentRoute
-  SettingsUsenetRoute: typeof SettingsUsenetRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
+  SettingsBackupRoute: SettingsBackupRoute,
   SettingsCastingRoute: SettingsCastingRoute,
   SettingsLogsRoute: SettingsLogsRoute,
   SettingsMetadataRoute: SettingsMetadataRoute,
   SettingsOrganizationRoute: SettingsOrganizationRoute,
+  SettingsQualityProfilesRoute: SettingsQualityProfilesRoute,
   SettingsSourcesRoute: SettingsSourcesRoute,
   SettingsTorrentRoute: SettingsTorrentRoute,
-  SettingsUsenetRoute: SettingsUsenetRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 }
 
