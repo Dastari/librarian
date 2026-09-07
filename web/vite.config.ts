@@ -130,10 +130,26 @@ export default defineConfig(({ mode }) => {
     },
     test: {
       environment: "jsdom",
+      // Dates in the UI are formatted in the local zone; pin it so snapshots of them are stable.
+      env: { TZ: "UTC" },
       globals: false,
       setupFiles: ["./vitest.setup.ts"],
       include: ["src/**/*.test.{ts,tsx}"],
       css: false,
+      coverage: {
+        provider: "v8",
+        reporter: ["text-summary", "html"],
+        reportsDirectory: "./coverage",
+        include: ["src/**/*.{ts,tsx}"],
+        exclude: [
+          "src/**/*.test.{ts,tsx}",
+          "src/test/**",
+          "src/graphql/generated/**",
+          "src/routeTree.gen.ts",
+          "src/main.tsx",
+          "src/vite-env.d.ts",
+        ],
+      },
     },
   };
 });

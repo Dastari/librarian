@@ -9325,9 +9325,7 @@ impl LibraryScanService {
     /// True when any *directory* on the path is a sample/proof/extras folder.
     fn sample_or_extras_directory(path: &str) -> Option<&'static str> {
         let path_obj = Path::new(path);
-        let Some(parent) = path_obj.parent() else {
-            return None;
-        };
+        let parent = path_obj.parent()?;
         for component in parent.components() {
             let Component::Normal(part) = component else {
                 continue;
@@ -10826,9 +10824,6 @@ impl LibraryScanService {
         copied_at: Option<&str>,
         copy_error: Option<&str>,
     ) -> Result<()> {
-        let now = chrono::Utc::now()
-            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
-            .to_string();
         let existing = self
             .find_pending_file_match(auth_user, info_hash, file.file_index, &file.source_path)
             .await?;
@@ -10853,7 +10848,10 @@ impl LibraryScanService {
             "copiedAt": copied_at,
             "copyError": copy_error.or(unmatched_reason),
             "copyAttempts": existing.as_ref().map(|e| e.2 + if copy_error.is_some() { 1 } else { 0 }).unwrap_or(if copy_error.is_some() { 1 } else { 0 }),
-            "updatedAt": now,
+            // `createdAt`/`updatedAt` are ORM-managed and are not part of the
+            // generated Create/Update inputs. Sending them made every single
+            // torrent import fail with an "unknown field" GraphQL error, which
+            // surfaced as `postProcessStatus = "failed"` on every torrent.
         });
 
         if let Some((id, _, _)) = existing {
@@ -10878,8 +10876,7 @@ impl LibraryScanService {
                 anyhow::bail!("updatePendingFileMatch failed");
             }
         } else {
-            let mut create_input = input;
-            create_input["createdAt"] = serde_json::Value::String(now);
+            let create_input = input;
             let data = self
                 .execute_mutation(
                     auth_user,

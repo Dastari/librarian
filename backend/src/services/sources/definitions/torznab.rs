@@ -706,7 +706,11 @@ fn apply_text_field(tag: &str, text: &str, item: &mut RawItem) {
 /// Parse a Torznab/Newznab RSS 2.0 search response into `SourceRelease`s.
 fn parse_torznab_rss(xml: &str) -> Result<Vec<SourceRelease>> {
     let mut reader = Reader::from_str(xml);
-    reader.config_mut().trim_text(true);
+    // Not `trim_text(true)`: an entity reference splits element text into
+    // several events, and trimming each one separately eats the spaces around
+    // it ("Show &amp; Tell" -> "Show&Tell"). The whole accumulated buffer is
+    // trimmed once, at the closing tag.
+    reader.config_mut().trim_text(false);
     let mut buf = Vec::new();
 
     let mut releases = Vec::new();
@@ -751,6 +755,22 @@ fn parse_torznab_rss(xml: &str) -> Result<Vec<SourceRelease>> {
             }
             Event::CData(t) => {
                 text_buf.push_str(&t);
+            }
+            // quick-xml reports an entity reference inside element text as its
+            // own event rather than as part of the surrounding `Text`. Ignoring
+            // it silently *deletes* the character: a `<link>` holding
+            // `magnet:?xt=urn:btih:HASH&amp;dn=...&amp;tr=...` came back with
+            // every `&` missing, so the display name and every tracker were
+            // swallowed into the info hash and the magnet resolved against DHT
+            // alone. Indexers overwhelmingly put the magnet in `<link>`.
+            Event::GeneralRef(reference) => {
+                if let Ok(Some(character)) = reference.resolve_char_ref() {
+                    text_buf.push(character);
+                } else if let Some(resolved) =
+                    quick_xml::escape::resolve_predefined_entity(&reference)
+                {
+                    text_buf.push_str(resolved);
+                }
             }
             Event::End(e) => {
                 let local = end_local_name(&e);
@@ -945,6 +965,42 @@ mod tests {
     </item>
   </channel>
 </rss>"#;
+
+    /// A magnet in `<link>` — the shape most indexers actually emit — with the
+    /// `&` separators XML-escaped, as they must be.
+    const MAGNET_IN_LINK_RSS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+  <channel>
+    <item>
+      <title>Show &amp; Tell S01E01 1080p WEB-DL</title>
+      <guid isPermaLink="false">https://example.com/d?id=1&amp;x=2</guid>
+      <link>magnet:?xt=urn:btih:AABBCCDDEEFF00112233445566778899AABBCCDD&amp;dn=Show+Tell&amp;tr=http%3A%2F%2Ftracker.example%2Fannounce</link>
+      <torznab:attr name="seeders" value="9" />
+    </item>
+  </channel>
+</rss>"#;
+
+    #[test]
+    fn entity_references_in_element_text_survive_parsing() {
+        // Regression guard: quick-xml emits `&amp;` inside element text as a
+        // separate `Event::GeneralRef`. Dropping it deleted every `&` from the
+        // magnet, so `dn` and `tr` were absorbed into the info hash and the
+        // torrent had no trackers at all.
+        let releases = parse_torznab_rss(MAGNET_IN_LINK_RSS).expect("parse rss");
+        let release = releases.first().expect("one release");
+
+        assert_eq!(
+            release.magnet_uri.as_deref(),
+            Some(
+                "magnet:?xt=urn:btih:AABBCCDDEEFF00112233445566778899AABBCCDD\
+                 &dn=Show+Tell&tr=http%3A%2F%2Ftracker.example%2Fannounce"
+                    .replace(char::is_whitespace, "")
+                    .as_str()
+            )
+        );
+        assert_eq!(release.title, "Show & Tell S01E01 1080p WEB-DL");
+        assert_eq!(release.guid, "https://example.com/d?id=1&x=2");
+    }
 
     const SAMPLE_CAPS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <caps>

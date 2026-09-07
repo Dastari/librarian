@@ -9,10 +9,12 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "pnpm run codegen && pnpm run icons && tsc --noEmit && vite build",
+    "build": "pnpm run codegen && pnpm run icons && tsc --noEmit -p tsconfig.build.json && vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
     "codegen": "node scripts/generate-entity-documents.mjs && graphql-codegen --config codegen.ts",
     "codegen:watch": "graphql-codegen --config codegen.ts --watch",
     "schema:pull": "node scripts/pull-schema.mjs",

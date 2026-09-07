@@ -184,9 +184,9 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
           release.profileMatch ? (
             release.rejectReasons.length > 0 ? (
               <Tooltip delay={200} closeDelay={0}>
-                <span tabIndex={0} data-focusable className="nav-focus inline-flex rounded-pill">
+                <Button variant="ghost" size="sm" data-focusable aria-label={`Why ${release.profileMatch}: ${release.rejectReasons.join(", ")}`} className="h-auto min-h-0 cursor-help rounded-pill border-0 bg-transparent p-0 shadow-none backdrop-blur-none">
                   <StatusChip status={MATCH[release.profileMatch] ?? MATCH.suboptimal!} />
-                </span>
+                </Button>
                 <Tooltip.Content placement="top">
                   <span className="block max-w-64 text-label-sm">{release.rejectReasons.join(" · ")}</span>
                 </Tooltip.Content>

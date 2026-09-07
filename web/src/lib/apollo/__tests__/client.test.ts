@@ -12,8 +12,11 @@ const LOGIN = parse(`mutation Login { login { success } }`);
 
 const unauthorized = () => new CombinedGraphQLErrors({ errors: [new GraphQLError("nope", { extensions: { code: "UNAUTHORIZED" } })] });
 const okResult = { data: { movies: [] } };
-/** `execute` wants the client the operation belongs to; the session link never reads it. */
-const context = { client: {} as never };
+/**
+ * `execute` wants the client the operation belongs to. The session link never reads it, but the
+ * error link asks the client's query manager whether a result is incremental.
+ */
+const context = { client: { queryManager: { incrementalHandler: { isIncrementalResult: () => false } } } as never };
 
 /**
  * A terminating link that fails the first attempt and succeeds afterwards, recording the

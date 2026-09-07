@@ -135,6 +135,9 @@ tokio-test = "0.4.5"
 tempfile = "3.27.0"
 assert_matches = "1.5.0"
 pretty_assertions = "1.4.1"
+# graphql-ws client for the generated-subscription contract test
+# (`tests/api_entities.rs`); already in the lock graph via axum's `ws` feature.
+tokio-tungstenite = "0.29.0"
 # regex is already a main dependency, but we use it in tests too
 
 [patch.crates-io]

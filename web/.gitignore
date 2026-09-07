@@ -11,3 +11,5 @@ src/routeTree.gen.ts
 public/icons/
 public/favicon.ico
 public/apple-touch-icon.png
+e2e/.auth/
+e2e/.results/

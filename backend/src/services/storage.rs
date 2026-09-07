@@ -94,30 +94,6 @@ fn parse_namespace(value: &str) -> Result<StorageNamespace> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::parse_storage_timestamp;
-
-    #[test]
-    fn reads_existing_unix_timestamp_artwork_metadata() {
-        let created_at = parse_storage_timestamp("1785390864").unwrap();
-        assert_eq!(created_at.unix_timestamp(), 1_785_390_864);
-    }
-
-    #[test]
-    fn preserves_rfc3339_storage_timestamps() {
-        let created_at = parse_storage_timestamp("2026-07-30T12:00:00+02:00").unwrap();
-        assert_eq!(created_at.unix_timestamp(), 1_785_405_600);
-    }
-
-    #[test]
-    fn rejects_corrupt_or_out_of_range_storage_timestamps() {
-        for value in ["", "not-a-date", "9223372036854775807"] {
-            assert!(parse_storage_timestamp(value).is_err(), "accepted {value}");
-        }
-    }
-}
-
 #[async_trait]
 impl Service for ObjectStorageService {
     fn name(&self) -> &str {
@@ -140,5 +116,29 @@ impl Service for ObjectStorageService {
 
     async fn health(&self) -> Result<ServiceHealth> {
         Ok(ServiceHealth::healthy())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_storage_timestamp;
+
+    #[test]
+    fn reads_existing_unix_timestamp_artwork_metadata() {
+        let created_at = parse_storage_timestamp("1785390864").unwrap();
+        assert_eq!(created_at.unix_timestamp(), 1_785_390_864);
+    }
+
+    #[test]
+    fn preserves_rfc3339_storage_timestamps() {
+        let created_at = parse_storage_timestamp("2026-07-30T12:00:00+02:00").unwrap();
+        assert_eq!(created_at.unix_timestamp(), 1_785_405_600);
+    }
+
+    #[test]
+    fn rejects_corrupt_or_out_of_range_storage_timestamps() {
+        for value in ["", "not-a-date", "9223372036854775807"] {
+            assert!(parse_storage_timestamp(value).is_err(), "accepted {value}");
+        }
     }
 }

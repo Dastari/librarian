@@ -480,7 +480,7 @@ async fn find_window_torrents(db: &Database, retry_window_days: i64) -> Result<V
         .await?)
 }
 
-async fn run_retry_sweep(
+pub async fn run_retry_sweep(
     manager: &Arc<ServicesManager>,
     retry_after_minutes: i64,
     retry_window_days: i64,

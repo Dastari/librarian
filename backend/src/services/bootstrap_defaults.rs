@@ -836,16 +836,64 @@ pub async fn seed_defaults(db: &Database) -> Result<()> {
 #[path = "bootstrap_defaults/tests.rs"]
 mod tests;
 
+/// Deployment environment variables that stand in for a setting's seed value.
+///
+/// Docker images, the portable server build and the sandbox script configure the
+/// torrent client through the environment, but the settings table is what the
+/// torrent service actually reads. Without this, a fresh database always started
+/// with the static seed (port 6881, `/data/downloads`) no matter what the
+/// deployment asked for, and the settings screen showed a value that was never
+/// the one in effect.
+const ENVIRONMENT_DEFAULTS: &[(&str, &str, bool)] = &[
+    // (setting key, environment variable, value is a JSON string)
+    ("torrent.listen_port", "TORRENT_LISTEN_PORT", false),
+    ("torrent.download_dir", "DOWNLOADS_PATH", true),
+    ("torrent.session_dir", "SESSION_PATH", true),
+];
+
+/// Resolves the value a setting should be seeded with, preferring the environment.
+pub fn environment_default(key: &str) -> Option<String> {
+    let (_, variable, is_string) = ENVIRONMENT_DEFAULTS
+        .iter()
+        .find(|(setting, _, _)| *setting == key)?;
+    let raw = std::env::var(variable).ok()?;
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if *is_string {
+        return Some(serde_json::Value::String(raw.to_string()).to_string());
+    }
+    raw.parse::<u16>().ok().map(|port| port.to_string())
+}
+
 async fn seed_app_settings(db: &Database) -> Result<()> {
     let existing = AppSetting::query(db.pool())
         .fetch_all()
         .await?
         .into_iter()
-        .map(|setting| setting.key)
-        .collect::<HashSet<_>>();
+        .map(|setting| (setting.key.clone(), setting))
+        .collect::<std::collections::HashMap<_, _>>();
 
     for seed in APP_SETTINGS {
-        if existing.contains(seed.key) {
+        let environment = environment_default(seed.key);
+        if let Some(current) = existing.get(seed.key) {
+            // A row that still carries the static seed is not something the user chose;
+            // let the deployment's environment override it, but never touch an edited value.
+            if let Some(value) = environment
+                && current.value == seed.value
+                && current.value != value
+            {
+                AppSetting::update_by_id(
+                    db,
+                    &current.id,
+                    UpdateAppSettingInput {
+                        value: Some(value),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            }
             continue;
         }
 
@@ -853,7 +901,7 @@ async fn seed_app_settings(db: &Database) -> Result<()> {
             db,
             CreateAppSettingInput {
                 key: seed.key.to_string(),
-                value: seed.value.to_string(),
+                value: environment.unwrap_or_else(|| seed.value.to_string()),
                 description: Some(seed.description.to_string()),
                 category: seed.category.to_string(),
             },

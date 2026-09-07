@@ -28,6 +28,8 @@ pnpm dev           # http://localhost:3000 (PORT=… to change), proxies /graphq
 ./live.sh start    # run the live site on :3000 in the background (./live.sh start --preview for the production build)
 pnpm lint          # tsc --noEmit
 pnpm test          # vitest
+pnpm test:coverage # vitest + v8 coverage report in coverage/
+pnpm test:e2e      # playwright against the sandbox stack on :3003
 pnpm build         # codegen + typecheck + production bundle in dist/
 pnpm icons         # regenerate PWA/favicon assets from src/assets/brand
 pnpm film-graph    # rebuild the sign-in constellation dataset (Wikidata + Wikipedia; needs network)
@@ -41,6 +43,33 @@ screenshots and QA without touching real data; sign in with the account you crea
 `/register`, then run `e2e/sandbox.sh adopt` so the copied libraries belong to it.
 
 Copy `.env.example` to `.env.local` to point the dev proxy at another backend.
+
+## Testing
+
+Two suites, both run from `web/`.
+
+**Unit and component tests** (`pnpm test`) use Vitest with jsdom and Testing Library. Specs live in
+`__tests__` folders beside the code they cover. `renderWithProviders` from `src/test` mounts a
+component with Apollo's `MockedProvider`, the toast outlet and (by default) a memory router, so a
+test only supplies the GraphQL mocks it needs; pass `shell: true` when the component reads the theme
+or input mode. Apollo mocks are reused rather than consumed once, so components that refetch work
+without duplicate mocks. `pnpm test:coverage` writes a v8 report to `coverage/`.
+
+**End-to-end smoke tests** (`pnpm test:e2e`) drive a real browser with Playwright against the
+sandbox stack: `playwright.config.ts` starts `e2e/sandbox.sh start` if nothing is already listening
+on `http://127.0.0.1:3003` and reuses it otherwise. Never point them at the live site on :3000 — the
+specs sign in, open dialogs and save. Credentials come from `LIBRARIAN_E2E_USER` and
+`LIBRARIAN_E2E_PASSWORD` (default `toby` / `sandbox-password-123`, which only exists in the sandbox
+copy). Refresh tokens rotate on every use, so each spec signs in for itself through
+`signInViaApi` instead of sharing a saved `storageState`. Anything a spec changes on the server it
+changes back, so the sandbox stays usable for screenshots.
+
+```bash
+e2e/sandbox.sh start          # or let playwright start it
+pnpm test:e2e                 # everything
+pnpm test:e2e --project=desktop --headed
+pnpm exec playwright show-trace e2e/.results/<test>/trace.zip
+```
 
 ## How the GraphQL layer works
 

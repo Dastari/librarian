@@ -62,7 +62,12 @@ impl SourcesServiceConfig {
         })
     }
 
-    #[cfg(test)]
+    /// Build a config around an explicit credential key.
+    ///
+    /// Test support only — `run()` always goes through [`Self::from_env`].
+    /// Exposed (rather than `#[cfg(test)]`) so `backend/tests/` can boot the
+    /// sources service without mutating process-wide environment variables.
+    #[doc(hidden)]
     pub fn with_key(key: String) -> Self {
         Self {
             credential_key: Some(key),

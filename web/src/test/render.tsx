@@ -1,8 +1,9 @@
+import type { MockLink } from "@apollo/client/testing";
 import { MockedProvider } from "@apollo/client/testing/react";
-import type { MockedResponse } from "@apollo/client/testing";
 import { ToastProvider } from "@heroui/react";
 import { render, type RenderOptions, type RenderResult } from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
+
 
 import { InputModeProvider } from "@/lib/input-mode";
 import { ThemeProvider } from "@/lib/theme";
@@ -11,7 +12,7 @@ import { TestRouterProvider, createTestRouter, type TestRouter, type TestRouterO
 
 export interface RenderWithProvidersOptions extends TestRouterOptions {
   /** Apollo mocks; omit for components that do not query. */
-  mocks?: ReadonlyArray<MockedResponse>;
+  mocks?: ReadonlyArray<MockLink.MockedResponse<any, any>>;
   /** Mount the router (needed by anything using Link/useNavigate). Defaults to true. */
   router?: boolean;
   /** Mount the theme and input-mode providers. Defaults to false; they touch <html>. */
@@ -27,8 +28,11 @@ export interface RenderWithProvidersResult extends RenderResult {
  * Renders a component with the providers it can reasonably expect: Apollo (mocked), the toast
  * outlet HeroUI mutations write to, an optional memory router and the theme/input-mode context.
  */
-export function renderWithProviders(ui: ReactElement, options: RenderWithProvidersOptions = {}): RenderWithProvidersResult {
+export async function renderWithProviders(ui: ReactElement, options: RenderWithProvidersOptions = {}): Promise<RenderWithProvidersResult> {
   const { mocks = [], router: withRouter = true, shell = false, renderOptions, ...routerOptions } = options;
+  // Mocks are single-use by default, which breaks any component that refetches. Reuse them
+  // unless a test deliberately caps a mock to assert how often it is asked for.
+  const reusable = mocks.map((mock) => ({ maxUsageCount: Number.POSITIVE_INFINITY, ...mock }));
 
   const wrap = (children: ReactNode): ReactNode => {
     let tree: ReactNode = (
@@ -45,7 +49,7 @@ export function renderWithProviders(ui: ReactElement, options: RenderWithProvide
       );
     }
     return (
-      <MockedProvider mocks={[...mocks]} defaultOptions={{ watchQuery: { fetchPolicy: "no-cache" }, query: { fetchPolicy: "no-cache" } }}>
+      <MockedProvider mocks={reusable} showWarnings={false}>
         {tree}
       </MockedProvider>
     );
@@ -55,5 +59,7 @@ export function renderWithProviders(ui: ReactElement, options: RenderWithProvide
     return { ...render(<>{wrap(ui)}</>, renderOptions), router: null };
   }
   const testRouter = createTestRouter(wrap(ui), routerOptions);
+  // Resolve the initial match first so the component is on screen when this returns.
+  await testRouter.load();
   return { ...render(<TestRouterProvider router={testRouter} />, renderOptions), router: testRouter };
 }

@@ -35,6 +35,11 @@ case "${1:-status}" in
   stop)
     for pid in "$SB/backend.pid" /tmp/librarian-web-shots.pid; do
       [ -f "$pid" ] && { kill "$(cat "$pid")" 2>/dev/null || true; rm -f "$pid"; }
+    done
+    sleep 1
+    # Pid files can point at a wrapper shell; make sure nothing is still holding the sandbox ports.
+    for port in 3011 3003; do
+      for p in $(ss -ltnp 2>/dev/null | grep ":$port " | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u); do kill "$p" 2>/dev/null || true; done
     done; echo stopped ;;
   status)
     for name in backend web; do

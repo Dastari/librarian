@@ -28,7 +28,6 @@ export function NavRail() {
 
   return (
     <aside
-      aria-label="Primary"
       data-expanded={expanded}
       className={cn(
         "glass-chrome sticky top-0 z-30 hidden h-svh shrink-0 flex-col rounded-none border-0 border-r pt-[calc(var(--safe-top)+0.75rem)] pb-[calc(var(--safe-bottom)+0.75rem)] transition-[width] duration-base ease-fluid md:flex",
@@ -40,7 +39,7 @@ export function NavRail() {
         {expanded ? <span className="text-title-md font-display tracking-tight text-foreground">Librarian</span> : null}
       </Link>
 
-      <nav className="flex flex-col gap-1 px-2">
+      <nav aria-label="Primary" className="flex flex-col gap-1 px-2">
         {PRIMARY_NAV.filter((item) => !item.adminOnly || isAdmin).map((item) => {
           const active = isNavActive(item.href, pathname);
           const badge = item.badge === "downloads" ? counts.downloads : item.badge === "notifications" ? counts.notifications : 0;
@@ -48,6 +47,7 @@ export function NavRail() {
             <Link
               to={item.href as never}
               data-focusable
+              aria-label={expanded ? undefined : item.label}
               aria-current={active ? "page" : undefined}
               className={cn(
                 "nav-focus relative flex h-11 items-center gap-3 rounded-xl px-3 text-rail-foreground transition-colors duration-fast",

@@ -2,7 +2,7 @@ import { CombinedGraphQLErrors } from "@apollo/client";
 import { GraphQLError } from "graphql";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CurrentUserDocument, LogoutDocument, RefreshSessionDocument } from "@/graphql/generated/graphql";
+import { LogoutDocument, RefreshSessionDocument } from "@/graphql/generated/graphql";
 
 import type { SessionUser } from "../session";
 

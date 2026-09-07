@@ -1,3 +1,5 @@
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -319,11 +321,25 @@ fn entity_files_use_graphql_orm_derives_and_camel_case_generation() {
     );
 }
 
+/// Introspection over the whole schema: every type with its field names,
+/// field argument names and input-field names.
+const INTROSPECTION: &str = r#"query {
+  __schema { types { name fields(includeDeprecated: true) { name args { name } }
+                     inputFields { name } } }
+}"#;
+
 #[test]
 fn generated_graphql_schema_has_no_pascal_case_fields_args_or_input_fields() {
-    let schema_path = backend_root().join("../frontend/src/lib/graphql/generated/schema.json");
-    let schema: serde_json::Value = serde_json::from_str(&read(&schema_path))
-        .unwrap_or_else(|err| panic!("failed to parse {}: {err}", schema_path.display()));
+    // Introspected from a live server rather than a checked-in artifact: the
+    // artifact used to live in the (now retired) `frontend/` tree, and a
+    // snapshot of the schema can only ever be as current as its last export.
+    let schema = common::run_app_test(|| async {
+        let app = common::TestApp::start().await;
+        let mut admin = app.admin_client().await;
+        let data = admin.query(INTROSPECTION, serde_json::json!({})).await;
+        app.shutdown().await;
+        data
+    });
 
     let types = schema
         .pointer("/__schema/types")

@@ -71,7 +71,7 @@ pub fn allows_any(profile: &QualityProfile) -> bool {
         && profile.release_group_blacklist.is_empty()
         && profile.release_group_whitelist.is_empty()
         && !profile.require_hdr
-        && !(profile.require_language_match && !profile.preferred_languages.is_empty())
+        && (!profile.require_language_match || profile.preferred_languages.is_empty())
         && profile.allow_season_packs
 }
 
