@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -152,8 +152,9 @@ describe("MovieReleases", () => {
       ownedMock([1, 2], []),
       librariesMock([library("lib-1", "Films", "movies")]),
     ]);
+    // Both rows load independently; the de-duplication settles once the cinema row has answered.
     const upcoming = await screen.findByRole("list", { name: "Upcoming movie releases" });
-    expect(titlesIn(upcoming)).toEqual(["Something Else"]);
+    await waitFor(() => expect(titlesIn(upcoming)).toEqual(["Something Else"]));
   });
 
   it("links titles already in a library and labels their state", async () => {
