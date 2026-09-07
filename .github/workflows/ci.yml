@@ -77,7 +77,7 @@ jobs:
       - name: Export schema
         run: >-
           EXPORT_GRAPHQL_SCHEMA=${{ runner.temp }}/librarian.graphql
-          cargo test --locked --bin librarian -j 1 services::graphql::schema::tests::schema_builds_without_recursing
+          cargo test --locked --lib -j 1 services::graphql::schema::tests::schema_builds_without_recursing
           -- --exact
         working-directory: backend
       - name: Regenerate client
