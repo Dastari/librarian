@@ -30,7 +30,7 @@ futures = "0.3.34"
 librqbit = "9.0.1"
 
 # Database - features controlled by crate features above
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "tls-rustls", "uuid", "time", "json", "chrono", "rust_decimal"] }
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "tls-rustls", "uuid", "time", "json", "chrono", "rust_decimal"] }
 
 # File type detection (for artwork)
 bytes = "1.12.1"
@@ -137,7 +137,7 @@ assert_matches = "1.5.0"
 pretty_assertions = "1.4.1"
 # graphql-ws client for the generated-subscription contract test
 # (`tests/api_entities.rs`); already in the lock graph via axum's `ws` feature.
-tokio-tungstenite = "0.29.0"
+tokio-tungstenite = "0.30.0"
 # regex is already a main dependency, but we use it in tests too
 
 [patch.crates-io]
