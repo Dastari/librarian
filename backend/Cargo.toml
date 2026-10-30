@@ -1,6 +1,6 @@
 [package]
 name = "librarian"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 authors = ["toby@dastari.net"]
 description = "Rust backend for Librarian media library"

@@ -34,7 +34,7 @@ RUN pnpm run build
 # ============================================================================
 # Stage 2: Build Backend
 # ============================================================================
-FROM rust:1.95-bookworm AS backend-builder
+FROM rust:1.99.1-bookworm AS backend-builder
 
 WORKDIR /app
 
@@ -48,6 +48,7 @@ RUN apt-get update && apt-get install -y \
 COPY backend/Cargo.toml backend/Cargo.lock ./
 COPY vendor/rust_cast /vendor/rust_cast
 COPY vendor/async-graphql /vendor/async-graphql
+COPY vendor/graphql-orm-macros /vendor/graphql-orm-macros
 
 # Create a dummy main.rs to build dependencies
 RUN mkdir src && echo "fn main() {}" > src/main.rs
