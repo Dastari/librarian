@@ -26,11 +26,29 @@ pub enum CredentialCommand {
     },
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct BackupRestoreCommand {
+    pub snapshot_id: String,
+    pub database_path: String,
+    pub object_root: String,
+}
+
+/// Offline maintenance run while the server is stopped.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum MaintenanceCommand {
+    /// Take and verify a full backup in the configured backup repository.
+    BackupCreate,
+    /// Merge torrent rows that share an info hash; a dry run unless `apply`.
+    RepairDuplicateTorrents { apply: bool },
+}
+
 #[derive(Debug, Default)]
 pub struct CliOptions {
     pub run_mode_override: Option<RunMode>,
     pub schema_command: Option<SchemaCommand>,
     pub credential_command: Option<CredentialCommand>,
+    pub backup_restore: Option<BackupRestoreCommand>,
+    pub maintenance: Option<MaintenanceCommand>,
 }
 
 impl CliOptions {
@@ -55,6 +73,64 @@ impl CliOptions {
                     if let Some(value) = arg.split_once('=').map(|(_, v)| v) {
                         options.run_mode_override = RunMode::from_arg(value);
                     }
+                }
+                "repair" => {
+                    if args.next().as_deref() != Some("duplicate-torrents") {
+                        anyhow::bail!("Expected `repair duplicate-torrents [--apply]`");
+                    }
+                    let apply = match args.next().as_deref() {
+                        None => false,
+                        Some("--apply") => true,
+                        Some(other) => {
+                            anyhow::bail!("Unknown repair duplicate-torrents argument `{other}`")
+                        }
+                    };
+                    options.maintenance =
+                        Some(MaintenanceCommand::RepairDuplicateTorrents { apply });
+                }
+                "backup" => {
+                    match args.next().as_deref() {
+                        Some("restore") => {}
+                        Some("create") => {
+                            if let Some(extra) = args.next() {
+                                anyhow::bail!("Unknown backup create argument `{extra}`");
+                            }
+                            options.maintenance = Some(MaintenanceCommand::BackupCreate);
+                            continue;
+                        }
+                        _ => anyhow::bail!(
+                            "Expected `backup create` or `backup restore --snapshot <ID> --database <NEW_FILE> --objects <NEW_DIRECTORY>`"
+                        ),
+                    }
+                    let mut snapshot_id = None;
+                    let mut database_path = None;
+                    let mut object_root = None;
+                    while let Some(flag) = args.next() {
+                        let (key, value) = if let Some((key, value)) = flag.split_once('=') {
+                            (key.to_string(), value.to_string())
+                        } else {
+                            (
+                                flag,
+                                args.next()
+                                    .context("Missing backup restore argument value")?,
+                            )
+                        };
+                        match key.as_str() {
+                            "--snapshot" => snapshot_id = Some(value),
+                            "--database" => database_path = Some(value),
+                            "--objects" => object_root = Some(value),
+                            _ => anyhow::bail!("Unknown backup restore argument `{key}`"),
+                        }
+                    }
+                    options.backup_restore = Some(BackupRestoreCommand {
+                        snapshot_id: snapshot_id.context("backup restore requires --snapshot")?,
+                        database_path: database_path.context(
+                            "backup restore requires --database with a new staging file",
+                        )?,
+                        object_root: object_root.context(
+                            "backup restore requires --objects with a new staging directory",
+                        )?,
+                    });
                 }
                 "schema" => {
                     let operation = args
@@ -168,6 +244,61 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<CliOptions> {
         CliOptions::from_iter(args.iter().map(|value| value.to_string()))
+    }
+
+    #[test]
+    fn offline_restore_requires_explicit_new_targets() {
+        assert!(parse(&["backup", "restore", "--snapshot", "snapshot"]).is_err());
+        assert!(
+            parse(&[
+                "backup",
+                "restore",
+                "--snapshot",
+                "snapshot",
+                "--database",
+                "new.db"
+            ])
+            .is_err()
+        );
+        let parsed = parse(&[
+            "backup",
+            "restore",
+            "--snapshot=snapshot",
+            "--database",
+            "new.db",
+            "--objects",
+            "new-objects",
+        ])
+        .unwrap();
+        assert_eq!(
+            parsed.backup_restore,
+            Some(BackupRestoreCommand {
+                snapshot_id: "snapshot".into(),
+                database_path: "new.db".into(),
+                object_root: "new-objects".into(),
+            })
+        );
+        assert!(parse(&["backup", "restore", "--replace", "yes"]).is_err());
+    }
+
+    #[test]
+    fn parses_offline_maintenance() -> Result<()> {
+        assert_eq!(
+            parse(&["backup", "create"])?.maintenance,
+            Some(MaintenanceCommand::BackupCreate)
+        );
+        assert_eq!(
+            parse(&["repair", "duplicate-torrents"])?.maintenance,
+            Some(MaintenanceCommand::RepairDuplicateTorrents { apply: false })
+        );
+        assert_eq!(
+            parse(&["repair", "duplicate-torrents", "--apply"])?.maintenance,
+            Some(MaintenanceCommand::RepairDuplicateTorrents { apply: true })
+        );
+        assert!(parse(&["backup", "create", "--now"]).is_err());
+        assert!(parse(&["repair", "torrents"]).is_err());
+        assert!(parse(&["repair", "duplicate-torrents", "--yes"]).is_err());
+        Ok(())
     }
 
     #[test]

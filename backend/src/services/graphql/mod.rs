@@ -2,15 +2,20 @@ pub mod auth;
 pub mod entities;
 pub(crate) mod error;
 pub mod filesystem_network;
-//pub mod helpers;
 pub mod mutations;
+pub mod personal_policy;
+pub mod personal_view;
 pub(crate) mod policy;
 pub mod queries;
 pub(crate) mod row_policy;
 mod schema;
 pub mod service;
+pub(crate) mod session_authority;
 pub mod subscriptions;
 
 pub use auth::{AuthUser, verify_token};
 pub use schema::{LibrarianSchema, build_schema};
 pub use service::{GraphqlService, GraphqlServiceConfig};
+
+#[cfg(test)]
+mod trusted_fields_tests;

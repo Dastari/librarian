@@ -1,5 +1,4 @@
-import { SearchField } from "@heroui/react";
-import { IconSearch, IconX } from "@tabler/icons-react";
+import { SearchField } from "glass-ux/input";
 import type { ReactNode } from "react";
 
 import { AlphabetRail, GlassSegmented, ViewToggle, type ViewMode } from "@/components/ui";
@@ -19,26 +18,19 @@ interface BrowserToolbarProps {
   /** Extra controls (sort menu, add button). */
   trailing?: ReactNode;
   placeholder?: string;
+  /** The table footer reports the count; kept so callers can pass it without a second display. */
   total?: number;
+  /** Table-only views have no gallery toggle or alphabet jump. */
+  tableOnly?: boolean;
 }
 
 /** Filter row shared by every library list: search, availability chips, letter rail, view. */
-export function BrowserToolbar({ query, onQueryChange, letter, onLetterChange, availability, onAvailabilityChange, view, onViewChange, trailing, placeholder = "Filter", total }: BrowserToolbarProps) {
+export function BrowserToolbar({ query, onQueryChange, letter, onLetterChange, availability, onAvailabilityChange, view, onViewChange, trailing, placeholder = "Filter", tableOnly = false }: BrowserToolbarProps) {
   const desktop = useIsDesktop();
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex shrink-0 flex-col gap-2 sm:gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <SearchField aria-label={placeholder} value={query} onChange={onQueryChange} className="w-full sm:w-64" variant="secondary">
-          <SearchField.Group>
-            <SearchField.SearchIcon>
-              <IconSearch size={16} />
-            </SearchField.SearchIcon>
-            <SearchField.Input placeholder={placeholder} />
-            <SearchField.ClearButton>
-              <IconX size={14} />
-            </SearchField.ClearButton>
-          </SearchField.Group>
-        </SearchField>
+        <SearchField aria-label={placeholder} value={query} onValueChange={onQueryChange} placeholder={placeholder} className="w-full sm:w-64" />
         {onAvailabilityChange ? (
           <GlassSegmented<AvailabilityFilter>
             ariaLabel="Availability"
@@ -54,11 +46,10 @@ export function BrowserToolbar({ query, onQueryChange, letter, onLetterChange, a
           />
         ) : null}
         <div className="flex-1" />
-        {typeof total === "number" ? <span className="text-numeric text-label text-muted">{total.toLocaleString()}</span> : null}
         {trailing}
-        <ViewToggle value={view} onChange={onViewChange} />
+        {!tableOnly ? <ViewToggle value={view} onChange={onViewChange} /> : null}
       </div>
-      {!desktop ? <AlphabetRail orientation="horizontal" value={letter} onChange={onLetterChange} /> : null}
+      {!desktop && !tableOnly ? <AlphabetRail orientation="horizontal" value={letter} onChange={onLetterChange} /> : null}
     </div>
   );
 }
@@ -66,5 +57,5 @@ export function BrowserToolbar({ query, onQueryChange, letter, onLetterChange, a
 export function BrowserLetterRail({ letter, onLetterChange }: { letter: string | null; onLetterChange: (letter: string | null) => void }) {
   const desktop = useIsDesktop();
   if (!desktop) return null;
-  return <AlphabetRail value={letter} onChange={onLetterChange} className="sticky top-4 shrink-0 self-start" />;
+  return <AlphabetRail value={letter} onChange={onLetterChange} className="min-h-0 shrink-0 self-stretch overscroll-contain" />;
 }

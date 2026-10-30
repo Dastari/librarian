@@ -1,0 +1,18 @@
+<resources>
+    <string name="app_name">Librarian TV</string>
+    <string name="server_title">Connect to Librarian</string>
+    <string name="server_help">Enter the address you use to open Librarian on your computer. Your TV must be able to reach that server.</string>
+    <string name="server_hint">https://library.example or http://192.168.1.20:3000</string>
+    <string name="connect">Connect</string>
+    <string name="cancel">Cancel</string>
+    <string name="retry">Retry</string>
+    <string name="change_server">Change server</string>
+    <string name="reload">Reload</string>
+    <string name="close_app">Close app</string>
+    <string name="menu_hint">Hold Back for connection settings.</string>
+    <string name="connection_error">Could not open Librarian. Check the server address, network connection, and certificate. Hold Back to change the server.</string>
+    <string name="outside_server">This link leaves your Librarian server. Open it on your phone or computer.</string>
+    <string name="server_changed">Changing servers clears this app’s local sign-in and website data. Sign out in Librarian first if you also want to revoke the server session.</string>
+    <string name="loading">Opening Librarian…</string>
+    <string name="webview_unavailable">Android System WebView is unavailable. Update or enable it in your TV’s app settings, then reopen Librarian.</string>
+</resources>

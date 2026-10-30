@@ -17,10 +17,14 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
+use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
 use tracing::warn;
+
+use super::session::TranscodeKind;
 
 /// Playlist filename written into every session's output directory.
 pub const PLAYLIST_FILENAME: &str = "playlist.m3u8";
@@ -169,6 +173,119 @@ pub fn spawn_hls_transcode(
 ) -> Result<Child> {
     let args = build_transcode_args(input, output_dir);
     spawn_ffmpeg(ffmpeg_path, &args, session_id)
+}
+
+/// Keep legacy default selection unchanged; explicit selection maps one video
+/// (if present) and precisely the authorized absolute audio index. Subtitles
+/// must be delivered separately rather than accidentally mapped into MPEG-TS.
+pub fn spawn_hls_with_audio(
+    ffmpeg_path: &str,
+    input: &Path,
+    output_dir: &Path,
+    session_id: &str,
+    kind: TranscodeKind,
+    audio_stream: Option<i32>,
+) -> Result<Child> {
+    let mut args = match kind {
+        TranscodeKind::Remux => build_remux_args(input, output_dir),
+        TranscodeKind::Transcode => build_transcode_args(input, output_dir),
+    };
+    if let Some(index) = audio_stream {
+        anyhow::ensure!(
+            index >= 0,
+            "negative audio stream index for HLS session {session_id}"
+        );
+        args.splice(
+            3..3,
+            [
+                "-map".to_owned(),
+                "0:v:0?".to_owned(),
+                "-map".to_owned(),
+                format!("0:{index}"),
+                "-sn".to_owned(),
+                "-dn".to_owned(),
+            ],
+        );
+    }
+    spawn_ffmpeg(ffmpeg_path, &args, session_id)
+}
+
+/// Hard allocation/output cap, including for embedded subtitles in large files.
+pub const MAX_SUBTITLE_BYTES: u64 = 8 * 1024 * 1024;
+
+#[derive(Debug)]
+pub enum SubtitleError {
+    Busy,
+    Unavailable,
+    Timeout,
+    TooLarge,
+    Conversion,
+}
+
+/// Read stdout incrementally under a hard cap. Never use `output()` here:
+/// malformed/large input must not allocate an unbounded subtitle response.
+/// `input_format` forces the sidecar demuxer so a disguised playlist cannot
+/// cause ffmpeg to open additional local or remote sources.
+pub async fn subtitle_webvtt(
+    ffmpeg_path: &str,
+    input: &Path,
+    stream_index: Option<i32>,
+    input_format: Option<&str>,
+) -> std::result::Result<Vec<u8>, SubtitleError> {
+    let mut command = Command::new(ffmpeg_path);
+    command.args([
+        "-nostdin",
+        "-v",
+        "error",
+        "-threads",
+        "1",
+        "-protocol_whitelist",
+        "file,pipe",
+    ]);
+    if let Some(format) = input_format {
+        command.args(["-f", format]);
+    }
+    command.arg("-i").arg(input);
+    let mapping = match stream_index {
+        Some(index) if index >= 0 => format!("0:{index}"),
+        Some(_) => return Err(SubtitleError::Conversion),
+        None => "0:s:0".to_owned(),
+    };
+    let mut child = command
+        .args(["-map", &mapping, "-c:s", "webvtt", "-f", "webvtt", "pipe:1"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| {
+            warn!(input_path = %input.display(), %error, "Failed to spawn subtitle conversion");
+            SubtitleError::Unavailable
+        })?;
+    let stdout = child.stdout.take().ok_or(SubtitleError::Conversion)?;
+    let result = tokio::time::timeout(Duration::from_secs(20), async {
+        let mut bytes = Vec::new();
+        stdout
+            .take(MAX_SUBTITLE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|_| SubtitleError::Conversion)?;
+        if bytes.len() as u64 > MAX_SUBTITLE_BYTES {
+            return Err(SubtitleError::TooLarge);
+        }
+        let status = child.wait().await.map_err(|_| SubtitleError::Conversion)?;
+        if !status.success() || !bytes.starts_with(b"WEBVTT") {
+            return Err(SubtitleError::Conversion);
+        }
+        Ok(bytes)
+    })
+    .await
+    .unwrap_or(Err(SubtitleError::Timeout));
+    if result.is_err() {
+        let _ = child.start_kill();
+        let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+    }
+    result
 }
 
 #[cfg(test)]

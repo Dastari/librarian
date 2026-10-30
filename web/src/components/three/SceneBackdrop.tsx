@@ -27,7 +27,7 @@ export function SceneBackdrop({ className, density, images }: SceneBackdropProps
 
   return (
     <div className={cn("pointer-events-none absolute inset-0 -z-10 overflow-hidden", className)} aria-hidden>
-      <div className="ambient-canvas absolute inset-0" />
+      <div className="canvas-ambient absolute inset-0" />
       {enabled ? (
         <Suspense fallback={null}>
           <AmbientScene density={density} images={images} />

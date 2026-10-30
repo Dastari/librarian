@@ -4,8 +4,16 @@ use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    async_graphql::SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
 )]
+#[graphql(complex)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
@@ -55,6 +63,7 @@ pub struct PlaybackSession {
 
     #[graphql(name = "tvShowId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub tv_show_id: Option<String>,
 
     #[graphql(name = "albumId")]
@@ -107,6 +116,91 @@ pub struct PlaybackSession {
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,
+
+    // Query relations do not add physical FKs or change existing delete behavior.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "MediaFile",
+        from = "media_file_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub media_file: Option<Box<MediaFile>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Episode",
+        from = "episode_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub episode: Option<Box<Episode>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Movie",
+        from = "movie_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub movie: Option<Box<Movie>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Track",
+        from = "track_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub track: Option<Box<Track>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Audiobook",
+        from = "audiobook_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub audiobook: Option<Box<Audiobook>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Show",
+        from = "tv_show_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub show: Option<Box<Show>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Album",
+        from = "album_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub album: Option<Box<Album>>,
 }
 
 #[derive(Default)]

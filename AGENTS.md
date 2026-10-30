@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 
 - `backend/`: Rust Axum API,service.
-- `web/`: the frontend, a full-screen SPA/PWA (Vite + TanStack Router + Apollo + HeroUI 3). GraphQL documents are generated per entity by `web/scripts/generate-entity-documents.mjs`; see `web/README.md` and `web/STYLE_GUIDE.md`. Serves the live site on :3000 (`web/live.sh start|stop|restart|status`, or `make live-web`). `DEV_SERVER_PUBLIC_URL` in `web/.env.local` sets the public origin for HMR and allowed hosts. Release binaries embed `web/dist` (`cargo build --release --features embed-frontend`), so `make build-web` must run first. The previous `frontend/` app was retired in September 2026 and exists only in git history.
+- `web/`: the frontend, a full-screen SPA/PWA (Vite + TanStack Router + Apollo). Glass UX is the target UI library; existing HeroUI 3/custom screens migrate according to `docs/glass-ux-migration-plan.md`. GraphQL documents are generated per entity by `web/scripts/generate-entity-documents.mjs`; see `web/README.md` and `web/STYLE_GUIDE.md`. Serves the live site on :3000 (`web/live.sh start|stop|restart|status`, or `make live-web`). `DEV_SERVER_PUBLIC_URL` in `web/.env.local` sets the public origin for HMR and allowed hosts. Release binaries embed `web/dist` (`cargo build --release --features embed-frontend`), so `make build-web` must run first. The previous `frontend/` app was retired in September 2026 and exists only in git history.
 - `macros/`: internal Rust proc-macro crate used by the backend.
 - `docs/`: architecture, design, and workflow notes.
 
@@ -15,6 +15,7 @@
 
 All agents must consult `.cursor/rules/` before making changes. At minimum, review:
 - `.cursor/rules/frontend-ui.mdc` for frontend/UI work.
+- `.cursor/rules/glass-ux.mdc` and the relevant Glass UX skill (`.agents/skills/glass-ux-*/SKILL.md`, mirrored in `.claude/skills/` for Claude Code) for Glass UX work; versioned design rules are in `docs/glass-ux/`. Media page, remote-focus and motion conventions are in `web/STYLE_GUIDE.md`.
 - `.cursor/rules/entity-single-source-of-truth.mdc` for GraphQL/entity data access.
 - `.cursor/rules/graphql-naming-convention.mdc` for GraphQL naming and schema shape.
 - `.cursor/rules/media-pipeline.mdc` for matching/pipeline behavior.
@@ -38,7 +39,7 @@ All agents must consult `.cursor/rules/` before making changes. At minimum, revi
 - Rust uses `rustfmt` defaults; run `cargo fmt` before pushing.
 - Rust modules and functions use `snake_case`; types and traits use `CamelCase`.
 - Frontend components use `PascalCase` filenames (`MediaCard.tsx`); hooks are `useThing.ts`.
-- Tailwind + HeroUI drive UI styling; follow `.cursor/rules/` (especially `frontend-ui.mdc`) for layout and UI patterns.
+- Tailwind + Glass UX drive migrated UI styling; follow `.cursor/rules/` (especially `frontend-ui.mdc`) and `docs/glass-ux-migration-plan.md`. Keep legacy HeroUI/custom styling confined to unmigrated slices.
 - Follow `docs/design.md` for product, architecture, and agent rules.
 
 ## Backend Data Access Rules (Mandatory)

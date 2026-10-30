@@ -191,6 +191,9 @@ pub struct SourceSettingOptionGql {
 #[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceReleaseInfo")]
 pub struct SourceReleaseInfoGql {
+    /// Source-scoped hash/GUID identity for deduplicating continued pages.
+    #[graphql(name = "stableId")]
+    pub stable_id: String,
     #[graphql(name = "title")]
     pub title: String,
     #[graphql(name = "guid")]
@@ -309,6 +312,8 @@ impl From<&crate::services::quality::scoring::ParsedRelease> for ParsedReleaseGq
 #[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceSearchResultItem")]
 pub struct SourceSearchResultItemGql {
+    #[graphql(name = "pageInfo")]
+    pub page_info: crate::services::sources::SourceSearchPageInfo,
     #[graphql(name = "sourceId")]
     pub source_id: String,
     #[graphql(name = "sourceName")]
@@ -329,10 +334,12 @@ pub struct SourceSearchResultItemGql {
 pub struct SourceSearchResultSetGql {
     #[graphql(name = "sources")]
     pub sources: Vec<SourceSearchResultItemGql>,
+    /// Number of releases returned in this response, not an external total.
     #[graphql(name = "totalReleases")]
     pub total_releases: i32,
     #[graphql(name = "totalElapsedMs")]
     pub total_elapsed_ms: i64,
+    /// Number of per-source result entries, including failed/unavailable sources.
     #[graphql(name = "sourcesSearched")]
     pub sources_searched: i32,
 }
@@ -372,9 +379,13 @@ pub struct SourceTestConnectionResultGql {
 /// fuzzy text hits. The `*Id` target fields (and `qualityProfileId`) are only
 /// used to resolve a `QualityProfile` for the returned releases' `parsed`,
 /// `profileMatch` and `rejectReasons` fields; they never filter the search.
-#[derive(InputObject, Clone, Debug)]
+#[derive(InputObject, Clone, Debug, Serialize)]
 #[graphql(name = "SearchSourcesInput")]
 pub struct SearchSourcesInput {
+    /// Nonempty continuations advance only these source IDs. Repeat the same
+    /// search/target/profile inputs; optional sourceIds must name the same set.
+    #[graphql(name = "continuations")]
+    pub continuations: Option<Vec<SourceSearchContinuationInput>>,
     #[graphql(name = "query")]
     pub query: String,
     #[graphql(name = "sourceIds")]
@@ -415,8 +426,46 @@ pub struct SearchSourcesInput {
     pub album_id: Option<String>,
     #[graphql(name = "audiobookId")]
     pub audiobook_id: Option<String>,
+    /// Provider item budget, 1..100 (default 50; YTS caps movie pages at 50).
+    /// A movie can return multiple torrent variants; all are preserved.
     #[graphql(name = "limit")]
     pub limit: Option<i32>,
+}
+
+/// Opaque, expiring source page handle. Contains no provider URL or secret.
+#[derive(InputObject, Clone, Debug, Serialize)]
+#[graphql(name = "SourceSearchContinuationInput")]
+pub struct SourceSearchContinuationInput {
+    #[graphql(name = "sourceId")]
+    pub source_id: String,
+    #[graphql(name = "cursor")]
+    pub cursor: String,
+}
+
+/// Bind cursors to every request fact and the effective grading rules.
+/// Source selection is independent so continuing A never restarts B. Volatile
+/// timestamps on the synthetic fallback profile are not grading facts.
+fn source_search_binding(
+    input: &SearchSourcesInput,
+    profile: Option<&QualityProfile>,
+) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut request = serde_json::to_value(input)
+        .map_err(|_| async_graphql::Error::new("Invalid search request"))?;
+    if let Some(fields) = request.as_object_mut() {
+        fields.remove("continuations");
+        fields.remove("source_ids");
+    }
+    let mut profile = serde_json::to_value(profile)
+        .map_err(|_| async_graphql::Error::new("Invalid search profile"))?;
+    if let Some(fields) = profile.as_object_mut() {
+        fields.remove("CreatedAt");
+        fields.remove("UpdatedAt");
+    }
+    Ok(hex::encode(Sha256::digest(
+        serde_json::to_vec(&(request, profile))
+            .map_err(|_| async_graphql::Error::new("Invalid search binding"))?,
+    )))
 }
 
 /// Input for updating source priorities
@@ -513,12 +562,12 @@ impl SourceCustomQueries {
         ctx: &Context<'_>,
         #[graphql(name = "input")] input: SearchSourcesInput,
     ) -> Result<SourceSearchResultSetGql> {
-        ctx.require_member()?;
+        let user = ctx.require_member()?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let db = ctx.data::<Database>()?;
 
         // Optional: the profile to grade every returned release against.
-        let quality_profile = resolve_search_profile(db, &input).await;
+        let quality_profile = resolve_search_profile(ctx, db, &input).await?;
 
         let sources_svc = manager
             .get_sources()
@@ -568,16 +617,32 @@ impl SourceCustomQueries {
 
         let start = std::time::Instant::now();
 
-        let results = if let Some(ref source_ids) = input.source_ids {
-            sources_manager.search_sources(source_ids, &query).await
-        } else {
-            sources_manager.search_all(&query).await
-        };
+        let binding = source_search_binding(&input, quality_profile.as_ref())?;
+        let principal = serde_json::to_string(&(&user.user_id, &user.role))
+            .map_err(|_| async_graphql::Error::new("Invalid search principal"))?;
+        let continuations: Vec<_> = input
+            .continuations
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|continuation| (continuation.source_id.clone(), continuation.cursor.clone()))
+            .collect();
+        let results = sources_manager
+            .search_paged(
+                &principal,
+                &binding,
+                input.source_ids.as_deref(),
+                &query,
+                &continuations,
+            )
+            .await
+            .map_err(|error| async_graphql::Error::new(error.to_string()))?;
 
         let mut total_releases = 0;
         let gql_results: Vec<SourceSearchResultItemGql> = results
             .into_iter()
-            .map(|r| {
+            .map(|page| {
+                let r = page.result;
                 let releases: Vec<SourceReleaseInfoGql> = r
                     .releases
                     .iter()
@@ -608,6 +673,7 @@ impl SourceCustomQueries {
                             None => (None, Vec::new()),
                         };
                         SourceReleaseInfoGql {
+                            stable_id: rel.stable_id(&r.source_id),
                             title: rel.title.clone(),
                             guid: rel.guid.clone(),
                             link: rel.link.clone(),
@@ -638,6 +704,7 @@ impl SourceCustomQueries {
                     .collect();
 
                 SourceSearchResultItemGql {
+                    page_info: page.page_info,
                     source_id: r.source_id,
                     source_name: r.source_name,
                     releases,
@@ -659,57 +726,133 @@ impl SourceCustomQueries {
     }
 }
 
+/// Apply the installed caller policy before trusted profile resolution.
+async fn authorize_search_row(
+    ctx: &Context<'_>,
+    db: &Database,
+    entity: &'static str,
+    policy_key: Option<&'static str>,
+    row: &(dyn std::any::Any + Send + Sync),
+) -> Result<()> {
+    db.ensure_entity_access(
+        Some(ctx),
+        entity,
+        policy_key,
+        graphql_orm::graphql::orm::EntityAccessKind::Read,
+        graphql_orm::graphql::orm::EntityAccessSurface::GraphqlQuery,
+    )
+    .await?;
+    let policy = db
+        .row_policy()
+        .ok_or_else(|| async_graphql::Error::new("Search target access policy unavailable"))?;
+    if !policy
+        .can_read_row(
+            Some(ctx),
+            db,
+            entity,
+            policy_key,
+            graphql_orm::graphql::orm::EntityAccessSurface::GraphqlQuery,
+            row,
+        )
+        .await?
+    {
+        return Err(async_graphql::Error::new(
+            "Search target not found or access denied",
+        ));
+    }
+    Ok(())
+}
+
 /// Resolve the quality profile `searchSources` should grade releases against:
-/// an explicit `qualityProfileId` wins, otherwise the effective profile of the
-/// named target (per-entity override > library > seeded default). Returns
-/// `None` when the caller named neither, in which case releases come back
-/// without `profileMatch`.
+/// an explicit `qualityProfileId` wins after target authorization, otherwise
+/// use the effective profile of one authorized target. Invalid, inaccessible,
+/// or conflicting IDs fail before the trusted source search begins.
 async fn resolve_search_profile(
+    ctx: &Context<'_>,
     db: &Database,
     input: &SearchSourcesInput,
-) -> Option<QualityProfile> {
-    if let Some(id) = input.quality_profile_id.as_deref()
-        && let Ok(Some(profile)) = QualityProfile::get(db.pool(), &id.to_string()).await
-    {
-        return Some(profile);
+) -> Result<Option<QualityProfile>> {
+    ctx.require_member()?;
+    let target_count = [
+        &input.show_id,
+        &input.movie_id,
+        &input.album_id,
+        &input.audiobook_id,
+    ]
+    .into_iter()
+    .filter(|id| id.is_some())
+    .count();
+    if target_count > 1 {
+        return Err(async_graphql::Error::new(
+            "Specify at most one search target",
+        ));
     }
 
-    let resolved = if let Some(id) = input.show_id.as_deref() {
-        match Show::get(db.pool(), &id.to_string()).await {
-            Ok(Some(show)) => Some((show.quality_profile_id, show.library_id)),
-            _ => None,
-        }
-    } else if let Some(id) = input.movie_id.as_deref() {
-        match Movie::get(db.pool(), &id.to_string()).await {
-            Ok(Some(movie)) => Some((movie.quality_profile_id, movie.library_id)),
-            _ => None,
-        }
-    } else if let Some(id) = input.album_id.as_deref() {
-        match Album::get(db.pool(), &id.to_string()).await {
-            Ok(Some(album)) => Some((album.quality_profile_id, album.library_id)),
-            _ => None,
-        }
-    } else if let Some(id) = input.audiobook_id.as_deref() {
-        match Audiobook::get(db.pool(), &id.to_string()).await {
-            Ok(Some(audiobook)) => Some((audiobook.quality_profile_id, audiobook.library_id)),
-            _ => None,
-        }
+    // Authorize the target even when an explicit profile overrides its profile.
+    // An override must never become a way to bypass target ownership checks.
+    macro_rules! target {
+        ($ty:ty, $name:literal, $id:expr) => {{
+            let row = <$ty>::get(db.pool(), $id)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?
+                .ok_or_else(|| {
+                    async_graphql::Error::new("Search target not found or access denied")
+                })?;
+            authorize_search_row(
+                ctx,
+                db,
+                $name,
+                <$ty as graphql_orm::graphql::orm::Entity>::metadata().read_policy,
+                &row,
+            )
+            .await?;
+            Some((row.quality_profile_id, row.library_id))
+        }};
+    }
+    let resolved = if let Some(id) = &input.show_id {
+        target!(Show, "Show", id)
+    } else if let Some(id) = &input.movie_id {
+        target!(Movie, "Movie", id)
+    } else if let Some(id) = &input.album_id {
+        target!(Album, "Album", id)
+    } else if let Some(id) = &input.audiobook_id {
+        target!(Audiobook, "Audiobook", id)
     } else {
         None
     };
 
-    let (override_id, library_id) = resolved?;
-    match quality::profile::resolve_profile(db, override_id.as_deref(), &library_id).await {
-        Ok(profile) => Some(profile),
-        Err(error) => {
-            tracing::warn!(
-                library_id = %library_id,
-                error = %error,
-                "searchSources: failed to resolve the quality profile for the target"
-            );
-            None
-        }
+    if let Some(id) = &input.quality_profile_id {
+        let profile = QualityProfile::get(db.pool(), id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+            .ok_or_else(|| {
+                async_graphql::Error::new("Quality profile not found or access denied")
+            })?;
+        authorize_search_row(
+            ctx,
+            db,
+            "QualityProfile",
+            <QualityProfile as graphql_orm::graphql::orm::Entity>::metadata().read_policy,
+            &profile,
+        )
+        .await?;
+        return Ok(Some(profile));
     }
+    let Some((override_id, library_id)) = resolved else {
+        return Ok(None);
+    };
+    let profile = quality::profile::resolve_profile(db, override_id.as_deref(), &library_id)
+        .await
+        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+    authorize_search_row(
+        ctx,
+        db,
+        "QualityProfile",
+        <QualityProfile as graphql_orm::graphql::orm::Entity>::metadata().read_policy,
+        &profile,
+    )
+    .await?;
+    Ok(Some(profile))
 }
 
 // =============================================================================
@@ -964,4 +1107,73 @@ async fn update_source_status(
     )
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod continuation_binding_tests {
+    use super::*;
+
+    fn input() -> SearchSourcesInput {
+        SearchSourcesInput {
+            continuations: None,
+            query: "fixture".into(),
+            source_ids: Some(vec!["a".into(), "b".into()]),
+            categories: None,
+            season: None,
+            episode: None,
+            imdb_id: None,
+            tvdb_id: None,
+            tmdb_id: None,
+            tvmaze_id: None,
+            year: None,
+            artist: None,
+            album: None,
+            author: None,
+            title: None,
+            quality_profile_id: None,
+            show_id: None,
+            movie_id: None,
+            album_id: None,
+            audiobook_id: None,
+            limit: Some(50),
+        }
+    }
+    #[test]
+    fn query_target_and_effective_profile_bind_cursor_but_source_subset_and_token_do_not() {
+        let original = input();
+        let mut profile = quality::profile::builtin_any_profile();
+        let binding = source_search_binding(&original, Some(&profile)).unwrap();
+        let mut continued = original.clone();
+        continued.source_ids = Some(vec!["a".into()]);
+        continued.continuations = Some(vec![SourceSearchContinuationInput {
+            source_id: "a".into(),
+            cursor: "opaque".into(),
+        }]);
+        assert_eq!(
+            binding,
+            source_search_binding(&continued, Some(&profile)).unwrap()
+        );
+        profile.created_at = "another request's fallback timestamp".into();
+        profile.updated_at = profile.created_at.clone();
+        assert_eq!(
+            binding,
+            source_search_binding(&continued, Some(&profile)).unwrap()
+        );
+        continued.movie_id = Some("foreign-or-different-target".into());
+        assert_ne!(
+            binding,
+            source_search_binding(&continued, Some(&profile)).unwrap()
+        );
+        continued = original.clone();
+        continued.query = "different".into();
+        assert_ne!(
+            binding,
+            source_search_binding(&continued, Some(&profile)).unwrap()
+        );
+        profile.min_seeders += 1;
+        assert_ne!(
+            binding,
+            source_search_binding(&original, Some(&profile)).unwrap()
+        );
+    }
 }

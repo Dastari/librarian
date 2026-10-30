@@ -1,6 +1,8 @@
 import { useLazyQuery, useMutation } from "@apollo/client/react";
-import { Checkbox, SearchField, toast } from "@heroui/react";
-import { IconPlus, IconSearch, IconX } from "@tabler/icons-react";
+import { Checkbox } from "glass-ux/checkbox";
+import { SearchField } from "glass-ux/input";
+import { toast } from "glass-ux/toast";
+import { IconPlus, IconSearch } from "glass-ux/icons";
 import { useEffect, useMemo, useState } from "react";
 
 import { Artwork, Button, Dialog, EmptyState, Spinner } from "@/components/ui";
@@ -176,23 +178,8 @@ export function ProviderSearchDialog({ kind, libraryId, isOpen, onOpenChange, on
     <Dialog isOpen={isOpen} onOpenChange={onOpenChange} title={copy.title} size="xl">
       <div className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-3">
-          <SearchField aria-label={copy.placeholder} value={query} onChange={setQuery} autoFocus className="min-w-0 flex-1">
-            <SearchField.Group>
-              <SearchField.SearchIcon>
-                <IconSearch size={16} />
-              </SearchField.SearchIcon>
-              <SearchField.Input placeholder={copy.placeholder} />
-              <SearchField.ClearButton>
-                <IconX size={14} />
-              </SearchField.ClearButton>
-            </SearchField.Group>
-          </SearchField>
-          <Checkbox isSelected={wanted} onChange={setWanted}>
-            <Checkbox.Control>
-              <Checkbox.Indicator />
-            </Checkbox.Control>
-            <Checkbox.Content>{kind === "collection" ? "Want missing movies" : "Search for downloads"}</Checkbox.Content>
-          </Checkbox>
+          <SearchField aria-label={copy.placeholder} value={query} onValueChange={setQuery} placeholder={copy.placeholder} autoFocus className="min-w-0 flex-1" />
+          <Checkbox checked={wanted} onCheckedChange={setWanted} label={kind === "collection" ? "Want missing movies" : "Search for downloads"} />
         </div>
 
         <div className="scrollbar-thin -mx-1 max-h-[55svh] min-h-48 overflow-y-auto px-1">
@@ -225,7 +212,7 @@ export function ProviderSearchDialog({ kind, libraryId, isOpen, onOpenChange, on
                       item.add().catch((error) => toast.danger(errorMessage(error))).finally(() => setBusyKey(null));
                     }}
                   >
-                    <IconPlus size={16} /> Add
+                    <IconPlus /> Add
                   </Button>
                 </li>
               ))}

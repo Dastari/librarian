@@ -1,5 +1,5 @@
-import { useMutation, useQuery } from "@apollo/client/react";
-import { toast } from "@heroui/react";
+import { useMutation } from "@apollo/client/react";
+import { toast } from "glass-ux/toast";
 import { IconBan, IconRotate } from "@tabler/icons-react";
 import { useMemo } from "react";
 
@@ -12,6 +12,9 @@ import {
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { formatDate, formatRelative } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
+
+import { SettingsLoadError } from "./SettingsLoadError";
+import { useSettingsConnection } from "./useSettingsConnection";
 
 /** Human wording for the reasons the backend records. */
 const REASON: Record<string, string> = {
@@ -27,10 +30,8 @@ const REASON: Record<string, string> = {
  */
 export function BlockedReleases() {
   const isAdmin = useIsAdmin();
-  const { data, previousData, loading, refetch } = useQuery(EntityReleaseBlocklistListDocument, {
-    variables: { orderBy: [{ createdAt: "DESC" }], page: { limit: 100, offset: 0 } },
-  });
-  const rows = (data ?? previousData)?.releaseBlocklists.edges.map((edge) => edge.node) ?? [];
+  const list = useSettingsConnection(EntityReleaseBlocklistListDocument, { orderBy: [{ createdAt: "DESC" }] }, (data) => data.releaseBlocklists);
+  const { rows, loading, refetch } = list;
   const [remove] = useMutation(EntityReleaseBlocklistDeleteDocument);
 
   const unblock = async (row: ReleaseBlocklistFieldsFragment) => {
@@ -68,7 +69,8 @@ export function BlockedReleases() {
 
   return (
     <Panel title="Blocked releases" description="Releases that failed to import or stalled. They are skipped until you unblock them." flush>
-      <DataTable<ReleaseBlocklistFieldsFragment>
+      <SettingsLoadError error={list.error} retry={list.refetch} hasRows={rows.length > 0} />
+        <DataTable<ReleaseBlocklistFieldsFragment>
         className="px-4 pb-4"
         frame={false}
         columns={columns}

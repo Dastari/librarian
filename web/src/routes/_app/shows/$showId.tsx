@@ -1,3 +1,4 @@
+import { useLiveRoute } from "@/lib/graphql/live/hooks";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { ShowPage } from "@/features/media/ShowPage";
@@ -9,5 +10,9 @@ export const Route = createFileRoute("/_app/shows/$showId")({
     const { data } = await context.apollo.query({ query: ShowDetailDocument, variables: { id: params.showId }, fetchPolicy: "cache-first" });
     return { crumb: data?.show?.name ?? "Show" };
   },
-  component: () => <ShowPage showId={Route.useParams().showId} />,
+  component: () => {
+    const { showId } = Route.useParams();
+    useLiveRoute(ShowDetailDocument, { id: showId });
+    return <ShowPage showId={showId} />;
+  },
 });

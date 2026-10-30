@@ -4,8 +4,16 @@ use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    async_graphql::SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
 )]
+#[graphql(complex)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
@@ -24,6 +32,7 @@ pub struct TorrentFile {
 
     #[graphql(name = "torrentId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub torrent_id: String,
 
     #[graphql(name = "fileIndex")]
@@ -55,6 +64,7 @@ pub struct TorrentFile {
 
     #[graphql(name = "mediaFileId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub media_file_id: Option<String>,
 
     #[graphql(name = "isExcluded")]
@@ -70,6 +80,32 @@ pub struct TorrentFile {
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,
+
+    // Query relations do not add physical FKs or change existing delete behavior.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Torrent",
+        from = "torrent_id",
+        to = "id",
+        on_delete = "cascade",
+        propagate_change = "up",
+        emit_fk = false
+    )]
+    pub torrent: Option<Box<Torrent>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "MediaFile",
+        from = "media_file_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub media_file: Option<Box<MediaFile>>,
 }
 
 #[derive(Default)]

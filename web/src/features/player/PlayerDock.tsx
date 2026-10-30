@@ -1,5 +1,8 @@
 import { useNavigate } from "@tanstack/react-router";
-import { IconChevronUp, IconListDetails, IconX } from "@tabler/icons-react";
+import { Button } from "glass-ux/button";
+import { ListRow } from "glass-ux/list-row";
+import { Notice } from "glass-ux/notice";
+import { IconChevronUp, IconList, IconClose } from "glass-ux/icons";
 import { useEffect, useRef } from "react";
 
 import { Artwork } from "@/components/ui";
@@ -7,6 +10,7 @@ import { cn } from "@/lib/utils";
 
 import { PlayPauseButton, SeekBar, SkipButton, VolumeControl } from "./controls";
 import { NowPlayingSheet } from "./NowPlayingSheet";
+import { CastButton } from "./CastButton";
 import { audioCommands } from "./usePlayer";
 import { currentAudioItem, playerStore, usePlayerState } from "./store";
 import { useMediaSource } from "./useMediaSource";
@@ -21,65 +25,117 @@ export function PlayerDock() {
   const item = currentAudioItem(state);
   const audioRef = useRef<HTMLAudioElement>(null);
   const navigate = useNavigate();
-  const progress = useProgressSync(item);
-  const media = useMediaSource(item && !progress.loading ? item.mediaFileId : null, audioRef, progress.resumePosition ?? item?.startPosition);
+  const activationKey = state.audioActivation;
+  const progress = useProgressSync(item, activationKey);
+  const media = useMediaSource(item && !progress.loading ? item.mediaFileId : null, audioRef, progress.resumePosition ?? item?.startPosition, { activationKey });
   const { transport } = state;
+
+  const { report, flush } = progress;
+  const { isTransitioning, retry } = media;
+
+  useEffect(() => {
+    if (!item) return;
+    const retryAudio = () => {
+      if (playerStore.getSnapshot().audioActivation !== activationKey) return;
+      playerStore.updateTransport({ error: null, loading: true, playing: true });
+      retry();
+    };
+    audioCommands.retry = retryAudio;
+    return () => { if (audioCommands.retry === retryAudio) delete audioCommands.retry; };
+  }, [item, activationKey, retry]);
 
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio) return;
-    audioCommands.seek = (position) => {
-      audio.currentTime = position;
-      playerStore.updateTransport({ position });
+    if (!audio || !item || !media.source) return;
+    const active = () => playerStore.getSnapshot().audioActivation === activationKey && !isTransitioning();
+    const duration = () => Math.max(media.duration ?? 0, Number.isFinite(audio.duration) ? audio.duration : 0);
+    const checkpoint = (playing: boolean) => report(audio.currentTime, duration(), playing);
+    const seek = (position: number) => {
+      if (!active() || !Number.isFinite(position)) return;
+      audio.currentTime = Math.max(0, duration() > 0 ? Math.min(position, duration()) : position);
+      playerStore.updateTransport({ position: audio.currentTime });
+      checkpoint(!audio.paused);
     };
+    audioCommands.seek = seek;
     const onTime = () => {
+      if (!active()) return;
       playerStore.updateTransport({ position: audio.currentTime, buffered: audio.buffered.length ? audio.buffered.end(audio.buffered.length - 1) : 0 });
-      progress.report(audio.currentTime, audio.duration || 0, !audio.paused);
+      checkpoint(!audio.paused);
     };
-    const onDuration = () => playerStore.updateTransport({ duration: Number.isFinite(audio.duration) ? audio.duration : 0 });
-    const onPlay = () => playerStore.updateTransport({ playing: true, loading: false });
+    const onDuration = () => { if (active()) playerStore.updateTransport({ duration: duration() }); };
+    const onPlay = () => {
+      if (!active()) return;
+      playerStore.updateTransport({ playing: true, loading: false, error: null });
+      checkpoint(true);
+    };
     const onPause = () => {
+      if (!active() || !audio.paused) return;
       playerStore.updateTransport({ playing: false });
-      void progress.flush(true);
+      checkpoint(false);
+      void flush(true);
     };
-    const onWaiting = () => playerStore.updateTransport({ loading: true });
-    const onReady = () => playerStore.updateTransport({ loading: false });
+    const onWaiting = () => { if (active()) playerStore.updateTransport({ loading: true }); };
+    const onReady = () => {
+      if (!active()) return;
+      playerStore.updateTransport({ loading: false, duration: duration() });
+      if (!audio.paused) onPlay();
+    };
     const onEnded = () => {
-      void progress.flush(true);
+      if (!active()) return;
+      checkpoint(false);
+      void flush(true);
       const snapshot = playerStore.getSnapshot();
       if (snapshot.index < snapshot.queue.length - 1) playerStore.skip(1);
       else playerStore.updateTransport({ playing: false });
     };
-    const onError = () => playerStore.updateTransport({ error: "This track could not be played.", loading: false, playing: false });
     audio.addEventListener("timeupdate", onTime);
     audio.addEventListener("durationchange", onDuration);
+    audio.addEventListener("loadedmetadata", onReady);
     audio.addEventListener("play", onPlay);
     audio.addEventListener("pause", onPause);
     audio.addEventListener("waiting", onWaiting);
     audio.addEventListener("canplay", onReady);
     audio.addEventListener("playing", onReady);
     audio.addEventListener("ended", onEnded);
-    audio.addEventListener("error", onError);
     return () => {
+      if (audioCommands.seek === seek) delete audioCommands.seek;
       audio.removeEventListener("timeupdate", onTime);
       audio.removeEventListener("durationchange", onDuration);
+      audio.removeEventListener("loadedmetadata", onReady);
       audio.removeEventListener("play", onPlay);
       audio.removeEventListener("pause", onPause);
       audio.removeEventListener("waiting", onWaiting);
       audio.removeEventListener("canplay", onReady);
       audio.removeEventListener("playing", onReady);
       audio.removeEventListener("ended", onEnded);
-      audio.removeEventListener("error", onError);
     };
-  }, [progress]);
+  }, [item, activationKey, media.source, media.duration, isTransitioning, report, flush]);
 
-  // Store → element: play/pause, volume, rate.
+  useEffect(() => {
+    if (!item) return;
+    if (media.error) {
+      playerStore.updateTransport({ error: media.error, loading: false, playing: false });
+    } else if (media.loading) {
+      playerStore.updateTransport({ loading: true });
+    }
+  }, [item, media.error, media.loading]);
+
+  // Playing is the requested state while a source is transitioning. A load()
+  // pause or an obsolete play() rejection must not cancel the next item's intent.
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || !media.source) return;
-    if (transport.playing && audio.paused) void audio.play().catch(() => playerStore.updateTransport({ playing: false }));
+    if (!audio || !item || !media.source || media.error) return;
+    let cancelled = false;
+    if (transport.playing && audio.paused) {
+      void audio.play().catch((error: unknown) => {
+        if (cancelled || playerStore.getSnapshot().audioActivation !== activationKey) return;
+        if (error instanceof DOMException && error.name === "AbortError" && isTransitioning()) return;
+        playerStore.updateTransport({ playing: false, loading: false, error: "Playback could not start. Retry playback." });
+      });
+    }
     if (!transport.playing && !audio.paused) audio.pause();
-  }, [transport.playing, media.source]);
+    return () => { cancelled = true; };
+  }, [item, activationKey, transport.playing, media.source, media.error, isTransitioning]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -109,6 +165,12 @@ export function PlayerDock() {
         // Unsupported action on this platform.
       }
     }
+    return () => {
+      for (const [action] of handlers) {
+        try { navigator.mediaSession.setActionHandler(action, null); } catch { /* Unsupported action. */ }
+      }
+      navigator.mediaSession.metadata = null;
+    };
   }, [item]);
 
   useEffect(() => {
@@ -130,14 +192,21 @@ export function PlayerDock() {
         role="region"
         aria-label="Now playing"
       >
-        <button type="button" data-focusable onClick={() => playerStore.setSheetOpen(true)} className="nav-focus flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left md:flex-none md:w-72" aria-label="Open now playing">
-          <Artwork src={item.artwork} alt="" aspect="square" className="size-11 shrink-0 rounded-md md:size-12" />
-          <span className="min-w-0">
-            <span className="block truncate text-title-sm text-foreground">{item.title}</span>
-            {item.subtitle ? <span className="block truncate text-label-sm text-muted">{item.subtitle}</span> : null}
-          </span>
-          <IconChevronUp size={16} className="ml-auto text-muted md:hidden" />
-        </button>
+        {transport.error ? (
+          <Notice tone="danger" compact role="alert" className="absolute inset-x-0 bottom-full" action={<Button size="sm" onClick={() => audioCommands.retry?.()}>Retry</Button>}>
+            {transport.error}
+          </Notice>
+        ) : null}
+        <ListRow
+          onClick={() => playerStore.setSheetOpen(true)}
+          aria-label="Open now playing"
+          title={item.title}
+          meta={item.subtitle}
+          icon={<Artwork src={item.artwork} alt="" aspect="square" className="size-11 shrink-0 rounded-md md:size-12" />}
+          trailing={<IconChevronUp size="sm" className="text-muted md:hidden" />}
+          className="min-w-0 flex-1 md:w-48 md:flex-none lg:w-72"
+          data-focusable
+        />
 
         <div className="hidden min-w-0 flex-1 flex-col items-center gap-1 md:flex">
           <div className="flex items-center gap-1">
@@ -152,15 +221,14 @@ export function PlayerDock() {
           </div>
         </div>
 
-        <div className="flex items-center gap-1 md:w-72 md:justify-end">
+        <div className="flex shrink-0 items-center gap-1 md:w-auto md:justify-end lg:w-72">
           <PlayPauseButton playing={transport.playing} onToggle={() => playerStore.updateTransport({ playing: !transport.playing })} size="sm" className="md:hidden" />
           <VolumeControl volume={transport.volume} muted={transport.muted} onVolume={(volume) => playerStore.updateTransport({ volume, muted: volume === 0 })} onMuted={(muted) => playerStore.updateTransport({ muted })} className="hidden md:flex" />
-          <button type="button" data-focusable aria-label="Queue" onClick={() => playerStore.setSheetOpen(true)} className="nav-focus hidden size-10 place-items-center rounded-full text-foreground/90 hover:bg-white/10 md:grid">
-            <IconListDetails size={20} />
-          </button>
-          <button type="button" data-focusable aria-label="Stop" onClick={() => playerStore.stopAudio()} className="nav-focus grid size-10 place-items-center rounded-full text-muted hover:bg-white/10 hover:text-foreground">
-            <IconX size={18} />
-          </button>
+          <CastButton item={item} activationKey={activationKey} position={transport.position} onStarted={() => {
+            if (playerStore.getSnapshot().audioActivation === activationKey) playerStore.updateTransport({ playing: false });
+          }} />
+          <Button variant="ghost" shape="circle" aria-label="Queue" onClick={() => playerStore.setSheetOpen(true)} icon={<IconList />} className="hidden md:inline-flex" data-focusable />
+          <Button variant="ghost" shape="circle" aria-label="Stop" onClick={() => playerStore.stopAudio()} icon={<IconClose />} data-focusable />
         </div>
         <div className="absolute inset-x-0 top-0 h-0.5 bg-white/10 md:hidden">
           <div className="h-full bg-brand" style={{ width: `${transport.duration ? (transport.position / transport.duration) * 100 : 0}%` }} />

@@ -51,7 +51,8 @@ use crate::services::sources::categories::CategoryMapping;
 use crate::services::sources::categories::cats;
 use crate::services::sources::{
     BookSearchParam, MovieSearchParam, MusicSearchParam, QueryType, Source, SourceCapabilities,
-    SourceQuery, SourceRelease, SourceType, TrackerType, TvSearchParam,
+    SourceContinuationSupport, SourcePage, SourceQuery, SourceRelease, SourceSearchPageState,
+    SourceType, TrackerType, TvSearchParam,
 };
 
 /// Generic Torznab/Newznab client source (torrent indexers only).
@@ -404,6 +405,10 @@ impl Source for TorznabSource {
     }
 
     async fn search(&self, query: &SourceQuery) -> Result<Vec<SourceRelease>> {
+        Ok(self.search_page(query).await?.releases)
+    }
+
+    async fn search_page(&self, query: &SourceQuery) -> Result<SourcePage> {
         let params = self.build_query_params(query);
 
         self.rate_limiter.wait_for_permit().await;
@@ -432,7 +437,7 @@ impl Source for TorznabSource {
             return Err(anyhow!("Torznab indexer returned error {}: {}", code, desc));
         }
 
-        parse_torznab_rss(&body)
+        parse_torznab_page(&body, query)
     }
 
     async fn download(&self, link: &str) -> Result<Vec<u8>> {
@@ -701,6 +706,82 @@ fn apply_text_field(tag: &str, text: &str, item: &mut RawItem) {
         "size" if item.size.is_none() => item.size = text.parse().ok(),
         _ => {}
     }
+}
+
+/// Advance only from the echoed provider offset and number of raw items.
+/// A short page without a trustworthy response total never proves exhaustion.
+fn parse_torznab_page(xml: &str, query: &SourceQuery) -> Result<SourcePage> {
+    let releases = parse_torznab_rss(xml)?;
+    let mut reader = Reader::from_str(xml);
+    let mut header = None;
+    let mut rss = false;
+    loop {
+        match reader.read_event()? {
+            Event::Start(e) | Event::Empty(e) => {
+                let name = start_local_name(&e);
+                if name == "rss" {
+                    rss = true;
+                }
+                if name == "response" {
+                    if header.is_some() {
+                        anyhow::bail!("Conflicting Torznab response headers");
+                    }
+                    header = Some((
+                        get_attr(&e, "offset").and_then(|s| s.parse::<i32>().ok()),
+                        get_attr(&e, "total").and_then(|s| s.parse::<i64>().ok()),
+                    ));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if !rss {
+        anyhow::bail!("Source did not return RSS");
+    }
+    let offset = query.offset.unwrap_or(0);
+    let raw_count = i32::try_from(releases.len()).unwrap_or(i32::MAX);
+    let advanced = offset.checked_add(raw_count);
+    let (support, state, next_offset) = match header {
+        Some((Some(echoed), total)) if echoed == offset && offset >= 0 => match (total, advanced) {
+            (Some(total), Some(next)) if total >= 0 && i64::from(next) == total => (
+                SourceContinuationSupport::Supported,
+                SourceSearchPageState::Exhausted,
+                None,
+            ),
+            (Some(total), Some(next)) if raw_count > 0 && i64::from(next) < total => (
+                SourceContinuationSupport::Supported,
+                SourceSearchPageState::More,
+                Some(next),
+            ),
+            (None, Some(next)) if raw_count > 0 => (
+                SourceContinuationSupport::Supported,
+                SourceSearchPageState::Unknown,
+                Some(next),
+            ),
+            (None, _) => (
+                SourceContinuationSupport::Supported,
+                SourceSearchPageState::Unknown,
+                None,
+            ),
+            _ => (
+                SourceContinuationSupport::Supported,
+                SourceSearchPageState::Partial,
+                None,
+            ),
+        },
+        _ => (
+            SourceContinuationSupport::Unknown,
+            SourceSearchPageState::Unknown,
+            None,
+        ),
+    };
+    Ok(SourcePage {
+        releases,
+        support,
+        state,
+        next_offset,
+    })
 }
 
 /// Parse a Torznab/Newznab RSS 2.0 search response into `SourceRelease`s.
@@ -1205,5 +1286,101 @@ mod tests {
         )
         .unwrap();
         assert!(!unconfigured.is_configured());
+    }
+}
+
+#[cfg(test)]
+mod paging_tests {
+    use super::*;
+    fn xml(header: &str, items: usize) -> String {
+        format!(
+            "<rss xmlns:torznab=\"http://torznab.com/schemas/2015/feed\"><channel>{header}{}</channel></rss>",
+            (0..items)
+                .map(|i| format!("<item><title>Fixture {i}</title><guid>{i}</guid></item>"))
+                .collect::<String>()
+        )
+    }
+    #[test]
+    fn remote_offset_advances_by_raw_items_even_when_requested_limit_is_clamped() {
+        let query = SourceQuery {
+            limit: Some(100),
+            offset: Some(0),
+            ..Default::default()
+        };
+        let page = parse_torznab_page(
+            &xml("<torznab:response offset=\"0\" total=\"3\"/>", 2),
+            &query,
+        )
+        .unwrap();
+        assert_eq!(page.state, SourceSearchPageState::More);
+        assert_eq!(
+            page.next_offset,
+            Some(2),
+            "requested 100 does not mean the provider returned 100"
+        );
+        let next_query = SourceQuery {
+            offset: Some(2),
+            ..query
+        };
+        let last = parse_torznab_page(
+            &xml("<torznab:response offset=\"2\" total=\"3\"/>", 1),
+            &next_query,
+        )
+        .unwrap();
+        assert_eq!(last.state, SourceSearchPageState::Exhausted);
+        assert!(last.next_offset.is_none());
+    }
+    #[test]
+    fn absent_total_or_offset_and_empty_partial_response_are_not_exhaustion() {
+        let query = SourceQuery {
+            limit: Some(100),
+            offset: Some(0),
+            ..Default::default()
+        };
+        for header in [
+            "",
+            "<torznab:response total=\"1\"/>",
+            "<torznab:response offset=\"99\" total=\"1\"/>",
+        ] {
+            let page = parse_torznab_page(&xml(header, 1), &query).unwrap();
+            assert_eq!(page.state, SourceSearchPageState::Unknown);
+            assert!(page.next_offset.is_none());
+        }
+        let unknown =
+            parse_torznab_page(&xml("<torznab:response offset=\"0\"/>", 1), &query).unwrap();
+        assert_eq!(unknown.state, SourceSearchPageState::Unknown);
+        assert_eq!(unknown.next_offset, Some(1));
+        let empty = parse_torznab_page(
+            &xml("<torznab:response offset=\"0\" total=\"10\"/>", 0),
+            &query,
+        )
+        .unwrap();
+        assert_eq!(empty.state, SourceSearchPageState::Partial);
+        assert!(empty.next_offset.is_none());
+        let exhausted = parse_torznab_page(
+            &xml("<torznab:response offset=\"0\" total=\"0\"/>", 0),
+            &query,
+        )
+        .unwrap();
+        assert_eq!(exhausted.state, SourceSearchPageState::Exhausted);
+        assert!(parse_torznab_page("<html>Sign in</html>", &query).is_err());
+    }
+    #[test]
+    fn request_uses_explicit_limit_and_offset_for_real_next_page() {
+        let source = TorznabSource::new(
+            "fixture".into(),
+            "Fixture".into(),
+            Some("https://fixture.invalid/".into()),
+            "fixture-key",
+            HashMap::new(),
+        )
+        .unwrap();
+        let params = source.build_query_params(&SourceQuery {
+            limit: Some(50),
+            offset: Some(50),
+            ..Default::default()
+        });
+        assert!(params.contains(&("limit".into(), "50".into())));
+        assert!(params.contains(&("offset".into(), "50".into())));
     }
 }

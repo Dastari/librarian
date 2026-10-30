@@ -1,5 +1,5 @@
-import { useQuery } from "@apollo/client/react";
-import { toast } from "@heroui/react";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+import { toast } from "glass-ux/toast";
 import { IconRefresh, IconRulerMeasure } from "@tabler/icons-react";
 
 import { Button, KeyValueList, Panel, StatusChip } from "@/components/ui";

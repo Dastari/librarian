@@ -101,8 +101,5 @@ subscription EntityAudiobookChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    audiobook {
-      ...AudiobookFields
-    }
   }
 }

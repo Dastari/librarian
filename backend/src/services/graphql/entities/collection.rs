@@ -81,7 +81,8 @@ pub struct Collection {
         target = "Library",
         from = "library_id",
         to = "id",
-        on_delete = "cascade"
+        on_delete = "cascade",
+        propagate_change = "up"
     )]
     pub library: Option<Library>,
 
@@ -90,9 +91,10 @@ pub struct Collection {
     #[skip_db]
     #[relation(
         target = "Movie",
-        from = "tmdb_collection_id",
-        to = "collection_id",
-        multiple
+        from = ["library_id", "tmdb_collection_id"],
+        to = ["library_id", "collection_id"],
+        multiple,
+        emit_fk = false
     )]
     pub movies: Vec<Movie>,
 }

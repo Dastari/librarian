@@ -1,9 +1,9 @@
-import { useMutation, useQuery } from "@apollo/client/react";
-import { toast } from "@heroui/react";
+import { useMutation } from "@apollo/client/react";
+import { toast } from "glass-ux/toast";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Link } from "@tanstack/react-router";
 import { IconFolder, IconPlus, IconSettings } from "@tabler/icons-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -16,6 +16,9 @@ import { formatRelative, pluralize } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { LIBRARY_TYPE_OPTIONS, libraryType } from "@/lib/library-types";
 
+import { SettingsLoadError } from "./SettingsLoadError";
+import { useSettingsConnection } from "./useSettingsConnection";
+
 const schema = z.object({
   name: z.string().trim().min(1, "Give the library a name").max(80),
   libraryType: z.string().min(1, "Choose a type"),
@@ -27,8 +30,8 @@ type Values = z.infer<typeof schema>;
 
 export function LibrariesSettings() {
   const { user } = useSession();
-  const { data, previousData, loading, refetch } = useQuery(LibrariesOverviewDocument);
-  const libraries = (data ?? previousData)?.libraries.edges.map((edge) => edge.node) ?? [];
+  const list = useSettingsConnection(LibrariesOverviewDocument, {}, (data) => data.libraries);
+  const { rows: libraries, loading, refetch } = list;
   const [creating, setCreating] = useState(false);
   const [pickingFolder, setPickingFolder] = useState(false);
   const [create, { loading: saving }] = useMutation(EntityLibraryCreateDocument);
@@ -50,7 +53,7 @@ export function LibrariesSettings() {
     }
   });
 
-  const columns: Array<DataTableColumn<LibraryOverview>> = [
+  const columns = useMemo<Array<DataTableColumn<LibraryOverview>>>(() => [
     {
       id: "name",
       header: "Library",
@@ -82,7 +85,7 @@ export function LibrariesSettings() {
         </Link>
       ),
     },
-  ];
+  ], []);
 
   return (
     <div className="flex flex-col gap-6">
@@ -95,6 +98,7 @@ export function LibrariesSettings() {
           </Button>
         }
       >
+        <SettingsLoadError error={list.error} retry={list.refetch} hasRows={libraries.length > 0} />
         <DataTable<LibraryOverview>
           className="px-4 pb-4" frame={false}
           columns={columns}
@@ -127,7 +131,7 @@ export function LibrariesSettings() {
             <FormTextField control={form.control} name="name" label="Name" placeholder="Movies" autoFocus isRequired />
             <FormSelectField control={form.control} name="libraryType" label="Type" options={LIBRARY_TYPE_OPTIONS.map((option) => ({ key: option.type, label: option.label }))} isRequired />
             <div className="flex items-end gap-2">
-              <FormTextField control={form.control} name="path" label="Folder" mono isRequired className="flex-1" placeholder="/data/media/Movies" />
+              <FormTextField control={form.control} name="path" label="Folder" mono isRequired className="min-w-0 flex-1" placeholder="/data/media/Movies" />
               <Button variant="secondary" isIconOnly aria-label="Browse folders" onPress={() => setPickingFolder(true)} className="mb-px">
                 <IconFolder size={18} />
               </Button>

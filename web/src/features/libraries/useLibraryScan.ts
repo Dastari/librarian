@@ -1,17 +1,13 @@
-import { useMutation, useQuery, useSubscription } from "@apollo/client/react";
-import { toast } from "@heroui/react";
+import { useMutation } from "@apollo/client/react";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+import { toast } from "glass-ux/toast";
 
-import { EntityLibraryScanRunChangedDocument, LibraryScanStateDocument, ScanLibraryDocument } from "@/graphql/generated/graphql";
+import { LibraryScanStateDocument, ScanLibraryDocument } from "@/graphql/generated/graphql";
 import { errorMessage } from "@/lib/graphql/errors";
 
 /** Latest scan run for a library plus a `scan()` action; live-updates from the run subscription. */
 export function useLibraryScan(libraryId: string) {
   const state = useQuery(LibraryScanStateDocument, { variables: { libraryId } });
-  useSubscription(EntityLibraryScanRunChangedDocument, {
-    onData: ({ data }) => {
-      if (data.data?.libraryScanRunChanged.libraryScanRun?.libraryId === libraryId) void state.refetch();
-    },
-  });
   const [scanLibrary, { loading }] = useMutation(ScanLibraryDocument);
 
   const scan = async () => {

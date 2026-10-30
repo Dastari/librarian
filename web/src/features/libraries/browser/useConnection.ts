@@ -1,4 +1,4 @@
-import { useQuery } from "@apollo/client/react";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import type { OperationVariables, TypedDocumentNode } from "@apollo/client";
 import { useMemo } from "react";
 

@@ -1,5 +1,5 @@
-import { useMutation, useQuery } from "@apollo/client/react";
-import { toast } from "@heroui/react";
+import { useMutation } from "@apollo/client/react";
+import { toast } from "glass-ux/toast";
 import { IconArrowDown, IconArrowUp, IconPlugConnected, IconPlus, IconTrash } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
@@ -10,12 +10,15 @@ import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 
 import { SourceDialog } from "./SourceDialog";
 
+import { SettingsLoadError } from "./SettingsLoadError";
+import { useSettingsConnection } from "./useSettingsConnection";
+
 type Source = EntitySourceListQuery["sources"]["edges"][number]["node"];
 
 /** Torrent indexers and feeds: add, test, order by priority, enable or remove. */
 export function SourcesSettings() {
-  const { data, previousData, loading, refetch } = useQuery(EntitySourceListDocument, { variables: { orderBy: [{ priority: "ASC" }], page: { limit: 100, offset: 0 } } });
-  const sources = useMemo(() => (data ?? previousData)?.sources.edges.map((edge) => edge.node) ?? [], [data, previousData]);
+  const list = useSettingsConnection(EntitySourceListDocument, { orderBy: [{ priority: "ASC" }] }, (data) => data.sources);
+  const { rows: sources, loading, refetch } = list;
   const [editing, setEditing] = useState<Source | null | "new">(null);
   const [removing, setRemoving] = useState<Source | null>(null);
   const [testSource] = useMutation(TestSourceDocument);
@@ -51,6 +54,7 @@ export function SourcesSettings() {
   const toggle = async (source: Source) => {
     try {
       assertSuccess((await updateSource({ variables: { id: source.id, input: { enabled: !source.enabled } } })).data?.updateSource, "Could not update");
+      void refetch();
     } catch (error) {
       toast.danger(errorMessage(error));
     }
@@ -64,7 +68,7 @@ export function SourcesSettings() {
     { key: "delete", label: "Remove", icon: <IconTrash size={16} />, destructive: true, onAction: (source) => setRemoving(source) },
   ];
 
-  const columns: Array<DataTableColumn<Source>> = [
+  const columns = useMemo<Array<DataTableColumn<Source>>>(() => [
     { id: "priority", header: "#", size: 64, align: "end", numeric: true, cell: (source) => source.priority },
     {
       id: "name",
@@ -79,7 +83,7 @@ export function SourcesSettings() {
     { id: "capabilities", header: "Searches", size: 200, hideBelow: "md", cell: (source) => <span className="text-muted">{[source.supportsMovieSearch && "Movies", source.supportsTvSearch && "TV", source.supportsMusicSearch && "Music", source.supportsBookSearch && "Books"].filter(Boolean).join(", ") || (source.supportsSearch ? "General" : "None")}</span> },
     { id: "status", header: "Status", size: 150, cell: (source) => (source.enabled ? (source.lastError ? <StatusChip status={{ label: `Error ×${source.errorCount}`, tone: "danger", dot: "bg-danger" }} /> : <StatusChip status={{ label: "Enabled", tone: "success", dot: "bg-success" }} />) : <StatusChip status={{ label: "Disabled", tone: "default", dot: "bg-muted" }} />) },
     { id: "last", header: "Last success", size: 140, hideBelow: "lg", cell: (source) => <span className="text-muted">{source.lastSuccessAt ? formatRelative(source.lastSuccessAt) : "Never"}</span> },
-  ];
+  ], []);
 
   return (
     <div className="flex flex-col gap-6">
@@ -93,6 +97,7 @@ export function SourcesSettings() {
           </Button>
         }
       >
+        <SettingsLoadError error={list.error} retry={list.refetch} hasRows={sources.length > 0} />
         <DataTable<Source>
           className="px-4 pb-4" frame={false}
           columns={columns}

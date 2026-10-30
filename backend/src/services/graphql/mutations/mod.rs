@@ -21,5 +21,7 @@ pub use quality::QualityMutations;
 #[cfg(test)]
 mod auth_session_tests;
 
+pub mod maintenance;
 #[cfg(test)]
 mod notification_tests;
+pub use maintenance::MaintenanceMutations;

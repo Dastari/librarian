@@ -94,8 +94,5 @@ subscription EntitySourceChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    source {
-      ...SourceFields
-    }
   }
 }

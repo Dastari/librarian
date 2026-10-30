@@ -2,7 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { IconLoader2 } from "@tabler/icons-react";
 import { useMemo } from "react";
 
-import { PosterMarquee } from "@/components/ui/PosterMarquee";
+import { PosterStrip } from "@/components/ui/PosterStrip";
 import type { LibrariesOverviewQuery } from "@/graphql/generated/graphql";
 import { albumCover, audiobookCover, moviePoster, showPoster } from "@/lib/artwork";
 import { formatRelative, pluralize } from "@/lib/format";
@@ -51,7 +51,7 @@ interface LibraryCardProps {
 }
 
 /**
- * Library tile: a slow marquee of the library's own artwork behind a tinted glass surface,
+ * Library tile: a still strip of the library's own artwork behind a tinted glass surface,
  * with the type icon, name and counts on top.
  */
 export function LibraryCard({ library, className, size = "md" }: LibraryCardProps) {
@@ -64,16 +64,16 @@ export function LibraryCard({ library, className, size = "md" }: LibraryCardProp
       params={{ libraryId: library.id }}
       data-focusable
       className={cn(
-        "group nav-focus relative isolate flex flex-col justify-between overflow-hidden rounded-card border border-glass-rim transition-[transform,box-shadow] duration-base ease-fluid hover:-translate-y-0.5 hover:shadow-poster-hover",
+        "tv-lift group nav-focus relative isolate flex flex-col justify-between overflow-hidden rounded-card border border-glass-rim transition-[transform,box-shadow] duration-base ease-fluid hover-capable:hover:shadow-poster-hover",
         size === "lg" ? "min-h-48" : "min-h-40",
         className,
       )}
       style={{ ["--placeholder-tint" as string]: meta.tintVar }}
     >
       <div className="placeholder-gradient absolute inset-0 -z-20" />
-      <PosterMarquee images={images} className="-z-10 opacity-80 saturate-[0.9] transition-opacity duration-slow group-hover:opacity-100" duration={images.length * 9} height={size === "lg" ? 210 : 170} square={meta.aspect === "square"} />
+      <PosterStrip images={images} className="-z-10 opacity-80 saturate-[0.9] transition-opacity duration-slow group-hover:opacity-100" height={size === "lg" ? 210 : 170} square={meta.aspect === "square"} />
       {/* Glass band: the artwork stays crisp above, the text sits on frosted glass below. */}
-      <div className="glass-surface glass-highlight absolute inset-x-0 bottom-0 -z-10 h-[46%] rounded-b-card border-x-0 border-b-0 shadow-none" />
+      <div className="glass-panel  absolute inset-x-0 bottom-0 -z-10 h-[46%] rounded-b-card border-x-0 border-b-0 shadow-none" />
       <div className="absolute inset-0 -z-10 bg-gradient-to-t from-background/70 via-transparent to-background/20" />
       <div className="relative flex items-start justify-between p-4">
         <span className={cn("glass-control grid size-11 place-items-center rounded-xl", meta.tint)}>

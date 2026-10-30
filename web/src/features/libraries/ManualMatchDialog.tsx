@@ -1,5 +1,5 @@
 import { useMutation } from "@apollo/client/react";
-import { toast } from "@heroui/react";
+import { toast } from "glass-ux/toast";
 import { IconLink } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 
@@ -30,12 +30,15 @@ export function ManualMatchDialog({ file, libraryId, onClose, onMatched }: Manua
     if (!file) return;
     setCandidates(null);
     setReason(null);
+    let active = true;
     void matchFile({ variables: { input: { mediaFileId: file.id, libraryId, autoMatch: false, candidateLimit: 12, wantedPolicy: "ALL", allowProviderFallback: false } } })
       .then(({ data }) => {
+        if (!active) return;
         setCandidates(data?.matchMediaFile.candidates ?? []);
         setReason(data?.matchMediaFile.reason ?? null);
       })
-      .catch((error) => setReason(errorMessage(error)));
+      .catch((error) => { if (active) setReason(errorMessage(error)); });
+    return () => { active = false; };
   }, [file, libraryId, matchFile]);
 
   const link = async (candidate: Candidate) => {
@@ -69,10 +72,10 @@ export function ManualMatchDialog({ file, libraryId, onClose, onMatched }: Manua
       ) : (
         <ul className="flex flex-col gap-1">
           {candidates.map((candidate) => (
-            <li key={`${candidate.targetType}-${candidate.targetId}`} className="flex items-center gap-3 rounded-card p-2 hover:bg-surface-hover">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-title-sm text-foreground">{candidate.targetName ?? candidate.targetId}</p>
-                <p className="truncate text-label-sm text-muted">{[candidate.targetType, candidate.reason].filter(Boolean).join(" · ")}</p>
+            <li key={`${candidate.targetType}-${candidate.targetId}`} className="flex flex-wrap items-center gap-3 rounded-card p-2 hover:bg-surface-hover">
+              <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
+                <p className="break-words text-title-sm text-foreground">{candidate.targetName ?? candidate.targetId}</p>
+                <p className="break-words text-label-sm text-muted">{[candidate.targetType, candidate.reason].filter(Boolean).join(" · ")}</p>
               </div>
               {candidate.wanted ? <StatusChip status={{ label: "Wanted", tone: "warning", dot: "bg-warning" }} /> : null}
               <span className="text-numeric text-label text-muted">{Math.round(candidate.score)}%</span>

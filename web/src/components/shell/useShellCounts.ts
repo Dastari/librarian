@@ -1,29 +1,14 @@
-import { useQuery, useSubscription } from "@apollo/client/react";
-
-import {
-  ActiveDownloadCountDocument,
-  EntityNotificationChangedDocument,
-  TorrentAddedDocument,
-  TorrentCompletedDocument,
-  TorrentRemovedDocument,
-  UnreadNotificationCountDocument,
-} from "@/graphql/generated/graphql";
+import { ActiveDownloadCountDocument, UnreadNotificationCountDocument } from "@/graphql/generated/graphql";
 import { useSession } from "@/lib/auth/useSession";
+import { useLiveQuery } from "@/lib/graphql/live/hooks";
 
-/** Live badge counts for the navigation. Refetches on the relevant change events. */
+/** Identical watches share one registry task and one listener per topic, even
+ * when all three responsive navigation bars remain mounted. */
 export function useShellCounts() {
   const { status } = useSession();
-  const enabled = status === "authenticated";
-
-  const downloads = useQuery(ActiveDownloadCountDocument, { skip: !enabled, pollInterval: 30_000 });
-  const notifications = useQuery(UnreadNotificationCountDocument, { skip: !enabled });
-
-  const refetchDownloads = () => void downloads.refetch();
-  useSubscription(TorrentAddedDocument, { skip: !enabled, onData: refetchDownloads });
-  useSubscription(TorrentCompletedDocument, { skip: !enabled, onData: refetchDownloads });
-  useSubscription(TorrentRemovedDocument, { skip: !enabled, onData: refetchDownloads });
-  useSubscription(EntityNotificationChangedDocument, { skip: !enabled, onData: () => void notifications.refetch() });
-
+  const skip = status !== "authenticated";
+  const downloads = useLiveQuery(ActiveDownloadCountDocument, { skip });
+  const notifications = useLiveQuery(UnreadNotificationCountDocument, { skip });
   return {
     downloads: downloads.data?.activeDownloadCount ?? 0,
     notifications: notifications.data?.notifications.pageInfo.totalCount ?? 0,

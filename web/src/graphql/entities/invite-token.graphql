@@ -86,8 +86,5 @@ subscription EntityInviteTokenChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    inviteToken {
-      ...InviteTokenFields
-    }
   }
 }

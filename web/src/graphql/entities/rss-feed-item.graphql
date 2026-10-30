@@ -95,8 +95,5 @@ subscription EntityRssFeedItemChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    rssFeedItem {
-      ...RssFeedItemFields
-    }
   }
 }

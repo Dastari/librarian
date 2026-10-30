@@ -1,0 +1,68 @@
+---
+description: Versioned Glass UX library rules for Librarian consumers
+globs:
+  - "web/**/*.{ts,tsx,css}"
+alwaysApply: false
+---
+
+# Glass UX integration contract
+
+The installed release is `glass-ux` 0.11.7. Its authoritative guides and API pages
+are under `web/node_modules/glass-ux/docs/`. Read `docs/glass-ux/README.md` for
+provenance, offline documentation, skills, and refresh instructions.
+
+Apply the full shared rules in `docs/glass-ux/ui-rules.md` (R1–R24) and the
+geometry contract in `docs/glass-ux/layout-contract.md`. Explicit Librarian product
+requirements take precedence; adapt generic workspace rules to the routed media
+app without introducing a window manager or assistant feature merely to use a component.
+
+- Install from a versioned release archive and commit the lockfile. Import from
+  public feature entries. Read exact props; HeroUI `onPress`, `isLoading`, and
+  compound slots are not interchangeable with Glass UX APIs.
+- Register `glassUx()` from `glass-ux/vite`; add shared CSS and Tailwind source
+  discovery. The foundation now owns root styles/providers; host media compositions use its tokens. Do not import a second theme or restore
+  the retired HeroUI recipes.
+- Register Librarian palettes/marks and configure appearance before mounting its
+  provider. Migrate the existing `librarian.theme` preference once. One runtime
+  owns root appearance attributes; retain input-mode attributes independently.
+- Supply AppearanceProvider, TooltipProvider, ActionProvider and PaletteProvider
+  when their components need them. Preserve router context and pass explicit
+  navigation callbacks where providers live outside the router.
+- Define shared ActionSets for header, row, context and bulk actions. Confirmation
+  and success/error feedback must occur once. Retain server authorization.
+- Use Surface material/radius/padding props, Panel slots and semantic role tokens.
+  No custom backdrop filters, duplicate glass layers, or fixed geometry overrides.
+  Use card material for repeated media tiles and `.over-imagery` over artwork.
+- Preserve pointer, touch, keyboard and TV behavior. Exclude library composites
+  from global spatial navigation; Base UI owns their keys. Ordinary modal controls
+  retain scoped remote navigation inside the active dialog; modal events need a
+  capture fallback because Base UI stops bubbling. Never navigate behind a modal.
+- Use typed value contracts: bytes, seconds, calendar dates, wall-clock values
+  and zones. Convert only at generated GraphQL input boundaries. Do not silently
+  adopt stricter form validation than the backend's existing contract.
+- Prefer useAppForm/formBehaviour for new or migrated bound forms. An interim
+  react-hook-form bridge may compose bare Glass UX controls; remove it when its
+  final consumer migrates. Do not maintain two independent validation engines.
+- Use LoginFlow with existing auth callbacks. Invite-token collection remains
+  host-owned because 0.11.7 has no arbitrary sign-up field slot. Do not expose
+  reset, MFA, provider sign-in or open registration without backend support.
+- Use DataTable controlled state and stable user/library/view IDs. Map schema
+  casing explicitly; never send the bundled PascalCase Where directly to this API.
+  Treat selection as loaded-row selection unless a server-wide action exists.
+- Main dataset routes use a bounded application pane (`fixedHeight`, `min-height: 0`
+  through the flex chain) and table `height="fill"`. Keep toolbar and footer visible
+  inside the viewport; scroll/load rows internally, reserving mobile tabs and the
+  active player. Gallery results use ScrollArea with an external count footer.
+  Use `height="auto"` only for embedded tables in an already scrolling detail pane.
+- Tables use infinite loading instead of page controls. Filter complete snapshots
+  locally; send filters to the server for incomplete lists. Pass a semantic dataset
+  key and a replacement revision to both table and gallery loaders. A refresh must
+  not consume the end-of-list trigger, and returning to a former query must permit
+  continuation again. Clear selection on changed dataset scope, preserve on append.
+- Keep DataTable column definitions and cell renderer component identities stable.
+  TanStack renders cell functions as component types; recreating them on status or
+  action updates remounts controls and loses focus. Use stable cell components with
+  React context for changing actions/status/progress. Let ActionBar own each action's
+  pending feedback instead of applying a global pending reason to every row.
+- Verify actual geometry and focus at scroll edges, live updates, slow images,
+  validation and loading. Typecheck/render success alone is insufficient.

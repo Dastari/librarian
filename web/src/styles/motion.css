@@ -27,12 +27,7 @@
   to { transform: rotate(360deg); }
 }
 
-/* Route transitions use view-transitions when available. */
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation-duration: 220ms;
-  animation-timing-function: var(--ease-fluid);
-}
+/* Route transitions live in media.css: only the routed view moves. */
 
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -43,9 +38,4 @@
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
-}
-
-@keyframes marquee {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
 }

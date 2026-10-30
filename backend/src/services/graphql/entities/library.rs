@@ -53,6 +53,7 @@ pub struct Library {
 
     #[graphql(name = "path")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "admin.write")]
     pub path: String,
 
     #[graphql(name = "libraryType")]
@@ -161,6 +162,67 @@ pub struct Library {
     #[skip_db]
     #[relation(target = "MediaFile", to = "library_id", multiple)]
     pub media_files: Vec<MediaFile>,
+
+    // Query relations do not add physical FKs or change existing delete behavior.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Artist",
+        from = "id",
+        to = "library_id",
+        multiple,
+        emit_fk = false
+    )]
+    pub artists: Vec<Artist>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "LibraryScanRun",
+        from = "id",
+        to = "library_id",
+        multiple,
+        emit_fk = false
+    )]
+    pub scan_runs: Vec<LibraryScanRun>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "LibraryScanIssue",
+        from = "id",
+        to = "library_id",
+        multiple,
+        emit_fk = false
+    )]
+    pub scan_issues: Vec<LibraryScanIssue>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "RssFeed",
+        from = "id",
+        to = "library_id",
+        multiple,
+        emit_fk = false
+    )]
+    pub rss_feeds: Vec<RssFeed>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "QualityProfile",
+        from = "quality_profile_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub quality_profile: Option<Box<QualityProfile>>,
 }
 
 #[derive(Default)]

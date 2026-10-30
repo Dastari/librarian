@@ -19,6 +19,10 @@ query BackupOverview {
   }
 }
 
+subscription BackupChanged {
+  backupChanged
+}
+
 mutation CreateFullBackup {
   createFullBackup {
     success

@@ -1,0 +1,15 @@
+fragment PersonalEntry on ListEntry {
+  id listId position movieId showId albumId audiobookId trackId
+  movie { id title year libraryId mediaFileId }
+  show { id name year libraryId posterUrl }
+  album { id name year libraryId coverUrl artist { id name } }
+  audiobook { id title libraryId coverUrl authorName }
+  track { id title libraryId albumId artistName mediaFileId durationSecs album { id coverUrl } }
+}
+
+query PersonalEntries($listId: String!, $page: PageInput) {
+  listEntries(where: { listId: { eq: $listId } }, orderBy: [{ position: ASC }, { id: ASC }], page: $page) {
+    edges { node { ...PersonalEntry } }
+    pageInfo { hasNextPage totalCount }
+  }
+}

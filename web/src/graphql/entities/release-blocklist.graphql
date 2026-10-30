@@ -86,8 +86,5 @@ subscription EntityReleaseBlocklistChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    releaseBlocklist {
-      ...ReleaseBlocklistFields
-    }
   }
 }

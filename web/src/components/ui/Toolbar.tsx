@@ -1,9 +1,8 @@
-import { IconLayoutGrid, IconList } from "@tabler/icons-react";
+import { IconGrid, IconList } from "glass-ux/icons";
+import { Segmented } from "glass-ux/segmented";
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
-
-import { GlassSegmented } from "./GlassControls";
 
 export type ViewMode = "card" | "table";
 
@@ -15,15 +14,16 @@ interface ViewToggleProps {
 
 export function ViewToggle({ value, onChange, className }: ViewToggleProps) {
   return (
-    <GlassSegmented<ViewMode>
-      ariaLabel="View"
+    <Segmented<ViewMode>
+      aria-label="View"
+      iconOnly
       size="sm"
       value={value}
-      onChange={onChange}
+      onValueChange={onChange}
       className={className}
-      items={[
-        { key: "card", label: null, ariaLabel: "Grid view", icon: <IconLayoutGrid size={16} /> },
-        { key: "table", label: null, ariaLabel: "List view", icon: <IconList size={16} /> },
+      options={[
+        { value: "card", label: "Grid view", icon: <IconGrid /> },
+        { value: "table", label: "List view", icon: <IconList /> },
       ]}
     />
   );

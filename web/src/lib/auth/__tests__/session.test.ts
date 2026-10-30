@@ -222,3 +222,53 @@ describe("session logout", () => {
     expect(client.mutate).not.toHaveBeenCalled();
   });
 });
+
+describe("private session reconciliation", () => {
+  it("reloads the authorized role instead of retaining the login snapshot", async () => {
+    const member = { ...user, role: "member" };
+    const { session } = await freshSession({ me: () => ({ data: { me: member } }) });
+    const changed = vi.fn();
+    session.onChange(changed);
+    session.establish(user, 900);
+    await session.reconcile();
+    expect(session.getSnapshot().user?.role).toBe("member");
+    expect(changed).toHaveBeenLastCalledWith(true);
+  });
+
+  it("retains the account on a transient read failure and ends it on an explicit missing account", async () => {
+    const { session, client } = await freshSession({ me: () => { throw new Error("offline"); } });
+    session.establish(user, 900);
+    await session.reconcile();
+    expect(session.getSnapshot().user).toEqual(user);
+    client.query.mockResolvedValueOnce({ data: { me: null } });
+    await session.reconcile();
+    expect(session.getSnapshot().status).toBe("anonymous");
+  });
+
+  it("serializes a busy read and retains one follow-up for a newer authority event", async () => {
+    const { session, client } = await freshSession();
+    session.establish(user, 900);
+    let resolve!: (value: unknown) => void;
+    client.query.mockImplementationOnce(() => new Promise((done) => { resolve = done; }))
+      .mockResolvedValueOnce({ data: { me: { ...user, role: "member" } } });
+    const first = session.reconcile();
+    const second = session.reconcile();
+    expect(client.query).toHaveBeenCalledTimes(1);
+    resolve({ data: { me: user } });
+    await Promise.all([first, second]);
+    expect(client.query).toHaveBeenCalledTimes(2);
+    expect(session.getSnapshot().user?.role).toBe("member");
+  });
+
+  it("cannot restore an old principal after logout while its read is pending", async () => {
+    const { session, client } = await freshSession();
+    session.establish(user, 900);
+    let resolve!: (value: unknown) => void;
+    client.query.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    const pending = session.reconcile();
+    await session.logout();
+    resolve({ data: { me: user } });
+    await pending;
+    expect(session.getSnapshot().status).toBe("anonymous");
+  });
+});

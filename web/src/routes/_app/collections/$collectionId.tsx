@@ -1,3 +1,4 @@
+import { useLiveRoute } from "@/lib/graphql/live/hooks";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { CollectionPage } from "@/features/media/CollectionPage";
@@ -9,5 +10,9 @@ export const Route = createFileRoute("/_app/collections/$collectionId")({
     const { data } = await context.apollo.query({ query: CollectionDetailDocument, variables: { id: params.collectionId }, fetchPolicy: "cache-first" });
     return { crumb: data?.collection?.name ?? "Collection" };
   },
-  component: () => <CollectionPage collectionId={Route.useParams().collectionId} />,
+  component: () => {
+    const { collectionId } = Route.useParams();
+    useLiveRoute(CollectionDetailDocument, { id: collectionId });
+    return <CollectionPage collectionId={collectionId} />;
+  },
 });

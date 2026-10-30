@@ -1,5 +1,6 @@
-import { Input, Label, ListBox, ListBoxItem, Select, TextField } from "@heroui/react";
-import { IconArrowDown, IconArrowUp, IconPlus, IconX } from "@tabler/icons-react";
+import { IconArrowDown, IconArrowUp, IconClose, IconPlus } from "glass-ux/icons";
+import { Input } from "glass-ux/input";
+import { Select } from "glass-ux/select";
 import { useState } from "react";
 import { Controller, type Control, type FieldPath, type FieldValues } from "react-hook-form";
 
@@ -52,17 +53,17 @@ export function OrderedChips({ label, description, value, onChange, options, pla
       {value.length > 0 ? (
         <ol className="flex flex-col gap-1">
           {value.map((item, index) => (
-            <li key={item} className="glass-control flex items-center gap-2 rounded-lg px-2 py-1">
+            <li key={item} className="flex items-center gap-2 py-1">
               <span className="text-numeric w-5 shrink-0 text-label-sm text-muted">{index + 1}</span>
               <span className="min-w-0 flex-1 truncate text-body-sm text-foreground">{renderLabel ? renderLabel(item) : item}</span>
               <Button size="sm" variant="ghost" isIconOnly aria-label={`Move ${item} up`} isDisabled={index === 0} onPress={() => move(index, -1)}>
-                <IconArrowUp size={14} />
+                <IconArrowUp />
               </Button>
               <Button size="sm" variant="ghost" isIconOnly aria-label={`Move ${item} down`} isDisabled={index === value.length - 1} onPress={() => move(index, 1)}>
-                <IconArrowDown size={14} />
+                <IconArrowDown />
               </Button>
               <Button size="sm" variant="ghost" isIconOnly aria-label={`Remove ${item}`} onPress={() => onChange(value.filter((entry) => entry !== item))}>
-                <IconX size={14} />
+                <IconClose />
               </Button>
             </li>
           ))}
@@ -72,37 +73,30 @@ export function OrderedChips({ label, description, value, onChange, options, pla
       ) : null}
       {options ? (
         remaining.length > 0 ? (
-          <Select aria-label={`Add to ${label}`} selectedKey={null} onSelectionChange={(key) => key !== null && add(String(key))} placeholder={placeholder ?? "Add…"} fullWidth>
-            <Select.Trigger>
-              <Select.Value />
-              <Select.Indicator />
-            </Select.Trigger>
-            <Select.Popover>
-              <ListBox>
-                {remaining.map((option) => (
-                  <ListBoxItem key={option.key} id={option.key} textValue={option.label}>
-                    {option.label}
-                  </ListBoxItem>
-                ))}
-              </ListBox>
-            </Select.Popover>
-          </Select>
+          <Select
+            aria-label={`Add to ${label}`}
+            value={null}
+            onValueChange={(item) => item !== null && add(item)}
+            placeholder={placeholder ?? "Add…"}
+            options={remaining.map((option) => ({ value: option.key, label: option.label }))}
+          />
         ) : null
       ) : (
         <div className="flex gap-2">
-          <TextField aria-label={`Add to ${label}`} value={draft} onChange={setDraft} className="flex-1" fullWidth>
-            <Label className="sr-only">{`Add to ${label}`}</Label>
-            <Input
-              placeholder={placeholder ?? "Add an entry"}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter") return;
-                event.preventDefault();
-                add(draft);
-              }}
-            />
-          </TextField>
+          <Input
+            aria-label={`Add to ${label}`}
+            value={draft}
+            onValueChange={setDraft}
+            className="min-w-0 flex-1"
+            placeholder={placeholder ?? "Add an entry"}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              add(draft);
+            }}
+          />
           <Button variant="secondary" isDisabled={!draft.trim()} onPress={() => add(draft)}>
-            <IconPlus size={16} /> Add
+            <IconPlus /> Add
           </Button>
         </div>
       )}

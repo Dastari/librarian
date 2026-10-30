@@ -33,6 +33,13 @@ query EntityAppLogGet($id: String!) {
   }
 }
 
+query EntityAppLogKeyset($where: AppLogWhereInput, $page: KeysetPageInput!) {
+  appLogsKeyset(where: $where, page: $page) {
+    edges { cursor node { ...AppLogFields } }
+    pageInfo { hasNextPage hasPreviousPage startCursor endCursor totalCount }
+  }
+}
+
 mutation EntityAppLogCreate($input: CreateAppLogInput!) {
   createAppLog(input: $input) {
     success
@@ -83,8 +90,5 @@ subscription EntityAppLogChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    appLog {
-      ...AppLogFields
-    }
   }
 }

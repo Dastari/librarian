@@ -337,7 +337,7 @@ fn not_configured() -> Result<FileOperationPayload> {
 }
 
 async fn run_create_directory(
-    _ctx: &Context<'_>,
+    ctx: &Context<'_>,
     input: &CreateDirectoryInput,
 ) -> Result<FileOperationPayload> {
     let path = PathBuf::from(input.path.trim());
@@ -347,11 +347,29 @@ async fn run_create_directory(
         )));
     }
     match fs::create_dir_all(&path).await {
-        Ok(_) => Ok(FileOperationPayload(FileOperationResult::ok(
-            Some(path.to_string_lossy().into_owned()),
-            1,
-            vec![],
-        ))),
+        Ok(_) => {
+            use crate::services::graphql::subscriptions::filesystem::{
+                FilesystemChangeBroker, FilesystemChangeEvent,
+            };
+            if let Some(broker) = ctx.data_opt::<Arc<FilesystemChangeBroker>>() {
+                broker.send(FilesystemChangeEvent {
+                    path: path.to_string_lossy().into_owned(),
+                    change_type: "created".into(),
+                    name: path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned()),
+                    new_name: None,
+                    timestamp: time::OffsetDateTime::now_utc()
+                        .format(&time::format_description::well_known::Rfc3339)
+                        .unwrap_or_default(),
+                });
+            }
+            Ok(FileOperationPayload(FileOperationResult::ok(
+                Some(path.to_string_lossy().into_owned()),
+                1,
+                vec![],
+            )))
+        }
         Err(e) => Ok(FileOperationPayload(FileOperationResult::err(format!(
             "Failed to create directory: {}",
             e

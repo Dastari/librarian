@@ -194,3 +194,17 @@ query LibraryScanIssues($libraryId: String!, $unresolvedOnly: Boolean!, $page: P
     }
   }
 }
+
+# A library's largest genres with their newest titles (Recommended view shelves).
+query LibraryGenreShelves($libraryId: String!, $maxGenres: Int, $perGenre: Int) {
+  libraryGenreShelves(libraryId: $libraryId, maxGenres: $maxGenres, perGenre: $perGenre) {
+    genre
+    total
+    movies {
+      ...MovieFields
+    }
+    shows {
+      ...ShowFields
+    }
+  }
+}

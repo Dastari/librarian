@@ -3,6 +3,7 @@ import { fileURLToPath, URL } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
+import { glassUx } from "glass-ux/vite";
 import { defineConfig, loadEnv } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
@@ -15,7 +16,7 @@ function vendorChunk(id: string): string | undefined {
   if (/node_modules\/(three|@react-three)\//.test(id)) return "vendor-three";
   if (/node_modules\/hls\.js\//.test(id)) return "vendor-hls";
   if (/node_modules\/(@apollo|graphql|graphql-ws|rxjs|@wry|optimism|zen-observable)/.test(id)) return "vendor-graphql";
-  if (/node_modules\/(react-aria|react-aria-components|react-stately|@react-aria|@react-stately|@react-types|@internationalized|@heroui|@radix-ui|tailwind-variants|tailwind-merge)\//.test(id)) {
+  if (/node_modules\/(glass-ux|@base-ui|@floating-ui|clsx|tailwind-merge)\//.test(id)) {
     return "vendor-ui";
   }
   if (/node_modules\/motion/.test(id) || /node_modules\/framer-motion/.test(id)) return "vendor-motion";
@@ -69,6 +70,7 @@ export default defineConfig(({ mode }) => {
       }),
       react(),
       tailwindcss(),
+      glassUx(),
       VitePWA({
         registerType: "prompt",
         injectRegister: false,
@@ -129,11 +131,12 @@ export default defineConfig(({ mode }) => {
       rollupOptions: { output: { manualChunks: vendorChunk } },
     },
     test: {
+      server: { deps: { inline: [/glass-ux/] } },
       environment: "jsdom",
       // Dates in the UI are formatted in the local zone; pin it so snapshots of them are stable.
       env: { TZ: "UTC" },
       globals: false,
-      setupFiles: ["./vitest.setup.ts"],
+      setupFiles: ["./vitest.setup.ts", "./src/test/glass-setup.ts"],
       include: ["src/**/*.test.{ts,tsx}"],
       css: false,
       coverage: {

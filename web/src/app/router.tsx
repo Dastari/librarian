@@ -13,6 +13,9 @@ export const router = createRouter({
   getScrollRestorationKey: (location) => location.pathname,
   defaultPendingMs: 200,
   defaultPendingMinMs: 300,
+  // Only the routed view animates (media.css names the shell layers); Glass UX turns
+  // transitions off for Still and reduced motion.
+  defaultViewTransition: true,
 });
 
 declare module "@tanstack/react-router" {

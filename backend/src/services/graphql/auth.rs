@@ -68,7 +68,16 @@ impl AuthUser {
 
 impl From<agql_auth::AuthUser> for AuthUser {
     fn from(user: agql_auth::AuthUser) -> Self {
-        let role = user.roles.first().cloned();
+        let role = user
+            .roles
+            .iter()
+            .find(|role| Role::parse(role) == Some(Role::Admin))
+            .or_else(|| {
+                user.roles
+                    .iter()
+                    .find(|role| Role::parse(role) == Some(Role::Member))
+            })
+            .cloned();
         Self {
             user_id: user.user_id,
             email: None,

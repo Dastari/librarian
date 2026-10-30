@@ -1,4 +1,7 @@
-import { IconPlayerPauseFilled, IconPlayerPlayFilled, IconPlayerSkipBackFilled, IconPlayerSkipForwardFilled, IconVolume, IconVolume2, IconVolumeOff } from "@tabler/icons-react";
+import { IconPlayerSkipBackFilled, IconPlayerSkipForwardFilled, IconVolume, IconVolume2, IconVolumeOff } from "@tabler/icons-react";
+import { Button } from "glass-ux/button";
+import { IconPause, IconPlay } from "glass-ux/icons";
+import { Slider } from "glass-ux/slider";
 import { useCallback, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 
 import { formatClock } from "@/lib/format";
@@ -80,7 +83,7 @@ export function SeekBar({ position, duration, buffered = 0, onSeek, chapters, cl
       }}
       className={cn("nav-focus group/seek relative flex w-full touch-none items-center rounded-full", thin ? "h-3" : "h-6", className)}
     >
-      <div className={cn("glass-track relative w-full overflow-hidden rounded-full transition-[height] duration-fast", thin ? "h-1.5 group-hover/seek:h-2" : "h-2 group-hover/seek:h-2.5")}>
+      <div className={cn("glass-inset relative w-full overflow-hidden rounded-full transition-[height] duration-fast", thin ? "h-1.5 group-hover/seek:h-2" : "h-2 group-hover/seek:h-2.5")}>
         <div className="absolute inset-y-0 left-0 bg-white/30" style={{ width: `${bufferedFraction * 100}%` }} />
         <div className="absolute inset-y-0 left-0 bg-brand" style={{ width: `${(safeDuration ? (preview ?? position) / safeDuration : 0) * 100}%` }} />
         {chapters?.map((chapter) =>
@@ -88,7 +91,7 @@ export function SeekBar({ position, duration, buffered = 0, onSeek, chapters, cl
         )}
       </div>
       <div
-        className={cn("glass-thumb absolute size-4 -translate-x-1/2 rounded-full transition-transform duration-fast", thin ? "scale-0 group-hover/seek:scale-100" : "scale-75 group-hover/seek:scale-100 group-focus-visible/seek:scale-100", dragging && "!scale-125")}
+        className={cn("bg-fg absolute size-4 -translate-x-1/2 rounded-full transition-transform duration-fast", thin ? "scale-0 group-hover/seek:scale-100" : "scale-75 group-hover/seek:scale-100 group-focus-visible/seek:scale-100", dragging && "!scale-125")}
         style={{ left: `${(safeDuration ? (preview ?? position) / safeDuration : fraction) * 100}%` }}
       />
       {preview !== null ? (
@@ -107,36 +110,13 @@ interface TransportButtonProps {
   className?: string;
 }
 
-const TRANSPORT_SIZE = { sm: "size-9 [&_svg]:size-4", md: "size-12 [&_svg]:size-6", lg: "size-16 [&_svg]:size-8" };
-
 export function PlayPauseButton({ playing, onToggle, size = "md", className }: TransportButtonProps) {
-  return (
-    <button
-      type="button"
-      data-focusable
-      aria-label={playing ? "Pause" : "Play"}
-      onClick={onToggle}
-      className={cn("nav-focus grid place-items-center rounded-full bg-foreground text-background transition-transform duration-fast hover:scale-105 active:scale-95", TRANSPORT_SIZE[size], className)}
-    >
-      {playing ? <IconPlayerPauseFilled /> : <IconPlayerPlayFilled className="translate-x-px" />}
-    </button>
-  );
+  return <Button type="button" variant="primary" shape="circle" size={size} aria-label={playing ? "Pause" : "Play"} onClick={onToggle} icon={playing ? <IconPause /> : <IconPlay />} className={className} data-focusable />;
 }
 
 export function SkipButton({ direction, onPress, disabled, className }: { direction: "back" | "forward"; onPress: () => void; disabled?: boolean; className?: string }) {
   const Icon = direction === "back" ? IconPlayerSkipBackFilled : IconPlayerSkipForwardFilled;
-  return (
-    <button
-      type="button"
-      data-focusable
-      disabled={disabled}
-      aria-label={direction === "back" ? "Previous" : "Next"}
-      onClick={onPress}
-      className={cn("nav-focus grid size-10 place-items-center rounded-full text-foreground/90 transition-colors hover:bg-white/10 disabled:opacity-30", className)}
-    >
-      <Icon size={20} />
-    </button>
-  );
+  return <Button type="button" variant="ghost" shape="circle" aria-label={direction === "back" ? "Previous" : "Next"} onClick={onPress} disabled={disabled} disabledReason={disabled ? direction === "back" ? "No previous track" : "No next track" : undefined} icon={<Icon />} className={className} data-focusable />;
 }
 
 interface VolumeControlProps {
@@ -151,20 +131,19 @@ export function VolumeControl({ volume, muted, onVolume, onMuted, className }: V
   const effective = muted ? 0 : volume;
   const Icon = effective === 0 ? IconVolumeOff : effective < 0.5 ? IconVolume2 : IconVolume;
   return (
-    <div className={cn("group/volume flex items-center gap-1", className)}>
-      <button type="button" data-focusable aria-label={muted ? "Unmute" : "Mute"} onClick={() => onMuted(!muted)} className="nav-focus grid size-10 place-items-center rounded-full text-foreground/90 hover:bg-white/10">
-        <Icon size={20} />
-      </button>
-      <input
-        type="range"
+    <div className={cn("flex min-w-0 items-center gap-1", className)}>
+      <Button type="button" variant="ghost" shape="circle" aria-label={muted ? "Unmute" : "Mute"} onClick={() => onMuted(!muted)} icon={<Icon />} data-focusable />
+      <Slider
         min={0}
         max={1}
         step={0.02}
+        largeStep={0.2}
         value={effective}
         aria-label="Volume"
-        data-spatial-ignore
-        onChange={(event) => onVolume(Number(event.target.value))}
-        className="glass-range h-1.5 w-0 cursor-pointer appearance-none rounded-full transition-[width] duration-base group-hover/volume:w-24 focus-visible:w-24 tv:w-24"
+        size="sm"
+        format={(value) => `${Math.round(value * 100)}%`}
+        onValueChange={(value) => { if (typeof value === "number") onVolume(value); }}
+        className="w-24 shrink-0"
       />
     </div>
   );

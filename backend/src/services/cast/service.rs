@@ -107,6 +107,8 @@ pub struct CastPlaybackDecision {
 #[derive(Clone, Debug)]
 pub struct CastRemoteStatus {
     pub player_state: String,
+    /// Only an explicit receiver FINISHED marks a title complete.
+    pub finished: bool,
     pub current_position: f64,
     pub duration: Option<f64>,
     pub volume: f64,
@@ -150,6 +152,26 @@ impl Default for CastServiceConfig {
     }
 }
 
+/// Original server-issued authority and the receiver IDs returned by LOAD.
+/// This state is deliberately not reconstructed from a historical database row.
+#[derive(Clone)]
+pub(crate) struct ManagedCastSession {
+    pub claims: CastGrantClaims,
+    pub transport_id: String,
+    pub receiver_session_id: String,
+    pub media_session_id: i32,
+}
+
+/// Receiver-scoped admission retained through I/O and checkpoint commit.
+/// Workers keep a clone until the SDK call actually exits, even after timeout.
+pub struct CastSessionOperation {
+    endpoint: SocketAddr,
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
+#[cfg(test)]
+type TestControlTransport = dyn Fn(&str, u16, &str) -> Result<()> + Send + Sync;
+
 pub struct CastService {
     manager: Weak<ServicesManager>,
     config: CastServiceConfig,
@@ -163,6 +185,12 @@ pub struct CastService {
     device_command_locks: Arc<TokioRwLock<HashMap<String, Arc<TokioMutex<()>>>>>,
     discovery_status: Arc<RwLock<DiscoveryStatus>>,
     session_monitors: TokioMutex<HashMap<String, JoinHandle<()>>>,
+    // Separate from the socket executor lock: admission, I/O and checkpoint
+    // commit are one ordered operation, including LOAD and monitor retirement.
+    session_operations: RwLock<HashMap<SocketAddr, Arc<TokioMutex<()>>>>,
+    managed_sessions: RwLock<HashMap<String, ManagedCastSession>>,
+    #[cfg(test)]
+    test_control_transport: RwLock<Option<Arc<TestControlTransport>>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -199,7 +227,92 @@ impl CastService {
             device_command_locks: Arc::new(TokioRwLock::new(HashMap::new())),
             discovery_status: Arc::new(RwLock::new(DiscoveryStatus::default())),
             session_monitors: TokioMutex::new(HashMap::new()),
+            session_operations: RwLock::new(HashMap::new()),
+            managed_sessions: RwLock::new(HashMap::new()),
+            #[cfg(test)]
+            test_control_transport: RwLock::new(None),
         }
+    }
+
+    pub(crate) async fn lock_session_operations(
+        &self,
+        address: &str,
+        port: u16,
+    ) -> Result<Arc<CastSessionOperation>> {
+        let (address, port) = Self::validate_target(address, i32::from(port))?;
+        let endpoint = SocketAddr::new(address, port);
+        let lock = {
+            let mut locks = self.session_operations.write();
+            Arc::clone(
+                locks
+                    .entry(endpoint)
+                    .or_insert_with(|| Arc::new(TokioMutex::new(()))),
+            )
+        };
+        Ok(Arc::new(CastSessionOperation {
+            endpoint,
+            _guard: lock.lock_owned().await,
+        }))
+    }
+
+    pub(crate) fn managed_session(&self, id: &str) -> Option<ManagedCastSession> {
+        self.managed_sessions.read().get(id).cloned()
+    }
+
+    /// Call under session_operations before LOAD, so old controls/monitors can
+    /// never operate on replacement playback, including receiver-global volume.
+    pub(crate) fn release_receiver(
+        &self,
+        device_id: &str,
+        address: &str,
+        port: u16,
+    ) -> Vec<CastGrantClaims> {
+        let endpoint = Self::validate_target(address, i32::from(port)).ok();
+        let mut sessions = self.managed_sessions.write();
+        let mut retired = Vec::new();
+        sessions.retain(|_, session| {
+            let same_receiver = session.claims.receiver_device_id == device_id
+                || endpoint.is_some_and(|endpoint| {
+                    Self::validate_target(
+                        &session.claims.receiver_address,
+                        i32::from(session.claims.receiver_port),
+                    )
+                    .ok()
+                        == Some(endpoint)
+                });
+            if same_receiver {
+                retired.push(session.claims.clone());
+            }
+            !same_receiver
+        });
+        retired
+    }
+
+    pub(crate) fn manage_session(
+        &self,
+        claims: CastGrantClaims,
+        transport_id: String,
+        receiver_session_id: String,
+        media_session_id: i32,
+    ) {
+        self.managed_sessions.write().insert(
+            claims.session_id.clone(),
+            ManagedCastSession {
+                claims,
+                transport_id,
+                receiver_session_id,
+                media_session_id,
+            },
+        );
+    }
+
+    pub(crate) fn forget_session(&self, id: &str) {
+        self.managed_sessions.write().remove(id);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_test_control_transport(&self, transport: Arc<TestControlTransport>) {
+        *self.test_control_transport.write() = Some(transport);
     }
 
     pub fn media_base_url(&self) -> &str {
@@ -571,6 +684,7 @@ impl CastService {
 
     pub async fn cast_media(
         &self,
+        operation: &Arc<CastSessionOperation>,
         address: &str,
         port: u16,
         stream_url: &str,
@@ -580,7 +694,7 @@ impl CastService {
         Self::validate_position(start_position)?;
         let stream_url = stream_url.to_string();
         let content_type = content_type.to_string();
-        self.run_device_command(address, port, move |address, port| {
+        self.run_device_command(operation, address, port, move |address, port| {
             Self::cast_media_blocking(&address, port, &stream_url, &content_type, start_position)
         })
         .await
@@ -588,13 +702,20 @@ impl CastService {
 
     pub async fn play(
         &self,
+        operation: &Arc<CastSessionOperation>,
         address: &str,
         port: u16,
         transport_id: &str,
         media_session_id: i32,
     ) -> Result<()> {
+        #[cfg(test)]
+        let test_transport = self.test_control_transport.read().clone();
         let transport_id = transport_id.to_string();
-        self.run_device_command(address, port, move |address, port| {
+        self.run_device_command(operation, address, port, move |address, port| {
+            #[cfg(test)]
+            if let Some(transport) = test_transport {
+                return transport(&address, port, "play");
+            }
             Self::control_playback_blocking(&address, port, &transport_id, media_session_id, "play")
         })
         .await
@@ -602,13 +723,20 @@ impl CastService {
 
     pub async fn pause(
         &self,
+        operation: &Arc<CastSessionOperation>,
         address: &str,
         port: u16,
         transport_id: &str,
         media_session_id: i32,
     ) -> Result<()> {
+        #[cfg(test)]
+        let test_transport = self.test_control_transport.read().clone();
         let transport_id = transport_id.to_string();
-        self.run_device_command(address, port, move |address, port| {
+        self.run_device_command(operation, address, port, move |address, port| {
+            #[cfg(test)]
+            if let Some(transport) = test_transport {
+                return transport(&address, port, "pause");
+            }
             Self::control_playback_blocking(
                 &address,
                 port,
@@ -622,13 +750,20 @@ impl CastService {
 
     pub async fn stop(
         &self,
+        operation: &Arc<CastSessionOperation>,
         address: &str,
         port: u16,
         transport_id: &str,
         media_session_id: i32,
     ) -> Result<()> {
+        #[cfg(test)]
+        let test_transport = self.test_control_transport.read().clone();
         let transport_id = transport_id.to_string();
-        self.run_device_command(address, port, move |address, port| {
+        self.run_device_command(operation, address, port, move |address, port| {
+            #[cfg(test)]
+            if let Some(transport) = test_transport {
+                return transport(&address, port, "stop");
+            }
             Self::control_playback_blocking(&address, port, &transport_id, media_session_id, "stop")
         })
         .await
@@ -636,6 +771,7 @@ impl CastService {
 
     pub async fn seek(
         &self,
+        operation: &Arc<CastSessionOperation>,
         address: &str,
         port: u16,
         transport_id: &str,
@@ -643,23 +779,53 @@ impl CastService {
         position: f64,
     ) -> Result<()> {
         Self::validate_position(position)?;
+        #[cfg(test)]
+        let test_transport = self.test_control_transport.read().clone();
         let transport_id = transport_id.to_string();
-        self.run_device_command(address, port, move |address, port| {
+        self.run_device_command(operation, address, port, move |address, port| {
+            #[cfg(test)]
+            if let Some(transport) = test_transport {
+                return transport(&address, port, "seek");
+            }
             Self::control_seek_blocking(&address, port, &transport_id, media_session_id, position)
         })
         .await
     }
 
-    pub async fn set_volume(&self, address: &str, port: u16, volume: f32) -> Result<()> {
+    pub async fn set_volume(
+        &self,
+        operation: &Arc<CastSessionOperation>,
+        address: &str,
+        port: u16,
+        volume: f32,
+    ) -> Result<()> {
         let volume = Self::validate_volume(volume as f64)?;
-        self.run_device_command(address, port, move |address, port| {
+        #[cfg(test)]
+        let test_transport = self.test_control_transport.read().clone();
+        self.run_device_command(operation, address, port, move |address, port| {
+            #[cfg(test)]
+            if let Some(transport) = test_transport {
+                return transport(&address, port, "set_volume");
+            }
             Self::control_volume_blocking(&address, port, volume)
         })
         .await
     }
 
-    pub async fn set_muted(&self, address: &str, port: u16, muted: bool) -> Result<()> {
-        self.run_device_command(address, port, move |address, port| {
+    pub async fn set_muted(
+        &self,
+        operation: &Arc<CastSessionOperation>,
+        address: &str,
+        port: u16,
+        muted: bool,
+    ) -> Result<()> {
+        #[cfg(test)]
+        let test_transport = self.test_control_transport.read().clone();
+        self.run_device_command(operation, address, port, move |address, port| {
+            #[cfg(test)]
+            if let Some(transport) = test_transport {
+                return transport(&address, port, "set_muted");
+            }
             Self::control_mute_blocking(&address, port, muted)
         })
         .await
@@ -667,13 +833,14 @@ impl CastService {
 
     pub async fn session_status(
         &self,
+        operation: &Arc<CastSessionOperation>,
         address: &str,
         port: u16,
         transport_id: &str,
         media_session_id: i32,
     ) -> Result<CastRemoteStatus> {
         let transport_id = transport_id.to_string();
-        self.run_device_command(address, port, move |address, port| {
+        self.run_device_command(operation, address, port, move |address, port| {
             Self::session_status_blocking(&address, port, &transport_id, media_session_id)
         })
         .await
@@ -685,18 +852,28 @@ impl CastService {
         monitor: impl std::future::Future<Output = ()> + Send + 'static,
     ) {
         let mut monitors = self.session_monitors.lock().await;
+        monitors.retain(|_, handle| !handle.is_finished());
         if let Some(existing) = monitors.remove(&session_id) {
             existing.abort();
         }
         monitors.insert(session_id, tokio::spawn(monitor));
     }
 
-    async fn run_device_command<T, F>(&self, address: &str, port: u16, command: F) -> Result<T>
+    async fn run_device_command<T, F>(
+        &self,
+        operation: &Arc<CastSessionOperation>,
+        address: &str,
+        port: u16,
+        command: F,
+    ) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce(String, u16) -> Result<T> + Send + 'static,
     {
         let (address, port) = Self::validate_target(address, i32::from(port))?;
+        if operation.endpoint != SocketAddr::new(address, port) {
+            anyhow::bail!("Cast operation guard does not match the receiver endpoint");
+        }
         let address = address.to_string();
         let key = format!("{address}:{port}");
         let device_lock = {
@@ -720,12 +897,16 @@ impl CastService {
             .await
             .context("Cast command executor is unavailable")?;
         let device_guard = device_lock.lock_owned().await;
+        let operation = Arc::clone(operation);
         let task = tokio::task::spawn_blocking(move || {
             // These guards intentionally live inside the blocking task. If the
             // async wait times out, the detached operation continues to consume
             // its global slot and per-device lock until it really exits.
             let _permit = permit;
             let _device_guard = device_guard;
+            // Keep admission held after timeout/request cancellation until
+            // this SDK call can no longer affect replacement playback.
+            let _operation = operation;
             command(address, port)
         });
 
@@ -1164,6 +1345,7 @@ impl CastService {
         let receiver = device.receiver.get_status()?;
         Ok(CastRemoteStatus {
             player_state: entry.player_state.to_string(),
+            finished: entry.idle_reason == Some(rust_cast::channels::media::IdleReason::Finished),
             current_position: entry.current_time.map(f64::from).unwrap_or(0.0),
             duration: entry
                 .media
@@ -1337,6 +1519,152 @@ fn validated_ssdp_location_endpoint(response: &str, source_ip: IpAddr) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cancelled_waiter_retains_only_its_receiver_lock_until_worker_exits() {
+        let cast = Arc::new(CastService::new(Weak::new(), CastServiceConfig::default()));
+        let operation_a = cast
+            .lock_session_operations("fd00::50", 8009)
+            .await
+            .unwrap();
+        // Interleave B's admission before dispatching A. A worker must retain
+        // its explicit guard, never whichever receiver was admitted most recently.
+        let operation_b = cast
+            .lock_session_operations("192.168.1.51", 8009)
+            .await
+            .unwrap();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker_cast = Arc::clone(&cast);
+        let worker_operation = Arc::clone(&operation_a);
+        let waiter = tokio::spawn(async move {
+            worker_cast
+                .run_device_command(
+                    &worker_operation,
+                    "fd00:0:0:0:0:0:0:50",
+                    8009,
+                    move |_, _| {
+                        let _ = started_tx.send(());
+                        // Dropping the sender on assertion failure also releases
+                        // the worker, so a failed test cannot strand runtime shutdown.
+                        release_rx.recv().context("test worker released")?;
+                        Ok(())
+                    },
+                )
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), started_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        waiter.abort();
+        assert!(waiter.await.unwrap_err().is_cancelled());
+        drop(operation_a);
+        drop(operation_b);
+
+        let mut alias = Box::pin(cast.lock_session_operations(" fd00:0000:0:0:0:0:0:0050 ", 8009));
+        assert!(
+            futures::poll!(alias.as_mut()).is_pending(),
+            "same endpoint alias must wait for the detached worker"
+        );
+        let operation_b = tokio::time::timeout(
+            Duration::from_secs(2),
+            cast.lock_session_operations("192.168.1.51", 8009),
+        )
+        .await
+        .expect("slow A must not hold B's admission")
+        .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            cast.run_device_command(&operation_b, "192.168.1.51", 8009, |_, _| Ok(())),
+        )
+        .await
+        .expect("B must complete while A is still blocked")
+        .unwrap();
+        drop(operation_b);
+        let other_port = tokio::time::timeout(
+            Duration::from_secs(2),
+            cast.lock_session_operations("fd00::50", 8010),
+        )
+        .await
+        .expect("a distinct port is a distinct receiver endpoint")
+        .unwrap();
+        drop(other_port);
+        assert!(futures::poll!(alias.as_mut()).is_pending());
+        assert_eq!(cast.command_slots.available_permits(), 3);
+
+        release_tx.send(()).unwrap();
+        let alias = tokio::time::timeout(Duration::from_secs(2), alias)
+            .await
+            .expect("alias must be admitted once the real worker exits")
+            .unwrap();
+        cast.run_device_command(&alias, "fd00::50", 8009, |_, _| Ok(()))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn executor_rejects_an_admission_guard_for_a_different_endpoint() {
+        let cast = CastService::new(Weak::new(), CastServiceConfig::default());
+        let operation = cast
+            .lock_session_operations("192.168.1.50", 8009)
+            .await
+            .unwrap();
+        for (address, port) in [("192.168.1.51", 8009), ("192.168.1.50", 8010)] {
+            let result: Result<()> = cast
+                .run_device_command(&operation, address, port, |_, _| {
+                    panic!("a mismatched guard must never dispatch a worker");
+                })
+                .await;
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("guard does not match")
+            );
+        }
+        assert_eq!(cast.command_slots.available_permits(), 4);
+    }
+
+    #[tokio::test]
+    async fn receiver_handoff_retires_alias_ids_at_the_normalized_endpoint_only() {
+        let cast = CastService::new(Weak::new(), CastServiceConfig::default());
+        let claims = CastGrantClaims::new(
+            "session-a".into(),
+            "file".into(),
+            "owner".into(),
+            "fd00::50".into(),
+            1,
+            "issuer".into(),
+            vec!["member".into()],
+            "device-a".into(),
+            8009,
+        );
+        let mut other_port = claims.clone();
+        other_port.session_id = "session-b".into();
+        other_port.receiver_device_id = "device-b".into();
+        other_port.receiver_port = 8010;
+        cast.manage_session(claims.clone(), "transport-a".into(), "receiver-a".into(), 1);
+        cast.manage_session(
+            other_port.clone(),
+            "transport-b".into(),
+            "receiver-b".into(),
+            2,
+        );
+        let _operation = cast
+            .lock_session_operations("fd00::50", 8009)
+            .await
+            .unwrap();
+        assert_eq!(
+            cast.release_receiver("alias-device", " fd00:0000:0:0:0:0:0:0050 ", 8009),
+            vec![claims.clone()],
+        );
+        assert!(cast.managed_session(&claims.session_id).is_none());
+        assert_eq!(
+            cast.managed_session(&other_port.session_id).unwrap().claims,
+            other_port
+        );
+    }
 
     #[test]
     fn infer_content_type_uses_valid_mime_value() {

@@ -1,9 +1,9 @@
 import type { MockLink } from "@apollo/client/testing";
 import { MockedProvider } from "@apollo/client/testing/react";
-import { ToastProvider } from "@heroui/react";
+import { ActionProvider } from "glass-ux/actions";
+import { TooltipProvider } from "glass-ux/tooltip";
 import { render, type RenderOptions, type RenderResult } from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
-
 
 import { InputModeProvider } from "@/lib/input-mode";
 import { ThemeProvider } from "@/lib/theme";
@@ -25,8 +25,8 @@ export interface RenderWithProvidersResult extends RenderResult {
 }
 
 /**
- * Renders a component with the providers it can reasonably expect: Apollo (mocked), the toast
- * outlet HeroUI mutations write to, an optional memory router and the theme/input-mode context.
+ * Renders with mocked Apollo, Glass UX tooltips and action hosts (toasts and confirmation),
+ * an optional memory router and the theme/input-mode context.
  */
 export async function renderWithProviders(ui: ReactElement, options: RenderWithProvidersOptions = {}): Promise<RenderWithProvidersResult> {
   const { mocks = [], router: withRouter = true, shell = false, renderOptions, ...routerOptions } = options;
@@ -36,10 +36,9 @@ export async function renderWithProviders(ui: ReactElement, options: RenderWithP
 
   const wrap = (children: ReactNode): ReactNode => {
     let tree: ReactNode = (
-      <>
-        {children}
-        <ToastProvider placement="bottom end" />
-      </>
+      <TooltipProvider>
+        <ActionProvider>{children}</ActionProvider>
+      </TooltipProvider>
     );
     if (shell) {
       tree = (

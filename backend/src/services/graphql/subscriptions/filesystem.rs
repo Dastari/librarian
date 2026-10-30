@@ -4,13 +4,13 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
-use async_graphql::{Context, Object, Subscription};
+use async_graphql::{Context, Subscription};
 use futures::Stream;
 use tokio::sync::broadcast;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 
-use super::super::auth::AuthUser;
+use super::super::auth::AuthExt;
 
 /// Event emitted when a filesystem mutation completes.
 #[derive(Clone, async_graphql::SimpleObject)]
@@ -65,7 +65,7 @@ impl FilesystemSubscriptions {
     ) -> Pin<Box<dyn Stream<Item = FilesystemChangeEvent> + Send>> {
         let filter = path_filter;
 
-        if ctx.data_opt::<AuthUser>().is_some()
+        if ctx.require_admin().is_ok()
             && let Ok(broker) = ctx.data::<Arc<FilesystemChangeBroker>>()
         {
             let rx = broker.subscribe();
@@ -73,7 +73,7 @@ impl FilesystemSubscriptions {
                 .filter_map(|r| r.ok())
                 .filter_map(move |event| {
                     let pass = match filter.as_ref() {
-                        Some(p) => event.path.starts_with(p),
+                        Some(p) => std::path::Path::new(&event.path).starts_with(p),
                         None => true,
                     };
                     if pass { Some(event) } else { None }

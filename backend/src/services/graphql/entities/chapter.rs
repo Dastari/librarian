@@ -95,7 +95,8 @@ pub struct Chapter {
         target = "Audiobook",
         from = "audiobook_id",
         to = "id",
-        on_delete = "cascade"
+        on_delete = "cascade",
+        propagate_change = "up"
     )]
     pub audiobook: Option<Audiobook>,
 

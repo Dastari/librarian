@@ -1,10 +1,15 @@
-import { useLazyQuery, useMutation, useQuery } from "@apollo/client/react";
-import { SearchField, Select, ListBox, ListBoxItem, Tooltip, toast } from "@heroui/react";
-import { IconDownload, IconSearch, IconX } from "@tabler/icons-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMutation } from "@apollo/client/react";
+import { useSourceSearch } from "./useSourceSearch";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+import { SearchField } from "glass-ux/input";
+import { Select } from "glass-ux/select";
+import { Tooltip } from "glass-ux/tooltip";
+import { toast } from "glass-ux/toast";
+import { IconDownload, IconSearch } from "@tabler/icons-react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 
 import { Button, DataTable, type DataTableColumn, Dialog, EmptyState, ErrorState, GlassSegmented, Spinner, StatusChip } from "@/components/ui";
-import { AddTorrentDocument, EntitySourceListDocument, SearchSourcesDocument, type SearchSourcesQuery } from "@/graphql/generated/graphql";
+import { AddTorrentDocument, HasEnabledSourcesDocument, type SearchSourcesQuery } from "@/graphql/generated/graphql";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { languageName } from "@/lib/languages";
@@ -12,6 +17,17 @@ import type { StatusMeta } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
 type Release = SearchSourcesQuery["searchSources"]["sources"][number]["releases"][number];
+const releaseId = (release: Release) => release.stableId;
+const ReleaseActionsContext = createContext<{ busy: string | null; grab: (release: Release) => Promise<void> } | null>(null);
+
+function GrabReleaseCell({ release }: { release: Release }) {
+  const actions = useContext(ReleaseActionsContext)!;
+  return (
+    <Button size="sm" variant="primary" isPending={actions.busy === releaseId(release)} onPress={() => void actions.grab(release)} isDisabled={!release.magnetUri && !release.link}>
+      <IconDownload size={14} /> Grab
+    </Button>
+  );
+}
 
 type Resolution = "any" | "2160p" | "1080p" | "720p" | "sd";
 type Codec = "any" | "hevc" | "h264" | "av1";
@@ -64,7 +80,7 @@ interface ReleaseSearchDialogProps {
 /** Search configured sources for releases and send one to the download client. */
 export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery, year, imdbId, season, episode, libraryId, artist, album, author, target }: ReleaseSearchDialogProps) {
   const [query, setQuery] = useState(initialQuery);
-  const [search, result] = useLazyQuery(SearchSourcesDocument);
+  const { search, result, loadMore, retrySource, retryContinuation, revision, hasMore, queryKey } = useSourceSearch();
   const [addTorrent] = useMutation(AddTorrentDocument);
   const [busy, setBusy] = useState<string | null>(null);
   const [resolution, setResolution] = useState<Resolution>("any");
@@ -74,7 +90,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
   const [hdrOnly, setHdrOnly] = useState(false);
   const [freeleechOnly, setFreeleechOnly] = useState(false);
   const [seededOnly, setSeededOnly] = useState(true);
-  const sources = useQuery(EntitySourceListDocument, { variables: { where: { enabled: { eq: true } }, page: { limit: 50, offset: 0 } }, skip: !isOpen });
+  const sourceCapability = useQuery(HasEnabledSourcesDocument, { skip: !isOpen });
 
   const variables = useMemo(
     () => ({
@@ -91,7 +107,9 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
         movieId: target?.movieId ?? null,
         albumId: target?.albumId ?? null,
         audiobookId: target?.audiobookId ?? null,
-        limit: 100,
+        // The response count describes this batch, not an external total.
+        // Local filters apply to accumulated returned releases only.
+        limit: null,
       },
     }),
     [initialQuery, imdbId, season, episode, year, artist, album, author, target?.showId, target?.movieId, target?.albumId, target?.audiobookId],
@@ -127,9 +145,12 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
     [allReleases, resolution, codec, packs, language, hdrOnly, freeleechOnly, seededOnly],
   );
   const failures = result.data?.searchSources.sources.filter((source) => source.error) ?? [];
+  const retryableSource = failures.find((source) => source.pageInfo.retryCursor);
+  const paginationError = result.moreError ?? (!hasMore && retryableSource ? new Error(retryableSource.error ?? "Source page failed") : undefined);
+  const retryPage = () => retryableSource && !result.moreError ? retrySource(retryableSource.sourceId) : retryContinuation();
 
   const grab = async (release: Release) => {
-    setBusy(release.guid);
+    setBusy(releaseId(release));
     try {
       const { data } = await addTorrent({
         variables: {
@@ -179,17 +200,15 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
       {
         id: "match",
         header: "Profile",
+        value: (release) => release.profileMatch ?? "",
         size: 130,
         cell: (release) =>
           release.profileMatch ? (
             release.rejectReasons.length > 0 ? (
-              <Tooltip delay={200} closeDelay={0}>
+              <Tooltip content={release.rejectReasons.join(" · ")}>
                 <Button variant="ghost" size="sm" data-focusable aria-label={`Why ${release.profileMatch}: ${release.rejectReasons.join(", ")}`} className="h-auto min-h-0 cursor-help rounded-pill border-0 bg-transparent p-0 shadow-none backdrop-blur-none">
                   <StatusChip status={MATCH[release.profileMatch] ?? MATCH.suboptimal!} />
                 </Button>
-                <Tooltip.Content placement="top">
-                  <span className="block max-w-64 text-label-sm">{release.rejectReasons.join(" · ")}</span>
-                </Tooltip.Content>
               </Tooltip>
             ) : (
               <StatusChip status={MATCH[release.profileMatch] ?? MATCH.suboptimal!} />
@@ -204,39 +223,27 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
       {
         id: "grab",
         header: "",
+        filter: { none: "Use the identifying fields to filter this list" },
         size: 110,
         align: "end",
-        cell: (release) => (
-          <Button size="sm" variant="primary" isPending={busy === release.guid} onPress={() => void grab(release)} isDisabled={!release.magnetUri && !release.link}>
-            <IconDownload size={14} /> Grab
-          </Button>
-        ),
+        cell: (release) => <GrabReleaseCell release={release} />,
       },
     ],
-    [busy],
+    [],
   );
 
   return (
+    <ReleaseActionsContext value={{ busy, grab }}>
     <Dialog isOpen={isOpen} onOpenChange={onOpenChange} title="Find a release" size="wide">
       <div className="flex flex-col gap-4">
         <form
-          className="flex gap-2"
+          className="flex min-w-0 gap-2"
           onSubmit={(event) => {
             event.preventDefault();
             void search({ variables: { input: { ...variables.input, query } } });
           }}
         >
-          <SearchField aria-label="Search releases" value={query} onChange={setQuery} className="flex-1">
-            <SearchField.Group>
-              <SearchField.SearchIcon>
-                <IconSearch size={16} />
-              </SearchField.SearchIcon>
-              <SearchField.Input placeholder="Search releases" />
-              <SearchField.ClearButton>
-                <IconX size={14} />
-              </SearchField.ClearButton>
-            </SearchField.Group>
-          </SearchField>
+          <SearchField aria-label="Search releases" value={query} onValueChange={setQuery} placeholder="Search releases" className="min-w-0 flex-1" />
           <Button type="submit" variant="secondary" isPending={result.loading}>
             Search
           </Button>
@@ -247,24 +254,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
             <GlassSegmented<Codec> ariaLabel="Codec" size="sm" value={codec} onChange={setCodec} items={[{ key: "any", label: "Any codec" }, { key: "hevc", label: "HEVC" }, { key: "h264", label: "H.264" }, { key: "av1", label: "AV1" }]} />
             <GlassSegmented<Packs> ariaLabel="Season packs" size="sm" value={packs} onChange={setPacks} items={[{ key: "any", label: "All" }, { key: "packs", label: "Season packs" }, { key: "episodes", label: "Single" }]} />
             {languages.length > 0 ? (
-              <Select aria-label="Language" selectedKey={language} onSelectionChange={(key) => key !== null && setLanguage(String(key))} className="w-40" variant="secondary">
-                <Select.Trigger className="h-8 text-label">
-                  <Select.Value />
-                  <Select.Indicator />
-                </Select.Trigger>
-                <Select.Popover>
-                  <ListBox>
-                    <ListBoxItem id="any" textValue="Any language">
-                      Any language
-                    </ListBoxItem>
-                    {languages.map((code) => (
-                      <ListBoxItem key={code} id={code} textValue={languageName(code)}>
-                        {languageName(code)}
-                      </ListBoxItem>
-                    ))}
-                  </ListBox>
-                </Select.Popover>
-              </Select>
+              <Select aria-label="Language" value={language} onValueChange={(value) => setLanguage(value ?? "any")} size="sm" className="w-40" options={[{ value: "any", label: "Any language" }, ...languages.map((code) => ({ value: code, label: languageName(code) }))]} />
             ) : null}
             <Button size="sm" variant={hdrOnly ? "primary" : "secondary"} onPress={() => setHdrOnly((value) => !value)} aria-pressed={hdrOnly}>
               HDR
@@ -278,7 +268,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
             <span className="text-numeric ml-auto text-label-sm text-muted">{releases.length} of {allReleases.length}</span>
           </div>
         ) : null}
-        {sources.data && sources.data.sources.edges.length === 0 ? (
+        {sourceCapability.data?.hasEnabledSources === false ? (
           <EmptyState compact icon={IconSearch} title="No sources configured" description="Add a torrent indexer under Settings → Sources to search for releases." />
         ) : result.loading ? (
           <div className="grid h-48 place-items-center">
@@ -289,20 +279,26 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
         ) : (
           <>
             {failures.length ? <p className="text-label-sm text-warning">{failures.map((source) => `${source.sourceName}: ${source.error}`).join(" · ")}</p> : null}
+            {result.data ? <p className="text-label-sm text-muted">Source results may be partial. Filters apply to returned releases.</p> : null}
             <DataTable<Release>
               frame={false}
               columns={columns}
               rows={releases}
-              getRowId={(release) => release.guid}
+              dataSource="server-infinite"
+              queryKey={queryKey}
+              loadRevision={revision}
+              infinite={{ hasMore, loadMore, loadingMore: result.loadingMore, error: paginationError ? <ErrorState error={paginationError} onRetry={() => void retryPage()} /> : undefined }}
+              getRowId={releaseId}
               density="compact"
               noun="releases"
               emptyState={<EmptyState compact icon={IconSearch} title={allReleases.length ? "Nothing matches these filters" : "No releases found"} description={allReleases.length ? "Loosen a filter to see more." : "Try a shorter title or search without the year."} />}
             />
-            {result.data ? <p className="text-label-sm text-muted">{result.data.searchSources.totalReleases} releases from {result.data.searchSources.sourcesSearched} sources in {result.data.searchSources.totalElapsedMs} ms</p> : null}
+            {result.data ? <p className="text-label-sm text-muted">{allReleases.length} returned releases from {result.data.searchSources.sources.length} sources · latest response {result.data.searchSources.totalElapsedMs} ms</p> : null}
           </>
         )}
       </div>
     </Dialog>
+    </ReleaseActionsContext>
   );
 }
 

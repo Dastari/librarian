@@ -80,6 +80,18 @@ jobs:
           cargo test --locked --lib -j 1 services::graphql::schema::tests::schema_builds_without_recursing
           -- --exact
         working-directory: backend
+      - name: Test vendored macro expansion and schema-export stubs
+        run: |
+          cargo test --locked -p graphql-orm-macros --lib -j 1
+          # Features cannot be selected on a non-member package; test the export-only build from its own manifest and lockfile.
+          cargo test --locked --manifest-path ../vendor/graphql-orm-macros/Cargo.toml --target-dir target/vendor-macros --features schema-export-only --lib -j 1
+        working-directory: backend
+      - name: Require tooling export to match the normal runtime schema
+        run: |
+          cargo build --locked --example export-schema --features schema-export-only -j 1
+          ./target/debug/examples/export-schema "${{ runner.temp }}/librarian-tooling.graphql"
+          diff -u "${{ runner.temp }}/librarian.graphql" "${{ runner.temp }}/librarian-tooling.graphql"
+        working-directory: backend
       - name: Regenerate client
         run: cp ${{ runner.temp }}/librarian.graphql schema.graphql && pnpm codegen
         working-directory: web
@@ -88,6 +100,9 @@ jobs:
           git diff --exit-code --
           web/schema.graphql
           web/src/graphql/entities
+      - name: Verify registered-root and generated-document coverage
+        run: pnpm run codegen:check
+        working-directory: web
 
   security:
     name: Supply-chain and secret policy

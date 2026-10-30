@@ -4,6 +4,8 @@
  */
 import { useSyncExternalStore } from "react";
 
+import { session } from "@/lib/auth/session";
+
 export type PlayEntityKind = "movie" | "episode" | "track" | "chapter";
 
 export interface PlayItem {
@@ -12,6 +14,8 @@ export interface PlayItem {
   subtitle?: string;
   artwork?: string;
   entity: { kind: PlayEntityKind; id: string };
+  /** Explicit parent identity for chapter sessions; never inferred from href. */
+  audiobookId?: string;
   /** Where "back" and the dock title should go. */
   href?: string;
   startPosition?: number;
@@ -34,6 +38,8 @@ export interface PlayerState {
   video: PlayItem | null;
   queue: PlayItem[];
   index: number;
+  /** Changes for each selected queue entry, including entries sharing a file. */
+  audioActivation: number;
   transport: AudioTransport;
   /** Expanded now-playing sheet on phones. */
   sheetOpen: boolean;
@@ -51,6 +57,7 @@ let state: PlayerState = {
   video: null,
   queue: [],
   index: -1,
+  audioActivation: 0,
   transport: { playing: false, position: 0, duration: 0, buffered: 0, volume: initialVolume, muted: false, rate: 1, loading: false, error: null },
   sheetOpen: false,
 };
@@ -76,29 +83,40 @@ export const playerStore = {
 
   /** Replaces the audio queue and starts at `index`. */
   playQueue(items: PlayItem[], index = 0) {
-    set({ queue: items, index, transport: { ...state.transport, position: 0, duration: 0, buffered: 0, loading: true, error: null, playing: true } });
+    if (!items.length || index < 0 || index >= items.length) {
+      playerStore.stopAudio();
+      return;
+    }
+    set({ queue: items, index, audioActivation: state.audioActivation + 1, transport: { ...state.transport, position: 0, duration: 0, buffered: 0, loading: true, error: null, playing: true } });
   },
   enqueue(items: PlayItem[]) {
-    set((previous) => ({ queue: [...previous.queue, ...items], index: previous.index < 0 ? 0 : previous.index }));
+    if (!items.length) return;
+    set((previous) => ({ queue: [...previous.queue, ...items], index: previous.index < 0 ? 0 : previous.index, audioActivation: previous.audioActivation + (previous.index < 0 ? 1 : 0) }));
   },
   skip(direction: 1 | -1) {
     const next = state.index + direction;
     if (next < 0 || next >= state.queue.length) return;
-    set({ index: next, transport: { ...state.transport, position: 0, duration: 0, buffered: 0, loading: true, playing: true } });
+    playerStore.jumpTo(next);
   },
   jumpTo(index: number) {
-    if (index < 0 || index >= state.queue.length) return;
-    set({ index, transport: { ...state.transport, position: 0, loading: true, playing: true } });
+    if (index < 0 || index >= state.queue.length || index === state.index) return;
+    set({ index, audioActivation: state.audioActivation + 1, transport: { ...state.transport, position: 0, duration: 0, buffered: 0, loading: true, playing: true, error: null } });
   },
   removeAt(index: number) {
+    if (index < 0 || index >= state.queue.length) return;
     set((previous) => {
       const queue = previous.queue.filter((_, i) => i !== index);
       const current = previous.index > index ? previous.index - 1 : Math.min(previous.index, queue.length - 1);
-      return { queue, index: current };
+      const changed = previous.index === index;
+      return { queue, index: current, ...(changed ? {
+        audioActivation: previous.audioActivation + 1,
+        transport: { ...previous.transport, position: 0, duration: 0, buffered: 0, error: null, loading: current >= 0, playing: current >= 0 },
+        sheetOpen: current >= 0 && previous.sheetOpen,
+      } : {}) };
     });
   },
   stopAudio() {
-    set({ queue: [], index: -1, sheetOpen: false, transport: { ...state.transport, playing: false, position: 0, duration: 0, buffered: 0, loading: false, error: null } });
+    set({ queue: [], index: -1, audioActivation: state.audioActivation + 1, sheetOpen: false, transport: { ...state.transport, playing: false, position: 0, duration: 0, buffered: 0, loading: false, error: null } });
   },
   updateTransport(patch: Partial<AudioTransport>) {
     if (patch.volume !== undefined) window.localStorage.setItem(VOLUME_KEY, String(patch.volume));
@@ -108,6 +126,13 @@ export const playerStore = {
     set({ sheetOpen: open });
   },
 };
+
+// Playback identity is private state too. The live provider remounts on authority
+// changes, while this store survives navigation and would otherwise retain it.
+session.onChange(() => {
+  playerStore.setVideo(null);
+  playerStore.stopAudio();
+});
 
 export function usePlayerState(): PlayerState {
   return useSyncExternalStore(playerStore.subscribe, playerStore.getSnapshot, playerStore.getSnapshot);

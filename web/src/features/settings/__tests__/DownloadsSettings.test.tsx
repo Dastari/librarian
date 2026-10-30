@@ -1,5 +1,7 @@
-import { screen } from "@testing-library/react";
+import { useApolloClient } from "@apollo/client/react";
+import { act, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useReducer } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -147,6 +149,20 @@ describe("DownloadsSettings", () => {
     expect(await screen.findByText("no sources")).toBeInTheDocument();
   });
 
+  it("keeps a cleared numeric limit empty and lets the form schema reject it", async () => {
+    const update = updateMock("set-torrent.download_limit", "0");
+    await mount([update.mock]);
+    await screen.findByDisplayValue("/data/downloads");
+    const input = screen.getAllByLabelText("Download limit (KB/s, 0 = unlimited)").find((node) => node.tagName === "INPUT")!;
+    await userEvent.clear(input);
+    await userEvent.tab();
+    expect(input).toHaveValue("");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(input).toHaveAttribute("aria-invalid", "true"));
+    await vi.waitFor(() => expect(input).toHaveFocus());
+    expect(update.called).not.toHaveBeenCalled();
+  });
+
   it("refuses an empty download folder", async () => {
     await mount();
     const folder = await screen.findByDisplayValue("/data/downloads");
@@ -154,4 +170,65 @@ describe("DownloadsSettings", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Choose a download folder")).toBeInTheDocument();
   });
+
+  it("preserves an edited folder while another settings snapshot arrives", async () => {
+    let receiveSnapshot: () => void = () => { throw new Error("Settings client has not mounted"); };
+    function SettingsWithSnapshot() {
+      const client = useApolloClient();
+      receiveSnapshot = () => {
+        client.writeQuery({
+          query: AppSettingsByCategoryDocument,
+          variables: { category: "auto_download" },
+          data: { appSettings: { edges: [
+            setting("auto_download.enabled", "true", "auto_download"),
+            setting("auto_download.interval_minutes", "60", "auto_download"),
+            setting("auto_download.retry_after_minutes", "480", "auto_download"),
+          ] } },
+        });
+      };
+      return <DownloadsSettings />;
+    }
+    await renderWithProviders(<SettingsWithSnapshot />, { mocks: base() as never });
+    const folder = await screen.findByDisplayValue("/data/downloads");
+    await screen.findAllByDisplayValue("240");
+    await userEvent.clear(folder);
+    act(() => receiveSnapshot());
+    await screen.findAllByDisplayValue("480");
+    expect(folder).toHaveValue("");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Choose a download folder")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(folder).toHaveValue("/data/downloads");
+    expect(screen.getAllByDisplayValue("480")).not.toHaveLength(0);
+  });
+  it("retains the folder draft on a failed save and can discard it", async () => {
+    await mount([{
+      request: { query: EntityAppSettingUpdateDocument, variables: { id: "set-torrent.download_dir", input: { value: "/new/downloads" } } },
+      error: new Error("Download settings unavailable"),
+    }]);
+    const folder = await screen.findByDisplayValue("/data/downloads");
+    await userEvent.clear(folder);
+    await userEvent.type(folder, "/new/downloads");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Download settings unavailable"));
+    expect(folder).toHaveValue("/new/downloads");
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(folder).toHaveValue("/data/downloads");
+  });
+
+  it("keeps stored values across an unrelated rerender", async () => {
+    let refresh = () => {};
+    function Harness() {
+      const [, rerender] = useReducer((value: number) => value + 1, 0);
+      refresh = rerender;
+      return <DownloadsSettings />;
+    }
+    await renderWithProviders(<Harness />, { mocks: base() as never });
+    await screen.findByDisplayValue("/data/downloads");
+    act(() => refresh());
+    expect(screen.getByDisplayValue("/data/downloads")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("/data/session")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
 });

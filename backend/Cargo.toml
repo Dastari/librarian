@@ -1,15 +1,22 @@
 [package]
 name = "librarian"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["toby@dastari.net"]
 description = "Rust backend for Librarian media library"
 publish = false
 
+[package.metadata.cargo-machete]
+# This optional proc-macro dependency intentionally unifies the host feature
+# used by the ORM's transitive derive crate; application source does not import it.
+ignored = ["graphql-orm-macros"]
+
 [features]
 default = ["sqlite"]
 sqlite = ["sqlx/sqlite", "graphql-orm/sqlite"]
 embed-frontend = ["rust-embed"]
+# Tooling only: same patched proc-macro package as the ORM's dependency.
+schema-export-only = ["dep:graphql-orm-macros", "graphql-orm-macros/schema-export-only"]
 
 [dependencies]
 # Web framework
@@ -45,7 +52,7 @@ anyhow = "1.0.104"
 async-trait = "0.1.92"
 
 # Auth
-agql-auth = { git = "https://github.com/Dastari/agql-auth", rev = "1d2e9fe2e1576105212a7b340a11abf8cad0382d", version = "0.19.0" }
+agql-auth = { git = "https://github.com/Dastari/agql-auth", rev = "86fabec09eea1eec0f675bc150e90e3809734567", version = "0.22.1" }
 
 # HTTP client
 reqwest = { version = "0.13.4", features = ["json", "rustls", "cookies", "gzip", "deflate", "query", "stream"], default-features = false }
@@ -54,9 +61,11 @@ reqwest = { version = "0.13.4", features = ["json", "rustls", "cookies", "gzip",
 walkdir = "2.5.0"
 
 # GraphQL ORM
-graphql-orm = { git = "https://github.com/Dastari/graphql-orm.git", rev = "39181034b02eca6a487eeadcf8d281aaf155a398", version = "0.30.0", default-features = false }
-graphql-orm-storage = { git = "https://github.com/Dastari/graphql-orm.git", rev = "39181034b02eca6a487eeadcf8d281aaf155a398", version = "0.6.2", default-features = false, features = ["local"] }
-graphql-orm-backup = { git = "https://github.com/Dastari/graphql-orm.git", rev = "39181034b02eca6a487eeadcf8d281aaf155a398", version = "0.7.2", default-features = false, features = ["local"] }
+# Optional direct edge unifies this host proc-macro feature with the git patch below.
+graphql-orm-macros = { path = "../vendor/graphql-orm-macros", version = "=0.57.0", default-features = false, optional = true }
+graphql-orm = { git = "https://github.com/Dastari/graphql-orm.git", rev = "a90b5bd41f952b02416f23999c729b9ceffcbb8d", version = "0.57.0", default-features = false }
+graphql-orm-storage = { git = "https://github.com/Dastari/graphql-orm.git", rev = "a90b5bd41f952b02416f23999c729b9ceffcbb8d", version = "0.7.5", default-features = false, features = ["local"] }
+graphql-orm-backup = { git = "https://github.com/Dastari/graphql-orm.git", rev = "a90b5bd41f952b02416f23999c729b9ceffcbb8d", version = "0.10.0", default-features = false, features = ["local"] }
 
 # Utilities
 regex = "1.13.1"
@@ -144,6 +153,10 @@ tokio-tungstenite = "0.29.0"
 # async-graphql 7.2.1 pins an LRU line affected by RUSTSEC-2026-0253.
 # Only its lru requirement differs from the registry source; see vendor/async-graphql/PATCH.md.
 async-graphql = { path = "../vendor/async-graphql" }
+
+[patch."https://github.com/Dastari/graphql-orm.git"]
+# Pinned 0.57 runtime; narrow macro fix surfaces broadcast lag as a resync error.
+graphql-orm-macros = { path = "../vendor/graphql-orm-macros" }
 
 [profile.release]
 opt-level = 'z'

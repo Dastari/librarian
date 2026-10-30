@@ -1,6 +1,9 @@
-import { useMutation, useQuery } from "@apollo/client/react";
-import { ListBox, ListBoxItem, Select, toast } from "@heroui/react";
-import { IconPlus, IconSearch } from "@tabler/icons-react";
+import { useMutation } from "@apollo/client/react";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+import { Select } from "glass-ux/select";
+import { Surface } from "glass-ux/surface";
+import { toast } from "glass-ux/toast";
+import { IconPlus, IconSearch } from "glass-ux/icons";
 import { useEffect, useMemo, useState } from "react";
 
 import { Artwork, Button, EmptyState, Spinner } from "@/components/ui";
@@ -67,21 +70,7 @@ export function ProviderResults({ kind, query, libraries }: { kind: Kind; query:
   return (
     <div className="flex flex-col gap-4">
       {targets.length > 1 ? (
-        <Select aria-label="Add to library" selectedKey={libraryId} onSelectionChange={(key) => setLibraryId(key === null ? null : String(key))} className="w-64" variant="secondary">
-          <Select.Trigger>
-            <Select.Value />
-            <Select.Indicator />
-          </Select.Trigger>
-          <Select.Popover>
-            <ListBox>
-              {targets.map((library) => (
-                <ListBoxItem key={library.id} id={library.id} textValue={library.name}>
-                  {library.name}
-                </ListBoxItem>
-              ))}
-            </ListBox>
-          </Select.Popover>
-        </Select>
+        <Select aria-label="Add to library" value={libraryId} onValueChange={setLibraryId} options={targets.map((library) => ({ value: library.id, label: library.name }))} className="w-64 max-w-full" />
       ) : null}
       {active.loading && !active.data ? (
         <div className="grid h-48 place-items-center">
@@ -94,7 +83,7 @@ export function ProviderResults({ kind, query, libraries }: { kind: Kind; query:
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {cards.map((card) => (
-            <div key={card.key} className="flex gap-3 rounded-card border border-border bg-surface p-3 shadow-surface">
+            <Surface key={card.key} material="card" radius="tile" padding="tile" className="flex gap-3">
               <Artwork src={card.image} alt="" aspect={kind === "album" ? "square" : "poster"} tint={meta.tintVar} className="w-20 shrink-0 rounded-md" />
               <div className="flex min-w-0 flex-1 flex-col">
                 <p className="truncate text-title-sm text-foreground">{card.title}</p>
@@ -116,11 +105,11 @@ export function ProviderResults({ kind, query, libraries }: { kind: Kind; query:
                         .finally(() => setBusy(null));
                     }}
                   >
-                    <IconPlus size={14} /> Add
+                    <IconPlus /> Add
                   </Button>
                 </div>
               </div>
-            </div>
+            </Surface>
           ))}
         </div>
       )}

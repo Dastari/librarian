@@ -75,7 +75,7 @@ const libraryMock = (qualityProfileId: string | null) => ({
         color: null,
         autoScan: false,
         autoOrganize: false,
-        namingPattern: null,
+        namingPattern: "",
         scanIntervalMinutes: 60,
         watchForChanges: false,
         scanning: false,
@@ -89,7 +89,9 @@ const libraryMock = (qualityProfileId: string | null) => ({
 });
 
 const updateMock = (query: unknown, field: string, variables: unknown) => {
-  const called = vi.fn(() => ({ data: { [field]: { __typename: "Result", success: true, error: null } } }));
+  const entity = field.slice("update".length);
+  const record = `${entity.charAt(0).toLowerCase()}${entity.slice(1)}`;
+  const called = vi.fn(() => ({ data: { [field]: { __typename: `Update${entity}Result`, success: true, error: null, [record]: null } } }));
   return { called, mock: { request: { query, variables }, result: called } };
 };
 
@@ -102,7 +104,7 @@ describe("AcquisitionDialog for a show", () => {
   it("opens on the title's current mode and explains it", async () => {
     await mount(showTarget, []);
     expect(screen.getByRole("dialog")).toHaveTextContent("Andor");
-    expect(screen.getByRole("radio", { name: "Wanted only" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Wanted only" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("Only items you mark as wanted are searched for and downloaded.")).toBeInTheDocument();
   });
 
@@ -112,7 +114,7 @@ describe("AcquisitionDialog for a show", () => {
       input: { autoDownload: true, autoDownloadMode: "ALL", qualityProfileId: null },
     });
     await mount(showTarget, [everything.mock]);
-    await userEvent.click(screen.getByRole("radio", { name: "Everything missing" }));
+    await userEvent.click(screen.getByRole("button", { name: "Everything missing" }));
     expect(screen.getByText("Every item without a file is searched for and downloaded as it appears.")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     await vi.waitFor(() => expect(everything.called).toHaveBeenCalled());
@@ -123,7 +125,7 @@ describe("AcquisitionDialog for a show", () => {
     const off = updateMock(EntityShowUpdateDocument, "updateShow", { id: "show-1", input: { autoDownload: false, autoDownloadMode: "NONE", qualityProfileId: null } });
     const onSaved = vi.fn();
     await mount(showTarget, [off.mock], onSaved);
-    await userEvent.click(screen.getByRole("radio", { name: "Off" }));
+    await userEvent.click(screen.getByRole("button", { name: "Off" }));
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     await vi.waitFor(() => expect(off.called).toHaveBeenCalled());
     expect(onSaved).toHaveBeenCalled();
@@ -153,7 +155,7 @@ describe("AcquisitionDialog for a show", () => {
     const onSaved = vi.fn();
     await mount(showTarget, [mock], onSaved);
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("Library is read only")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Library is read only");
     expect(onSaved).not.toHaveBeenCalled();
   });
 });
@@ -165,7 +167,7 @@ describe("AcquisitionDialog for a movie", () => {
     await mount(movieTarget, []);
     expect(screen.getByRole("switch", { name: "Monitored" })).not.toBeChecked();
     expect(screen.getByRole("switch", { name: "Wanted" })).not.toBeChecked();
-    expect(screen.queryByRole("radiogroup", { name: "Automatic downloads" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Automatic downloads" })).toBeNull();
   });
 
   it("turning on wanted also monitors the movie", async () => {

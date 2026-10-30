@@ -139,7 +139,7 @@ query AlbumDetail($id: String!) {
       name
       libraryType
     }
-    tracks(orderBy: { trackNumber: ASC }, page: { limit: 100, offset: 0 }) {
+    tracks(orderBy: { trackNumber: ASC, discNumber: ASC }, page: { limit: 100, offset: 0 }) {
       edges {
         node {
           ...TrackFields
@@ -153,13 +153,39 @@ query AlbumDetail($id: String!) {
         }
       }
       pageInfo {
+        hasNextPage
         totalCount
       }
     }
   }
 }
 
-query ArtistDetail($id: String!) {
+# Keep this relation's order identical to AlbumDetail; the page assembles disc/track order.
+query AlbumTracksPage($id: String!, $offset: Int!) {
+  album(id: $id) {
+    id
+    tracks(orderBy: { trackNumber: ASC, discNumber: ASC }, page: { limit: 100, offset: $offset }) {
+      edges {
+        node {
+          ...TrackFields
+          mediaFile {
+            id
+            duration
+            audioCodec
+            bitrate
+            size
+          }
+        }
+      }
+      pageInfo {
+        hasNextPage
+        totalCount
+      }
+    }
+  }
+}
+
+query ArtistDetail($id: String!, $page: PageInput = { limit: 100, offset: 0 }) {
   artist(id: $id) {
     ...ArtistFields
     library {
@@ -167,12 +193,13 @@ query ArtistDetail($id: String!) {
       name
       libraryType
     }
-    albums(orderBy: { year: DESC }, page: { limit: 100, offset: 0 }) {
+    albums(orderBy: { year: DESC }, page: $page) {
       edges {
         node {
           ...AlbumFields
         }
       }
+      pageInfo { hasNextPage totalCount }
     }
   }
 }
@@ -198,13 +225,37 @@ query AudiobookDetail($id: String!) {
         }
       }
       pageInfo {
+        hasNextPage
         totalCount
       }
     }
   }
 }
 
-query CollectionDetail($id: String!) {
+query AudiobookChaptersPage($id: String!, $offset: Int!) {
+  audiobook(id: $id) {
+    id
+    chapters(orderBy: { chapterNumber: ASC }, page: { limit: 100, offset: $offset }) {
+      edges {
+        node {
+          ...ChapterFields
+          mediaFile {
+            id
+            duration
+            audioCodec
+            size
+          }
+        }
+      }
+      pageInfo {
+        hasNextPage
+        totalCount
+      }
+    }
+  }
+}
+
+query CollectionDetail($id: String!, $page: PageInput = { limit: 100, offset: 0 }) {
   collection(id: $id) {
     ...CollectionFields
     library {
@@ -212,12 +263,13 @@ query CollectionDetail($id: String!) {
       name
       libraryType
     }
-    movies(orderBy: { releaseDate: ASC }, page: { limit: 100, offset: 0 }) {
+    movies(orderBy: { releaseDate: ASC }, page: $page) {
       edges {
         node {
           ...MovieFields
         }
       }
+      pageInfo { hasNextPage totalCount }
     }
   }
 }

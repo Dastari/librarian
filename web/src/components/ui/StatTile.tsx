@@ -1,7 +1,7 @@
 import type { Icon as TablerIcon } from "@tabler/icons-react";
+import { DetailTile } from "glass-ux/detail-tile";
+import { ToneDot } from "glass-ux/tone-dot";
 import type { ReactNode } from "react";
-
-import { cn } from "@/lib/utils";
 
 interface StatTileProps {
   label: string;
@@ -12,28 +12,9 @@ interface StatTileProps {
   className?: string;
 }
 
-const TONE: Record<NonNullable<StatTileProps["tone"]>, string> = {
-  default: "text-muted",
-  brand: "text-brand",
-  accent: "text-accent",
-  success: "text-success",
-  warning: "text-warning",
-  danger: "text-danger",
-};
-
 export function StatTile({ label, value, hint, icon: Icon, tone = "default", className }: StatTileProps) {
+  const stateTone = tone === "success" || tone === "warning" || tone === "danger" ? tone : undefined;
   return (
-    <div className={cn("glass-surface flex items-start gap-3 rounded-card p-4", className)}>
-      {Icon ? (
-        <span className={cn("grid size-10 shrink-0 place-items-center rounded-xl bg-surface-secondary", TONE[tone])}>
-          <Icon size={20} stroke={1.75} />
-        </span>
-      ) : null}
-      <div className="min-w-0">
-        <p className="text-label text-muted">{label}</p>
-        <p className="text-numeric text-title-lg text-foreground">{value}</p>
-        {hint ? <p className="mt-0.5 text-label-sm text-muted">{hint}</p> : null}
-      </div>
-    </div>
+    <DetailTile className={className} label={label} value={stateTone ? <span className="inline-flex items-center gap-2"><ToneDot tone={stateTone} />{value}</span> : value} detail={hint} icon={Icon ? <Icon className="fa-icon" /> : undefined} numeric />
   );
 }

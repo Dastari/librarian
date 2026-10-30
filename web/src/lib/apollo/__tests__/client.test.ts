@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { session } from "@/lib/auth/session";
 
-import { sessionLink } from "../client";
+import { sessionLink, shouldRetryNetworkError } from "../client";
 
 const QUERY = parse(`query Movies { movies { id } }`);
 const LOGIN = parse(`mutation Login { login { success } }`);
@@ -78,6 +78,15 @@ describe("apollo session link", () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
+  it("does not replay a command after a potentially partial authorization failure", async () => {
+    const refresh = vi.spyOn(session, "refresh").mockResolvedValue(true);
+    const { link, attempts } = flakyLink(unauthorized);
+    const command = parse(`mutation StartScan { scanLibrary(id: "library") { success } }`);
+    await expect(lastValueFrom(execute(ApolloLink.from([sessionLink, link]), { query: command }, context))).rejects.toThrow(/nope/);
+    expect(attempts).toHaveLength(1);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
   it("passes other failures straight through", async () => {
     const refresh = vi.spyOn(session, "refresh").mockResolvedValue(true);
     const { link } = flakyLink(() => new Error("Failed to fetch"));
@@ -93,5 +102,16 @@ describe("apollo session link", () => {
     }));
     await expect(firstValueFrom(execute(ApolloLink.from([sessionLink, link]), { query: QUERY }, context))).resolves.toEqual(okResult);
     expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("network retry safety", () => {
+  it("retries failed reads while leaving uncertain commands and streams alone", () => {
+    const error = new Error("Response lost");
+    expect(shouldRetryNetworkError(error, { query: QUERY })).toBe(true);
+    expect(shouldRetryNetworkError(error, { query: LOGIN })).toBe(false);
+    expect(shouldRetryNetworkError(error, { query: parse(`subscription Changed { movieChanged { id } }`) })).toBe(false);
+    expect(shouldRetryNetworkError(unauthorized(), { query: QUERY })).toBe(false);
+    expect(shouldRetryNetworkError(undefined, { query: QUERY })).toBe(false);
   });
 });

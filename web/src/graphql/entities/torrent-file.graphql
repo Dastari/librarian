@@ -86,8 +86,5 @@ subscription EntityTorrentFileChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    torrentFile {
-      ...TorrentFileFields
-    }
   }
 }

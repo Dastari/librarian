@@ -3,7 +3,7 @@
 //! Sessions are intentionally **not** a DB entity (`docs/tier1-features-plan.md`
 //! §4: "Transcode sessions are intentionally ephemeral/in-memory") — they're
 //! runtime-only state tied to a live `ffmpeg` `Child` process, keyed by
-//! `media_file_id` (one active HLS session per file at a time).
+//! file, packaging kind and selected absolute audio stream index.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -17,12 +17,30 @@ use tracing::warn;
 /// Which `ffmpeg` invocation produced a session's segments — kept so logs and
 /// health/debug views can distinguish the fast (remux) path from the
 /// expensive (transcode) path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TranscodeKind {
     /// Stream-copy repackage (`-c copy`) — incompatible container, compatible codecs.
     Remux,
     /// Full re-encode (`-c:v libx264 -c:a aac`) — incompatible codec (HEVC/DV).
     Transcode,
+}
+
+/// Independent output namespace for each file/kind/audio selection.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SessionKey {
+    pub media_file_id: String,
+    pub kind: TranscodeKind,
+    pub audio_stream: Option<i32>,
+}
+
+impl SessionKey {
+    pub fn new(media_file_id: &str, kind: TranscodeKind, audio_stream: Option<i32>) -> Self {
+        Self {
+            media_file_id: media_file_id.to_owned(),
+            kind,
+            audio_stream,
+        }
+    }
 }
 
 /// A live HLS session: one `ffmpeg` child process writing segments/playlist
@@ -33,6 +51,7 @@ pub struct TranscodeSession {
     pub session_id: String,
     pub output_dir: PathBuf,
     pub kind: TranscodeKind,
+    pub audio_stream: Option<i32>,
     child: Child,
     last_accessed: DateTime<Utc>,
 }
@@ -50,9 +69,14 @@ impl TranscodeSession {
             session_id,
             output_dir,
             kind,
+            audio_stream: None,
             child,
             last_accessed: Utc::now(),
         }
+    }
+
+    fn key(&self) -> SessionKey {
+        SessionKey::new(&self.media_file_id, self.kind, self.audio_stream)
     }
 }
 
@@ -87,10 +111,10 @@ pub fn sanitize_segment_name(name: &str) -> Option<&str> {
     Some(name)
 }
 
-/// In-memory registry of live sessions, keyed by `media_file_id`.
+/// In-memory registry of independent file/kind/audio variants.
 #[derive(Default)]
 pub struct SessionRegistry {
-    sessions: RwLock<HashMap<String, TranscodeSession>>,
+    sessions: RwLock<HashMap<SessionKey, TranscodeSession>>,
 }
 
 impl SessionRegistry {
@@ -103,10 +127,16 @@ impl SessionRegistry {
     /// whether a new `ffmpeg` needs to be spawned and to keep an in-progress
     /// session alive across repeated playlist/segment polls.
     pub async fn touch(&self, media_file_id: &str) -> Option<PathBuf> {
-        let mut guard = self.sessions.write().await;
-        let session = guard.get_mut(media_file_id)?;
-        session.last_accessed = Utc::now();
-        Some(session.output_dir.clone())
+        // Legacy callers have no kind parameter. Prefer the default remux;
+        // never return another client's explicit audio selection.
+        if let Some(dir) = self
+            .touch_for_kind(media_file_id, TranscodeKind::Remux)
+            .await
+        {
+            return Some(dir);
+        }
+        self.touch_for_kind(media_file_id, TranscodeKind::Transcode)
+            .await
     }
 
     /// Reuse a session only when its remux/transcode mode matches the caller's
@@ -116,19 +146,51 @@ impl SessionRegistry {
         media_file_id: &str,
         kind: TranscodeKind,
     ) -> Option<PathBuf> {
-        let mut guard = self.sessions.write().await;
-        let session = guard.get_mut(media_file_id)?;
-        if session.kind != kind {
-            return None;
+        self.touch_variant(&SessionKey::new(media_file_id, kind, None))
+            .await
+    }
+
+    /// Failed children are removed so a later playlist request can retry.
+    /// Successful EOF remains reusable: its complete VOD output is valid.
+    pub async fn touch_variant(&self, key: &SessionKey) -> Option<PathBuf> {
+        let failed = {
+            let mut guard = self.sessions.write().await;
+            let session = guard.get_mut(key)?;
+            let reusable = match session.child.try_wait() {
+                Ok(None) => true,
+                Ok(Some(status)) => status.success(),
+                Err(error) => {
+                    warn!(media_file_id = %session.media_file_id, session_id = %session.session_id,
+                        %error, "Transcode: failed to inspect HLS child");
+                    false
+                }
+            };
+            if reusable {
+                session.last_accessed = Utc::now();
+                return Some(session.output_dir.clone());
+            }
+            guard.remove(key)
+        };
+        if let Some(mut session) = failed {
+            kill_and_cleanup(&mut session).await;
         }
-        session.last_accessed = Utc::now();
-        Some(session.output_dir.clone())
+        None
     }
 
     /// Stop and remove one active session, if present.
     pub async fn remove(&self, media_file_id: &str) {
-        let session = self.sessions.write().await.remove(media_file_id);
-        if let Some(mut session) = session {
+        let sessions: Vec<_> = {
+            let mut guard = self.sessions.write().await;
+            let keys: Vec<_> = guard
+                .keys()
+                .filter(|key| key.media_file_id == media_file_id)
+                .cloned()
+                .collect();
+            keys.into_iter()
+                .filter_map(|key| guard.remove(&key))
+                .collect()
+        };
+        for mut session in sessions {
             kill_and_cleanup(&mut session).await;
         }
     }
@@ -138,11 +200,11 @@ impl SessionRegistry {
     /// callers check [`touch`](Self::touch) first, but guards against a race.
     pub async fn insert(&self, session: TranscodeSession) {
         let mut guard = self.sessions.write().await;
-        if let Some(mut previous) = guard.insert(session.media_file_id.clone(), session) {
+        if let Some(mut previous) = guard.insert(session.key(), session) {
             warn!(
                 media_file_id = %previous.media_file_id,
                 previous_session_id = %previous.session_id,
-                "Transcode: replacing an existing HLS session for the same media file"
+                "Transcode: replacing an existing HLS session for the same variant"
             );
             kill_and_cleanup(&mut previous).await;
         }
@@ -153,7 +215,7 @@ impl SessionRegistry {
     /// `media_file_id`s (for logging by the caller).
     pub async fn reap_idle(&self, idle_minutes: i64) -> Vec<String> {
         let now = Utc::now();
-        let idle_ids: Vec<String> = {
+        let idle_ids: Vec<SessionKey> = {
             let guard = self.sessions.read().await;
             guard
                 .iter()
@@ -166,11 +228,18 @@ impl SessionRegistry {
         for id in idle_ids {
             let removed_session = {
                 let mut guard = self.sessions.write().await;
-                guard.remove(&id)
+                // A playlist/segment may have touched it since the snapshot.
+                if guard.get(&id).is_some_and(|session| {
+                    session_is_idle(session.last_accessed, now, idle_minutes)
+                }) {
+                    guard.remove(&id)
+                } else {
+                    None
+                }
             };
             if let Some(mut session) = removed_session {
                 kill_and_cleanup(&mut session).await;
-                removed.push(id);
+                removed.push(id.media_file_id);
             }
         }
         removed

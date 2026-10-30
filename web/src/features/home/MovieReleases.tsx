@@ -1,7 +1,11 @@
-import { useMutation, useQuery } from "@apollo/client/react";
-import { ListBox, ListBoxItem, Select, toast } from "@heroui/react";
+import { useMutation } from "@apollo/client/react";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+import { Select } from "glass-ux/select";
+import { Button } from "glass-ux/button";
+import { IconCalendar, IconPlus } from "glass-ux/icons";
+import { toast } from "glass-ux/toast";
 import { useNavigate } from "@tanstack/react-router";
-import { IconCalendarStats, IconMovie, IconPlus } from "@tabler/icons-react";
+import { IconMovie } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { EmptyState, ErrorState, MediaRow, PosterCard, Section, SkeletonRow } from "@/components/ui";
@@ -93,20 +97,18 @@ export function MovieReleases() {
         {...(existing ? { to: "/movies/$movieId" as const, params: { movieId: existing.id } } : { onPress: () => void navigate({ to: "/search", search: { q: movie.title, in: "movie" } as never }) })}
         actions={
           !existing && libraryId ? (
-            <button
-              type="button"
+            <Button
+              variant="soft"
+              size="sm"
               aria-label={`Add ${movie.title} to library`}
-              data-focusable
-              disabled={busy === movie.providerId}
+              status={busy === movie.providerId ? "pending" : "idle"}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
                 add(movie);
               }}
-              className="nav-focus glass-control glass-brand grid size-8 place-items-center rounded-full disabled:opacity-60"
-            >
-              <IconPlus size={16} />
-            </button>
+              icon={<IconPlus />}
+            />
           ) : undefined
         }
       />
@@ -115,26 +117,12 @@ export function MovieReleases() {
 
   const picker =
     targets.length > 1 ? (
-      <Select aria-label="Add to library" selectedKey={libraryId} onSelectionChange={(key) => setLibraryId(key === null ? null : String(key))} className="w-48" variant="secondary">
-        <Select.Trigger>
-          <Select.Value />
-          <Select.Indicator />
-        </Select.Trigger>
-        <Select.Popover>
-          <ListBox>
-            {targets.map((library) => (
-              <ListBoxItem key={library.id} id={library.id} textValue={library.name}>
-                {library.name}
-              </ListBoxItem>
-            ))}
-          </ListBox>
-        </Select.Popover>
-      </Select>
+      <Select aria-label="Add to library" value={libraryId} onValueChange={setLibraryId} options={targets.map((library) => ({ value: library.id, label: library.name }))} className="w-48 max-w-full" />
     ) : (
       <span>{region ? `In cinemas · ${region}` : "In cinemas"}</span>
     );
 
-  const row = (query: typeof nowPlaying, list: Release[], label: string, empty: { title: string; description: string; icon: typeof IconMovie }, badge: (movie: Release) => string | undefined) => {
+  const row = (query: typeof nowPlaying, list: Release[], label: string, empty: { title: string; description: string; icon: typeof IconMovie | typeof IconCalendar }, badge: (movie: Release) => string | undefined) => {
     if (query.loading && list.length === 0) return <SkeletonRow />;
     if (query.error) {
       return (
@@ -159,7 +147,7 @@ export function MovieReleases() {
         {row(nowPlaying, recentList, "Recently released movies", { icon: IconMovie, title: "No current releases", description: "TMDB's now-playing list is empty for this region." }, () => undefined)}
       </Section>
       <Section title="Upcoming releases" bleed>
-        {row(upcoming, upcomingList, "Upcoming movie releases", { icon: IconCalendarStats, title: "Nothing scheduled", description: "TMDB has no upcoming releases listed for this region." }, (movie) => {
+        {row(upcoming, upcomingList, "Upcoming movie releases", { icon: IconCalendar, title: "Nothing scheduled", description: "TMDB has no upcoming releases listed for this region." }, (movie) => {
           if (!movie.releaseDate) return undefined;
           const days = daysUntil(movie.releaseDate.slice(0, 10), today);
           if (days < 0) return "Re-release";

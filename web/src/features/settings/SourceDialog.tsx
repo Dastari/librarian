@@ -1,5 +1,11 @@
-import { useMutation, useQuery } from "@apollo/client/react";
-import { Description, FieldError, Input, Label, ListBox, ListBoxItem, Select, Switch, TextField, toast } from "@heroui/react";
+import { useMutation } from "@apollo/client/react";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+import { Field } from "glass-ux/field";
+import { Input } from "glass-ux/input";
+import { Select } from "glass-ux/select";
+import { toast } from "glass-ux/toast";
+import { SettingRow } from "glass-ux/setting-row";
+import { Switch } from "glass-ux/switch";
 import { useEffect, useMemo, useState } from "react";
 
 import { Button, Dialog, FieldGroup } from "@/components/ui";
@@ -131,73 +137,37 @@ export function SourceDialog({ source, isOpen, onOpenChange, onSaved }: SourceDi
       }
     >
       <FieldGroup>
-        <Select aria-label="Source type" selectedKey={definitionId} onSelectionChange={(key) => setDefinitionId(key === null ? null : String(key))} isDisabled={Boolean(source)} isInvalid={Boolean(errors.definition)} fullWidth placeholder="Choose a source type">
-          <Label>Type</Label>
-          <Select.Trigger>
-            <Select.Value />
-            <Select.Indicator />
-          </Select.Trigger>
-          {definition ? <Description>{definition.description}</Description> : null}
-          <FieldError>{errors.definition}</FieldError>
-          <Select.Popover>
-            <ListBox>
-              {(definitions.data?.availableSourceDefinitions ?? []).map((item) => (
-                <ListBoxItem key={item.id} id={item.id} textValue={item.name}>
-                  <span className="flex flex-col">
-                    <span>{item.name}</span>
-                    <span className="text-label-sm text-muted">{item.trackerType} · {item.language}</span>
-                  </span>
-                </ListBoxItem>
-              ))}
-            </ListBox>
-          </Select.Popover>
-        </Select>
-        <TextField value={name} onChange={setName} isInvalid={Boolean(errors.name)} fullWidth isRequired>
-          <Label>Name</Label>
-          <Input />
-          <FieldError>{errors.name}</FieldError>
-        </TextField>
-        <TextField value={siteUrl} onChange={setSiteUrl} fullWidth type="url">
-          <Label>Site URL</Label>
-          <Input className="font-mono text-label" />
-        </TextField>
+        <Field label="Type" hint={definition?.description} error={errors.definition} disabled={Boolean(source)} nativeLabel={false}>
+          <Select
+            value={definitionId}
+            onValueChange={setDefinitionId}
+            disabled={Boolean(source)}
+            placeholder="Choose a source type"
+            options={(definitions.data?.availableSourceDefinitions ?? []).map((item) => ({ value: item.id, label: item.name, detail: [item.trackerType, item.language].filter(Boolean).join(" · ") }))}
+          />
+        </Field>
+        <Field label="Name" error={errors.name} required>
+          <Input value={name} onValueChange={setName} required />
+        </Field>
+        <Field label="Site URL">
+          <Input value={siteUrl} onValueChange={setSiteUrl} type="url" className="font-mono" />
+        </Field>
         {requiredCredentials.map((key) => (
-          <TextField key={key} value={credentials[key] ?? ""} onChange={(value) => setCredentials({ ...credentials, [key]: value })} isInvalid={Boolean(errors[key])} fullWidth type="password" autoComplete="off">
-            <Label className="capitalize">{key.replace(/_/g, " ")}</Label>
-            <Input className="font-mono text-label" placeholder={source ? "Leave empty to keep the stored value" : undefined} />
-            <FieldError>{errors[key]}</FieldError>
-          </TextField>
+          <Field key={key} label={key.replace(/_/g, " ")} error={errors[key]} required={!source}>
+            <Input value={credentials[key] ?? ""} onValueChange={(value) => setCredentials({ ...credentials, [key]: value })} type="password" autoComplete="off" required={!source} placeholder={source ? "Leave empty to keep the stored value" : undefined} className="font-mono" />
+          </Field>
         ))}
         {(settingDefs.data?.sourceSettingDefinitions ?? []).map((setting) =>
           setting.options?.length ? (
-            <Select key={setting.key} aria-label={setting.label} selectedKey={settings[setting.key] ?? setting.defaultValue ?? null} onSelectionChange={(key) => setSettings({ ...settings, [setting.key]: String(key) })} fullWidth>
-              <Label>{setting.label}</Label>
-              <Select.Trigger>
-                <Select.Value />
-                <Select.Indicator />
-              </Select.Trigger>
-              <Select.Popover>
-                <ListBox>
-                  {setting.options.map((option) => (
-                    <ListBoxItem key={option.value} id={option.value} textValue={option.label}>
-                      {option.label}
-                    </ListBoxItem>
-                  ))}
-                </ListBox>
-              </Select.Popover>
-            </Select>
+            <Field key={setting.key} label={setting.label} nativeLabel={false}>
+              <Select value={settings[setting.key] ?? setting.defaultValue ?? null} onValueChange={(value) => value !== null && setSettings({ ...settings, [setting.key]: value })} options={setting.options.map((option) => ({ value: option.value, label: option.label }))} />
+            </Field>
           ) : setting.settingType === "boolean" ? (
-            <Switch key={setting.key} isSelected={(settings[setting.key] ?? setting.defaultValue) === "true"} onChange={(value) => setSettings({ ...settings, [setting.key]: String(value) })}>
-              <Switch.Control>
-                <Switch.Thumb />
-              </Switch.Control>
-              <Switch.Content>{setting.label}</Switch.Content>
-            </Switch>
+            <SettingRow key={setting.key} label={setting.label} control={<Switch checked={(settings[setting.key] ?? setting.defaultValue) === "true"} onCheckedChange={(value) => setSettings({ ...settings, [setting.key]: String(value) })} />} />
           ) : (
-            <TextField key={setting.key} value={settings[setting.key] ?? setting.defaultValue ?? ""} onChange={(value) => setSettings({ ...settings, [setting.key]: value })} fullWidth>
-              <Label>{setting.label}</Label>
-              <Input className="font-mono text-label" />
-            </TextField>
+            <Field key={setting.key} label={setting.label}>
+              <Input value={settings[setting.key] ?? setting.defaultValue ?? ""} onValueChange={(value) => setSettings({ ...settings, [setting.key]: value })} className="font-mono" />
+            </Field>
           ),
         )}
         <div>
@@ -206,19 +176,14 @@ export function SourceDialog({ source, isOpen, onOpenChange, onSaved }: SourceDi
             {MEDIA_TYPES.map((type) => {
               const active = mediaTypes.includes(type.key);
               return (
-                <Button key={type.key} size="sm" variant={active ? "primary" : "secondary"} onPress={() => setMediaTypes(active ? mediaTypes.filter((item) => item !== type.key) : [...mediaTypes, type.key])}>
+                <Button key={type.key} aria-pressed={active} size="sm" variant={active ? "primary" : "secondary"} onPress={() => setMediaTypes(active ? mediaTypes.filter((item) => item !== type.key) : [...mediaTypes, type.key])}>
                   {type.label}
                 </Button>
               );
             })}
           </div>
         </div>
-        <Switch isSelected={enabled} onChange={setEnabled}>
-          <Switch.Control>
-            <Switch.Thumb />
-          </Switch.Control>
-          <Switch.Content>Enabled</Switch.Content>
-        </Switch>
+        <SettingRow label="Enabled" control={<Switch checked={enabled} onCheckedChange={setEnabled} />} />
       </FieldGroup>
     </Dialog>
   );

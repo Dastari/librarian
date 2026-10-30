@@ -81,8 +81,5 @@ subscription EntityMovieCastCreditChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    movieCastCredit {
-      ...MovieCastCreditFields
-    }
   }
 }

@@ -48,6 +48,7 @@ pub struct Episode {
 
     #[graphql(name = "showId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub show_id: String,
 
     #[graphql(name = "season")]
@@ -87,6 +88,11 @@ pub struct Episode {
     #[filterable(type = "number")]
     pub runtime: Option<i32>,
 
+    /// Provider still image URL: the source the artwork cache downloads the episode
+    /// thumbnail from. Clients use `/api/artwork/episode/{id}/thumbnail`.
+    #[graphql(name = "stillUrl")]
+    pub still_url: Option<String>,
+
     #[graphql(name = "tvmazeId")]
     #[filterable(type = "number")]
     pub tvmaze_id: Option<i32>,
@@ -110,6 +116,7 @@ pub struct Episode {
 
     #[graphql(name = "mediaFileId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub media_file_id: Option<String>,
 
     #[graphql(name = "createdAt")]
@@ -123,7 +130,13 @@ pub struct Episode {
     pub updated_at: String,
     #[graphql(skip)]
     #[serde(skip)]
-    #[relation(target = "Show", from = "show_id", to = "id", on_delete = "cascade")]
+    #[relation(
+        target = "Show",
+        from = "show_id",
+        to = "id",
+        on_delete = "cascade",
+        propagate_change = "up"
+    )]
     pub show: Option<Show>,
     #[graphql(skip)]
     #[serde(skip)]

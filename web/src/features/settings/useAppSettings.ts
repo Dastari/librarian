@@ -1,4 +1,5 @@
-import { useApolloClient, useQuery } from "@apollo/client/react";
+import { useApolloClient } from "@apollo/client/react";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { useCallback, useMemo } from "react";
 
 import { AppSettingsByCategoryDocument, EntityAppSettingCreateDocument, EntityAppSettingUpdateDocument } from "@/graphql/generated/graphql";

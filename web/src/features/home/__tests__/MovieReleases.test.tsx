@@ -58,7 +58,7 @@ const library = (id: string, name: string, libraryType: string) => ({
     color: null,
     autoScan: false,
     autoOrganize: false,
-    namingPattern: null,
+    namingPattern: "",
     scanIntervalMinutes: 60,
     watchForChanges: false,
     scanning: false,
@@ -76,7 +76,7 @@ const library = (id: string, name: string, libraryType: string) => ({
 
 const librariesMock = (edges: unknown[]) => ({
   request: { query: LibrariesOverviewDocument, variables: {} },
-  result: { data: { libraries: { __typename: "LibraryConnection", edges } } },
+  result: { data: { libraries: { __typename: "LibraryConnection", edges, pageInfo: { __typename: "PageInfo", hasNextPage: false, totalCount: edges.length } } } },
 });
 
 const nowPlaying = [release(1, "Dune Part Three", "2026-09-01"), release(2, "The Batman 2", "2026-09-05")];
@@ -169,8 +169,8 @@ describe("MovieReleases", () => {
     ]);
     const downloaded = await screen.findByRole("link", { name: /Dune Part Three/ });
     expect(downloaded).toHaveAttribute("href", "/movies/mv-1");
-    expect(downloaded).toHaveTextContent("Downloaded");
-    expect(screen.getByRole("link", { name: /The Batman 2/ })).toHaveTextContent("Wanted");
+    expect(downloaded.closest("article")).toHaveTextContent("Downloaded");
+    expect(screen.getByRole("link", { name: /The Batman 2/ }).closest("article")).toHaveTextContent("Wanted");
     // Nothing to add: an owned title has no add button.
     expect(screen.queryByRole("button", { name: /Add .* to library/ })).toBeNull();
   });
@@ -182,7 +182,7 @@ describe("MovieReleases", () => {
       ownedMock([1], [{ id: "mv-1", tmdbId: 1, hasFile: false, wanted: false }]),
       librariesMock([library("lib-1", "Films", "movies")]),
     ]);
-    expect(await screen.findByRole("link", { name: /Dune Part Three/ })).toHaveTextContent("In library");
+    expect((await screen.findByRole("link", { name: /Dune Part Three/ })).closest("article")).toHaveTextContent("In library");
   });
 
   it("adds a title to the only movie library", async () => {
@@ -200,7 +200,7 @@ describe("MovieReleases", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Add Dune Part Three to library" }));
     await vi.waitFor(() => expect(addMovie).toHaveBeenCalled());
     // A single movie library needs no picker; the row says where the film is playing instead.
-    expect(screen.queryByRole("button", { name: "Add to library" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Add to library" })).toBeNull();
     expect(screen.getByText("In cinemas · US")).toBeInTheDocument();
   });
 
@@ -211,7 +211,7 @@ describe("MovieReleases", () => {
       ownedMock([1], []),
       librariesMock([library("lib-1", "Films", "movies"), library("lib-3", "Kids films", "movies")]),
     ]);
-    expect(await screen.findByRole("button", { name: /Add to library/ })).toBeInTheDocument();
+    expect(await screen.findByRole("combobox", { name: /Add to library/ })).toBeInTheDocument();
   });
 
   it("shows an inline error with a retry when TMDB fails", async () => {

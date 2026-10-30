@@ -1,21 +1,24 @@
-import { useMutation, useSubscription } from "@apollo/client/react";
-import { toast } from "@heroui/react";
+import { useMutation } from "@apollo/client/react";
+import { toast } from "glass-ux/toast";
 import { Link } from "@tanstack/react-router";
 import { IconArrowUpCircle, IconBell, IconCheck, IconChecks, IconTrash } from "@tabler/icons-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import { parseAsString, parseAsStringEnum, useQueryState } from "nuqs";
+import { SearchField } from "glass-ux/input";
 
 import { Button, DataTable, type DataTableBulkAction, type DataTableColumn, type DataTableRowAction, EmptyState, ErrorState, PageHeader, SegmentTabs, StatusChip } from "@/components/ui";
-import { useConnection } from "@/features/libraries/browser/useConnection";
+import { useInfiniteConnection } from "@/features/libraries/browser/useInfiniteConnection";
 import {
   ApproveQualityUpgradeDocument,
-  EntityNotificationChangedDocument,
   EntityNotificationDeleteDocument,
   EntityNotificationListDocument,
   EntityNotificationUpdateDocument,
   EntityNotificationUpdateManyDocument,
   type EntityNotificationListQuery,
   type NotificationWhereInput,
+  type NotificationOrderByInput,
 } from "@/graphql/generated/graphql";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useServerTable } from "@/hooks/useServerTable";
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { formatRelative } from "@/lib/format";
@@ -30,17 +33,22 @@ type Tab = (typeof TABS)[number];
 /** Notifications, upgrade approvals and anything that needs a decision. */
 export function ActivityPage() {
   const isAdmin = useIsAdmin();
-  const [tab, setTab] = useState<Tab>("unread");
-  const table = useServerTable({ persistKey: "activity", defaultPageSize: 50 });
-  useEffect(() => table.resetPage(), [tab, table.resetPage]);
+  const [tab, setTab] = useQueryState("show", parseAsStringEnum<Tab>([...TABS]).withDefault("unread").withOptions({ history: "push" }));
+  const [query, setQuery] = useQueryState("q", parseAsString.withDefault(""));
+  const search = useDebouncedValue(query.trim(), 250);
+  const table = useServerTable<NotificationOrderByInput>({ persistKey: "activity", defaultSorting: [{ id: "createdAt", desc: true }] });
 
   const where = useMemo<NotificationWhereInput>(() => {
-    if (tab === "unread") return { readAt: { isNull: true } };
-    if (tab === "action") return { actionType: { isNull: false }, resolvedAt: { isNull: true } };
-    return {};
-  }, [tab]);
-  const list = useConnection(EntityNotificationListDocument, { where, orderBy: [{ createdAt: "DESC" }], page: table.page }, (data) => data.notifications);
-  useSubscription(EntityNotificationChangedDocument, { onData: () => void list.refetch() });
+    const clause: NotificationWhereInput = {};
+    if (tab === "unread") clause.readAt = { isNull: true };
+    if (tab === "action") {
+      clause.actionType = { isNull: false };
+      clause.resolvedAt = { isNull: true };
+    }
+    if (search) clause.or = [{ title: { contains: search } }, { category: { contains: search } }];
+    return clause;
+  }, [tab, search]);
+  const list = useInfiniteConnection(EntityNotificationListDocument, { where, orderBy: table.orderBy }, (data) => data.notifications);
 
   const [update] = useMutation(EntityNotificationUpdateDocument);
   const [updateMany] = useMutation(EntityNotificationUpdateManyDocument);
@@ -95,8 +103,8 @@ export function ActivityPage() {
             <span className="flex min-w-0 items-start gap-3">
               <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", row.readAt ? "bg-transparent" : type.dot)} />
               <span className="min-w-0">
-                <span className={cn("block truncate text-body-sm", row.readAt ? "text-muted" : "text-foreground")}>{row.title}</span>
-                <span className="block truncate text-label-sm text-muted">{row.message}</span>
+                <span className={cn("block break-words text-body-sm", row.readAt ? "text-muted" : "text-foreground")}>{row.title}</span>
+                <span className="block whitespace-pre-wrap break-words text-label-sm text-muted">{row.message}</span>
                 {row.libraryId ? (
                   <Link to="/libraries/$libraryId" params={{ libraryId: row.libraryId }} className="nav-focus mt-0.5 inline-block rounded text-label-sm text-brand hover:underline" onClick={(event) => event.stopPropagation()}>
                     Open library
@@ -109,15 +117,16 @@ export function ActivityPage() {
       },
       { id: "category", header: "Category", size: 150, hideBelow: "md", cell: (row) => <span className="capitalize text-muted">{row.category.toLowerCase().replace(/_/g, " ")}</span> },
       { id: "type", header: "Level", size: 130, cell: (row) => <StatusChip status={notificationType(row.notificationType)} /> },
-      { id: "when", header: "When", size: 130, cell: (row) => <span className="text-muted">{formatRelative(row.createdAt)}</span> },
+      { id: "createdAt", header: "When", size: 130, sortable: true, cell: (row) => <span className="text-muted">{formatRelative(row.createdAt)}</span> },
     ],
     [],
   );
 
   return (
-    <div className="page-gutter flex flex-col gap-6 py-8">
+    <div data-print-flow className="page-gutter flex min-h-0 flex-1 flex-col gap-4 overflow-hidden py-4 md:gap-6 md:py-6 [@media(max-height:35rem)]:gap-2 [@media(max-height:35rem)]:py-2">
       <PageHeader
         title="Activity"
+        titleVisibility="accessible"
         actions={
           <Button variant="secondary" onPress={() => void markAllRead()}>
             <IconChecks size={16} /> Mark all read
@@ -125,20 +134,24 @@ export function ActivityPage() {
         }
       />
       <SegmentTabs ariaLabel="Activity filter" items={[{ key: "unread", label: "Unread" }, { key: "action", label: "Needs action" }, { key: "all", label: "Everything" }]} selected={tab} onSelect={(key) => setTab(key as Tab)} />
+      <SearchField aria-label="Filter activity" placeholder="Filter activity" value={query} onValueChange={(value) => void setQuery(value)} className="w-full shrink-0 sm:max-w-sm" />
       <DataTable<Row>
+        height="fill"
         columns={columns}
         rows={list.rows}
         getRowId={(row) => row.id}
         isLoading={list.loading}
+        refetching={list.fetching}
+        queryKey={list.queryKey} loadRevision={list.loadRevision}
+        externalBrowserToolbar
         totalCount={list.totalCount}
-        hasNextPage={list.hasNextPage}
+        infinite={{ hasMore: list.hasMore, loadMore: list.loadMore, loadingMore: list.loadingMore }}
         rowActions={rowActions}
         bulkActions={bulkActions}
         selectable
         noun="notifications"
-        {...table.tableProps}
-        sorting={[]}
-        onSortingChange={undefined}
+        sorting={table.sorting}
+        onSortingChange={table.setSorting}
         onRowClick={(row) => (row.readAt ? undefined : void run(() => update({ variables: { id: row.id, input: { readAt: now() } } })))}
         error={list.error && list.rows.length === 0 ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : undefined}
         emptyState={<EmptyState icon={IconBell} title={tab === "unread" ? "You're all caught up" : "Nothing here"} />}

@@ -94,8 +94,5 @@ subscription EntityPlaybackSessionChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    playbackSession {
-      ...PlaybackSessionFields
-    }
   }
 }

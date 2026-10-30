@@ -14,7 +14,10 @@ use futures::{
     FutureExt,
     stream::{self, StreamExt},
 };
+use graphql_orm::graphql::auth::AuthSubject;
+use graphql_orm::graphql::errors::{OrmErrorCode, OrmPublicError};
 use graphql_orm::graphql::filters::StringFilter;
+use graphql_orm::graphql::orm::{DbAuthContext, TransactionMode};
 use regex::Regex;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -43,6 +46,40 @@ use crate::services::metadata::providers::{
 };
 use crate::services::ollama::{OllamaClient, OllamaParsedHint, OllamaParserSettings};
 use crate::services::quality::{profile, scoring};
+
+/// Transport success is not mutation success. These internal documents select a
+/// success/error payload for every mutation root, including compatibility aliases.
+fn check_mutation_payloads(data: &serde_json::Value) -> anyhow::Result<()> {
+    let roots = data
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("Mutation response is not an object"))?;
+    if roots.is_empty() {
+        anyhow::bail!("Mutation response has no result payload");
+    }
+    let mut checked = false;
+    for (name, payload) in roots {
+        if name == "__typename" {
+            continue;
+        }
+        checked = true;
+        let success = payload
+            .get("success")
+            .or_else(|| payload.get("Success"))
+            .and_then(serde_json::Value::as_bool);
+        if success != Some(true) {
+            let error = payload
+                .get("error")
+                .or_else(|| payload.get("Error"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("missing or unsuccessful mutation payload");
+            anyhow::bail!("{name}: {error}");
+        }
+    }
+    if !checked {
+        anyhow::bail!("Mutation response has no result payload");
+    }
+    Ok(())
+}
 
 tokio::task_local! {
     static SCAN_GRAPHQL_ENTITY_OPERATIONS: Cell<u64>;
@@ -165,14 +202,12 @@ const TORRENT_LINK_PARSED_MATCH_TYPE: &str = "torrent_link_parsed";
 /// release also contains a larger video file (design.md Q54).
 const MIN_IMPORT_VIDEO_BYTES: i64 = 50 * 1024 * 1024;
 
-/// One file offered to the importer, plus where it came from.
+/// One file offered to the importer. Files unpacked from archives go through the same
+/// hardlink/copy transfer as seeding payload; their staging directory is removed after
+/// the import, so an extracted file ends up moved rather than duplicated.
 #[derive(Debug, Clone)]
 struct ImportFile {
     file: SourceFileImport,
-    /// True for files Librarian unpacked into its own staging directory. Those
-    /// are our copies, not the seeding payload, so they may be *moved* into
-    /// the library instead of hardlinked/copied.
-    from_archive: bool,
 }
 
 /// Result of splitting a torrent's files by what the importer can do with them.
@@ -213,6 +248,7 @@ struct ImportDiagnostics {
 /// Wanted-target linkage stamped on the `Torrent` row at grab time.
 #[derive(Debug, Clone, Default)]
 struct TorrentImportLink {
+    user_id: Option<String>,
     name: Option<String>,
     library_id: Option<String>,
     movie_id: Option<String>,
@@ -226,6 +262,21 @@ struct TorrentImportLink {
 }
 
 impl TorrentImportLink {
+    fn from_torrent(row: &crate::graphql::entities::Torrent) -> Self {
+        Self {
+            user_id: Some(row.user_id.clone()),
+            name: Some(row.name.clone()),
+            library_id: row.library_id.clone(),
+            movie_id: row.movie_id.clone(),
+            episode_id: row.episode_id.clone(),
+            track_id: row.track_id.clone(),
+            chapter_id: row.chapter_id.clone(),
+            show_id: row.show_id.clone(),
+            album_id: row.album_id.clone(),
+            audiobook_id: row.audiobook_id.clone(),
+            season: row.season,
+        }
+    }
     fn has_target(&self) -> bool {
         self.movie_id.is_some()
             || self.episode_id.is_some()
@@ -235,6 +286,17 @@ impl TorrentImportLink {
             || self.album_id.is_some()
             || self.audiobook_id.is_some()
     }
+}
+
+/// Private proof established before the processing/error boundary. Status writes use
+/// this persisted ID and owner, never a fresh system lookup of an untrusted hash.
+#[derive(Debug, Clone)]
+struct AuthorizedTorrentImport {
+    id: String,
+    info_hash: String,
+    owner_id: String,
+    actor: AuthUser,
+    link: TorrentImportLink,
 }
 
 /// A concrete import target derived from the recorded torrent linkage.
@@ -631,7 +693,17 @@ impl LibraryScanService {
         mutation: &str,
         variables: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        self.execute_graphql(auth_user, mutation, variables).await
+        if let Some(owner) = variables.get("input").and_then(|input| input.get("userId")) {
+            let owner = owner
+                .as_str()
+                .context("New record ownership must be explicit")?;
+            Uuid::parse_str(owner).context(
+                "New record ownership is unknown; system actors cannot own user records",
+            )?;
+        }
+        let data = self.execute_graphql(auth_user, mutation, variables).await?;
+        check_mutation_payloads(&data)?;
+        Ok(data)
     }
 
     async fn execute_graphql(
@@ -647,6 +719,12 @@ impl LibraryScanService {
         let request = Request::new(document)
             .variables(Variables::from_json(variables))
             .data(auth_user.clone())
+            .data(AuthSubject::from_parts(
+                auth_user.user_id.clone(),
+                auth_user.role.iter().cloned().collect(),
+                Vec::new(),
+                None,
+            ))
             .data(auth_user.user_id.clone());
         let response = schema.execute(request).await;
         if !response.errors.is_empty() {
@@ -778,11 +856,7 @@ impl LibraryScanService {
         }
 
         for user_id in users {
-            let auth_user = AuthUser {
-                user_id: user_id.clone(),
-                email: None,
-                role: Some("admin".to_string()),
-            };
+            let auth_user = AuthUser::system_admin();
 
             let existing = self
                 .execute_graphql(
@@ -825,7 +899,7 @@ impl LibraryScanService {
                     }"#,
                     serde_json::json!({
                         "input": {
-                            "userId": auth_user.user_id,
+                            "userId": user_id,
                             "notificationType": "ERROR",
                             "category": "CONFIGURATION",
                             "title": "ffprobe is not installed",
@@ -842,6 +916,7 @@ impl LibraryScanService {
     async fn create_notification(
         &self,
         auth_user: &AuthUser,
+        owner_id: &str,
         notification_type: &str,
         category: &str,
         title: &str,
@@ -856,7 +931,7 @@ impl LibraryScanService {
             let rows = Notification::query(database.pool().pool())
                 .filter(NotificationWhereInput {
                     user_id: Some(StringFilter {
-                        eq: Some(auth_user.user_id.clone()),
+                        eq: Some(owner_id.to_string()),
                         ..Default::default()
                     }),
                     category: Some(StringFilter {
@@ -882,7 +957,7 @@ impl LibraryScanService {
             Ok(true) => return,
             Ok(false) => {}
             Err(error) => {
-                warn!(user_id = %auth_user.user_id, title, error = %error, "Failed to check existing scan notification");
+                warn!(user_id = %owner_id, title, error = %error, "Failed to check existing scan notification");
                 return;
             }
         }
@@ -897,7 +972,7 @@ impl LibraryScanService {
                 }"#,
                 serde_json::json!({
                     "input": {
-                        "userId": auth_user.user_id,
+                        "userId": owner_id,
                         "notificationType": notification_type,
                         "category": category,
                         "title": title,
@@ -908,10 +983,10 @@ impl LibraryScanService {
             .await
         {
             warn!(
-                user_id = %auth_user.user_id,
+                user_id = %owner_id,
                 error = %e,
                 "Failed to create notification: user_id={}, title={}, error={}",
-                auth_user.user_id,
+                owner_id,
                 title,
                 e
             );
@@ -936,7 +1011,7 @@ impl LibraryScanService {
                 }"#,
                 serde_json::json!({
                     "where": {
-                        "userId": { "eq": auth_user.user_id },
+                        "userId": { "eq": library.user_id },
                         "libraryId": { "eq": library.id },
                         "category": { "eq": "CONFIGURATION" },
                         "title": { "eq": TITLE },
@@ -960,7 +1035,7 @@ impl LibraryScanService {
             Ok(_) => {}
             Err(error) => {
                 warn!(
-                    user_id = %auth_user.user_id,
+                    user_id = %library.user_id,
                     library_id = %library.id,
                     error = %error,
                     "Failed to check for an existing TMDB scan notification"
@@ -986,7 +1061,7 @@ impl LibraryScanService {
                 }"#,
                 serde_json::json!({
                     "input": {
-                        "userId": auth_user.user_id,
+                        "userId": library.user_id,
                         "notificationType": "ACTION_REQUIRED",
                         "category": "CONFIGURATION",
                         "title": TITLE,
@@ -998,7 +1073,7 @@ impl LibraryScanService {
             .await
         {
             warn!(
-                user_id = %auth_user.user_id,
+                user_id = %library.user_id,
                 library_id = %library.id,
                 error = %error,
                 "Failed to create TMDB scan notification"
@@ -1024,7 +1099,7 @@ impl LibraryScanService {
                 }"#,
                 serde_json::json!({
                     "where": {
-                        "userId": { "eq": auth_user.user_id },
+                        "userId": { "eq": library.user_id },
                         "libraryId": { "eq": library.id },
                         "category": { "eq": "CONFIGURATION" },
                         "title": { "eq": TITLE },
@@ -1069,16 +1144,16 @@ impl LibraryScanService {
             .into_iter()
             .filter(|issue| issue.resolved_at.is_none())
         {
-            let _ = LibraryScanIssue::update_by_id(
-                database.pool(),
-                &issue.id,
-                UpdateLibraryScanIssueInput {
-                    resolved_at: Some(Some(now.clone())),
-                    resolution: Some(Some("TMDB configured and matching retried".to_string())),
-                    ..Default::default()
-                },
-            )
-            .await;
+            let _ = self
+                .update_scan_issue(
+                    &issue.id,
+                    UpdateLibraryScanIssueInput {
+                        resolved_at: Some(Some(now.clone())),
+                        resolution: Some(Some("TMDB configured and matching retried".to_string())),
+                        ..Default::default()
+                    },
+                )
+                .await;
         }
     }
 
@@ -1103,7 +1178,7 @@ impl LibraryScanService {
                 }"#,
                 serde_json::json!({
                     "where": {
-                        "userId": { "eq": auth_user.user_id },
+                        "userId": { "eq": library.user_id },
                         "libraryId": { "eq": library.id },
                         "mediaFileId": { "eq": media_file_id },
                         "category": { "eq": "ORGANIZATION" },
@@ -1128,7 +1203,7 @@ impl LibraryScanService {
             Ok(_) => {}
             Err(error) => {
                 warn!(
-                    user_id = %auth_user.user_id,
+                    user_id = %library.user_id,
                     library_id = %library.id,
                     media_file_id = %media_file_id,
                     attempted_operation,
@@ -1155,7 +1230,7 @@ impl LibraryScanService {
                 }"#,
                 serde_json::json!({
                     "input": {
-                        "userId": auth_user.user_id,
+                        "userId": library.user_id,
                         "notificationType": "ERROR",
                         "category": "ORGANIZATION",
                         "title": title,
@@ -1168,7 +1243,7 @@ impl LibraryScanService {
             .await
         {
             warn!(
-                user_id = %auth_user.user_id,
+                user_id = %library.user_id,
                 library_id = %library.id,
                 media_file_id = %media_file_id,
                 attempted_operation,
@@ -1186,12 +1261,14 @@ impl LibraryScanService {
     async fn create_action_notification(
         &self,
         auth_user: &AuthUser,
+        owner_id: &str,
         notification_type: &str,
         category: &str,
         title: &str,
         message: &str,
         library_id: Option<&str>,
         media_file_id: Option<&str>,
+        pending_match_id: Option<&str>,
         action_type: &str,
         action_data: &str,
     ) {
@@ -1206,13 +1283,14 @@ impl LibraryScanService {
                 }"#,
                 serde_json::json!({
                     "input": {
-                        "userId": auth_user.user_id,
+                        "userId": owner_id,
                         "notificationType": notification_type,
                         "category": category,
                         "title": title,
                         "message": message,
                         "libraryId": library_id,
                         "mediaFileId": media_file_id,
+                        "pendingMatchId": pending_match_id,
                         "actionType": action_type,
                         "actionData": action_data,
                     }
@@ -1221,10 +1299,10 @@ impl LibraryScanService {
             .await
         {
             warn!(
-                user_id = %auth_user.user_id,
+                user_id = %owner_id,
                 error = %e,
                 "Failed to create action notification: user_id={}, title={}, error={}",
-                auth_user.user_id,
+                owner_id,
                 title,
                 e
             );
@@ -1323,75 +1401,20 @@ impl LibraryScanService {
         Ok(None)
     }
 
-    async fn try_system_auth_user(
-        &self,
-        fallback_user_id: Option<&str>,
-    ) -> Result<Option<AuthUser>> {
-        if let Some(user_id) = fallback_user_id {
-            return Ok(Some(AuthUser {
-                user_id: user_id.to_string(),
-                email: None,
-                role: Some("admin".to_string()),
-            }));
+    /// Worker authority never depends on the first account in the database. A supplied
+    /// owner validates an explicit scope taken from a Library/target/caller. The actor
+    /// remains system; each new owned record names its recipient/owner separately.
+    async fn try_system_auth_user(&self, owner_id: Option<&str>) -> Result<Option<AuthUser>> {
+        if let Some(owner) = owner_id {
+            Uuid::parse_str(owner).context("Worker target has no valid owner")?;
         }
-
-        let bootstrap_auth = AuthUser {
-            user_id: "system-bootstrap".to_string(),
-            email: None,
-            role: Some("admin".to_string()),
-        };
-        if let Ok(data) = self
-            .execute_graphql(
-                &bootstrap_auth,
-                r#"query FirstUserForBootstrap {
-                    Users: users(page: { limit: 1 }) {
-                        Edges: edges { Node: node { Id: id } }
-                    }
-                }"#,
-                serde_json::json!({}),
-            )
-            .await
-            && let Some(user_id) = data
-                .get("Users")
-                .and_then(|v| v.get("Edges"))
-                .and_then(|v| v.as_array())
-                .and_then(|edges| edges.first())
-                .and_then(|edge| edge.get("Node"))
-                .and_then(|node| node.get("Id"))
-                .and_then(|v| v.as_str())
-        {
-            return Ok(Some(AuthUser {
-                user_id: user_id.to_string(),
-                email: None,
-                role: Some("admin".to_string()),
-            }));
-        }
-
-        // Bootstrap fallback only: GraphQL needs an AuthUser, so we query users directly if bootstrap auth fails.
-        let db_svc = self
-            .manager
-            .get_database()
-            .await
-            .ok_or_else(|| anyhow::anyhow!("Database service not available"))?;
-
-        let user_id = User::query(db_svc.pool().pool())
-            .fetch_all()
-            .await?
-            .into_iter()
-            .min_by(|a, b| a.created_at.cmp(&b.created_at))
-            .map(|user| user.id);
-
-        Ok(user_id.map(|user_id| AuthUser {
-            user_id,
-            email: None,
-            role: Some("admin".to_string()),
-        }))
+        Ok(Some(AuthUser::system_admin()))
     }
 
-    async fn system_auth_user(&self, fallback_user_id: Option<&str>) -> Result<AuthUser> {
-        self.try_system_auth_user(fallback_user_id)
+    async fn system_auth_user(&self, owner_id: Option<&str>) -> Result<AuthUser> {
+        self.try_system_auth_user(owner_id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("No user exists to run library scan operations"))
+            .context("System scan authority is unavailable")
     }
 
     async fn get_library(&self, library_id: &str) -> Result<LibraryRow> {
@@ -1468,6 +1491,7 @@ impl LibraryScanService {
 
     async fn resolve_library_naming_pattern(&self, library: &LibraryRow) -> Result<String> {
         if !library.naming_pattern.trim().is_empty() {
+            validate_relative_library_path(Path::new(&library.naming_pattern))?;
             return Ok(library.naming_pattern.clone());
         }
 
@@ -1518,11 +1542,13 @@ impl LibraryScanService {
             .collect();
         patterns.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.2.cmp(&b.2)));
 
-        Ok(patterns
+        let pattern = patterns
             .first()
             .map(|(pattern, _, _)| pattern.clone())
             .filter(|pattern| !pattern.trim().is_empty())
-            .unwrap_or_else(|| Self::fallback_naming_pattern(&normalized_type).to_string()))
+            .unwrap_or_else(|| Self::fallback_naming_pattern(&normalized_type).to_string());
+        validate_relative_library_path(Path::new(&pattern))?;
+        Ok(pattern)
     }
 
     async fn get_due_autoscan_libraries(&self) -> Result<Vec<String>> {
@@ -2428,11 +2454,11 @@ impl LibraryScanService {
                 .await
                 .context("Failed to read old scan issues for compaction")?;
             for issue in issues {
-                LibraryScanIssue::delete_by_id(database.pool(), &issue.id)
+                self.delete_scan_issue(&issue.id)
                     .await
                     .context("Failed to delete compacted scan issue")?;
             }
-            LibraryScanRun::delete_by_id(database.pool(), &run.id)
+            self.delete_scan_run(&run.id)
                 .await
                 .context("Failed to delete compacted scan run")?;
         }
@@ -2453,7 +2479,7 @@ impl LibraryScanService {
                 .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
                 .is_some_and(|resolved_at| resolved_at.with_timezone(&Utc) < cutoff);
             if expired {
-                LibraryScanIssue::delete_by_id(database.pool(), &issue.id)
+                self.delete_scan_issue(&issue.id)
                     .await
                     .context("Failed to delete expired resolved scan issue")?;
             }
@@ -2628,7 +2654,7 @@ impl LibraryScanService {
                 ..Default::default()
             }
         };
-        LibraryScanIssue::update_by_id(database.pool(), &issue.id, input)
+        self.update_scan_issue(&issue.id, input)
             .await
             .context("Failed to persist analysis retry outcome")?;
         Ok(())
@@ -2647,8 +2673,7 @@ impl LibraryScanService {
         if issue.resolved_at.is_some() {
             return Ok(());
         }
-        LibraryScanIssue::update_by_id(
-            database.pool(),
+        self.update_scan_issue(
             &issue.id,
             UpdateLibraryScanIssueInput {
                 resolved_at: Some(Some(Utc::now().to_rfc3339())),
@@ -2742,15 +2767,14 @@ impl LibraryScanService {
             anyhow::bail!("Duplicate content changed since it was verified; rescan before removal");
         }
 
-        let trash_dir = root.join(".librarian-trash");
-        tokio::fs::create_dir_all(&trash_dir)
-            .await
-            .context("Failed to create the library trash directory")?;
+        let trash_dir = create_library_directory(&root, &root.join(".librarian-trash"))
+            .context("Failed to create the contained library trash directory")?;
         let original_name = duplicate_path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("media");
         let trash_path = trash_dir.join(format!("{}-{original_name}", Uuid::new_v4()));
+        checked_library_path(&root, &trash_path)?;
         tokio::fs::rename(&duplicate_path, &trash_path)
             .await
             .context("Failed to move duplicate to recoverable trash")?;
@@ -2821,33 +2845,161 @@ impl LibraryScanService {
             .ok_or_else(|| anyhow::anyhow!("Database service not available"))
     }
 
-    async fn create_scan_run(&self, library: &LibraryRow) -> Result<LibraryScanRun> {
+    /// Narrow trusted scan action boundary. Ownership comes from a persisted library,
+    /// never from worker authority; all related writes stay on one generated context.
+    async fn owned_scan_write<T, F>(
+        &self,
+        library_id: String,
+        owner_id: String,
+        operation: F,
+    ) -> Result<T>
+    where
+        T: Send + 'static,
+        F: for<'tx> FnOnce(
+                &'tx mut graphql_orm::graphql::orm::MutationContext<'_>,
+            ) -> futures::future::BoxFuture<
+                'tx,
+                std::result::Result<T, OrmPublicError>,
+            > + Send
+            + 'static,
+    {
+        Uuid::parse_str(&owner_id).context("Scan record ownership is unknown")?;
         let database = self.database().await?;
-        LibraryScanRun::insert(
-            database.pool(),
-            CreateLibraryScanRunInput {
-                user_id: library.user_id.clone(),
-                library_id: library.id.clone(),
-                status: "QUEUED".to_string(),
-                current_stage: "QUEUE".to_string(),
-                started_at: None,
-                finished_at: None,
-                discovered_count: 0,
-                existing_count: 0,
-                matched_count: 0,
-                unmatched_count: 0,
-                provider_blocked_count: 0,
-                analysis_queued_count: 0,
-                analysis_succeeded_count: 0,
-                analysis_failed_count: 0,
-                organization_succeeded_count: 0,
-                organization_failed_count: 0,
-                missing_count: 0,
-                reconciled_count: 0,
-                summary: Some(format!("Scan queued for {}", library.name)),
-                error_code: None,
-            },
-        )
+        let authority = DbAuthContext {
+            user_id: Some(owner_id.clone()),
+            subject: Some("system".to_string()),
+            actor_id: Some("system".to_string()),
+            roles: vec!["admin".to_string()],
+            ..Default::default()
+        };
+        database
+            .pool()
+            .transaction_with_auth(TransactionMode::StateMachine, Some(&authority), move |tx| {
+                Box::pin(async move {
+                    let library = tx
+                        .find_by_id::<crate::graphql::entities::Library>(&library_id)
+                        .await?
+                        .ok_or_else(OrmPublicError::forbidden)?;
+                    if library.user_id != owner_id
+                        || tx.find_by_id::<User>(&owner_id).await?.is_none()
+                    {
+                        return Err(OrmPublicError::forbidden());
+                    }
+                    operation(tx).await
+                })
+            })
+            .await
+            .context("Scoped scan entity transaction failed")
+    }
+
+    async fn update_scan_issue(
+        &self,
+        id: &str,
+        input: UpdateLibraryScanIssueInput,
+    ) -> Result<Option<LibraryScanIssue>> {
+        let database = self.database().await?;
+        let Some(issue) = LibraryScanIssue::get(database.pool().pool(), &id.to_string()).await?
+        else {
+            return Ok(None);
+        };
+        let library_id = issue.library_id.clone();
+        let owner_id = issue.user_id.clone();
+        self.owned_scan_write(library_id.clone(), owner_id.clone(), move |tx| {
+            Box::pin(async move {
+                let Some(current) = tx.find_by_id::<LibraryScanIssue>(&issue.id).await? else {
+                    return Ok(None);
+                };
+                if current.library_id != library_id
+                    || current.user_id != owner_id
+                    || input
+                        .library_id
+                        .as_ref()
+                        .is_some_and(|id| id != &library_id)
+                    || input.user_id.as_ref().is_some_and(|id| id != &owner_id)
+                {
+                    return Err(OrmPublicError::forbidden());
+                }
+                tx.update_by_id::<LibraryScanIssue>(&issue.id, input)
+                    .await
+                    .map_err(Into::into)
+            })
+        })
+        .await
+    }
+
+    async fn delete_scan_issue(&self, id: &str) -> Result<bool> {
+        let database = self.database().await?;
+        let Some(issue) = LibraryScanIssue::get(database.pool().pool(), &id.to_string()).await?
+        else {
+            return Ok(false);
+        };
+        let library_id = issue.library_id.clone();
+        let owner_id = issue.user_id.clone();
+        self.owned_scan_write(library_id.clone(), owner_id.clone(), move |tx| {
+            Box::pin(async move {
+                let Some(current) = tx.find_by_id::<LibraryScanIssue>(&issue.id).await? else {
+                    return Ok(false);
+                };
+                if current.library_id != library_id || current.user_id != owner_id {
+                    return Err(OrmPublicError::forbidden());
+                }
+                tx.delete_by_id::<LibraryScanIssue>(&issue.id)
+                    .await
+                    .map_err(Into::into)
+            })
+        })
+        .await
+    }
+
+    async fn delete_scan_run(&self, id: &str) -> Result<bool> {
+        let database = self.database().await?;
+        let Some(run) = LibraryScanRun::get(database.pool().pool(), &id.to_string()).await? else {
+            return Ok(false);
+        };
+        let library_id = run.library_id.clone();
+        let owner_id = run.user_id.clone();
+        self.owned_scan_write(library_id.clone(), owner_id.clone(), move |tx| {
+            Box::pin(async move {
+                let Some(current) = tx.find_by_id::<LibraryScanRun>(&run.id).await? else {
+                    return Ok(false);
+                };
+                if current.library_id != library_id || current.user_id != owner_id {
+                    return Err(OrmPublicError::forbidden());
+                }
+                tx.delete_by_id::<LibraryScanRun>(&run.id)
+                    .await
+                    .map_err(Into::into)
+            })
+        })
+        .await
+    }
+
+    async fn create_scan_run(&self, library: &LibraryRow) -> Result<LibraryScanRun> {
+        let input = CreateLibraryScanRunInput {
+            user_id: library.user_id.clone(),
+            library_id: library.id.clone(),
+            status: "QUEUED".to_string(),
+            current_stage: "QUEUE".to_string(),
+            started_at: None,
+            finished_at: None,
+            discovered_count: 0,
+            existing_count: 0,
+            matched_count: 0,
+            unmatched_count: 0,
+            provider_blocked_count: 0,
+            analysis_queued_count: 0,
+            analysis_succeeded_count: 0,
+            analysis_failed_count: 0,
+            organization_succeeded_count: 0,
+            organization_failed_count: 0,
+            missing_count: 0,
+            reconciled_count: 0,
+            summary: Some(format!("Scan queued for {}", library.name)),
+            error_code: None,
+        };
+        self.owned_scan_write(library.id.clone(), library.user_id.clone(), move |tx| {
+            Box::pin(async move { tx.insert::<LibraryScanRun>(input).await.map_err(Into::into) })
+        })
         .await
         .context("Failed to create durable library scan run")
     }
@@ -2858,10 +3010,35 @@ impl LibraryScanService {
         input: UpdateLibraryScanRunInput,
     ) -> Result<LibraryScanRun> {
         let database = self.database().await?;
-        LibraryScanRun::update_by_id(database.pool(), &scan_run_id.to_string(), input)
-            .await
-            .context("Failed to update durable library scan run")?
-            .ok_or_else(|| anyhow::anyhow!("Library scan run no longer exists"))
+        let run = LibraryScanRun::get(database.pool().pool(), &scan_run_id.to_string())
+            .await?
+            .context("Library scan run no longer exists")?;
+        let library_id = run.library_id.clone();
+        let owner_id = run.user_id.clone();
+        self.owned_scan_write(library_id.clone(), owner_id.clone(), move |tx| {
+            Box::pin(async move {
+                let current = tx
+                    .find_by_id::<LibraryScanRun>(&run.id)
+                    .await?
+                    .ok_or_else(OrmPublicError::forbidden)?;
+                if current.library_id != library_id
+                    || current.user_id != owner_id
+                    || input
+                        .library_id
+                        .as_ref()
+                        .is_some_and(|id| id != &library_id)
+                    || input.user_id.as_ref().is_some_and(|id| id != &owner_id)
+                {
+                    return Err(OrmPublicError::forbidden());
+                }
+                tx.update_by_id::<LibraryScanRun>(&run.id, input)
+                    .await?
+                    .ok_or_else(|| {
+                        OrmPublicError::with_message(OrmErrorCode::Conflict, "Scan run disappeared")
+                    })
+            })
+        })
+        .await
     }
 
     fn bounded_issue_text(input: &str, max_chars: usize) -> String {
@@ -2928,8 +3105,7 @@ impl LibraryScanService {
             .find(|issue| issue.media_file_id.as_deref() == media_file_id);
 
         if let Some(existing) = existing {
-            LibraryScanIssue::update_by_id(
-                database.pool(),
+            self.update_scan_issue(
                 &existing.id,
                 UpdateLibraryScanIssueInput {
                     occurrence_count: Some(existing.occurrence_count.saturating_add(1)),
@@ -2979,25 +3155,29 @@ impl LibraryScanService {
             })
             .and_then(|issue| issue.read_at);
 
-        LibraryScanIssue::insert(
-            database.pool(),
-            CreateLibraryScanIssueInput {
-                user_id: library.user_id.clone(),
-                scan_run_id: scan_run_id.to_string(),
-                library_id: library.id.clone(),
-                media_file_id: media_file_id.map(str::to_string),
-                stage: stage.to_string(),
-                issue_code: issue_code.to_string(),
-                severity: severity.to_string(),
-                message: Self::bounded_issue_text(message, 1_000),
-                remediation: remediation.map(|value| Self::bounded_issue_text(value, 1_000)),
-                details_json: details_json.map(|value| Self::bounded_issue_text(&value, 8_000)),
-                occurrence_count: 1,
-                read_at,
-                resolved_at: None,
-                resolution: None,
-            },
-        )
+        let input = CreateLibraryScanIssueInput {
+            user_id: library.user_id.clone(),
+            scan_run_id: scan_run_id.to_string(),
+            library_id: library.id.clone(),
+            media_file_id: media_file_id.map(str::to_string),
+            stage: stage.to_string(),
+            issue_code: issue_code.to_string(),
+            severity: severity.to_string(),
+            message: Self::bounded_issue_text(message, 1_000),
+            remediation: remediation.map(|value| Self::bounded_issue_text(value, 1_000)),
+            details_json: details_json.map(|value| Self::bounded_issue_text(&value, 8_000)),
+            occurrence_count: 1,
+            read_at,
+            resolved_at: None,
+            resolution: None,
+        };
+        self.owned_scan_write(library.id.clone(), library.user_id.clone(), move |tx| {
+            Box::pin(async move {
+                tx.insert::<LibraryScanIssue>(input)
+                    .await
+                    .map_err(Into::into)
+            })
+        })
         .await
         .context("Failed to persist scan issue")?;
         Ok(())
@@ -3023,7 +3203,7 @@ impl LibraryScanService {
                 ..Default::default()
             }
         };
-        LibraryScanRun::update_by_id(database.pool(), &run.id, input)
+        self.update_scan_run(&run.id, input)
             .await
             .context("Failed to persist scan analysis outcome")?;
         Ok(())
@@ -3853,56 +4033,17 @@ impl LibraryScanService {
             media_file_id,
             path
         );
-        let auth_user = self.system_auth_user(None).await?;
+        let actor = AuthUser::system_admin();
+        let file = self.get_media_file(media_file_id).await?;
+        let library_id = file
+            .library_id
+            .as_deref()
+            .context("Cannot analyze a file with unknown ownership")?;
+        let library = self.get_library(library_id).await?;
+        let target = AnalysisTarget::capture(&file, &library, path)?;
         let analysis = ffprobe_analyze(path).await?;
-
-        let data = self
-            .execute_mutation(
-                &auth_user,
-                r#"mutation UpdateMediaFileFromAnalysis($id: String!, $input: UpdateMediaFileInput!) {
-                    UpdateMediaFile: updateMediaFile(id: $id, input: $input) {
-                        Success: success
-                        Error: error
-                    }
-                }"#,
-                serde_json::json!({
-                    "id": media_file_id,
-                    "input": {
-                        "container": analysis.container,
-                        "videoCodec": analysis.video_codec,
-                        "audioCodec": analysis.audio_codec,
-                        "width": analysis.width,
-                        "height": analysis.height,
-                        "duration": analysis.duration,
-                        "bitrate": analysis.bitrate,
-                        "resolution": analysis.resolution,
-                        "isHdr": analysis.is_hdr,
-                        "hdrType": analysis.hdr_type,
-                        "audioChannels": analysis.audio_channels,
-                        "metadata": analysis.metadata,
-                        "analyzedAt": Utc::now().to_rfc3339(),
-                    }
-                }),
-            )
-            .await?;
-
-        let success = data
-            .get("UpdateMediaFile")
-            .and_then(|v| v.get("Success"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-
-        if !success {
-            let err = data
-                .get("UpdateMediaFile")
-                .and_then(|v| v.get("Error"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("failed to update media file from analysis");
-            anyhow::bail!(err.to_string());
-        }
-
-        self.persist_media_analysis_details(&auth_user, media_file_id, &analysis)
-            .await?;
+        let database = self.database().await?;
+        replace_media_analysis(database.pool(), &actor, target, analysis.clone()).await?;
 
         // design.md Q23/Q24: ffprobe is authoritative for quality, so
         // (re)compute `quality_status` against the media file's resolved
@@ -3946,250 +4087,6 @@ impl LibraryScanService {
             analysis.video_codec,
             analysis.audio_codec,
             analysis.resolution
-        );
-
-        Ok(())
-    }
-
-    async fn persist_media_analysis_details(
-        &self,
-        auth_user: &AuthUser,
-        media_file_id: &str,
-        analysis: &ProbeAnalysis,
-    ) -> Result<()> {
-        let cleared = self
-            .execute_mutation(
-                auth_user,
-                r#"mutation ClearMediaFileAnalysisDetails($mediaFileId: String!) {
-                    DeleteVideoStreams: deleteVideoStreams(where: { mediaFileId: { eq: $mediaFileId } }) { success error DeletedCount: deletedCount }
-                    DeleteAudioStreams: deleteAudioStreams(where: { mediaFileId: { eq: $mediaFileId } }) { success error DeletedCount: deletedCount }
-                    DeleteSubtitles: deleteSubtitles(where: { mediaFileId: { eq: $mediaFileId } }) { success error DeletedCount: deletedCount }
-                    DeleteMediaChapters: deleteMediaChapters(where: { mediaFileId: { eq: $mediaFileId } }) { success error DeletedCount: deletedCount }
-                }"#,
-                serde_json::json!({ "mediaFileId": media_file_id }),
-            )
-            .await?;
-
-        for (op, label) in [
-            ("DeleteVideoStreams", "video streams"),
-            ("DeleteAudioStreams", "audio streams"),
-            ("DeleteSubtitles", "subtitles"),
-            ("DeleteMediaChapters", "media chapters"),
-        ] {
-            let ok = cleared
-                .get(op)
-                .and_then(|v| v.get("success"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if !ok {
-                let err = cleared
-                    .get(op)
-                    .and_then(|v| v.get("error"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("bulk delete failed");
-                anyhow::bail!(
-                    "failed clearing {} for media_file_id={}: {}",
-                    label,
-                    media_file_id,
-                    err
-                );
-            }
-        }
-
-        for stream in &analysis.video_streams {
-            let created = self
-                .execute_mutation(
-                    auth_user,
-                    r#"mutation CreateVideoStreamFromAnalysis($input: CreateVideoStreamInput!) {
-                        CreateVideoStream: createVideoStream(input: $input) { Success: success Error: error }
-                    }"#,
-                    serde_json::json!({
-                        "input": {
-                            "mediaFileId": media_file_id,
-                            "streamIndex": stream.stream_index,
-                            "codec": stream.codec,
-                            "codecLongName": stream.codec_long_name,
-                            "width": stream.width,
-                            "height": stream.height,
-                            "aspectRatio": stream.aspect_ratio,
-                            "frameRate": stream.frame_rate,
-                            "avgFrameRate": stream.avg_frame_rate,
-                            "bitrate": stream.bitrate,
-                            "pixelFormat": stream.pixel_format,
-                            "colorSpace": stream.color_space,
-                            "colorTransfer": stream.color_transfer,
-                            "colorPrimaries": stream.color_primaries,
-                            "hdrType": stream.hdr_type,
-                            "bitDepth": stream.bit_depth,
-                            "language": stream.language,
-                            "title": stream.title,
-                            "isDefault": stream.is_default,
-                            "metadata": stream.metadata,
-                        }
-                    }),
-                )
-                .await?;
-            let ok = created
-                .get("CreateVideoStream")
-                .and_then(|v| v.get("Success"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if !ok {
-                let err = created
-                    .get("CreateVideoStream")
-                    .and_then(|v| v.get("Error"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("create video stream failed");
-                anyhow::bail!(
-                    "failed creating video stream: media_file_id={}, stream_index={}, error={}",
-                    media_file_id,
-                    stream.stream_index,
-                    err
-                );
-            }
-        }
-
-        for stream in &analysis.audio_streams {
-            let created = self
-                .execute_mutation(
-                    auth_user,
-                    r#"mutation CreateAudioStreamFromAnalysis($input: CreateAudioStreamInput!) {
-                        CreateAudioStream: createAudioStream(input: $input) { Success: success Error: error }
-                    }"#,
-                    serde_json::json!({
-                        "input": {
-                            "mediaFileId": media_file_id,
-                            "streamIndex": stream.stream_index,
-                            "codec": stream.codec,
-                            "codecLongName": stream.codec_long_name,
-                            "channels": stream.channels,
-                            "channelLayout": stream.channel_layout,
-                            "sampleRate": stream.sample_rate,
-                            "bitrate": stream.bitrate,
-                            "bitDepth": stream.bit_depth,
-                            "language": stream.language,
-                            "title": stream.title,
-                            "isDefault": stream.is_default,
-                            "isCommentary": stream.is_commentary,
-                            "metadata": stream.metadata,
-                        }
-                    }),
-                )
-                .await?;
-            let ok = created
-                .get("CreateAudioStream")
-                .and_then(|v| v.get("Success"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if !ok {
-                let err = created
-                    .get("CreateAudioStream")
-                    .and_then(|v| v.get("Error"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("create audio stream failed");
-                anyhow::bail!(
-                    "failed creating audio stream: media_file_id={}, stream_index={}, error={}",
-                    media_file_id,
-                    stream.stream_index,
-                    err
-                );
-            }
-        }
-
-        for subtitle in &analysis.subtitles {
-            let created = self
-                .execute_mutation(
-                    auth_user,
-                    r#"mutation CreateSubtitleFromAnalysis($input: CreateSubtitleInput!) {
-                        CreateSubtitle: createSubtitle(input: $input) { Success: success Error: error }
-                    }"#,
-                    serde_json::json!({
-                        "input": {
-                            "mediaFileId": media_file_id,
-                            "sourceType": subtitle.source_type,
-                            "streamIndex": subtitle.stream_index,
-                            "codec": subtitle.codec,
-                            "codecLongName": subtitle.codec_long_name,
-                            "language": subtitle.language,
-                            "title": subtitle.title,
-                            "isDefault": subtitle.is_default,
-                            "isForced": subtitle.is_forced,
-                            "isHearingImpaired": subtitle.is_hearing_impaired,
-                            "metadata": subtitle.metadata,
-                        }
-                    }),
-                )
-                .await?;
-            let ok = created
-                .get("CreateSubtitle")
-                .and_then(|v| v.get("Success"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if !ok {
-                let err = created
-                    .get("CreateSubtitle")
-                    .and_then(|v| v.get("Error"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("create subtitle failed");
-                anyhow::bail!(
-                    "failed creating subtitle: media_file_id={}, stream_index={:?}, error={}",
-                    media_file_id,
-                    subtitle.stream_index,
-                    err
-                );
-            }
-        }
-
-        for chapter in &analysis.chapters {
-            let created = self
-                .execute_mutation(
-                    auth_user,
-                    r#"mutation CreateMediaChapterFromAnalysis($input: CreateMediaChapterInput!) {
-                        CreateMediaChapter: createMediaChapter(input: $input) { Success: success Error: error }
-                    }"#,
-                    serde_json::json!({
-                        "input": {
-                            "mediaFileId": media_file_id,
-                            "chapterIndex": chapter.chapter_index,
-                            "startSecs": chapter.start_secs,
-                            "endSecs": chapter.end_secs,
-                            "title": chapter.title,
-                        }
-                    }),
-                )
-                .await?;
-            let ok = created
-                .get("CreateMediaChapter")
-                .and_then(|v| v.get("Success"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if !ok {
-                let err = created
-                    .get("CreateMediaChapter")
-                    .and_then(|v| v.get("Error"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("create media chapter failed");
-                anyhow::bail!(
-                    "failed creating media chapter: media_file_id={}, chapter_index={}, error={}",
-                    media_file_id,
-                    chapter.chapter_index,
-                    err
-                );
-            }
-        }
-
-        info!(
-            media_file_id = %media_file_id,
-            video_stream_count = analysis.video_streams.len(),
-            audio_stream_count = analysis.audio_streams.len(),
-            subtitle_count = analysis.subtitles.len(),
-            chapter_count = analysis.chapters.len(),
-            "Persisted detailed ffprobe rows: media_file_id={}, video_streams={}, audio_streams={}, subtitles={}, chapters={}",
-            media_file_id,
-            analysis.video_streams.len(),
-            analysis.audio_streams.len(),
-            analysis.subtitles.len(),
-            analysis.chapters.len()
         );
 
         Ok(())
@@ -5245,6 +5142,7 @@ impl LibraryScanService {
                     );
                     self.create_notification(
                         auth_user,
+                        &library.user_id,
                         "WARNING",
                         "SCAN",
                         "Auto-organize skipped due to potential mismatch",
@@ -5875,7 +5773,7 @@ impl LibraryScanService {
         );
 
         let library_uuid = Uuid::parse_str(&library.id)?;
-        let user_uuid = Uuid::parse_str(&auth_user.user_id)?;
+        let user_uuid = Uuid::parse_str(&library.user_id)?;
         let movie = metadata
             .add_movie_from_provider(AddMovieOptions {
                 provider: MetadataProvider::Tmdb,
@@ -6009,7 +5907,7 @@ impl LibraryScanService {
         }
 
         let library_uuid = Uuid::parse_str(&library.id)?;
-        let user_uuid = Uuid::parse_str(&auth_user.user_id)?;
+        let user_uuid = Uuid::parse_str(&library.user_id)?;
         let show = metadata
             .add_tv_show_from_provider(AddTvShowOptions {
                 provider: MetadataProvider::Tvmaze,
@@ -6245,7 +6143,7 @@ impl LibraryScanService {
         }
 
         let library_uuid = Uuid::parse_str(&library.id)?;
-        let user_uuid = Uuid::parse_str(&auth_user.user_id)?;
+        let user_uuid = Uuid::parse_str(&library.user_id)?;
         let album = metadata
             .add_album_from_provider(AddAlbumOptions {
                 provider: MetadataProvider::Musicbrainz,
@@ -6396,7 +6294,7 @@ impl LibraryScanService {
         }
 
         let library_uuid = Uuid::parse_str(&library.id)?;
-        let user_uuid = Uuid::parse_str(&auth_user.user_id)?;
+        let user_uuid = Uuid::parse_str(&library.user_id)?;
         let audiobook = metadata
             .add_audiobook_from_provider(AddAudiobookOptions {
                 provider: MetadataProvider::OpenLibrary,
@@ -8353,7 +8251,10 @@ impl LibraryScanService {
             _ => anyhow::bail!("Unsupported library type/target for organizing"),
         };
 
-        Ok(PathBuf::from(&library.path).join(relative_path))
+        validate_relative_library_path(&relative_path)?;
+        let target = PathBuf::from(&library.path).join(relative_path);
+        checked_library_path(Path::new(&library.path), &target)?;
+        Ok(target)
     }
 
     pub async fn organize_media_file(&self, media_file_id: &str) -> Result<OrganizeResult> {
@@ -8370,6 +8271,7 @@ impl LibraryScanService {
         let auth_user = self.system_auth_user(Some(&library.user_id)).await?;
 
         let old_path = PathBuf::from(&media_file.path);
+        checked_library_path(Path::new(&library.path), &old_path)?;
         if !old_path.exists() {
             return Ok(OrganizeResult {
                 success: false,
@@ -8418,14 +8320,17 @@ impl LibraryScanService {
             });
         }
 
-        if let Some(parent) = target_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-
         // Atomic no-clobber move (audit #4): `hard_link` + `remove` instead of the
         // previous `exists()`-then-`rename()`, which races under concurrent
         // organize/import and can silently replace an existing target file.
-        let move_outcome = no_clobber_place(old_path.clone(), target_path.clone(), true).await?;
+        let move_outcome = place_in_library(
+            PathBuf::from(&library.path),
+            old_path.clone(),
+            target_path.clone(),
+            true,
+            true,
+        )
+        .await?;
 
         if move_outcome == NoClobberOutcome::TargetExists {
             if paths_refer_to_same_file(&old_path, &target_path).await {
@@ -8453,6 +8358,7 @@ impl LibraryScanService {
             );
             self.create_notification(
                 &auth_user,
+                &library.user_id,
                 "WARNING",
                 "ORGANIZATION",
                 "Organize conflict skipped",
@@ -8533,7 +8439,15 @@ impl LibraryScanService {
                 db_error
             );
 
-            match no_clobber_place(target_path.clone(), old_path.clone(), true).await {
+            match place_in_library(
+                PathBuf::from(&library.path),
+                target_path.clone(),
+                old_path.clone(),
+                true,
+                true,
+            )
+            .await
+            {
                 Ok(NoClobberOutcome::Placed) => {
                     anyhow::bail!(
                         "Failed to update organized media path in database ({}); the file was moved back to its original location",
@@ -8595,48 +8509,144 @@ impl LibraryScanService {
         library_override: Option<String>,
         files: Vec<SourceFileImport>,
     ) -> SourceProcessSummary {
+        let admission = async {
+            let database = self.database().await?;
+            Self::authorize_torrent_import(
+                database.pool(),
+                auth_user,
+                info_hash,
+                library_override.as_deref(),
+            )
+            .await
+        }
+        .await;
+        let import = match admission {
+            Ok(import) => import,
+            Err(error) => return Self::failed_source_summary(error),
+        };
         match self
-            .process_torrent_source_files_inner(auth_user, info_hash, library_override, files)
+            .process_torrent_source_files_inner(&import, library_override, files)
             .await
         {
             Ok(summary) => summary,
             Err(error) => {
                 let message = error.to_string();
                 if let Err(status_error) = self
-                    .update_torrent_post_process_status(info_hash, "failed", Some(&message), 0, 1)
+                    .update_torrent_post_process_status(&import, "failed", Some(&message), 0, 1)
                     .await
                 {
-                    warn!(
-                        info_hash = %info_hash,
-                        error = %status_error,
-                        "Failed to mark torrent post-processing failure: info_hash={}, error={}",
-                        info_hash,
-                        status_error
-                    );
+                    warn!(info_hash = %import.info_hash, torrent_id = %import.id, error = %status_error,
+                        "Failed to record authorized torrent post-processing failure");
                 }
-                SourceProcessSummary {
-                    success: false,
-                    files_processed: 0,
-                    files_failed: 1,
-                    messages: vec![message.clone()],
-                    error: Some(message),
-                }
+                Self::failed_source_summary(error)
             }
         }
     }
 
+    fn failed_source_summary(error: anyhow::Error) -> SourceProcessSummary {
+        let message = error.to_string();
+        SourceProcessSummary {
+            success: false,
+            files_processed: 0,
+            files_failed: 1,
+            messages: vec![message.clone()],
+            error: Some(message),
+        }
+    }
+
+    async fn authorize_torrent_import(
+        db: &crate::db::Database,
+        actor: &AuthUser,
+        info_hash: &str,
+        library_override: Option<&str>,
+    ) -> Result<AuthorizedTorrentImport> {
+        let actor = if actor.user_id == "system" && actor.is_admin() {
+            actor.clone()
+        } else {
+            crate::services::graphql::entities::torrent::current_torrent_user(db, actor)
+                .await
+                .map_err(|error| anyhow::anyhow!(error.message))?
+        };
+        let mut rows = crate::graphql::entities::Torrent::query(db.pool())
+            .filter(crate::graphql::entities::TorrentWhereInput {
+                info_hash: Some(StringFilter {
+                    eq: Some(info_hash.to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .limit(2)
+            .fetch_all()
+            .await?;
+        if rows.len() != 1 {
+            anyhow::bail!("Torrent not found or access denied");
+        }
+        let row = rows.pop().unwrap();
+        let link = TorrentImportLink::from_torrent(&row);
+        let owner_id = Self::torrent_import_owner(&actor, &link)?;
+        if User::get(db.pool(), &owner_id).await?.is_none() {
+            anyhow::bail!("Torrent import owner is unavailable");
+        }
+        for id in [row.library_id.as_deref(), library_override]
+            .into_iter()
+            .flatten()
+        {
+            let library = crate::graphql::entities::Library::get(db.pool(), &id.to_string())
+                .await?
+                .context("Torrent import library is unavailable")?;
+            if library.user_id != owner_id {
+                anyhow::bail!(
+                    "Torrent import library does not belong to the persisted source owner"
+                );
+            }
+        }
+        Ok(AuthorizedTorrentImport {
+            id: row.id,
+            info_hash: row.info_hash,
+            owner_id,
+            actor,
+            link,
+        })
+    }
+
+    fn torrent_import_owner(caller: &AuthUser, link: &TorrentImportLink) -> Result<String> {
+        let owner = link
+            .user_id
+            .as_deref()
+            .context("Torrent import ownership is unknown")?;
+        Uuid::parse_str(owner).context("Torrent import has no valid persisted owner")?;
+        if !caller.has_role(crate::services::graphql::auth::Role::Member)
+            || (!caller.is_admin() && caller.user_id != owner)
+        {
+            anyhow::bail!("Torrent not found or access denied");
+        }
+        Ok(owner.to_string())
+    }
+
     async fn process_torrent_source_files_inner(
         &self,
-        auth_user: &AuthUser,
-        info_hash: &str,
+        import: &AuthorizedTorrentImport,
         library_override: Option<String>,
         files: Vec<SourceFileImport>,
     ) -> Result<SourceProcessSummary> {
-        let link = self.load_torrent_import_link(auth_user, info_hash).await?;
+        let info_hash = import.info_hash.as_str();
+        let link = &import.link;
+        let owner_id = import.owner_id.clone();
+        let owner_actor = AuthUser::system_admin();
+        let auth_user = &owner_actor;
         let torrent_library_id = match library_override {
             Some(id) => Some(id),
             None => link.library_id.clone(),
         };
+
+        if let Some(library_id) = torrent_library_id.as_deref() {
+            let library = self.get_library(library_id).await?;
+            if library.user_id != owner_id {
+                anyhow::bail!(
+                    "Torrent import library does not belong to the persisted source owner"
+                );
+            }
+        }
 
         let mut diagnostics = ImportDiagnostics::default();
         let mut processed = 0i32;
@@ -8656,13 +8666,8 @@ impl LibraryScanService {
         } = Self::partition_import_files(files);
         diagnostics.ignored_extensions = ignored_extensions;
 
-        let mut import_files: Vec<ImportFile> = media
-            .into_iter()
-            .map(|file| ImportFile {
-                file,
-                from_archive: false,
-            })
-            .collect();
+        let mut import_files: Vec<ImportFile> =
+            media.into_iter().map(|file| ImportFile { file }).collect();
         let mut staging_dirs: Vec<PathBuf> = Vec::new();
 
         if !archives.is_empty() {
@@ -8695,7 +8700,6 @@ impl LibraryScanService {
                                     downloaded_bytes: extracted.size as i64,
                                     file_index: None,
                                 },
-                                from_archive: true,
                             });
                         }
                         info!(
@@ -8740,6 +8744,7 @@ impl LibraryScanService {
                         let _ = self
                             .upsert_pending_file_match(
                                 auth_user,
+                                &owner_id,
                                 info_hash,
                                 archive,
                                 None,
@@ -8777,7 +8782,7 @@ impl LibraryScanService {
         // ------------------------------------------------------------------
         let linked = if link.has_target() {
             match self
-                .plan_linked_import_targets(auth_user, &link, &import_files)
+                .plan_linked_import_targets(auth_user, link, &import_files)
                 .await
             {
                 Ok(plan) => plan,
@@ -8806,7 +8811,10 @@ impl LibraryScanService {
                 continue;
             }
 
-            let media_file_id = match self.ensure_source_media_file(auth_user, file).await {
+            let media_file_id = match self
+                .ensure_source_media_file(auth_user, &owner_id, info_hash, file)
+                .await
+            {
                 Ok(id) => id,
                 Err(error) => {
                     failed += 1;
@@ -8872,6 +8880,7 @@ impl LibraryScanService {
                             let _ = self
                                 .upsert_pending_file_match(
                                     auth_user,
+                                    &owner_id,
                                     info_hash,
                                     file,
                                     None,
@@ -8916,7 +8925,12 @@ impl LibraryScanService {
                 None
             } else {
                 let libraries = match self
-                    .candidate_libraries_for_import(auth_user, torrent_library_id.as_deref(), file)
+                    .candidate_libraries_for_import(
+                        auth_user,
+                        &owner_id,
+                        torrent_library_id.as_deref(),
+                        file,
+                    )
                     .await
                 {
                     Ok(libraries) => libraries,
@@ -8930,6 +8944,7 @@ impl LibraryScanService {
                         let _ = self
                             .upsert_pending_file_match(
                                 auth_user,
+                                &owner_id,
                                 info_hash,
                                 file,
                                 None,
@@ -8965,6 +8980,7 @@ impl LibraryScanService {
                 let _ = self
                     .upsert_pending_file_match(
                         auth_user,
+                        &owner_id,
                         info_hash,
                         file,
                         None,
@@ -8976,6 +8992,12 @@ impl LibraryScanService {
                 messages.push(format!("{} for '{}'", reason, file.source_path));
                 continue;
             };
+
+            if selected.library.user_id != owner_id {
+                anyhow::bail!(
+                    "Selected import target does not belong to the persisted source owner"
+                );
+            }
 
             let source_path = PathBuf::from(&file.source_path);
             let target_path = match self
@@ -8998,6 +9020,7 @@ impl LibraryScanService {
                     let _ = self
                         .upsert_pending_file_match(
                             auth_user,
+                            &owner_id,
                             info_hash,
                             file,
                             Some(&selected.candidate),
@@ -9010,17 +9033,29 @@ impl LibraryScanService {
                 }
             };
 
-            // Files unpacked from an archive are Librarian's own temporary
-            // copies in the staging directory, not the seeding payload, so
-            // moving them into the library is both safe and preferable (no
-            // duplicate disk usage). Plain torrent files are never moved.
+            // Keep the complete extraction intact until the batch succeeds.
+            // A conflict can create an approval referencing a staged source,
+            // and retries must be able to reuse its completed manifest.
+            // Persist the selected source identity before a conflict can produce an
+            // approval notification. Approval rederives it from this row and TorrentFile.
+            self.upsert_pending_file_match(
+                auth_user,
+                &owner_id,
+                info_hash,
+                file,
+                Some(&selected.candidate),
+                None,
+                None,
+                None,
+            )
+            .await?;
             if let Err(error) = self
                 .materialize_torrent_file(
                     &source_path,
                     &target_path,
                     auth_user,
                     &selected.library,
-                    import.from_archive,
+                    false,
                 )
                 .await
             {
@@ -9032,6 +9067,7 @@ impl LibraryScanService {
                 let _ = self
                     .upsert_pending_file_match(
                         auth_user,
+                        &owner_id,
                         info_hash,
                         file,
                         Some(&selected.candidate),
@@ -9072,6 +9108,7 @@ impl LibraryScanService {
                 let _ = self
                     .upsert_pending_file_match(
                         auth_user,
+                        &owner_id,
                         info_hash,
                         file,
                         Some(&selected.candidate),
@@ -9101,6 +9138,7 @@ impl LibraryScanService {
 
             self.upsert_pending_file_match(
                 auth_user,
+                &owner_id,
                 info_hash,
                 file,
                 Some(&selected.candidate),
@@ -9120,11 +9158,13 @@ impl LibraryScanService {
             ));
         }
 
-        // Staging directories only ever hold copies we made; once the files
-        // have been imported (or durably recorded as failures) they are dead
-        // weight. The archive itself is never touched so seeding continues.
-        for staging_dir in &staging_dirs {
-            extract::cleanup_staging_dir(staging_dir).await;
+        // Pending approvals/retries still need the verified extracted files.
+        // Only discard our temporary copies after the whole batch succeeds;
+        // the original archives and torrent payloads are always preserved.
+        if failed == 0 {
+            for staging_dir in &staging_dirs {
+                extract::cleanup_staging_dir(staging_dir).await;
+            }
         }
 
         let status = if processed > 0 && failed == 0 {
@@ -9136,7 +9176,7 @@ impl LibraryScanService {
         };
         let error = Self::summarize_import_outcome(&diagnostics, processed, failed);
         self.update_torrent_post_process_status(
-            info_hash,
+            import,
             status,
             error.as_deref(),
             processed,
@@ -9504,111 +9544,6 @@ impl LibraryScanService {
             None
         } else {
             Some(parts.join("; "))
-        }
-    }
-
-    /// Load the wanted-target linkage stamped on the `Torrent` row at grab
-    /// time (`jobs::auto_download` and manual `addTorrent` both set these).
-    async fn load_torrent_import_link(
-        &self,
-        auth_user: &AuthUser,
-        info_hash: &str,
-    ) -> Result<TorrentImportLink> {
-        let data = self
-            .execute_graphql(
-                auth_user,
-                r#"query TorrentImportLinkage($infoHash: String!) {
-                    Torrents: torrents(
-                        where: { infoHash: { eq: $infoHash } }
-                        page: { limit: 1 }
-                    ) {
-                        Edges: edges {
-                            Node: node {
-                                Id: id
-                                Name: name
-                                LibraryId: libraryId
-                                MovieId: movieId
-                                EpisodeId: episodeId
-                                TrackId: trackId
-                                ChapterId: chapterId
-                                ShowId: showId
-                                AlbumId: albumId
-                                AudiobookId: audiobookId
-                            }
-                        }
-                    }
-                }"#,
-                serde_json::json!({ "infoHash": info_hash }),
-            )
-            .await?;
-        let node = data
-            .get("Torrents")
-            .and_then(|v| v.get("Edges"))
-            .and_then(|v| v.as_array())
-            .and_then(|edges| edges.first())
-            .and_then(|edge| edge.get("Node"))
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-
-        let text = |key: &str| -> Option<String> {
-            node.get(key)
-                .and_then(|value| value.as_str())
-                .filter(|value| !value.is_empty())
-                .map(|value| value.to_string())
-        };
-
-        Ok(TorrentImportLink {
-            name: text("Name"),
-            library_id: text("LibraryId"),
-            movie_id: text("MovieId"),
-            episode_id: text("EpisodeId"),
-            track_id: text("TrackId"),
-            chapter_id: text("ChapterId"),
-            show_id: text("ShowId"),
-            album_id: text("AlbumId"),
-            audiobook_id: text("AudiobookId"),
-            season: self.load_torrent_season(auth_user, info_hash).await,
-        })
-    }
-
-    /// `Torrent.season` is only set for season-pack grabs. It is queried
-    /// separately and tolerantly so import keeps working on deployments whose
-    /// schema predates the column (the season is then re-derived from the
-    /// release name).
-    async fn load_torrent_season(&self, auth_user: &AuthUser, info_hash: &str) -> Option<i32> {
-        match self
-            .execute_graphql(
-                auth_user,
-                r#"query TorrentImportSeason($infoHash: String!) {
-                    Torrents: torrents(
-                        where: { infoHash: { eq: $infoHash } }
-                        page: { limit: 1 }
-                    ) {
-                        Edges: edges { Node: node { Season: season } } }
-                }"#,
-                serde_json::json!({ "infoHash": info_hash }),
-            )
-            .await
-        {
-            Ok(data) => data
-                .get("Torrents")
-                .and_then(|v| v.get("Edges"))
-                .and_then(|v| v.as_array())
-                .and_then(|edges| edges.first())
-                .and_then(|edge| edge.get("Node"))
-                .and_then(|node| node.get("Season"))
-                .and_then(|value| value.as_i64())
-                .map(|value| value as i32),
-            Err(error) => {
-                debug!(
-                    info_hash = %info_hash,
-                    error = %error,
-                    "Torrent.season is unavailable; season packs will fall back to name parsing: info_hash={}, error={}",
-                    info_hash,
-                    error
-                );
-                None
-            }
         }
     }
 
@@ -10362,10 +10297,12 @@ impl LibraryScanService {
     async fn ensure_source_media_file(
         &self,
         auth_user: &AuthUser,
+        owner_id: &str,
+        info_hash: &str,
         file: &SourceFileImport,
     ) -> Result<String> {
         if let Some(id) = self
-            .find_media_file_id_by_path(auth_user, &file.source_path)
+            .find_media_file_id_by_path(auth_user, owner_id, info_hash, &file.source_path)
             .await?
         {
             return Ok(id);
@@ -10399,6 +10336,8 @@ impl LibraryScanService {
                         "addedAt": added_at,
                         "metadata": serde_json::json!({
                             "sourceType": "torrent",
+                            "sourceId": info_hash,
+                            "sourceOwnerId": owner_id,
                             "unmatchedReason": "Completed torrent file awaiting match"
                         }).to_string()
                     }
@@ -10432,6 +10371,8 @@ impl LibraryScanService {
     async fn find_media_file_id_by_path(
         &self,
         auth_user: &AuthUser,
+        owner_id: &str,
+        info_hash: &str,
         path: &str,
     ) -> Result<Option<String>> {
         let data = self
@@ -10442,26 +10383,47 @@ impl LibraryScanService {
                         where: { path: { eq: $path } }
                         page: { limit: 1 }
                     ) {
-                        Edges: edges { Node: node { Id: id } }
+                        Edges: edges { Node: node { Id: id LibraryId: libraryId Metadata: metadata Library: library { UserId: userId } } }
                     }
                 }"#,
                 serde_json::json!({ "path": path }),
             )
             .await?;
-        Ok(data
+        let node = data
             .get("MediaFiles")
-            .and_then(|v| v.get("Edges"))
-            .and_then(|v| v.as_array())
+            .and_then(|value| value.get("Edges"))
+            .and_then(serde_json::Value::as_array)
             .and_then(|edges| edges.first())
-            .and_then(|edge| edge.get("Node"))
-            .and_then(|node| node.get("Id"))
-            .and_then(|v| v.as_str())
-            .map(|value| value.to_string()))
+            .and_then(|edge| edge.get("Node"));
+        let Some(node) = node else { return Ok(None) };
+        let assigned_owner = node
+            .get("Library")
+            .and_then(|library| library.get("UserId"))
+            .and_then(serde_json::Value::as_str);
+        let source = node
+            .get("Metadata")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok());
+        let owned_unassigned_source = node.get("LibraryId").is_none_or(serde_json::Value::is_null)
+            && source.as_ref().is_some_and(|source| {
+                source["sourceOwnerId"].as_str() == Some(owner_id)
+                    && source["sourceId"].as_str() == Some(info_hash)
+            });
+        if assigned_owner != Some(owner_id) && !owned_unassigned_source {
+            anyhow::bail!(
+                "Existing source media file ownership is unknown or belongs to another user"
+            );
+        }
+        Ok(node
+            .get("Id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string))
     }
 
     async fn candidate_libraries_for_import(
         &self,
         auth_user: &AuthUser,
+        owner_id: &str,
         explicit_library_id: Option<&str>,
         file: &SourceFileImport,
     ) -> Result<Vec<LibraryRow>> {
@@ -10472,6 +10434,9 @@ impl LibraryScanService {
 
         if let Some(library_id) = explicit_library_id {
             let library = self.get_library(library_id).await?;
+            if library.user_id != owner_id {
+                anyhow::bail!("Import library does not belong to the source owner");
+            }
             if compatible_types.contains(&Self::normalize_library_type(&library.library_type)) {
                 return Ok(vec![library]);
             }
@@ -10501,7 +10466,7 @@ impl LibraryScanService {
                         }
                     }
                 }"#,
-                serde_json::json!({ "userId": auth_user.user_id }),
+                serde_json::json!({ "userId": owner_id }),
             )
             .await?;
 
@@ -10532,7 +10497,8 @@ impl LibraryScanService {
                     user_id: node
                         .get("UserId")
                         .and_then(|v| v.as_str())
-                        .unwrap_or(&auth_user.user_id)
+                        .filter(|id| *id == owner_id)
+                        .context("Import library ownership is missing or inconsistent")?
                         .to_string(),
                     name: node
                         .get("Name")
@@ -10667,10 +10633,6 @@ impl LibraryScanService {
             anyhow::bail!("Source file does not exist: {}", source_path.display());
         }
 
-        if let Some(parent) = target_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-
         // No-clobber placement (audit #4): for torrent payload files `allow_move`
         // is false, so this is always a copy/hardlink, never a move, and the
         // seeding source file is never modified. It is only true for files
@@ -10682,10 +10644,12 @@ impl LibraryScanService {
         // copy (via the no-clobber copy-to-temp-then-hardlink path); an
         // `AlreadyExists` race is handled as the pre-existing conflict path below,
         // and any other error propagates instead of being papered over.
-        let outcome = no_clobber_place(
+        let outcome = place_in_library(
+            PathBuf::from(&library.path),
             source_path.to_path_buf(),
             target_path.to_path_buf(),
             allow_move,
+            false,
         )
         .await?;
 
@@ -10716,6 +10680,7 @@ impl LibraryScanService {
             );
             self.create_notification(
                 auth_user,
+                &library.user_id,
                 "WARNING",
                 "ORGANIZATION",
                 "Torrent import conflict skipped",
@@ -10752,16 +10717,22 @@ impl LibraryScanService {
         let target_str = target_path.to_string_lossy().to_string();
         let existing = match crate::graphql::entities::MediaFile::query(db.pool())
             .filter(crate::graphql::entities::MediaFileWhereInput {
+                library_id: Some(StringFilter {
+                    eq: Some(library.id.clone()),
+                    ..Default::default()
+                }),
                 path: Some(graphql_orm::graphql::filters::StringFilter {
                     eq: Some(target_str.clone()),
                     ..Default::default()
                 }),
                 ..Default::default()
             })
+            .limit(2)
             .fetch_all()
             .await
         {
-            Ok(rows) => rows.into_iter().next(),
+            Ok(mut rows) if rows.len() == 1 => rows.pop(),
+            Ok(_) => None,
             Err(e) => {
                 warn!(error = %e, "Failed to look up existing media file for upgrade check");
                 return;
@@ -10790,23 +10761,35 @@ impl LibraryScanService {
             "A higher quality version was found for an existing file: '{}' may be an upgrade over '{}'. Approve to replace it.",
             new_filename, existing_filename
         );
-        let action_data = serde_json::json!({
-            "sourcePath": source_path.to_string_lossy(),
-            "targetPath": target_str,
-            "mediaFileId": existing.id,
-            "newResolution": new_parsed.resolution,
-            "existingResolution": existing_parsed.resolution,
-        })
-        .to_string();
+        let (pending_match_id, action_data) =
+            match crate::services::graphql::mutations::quality::build_quality_upgrade_action_data(
+                &db,
+                &library.user_id,
+                &library.id,
+                &existing.id,
+                source_path,
+                target_path,
+            )
+            .await
+            {
+                Ok(data) => data,
+                Err(error) => {
+                    warn!(library_id = %library.id, source_path = %source_path.display(), target_path = %target_path.display(), error = %error,
+                    "Cannot create quality upgrade notification without verified file identities");
+                    return;
+                }
+            };
 
         self.create_action_notification(
             auth_user,
+            &library.user_id,
             "ACTION_REQUIRED",
             "QUALITY",
             "Possible quality upgrade found",
             &message,
             Some(&library.id),
             Some(&existing.id),
+            Some(&pending_match_id),
             crate::services::graphql::mutations::quality::QUALITY_UPGRADE_ACTION_TYPE,
             &action_data,
         )
@@ -10817,6 +10800,7 @@ impl LibraryScanService {
     async fn upsert_pending_file_match(
         &self,
         auth_user: &AuthUser,
+        owner_id: &str,
         info_hash: &str,
         file: &SourceFileImport,
         candidate: Option<&MatchCandidate>,
@@ -10825,11 +10809,17 @@ impl LibraryScanService {
         copy_error: Option<&str>,
     ) -> Result<()> {
         let existing = self
-            .find_pending_file_match(auth_user, info_hash, file.file_index, &file.source_path)
+            .find_pending_file_match(
+                auth_user,
+                owner_id,
+                info_hash,
+                file.file_index,
+                &file.source_path,
+            )
             .await?;
 
         let input = serde_json::json!({
-            "userId": auth_user.user_id.clone(),
+            "userId": owner_id,
             "sourcePath": file.source_path.clone(),
             "sourceType": "torrent",
             "sourceId": info_hash,
@@ -10901,6 +10891,7 @@ impl LibraryScanService {
     async fn find_pending_file_match(
         &self,
         auth_user: &AuthUser,
+        owner_id: &str,
         info_hash: &str,
         file_index: Option<i32>,
         source_path: &str,
@@ -10918,11 +10909,13 @@ impl LibraryScanService {
                 "sourcePath": { "eq": source_path }
             })
         };
+        let mut where_input = where_input;
+        where_input["userId"] = serde_json::json!({ "eq": owner_id });
         let data = self
             .execute_graphql(
                 auth_user,
                 r#"query PendingFileMatchForSource($where: PendingFileMatchWhereInput!) {
-                    PendingFileMatches: pendingFileMatches(where: $where, page: { limit: 1 }) {
+                    PendingFileMatches: pendingFileMatches(where: $where, page: { limit: 2 }) {
                         Edges: edges {
                             Node: node {
                                 Id: id
@@ -10935,6 +10928,14 @@ impl LibraryScanService {
                 serde_json::json!({ "where": where_input }),
             )
             .await?;
+        if data
+            .get("PendingFileMatches")
+            .and_then(|value| value.get("Edges"))
+            .and_then(|value| value.as_array())
+            .is_some_and(|rows| rows.len() > 1)
+        {
+            anyhow::bail!("Pending source identity is ambiguous");
+        }
         Ok(data
             .get("PendingFileMatches")
             .and_then(|v| v.get("Edges"))
@@ -10956,64 +10957,76 @@ impl LibraryScanService {
 
     async fn update_torrent_post_process_status(
         &self,
-        info_hash: &str,
+        import: &AuthorizedTorrentImport,
         status: &str,
         error: Option<&str>,
         _processed: i32,
         _failed: i32,
     ) -> Result<()> {
-        let auth_user = self.system_auth_user(None).await?;
-        let data = self
-            .execute_graphql(
-                &auth_user,
-                r#"query TorrentForPostProcessStatus($infoHash: String!) {
-                    Torrents: torrents(
-                        where: { infoHash: { eq: $infoHash } }
-                        page: { limit: 1 }
-                    ) {
-                        Edges: edges { Node: node { Id: id } }
-                    }
-                }"#,
-                serde_json::json!({ "infoHash": info_hash }),
-            )
-            .await?;
-        let Some(torrent_id) = data
-            .get("Torrents")
-            .and_then(|v| v.get("Edges"))
-            .and_then(|v| v.as_array())
-            .and_then(|edges| edges.first())
-            .and_then(|edge| edge.get("Node"))
-            .and_then(|node| node.get("Id"))
-            .and_then(|v| v.as_str())
-        else {
-            return Ok(());
-        };
+        let database = self.database().await?;
+        Self::record_torrent_import_status(database.pool(), import, status, error).await
+    }
 
-        let data = self
-            .execute_mutation(
-                &auth_user,
-                r#"mutation UpdateTorrentPostProcessStatus($id: String!, $input: UpdateTorrentInput!) {
-                    updateTorrent(id: $id, input: $input) { success error }
-                }"#,
-                serde_json::json!({
-                    "id": torrent_id,
-                    "input": {
-                        "postProcessStatus": status,
-                        "postProcessError": error,
-                        "processedAt": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
+    async fn record_torrent_import_status(
+        db: &crate::db::Database,
+        import: &AuthorizedTorrentImport,
+        status: &str,
+        error: Option<&str>,
+    ) -> Result<()> {
+        use crate::graphql::entities::{Torrent, UpdateTorrentInput};
+        let import = import.clone();
+        let status = status.to_string();
+        let error = error.map(str::to_string);
+        let authority = DbAuthContext {
+            user_id: Some(import.owner_id.clone()),
+            actor_id: Some(import.actor.user_id.clone()),
+            subject: Some(import.actor.user_id.clone()),
+            roles: import.actor.role.iter().cloned().collect(),
+            ..Default::default()
+        };
+        db.transaction_with_auth(TransactionMode::StateMachine, Some(&authority), move |tx| {
+            Box::pin(async move {
+                let row = tx
+                    .find_by_id::<Torrent>(&import.id)
+                    .await?
+                    .ok_or_else(OrmPublicError::forbidden)?;
+                if row.info_hash != import.info_hash
+                    || row.user_id != import.owner_id
+                    || row.library_id != import.link.library_id
+                {
+                    return Err(OrmPublicError::forbidden());
+                }
+                if import.actor.user_id != "system" || !import.actor.is_admin() {
+                    let actor = tx
+                        .find_by_id::<User>(&import.actor.user_id)
+                        .await?
+                        .ok_or_else(OrmPublicError::forbidden)?;
+                    let current_admin = import.actor.is_admin()
+                        && crate::services::graphql::auth::Role::parse(&actor.role)
+                            == Some(crate::services::graphql::auth::Role::Admin);
+                    if !actor.is_active
+                        || (!current_admin && actor.id != import.owner_id)
+                        || crate::services::graphql::auth::Role::parse(&actor.role).is_none()
+                    {
+                        return Err(OrmPublicError::forbidden());
                     }
-                }),
-            )
-            .await?;
-        if !data
-            .get("updateTorrent")
-            .and_then(|v| v.get("success"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-        {
-            anyhow::bail!("updateTorrent post-process status failed");
-        }
-        Ok(())
+                }
+                tx.update_by_id::<Torrent>(
+                    &import.id,
+                    UpdateTorrentInput {
+                        post_process_status: Some(Some(status)),
+                        post_process_error: Some(error),
+                        processed_at: Some(Some(Utc::now().to_rfc3339())),
+                        ..Default::default()
+                    },
+                )
+                .await?
+                .ok_or_else(OrmPublicError::forbidden)?;
+                Ok(())
+            })
+        })
+        .await
+        .context("Authorized torrent import status update failed")
     }
 
     fn is_supported_import_extension(path: &str) -> bool {
@@ -11152,7 +11165,7 @@ impl LibraryScanService {
 
         for (show_name, show_path, show_year, seasons) in shows {
             if let Some(path) = show_path {
-                tokio::fs::create_dir_all(PathBuf::from(path)).await?;
+                create_library_directory(Path::new(&library.path), Path::new(&path))?;
             }
 
             if seasons.is_empty() {
@@ -11162,8 +11175,8 @@ impl LibraryScanService {
                     &show_name,
                     1,
                     show_year,
-                );
-                tokio::fs::create_dir_all(show_dir).await?;
+                )?;
+                create_library_directory(Path::new(&library.path), &show_dir)?;
                 continue;
             }
 
@@ -11174,9 +11187,9 @@ impl LibraryScanService {
                     &show_name,
                     season,
                     show_year,
-                );
-                tokio::fs::create_dir_all(show_dir).await?;
-                tokio::fs::create_dir_all(season_dir).await?;
+                )?;
+                create_library_directory(Path::new(&library.path), &show_dir)?;
+                create_library_directory(Path::new(&library.path), &season_dir)?;
             }
         }
 
@@ -11260,13 +11273,14 @@ impl LibraryScanService {
         library_path: &str,
         naming_pattern: &str,
         shows: &[TvShowFolderRow],
-    ) -> HashSet<PathBuf> {
+    ) -> Result<HashSet<PathBuf>> {
         let mut protected = HashSet::new();
         let root = PathBuf::from(library_path);
         protected.insert(root.clone());
 
         for (show_name, show_path, show_year, seasons) in shows {
             if let Some(path) = show_path {
+                checked_library_path(&root, Path::new(path))?;
                 protected.insert(PathBuf::from(path));
             }
 
@@ -11277,7 +11291,7 @@ impl LibraryScanService {
                     show_name,
                     1,
                     *show_year,
-                );
+                )?;
                 protected.insert(show_dir);
             } else {
                 for season in seasons {
@@ -11287,14 +11301,14 @@ impl LibraryScanService {
                         show_name,
                         *season,
                         *show_year,
-                    );
+                    )?;
                     protected.insert(show_dir);
                     protected.insert(season_dir);
                 }
             }
         }
 
-        protected
+        Ok(protected)
     }
 
     async fn build_tv_protected_paths(&self, library: &LibraryRow) -> Result<HashSet<PathBuf>> {
@@ -11304,11 +11318,7 @@ impl LibraryScanService {
         let shows = self
             .get_tv_shows_for_library(&auth_user, &library.id)
             .await?;
-        Ok(Self::build_tv_protected_paths_from_rows(
-            &library.path,
-            &naming_pattern,
-            &shows,
-        ))
+        Self::build_tv_protected_paths_from_rows(&library.path, &naming_pattern, &shows)
     }
 
     fn protect_path_and_ancestors(
@@ -11371,7 +11381,10 @@ impl LibraryScanService {
             };
             let year = node.get("Year").and_then(|v| v.as_i64()).map(|v| v as i32);
             let rel = apply_movie_naming_pattern(&naming_pattern, title, year, "dummy.mkv", "mkv");
-            if let Some(parent) = root.join(rel).parent().map(|p| p.to_path_buf()) {
+            validate_relative_library_path(&rel)?;
+            let target = root.join(rel);
+            checked_library_path(&root, &target)?;
+            if let Some(parent) = target.parent().map(|p| p.to_path_buf()) {
                 self.protect_path_and_ancestors(&mut protected, &root, parent);
             }
         }
@@ -11459,7 +11472,10 @@ impl LibraryScanService {
                 original_filename,
                 "mp3",
             );
-            if let Some(parent) = root.join(rel).parent().map(PathBuf::from) {
+            validate_relative_library_path(&rel)?;
+            let target = root.join(rel);
+            checked_library_path(&root, &target)?;
+            if let Some(parent) = target.parent().map(PathBuf::from) {
                 self.protect_path_and_ancestors(&mut protected, &root, parent);
             }
         }
@@ -11549,7 +11565,10 @@ impl LibraryScanService {
                 original_filename,
                 "m4b",
             );
-            if let Some(parent) = root.join(rel).parent().map(PathBuf::from) {
+            validate_relative_library_path(&rel)?;
+            let target = root.join(rel);
+            checked_library_path(&root, &target)?;
+            if let Some(parent) = target.parent().map(PathBuf::from) {
                 self.protect_path_and_ancestors(&mut protected, &root, parent);
             }
         }
@@ -11797,7 +11816,7 @@ struct FfprobeChapter {
     tags: Option<HashMap<String, String>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct VideoStreamAnalysis {
     stream_index: i32,
     codec: String,
@@ -11820,7 +11839,7 @@ struct VideoStreamAnalysis {
     metadata: Option<String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct AudioStreamAnalysis {
     stream_index: i32,
     codec: String,
@@ -11837,7 +11856,7 @@ struct AudioStreamAnalysis {
     metadata: Option<String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct SubtitleAnalysis {
     source_type: String,
     stream_index: Option<i32>,
@@ -11851,7 +11870,7 @@ struct SubtitleAnalysis {
     metadata: Option<String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct ChapterAnalysis {
     chapter_index: i32,
     start_secs: f64,
@@ -11859,7 +11878,7 @@ struct ChapterAnalysis {
     title: Option<String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct ProbeAnalysis {
     container: Option<String>,
     video_codec: Option<String>,
@@ -11877,6 +11896,219 @@ struct ProbeAnalysis {
     audio_streams: Vec<AudioStreamAnalysis>,
     subtitles: Vec<SubtitleAnalysis>,
     chapters: Vec<ChapterAnalysis>,
+}
+
+/// Private proof of the authorized target before ffprobe. Recheck it on the pinned
+/// transaction so moved/reowned/replaced files cannot receive stale analysis.
+#[derive(Debug, Clone)]
+struct AnalysisTarget {
+    file_id: String,
+    library_id: String,
+    owner_id: String,
+    path: String,
+    size: i64,
+    file_modified_at: Option<String>,
+}
+
+impl AnalysisTarget {
+    fn capture(file: &MediaFileRow, library: &LibraryRow, path: &str) -> Result<Self> {
+        Uuid::parse_str(&library.user_id).context("Analysis library has no valid owner")?;
+        if file.id.is_empty()
+            || file.library_id.as_deref() != Some(library.id.as_str())
+            || file.path != path
+        {
+            anyhow::bail!("Analysis target path or library changed before probing");
+        }
+        Ok(Self {
+            file_id: file.id.clone(),
+            library_id: library.id.clone(),
+            owner_id: library.user_id.clone(),
+            path: file.path.clone(),
+            size: file.size,
+            file_modified_at: file.file_modified_at.clone(),
+        })
+    }
+}
+
+/// Authorized worker action: top-level ffprobe columns and all owned detail rows commit
+/// together. These generated context writes preserve existing hooks and postcommit witnesses.
+/// The explicit DB auth context keeps execution actor distinct from the target owner.
+async fn replace_media_analysis(
+    db: &crate::db::Database,
+    actor: &AuthUser,
+    target: AnalysisTarget,
+    analysis: ProbeAnalysis,
+) -> Result<()> {
+    use crate::graphql::entities::{
+        AudioStream, AudioStreamWhereInput, CreateAudioStreamInput, CreateMediaChapterInput,
+        CreateSubtitleInput, CreateVideoStreamInput, Library, MediaChapter, MediaChapterWhereInput,
+        Subtitle, SubtitleWhereInput, UpdateMediaFileInput, VideoStream, VideoStreamWhereInput,
+    };
+    if !actor.has_role(crate::services::graphql::auth::Role::Member)
+        || (!actor.is_admin() && actor.user_id != target.owner_id)
+    {
+        anyhow::bail!("Analysis target not found or access denied");
+    }
+    let authority = DbAuthContext {
+        user_id: Some(target.owner_id.clone()),
+        subject: Some(actor.user_id.clone()),
+        actor_id: Some(actor.user_id.clone()),
+        roles: actor.role.iter().cloned().collect(),
+        ..Default::default()
+    };
+    db.transaction_with_auth(TransactionMode::StateMachine, Some(&authority), move |tx| {
+        Box::pin(async move {
+            let conflict = || {
+                OrmPublicError::with_message(
+                    OrmErrorCode::Conflict,
+                    "Analysis target changed; retry analysis",
+                )
+            };
+            let file = tx
+                .find_by_id::<MediaFile>(&target.file_id)
+                .await?
+                .ok_or_else(conflict)?;
+            let library = tx
+                .find_by_id::<Library>(&target.library_id)
+                .await?
+                .ok_or_else(conflict)?;
+            if file.library_id.as_deref() != Some(target.library_id.as_str())
+                || library.user_id != target.owner_id
+                || file.path != target.path
+                || file.size != target.size
+                || file.file_modified_at != target.file_modified_at
+                || tx.find_by_id::<User>(&target.owner_id).await?.is_none()
+            {
+                return Err(conflict());
+            }
+            let eq = || StringFilter {
+                eq: Some(target.file_id.clone()),
+                ..Default::default()
+            };
+            tx.delete_where::<VideoStream>(VideoStreamWhereInput {
+                media_file_id: Some(eq()),
+                ..Default::default()
+            })
+            .await?;
+            tx.delete_where::<AudioStream>(AudioStreamWhereInput {
+                media_file_id: Some(eq()),
+                ..Default::default()
+            })
+            .await?;
+            // Sidecar/downloaded subtitles belong to their own workflows, not this probe.
+            tx.delete_where::<Subtitle>(SubtitleWhereInput {
+                media_file_id: Some(eq()),
+                source_type: Some(StringFilter {
+                    eq: Some("embedded".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .await?;
+            tx.delete_where::<MediaChapter>(MediaChapterWhereInput {
+                media_file_id: Some(eq()),
+                ..Default::default()
+            })
+            .await?;
+            for stream in analysis.video_streams {
+                tx.insert::<VideoStream>(CreateVideoStreamInput {
+                    media_file_id: target.file_id.clone(),
+                    stream_index: stream.stream_index,
+                    codec: stream.codec,
+                    codec_long_name: stream.codec_long_name,
+                    width: stream.width,
+                    height: stream.height,
+                    aspect_ratio: stream.aspect_ratio,
+                    frame_rate: stream.frame_rate,
+                    avg_frame_rate: stream.avg_frame_rate,
+                    bitrate: stream.bitrate,
+                    pixel_format: stream.pixel_format,
+                    color_space: stream.color_space,
+                    color_transfer: stream.color_transfer,
+                    color_primaries: stream.color_primaries,
+                    hdr_type: stream.hdr_type,
+                    bit_depth: stream.bit_depth,
+                    language: stream.language,
+                    title: stream.title,
+                    is_default: stream.is_default,
+                    metadata: stream.metadata,
+                })
+                .await?;
+            }
+            for stream in analysis.audio_streams {
+                tx.insert::<AudioStream>(CreateAudioStreamInput {
+                    media_file_id: target.file_id.clone(),
+                    stream_index: stream.stream_index,
+                    codec: stream.codec,
+                    codec_long_name: stream.codec_long_name,
+                    channels: stream.channels,
+                    channel_layout: stream.channel_layout,
+                    sample_rate: stream.sample_rate,
+                    bitrate: stream.bitrate,
+                    bit_depth: stream.bit_depth,
+                    language: stream.language,
+                    title: stream.title,
+                    is_default: stream.is_default,
+                    is_commentary: stream.is_commentary,
+                    metadata: stream.metadata,
+                })
+                .await?;
+            }
+            for stream in analysis.subtitles {
+                tx.insert::<Subtitle>(CreateSubtitleInput {
+                    media_file_id: target.file_id.clone(),
+                    source_type: stream.source_type,
+                    stream_index: stream.stream_index,
+                    codec: stream.codec,
+                    codec_long_name: stream.codec_long_name,
+                    language: stream.language,
+                    title: stream.title,
+                    is_default: stream.is_default,
+                    is_forced: stream.is_forced,
+                    is_hearing_impaired: stream.is_hearing_impaired,
+                    metadata: stream.metadata,
+                    file_path: None,
+                    opensubtitles_id: None,
+                    downloaded_at: None,
+                })
+                .await?;
+            }
+            for stream in analysis.chapters {
+                tx.insert::<MediaChapter>(CreateMediaChapterInput {
+                    media_file_id: target.file_id.clone(),
+                    chapter_index: stream.chapter_index,
+                    start_secs: stream.start_secs,
+                    end_secs: stream.end_secs,
+                    title: stream.title,
+                })
+                .await?;
+            }
+            tx.update_by_id::<MediaFile>(
+                &target.file_id,
+                UpdateMediaFileInput {
+                    container: Some(analysis.container),
+                    video_codec: Some(analysis.video_codec),
+                    audio_codec: Some(analysis.audio_codec),
+                    width: Some(analysis.width),
+                    height: Some(analysis.height),
+                    duration: Some(analysis.duration),
+                    bitrate: Some(analysis.bitrate),
+                    resolution: Some(analysis.resolution),
+                    is_hdr: Some(analysis.is_hdr),
+                    hdr_type: Some(analysis.hdr_type),
+                    audio_channels: Some(analysis.audio_channels),
+                    metadata: Some(analysis.metadata),
+                    analyzed_at: Some(Some(Utc::now().to_rfc3339())),
+                    ..Default::default()
+                },
+            )
+            .await?
+            .ok_or_else(conflict)?;
+            Ok(())
+        })
+    })
+    .await
+    .context("Failed to atomically replace media analysis")
 }
 
 const FFPROBE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -12391,7 +12623,8 @@ fn derive_tv_dirs_from_pattern(
     show_name: &str,
     season: i32,
     show_year: Option<i32>,
-) -> (PathBuf, PathBuf) {
+) -> Result<(PathBuf, PathBuf)> {
+    validate_relative_library_path(Path::new(naming_pattern))?;
     let safe_show = show_year
         .map(|year| format!("{} ({})", sanitize_for_filename(show_name), year))
         .unwrap_or_else(|| sanitize_for_filename(show_name));
@@ -12404,7 +12637,10 @@ fn derive_tv_dirs_from_pattern(
         Some("Episode"),
         "mkv",
     );
-    let absolute = PathBuf::from(library_path).join(relative);
+    validate_relative_library_path(&relative)?;
+    let root = Path::new(library_path);
+    let absolute = root.join(relative);
+    checked_library_path(root, &absolute)?;
 
     let season_dir = absolute
         .parent()
@@ -12415,7 +12651,121 @@ fn derive_tv_dirs_from_pattern(
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(library_path));
 
-    (show_dir, season_dir)
+    // A flat/custom layout can have fewer than two directory levels.
+    let show_dir = if show_dir.starts_with(root) {
+        show_dir
+    } else {
+        root.to_path_buf()
+    };
+    Ok((show_dir, season_dir))
+}
+
+/// Patterns and their expansions are always relative names, on every host platform.
+/// Check both: metadata tokens can introduce traversal even in an otherwise safe template.
+pub(crate) fn validate_relative_library_path(path: &Path) -> Result<()> {
+    let text = path.to_string_lossy();
+    if text.is_empty()
+        || text.contains('\\')
+        || text.contains('\0')
+        || text.as_bytes().get(1) == Some(&b':')
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_) | Component::CurDir))
+        || !path
+            .components()
+            .any(|component| matches!(component, Component::Normal(_)))
+    {
+        anyhow::bail!(
+            "Library naming paths must be relative and contain no parent traversal or platform prefixes"
+        );
+    }
+    Ok(())
+}
+
+/// Resolve existing ancestors, including symlinks, without creating anything. Missing
+/// suffixes are allowed for planning; dangling links and escapes fail closed.
+pub(crate) fn checked_library_path(root: &Path, destination: &Path) -> Result<PathBuf> {
+    let relative = destination
+        .strip_prefix(root)
+        .context("Destination is outside the library root")?;
+    if !relative.as_os_str().is_empty() {
+        validate_relative_library_path(relative)?;
+    }
+    let canonical_root = std::fs::canonicalize(root).context("Library root is unavailable")?;
+    if !canonical_root.is_dir() {
+        anyhow::bail!("Library root is not a directory");
+    }
+    let mut resolved = canonical_root.clone();
+    for component in relative.components() {
+        if component == Component::CurDir {
+            continue;
+        }
+        resolved.push(component.as_os_str());
+        match std::fs::symlink_metadata(&resolved) {
+            Ok(_) => {
+                resolved = std::fs::canonicalize(&resolved)
+                    .context("Destination contains an unresolved symlink")?;
+                if !resolved.starts_with(&canonical_root) {
+                    anyhow::bail!("Destination symlink escapes the library root");
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("Cannot inspect library destination"),
+        }
+    }
+    Ok(resolved)
+}
+
+fn create_library_directory(root: &Path, directory: &Path) -> Result<PathBuf> {
+    checked_library_path(root, directory)?;
+    let relative = directory.strip_prefix(root)?;
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        current.push(component.as_os_str());
+        let checked = checked_library_path(root, &current)?;
+        match std::fs::create_dir(&checked) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error).context("Cannot create library directory"),
+        }
+        if !checked_library_path(root, &current)?.is_dir() {
+            anyhow::bail!("Library destination parent is not a directory");
+        }
+    }
+    checked_library_path(root, directory)
+}
+
+/// All active library placement paths pass through this final containment boundary.
+/// The raw no-clobber primitive remains usable for its isolated filesystem tests.
+async fn place_in_library(
+    root: PathBuf,
+    source: PathBuf,
+    target: PathBuf,
+    remove_source: bool,
+    source_is_library: bool,
+) -> Result<NoClobberOutcome> {
+    tokio::task::spawn_blocking(move || {
+        if source_is_library {
+            checked_library_path(&root, &source)?;
+            if std::fs::symlink_metadata(&source)?.file_type().is_symlink() {
+                anyhow::bail!("Cannot organize a symlinked media file");
+            }
+        }
+        checked_library_path(&root, &target)?;
+        let parent = target
+            .parent()
+            .context("Library destination has no parent")?;
+        create_library_directory(&root, parent)?;
+        let target = checked_library_path(&root, &target)?;
+        let source = if source_is_library {
+            checked_library_path(&root, &source)?
+        } else {
+            source
+        };
+        no_clobber_place_blocking(&source, &target, remove_source)
+    })
+    .await
+    .context("Contained library placement task failed")?
 }
 
 async fn paths_refer_to_same_file(left: &Path, right: &Path) -> bool {
@@ -12438,7 +12788,7 @@ async fn paths_refer_to_same_file(left: &Path, right: &Path) -> bool {
     }
 }
 
-/// Outcome of [`no_clobber_place`].
+/// Outcome of [`place_in_library`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NoClobberOutcome {
     /// `src` (or its bytes, for a copy) is now at `dst`.
@@ -12469,6 +12819,7 @@ enum NoClobberOutcome {
 ///
 /// `dst`'s parent directory must already exist. Runs on a blocking thread pool
 /// since these are synchronous syscalls.
+#[cfg(test)]
 async fn no_clobber_place(
     src: PathBuf,
     dst: PathBuf,
@@ -12576,7 +12927,6 @@ mod tests {
                 downloaded_bytes: size_mb * 1024 * 1024,
                 file_index: None,
             },
-            from_archive: false,
         }
     }
 
@@ -13263,7 +13613,7 @@ mod tests {
             &root.to_string_lossy(),
             "{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}",
             &shows,
-        );
+        )?;
 
         assert!(protected.contains(&root.to_path_buf()));
         assert!(protected.contains(&root.join("Example Show")));
@@ -14260,5 +14610,890 @@ mod tests {
         );
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod atomic_analysis_tests {
+    use super::*;
+    use crate::db::Database;
+    use crate::graphql::entities::*;
+    use graphql_orm::DbPool;
+    use graphql_orm::graphql::orm::{
+        ChangeAction, MutationContext, MutationEvent, MutationHook, MutationPhase,
+    };
+    use graphql_orm::graphql::subscriptions::SubscriptionEvent;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    async fn database() -> crate::db::Database {
+        let db = crate::db::Database::new(DbPool::connect("sqlite::memory:").await.unwrap());
+        crate::services::database::bootstrap_schema(&db)
+            .await
+            .unwrap();
+        crate::services::DatabaseService::new(db).pool().clone()
+    }
+    async fn user(db: &Database) -> User {
+        User::insert(
+            db,
+            CreateUserInput {
+                username: uuid::Uuid::new_v4().to_string(),
+                email: None,
+                password_hash: "fixture password_hash".to_string(),
+                role: "member".to_string(),
+                display_name: None,
+                avatar_url: None,
+                is_active: true,
+                last_login_at: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn library(db: &Database, user: &User) -> Library {
+        Library::insert(
+            db,
+            CreateLibraryInput {
+                user_id: user.id.clone(),
+                name: "fixture library".to_string(),
+                path: format!("/fixture/{}", uuid::Uuid::new_v4()),
+                library_type: "music".to_string(),
+                icon: None,
+                color: None,
+                auto_scan: false,
+                auto_organize: false,
+                naming_pattern: "fixture naming_pattern".to_string(),
+                scan_interval_minutes: 0,
+                watch_for_changes: false,
+                scanning: false,
+                last_scanned_at: None,
+                quality_profile_id: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn media_file(
+        db: &Database,
+        library: &Library,
+        size: i64,
+        track_id: Option<&str>,
+        chapter_id: Option<&str>,
+    ) -> MediaFile {
+        MediaFile::insert(
+            db,
+            CreateMediaFileInput {
+                library_id: Some(library.id.clone()),
+                episode_id: None,
+                movie_id: None,
+                track_id: track_id.map(str::to_string),
+                chapter_id: chapter_id.map(str::to_string),
+                path: format!("/fixture/{}.bin", uuid::Uuid::new_v4()),
+                relative_path: None,
+                original_name: None,
+                size,
+                container: None,
+                video_codec: None,
+                audio_codec: None,
+                width: None,
+                height: None,
+                duration: None,
+                bitrate: None,
+                resolution: None,
+                is_hdr: false,
+                hdr_type: None,
+                audio_channels: None,
+                metadata: None,
+                content_type: None,
+                added_at: "2026-10-26T00:00:00Z".to_string(),
+                analyzed_at: None,
+                file_modified_at: None,
+                match_type: None,
+                matched_by_user_id: None,
+                match_confirmed_at: None,
+                quality_status: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+    fn target(file: &MediaFile, library: &Library) -> AnalysisTarget {
+        AnalysisTarget {
+            file_id: file.id.clone(),
+            library_id: library.id.clone(),
+            owner_id: library.user_id.clone(),
+            path: file.path.clone(),
+            size: file.size,
+            file_modified_at: file.file_modified_at.clone(),
+        }
+    }
+
+    fn analysis(codec: &str) -> ProbeAnalysis {
+        ProbeAnalysis {
+            container: Some("matroska".to_string()),
+            video_codec: Some(codec.to_string()),
+            audio_codec: Some(format!("{codec}-audio")),
+            width: Some(1920),
+            height: Some(1080),
+            video_streams: vec![VideoStreamAnalysis {
+                stream_index: 0,
+                codec: codec.to_string(),
+                width: 1920,
+                height: 1080,
+                ..Default::default()
+            }],
+            audio_streams: vec![AudioStreamAnalysis {
+                stream_index: 1,
+                codec: format!("{codec}-audio"),
+                channels: 2,
+                ..Default::default()
+            }],
+            subtitles: vec![SubtitleAnalysis {
+                source_type: "embedded".to_string(),
+                stream_index: Some(2),
+                codec: Some("subrip".to_string()),
+                ..Default::default()
+            }],
+            chapters: vec![ChapterAnalysis {
+                chapter_index: 0,
+                start_secs: 0.0,
+                end_secs: 30.0,
+                title: Some(codec.to_string()),
+            }],
+            ..Default::default()
+        }
+    }
+
+    struct FailAudioOnce {
+        previous: Arc<dyn MutationHook>,
+        enabled: Arc<AtomicBool>,
+    }
+    impl MutationHook for FailAudioOnce {
+        fn on_mutation<'a>(
+            &'a self,
+            ctx: Option<&'a async_graphql::Context<'_>>,
+            tx: &'a mut MutationContext<'_>,
+            event: &'a MutationEvent,
+        ) -> futures::future::BoxFuture<'a, async_graphql::Result<()>> {
+            Box::pin(async move {
+                self.previous.on_mutation(ctx, tx, event).await?;
+                if event.entity_name == "AudioStream"
+                    && event.phase == MutationPhase::After
+                    && event.action == ChangeAction::Created
+                    && self.enabled.swap(false, Ordering::AcqRel)
+                {
+                    return Err(async_graphql::Error::new(
+                        "injected audio persistence failure",
+                    ));
+                }
+                Ok(())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn analysis_failure_rolls_back_and_retry_commits_a_complete_stream_snapshot() {
+        let mut db = database().await;
+        let owner = user(&db).await;
+        let lib = library(&db, &owner).await;
+        let file = media_file(&db, &lib, 42, None, None).await;
+        let expected = target(&file, &lib);
+        replace_media_analysis(
+            &db,
+            &AuthUser::system_admin(),
+            expected.clone(),
+            analysis("old"),
+        )
+        .await
+        .unwrap();
+        let sidecar = Subtitle::insert(
+            &db,
+            CreateSubtitleInput {
+                media_file_id: file.id.clone(),
+                source_type: "downloaded".to_string(),
+                stream_index: None,
+                file_path: Some("/fixture/external.srt".to_string()),
+                codec: Some("subrip".to_string()),
+                codec_long_name: None,
+                language: Some("en".to_string()),
+                title: None,
+                is_default: false,
+                is_forced: false,
+                is_hearing_impaired: false,
+                opensubtitles_id: None,
+                downloaded_at: None,
+                metadata: None,
+            },
+        )
+        .await
+        .unwrap();
+        let old_file = MediaFile::get(db.pool(), &file.id).await.unwrap().unwrap();
+        let old_video = VideoStream::query(db.pool()).fetch_all().await.unwrap();
+        let old_audio = AudioStream::query(db.pool()).fetch_all().await.unwrap();
+        let old_chapters = MediaChapter::query(db.pool()).fetch_all().await.unwrap();
+        let mut events = db
+            .ensure_event_sender::<SubscriptionEvent<MediaFileChangedEvent>>()
+            .subscribe();
+        let mut stream_events = db
+            .ensure_event_sender::<SubscriptionEvent<VideoStreamChangedEvent>>()
+            .subscribe();
+        let previous = db.mutation_hook().unwrap().clone();
+        db.set_mutation_hook(FailAudioOnce {
+            previous,
+            enabled: Arc::new(AtomicBool::new(true)),
+        });
+        assert!(
+            replace_media_analysis(
+                &db,
+                &AuthUser::system_admin(),
+                expected.clone(),
+                analysis("new")
+            )
+            .await
+            .is_err()
+        );
+        let unchanged = MediaFile::get(db.pool(), &file.id).await.unwrap().unwrap();
+        assert_eq!(unchanged.video_codec, old_file.video_codec);
+        assert_eq!(unchanged.analyzed_at, old_file.analyzed_at);
+        assert_eq!(
+            VideoStream::query(db.pool()).fetch_all().await.unwrap()[0].id,
+            old_video[0].id
+        );
+        assert_eq!(
+            AudioStream::query(db.pool()).fetch_all().await.unwrap()[0].id,
+            old_audio[0].id
+        );
+        assert_eq!(
+            MediaChapter::query(db.pool()).fetch_all().await.unwrap()[0].id,
+            old_chapters[0].id
+        );
+        assert!(
+            Subtitle::get(db.pool(), &sidecar.id)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(events.try_recv().is_err());
+        assert!(stream_events.try_recv().is_err());
+
+        replace_media_analysis(&db, &AuthUser::system_admin(), expected, analysis("new"))
+            .await
+            .unwrap();
+        assert!(events.try_recv().is_ok());
+        assert!(stream_events.try_recv().is_ok());
+        let restored = MediaFile::get(db.pool(), &file.id).await.unwrap().unwrap();
+        assert_eq!(restored.video_codec.as_deref(), Some("new"));
+        assert_eq!(
+            (restored.path, restored.size, restored.library_id),
+            (file.path, file.size, Some(lib.id.clone()))
+        );
+        assert_eq!(
+            VideoStream::query(db.pool()).fetch_all().await.unwrap()[0].codec,
+            "new"
+        );
+        assert_eq!(
+            AudioStream::query(db.pool()).fetch_all().await.unwrap()[0].codec,
+            "new-audio"
+        );
+        assert_eq!(
+            MediaChapter::query(db.pool()).fetch_all().await.unwrap()[0]
+                .title
+                .as_deref(),
+            Some("new")
+        );
+        let subtitles = Subtitle::query(db.pool()).fetch_all().await.unwrap();
+        assert_eq!(subtitles.len(), 2);
+        assert!(subtitles.iter().any(|row| row.id == sidecar.id));
+        assert_eq!(
+            Library::get(db.pool(), &lib.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .user_id,
+            owner.id
+        );
+    }
+
+    #[tokio::test]
+    async fn analysis_rejects_foreign_owners_forged_scope_and_stale_file_versions() {
+        let db = database().await;
+        let owner = user(&db).await;
+        let other = user(&db).await;
+        let lib = library(&db, &owner).await;
+        let file = media_file(&db, &lib, 42, None, None).await;
+        let scope = target(&file, &lib);
+        let foreign = AuthUser {
+            user_id: other.id.clone(),
+            email: None,
+            role: Some("member".to_string()),
+        };
+        assert!(
+            replace_media_analysis(&db, &foreign, scope.clone(), analysis("bad"))
+                .await
+                .is_err()
+        );
+        let mut forged = scope.clone();
+        forged.owner_id = other.id;
+        assert!(
+            replace_media_analysis(&db, &foreign, forged, analysis("bad"))
+                .await
+                .is_err()
+        );
+        MediaFile::update_by_id(
+            &db,
+            &file.id,
+            UpdateMediaFileInput {
+                size: Some(43),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let mut events = db
+            .ensure_event_sender::<SubscriptionEvent<MediaFileChangedEvent>>()
+            .subscribe();
+        assert!(
+            replace_media_analysis(&db, &AuthUser::system_admin(), scope, analysis("bad"))
+                .await
+                .is_err()
+        );
+        assert!(events.try_recv().is_err());
+        assert!(
+            VideoStream::query(db.pool())
+                .fetch_all()
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let unchanged = MediaFile::get(db.pool(), &file.id).await.unwrap().unwrap();
+        assert_eq!(unchanged.analyzed_at, None);
+        assert_eq!(unchanged.size, 43);
+    }
+
+    #[tokio::test]
+    async fn scanner_uses_system_authority_without_selecting_an_account_and_rejects_unknown_owners()
+    {
+        let scanner = LibraryScanService::new(
+            Arc::new(ServicesManager::new()),
+            LibraryScanServiceConfig::default(),
+        );
+        let actor = scanner.try_system_auth_user(None).await.unwrap().unwrap();
+        assert_eq!(actor.user_id, "system");
+        let owner = Uuid::new_v4().to_string();
+        assert_eq!(
+            scanner
+                .try_system_auth_user(Some(&owner))
+                .await
+                .unwrap()
+                .unwrap()
+                .user_id,
+            "system"
+        );
+        assert!(actor.is_admin());
+        assert!(
+            scanner
+                .try_system_auth_user(Some("unknown-owner"))
+                .await
+                .is_err()
+        );
+        let result = scanner
+            .execute_mutation(
+                &actor,
+                "mutation { ignored }",
+                serde_json::json!({"input": {"userId": "system"}}),
+            )
+            .await;
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("ownership is unknown")
+        );
+    }
+
+    #[test]
+    fn torrent_import_uses_the_persisted_source_owner_and_rejects_unknown_or_foreign_scope() {
+        let owner = Uuid::new_v4().to_string();
+        let caller = AuthUser {
+            user_id: owner.clone(),
+            email: None,
+            role: Some("member".to_string()),
+        };
+        assert!(
+            LibraryScanService::torrent_import_owner(&caller, &TorrentImportLink::default())
+                .is_err()
+        );
+        let link = TorrentImportLink {
+            user_id: Some(owner.clone()),
+            ..Default::default()
+        };
+        assert_eq!(
+            LibraryScanService::torrent_import_owner(&AuthUser::system_admin(), &link).unwrap(),
+            owner
+        );
+        let foreign = AuthUser {
+            user_id: Uuid::new_v4().to_string(),
+            email: None,
+            role: Some("member".to_string()),
+        };
+        assert!(LibraryScanService::torrent_import_owner(&foreign, &link).is_err());
+    }
+
+    #[test]
+    fn scanner_mutation_failures_are_checked_even_without_transport_errors() {
+        assert!(
+            check_mutation_payloads(
+                &serde_json::json!({"updateMediaFile": {"success": false, "error": "denied"}})
+            )
+            .is_err()
+        );
+        assert!(
+            check_mutation_payloads(
+                &serde_json::json!({"UpdateMediaFile": {"Success": true, "Error": null}})
+            )
+            .is_ok()
+        );
+        assert!(check_mutation_payloads(&serde_json::json!({"UpdateMediaFile": null})).is_err());
+    }
+    fn import_torrent_input(user: &AuthUser, hash: &str) -> CreateTorrentInput {
+        CreateTorrentInput {
+            user_id: user.user_id.clone(),
+            info_hash: hash.into(),
+            magnet_uri: None,
+            name: "persisted name".into(),
+            state: "paused".into(),
+            progress: 0.1,
+            total_bytes: 100,
+            downloaded_bytes: 10,
+            uploaded_bytes: 0,
+            uploaded_bytes_total: 0,
+            save_path: "/test/downloads".into(),
+            download_path: None,
+            source_url: None,
+            source_feed_id: None,
+            source_indexer_id: None,
+            library_id: None,
+            post_process_status: None,
+            post_process_error: None,
+            processed_at: None,
+            episode_id: None,
+            movie_id: None,
+            track_id: None,
+            chapter_id: None,
+            show_id: None,
+            album_id: None,
+            audiobook_id: None,
+            minimum_ratio: None,
+            minimum_seed_time_minutes: None,
+            season: None,
+            excluded_files: vec![],
+            added_at: "2026-10-24T00:00:00Z".into(),
+            completed_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn rejected_source_requests_cannot_write_foreign_status_or_emit_changes() {
+        // The GraphQL service here only builds its schema; no HTTP listener or
+        // torrent/scan worker is started, and all storage is in memory.
+        let manager = ServicesManager::builder()
+            .add_service(crate::services::DatabaseServiceConfig {
+                database_url: "sqlite::memory:".to_string(),
+                connect_timeout: Duration::from_secs(5),
+            })
+            .add_service(crate::services::AuthConfig::for_tests())
+            .add_service(crate::services::GraphqlServiceConfig { server_port: 0 })
+            .start()
+            .await
+            .unwrap();
+        let db = manager.get_database().await.unwrap().pool().clone();
+        let first = user(&db).await;
+        let second = user(&db).await;
+        let first_library = library(&db, &first).await;
+        let second_library = library(&db, &second).await;
+        let first_actor = AuthUser {
+            user_id: first.id.clone(),
+            email: None,
+            role: Some("member".to_string()),
+        };
+        let second_actor = AuthUser {
+            user_id: second.id.clone(),
+            email: None,
+            role: Some("member".to_string()),
+        };
+        let hash = "b".repeat(40);
+        let mut input = import_torrent_input(&second_actor, &hash);
+        input.library_id = Some(second_library.id.clone());
+        input.post_process_status = Some("unmatched".to_string());
+        input.post_process_error = Some("existing outcome".to_string());
+        let foreign = Torrent::insert(&db, input).await.unwrap();
+        let scanner = LibraryScanService::new(manager.clone(), LibraryScanServiceConfig::default());
+        let mut changes = db
+            .ensure_event_sender::<SubscriptionEvent<TorrentChangedEvent>>()
+            .subscribe();
+        let forged_admin = AuthUser::system_admin_for(&first.id);
+        for (actor, target) in [
+            (&first_actor, None),
+            (&forged_admin, None),
+            (&second_actor, Some(first_library.id.clone())),
+        ] {
+            let rejected = scanner
+                .process_torrent_source_files(actor, &hash, target, vec![])
+                .await;
+            assert!(!rejected.success);
+            let row = Torrent::get(db.pool(), &foreign.id).await.unwrap().unwrap();
+            assert_eq!(row.post_process_status, foreign.post_process_status);
+            assert_eq!(row.post_process_error, foreign.post_process_error);
+            assert_eq!(row.processed_at, foreign.processed_at);
+        }
+        assert!(changes.try_recv().is_err());
+        assert!(
+            PendingFileMatch::query(db.pool())
+                .fetch_all()
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let proof = LibraryScanService::authorize_torrent_import(&db, &second_actor, &hash, None)
+            .await
+            .unwrap();
+        LibraryScanService::record_torrent_import_status(
+            &db,
+            &proof,
+            "failed",
+            Some("authorized operational failure"),
+        )
+        .await
+        .unwrap();
+        let row = Torrent::get(db.pool(), &foreign.id).await.unwrap().unwrap();
+        assert_eq!(row.user_id, second.id);
+        assert_eq!(row.post_process_status.as_deref(), Some("failed"));
+        assert_eq!(
+            row.post_process_error.as_deref(),
+            Some("authorized operational failure")
+        );
+        assert!(changes.try_recv().is_ok());
+        manager.stop_all().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn import_status_cannot_follow_an_owner_change_or_revoked_actor() {
+        let db = database().await;
+        let owner = user(&db).await;
+        let other = user(&db).await;
+        let actor = AuthUser {
+            user_id: owner.id.clone(),
+            email: None,
+            role: Some("member".to_string()),
+        };
+        let hash = "c".repeat(40);
+        let row = Torrent::insert(&db, import_torrent_input(&actor, &hash))
+            .await
+            .unwrap();
+        let proof = LibraryScanService::authorize_torrent_import(&db, &actor, &hash, None)
+            .await
+            .unwrap();
+        Torrent::update_by_id(
+            &db,
+            &row.id,
+            UpdateTorrentInput {
+                user_id: Some(other.id),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            LibraryScanService::record_torrent_import_status(
+                &db,
+                &proof,
+                "failed",
+                Some("must not persist")
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            Torrent::get(db.pool(), &row.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .post_process_status
+                .is_none()
+        );
+        Torrent::update_by_id(
+            &db,
+            &row.id,
+            UpdateTorrentInput {
+                user_id: Some(owner.id.clone()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        User::update_by_id(
+            &db,
+            &owner.id,
+            UpdateUserInput {
+                is_active: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            LibraryScanService::record_torrent_import_status(
+                &db,
+                &proof,
+                "failed",
+                Some("must not persist")
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            Torrent::get(db.pool(), &row.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .post_process_status
+                .is_none()
+        );
+    }
+}
+
+#[cfg(test)]
+mod library_path_safety_tests {
+    use super::*;
+
+    fn library(root: &Path, pattern: &str) -> LibraryRow {
+        LibraryRow {
+            id: Uuid::new_v4().to_string(),
+            user_id: Uuid::new_v4().to_string(),
+            name: "Safe custom library".to_string(),
+            path: root.to_string_lossy().to_string(),
+            library_type: "movies".to_string(),
+            auto_organize: true,
+            scan_interval_minutes: 0,
+            scanning: false,
+            naming_pattern: pattern.to_string(),
+        }
+    }
+    fn scanner() -> LibraryScanService {
+        LibraryScanService::new(
+            Arc::new(ServicesManager::new()),
+            LibraryScanServiceConfig::default(),
+        )
+    }
+
+    #[tokio::test]
+    async fn relative_owner_patterns_remain_available_and_absolute_or_parent_templates_fail() {
+        let temp = tempfile::tempdir().unwrap();
+        let scanner = scanner();
+        for pattern in [
+            "/outside/{title}.{ext}",
+            "../outside/{title}",
+            "nested/../../{title}",
+            r"C:\outside\{title}",
+            r"\\server\share\{title}",
+        ] {
+            assert!(
+                scanner
+                    .resolve_library_naming_pattern(&library(temp.path(), pattern))
+                    .await
+                    .is_err(),
+                "{pattern}"
+            );
+        }
+        let pattern = "Custom/{title} ({year})/{original}.{ext}";
+        assert_eq!(
+            scanner
+                .resolve_library_naming_pattern(&library(temp.path(), pattern))
+                .await
+                .unwrap(),
+            pattern
+        );
+        let relative =
+            apply_movie_naming_pattern(pattern, "Movie", Some(2026), "Release.mkv", "mkv");
+        validate_relative_library_path(&relative).unwrap();
+        checked_library_path(temp.path(), &temp.path().join(relative)).unwrap();
+        let expanded =
+            apply_movie_naming_pattern("{original}/{title}.{ext}", "Movie", None, "..", "mkv");
+        assert!(validate_relative_library_path(&expanded).is_err());
+        for relative in [
+            apply_tv_naming_pattern(
+                "../{show}/{title}.{ext}",
+                "Show",
+                1,
+                1,
+                Some("Title"),
+                "mkv",
+            ),
+            apply_music_naming_pattern(
+                "../{artist}/{title}.{ext}",
+                "Artist",
+                "Album",
+                None,
+                1,
+                None,
+                "Track",
+                "track.flac",
+                "flac",
+            ),
+            apply_audiobook_naming_pattern(
+                "../{author}/{title}.{ext}",
+                "Author",
+                "Book",
+                1,
+                None,
+                "book.m4b",
+                "m4b",
+            ),
+        ] {
+            assert!(validate_relative_library_path(&relative).is_err());
+        }
+        let (show, season) = derive_tv_dirs_from_pattern(
+            &temp.path().to_string_lossy(),
+            "{show}.{ext}",
+            "Show",
+            1,
+            None,
+        )
+        .unwrap();
+        assert_eq!(show, temp.path());
+        assert_eq!(season, temp.path());
+    }
+
+    #[tokio::test]
+    async fn import_effect_rejects_escape_without_creating_directories_or_removing_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("library");
+        std::fs::create_dir(&root).unwrap();
+        let source = temp.path().join("source.mkv");
+        std::fs::write(&source, b"seeding payload").unwrap();
+        let scanner = scanner();
+        let library = library(&root, "{title}.{ext}");
+        for target in [
+            temp.path().join("outside/new.mkv"),
+            root.join("../outside/new.mkv"),
+        ] {
+            assert!(
+                scanner
+                    .materialize_torrent_file(
+                        &source,
+                        &target,
+                        &AuthUser::system_admin(),
+                        &library,
+                        true
+                    )
+                    .await
+                    .is_err()
+            );
+            assert_eq!(std::fs::read(&source).unwrap(), b"seeding payload");
+            assert!(!temp.path().join("outside").exists());
+        }
+        let target = root.join("Custom/Movie/file.mkv");
+        scanner
+            .materialize_torrent_file(&source, &target, &AuthUser::system_admin(), &library, false)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"seeding payload");
+        assert_eq!(std::fs::read(&source).unwrap(), b"seeding payload");
+        let other = temp.path().join("other.mkv");
+        std::fs::write(&other, b"other payload").unwrap();
+        assert!(
+            scanner
+                .materialize_torrent_file(
+                    &other,
+                    &target,
+                    &AuthUser::system_admin(),
+                    &library,
+                    false
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"seeding payload");
+        assert_eq!(std::fs::read(&other).unwrap(), b"other payload");
+        assert!(
+            place_in_library(
+                root.clone(),
+                other.clone(),
+                root.join("illegal-move.mkv"),
+                true,
+                true
+            )
+            .await
+            .is_err()
+        );
+        assert!(other.exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlink_parent_escape_and_postplanning_swap_fail_but_contained_aliases_work() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("library");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        let source = temp.path().join("source.mkv");
+        std::fs::write(&source, b"preserve source").unwrap();
+        let scanner = scanner();
+        let library = library(&root, "{title}.{ext}");
+        symlink(&outside, root.join("escape")).unwrap();
+        let target = root.join("escape/new/file.mkv");
+        assert!(checked_library_path(&root, &target).is_err());
+        assert!(create_library_directory(&root, &root.join("escape/new")).is_err());
+        assert!(
+            scanner
+                .materialize_torrent_file(
+                    &source,
+                    &target,
+                    &AuthUser::system_admin(),
+                    &library,
+                    true
+                )
+                .await
+                .is_err()
+        );
+        assert!(!outside.join("new").exists());
+        assert!(source.exists());
+        symlink(outside.join("missing"), root.join("dangling")).unwrap();
+        assert!(checked_library_path(&root, &root.join("dangling/file.mkv")).is_err());
+        let planned_parent = root.join("planned");
+        std::fs::create_dir(&planned_parent).unwrap();
+        let planned = planned_parent.join("file.mkv");
+        checked_library_path(&root, &planned).unwrap();
+        std::fs::remove_dir(&planned_parent).unwrap();
+        symlink(&outside, &planned_parent).unwrap();
+        assert!(
+            scanner
+                .materialize_torrent_file(
+                    &source,
+                    &planned,
+                    &AuthUser::system_admin(),
+                    &library,
+                    true
+                )
+                .await
+                .is_err()
+        );
+        assert!(!outside.join("file.mkv").exists());
+        let real_parent = root.join("real");
+        std::fs::create_dir(&real_parent).unwrap();
+        symlink(&real_parent, root.join("alias")).unwrap();
+        let safe = root.join("alias/nested/file.mkv");
+        scanner
+            .materialize_torrent_file(&source, &safe, &AuthUser::system_admin(), &library, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read(root.join("real/nested/file.mkv")).unwrap(),
+            b"preserve source"
+        );
+        assert_eq!(std::fs::read(&source).unwrap(), b"preserve source");
     }
 }

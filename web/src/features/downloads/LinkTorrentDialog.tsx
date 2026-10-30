@@ -1,10 +1,13 @@
-import { useMutation, useQuery } from "@apollo/client/react";
-import { ListBox, ListBoxItem, Select, toast } from "@heroui/react";
+import { useMutation } from "@apollo/client/react";
+import { Select } from "glass-ux/select";
+import { toast } from "glass-ux/toast";
 import { useEffect, useState } from "react";
 
-import { Button, Dialog } from "@/components/ui";
-import { EntityTorrentUpdateDocument, NavLibrariesDocument, RematchSourceDocument } from "@/graphql/generated/graphql";
+import { Button, Dialog, ErrorState } from "@/components/ui";
+import { EntityTorrentUpdateDocument, EntityLibraryListDocument, RematchSourceDocument } from "@/graphql/generated/graphql";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
+
+import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
 
 import type { TorrentRow } from "./useLiveTorrents";
 
@@ -16,14 +19,14 @@ interface LinkTorrentDialogProps {
 
 /** Points a download at a library and re-runs matching so its files import there. */
 export function LinkTorrentDialog({ row, onClose, onLinked }: LinkTorrentDialogProps) {
-  const libraries = useQuery(NavLibrariesDocument, { skip: !row });
+  const libraries = useCompleteConnection(EntityLibraryListDocument, { orderBy: [{ name: "ASC" }] }, (data) => data.libraries, { skip: !row });
   const [libraryId, setLibraryId] = useState<string | null>(null);
   const [updateTorrent, { loading: saving }] = useMutation(EntityTorrentUpdateDocument);
   const [rematch, { loading: matching }] = useMutation(RematchSourceDocument);
 
   useEffect(() => {
     setLibraryId(row?.record?.libraryId ?? null);
-  }, [row]);
+  }, [row?.record?.id, row?.record?.libraryId]);
 
   const save = async () => {
     if (!row?.record) {
@@ -31,11 +34,16 @@ export function LinkTorrentDialog({ row, onClose, onLinked }: LinkTorrentDialogP
       return;
     }
     try {
-      assertSuccess((await updateTorrent({ variables: { id: row.record.id, input: { libraryId } } })).data?.updateTorrent, "Could not link");
+      const updated = assertSuccess((await updateTorrent({ variables: { id: row.record.id, input: { libraryId } } })).data?.updateTorrent, "Could not link");
+      // A generated field policy may drop a rejected nullable field while the
+      // mutation still reports success. Confirm persistence before any follow-up.
+      if (!updated.torrent || updated.torrent.id !== row.record.id || updated.torrent.libraryId !== libraryId) {
+        throw new Error("The download's library link was not saved. Refresh and try again.");
+      }
       if (libraryId && row.live.progress >= 1) {
         const result = assertSuccess((await rematch({ variables: { sourceId: row.record.id, sourceType: "torrent", libraryId } })).data?.rematchSource, "Matching failed");
         toast.success(`Linked and matched ${result.matchCount} files`);
-      } else toast.success("Linked");
+      } else toast.success(libraryId ? "Linked" : "Unlinked");
       onLinked?.();
       onClose();
     } catch (error) {
@@ -55,27 +63,14 @@ export function LinkTorrentDialog({ row, onClose, onLinked }: LinkTorrentDialogP
           <Button variant="ghost" onPress={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" onPress={() => void save()} isPending={saving || matching}>
+          <Button variant="primary" onPress={() => void save()} isPending={saving || matching || libraries.loading} isDisabled={Boolean(libraries.error)}>
             Link
           </Button>
         </>
       }
     >
-      <Select aria-label="Library" selectedKey={libraryId} onSelectionChange={(key) => setLibraryId(key === null ? null : String(key))} placeholder="Choose a library" fullWidth>
-        <Select.Trigger>
-          <Select.Value />
-          <Select.Indicator />
-        </Select.Trigger>
-        <Select.Popover>
-          <ListBox>
-            {(libraries.data?.libraries.edges ?? []).map(({ node }) => (
-              <ListBoxItem key={node.id} id={node.id} textValue={node.name}>
-                {node.name}
-              </ListBoxItem>
-            ))}
-          </ListBox>
-        </Select.Popover>
-      </Select>
+      {libraries.error ? <ErrorState error={libraries.error} onRetry={() => void libraries.refetch()} compact /> : null}
+      <Select aria-label="Library" value={libraryId} onValueChange={setLibraryId} placeholder="Choose a library" width="full" disabled={libraries.loading} options={libraries.rows.map((library) => ({ value: library.id, label: library.name }))} />
     </Dialog>
   );
 }

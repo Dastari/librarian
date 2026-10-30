@@ -1,18 +1,26 @@
-import { useQuery } from "@apollo/client/react";
-
 import { Link } from "@tanstack/react-router";
 import { IconPlus, IconStack2 } from "@tabler/icons-react";
 
 import { Button, EmptyState, ErrorState, PageHeader, SkeletonBlock } from "@/components/ui";
-import { useIsAdmin } from "@/lib/auth/useSession";
+import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { LibrariesOverviewDocument } from "@/graphql/generated/graphql";
 
 import { LibraryCard } from "./LibraryCard";
+import { useCompleteConnection } from "./browser/useCompleteConnection";
+import { useLibraryPreferences } from "@/features/personal/usePersonalLibrary";
+import { IconStar } from "glass-ux/icons";
+import { toast } from "glass-ux/toast";
+import { errorMessage } from "@/lib/graphql/errors";
+import { useState } from "react";
 
 export function LibrariesPage() {
-  const { data, previousData, loading, error, refetch } = useQuery(LibrariesOverviewDocument);
+  const { rows: libraries, loading, error, refetch } = useCompleteConnection(LibrariesOverviewDocument, {}, (data) => data.libraries);
   const isAdmin = useIsAdmin();
-  const libraries = (data ?? previousData)?.libraries.edges.map((edge) => edge.node) ?? [];
+  const { user } = useSession();
+  const preferences = useLibraryPreferences();
+  const [pending, setPending] = useState<string>();
+  const favouriteIds = new Set(preferences.rows.filter((row) => row.favourite).map((row) => row.libraryId));
+  const ordered = [...libraries].sort((a, b) => Number(favouriteIds.has(b.id)) - Number(favouriteIds.has(a.id)));
 
   return (
     <div className="page-gutter flex flex-col gap-8 py-8">
@@ -28,6 +36,7 @@ export function LibrariesPage() {
           ) : null
         }
       />
+      {preferences.error ? <ErrorState error={preferences.error} onRetry={() => void preferences.refetch()} /> : null}
       {error && libraries.length === 0 ? (
         <ErrorState error={error} onRetry={() => void refetch()} />
       ) : loading && libraries.length === 0 ? (
@@ -40,8 +49,12 @@ export function LibrariesPage() {
         <EmptyState icon={IconStack2} title="No libraries yet" description="Add a library to start cataloguing your media." />
       ) : (
         <div className="library-grid">
-          {libraries.map((library) => (
-            <LibraryCard key={library.id} library={library} size="lg" />
+          {ordered.map((library) => (
+            <div key={library.id} className="flex min-w-0 flex-col gap-1"><LibraryCard library={library} size="lg" />
+              {library.userId === user?.id ? <Button variant="ghost" aria-pressed={favouriteIds.has(library.id)} aria-label={`${favouriteIds.has(library.id) ? "Unfavourite" : "Favourite"} ${library.name}`} isPending={pending === library.id} isDisabled={Boolean(pending) || !preferences.complete} onPress={async () => {
+                setPending(library.id); try { await preferences.toggle(library.id); } catch (error) { toast.danger(errorMessage(error)); } finally { setPending(undefined); }
+              }}><IconStar />{favouriteIds.has(library.id) ? "Favourite" : "Add to favourites"}</Button> : null}
+            </div>
           ))}
         </div>
       )}

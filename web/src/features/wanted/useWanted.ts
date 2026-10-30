@@ -1,7 +1,9 @@
-import { useQuery } from "@apollo/client/react";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 
-import { useInfiniteConnection } from "@/features/libraries/browser/useInfiniteConnection";
+import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
+import { useContentStatusState } from "@/hooks/useContentStatuses";
+import { useLiveEpoch } from "@/lib/graphql/live/hooks";
+import { useSession } from "@/lib/auth/useSession";
 import {
   UpgradableFilesDocument,
   WantedListChaptersDocument,
@@ -10,7 +12,6 @@ import {
   WantedListTracksDocument,
   type ContentStatus,
 } from "@/graphql/generated/graphql";
-import { useContentStatuses } from "@/hooks/useContentStatuses";
 import { albumCover, audiobookCover, moviePoster, showPoster } from "@/lib/artwork";
 
 import { buildGroups, episodeCode, groupKey, type WantedEntry, type WantedGroup } from "./grouping";
@@ -25,8 +26,6 @@ export const WANTED_TAB_LABEL: Record<WantedTab, string> = {
   upgradable: "Upgradable",
 };
 
-const TARGET_PAGE = { limit: 200, offset: 0 };
-
 /**
  * Everything the acquisition queue needs, across every media type.
  *
@@ -35,62 +34,67 @@ const TARGET_PAGE = { limit: 200, offset: 0 };
  * media files the quality engine marked as below their profile and resolves the owning titles.
  */
 export function useWanted(tab: WantedTab) {
+  const { user, status } = useSession();
+  const epoch = useLiveEpoch();
+  const principal = `${epoch}:${user ? `${user.id}:${user.role}` : status}`;
+  const snapshots = useRef<{ principal: string; tabs: Map<WantedTab, { groups: WantedGroup[]; statuses: Map<string, ContentStatus>; itemCount: number }> }>({ principal, tabs: new Map() });
+  if (snapshots.current.principal !== principal) snapshots.current = { principal, tabs: new Map() };
   const listsActive = tab !== "upgradable";
   const wantedOnly = tab !== "missing";
 
-  const episodes = useInfiniteConnection(
+  const episodes = useCompleteConnection(
     WantedListEpisodesDocument,
     { where: { mediaFileId: { isNull: true }, wanted: { eq: wantedOnly } } },
     (data) => data.episodes,
     { skip: !listsActive },
   );
-  const movies = useInfiniteConnection(
+  const movies = useCompleteConnection(
     WantedListMoviesDocument,
     { where: { hasFile: { eq: false }, wanted: { eq: wantedOnly } } },
     (data) => data.movies,
     { skip: !listsActive },
   );
-  const tracks = useInfiniteConnection(
+  const tracks = useCompleteConnection(
     WantedListTracksDocument,
     { where: { mediaFileId: { isNull: true }, wanted: { eq: wantedOnly } } },
     (data) => data.tracks,
     { skip: !listsActive },
   );
-  const chapters = useInfiniteConnection(
+  const chapters = useCompleteConnection(
     WantedListChaptersDocument,
     { where: { mediaFileId: { isNull: true }, wanted: { eq: wantedOnly } } },
     (data) => data.chapters,
     { skip: !listsActive },
   );
-  const files = useInfiniteConnection(UpgradableFilesDocument, {}, (data) => data.mediaFiles, { skip: listsActive });
+  const files = useCompleteConnection(UpgradableFilesDocument, {}, (data) => data.mediaFiles, { skip: listsActive });
 
   const upgradeIds = useMemo(() => {
     const pick = (key: "episodeId" | "movieId" | "trackId" | "chapterId") => files.rows.map((file) => file[key]).filter((id): id is string => Boolean(id));
     return { episodes: pick("episodeId"), movies: pick("movieId"), tracks: pick("trackId"), chapters: pick("chapterId") };
   }, [files.rows]);
 
-  const upgradeEpisodes = useQuery(WantedListEpisodesDocument, { variables: { where: { id: { inList: upgradeIds.episodes } }, page: TARGET_PAGE }, skip: upgradeIds.episodes.length === 0 });
-  const upgradeMovies = useQuery(WantedListMoviesDocument, { variables: { where: { id: { inList: upgradeIds.movies } }, page: TARGET_PAGE }, skip: upgradeIds.movies.length === 0 });
-  const upgradeTracks = useQuery(WantedListTracksDocument, { variables: { where: { id: { inList: upgradeIds.tracks } }, page: TARGET_PAGE }, skip: upgradeIds.tracks.length === 0 });
-  const upgradeChapters = useQuery(WantedListChaptersDocument, { variables: { where: { id: { inList: upgradeIds.chapters } }, page: TARGET_PAGE }, skip: upgradeIds.chapters.length === 0 });
+  const upgradeEpisodes = useCompleteConnection(WantedListEpisodesDocument, { where: { id: { inList: upgradeIds.episodes } } }, (data) => data.episodes, { skip: listsActive || !files.complete || upgradeIds.episodes.length === 0 });
+  const upgradeMovies = useCompleteConnection(WantedListMoviesDocument, { where: { id: { inList: upgradeIds.movies } } }, (data) => data.movies, { skip: listsActive || !files.complete || upgradeIds.movies.length === 0 });
+  const upgradeTracks = useCompleteConnection(WantedListTracksDocument, { where: { id: { inList: upgradeIds.tracks } } }, (data) => data.tracks, { skip: listsActive || !files.complete || upgradeIds.tracks.length === 0 });
+  const upgradeChapters = useCompleteConnection(WantedListChaptersDocument, { where: { id: { inList: upgradeIds.chapters } } }, (data) => data.chapters, { skip: listsActive || !files.complete || upgradeIds.chapters.length === 0 });
 
-  const episodeRows = useMemo(() => (listsActive ? episodes.rows : upgradeEpisodes.data?.episodes.edges.map((edge) => edge.node) ?? []), [listsActive, episodes.rows, upgradeEpisodes.data]);
-  const movieRows = useMemo(() => (listsActive ? movies.rows : upgradeMovies.data?.movies.edges.map((edge) => edge.node) ?? []), [listsActive, movies.rows, upgradeMovies.data]);
-  const trackRows = useMemo(() => (listsActive ? tracks.rows : upgradeTracks.data?.tracks.edges.map((edge) => edge.node) ?? []), [listsActive, tracks.rows, upgradeTracks.data]);
-  const chapterRows = useMemo(() => (listsActive ? chapters.rows : upgradeChapters.data?.chapters.edges.map((edge) => edge.node) ?? []), [listsActive, chapters.rows, upgradeChapters.data]);
+  const episodeRows = listsActive ? episodes.rows : upgradeEpisodes.rows;
+  const movieRows = listsActive ? movies.rows : upgradeMovies.rows;
+  const trackRows = listsActive ? tracks.rows : upgradeTracks.rows;
+  const chapterRows = listsActive ? chapters.rows : upgradeChapters.rows;
 
-  const episodeStatuses = useContentStatuses("EPISODE", useMemo(() => episodeRows.map((row) => row.id), [episodeRows]));
-  const movieStatuses = useContentStatuses("MOVIE", useMemo(() => movieRows.map((row) => row.id), [movieRows]));
-  const trackStatuses = useContentStatuses("TRACK", useMemo(() => trackRows.map((row) => row.id), [trackRows]));
-  const chapterStatuses = useContentStatuses("CHAPTER", useMemo(() => chapterRows.map((row) => row.id), [chapterRows]));
+  const episodeStatuses = useContentStatusState("EPISODE", useMemo(() => episodeRows.map((row) => row.id), [episodeRows]));
+  const movieStatuses = useContentStatusState("MOVIE", useMemo(() => movieRows.map((row) => row.id), [movieRows]));
+  const trackStatuses = useContentStatusState("TRACK", useMemo(() => trackRows.map((row) => row.id), [trackRows]));
+  const chapterStatuses = useContentStatusState("CHAPTER", useMemo(() => chapterRows.map((row) => row.id), [chapterRows]));
 
   const statuses = useMemo(() => {
     const map = new Map<string, ContentStatus>();
     for (const [kind, source] of [["episode", episodeStatuses], ["movie", movieStatuses], ["track", trackStatuses], ["chapter", chapterStatuses]] as const) {
-      for (const [id, status] of source) map.set(`${kind}:${id}`, status);
+      for (const [id, status] of source.statuses) map.set(`${kind}:${id}`, status);
     }
     return map;
-  }, [episodeStatuses, movieStatuses, trackStatuses, chapterStatuses]);
+  }, [episodeStatuses.statuses, movieStatuses.statuses, trackStatuses.statuses, chapterStatuses.statuses]);
 
   const groups = useMemo(() => {
     const entries: WantedEntry[] = [];
@@ -171,22 +175,36 @@ export function useWanted(tab: WantedTab) {
     return buildGroups(entries);
   }, [episodeRows, movieRows, trackRows, chapterRows, statuses, tab]);
 
-  const sources = listsActive ? [episodes, movies, tracks, chapters] : [files];
+  const sources = listsActive ? [episodes, movies, tracks, chapters] : [files, upgradeEpisodes, upgradeMovies, upgradeTracks, upgradeChapters];
+  const statusSources = [episodeStatuses, movieStatuses, trackStatuses, chapterStatuses];
+  const fetching = sources.some((source) => source.loading) || statusSources.some((source) => source.loading);
+  const error = sources.find((source) => source.error)?.error ?? statusSources.find((source) => source.error)?.error;
+  const refetch = () => {
+    for (const source of sources) void source.refetch();
+    for (const source of statusSources) source.refetch();
+  };
   const itemCount = groups.reduce((total, group: WantedGroup) => total + group.items.length, 0);
+  // Group actions must always target an entire title. Stage all entity, upgrade
+  // and computed-status batches, then replace one complete snapshot at once.
+  // Keep the prior complete tab visible during refresh and on a failed batch.
+  if (!fetching && !error) snapshots.current.tabs.set(tab, { groups, statuses, itemCount });
+  const snapshot = snapshots.current.tabs.get(tab);
 
   return {
-    groups,
-    statuses,
-    itemCount,
-    loading: sources.some((source) => source.loading),
-    error: sources.find((source) => source.error)?.error,
+    groups: snapshot?.groups ?? [],
+    statuses: snapshot?.statuses ?? new Map<string, ContentStatus>(),
+    itemCount: snapshot?.itemCount ?? 0,
+    loading: fetching && !snapshot && !error,
+    fetching,
+    refreshing: fetching && Boolean(snapshot),
+    error,
+    complete: Boolean(snapshot),
+    queryKey: JSON.stringify([principal, tab]),
     hasMore: sources.some((source) => source.hasMore),
     loadingMore: sources.some((source) => source.loadingMore),
     loadMore: async () => {
       await Promise.all(sources.filter((source) => source.hasMore).map((source) => source.loadMore()));
     },
-    refetch: () => {
-      for (const source of sources) void source.refetch();
-    },
+    refetch,
   };
 }

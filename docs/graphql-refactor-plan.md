@@ -1,6 +1,13 @@
 GraphQL Type Consistency Refactor Plan
 ======================================
 
+> Historical reference for the retired custom ORM. This is not the current
+> implementation plan. The backend uses pinned `graphql-orm` entity derives,
+> generated operations/relations and its filter/pagination types. The unregistered
+> legacy helpers/filter/pagination modules have been removed. Follow
+> [design rules](design.md) and the [backend alignment plan](backend-alignment-plan.md);
+> do not reconstruct this obsolete resolver layer or its SQL helpers.
+
 Goals
 -----
 - Keep backend GraphQL, Rust domain types, and database schema aligned with a single source of truth per table.

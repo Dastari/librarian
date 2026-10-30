@@ -87,7 +87,9 @@ query SearchSources($input: SearchSourcesInput!) {
       elapsedMs
       fromCache
       error
+      pageInfo { support state hasMore nextCursor retryCursor returnedCount }
       releases {
+        stableId
         title
         guid
         link

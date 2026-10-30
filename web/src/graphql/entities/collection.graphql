@@ -86,8 +86,5 @@ subscription EntityCollectionChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    collection {
-      ...CollectionFields
-    }
   }
 }

@@ -19,8 +19,9 @@
 //! [`SessionRegistry::kill_all`] so graceful shutdown never leaves an
 //! orphaned transcode process running after the server exits.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -31,7 +32,9 @@ use uuid::Uuid;
 
 use crate::services::manager::{Service, ServiceHealth, ServicesManager};
 use crate::services::transcode::ffmpeg;
-use crate::services::transcode::session::{SessionRegistry, TranscodeKind, TranscodeSession};
+use crate::services::transcode::session::{
+    SessionKey, SessionRegistry, TranscodeKind, TranscodeSession,
+};
 
 /// Config for [`TranscodeService`]. `ffmpeg_path` mirrors `Config::cache_path`'s
 /// shape: read once at startup (see `config/mod.rs`'s `FFMPEG_PATH` env var),
@@ -68,6 +71,8 @@ struct TranscodeRuntime {
 pub struct TranscodeService {
     config: TranscodeServiceConfig,
     sessions: Arc<SessionRegistry>,
+    starts: tokio::sync::Mutex<HashMap<SessionKey, Weak<tokio::sync::Mutex<()>>>>,
+    subtitle_slots: tokio::sync::Semaphore,
     ffmpeg_available: tokio::sync::RwLock<bool>,
     inner: tokio::sync::RwLock<Option<TranscodeRuntime>>,
 }
@@ -77,6 +82,8 @@ impl TranscodeService {
         Self {
             config,
             sessions: Arc::new(SessionRegistry::new()),
+            starts: tokio::sync::Mutex::new(HashMap::new()),
+            subtitle_slots: tokio::sync::Semaphore::new(2),
             ffmpeg_available: tokio::sync::RwLock::new(true),
             inner: tokio::sync::RwLock::new(None),
         }
@@ -97,48 +104,80 @@ impl TranscodeService {
         input_path: &Path,
         kind: TranscodeKind,
     ) -> Result<PathBuf> {
-        if let Some(dir) = self.sessions.touch_for_kind(media_file_id, kind).await {
+        self.get_or_start_session_with_audio(media_file_id, input_path, kind, None)
+            .await
+    }
+
+    /// Start/reuse an independent variant. `audio_stream` is an absolute
+    /// ffprobe stream index already authorized against the file by the caller.
+    pub async fn get_or_start_session_with_audio(
+        &self,
+        media_file_id: &str,
+        input_path: &Path,
+        kind: TranscodeKind,
+        audio_stream: Option<i32>,
+    ) -> Result<PathBuf> {
+        anyhow::ensure!(
+            audio_stream.is_none_or(|index| index >= 0),
+            "negative audio stream index"
+        );
+        let key = SessionKey::new(media_file_id, kind, audio_stream);
+        let start_lock = {
+            let mut starts = self.starts.lock().await;
+            starts.retain(|_, lock| lock.strong_count() > 0);
+            if let Some(lock) = starts.get(&key).and_then(Weak::upgrade) {
+                lock
+            } else {
+                let lock = Arc::new(tokio::sync::Mutex::new(()));
+                starts.insert(key.clone(), Arc::downgrade(&lock));
+                lock
+            }
+        };
+        let _start = start_lock.lock().await;
+        if let Some(dir) = self.sessions.touch_variant(&key).await {
             return Ok(dir);
         }
-        self.sessions.remove(media_file_id).await;
 
         let session_id = Uuid::new_v4().to_string();
-        let output_dir = self.hls_root().join(media_file_id).join(&session_id);
+        let output_dir = self.hls_root().join(&session_id);
         tokio::fs::create_dir_all(&output_dir)
             .await
             .with_context(|| format!("failed to create HLS output dir {}", output_dir.display()))?;
 
-        let child = match kind {
-            TranscodeKind::Remux => ffmpeg::spawn_hls_remux(
-                &self.config.ffmpeg_path,
-                input_path,
-                &output_dir,
-                &session_id,
-            ),
-            TranscodeKind::Transcode => ffmpeg::spawn_hls_transcode(
-                &self.config.ffmpeg_path,
-                input_path,
-                &output_dir,
-                &session_id,
-            ),
-        }
-        .with_context(|| format!("failed to spawn ffmpeg for media file {media_file_id}"))?;
+        let child = match ffmpeg::spawn_hls_with_audio(
+            &self.config.ffmpeg_path,
+            input_path,
+            &output_dir,
+            &session_id,
+            kind,
+            audio_stream,
+        ) {
+            Ok(child) => child,
+            Err(error) => {
+                let _ = tokio::fs::remove_dir_all(&output_dir).await;
+                return Err(error).with_context(|| {
+                    format!("failed to spawn ffmpeg for media file {media_file_id}")
+                });
+            }
+        };
 
         info!(
             media_file_id = %media_file_id,
             session_id = %session_id,
             kind = ?kind,
+            audio_stream = ?audio_stream,
             output_dir = %output_dir.display(),
             "Transcode: started HLS session"
         );
 
-        let session = TranscodeSession::new(
+        let mut session = TranscodeSession::new(
             media_file_id.to_string(),
             session_id,
             output_dir.clone(),
             kind,
             child,
         );
+        session.audio_stream = audio_stream;
         self.sessions.insert(session).await;
         Ok(output_dir)
     }
@@ -149,6 +188,33 @@ impl TranscodeService {
     /// session on their own (the playlist route must be hit first).
     pub async fn touch_session(&self, media_file_id: &str) -> Option<PathBuf> {
         self.sessions.touch(media_file_id).await
+    }
+
+    /// Segments must resolve to precisely the playlist's kind/audio variant.
+    pub async fn touch_session_with_audio(
+        &self,
+        media_file_id: &str,
+        kind: TranscodeKind,
+        audio_stream: Option<i32>,
+    ) -> Option<PathBuf> {
+        self.sessions
+            .touch_variant(&SessionKey::new(media_file_id, kind, audio_stream))
+            .await
+    }
+
+    /// Convert a previously authorized, canonical subtitle source to WebVTT.
+    /// Bound queueing as well as process time and output allocation.
+    pub async fn subtitle_webvtt(
+        &self,
+        input: &Path,
+        stream_index: Option<i32>,
+        input_format: Option<&str>,
+    ) -> std::result::Result<Vec<u8>, ffmpeg::SubtitleError> {
+        let _slot = tokio::time::timeout(Duration::from_secs(2), self.subtitle_slots.acquire())
+            .await
+            .map_err(|_| ffmpeg::SubtitleError::Busy)?
+            .map_err(|_| ffmpeg::SubtitleError::Busy)?;
+        ffmpeg::subtitle_webvtt(&self.config.ffmpeg_path, input, stream_index, input_format).await
     }
 
     /// Number of live HLS sessions (for health/debug reporting).

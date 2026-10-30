@@ -14,6 +14,7 @@ use crate::graphql::entities::Library;
 
 use super::common::AutoDownloadMode;
 use super::episode::Episode;
+use super::season::Season;
 use crate::services::metadata::providers::{AddTvShowOptions, MetadataProvider, MetadataService};
 
 /// Show entity representing a TV show.
@@ -61,10 +62,12 @@ pub struct Show {
 
     #[graphql(name = "libraryId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub library_id: String,
 
     #[graphql(name = "userId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owner.id")]
     pub user_id: String,
 
     #[graphql(name = "name")]
@@ -164,7 +167,8 @@ pub struct Show {
         target = "Library",
         from = "library_id",
         to = "id",
-        on_delete = "cascade"
+        on_delete = "cascade",
+        propagate_change = "up"
     )]
     pub library: Option<Library>,
 
@@ -174,6 +178,26 @@ pub struct Show {
     #[skip_db]
     #[relation(target = "Episode", to = "show_id", multiple)]
     pub episodes: Vec<Episode>,
+
+    /// Seasons of this show, with provider names, dates and cached posters
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(target = "Season", to = "show_id", multiple)]
+    pub seasons: Vec<Season>,
+
+    // Query relations do not add physical FKs or change existing delete behavior.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "QualityProfile",
+        from = "quality_profile_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub quality_profile: Option<Box<QualityProfile>>,
 }
 
 #[derive(Default)]
@@ -301,13 +325,15 @@ impl ShowMetadataMutations {
         #[graphql(name = "libraryId")] library_id: String,
         #[graphql(name = "input")] input: AddTvShowInput,
     ) -> async_graphql::Result<TvShowOperationResult> {
-        let user = ctx.librarian_auth_user()?;
+        let user = ctx.require_member()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 
         let lib_id = uuid::Uuid::parse_str(&library_id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
-        let user_id = uuid::Uuid::parse_str(&user.user_id)
-            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+        let user_id = metadata
+            .authorize_library_import(user, lib_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
         let monitor_type = input.auto_download_mode.unwrap_or(AutoDownloadMode::All);
 

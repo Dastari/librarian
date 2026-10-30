@@ -89,6 +89,7 @@ pub struct Track {
 
     #[graphql(name = "artistId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub artist_id: Option<String>,
 
     #[graphql(name = "wanted")]
@@ -116,7 +117,13 @@ pub struct Track {
     pub updated_at: String,
     #[graphql(skip)]
     #[serde(skip)]
-    #[relation(target = "Album", from = "album_id", to = "id", on_delete = "cascade")]
+    #[relation(
+        target = "Album",
+        from = "album_id",
+        to = "id",
+        on_delete = "cascade",
+        propagate_change = "up"
+    )]
     pub album: Option<Album>,
     #[graphql(skip)]
     #[serde(skip)]
@@ -137,6 +144,19 @@ pub struct Track {
         on_delete = "set_null"
     )]
     pub media_file: Option<MediaFile>,
+
+    // Query relations do not add physical FKs or change existing delete behavior.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Artist",
+        from = "artist_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub artist: Option<Box<Artist>>,
 }
 
 #[derive(Default)]

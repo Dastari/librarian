@@ -2,6 +2,7 @@
 //!
 //! Other services that need the database (e.g. logging) should declare `dependencies: ["database"]`.
 
+use std::collections::BTreeSet;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -11,9 +12,10 @@ use async_trait::async_trait;
 use futures::future::BoxFuture;
 use graphql_orm::graphql::filters::StringFilter;
 use graphql_orm::graphql::orm::{
-    ApplyOptions, ChangeAction, Entity, MigrationRisk, MigrationStep, MutationContext,
-    MutationEvent, MutationHook, MutationPhase, PaginationConfig, PlannedMigration,
-    PostCommitErrorHandler, WriteInputTransform,
+    ApplyOptions, AuthorizedScanConfig, ChangeAction, DatabaseFilter, DefaultBackend, Entity,
+    FromSqlRow, MigrationRisk, MigrationStep, MutationContext, MutationEvent, MutationHook,
+    MutationPhase, PaginationConfig, PlannedMigration, PostCommitErrorHandler, TransactionMode,
+    WriteInputTransform,
 };
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tracing::{info, warn};
@@ -78,6 +80,12 @@ impl DatabaseService {
     }
 
     fn install_hooks(pool: &mut Database, services: Option<Weak<ServicesManager>>) {
+        // Exact visible offsets/counts with residual ownership checks require an
+        // explicit finite budget since ORM 0.46. Scan continuations are local to
+        // this process; restarting invalidates them rather than reusing a key.
+        *pool = pool
+            .clone()
+            .with_authorized_scan_config(AuthorizedScanConfig::new(rand::random(), 256, 100_000));
         // Preserve the pre-0.3 ORM page behavior while existing Librarian operations are
         // migrated to bounded pagination. The consolidated ORM defaults to 50/100, while
         // this application previously used and still requests pages up to the legacy 1,000 cap.
@@ -107,6 +115,7 @@ pub(crate) fn entity_metadata() -> Vec<&'static graphql_orm::graphql::orm::Entit
         <Collection as Entity>::metadata(),
         <Show as Entity>::metadata(),
         <Episode as Entity>::metadata(),
+        <Season as Entity>::metadata(),
         <MediaFile as Entity>::metadata(),
         <Artist as Entity>::metadata(),
         <Album as Entity>::metadata(),
@@ -130,6 +139,11 @@ pub(crate) fn entity_metadata() -> Vec<&'static graphql_orm::graphql::orm::Entit
         <MediaChapter as Entity>::metadata(),
         <PlaybackSession as Entity>::metadata(),
         <PlaybackProgress as Entity>::metadata(),
+        <PersonalList as Entity>::metadata(),
+        <ListEntry as Entity>::metadata(),
+        <SavedView as Entity>::metadata(),
+        <HomeShelf as Entity>::metadata(),
+        <LibraryPreference as Entity>::metadata(),
         <CastDevice as Entity>::metadata(),
         <CastSession as Entity>::metadata(),
         <CastSetting as Entity>::metadata(),
@@ -379,6 +393,29 @@ pub(crate) async fn plan_schema(pool: &Database) -> Result<Option<PlannedMigrati
     plan_schema_for_entities(pool, &entity_metadata()).await
 }
 
+/// The plan behind `librarian schema plan`/`apply`: a full diff of the introspected schema.
+/// Startup validation does not report every constraint (a missing `UNIQUE`, for one), so the
+/// reviewed path never skips planning on a clean validation; it is `None` only when the diff
+/// has no steps.
+pub(crate) async fn plan_reviewed_schema(pool: &Database) -> Result<Option<PlannedMigration>> {
+    let version = format!(
+        "reviewed-{}",
+        OffsetDateTime::now_utc()
+            .format(&Rfc3339)
+            .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339())
+    );
+    let plan = pool
+        .schema()
+        .plan_migration_to_entities(
+            version,
+            "sync GraphQL ORM entity schema",
+            &entity_metadata(),
+        )
+        .await
+        .context("GraphQL ORM schema migration planning failed")?;
+    Ok((!plan.steps.is_empty()).then_some(plan))
+}
+
 async fn bootstrap_schema_for_entities(
     pool: &Database,
     entities: &[&'static graphql_orm::graphql::orm::EntityMetadata],
@@ -446,7 +483,7 @@ pub(crate) async fn apply_reviewed_schema_plan(
     expected_plan_hash: &str,
     backup: &VerifiedSchemaBackup,
 ) -> Result<Option<graphql_orm::graphql::orm::AppliedMigrationReport>> {
-    let Some(plan) = plan_schema(pool).await? else {
+    let Some(plan) = plan_reviewed_schema(pool).await? else {
         return Ok(None);
     };
     if plan.plan_hash != expected_plan_hash {
@@ -735,6 +772,15 @@ impl AppWriteInputTransform {
                         .downcast_ref::<UpdateAudiobookInput>()
                         .is_some_and(|input| input.cover_url.is_some())
             }
+            // A still URL is a download source like a poster: only metadata sync sets it.
+            "Episode" => {
+                input
+                    .downcast_ref::<CreateEpisodeInput>()
+                    .is_some_and(|input| input.still_url.is_some())
+                    || input
+                        .downcast_ref::<UpdateEpisodeInput>()
+                        .is_some_and(|input| input.still_url.is_some())
+            }
             "Artist" => {
                 input
                     .downcast_ref::<CreateArtistInput>()
@@ -790,6 +836,46 @@ impl AppWriteInputTransform {
 }
 
 impl WriteInputTransform for AppWriteInputTransform {
+    fn before_update_with_context<'a>(
+        &'a self,
+        write_ctx: &'a mut graphql_orm::graphql::orm::WriteInputContext<'_, '_>,
+        existing_row: Option<&'a (dyn std::any::Any + Send + Sync)>,
+        input: &'a mut (dyn std::any::Any + Send + Sync),
+    ) -> BoxFuture<'a, async_graphql::Result<()>> {
+        Box::pin(async move {
+            self.before_update(
+                write_ctx.graphql_ctx(),
+                write_ctx.database(),
+                write_ctx.entity_name(),
+                existing_row,
+                input,
+            )
+            .await?;
+
+            // Generated update holds its MutationContext before field policies
+            // run. Validate this mutable link through WriteQuery, which uses
+            // that transaction, rather than re-entering the connection pool.
+            if write_ctx.entity_name() == "Torrent" && write_ctx.graphql_ctx().is_some() {
+                let torrent_input =
+                    input.downcast_ref::<UpdateTorrentInput>().ok_or_else(|| {
+                        async_graphql::Error::new("Invalid torrent update input")
+                            .extend_with(|_, extensions| extensions.set("code", "FORBIDDEN"))
+                    })?;
+                if let Some(library_id) = &torrent_input.library_id {
+                    let user = write_ctx.actor::<AuthUser>();
+                    AppFieldPolicy::validate_mutable_torrent_library(
+                        write_ctx,
+                        user.as_ref(),
+                        existing_row,
+                        Some(library_id),
+                    )
+                    .await?;
+                }
+            }
+            Ok(())
+        })
+    }
+
     fn before_create<'a>(
         &'a self,
         ctx: Option<&'a async_graphql::Context<'_>>,
@@ -798,6 +884,7 @@ impl WriteInputTransform for AppWriteInputTransform {
         input: &'a mut (dyn std::any::Any + Send + Sync),
     ) -> BoxFuture<'a, async_graphql::Result<()>> {
         Box::pin(async move {
+            crate::services::graphql::personal_policy::prepare_create(ctx, entity_name, input)?;
             Self::assign_create_owner(ctx, entity_name, input);
             Self::validate_upsert_link_workaround(ctx, db, entity_name, input, true).await?;
             Self::reject_member_artwork_source_write(ctx, entity_name, input)?;
@@ -817,10 +904,16 @@ impl WriteInputTransform for AppWriteInputTransform {
         ctx: Option<&'a async_graphql::Context<'_>>,
         db: &'a Database,
         entity_name: &'static str,
-        _existing_row: Option<&'a (dyn std::any::Any + Send + Sync)>,
+        existing_row: Option<&'a (dyn std::any::Any + Send + Sync)>,
         input: &'a mut (dyn std::any::Any + Send + Sync),
     ) -> BoxFuture<'a, async_graphql::Result<()>> {
         Box::pin(async move {
+            crate::services::graphql::personal_policy::prepare_update(
+                ctx,
+                entity_name,
+                existing_row,
+                input,
+            )?;
             Self::reject_owner_update(ctx, entity_name, input)?;
             Self::validate_upsert_link_workaround(ctx, db, entity_name, input, false).await?;
             Self::reject_member_artwork_source_write(ctx, entity_name, input)?;
@@ -849,10 +942,281 @@ impl PostCommitErrorHandler for AppPostCommitErrorHandler {
     }
 }
 
+/// MutationQuery inherits connection bounds (and the pinned renderer caps a page at 100).
+/// Read all stable primary-key pages on the same transaction instead of mistaking one page
+/// for a canonical aggregate. Repository hook reads are trusted; request ACLs belong at entry.
+async fn transaction_rows<T, F>(
+    tx: &mut MutationContext<'_>,
+    filter: F,
+) -> graphql_orm::Result<Vec<T>>
+where
+    T: Entity + FromSqlRow<DefaultBackend> + Clone + Send + Sync + 'static,
+    F: DatabaseFilter + Clone + Send + Sync,
+{
+    let limit = tx
+        .database()
+        .pagination_config()
+        .max_limit
+        .unwrap_or(100)
+        .min(100);
+    if limit < 1 {
+        return Err(graphql_orm::Error::Protocol(
+            "summary maintenance requires a positive page limit".to_string(),
+        ));
+    }
+    let mut rows = Vec::new();
+    let mut offset = 0_i64;
+    loop {
+        let page = tx
+            .query::<T>()
+            .filter(filter.clone())
+            .limit(limit)
+            .offset(offset)
+            .fetch_all()
+            .await?;
+        let complete = page.len() < limit as usize;
+        rows.extend(page);
+        if complete {
+            return Ok(rows);
+        }
+        offset = offset.checked_add(limit).ok_or_else(|| {
+            graphql_orm::Error::Protocol("summary page offset overflow".to_string())
+        })?;
+    }
+}
+
+/// Explicit maintenance result. Counts describe parents, not tracks/chapters or events.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct StoredSummaryReconciliation {
+    pub artists_examined: u64,
+    pub artists_changed: u64,
+    pub albums_examined: u64,
+    pub albums_changed: u64,
+    pub audiobooks_examined: u64,
+    pub audiobooks_changed: u64,
+    pub dry_run: bool,
+}
+
+/// Admin/system maintenance entry point; the GraphQL action must establish admin authority.
+/// Never run automatically on startup. A state-machine transaction pins all typed reads and
+/// writes; dry run performs no writes/events, and a failed apply rolls back the whole repair.
+pub(crate) async fn reconcile_stored_media_summaries(
+    db: &Database,
+    dry_run: bool,
+) -> Result<StoredSummaryReconciliation> {
+    db.transaction(TransactionMode::StateMachine, move |tx| {
+        Box::pin(async move {
+            let albums = transaction_rows::<Album, _>(tx, AlbumWhereInput::default()).await?;
+            let books =
+                transaction_rows::<Audiobook, _>(tx, AudiobookWhereInput::default()).await?;
+            let mut report = StoredSummaryReconciliation {
+                dry_run,
+                ..Default::default()
+            };
+            for artist in transaction_rows::<Artist, _>(tx, ArtistWhereInput::default()).await? {
+                report.artists_examined += 1;
+                if reconcile_artist_summary(tx, &artist.id, dry_run, false).await? {
+                    report.artists_changed += 1;
+                }
+            }
+            for album in albums {
+                report.albums_examined += 1;
+                if reconcile_album_summary(tx, &album.id, dry_run, false).await? {
+                    report.albums_changed += 1;
+                }
+            }
+            for book in books {
+                report.audiobooks_examined += 1;
+                if reconcile_audiobook_summary(tx, &book.id, dry_run, false).await? {
+                    report.audiobooks_changed += 1;
+                }
+            }
+            Ok(report)
+        })
+    })
+    .await
+    .map_err(anyhow::Error::from)
+}
+
+/// Artist membership follows explicit stored artist IDs, never an album fallback for
+/// tracks. A malformed cross-library link must not contribute to another library's totals.
+async fn reconcile_artist_summary(
+    tx: &mut MutationContext<'_>,
+    id: &str,
+    dry_run: bool,
+    invalidate: bool,
+) -> graphql_orm::Result<bool> {
+    let Some(parent) = tx.find_by_id::<Artist>(&id.to_string()).await? else {
+        return Ok(false);
+    };
+    let album_count = tx
+        .query::<Album>()
+        .filter(AlbumWhereInput {
+            artist_id: Some(AppMutationHook::string_eq(id)),
+            library_id: Some(AppMutationHook::string_eq(&parent.library_id)),
+            ..Default::default()
+        })
+        .count()
+        .await?;
+    let tracks = transaction_rows::<Track, _>(
+        tx,
+        TrackWhereInput {
+            artist_id: Some(AppMutationHook::string_eq(id)),
+            library_id: Some(AppMutationHook::string_eq(&parent.library_id)),
+            ..Default::default()
+        },
+    )
+    .await?;
+    let album_count = i32::try_from(album_count)
+        .map_err(|_| graphql_orm::Error::Protocol("artist album count overflow".into()))?;
+    let track_count = i32::try_from(tracks.len())
+        .map_err(|_| graphql_orm::Error::Protocol("artist track count overflow".into()))?;
+    let mut duration = 0_i32;
+    for track in tracks {
+        let value = track.duration_secs.unwrap_or(0);
+        if value < 0 {
+            return Err(graphql_orm::Error::Protocol(format!(
+                "negative track duration for {}",
+                track.id
+            )));
+        }
+        duration = duration
+            .checked_add(value)
+            .ok_or_else(|| graphql_orm::Error::Protocol("artist duration sum overflow".into()))?;
+    }
+    let changed = parent.album_count != Some(album_count)
+        || parent.track_count != Some(track_count)
+        || parent.total_duration_secs != Some(duration);
+    if !dry_run && (changed || invalidate) {
+        tx.update_by_id::<Artist>(
+            &parent.id,
+            UpdateArtistInput {
+                album_count: changed.then_some(Some(album_count)),
+                track_count: changed.then_some(Some(track_count)),
+                total_duration_secs: changed.then_some(Some(duration)),
+                ..Default::default()
+            },
+        )
+        .await?;
+    }
+    Ok(changed)
+}
+
+/// The canonical summary follows playable child links. One file shared by several chapters
+/// contributes its bytes once. A dangling link cannot make content available; zero is a
+/// known empty size. Provider track/chapter totals and durations are not local-file counts.
+async fn linked_file_summary(
+    tx: &mut MutationContext<'_>,
+    file_ids: BTreeSet<String>,
+) -> graphql_orm::Result<(bool, i64)> {
+    let mut has_files = false;
+    let mut size = 0_i64;
+    for id in file_ids {
+        if let Some(file) = tx.find_by_id::<MediaFile>(&id).await? {
+            has_files = true;
+            if file.size < 0 {
+                return Err(graphql_orm::Error::Protocol(format!(
+                    "negative media size for {}",
+                    file.id
+                )));
+            }
+            size = size.checked_add(file.size).ok_or_else(|| {
+                graphql_orm::Error::Protocol("linked media size sum overflow".to_string())
+            })?;
+        }
+    }
+    Ok((has_files, size))
+}
+
+async fn reconcile_album_summary(
+    tx: &mut MutationContext<'_>,
+    id: &str,
+    dry_run: bool,
+    invalidate: bool,
+) -> graphql_orm::Result<bool> {
+    let Some(parent) = tx.find_by_id::<Album>(&id.to_string()).await? else {
+        return Ok(false);
+    };
+    let tracks = transaction_rows::<Track, _>(
+        tx,
+        TrackWhereInput {
+            album_id: Some(AppMutationHook::string_eq(id)),
+            ..Default::default()
+        },
+    )
+    .await?;
+    let (has_files, size) = linked_file_summary(
+        tx,
+        tracks
+            .into_iter()
+            .filter_map(|track| track.media_file_id)
+            .collect(),
+    )
+    .await?;
+    let changed = parent.has_files != has_files || parent.size_bytes != Some(size);
+    if !dry_run && (changed || invalidate) {
+        tx.update_by_id::<Album>(
+            &parent.id,
+            UpdateAlbumInput {
+                has_files: changed.then_some(has_files),
+                size_bytes: changed.then_some(Some(size)),
+                ..Default::default()
+            },
+        )
+        .await?;
+    }
+    Ok(changed)
+}
+
+async fn reconcile_audiobook_summary(
+    tx: &mut MutationContext<'_>,
+    id: &str,
+    dry_run: bool,
+    invalidate: bool,
+) -> graphql_orm::Result<bool> {
+    let Some(parent) = tx.find_by_id::<Audiobook>(&id.to_string()).await? else {
+        return Ok(false);
+    };
+    let chapters = transaction_rows::<Chapter, _>(
+        tx,
+        ChapterWhereInput {
+            audiobook_id: Some(AppMutationHook::string_eq(id)),
+            ..Default::default()
+        },
+    )
+    .await?;
+    let (has_files, size) = linked_file_summary(
+        tx,
+        chapters
+            .into_iter()
+            .filter_map(|chapter| chapter.media_file_id)
+            .collect(),
+    )
+    .await?;
+    let changed = parent.has_files != has_files || parent.size_bytes != Some(size);
+    if !dry_run && (changed || invalidate) {
+        tx.update_by_id::<Audiobook>(
+            &parent.id,
+            UpdateAudiobookInput {
+                has_files: changed.then_some(has_files),
+                size_bytes: changed.then_some(Some(size)),
+                ..Default::default()
+            },
+        )
+        .await?;
+    }
+    Ok(changed)
+}
+
 #[derive(Debug, Default)]
 struct AppMutationHook {
     services: Option<Weak<ServicesManager>>,
 }
+
+/// A direct parent write gives delivery current parent provenance after a child
+/// disappears/moves. Stable create/update propagation remains the entity metadata's job.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct ParentInvalidation(&'static str, String);
 
 impl AppMutationHook {
     fn db_error(error: impl std::fmt::Display) -> async_graphql::Error {
@@ -906,101 +1270,6 @@ impl AppMutationHook {
         hook_ctx: &mut MutationContext<'_>,
         library_id: &str,
     ) -> async_graphql::Result<()> {
-        let shows = hook_ctx
-            .query::<Show>()
-            .filter(ShowWhereInput {
-                library_id: Some(Self::string_eq(library_id)),
-                ..ShowWhereInput::default()
-            })
-            .fetch_all()
-            .await
-            .map_err(Self::db_error)?;
-        for show in &shows {
-            hook_ctx
-                .delete_where::<Episode>(EpisodeWhereInput {
-                    show_id: Some(Self::string_eq(&show.id)),
-                    ..EpisodeWhereInput::default()
-                })
-                .await
-                .map_err(Self::db_error)?;
-        }
-
-        let albums = hook_ctx
-            .query::<Album>()
-            .filter(AlbumWhereInput {
-                library_id: Some(Self::string_eq(library_id)),
-                ..AlbumWhereInput::default()
-            })
-            .fetch_all()
-            .await
-            .map_err(Self::db_error)?;
-        for album in &albums {
-            hook_ctx
-                .delete_where::<Track>(TrackWhereInput {
-                    album_id: Some(Self::string_eq(&album.id)),
-                    ..TrackWhereInput::default()
-                })
-                .await
-                .map_err(Self::db_error)?;
-        }
-
-        let audiobooks = hook_ctx
-            .query::<Audiobook>()
-            .filter(AudiobookWhereInput {
-                library_id: Some(Self::string_eq(library_id)),
-                ..AudiobookWhereInput::default()
-            })
-            .fetch_all()
-            .await
-            .map_err(Self::db_error)?;
-        for audiobook in &audiobooks {
-            hook_ctx
-                .delete_where::<Chapter>(ChapterWhereInput {
-                    audiobook_id: Some(Self::string_eq(&audiobook.id)),
-                    ..ChapterWhereInput::default()
-                })
-                .await
-                .map_err(Self::db_error)?;
-        }
-
-        let movies = hook_ctx
-            .query::<Movie>()
-            .filter(MovieWhereInput {
-                library_id: Some(Self::string_eq(library_id)),
-                ..MovieWhereInput::default()
-            })
-            .fetch_all()
-            .await
-            .map_err(Self::db_error)?;
-        for movie in &movies {
-            hook_ctx
-                .delete_where::<MovieCastCredit>(MovieCastCreditWhereInput {
-                    movie_id: Some(Self::string_eq(&movie.id)),
-                    ..MovieCastCreditWhereInput::default()
-                })
-                .await
-                .map_err(Self::db_error)?;
-        }
-
-        let rss_feeds = hook_ctx
-            .query::<RssFeed>()
-            .filter(RssFeedWhereInput {
-                library_id: Some(Self::string_eq(library_id)),
-                ..RssFeedWhereInput::default()
-            })
-            .fetch_all()
-            .await
-            .map_err(Self::db_error)?;
-        for feed in &rss_feeds {
-            hook_ctx
-                .delete_where::<RssFeedItem>(RssFeedItemWhereInput {
-                    feed_id: Some(Self::string_eq(&feed.id)),
-                    ..RssFeedItemWhereInput::default()
-                })
-                .await
-                .map_err(Self::db_error)?;
-        }
-
         hook_ctx
             .delete_where::<Show>(ShowWhereInput {
                 library_id: Some(Self::string_eq(library_id)),
@@ -1040,6 +1309,21 @@ impl AppMutationHook {
             .delete_where::<Audiobook>(AudiobookWhereInput {
                 library_id: Some(Self::string_eq(library_id)),
                 ..AudiobookWhereInput::default()
+            })
+            .await
+            .map_err(Self::db_error)?;
+        // Scan history is owned by its library, not retained as inaccessible orphan rows.
+        hook_ctx
+            .delete_where::<LibraryScanIssue>(LibraryScanIssueWhereInput {
+                library_id: Some(Self::string_eq(library_id)),
+                ..Default::default()
+            })
+            .await
+            .map_err(Self::db_error)?;
+        hook_ctx
+            .delete_where::<LibraryScanRun>(LibraryScanRunWhereInput {
+                library_id: Some(Self::string_eq(library_id)),
+                ..Default::default()
             })
             .await
             .map_err(Self::db_error)?;
@@ -1098,6 +1382,646 @@ impl AppMutationHook {
             .await
             .map_err(Self::db_error)?;
 
+        Ok(())
+    }
+
+    async fn cleanup_parent_children(
+        tx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        match event.entity_name {
+            "Show" => {
+                tx.delete_where::<Episode>(EpisodeWhereInput {
+                    show_id: Some(Self::string_eq(&event.id)),
+                    ..Default::default()
+                })
+                .await
+                .map_err(Self::db_error)?;
+                // Through the entity layer, not the FK cascade, so season hooks (artwork
+                // cleanup, subscriptions) run for each season.
+                tx.delete_where::<Season>(SeasonWhereInput {
+                    show_id: Some(Self::string_eq(&event.id)),
+                    ..Default::default()
+                })
+                .await
+                .map_err(Self::db_error)?;
+            }
+            "Album" => {
+                tx.delete_where::<Track>(TrackWhereInput {
+                    album_id: Some(Self::string_eq(&event.id)),
+                    ..Default::default()
+                })
+                .await
+                .map_err(Self::db_error)?;
+            }
+            "Audiobook" => {
+                tx.delete_where::<Chapter>(ChapterWhereInput {
+                    audiobook_id: Some(Self::string_eq(&event.id)),
+                    ..Default::default()
+                })
+                .await
+                .map_err(Self::db_error)?;
+            }
+            "Movie" => {
+                tx.delete_where::<MovieCastCredit>(MovieCastCreditWhereInput {
+                    movie_id: Some(Self::string_eq(&event.id)),
+                    ..Default::default()
+                })
+                .await
+                .map_err(Self::db_error)?;
+            }
+            "RssFeed" => {
+                tx.delete_where::<RssFeedItem>(RssFeedItemWhereInput {
+                    feed_id: Some(Self::string_eq(&event.id)),
+                    ..Default::default()
+                })
+                .await
+                .map_err(Self::db_error)?;
+            }
+            "LibraryScanRun" => {
+                tx.delete_where::<LibraryScanIssue>(LibraryScanIssueWhereInput {
+                    scan_run_id: Some(Self::string_eq(&event.id)),
+                    ..Default::default()
+                })
+                .await
+                .map_err(Self::db_error)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn detach_deleted_title(
+        tx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        match event.entity_name {
+            "Movie" => {
+                tx.update_where::<MediaFile>(
+                    MediaFileWhereInput {
+                        movie_id: Some(Self::string_eq(&event.id)),
+                        ..Default::default()
+                    },
+                    UpdateMediaFileInput {
+                        movie_id: Some(None),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(Self::db_error)?;
+                // Pending acquisition records retain source/debug history, but not dead title IDs.
+                tx.update_where::<PendingFileMatch>(
+                    PendingFileMatchWhereInput {
+                        movie_id: Some(Self::string_eq(&event.id)),
+                        ..Default::default()
+                    },
+                    UpdatePendingFileMatchInput {
+                        movie_id: Some(None),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(Self::db_error)?;
+            }
+            "Episode" => {
+                tx.update_where::<MediaFile>(
+                    MediaFileWhereInput {
+                        episode_id: Some(Self::string_eq(&event.id)),
+                        ..Default::default()
+                    },
+                    UpdateMediaFileInput {
+                        episode_id: Some(None),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(Self::db_error)?;
+                // Pending acquisition records retain source/debug history, but not dead title IDs.
+                tx.update_where::<PendingFileMatch>(
+                    PendingFileMatchWhereInput {
+                        episode_id: Some(Self::string_eq(&event.id)),
+                        ..Default::default()
+                    },
+                    UpdatePendingFileMatchInput {
+                        episode_id: Some(None),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(Self::db_error)?;
+            }
+            "Track" => {
+                tx.update_where::<MediaFile>(
+                    MediaFileWhereInput {
+                        track_id: Some(Self::string_eq(&event.id)),
+                        ..Default::default()
+                    },
+                    UpdateMediaFileInput {
+                        track_id: Some(None),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(Self::db_error)?;
+                // Pending acquisition records retain source/debug history, but not dead title IDs.
+                tx.update_where::<PendingFileMatch>(
+                    PendingFileMatchWhereInput {
+                        track_id: Some(Self::string_eq(&event.id)),
+                        ..Default::default()
+                    },
+                    UpdatePendingFileMatchInput {
+                        track_id: Some(None),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(Self::db_error)?;
+            }
+            "Chapter" => {
+                tx.update_where::<MediaFile>(
+                    MediaFileWhereInput {
+                        chapter_id: Some(Self::string_eq(&event.id)),
+                        ..Default::default()
+                    },
+                    UpdateMediaFileInput {
+                        chapter_id: Some(None),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(Self::db_error)?;
+                // Pending acquisition records retain source/debug history, but not dead title IDs.
+                tx.update_where::<PendingFileMatch>(
+                    PendingFileMatchWhereInput {
+                        chapter_id: Some(Self::string_eq(&event.id)),
+                        ..Default::default()
+                    },
+                    UpdatePendingFileMatchInput {
+                        chapter_id: Some(None),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(Self::db_error)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn cleanup_media_file_dependents(
+        tx: &mut MutationContext<'_>,
+        id: &str,
+    ) -> async_graphql::Result<()> {
+        tx.delete_where::<VideoStream>(VideoStreamWhereInput {
+            media_file_id: Some(Self::string_eq(id)),
+            ..Default::default()
+        })
+        .await
+        .map_err(Self::db_error)?;
+        tx.delete_where::<AudioStream>(AudioStreamWhereInput {
+            media_file_id: Some(Self::string_eq(id)),
+            ..Default::default()
+        })
+        .await
+        .map_err(Self::db_error)?;
+        tx.delete_where::<Subtitle>(SubtitleWhereInput {
+            media_file_id: Some(Self::string_eq(id)),
+            ..Default::default()
+        })
+        .await
+        .map_err(Self::db_error)?;
+        tx.delete_where::<MediaChapter>(MediaChapterWhereInput {
+            media_file_id: Some(Self::string_eq(id)),
+            ..Default::default()
+        })
+        .await
+        .map_err(Self::db_error)?;
+        tx.delete_where::<PlaybackProgress>(PlaybackProgressWhereInput {
+            media_file_id: Some(Self::string_eq(id)),
+            ..Default::default()
+        })
+        .await
+        .map_err(Self::db_error)?;
+        // Retain scan history while its Library/ScanRun exists, with a nullable file link.
+        tx.update_where::<LibraryScanIssue>(
+            LibraryScanIssueWhereInput {
+                media_file_id: Some(Self::string_eq(id)),
+                ..Default::default()
+            },
+            UpdateLibraryScanIssueInput {
+                media_file_id: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(Self::db_error)?;
+        // Sessions retain their owner and content history; they cannot keep playing a dead file.
+        tx.update_where::<PlaybackSession>(
+            PlaybackSessionWhereInput {
+                media_file_id: Some(Self::string_eq(id)),
+                ..Default::default()
+            },
+            UpdatePlaybackSessionInput {
+                media_file_id: Some(None),
+                is_playing: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(Self::db_error)?;
+        tx.update_where::<CastSession>(
+            CastSessionWhereInput {
+                media_file_id: Some(Self::string_eq(id)),
+                ..Default::default()
+            },
+            UpdateCastSessionInput {
+                media_file_id: Some(None),
+                player_state: Some("IDLE".to_string()),
+                ended_at: Some(Some(Self::now_rfc3339())),
+                stream_url: Some(String::new()),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(Self::db_error)?;
+        Ok(())
+    }
+
+    async fn invalidate_parent(
+        tx: &mut MutationContext<'_>,
+        parent: ParentInvalidation,
+    ) -> async_graphql::Result<()> {
+        let ParentInvalidation(kind, id) = parent;
+        match kind {
+            "Artist" => {
+                tx.update_by_id::<Artist>(&id, UpdateArtistInput::default())
+                    .await
+                    .map_err(Self::db_error)?;
+            }
+            "Collection" => {
+                tx.update_by_id::<Collection>(&id, UpdateCollectionInput::default())
+                    .await
+                    .map_err(Self::db_error)?;
+            }
+            "Album" => {
+                reconcile_album_summary(tx, &id, false, true)
+                    .await
+                    .map_err(Self::db_error)?;
+            }
+            "Audiobook" => {
+                reconcile_audiobook_summary(tx, &id, false, true)
+                    .await
+                    .map_err(Self::db_error)?;
+            }
+            "Show" => {
+                tx.update_by_id::<Show>(&id, UpdateShowInput::default())
+                    .await
+                    .map_err(Self::db_error)?;
+            }
+            "Library" => {
+                tx.update_by_id::<Library>(&id, UpdateLibraryInput::default())
+                    .await
+                    .map_err(Self::db_error)?;
+            }
+            "Movie" => {
+                tx.update_by_id::<Movie>(&id, UpdateMovieInput::default())
+                    .await
+                    .map_err(Self::db_error)?;
+            }
+            "Episode" => {
+                tx.update_by_id::<Episode>(&id, UpdateEpisodeInput::default())
+                    .await
+                    .map_err(Self::db_error)?;
+            }
+            "Track" => {
+                tx.update_by_id::<Track>(&id, UpdateTrackInput::default())
+                    .await
+                    .map_err(Self::db_error)?;
+            }
+            "Chapter" => {
+                tx.update_by_id::<Chapter>(&id, UpdateChapterInput::default())
+                    .await
+                    .map_err(Self::db_error)?;
+            }
+            "Torrent" => {
+                tx.update_by_id::<Torrent>(&id, UpdateTorrentInput::default())
+                    .await
+                    .map_err(Self::db_error)?;
+            }
+            "RssFeed" => {
+                tx.update_by_id::<RssFeed>(&id, UpdateRssFeedInput::default())
+                    .await
+                    .map_err(Self::db_error)?;
+            }
+            "LibraryScanRun" => {
+                tx.update_by_id::<LibraryScanRun>(&id, UpdateLibraryScanRunInput::default())
+                    .await
+                    .map_err(Self::db_error)?;
+            }
+            "MediaFile" => {
+                tx.update_by_id::<MediaFile>(&id, UpdateMediaFileInput::default())
+                    .await
+                    .map_err(Self::db_error)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Local sets deduplicate old/new identities. The pinned context exposes no
+    /// transaction-local extensions or before-commit callbacks, so cross-event coalescing
+    /// cannot safely use a process-global cache or post-commit writes. Real summaries skip
+    /// unchanged values; generated timestamp-only updates cover provenance gaps.
+    async fn maintain_summaries_and_parent_events(
+        tx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        if event.phase != MutationPhase::After {
+            return Ok(());
+        }
+        let mut parents = BTreeSet::new();
+        let mut summaries = BTreeSet::new();
+        macro_rules! edge {
+            ($child:ty, $field:ident, $parent:literal) => {{
+                let before = event.before::<$child>()?.map(|row| row.$field.as_str());
+                let after = event.after::<$child>()?.map(|row| row.$field.as_str());
+                if event.action == ChangeAction::Deleted || (before.is_some() && before != after) {
+                    for id in [before, after].into_iter().flatten() {
+                        parents.insert(ParentInvalidation($parent, id.to_string()));
+                    }
+                }
+            }};
+        }
+        macro_rules! optional_edge {
+            ($child:ty, $field:ident, $parent:literal) => {{
+                let before = event
+                    .before::<$child>()?
+                    .and_then(|row| row.$field.as_deref());
+                let after = event
+                    .after::<$child>()?
+                    .and_then(|row| row.$field.as_deref());
+                if event.action == ChangeAction::Deleted
+                    || (event.action == ChangeAction::Updated && before != after)
+                {
+                    for id in [before, after].into_iter().flatten() {
+                        parents.insert(ParentInvalidation($parent, id.to_string()));
+                    }
+                }
+            }};
+        }
+        // Nested-only relations have no automatic upward propagation. Their
+        // metadata/status changes also invalidate the same surviving parent.
+        macro_rules! nested_edge {
+            ($child:ty, $field:ident, $parent:literal) => {{
+                for row in [event.before::<$child>()?, event.after::<$child>()?]
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Some(id) = &row.$field {
+                        parents.insert(ParentInvalidation($parent, id.clone()));
+                    }
+                }
+            }};
+        }
+        match event.entity_name {
+            "Track" => {
+                edge!(Track, album_id, "Album");
+                edge!(Track, library_id, "Library");
+                let before = event.before::<Track>()?;
+                let after = event.after::<Track>()?;
+                let artist_summary_changed = before
+                    .map(|row| (&row.artist_id, &row.library_id, row.duration_secs))
+                    != after.map(|row| (&row.artist_id, &row.library_id, row.duration_secs));
+                for row in [before, after].into_iter().flatten() {
+                    summaries.insert(ParentInvalidation("Album", row.album_id.clone()));
+                    if let Some(id) = &row.artist_id {
+                        parents.insert(ParentInvalidation("Artist", id.clone()));
+                        if artist_summary_changed {
+                            summaries.insert(ParentInvalidation("Artist", id.clone()));
+                        }
+                    }
+                }
+            }
+            "Chapter" => {
+                edge!(Chapter, audiobook_id, "Audiobook");
+                for row in [event.before::<Chapter>()?, event.after::<Chapter>()?]
+                    .into_iter()
+                    .flatten()
+                {
+                    summaries.insert(ParentInvalidation("Audiobook", row.audiobook_id.clone()));
+                }
+            }
+            "Episode" => edge!(Episode, show_id, "Show"),
+            "Season" => edge!(Season, show_id, "Show"),
+            "Show" => edge!(Show, library_id, "Library"),
+            "Movie" => {
+                edge!(Movie, library_id, "Library");
+                let memberships = [event.before::<Movie>()?, event.after::<Movie>()?]
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|row| row.collection_id.map(|key| (row.library_id.clone(), key)))
+                    .collect::<BTreeSet<_>>();
+                for (library_id, key) in memberships {
+                    for collection in transaction_rows::<Collection, _>(
+                        tx,
+                        CollectionWhereInput {
+                            library_id: Some(Self::string_eq(library_id)),
+                            tmdb_collection_id: Some(graphql_orm::graphql::filters::IntFilter {
+                                eq: Some(key),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .map_err(Self::db_error)?
+                    {
+                        parents.insert(ParentInvalidation("Collection", collection.id));
+                    }
+                }
+            }
+            "Artist" => {
+                edge!(Artist, library_id, "Library");
+                // Recompute on insertion/library moves only. Summary timestamp writes
+                // reenter this hook but cannot schedule another Artist write.
+                let before = event.before::<Artist>()?;
+                if let Some(after) = event.after::<Artist>()?
+                    && before.is_none_or(|row| row.library_id != after.library_id)
+                {
+                    reconcile_artist_summary(tx, &after.id, false, false)
+                        .await
+                        .map_err(Self::db_error)?;
+                }
+            }
+            "Collection" => edge!(Collection, library_id, "Library"),
+            "RssFeed" => nested_edge!(RssFeed, library_id, "Library"),
+            "Torrent" => {
+                nested_edge!(Torrent, library_id, "Library");
+                nested_edge!(Torrent, movie_id, "Movie");
+                nested_edge!(Torrent, episode_id, "Episode");
+                nested_edge!(Torrent, track_id, "Track");
+                nested_edge!(Torrent, chapter_id, "Chapter");
+                nested_edge!(Torrent, show_id, "Show");
+                nested_edge!(Torrent, album_id, "Album");
+                nested_edge!(Torrent, audiobook_id, "Audiobook");
+            }
+            "PendingFileMatch" => {
+                nested_edge!(PendingFileMatch, movie_id, "Movie");
+                nested_edge!(PendingFileMatch, episode_id, "Episode");
+                nested_edge!(PendingFileMatch, track_id, "Track");
+                nested_edge!(PendingFileMatch, chapter_id, "Chapter");
+                let sources = [
+                    event.before::<PendingFileMatch>()?,
+                    event.after::<PendingFileMatch>()?,
+                ]
+                .into_iter()
+                .flatten()
+                .filter(|row| row.source_type == "torrent")
+                .filter_map(|row| {
+                    row.source_id
+                        .as_ref()
+                        .map(|hash| (row.user_id.clone(), hash.clone()))
+                })
+                .collect::<BTreeSet<_>>();
+                for (owner, hash) in sources {
+                    // The import pipeline stores an info hash, never Torrent.id.
+                    // Provenance is qualified by the pending row's owner even for
+                    // trusted/admin writes; a foreign UUID/hash grants no authority.
+                    let mut torrents = transaction_rows::<Torrent, _>(
+                        tx,
+                        TorrentWhereInput {
+                            info_hash: Some(Self::string_eq(hash)),
+                            user_id: Some(Self::string_eq(owner)),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .map_err(Self::db_error)?;
+                    if torrents.len() > 1 {
+                        return Err(async_graphql::Error::new(
+                            "Ambiguous owned torrent source for pending file match",
+                        ));
+                    }
+                    if let Some(torrent) = torrents.pop() {
+                        parents.insert(ParentInvalidation("Torrent", torrent.id));
+                    }
+                }
+            }
+            "Album" => {
+                edge!(Album, library_id, "Library");
+                let before = event.before::<Album>()?;
+                let after = event.after::<Album>()?;
+                let artist_summary_changed = before.map(|row| (&row.artist_id, &row.library_id))
+                    != after.map(|row| (&row.artist_id, &row.library_id));
+                for row in [before, after].into_iter().flatten() {
+                    parents.insert(ParentInvalidation("Artist", row.artist_id.clone()));
+                    if artist_summary_changed {
+                        summaries.insert(ParentInvalidation("Artist", row.artist_id.clone()));
+                    }
+                }
+            }
+            "Audiobook" => edge!(Audiobook, library_id, "Library"),
+            "MovieCastCredit" => edge!(MovieCastCredit, movie_id, "Movie"),
+            "TorrentFile" => edge!(TorrentFile, torrent_id, "Torrent"),
+            "RssFeedItem" => edge!(RssFeedItem, feed_id, "RssFeed"),
+            "LibraryScanIssue" => edge!(LibraryScanIssue, scan_run_id, "LibraryScanRun"),
+            "LibraryScanRun" => edge!(LibraryScanRun, library_id, "Library"),
+            "MediaFile" => {
+                optional_edge!(MediaFile, library_id, "Library");
+                // Link changes already write the old/new targets through the inverse
+                // hooks. Only unchanged target IDs need a timestamp write for changes to
+                // file analysis/quality/size; avoid redundant target writes on rematches.
+                if event.action == ChangeAction::Updated {
+                    let before = Self::before::<MediaFile>(event, "MediaFile")?;
+                    if let Some(file) = tx
+                        .find_by_id::<MediaFile>(&event.id)
+                        .await
+                        .map_err(Self::db_error)?
+                    {
+                        for (kind, old, current) in [
+                            ("Movie", before.movie_id.as_ref(), file.movie_id.as_ref()),
+                            (
+                                "Episode",
+                                before.episode_id.as_ref(),
+                                file.episode_id.as_ref(),
+                            ),
+                            ("Track", before.track_id.as_ref(), file.track_id.as_ref()),
+                            (
+                                "Chapter",
+                                before.chapter_id.as_ref(),
+                                file.chapter_id.as_ref(),
+                            ),
+                        ] {
+                            if old == current
+                                && let Some(id) = current
+                            {
+                                parents.insert(ParentInvalidation(kind, id.clone()));
+                            }
+                        }
+                    }
+                }
+                // Child-side links are canonical, including historical one-sided rows.
+                for track in transaction_rows::<Track, _>(
+                    tx,
+                    TrackWhereInput {
+                        media_file_id: Some(Self::string_eq(&event.id)),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(Self::db_error)?
+                {
+                    summaries.insert(ParentInvalidation("Album", track.album_id));
+                }
+                for chapter in transaction_rows::<Chapter, _>(
+                    tx,
+                    ChapterWhereInput {
+                        media_file_id: Some(Self::string_eq(&event.id)),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(Self::db_error)?
+                {
+                    summaries.insert(ParentInvalidation("Audiobook", chapter.audiobook_id));
+                }
+            }
+            "VideoStream" => edge!(VideoStream, media_file_id, "MediaFile"),
+            "AudioStream" => edge!(AudioStream, media_file_id, "MediaFile"),
+            "Subtitle" => edge!(Subtitle, media_file_id, "MediaFile"),
+            "MediaChapter" => edge!(MediaChapter, media_file_id, "MediaFile"),
+            _ => {}
+        }
+        for parent in summaries {
+            if parent.0 == "Artist" {
+                let invalidate = parents.remove(&parent);
+                reconcile_artist_summary(tx, &parent.1, false, invalidate)
+                    .await
+                    .map_err(Self::db_error)?;
+                continue;
+            }
+            if parents.remove(&parent) {
+                Self::invalidate_parent(tx, parent).await?;
+            } else {
+                match parent.0 {
+                    "Album" => {
+                        reconcile_album_summary(tx, &parent.1, false, false)
+                            .await
+                            .map_err(Self::db_error)?;
+                    }
+                    "Audiobook" => {
+                        reconcile_audiobook_summary(tx, &parent.1, false, false)
+                            .await
+                            .map_err(Self::db_error)?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for parent in parents {
+            Self::invalidate_parent(tx, parent).await?;
+        }
         Ok(())
     }
 
@@ -1196,21 +2120,27 @@ impl AppMutationHook {
     ) -> async_graphql::Result<()> {
         let before = Self::before::<User>(event, "User")?;
         let after = Self::after::<User>(event, "User")?;
-        let should_revoke = (before.is_active && !after.is_active) || before.role != after.role;
+        let should_revoke = (before.is_active && !after.is_active)
+            || before.role != after.role
+            || before.password_hash != after.password_hash;
         if !should_revoke {
             return Ok(());
         }
 
         let revoked_at = Self::now_rfc3339();
-        let tokens = hook_ctx
-            .query::<RefreshToken>()
-            .filter(RefreshTokenWhereInput {
+        let tokens = transaction_rows::<RefreshToken, _>(
+            hook_ctx,
+            RefreshTokenWhereInput {
                 user_id: Some(Self::string_eq(&after.id)),
+                revoked_at: Some(graphql_orm::graphql::filters::DateFilter {
+                    is_null: Some(true),
+                    ..Default::default()
+                }),
                 ..RefreshTokenWhereInput::default()
-            })
-            .fetch_all()
-            .await
-            .map_err(Self::db_error)?;
+            },
+        )
+        .await
+        .map_err(Self::db_error)?;
         for token in tokens {
             if token.revoked_at.is_some() {
                 continue;
@@ -1394,209 +2324,286 @@ impl AppMutationHook {
         Ok(())
     }
 
+    /// Detach only the inverse that still points at this target. A nested rematch may
+    /// already have installed another target; stale outer preimages must not erase it.
+    async fn clear_media_file_target_if_matches(
+        tx: &mut MutationContext<'_>,
+        file_id: &str,
+        kind: &str,
+        target_id: &str,
+    ) -> async_graphql::Result<()> {
+        let Some(file) = tx
+            .find_by_id::<MediaFile>(&file_id.to_string())
+            .await
+            .map_err(Self::db_error)?
+        else {
+            return Ok(());
+        };
+        let matches = match kind {
+            "Movie" => file.movie_id.as_deref() == Some(target_id),
+            "Episode" => file.episode_id.as_deref() == Some(target_id),
+            "Track" => file.track_id.as_deref() == Some(target_id),
+            "Chapter" => file.chapter_id.as_deref() == Some(target_id),
+            _ => false,
+        };
+        if matches {
+            Self::set_media_file_target(tx, file_id, None, None, None, None).await?;
+        }
+        Ok(())
+    }
+
     async fn sync_media_file_link_update(
-        hook_ctx: &mut MutationContext<'_>,
+        tx: &mut MutationContext<'_>,
         event: &MutationEvent,
     ) -> async_graphql::Result<()> {
-        let before = Self::before::<MediaFile>(event, "MediaFile")?;
-        let after = Self::after::<MediaFile>(event, "MediaFile")?;
-
+        let before = event.before::<MediaFile>()?;
+        let Some(after) = tx
+            .find_by_id::<MediaFile>(&event.id)
+            .await
+            .map_err(Self::db_error)?
+        else {
+            return Ok(());
+        };
         let active_movie = after.movie_id.as_deref();
-        let active_episode = if active_movie.is_none() {
-            after.episode_id.as_deref()
-        } else {
-            None
-        };
-        let active_track = if active_movie.is_none() && active_episode.is_none() {
-            after.track_id.as_deref()
-        } else {
-            None
-        };
-        let active_chapter =
-            if active_movie.is_none() && active_episode.is_none() && active_track.is_none() {
-                after.chapter_id.as_deref()
-            } else {
-                None
-            };
-
-        if after.movie_id.as_deref() != active_movie
-            || after.episode_id.as_deref() != active_episode
-            || after.track_id.as_deref() != active_track
-            || after.chapter_id.as_deref() != active_chapter
+        let active_episode = after
+            .episode_id
+            .as_deref()
+            .filter(|_| active_movie.is_none());
+        let active_track = after
+            .track_id
+            .as_deref()
+            .filter(|_| active_movie.is_none() && active_episode.is_none());
+        let active_chapter = after.chapter_id.as_deref().filter(|_| {
+            active_movie.is_none() && active_episode.is_none() && active_track.is_none()
+        });
+        Self::set_media_file_target(
+            tx,
+            &after.id,
+            active_movie,
+            active_episode,
+            active_track,
+            active_chapter,
+        )
+        .await?;
+        let old = before.and_then(|row| row.movie_id.as_deref());
+        if old != active_movie
+            && let Some(id) = old
+            && let Some(row) = tx
+                .find_by_id::<Movie>(&id.to_string())
+                .await
+                .map_err(Self::db_error)?
+            && row.media_file_id.as_deref() == Some(after.id.as_str())
         {
-            Self::set_media_file_target(
-                hook_ctx,
-                &after.id,
-                active_movie,
-                active_episode,
-                active_track,
-                active_chapter,
-            )
-            .await?;
+            Self::set_movie_media_file(tx, id, None).await?;
         }
-
-        if before.movie_id.as_deref() != active_movie {
-            if let Some(old_id) = before.movie_id.as_deref() {
-                Self::set_movie_media_file(hook_ctx, old_id, None).await?;
-            }
-            if let Some(new_id) = active_movie {
-                Self::set_movie_media_file(hook_ctx, new_id, Some(&after.id)).await?;
-            }
+        if let Some(id) = active_movie {
+            Self::set_movie_media_file(tx, id, Some(&after.id)).await?;
         }
-        if before.episode_id.as_deref() != active_episode {
-            if let Some(old_id) = before.episode_id.as_deref() {
-                Self::set_episode_media_file(hook_ctx, old_id, None).await?;
-            }
-            if let Some(new_id) = active_episode {
-                Self::set_episode_media_file(hook_ctx, new_id, Some(&after.id)).await?;
-            }
+        let old = before.and_then(|row| row.episode_id.as_deref());
+        if old != active_episode
+            && let Some(id) = old
+            && let Some(row) = tx
+                .find_by_id::<Episode>(&id.to_string())
+                .await
+                .map_err(Self::db_error)?
+            && row.media_file_id.as_deref() == Some(after.id.as_str())
+        {
+            Self::set_episode_media_file(tx, id, None).await?;
         }
-        if before.track_id.as_deref() != active_track {
-            if let Some(old_id) = before.track_id.as_deref() {
-                Self::set_track_media_file(hook_ctx, old_id, None).await?;
-            }
-            if let Some(new_id) = active_track {
-                Self::set_track_media_file(hook_ctx, new_id, Some(&after.id)).await?;
-            }
+        if let Some(id) = active_episode {
+            Self::set_episode_media_file(tx, id, Some(&after.id)).await?;
         }
-        if before.chapter_id.as_deref() != active_chapter {
-            if let Some(old_id) = before.chapter_id.as_deref() {
-                Self::set_chapter_media_file(hook_ctx, old_id, None).await?;
-            }
-            if let Some(new_id) = active_chapter {
-                Self::set_chapter_media_file(hook_ctx, new_id, Some(&after.id)).await?;
-            }
+        let old = before.and_then(|row| row.track_id.as_deref());
+        if old != active_track
+            && let Some(id) = old
+            && let Some(row) = tx
+                .find_by_id::<Track>(&id.to_string())
+                .await
+                .map_err(Self::db_error)?
+            && row.media_file_id.as_deref() == Some(after.id.as_str())
+        {
+            Self::set_track_media_file(tx, id, None).await?;
         }
-
+        if let Some(id) = active_track {
+            Self::set_track_media_file(tx, id, Some(&after.id)).await?;
+        }
+        let old = before.and_then(|row| row.chapter_id.as_deref());
+        if old != active_chapter
+            && let Some(id) = old
+            && let Some(row) = tx
+                .find_by_id::<Chapter>(&id.to_string())
+                .await
+                .map_err(Self::db_error)?
+            && row.media_file_id.as_deref() == Some(after.id.as_str())
+        {
+            Self::set_chapter_media_file(tx, id, None).await?;
+        }
+        if let Some(id) = active_chapter {
+            Self::set_chapter_media_file(tx, id, Some(&after.id)).await?;
+        }
         Ok(())
     }
 
     async fn clear_deleted_media_file_links(
-        hook_ctx: &mut MutationContext<'_>,
+        tx: &mut MutationContext<'_>,
         event: &MutationEvent,
     ) -> async_graphql::Result<()> {
-        let media_file = Self::before::<MediaFile>(event, "MediaFile")?;
-        if let Some(movie_id) = media_file.movie_id.as_deref() {
-            Self::set_movie_media_file(hook_ctx, movie_id, None).await?;
-        }
-        if let Some(episode_id) = media_file.episode_id.as_deref() {
-            Self::set_episode_media_file(hook_ctx, episode_id, None).await?;
-        }
-        if let Some(track_id) = media_file.track_id.as_deref() {
-            Self::set_track_media_file(hook_ctx, track_id, None).await?;
-        }
-        if let Some(chapter_id) = media_file.chapter_id.as_deref() {
-            Self::set_chapter_media_file(hook_ctx, chapter_id, None).await?;
-        }
+        // Read the child-side links too: historical one-sided links must not survive deletion.
+        tx.update_where::<Movie>(
+            MovieWhereInput {
+                media_file_id: Some(Self::string_eq(&event.id)),
+                ..Default::default()
+            },
+            UpdateMovieInput {
+                media_file_id: Some(None),
+                wanted: Some(true),
+                has_file: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(Self::db_error)?;
+        tx.update_where::<Episode>(
+            EpisodeWhereInput {
+                media_file_id: Some(Self::string_eq(&event.id)),
+                ..Default::default()
+            },
+            UpdateEpisodeInput {
+                media_file_id: Some(None),
+                wanted: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(Self::db_error)?;
+        tx.update_where::<Track>(
+            TrackWhereInput {
+                media_file_id: Some(Self::string_eq(&event.id)),
+                ..Default::default()
+            },
+            UpdateTrackInput {
+                media_file_id: Some(None),
+                wanted: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(Self::db_error)?;
+        tx.update_where::<Chapter>(
+            ChapterWhereInput {
+                media_file_id: Some(Self::string_eq(&event.id)),
+                ..Default::default()
+            },
+            UpdateChapterInput {
+                media_file_id: Some(None),
+                wanted: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(Self::db_error)?;
+        Self::cleanup_media_file_dependents(tx, &event.id).await?;
         Ok(())
     }
 
     async fn sync_movie_media_file_update(
-        hook_ctx: &mut MutationContext<'_>,
+        tx: &mut MutationContext<'_>,
         event: &MutationEvent,
     ) -> async_graphql::Result<()> {
-        let before = Self::before::<Movie>(event, "Movie")?;
-        let after = Self::after::<Movie>(event, "Movie")?;
-        if before.media_file_id == after.media_file_id {
+        let before = event.before::<Movie>()?;
+        let Some(after) = tx
+            .find_by_id::<Movie>(&event.id)
+            .await
+            .map_err(Self::db_error)?
+        else {
+            return Ok(());
+        };
+        let old = before.and_then(|row| row.media_file_id.as_deref());
+        if old == after.media_file_id.as_deref() {
             return Ok(());
         }
-        if let Some(old_media_file_id) = before.media_file_id.as_deref() {
-            Self::set_media_file_target(hook_ctx, old_media_file_id, None, None, None, None)
-                .await?;
+        if let Some(file_id) = old {
+            Self::clear_media_file_target_if_matches(tx, file_id, "Movie", &after.id).await?;
         }
-        if let Some(new_media_file_id) = after.media_file_id.as_deref() {
-            Self::set_media_file_target(
-                hook_ctx,
-                new_media_file_id,
-                Some(&after.id),
-                None,
-                None,
-                None,
-            )
-            .await?;
+        if let Some(file_id) = after.media_file_id.as_deref() {
+            Self::set_media_file_target(tx, file_id, Some(&after.id), None, None, None).await?;
         }
-        Self::set_movie_media_file(hook_ctx, &after.id, after.media_file_id.as_deref()).await
+        Self::set_movie_media_file(tx, &after.id, after.media_file_id.as_deref()).await
     }
 
     async fn sync_episode_media_file_update(
-        hook_ctx: &mut MutationContext<'_>,
+        tx: &mut MutationContext<'_>,
         event: &MutationEvent,
     ) -> async_graphql::Result<()> {
-        let before = Self::before::<Episode>(event, "Episode")?;
-        let after = Self::after::<Episode>(event, "Episode")?;
-        if before.media_file_id == after.media_file_id {
+        let before = event.before::<Episode>()?;
+        let Some(after) = tx
+            .find_by_id::<Episode>(&event.id)
+            .await
+            .map_err(Self::db_error)?
+        else {
+            return Ok(());
+        };
+        let old = before.and_then(|row| row.media_file_id.as_deref());
+        if old == after.media_file_id.as_deref() {
             return Ok(());
         }
-        if let Some(old_media_file_id) = before.media_file_id.as_deref() {
-            Self::set_media_file_target(hook_ctx, old_media_file_id, None, None, None, None)
-                .await?;
+        if let Some(file_id) = old {
+            Self::clear_media_file_target_if_matches(tx, file_id, "Episode", &after.id).await?;
         }
-        if let Some(new_media_file_id) = after.media_file_id.as_deref() {
-            Self::set_media_file_target(
-                hook_ctx,
-                new_media_file_id,
-                None,
-                Some(&after.id),
-                None,
-                None,
-            )
-            .await?;
+        if let Some(file_id) = after.media_file_id.as_deref() {
+            Self::set_media_file_target(tx, file_id, None, Some(&after.id), None, None).await?;
         }
-        Self::set_episode_media_file(hook_ctx, &after.id, after.media_file_id.as_deref()).await
+        Self::set_episode_media_file(tx, &after.id, after.media_file_id.as_deref()).await
     }
 
     async fn sync_track_media_file_update(
-        hook_ctx: &mut MutationContext<'_>,
+        tx: &mut MutationContext<'_>,
         event: &MutationEvent,
     ) -> async_graphql::Result<()> {
-        let before = Self::before::<Track>(event, "Track")?;
-        let after = Self::after::<Track>(event, "Track")?;
-        if before.media_file_id == after.media_file_id {
+        let before = event.before::<Track>()?;
+        let Some(after) = tx
+            .find_by_id::<Track>(&event.id)
+            .await
+            .map_err(Self::db_error)?
+        else {
+            return Ok(());
+        };
+        let old = before.and_then(|row| row.media_file_id.as_deref());
+        if old == after.media_file_id.as_deref() {
             return Ok(());
         }
-        if let Some(old_media_file_id) = before.media_file_id.as_deref() {
-            Self::set_media_file_target(hook_ctx, old_media_file_id, None, None, None, None)
-                .await?;
+        if let Some(file_id) = old {
+            Self::clear_media_file_target_if_matches(tx, file_id, "Track", &after.id).await?;
         }
-        if let Some(new_media_file_id) = after.media_file_id.as_deref() {
-            Self::set_media_file_target(
-                hook_ctx,
-                new_media_file_id,
-                None,
-                None,
-                Some(&after.id),
-                None,
-            )
-            .await?;
+        if let Some(file_id) = after.media_file_id.as_deref() {
+            Self::set_media_file_target(tx, file_id, None, None, Some(&after.id), None).await?;
         }
-        Self::set_track_media_file(hook_ctx, &after.id, after.media_file_id.as_deref()).await
+        Self::set_track_media_file(tx, &after.id, after.media_file_id.as_deref()).await
     }
 
     async fn sync_chapter_media_file_update(
-        hook_ctx: &mut MutationContext<'_>,
+        tx: &mut MutationContext<'_>,
         event: &MutationEvent,
     ) -> async_graphql::Result<()> {
-        let before = Self::before::<Chapter>(event, "Chapter")?;
-        let after = Self::after::<Chapter>(event, "Chapter")?;
-        if before.media_file_id == after.media_file_id {
+        let before = event.before::<Chapter>()?;
+        let Some(after) = tx
+            .find_by_id::<Chapter>(&event.id)
+            .await
+            .map_err(Self::db_error)?
+        else {
+            return Ok(());
+        };
+        let old = before.and_then(|row| row.media_file_id.as_deref());
+        if old == after.media_file_id.as_deref() {
             return Ok(());
         }
-        if let Some(old_media_file_id) = before.media_file_id.as_deref() {
-            Self::set_media_file_target(hook_ctx, old_media_file_id, None, None, None, None)
-                .await?;
+        if let Some(file_id) = old {
+            Self::clear_media_file_target_if_matches(tx, file_id, "Chapter", &after.id).await?;
         }
-        if let Some(new_media_file_id) = after.media_file_id.as_deref() {
-            Self::set_media_file_target(
-                hook_ctx,
-                new_media_file_id,
-                None,
-                None,
-                None,
-                Some(&after.id),
-            )
-            .await?;
+        if let Some(file_id) = after.media_file_id.as_deref() {
+            Self::set_media_file_target(tx, file_id, None, None, None, Some(&after.id)).await?;
         }
-        Self::set_chapter_media_file(hook_ctx, &after.id, after.media_file_id.as_deref()).await
+        Self::set_chapter_media_file(tx, &after.id, after.media_file_id.as_deref()).await
     }
 
     fn defer_storage_object_delete(
@@ -1664,6 +2671,101 @@ impl AppMutationHook {
         if remaining.is_empty() {
             hook_ctx
                 .delete_by_id::<StorageObject>(&cache.storage_object_id)
+                .await
+                .map_err(Self::db_error)?;
+        }
+        Ok(())
+    }
+
+    /// Remove an entity's cached artwork (originals and resized copies) with the entity, in
+    /// the same transaction. The ArtworkCache hook releases unreferenced storage objects,
+    /// whose bytes the StorageObject hook deletes after commit.
+    async fn cleanup_entity_artwork(
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        let (entity_type, entity_id) = match event.entity_name {
+            // Collection artwork is shared by TMDB collection id across libraries: it goes
+            // with the last library collection that uses it.
+            "Collection" => {
+                let collection = Self::before::<Collection>(event, "Collection")?;
+                let others = hook_ctx
+                    .query::<Collection>()
+                    .filter(CollectionWhereInput {
+                        tmdb_collection_id: Some(graphql_orm::graphql::filters::IntFilter {
+                            eq: Some(collection.tmdb_collection_id),
+                            ..Default::default()
+                        }),
+                        id: Some(graphql_orm::graphql::filters::StringFilter {
+                            ne: Some(collection.id.clone()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    })
+                    .limit(1)
+                    .fetch_all()
+                    .await
+                    .map_err(Self::db_error)?;
+                if !others.is_empty() {
+                    return Ok(());
+                }
+                ("collection", collection.tmdb_collection_id.to_string())
+            }
+            name => (Self::artwork_entity_type(name), event.id.clone()),
+        };
+        hook_ctx
+            .delete_where::<ArtworkCache>(ArtworkCacheWhereInput {
+                entity_type: Some(Self::string_eq(entity_type)),
+                entity_id: Some(Self::string_eq(&entity_id)),
+                ..ArtworkCacheWhereInput::default()
+            })
+            .await
+            .map_err(Self::db_error)?;
+        Ok(())
+    }
+
+    /// The artwork cache's entity kind for an entity name.
+    fn artwork_entity_type(entity_name: &str) -> &'static str {
+        match entity_name {
+            "Movie" => "movie",
+            "Show" => "show",
+            "Season" => "season",
+            "Episode" => "episode",
+            "Album" => "album",
+            "Artist" => "artist",
+            "Audiobook" => "audiobook",
+            "Person" => "person",
+            _ => "unknown",
+        }
+    }
+
+    /// Guide posters belong to a TVMaze show while the guide still lists it.
+    async fn cleanup_guide_artwork(
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        let entry = Self::before::<ScheduleCache>(event, "ScheduleCache")?;
+        let tvmaze_show_id = entry.tvmaze_show_id;
+        let remaining = hook_ctx
+            .query::<ScheduleCache>()
+            .filter(ScheduleCacheWhereInput {
+                tvmaze_show_id: Some(graphql_orm::graphql::filters::IntFilter {
+                    eq: Some(tvmaze_show_id),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .limit(1)
+            .fetch_all()
+            .await
+            .map_err(Self::db_error)?;
+        if remaining.is_empty() {
+            hook_ctx
+                .delete_where::<ArtworkCache>(ArtworkCacheWhereInput {
+                    entity_type: Some(Self::string_eq("guide")),
+                    entity_id: Some(Self::string_eq(tvmaze_show_id.to_string())),
+                    ..ArtworkCacheWhereInput::default()
+                })
                 .await
                 .map_err(Self::db_error)?;
         }
@@ -1780,29 +2882,49 @@ impl MutationHook for AppMutationHook {
         event: &'a MutationEvent,
     ) -> BoxFuture<'a, async_graphql::Result<()>> {
         Box::pin(async move {
+            crate::services::graphql::personal_policy::on_mutation(ctx, hook_ctx, event).await?;
             match (&event.phase, &event.action, event.entity_name) {
                 (MutationPhase::Before, ChangeAction::Deleted, "Library") => {
                     Self::cleanup_library_children(hook_ctx, &event.id).await?;
                 }
+                (
+                    MutationPhase::Before,
+                    ChangeAction::Deleted,
+                    "Show" | "Album" | "Audiobook" | "Movie" | "RssFeed" | "LibraryScanRun",
+                ) => {
+                    Self::cleanup_parent_children(hook_ctx, event).await?;
+                }
                 (MutationPhase::After, ChangeAction::Updated, "User") => {
                     Self::revoke_user_sessions_if_needed(hook_ctx, event).await?;
                 }
-                (MutationPhase::After, ChangeAction::Updated, "MediaFile") => {
+                (
+                    MutationPhase::After,
+                    ChangeAction::Created | ChangeAction::Updated,
+                    "MediaFile",
+                ) => {
                     Self::sync_media_file_link_update(hook_ctx, event).await?;
                 }
                 (MutationPhase::Before, ChangeAction::Deleted, "MediaFile") => {
                     Self::clear_deleted_media_file_links(hook_ctx, event).await?;
                 }
-                (MutationPhase::After, ChangeAction::Updated, "Movie") => {
+                (MutationPhase::After, ChangeAction::Created | ChangeAction::Updated, "Movie") => {
                     Self::sync_movie_media_file_update(hook_ctx, event).await?;
                 }
-                (MutationPhase::After, ChangeAction::Updated, "Episode") => {
+                (
+                    MutationPhase::After,
+                    ChangeAction::Created | ChangeAction::Updated,
+                    "Episode",
+                ) => {
                     Self::sync_episode_media_file_update(hook_ctx, event).await?;
                 }
-                (MutationPhase::After, ChangeAction::Updated, "Track") => {
+                (MutationPhase::After, ChangeAction::Created | ChangeAction::Updated, "Track") => {
                     Self::sync_track_media_file_update(hook_ctx, event).await?;
                 }
-                (MutationPhase::After, ChangeAction::Updated, "Chapter") => {
+                (
+                    MutationPhase::After,
+                    ChangeAction::Created | ChangeAction::Updated,
+                    "Chapter",
+                ) => {
                     Self::sync_chapter_media_file_update(hook_ctx, event).await?;
                 }
                 (MutationPhase::After, ChangeAction::Deleted, "StorageObject") => {
@@ -1810,6 +2932,9 @@ impl MutationHook for AppMutationHook {
                 }
                 (MutationPhase::After, ChangeAction::Deleted, "ArtworkCache") => {
                     Self::cleanup_deleted_artwork_cache(hook_ctx, event).await?;
+                }
+                (MutationPhase::After, ChangeAction::Deleted, "ScheduleCache") => {
+                    Self::cleanup_guide_artwork(hook_ctx, event).await?;
                 }
                 (MutationPhase::After, ChangeAction::Created, "CastSession") => {
                     Self::end_other_active_cast_sessions(hook_ctx, event).await?;
@@ -1822,6 +2947,31 @@ impl MutationHook for AppMutationHook {
                 }
                 _ => {}
             }
+
+            if event.phase == MutationPhase::Before
+                && event.action == ChangeAction::Deleted
+                && matches!(event.entity_name, "Movie" | "Episode" | "Track" | "Chapter")
+            {
+                Self::detach_deleted_title(hook_ctx, event).await?;
+            }
+            if event.phase == MutationPhase::Before
+                && event.action == ChangeAction::Deleted
+                && matches!(
+                    event.entity_name,
+                    "Movie"
+                        | "Show"
+                        | "Season"
+                        | "Episode"
+                        | "Album"
+                        | "Artist"
+                        | "Audiobook"
+                        | "Person"
+                        | "Collection"
+                )
+            {
+                Self::cleanup_entity_artwork(hook_ctx, event).await?;
+            }
+            Self::maintain_summaries_and_parent_events(hook_ctx, event).await?;
 
             if Self::source_change_requires_reload(event) {
                 self.defer_source_reload(ctx, hook_ctx, event);
@@ -2218,6 +3368,9 @@ mod lifecycle_tests {
                 session_family_id: "family-1".to_string(),
                 scopes: vec!["read".to_string()],
                 session: "{}".to_string(),
+                grant_source: None,
+                roles: None,
+                authorization_roles: None,
                 ip_address: None,
                 user_agent: None,
                 expires_at: now(),
@@ -2239,6 +3392,9 @@ mod lifecycle_tests {
                 session_family_id: "family-2".to_string(),
                 scopes: vec!["read".to_string()],
                 session: "{}".to_string(),
+                grant_source: None,
+                roles: None,
+                authorization_roles: None,
                 ip_address: None,
                 user_agent: None,
                 expires_at: now(),
@@ -2378,3 +3534,11 @@ mod lifecycle_tests {
         assert!(remaining.is_empty());
     }
 }
+
+#[cfg(test)]
+#[path = "database_summary_tests.rs"]
+mod summary_tests;
+
+#[cfg(test)]
+#[path = "database_parent_summary_tests.rs"]
+mod parent_summary_tests;

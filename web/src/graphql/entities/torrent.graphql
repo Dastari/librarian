@@ -100,3 +100,14 @@ mutation EntityTorrentDeleteMany($where: TorrentWhereInput) {
     error
   }
 }
+
+subscription EntityTorrentChanged($filter: SubscriptionFilterInput) {
+  torrentChanged(filter: $filter) {
+    action
+    changeKind
+    id
+    sourceEntity
+    sourceId
+    path
+  }
+}

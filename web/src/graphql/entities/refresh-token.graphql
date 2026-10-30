@@ -85,8 +85,5 @@ subscription EntityRefreshTokenChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    refreshToken {
-      ...RefreshTokenFields
-    }
   }
 }

@@ -31,6 +31,20 @@ fn matrix_policy(entity: &str) -> (String, String) {
     )
 }
 
+fn assert_forbidden_write(response: &common::GqlResponse, field: &str) {
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert!(
+        response.body["errors"].as_array().is_some_and(|errors| {
+            errors
+                .iter()
+                .any(|error| error["extensions"]["code"] == "FORBIDDEN")
+        }),
+        "{field} must reject protected fields with FORBIDDEN: {}",
+        response.body
+    );
+    assert_ne!(response.body["data"][field]["success"], json!(true));
+}
+
 /// Mint an invite token straight through the entity layer.
 ///
 /// `InviteToken.token` is `#[graphql_orm(private)]`, so it exists on the Rust
@@ -427,13 +441,13 @@ fn member_and_admin_authorization_matches_the_shipped_matrix() {
         let admin_write = admin.query(RENAME, json!({ "id": profile_id })).await;
         assert_eq!(admin_write["updateQualityProfile"]["success"], true);
 
-        // --- Library: member.read / member.write, owner-scoped ----------------
+        // --- Library: owned metadata is member-writable; roots require admin --
         assert_eq!(
             matrix_policy("Library"),
             ("member.read".to_string(), "member.write".to_string())
         );
         const CREATE_LIBRARY: &str = r#"mutation Create($input: CreateLibraryInput!) {
-      createLibrary(input: $input) { success error library { id userId name } }
+      createLibrary(input: $input) { success error library { id userId name path } }
     }"#;
         let library_input = |user_id: &str, name: &str, path: &str| {
             json!({ "input": {
@@ -443,10 +457,18 @@ fn member_and_admin_authorization_matches_the_shipped_matrix() {
             }})
         };
 
+        let admin_path = app
+            .path("media/admin-library")
+            .to_string_lossy()
+            .to_string();
+        let member_path = app
+            .path("media/member-library")
+            .to_string_lossy()
+            .to_string();
         let admin_library = admin
             .query(
                 CREATE_LIBRARY,
-                library_input(&admin_id, "Admin Library", "/tmp/admin-library"),
+                library_input(&admin_id, "Admin Library", &admin_path),
             )
             .await;
         assert_eq!(admin_library["createLibrary"]["success"], true);
@@ -456,13 +478,39 @@ fn member_and_admin_authorization_matches_the_shipped_matrix() {
             .to_string();
 
         let member_id = member.user_id.clone().expect("member id");
-        let member_library = member
+        let member_create = member
+            .post(
+                CREATE_LIBRARY,
+                library_input(&member_id, "Unapproved Library", &member_path),
+            )
+            .await;
+        assert_forbidden_write(&member_create, "createLibrary");
+        let rejected_library = admin.query(
+            "query { libraries(where: { name: { eq: \"Unapproved Library\" } }) { pageInfo { totalCount } } }",
+            json!({}),
+        ).await;
+        assert_eq!(rejected_library["libraries"]["pageInfo"]["totalCount"], 0);
+
+        // Provision the approved root as admin without changing its intended owner.
+        let member_library = admin
             .query(
                 CREATE_LIBRARY,
-                library_input(&member_id, "Member Library", "/tmp/member-library"),
+                library_input(&member_id, "Member Library", &member_path),
             )
             .await;
         assert_eq!(member_library["createLibrary"]["success"], true);
+        assert_eq!(
+            member_library["createLibrary"]["library"]["userId"],
+            member_id
+        );
+        assert_eq!(
+            member_library["createLibrary"]["library"]["path"],
+            member_path
+        );
+        let member_library_id = member_library["createLibrary"]["library"]["id"]
+            .as_str()
+            .expect("member library id")
+            .to_string();
 
         const LIBRARIES: &str =
             "query { libraries(page: { limit: 50 }) { edges { node { id name userId } } } }";
@@ -470,6 +518,7 @@ fn member_and_admin_authorization_matches_the_shipped_matrix() {
         let member_rows = member_view["libraries"]["edges"].as_array().expect("edges");
         assert_eq!(member_rows.len(), 1, "a member only sees its own libraries");
         assert_eq!(member_rows[0]["node"]["userId"], member_id);
+        assert_eq!(member_rows[0]["node"]["id"], member_library_id);
 
         let admin_view = admin.query(LIBRARIES, json!({})).await;
         assert_eq!(
@@ -480,6 +529,70 @@ fn member_and_admin_authorization_matches_the_shipped_matrix() {
             2,
             "an admin sees every library"
         );
+
+        const UPDATE_LIBRARY: &str = r#"mutation Update($id: String!, $input: UpdateLibraryInput!) {
+          updateLibrary(id: $id, input: $input) { success error library { userId name path namingPattern scanIntervalMinutes } }
+        }"#;
+        let member_update = member.query(UPDATE_LIBRARY, json!({
+            "id": member_library_id,
+            "input": { "name": "Member Label", "namingPattern": "Custom/{show}/{title}.{ext}", "scanIntervalMinutes": 15 }
+        })).await;
+        assert_eq!(
+            member_update["updateLibrary"]["success"], true,
+            "{member_update}"
+        );
+        assert_eq!(
+            member_update["updateLibrary"]["library"]["userId"],
+            member_id
+        );
+        assert_eq!(
+            member_update["updateLibrary"]["library"]["path"],
+            member_path
+        );
+        assert_eq!(
+            member_update["updateLibrary"]["library"]["namingPattern"],
+            "Custom/{show}/{title}.{ext}"
+        );
+        assert_eq!(
+            member_update["updateLibrary"]["library"]["scanIntervalMinutes"],
+            15
+        );
+        let member_root_update = member.post(UPDATE_LIBRARY, json!({
+            "id": member_library_id,
+            "input": { "name": "must not commit", "path": app.path("media/unapproved-replacement") }
+        })).await;
+        assert_forbidden_write(&member_root_update, "updateLibrary");
+        let member_persisted = member
+            .query(
+                "query Get($id: String!) { library(id: $id) { userId name path namingPattern } }",
+                json!({"id": member_library_id}),
+            )
+            .await;
+        assert_eq!(member_persisted["library"]["name"], "Member Label");
+        assert_eq!(member_persisted["library"]["userId"], member_id);
+        assert_eq!(member_persisted["library"]["path"], member_path);
+        assert_eq!(
+            member_persisted["library"]["namingPattern"],
+            "Custom/{show}/{title}.{ext}"
+        );
+
+        // A valid owned library does not authorize manufacturing a runtime identity.
+        let forged_hash = "abcdef0000000000000000000000000000000001";
+        let member_torrent_create = member.post(
+            "mutation Create($input: CreateTorrentInput!) { createTorrent(input: $input) { success error } }",
+            json!({"input": {
+                "userId": member_id, "libraryId": member_library_id, "infoHash": forged_hash,
+                "name": "Member manufactured", "state": "paused", "progress": 0.0, "totalBytes": 100,
+                "downloadedBytes": 0, "uploadedBytes": 0, "uploadedBytesTotal": 0,
+                "savePath": app.path("downloads"), "excludedFiles": [], "addedAt": "2026-10-25T00:00:00Z"
+            }}),
+        ).await;
+        assert_forbidden_write(&member_torrent_create, "createTorrent");
+        let rejected_torrent = admin.query(
+            "query Get($hash: String!) { torrents(where: { infoHash: { eq: $hash } }) { pageInfo { totalCount } } }",
+            json!({"hash": forged_hash}),
+        ).await;
+        assert_eq!(rejected_torrent["torrents"]["pageInfo"]["totalCount"], 0);
 
         // A member cannot reach across the ownership boundary.
         const STEAL: &str = r#"mutation Steal($id: String!) {
@@ -501,6 +614,21 @@ fn member_and_admin_authorization_matches_the_shipped_matrix() {
             )
             .await;
         assert_eq!(still_named["library"]["name"], "Admin Library");
+
+        let member_delete = member
+            .query(
+                "mutation Delete($id: String!) { deleteLibrary(id: $id) { success error } }",
+                json!({"id": member_library_id}),
+            )
+            .await;
+        assert_eq!(
+            member_delete["deleteLibrary"]["success"], true,
+            "{member_delete}"
+        );
+        let remaining = admin.query(LIBRARIES, json!({})).await;
+        let remaining_rows = remaining["libraries"]["edges"].as_array().expect("edges");
+        assert_eq!(remaining_rows.len(), 1);
+        assert_eq!(remaining_rows[0]["node"]["id"], admin_library_id);
 
         app.shutdown().await;
     });

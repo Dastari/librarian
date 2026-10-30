@@ -97,7 +97,10 @@ pub struct FilesystemRuntimeInfo {
 pub struct LibraryPathAvailabilityInput {
     #[graphql(name = "paths")]
     pub paths: Vec<String>,
-    #[graphql(name = "attemptReconnect")]
+    #[graphql(
+        name = "attemptReconnect",
+        deprecation = "Queries are read-only; use reconnectNetworkPath instead"
+    )]
     pub attempt_reconnect: Option<bool>,
 }
 
@@ -255,13 +258,18 @@ impl FilesystemQueries {
 
         let db = ctx.data::<Database>()?;
         let services = ctx.data::<Arc<ServicesManager>>()?;
-        let attempt_reconnect = input.attempt_reconnect.unwrap_or(false);
+        // Availability is a read. Mount/reconnect is the explicit admin command.
+        let _legacy_attempt_reconnect = input.attempt_reconnect;
+        if input.paths.len() > 100 {
+            return Err(async_graphql::Error::new(
+                "At most 100 paths may be checked at once",
+            ));
+        }
 
         let mut out = Vec::with_capacity(input.paths.len());
         for path in input.paths {
             let status =
-                filesystem_network::check_path_availability(db, services, &path, attempt_reconnect)
-                    .await;
+                filesystem_network::check_path_availability(db, services, &path, false).await;
             out.push(LibraryPathAvailability {
                 path: status.path,
                 reachable: status.reachable,

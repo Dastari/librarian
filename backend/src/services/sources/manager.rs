@@ -23,6 +23,10 @@ use super::definitions::yts::YtsSource;
 use super::encryption::CredentialEncryption;
 use super::{Source, SourceQuery, SourceRelease, SourceSearchResult};
 
+#[path = "paging.rs"]
+mod paging;
+use paging::ContinuationStore;
+
 /// Default cache TTL (5 minutes)
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 /// Maximum concurrent searches per source
@@ -35,6 +39,8 @@ const SOURCE_SEARCH_TIMEOUT: Duration = Duration::from_secs(45);
 pub struct SourcesManager {
     /// Credential encryption service
     encryption: CredentialEncryption,
+    generations: RwLock<HashMap<String, String>>,
+    continuations: RwLock<ContinuationStore>,
     /// Loaded source instances by config ID
     sources: RwLock<HashMap<String, Arc<dyn Source>>>,
     /// Source priorities (source_id -> priority, lower = higher priority)
@@ -52,6 +58,8 @@ impl SourcesManager {
 
         Ok(Self {
             encryption,
+            generations: RwLock::new(HashMap::new()),
+            continuations: RwLock::new(ContinuationStore::default()),
             sources: RwLock::new(HashMap::new()),
             priorities: RwLock::new(HashMap::new()),
             cache: RwLock::new(SearchCache::new(DEFAULT_CACHE_TTL)),
@@ -128,7 +136,13 @@ impl SourcesManager {
             }
         };
 
-        self.sources.write().insert(source_id.to_string(), source);
+        {
+            let mut sources = self.sources.write();
+            self.generations
+                .write()
+                .insert(source_id.to_string(), uuid::Uuid::new_v4().to_string());
+            sources.insert(source_id.to_string(), source);
+        }
         self.priorities
             .write()
             .insert(source_id.to_string(), priority);
@@ -151,14 +165,23 @@ impl SourcesManager {
 
     /// Unload a source
     pub fn unload_source(&self, source_id: &str) {
-        self.sources.write().remove(source_id);
+        {
+            let mut sources = self.sources.write();
+            self.generations.write().remove(source_id);
+            sources.remove(source_id);
+        }
         self.priorities.write().remove(source_id);
         self.rate_limiters.write().remove(source_id);
     }
 
     /// Clear all loaded sources before rebuilding from current database state.
     pub fn clear_sources(&self) {
-        self.sources.write().clear();
+        {
+            let mut sources = self.sources.write();
+            self.generations.write().clear();
+            sources.clear();
+        }
+        self.continuations.write().clear();
         self.priorities.write().clear();
         self.rate_limiters.write().clear();
     }

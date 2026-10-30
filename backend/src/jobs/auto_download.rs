@@ -4,7 +4,7 @@
 //! builds one or more `SourceQuery` variants, searches all configured sources,
 //! filters candidates against the item's resolved `QualityProfile`, ranks the
 //! survivors with `services::quality::profile::filter_and_rank`, and grabs the
-//! best release via `TorrentService::add_magnet_with_metadata`, stamping the
+//! best release via `TorrentService::add_magnet_for_actor_with_outcome`, stamping the
 //! wanted-target linkage columns on the created `Torrent` row.
 //!
 //! What is hunted is decided by `auto_download_mode` on the parent
@@ -53,7 +53,7 @@ use crate::graphql::entities::{
 use crate::services::ServicesManager;
 use crate::services::quality::profile;
 use crate::services::sources::{QueryType, SourceQuery, SourceRelease};
-use crate::services::torrent::{TorrentAddMetadata, get_default_user_id};
+use crate::services::torrent::TorrentAddMetadata;
 
 /// App setting holding the per-target "last searched at" map (JSON object of
 /// `target key -> RFC3339 timestamp`).
@@ -1109,7 +1109,6 @@ struct HuntContext {
     db: Database,
     sources: Arc<crate::services::sources::manager::SourcesManager>,
     torrent: Arc<crate::services::torrent::TorrentService>,
-    user_id: Option<uuid::Uuid>,
     blocklist: Blocklist,
 }
 
@@ -1222,10 +1221,19 @@ async fn try_candidate(
 
     match ctx
         .torrent
-        .add_magnet_with_metadata(&uri, ctx.user_id, metadata)
+        .add_magnet_for_actor_with_outcome(
+            &uri,
+            &crate::services::torrent::system_auth_user(),
+            metadata,
+        )
         .await
     {
-        Ok(info) => {
+        Ok(outcome) => {
+            if !outcome.created {
+                tracing::debug!(info_hash = %outcome.info.info_hash, "Auto-download: existing owned torrent retained; grab details unchanged");
+                return Ok(false);
+            }
+            let info = outcome.info;
             summary.grabbed += 1;
             // Season (for packs) and the tracker's seeding floors are not
             // carried by `TorrentAddMetadata`; stamp them on the row the
@@ -1294,10 +1302,6 @@ pub async fn run_scoped(
         .await
         .context("torrent service not available")?;
 
-    let user_id = get_default_user_id(&db)
-        .await
-        .context("failed to look up default user")?;
-
     let blocklist = Blocklist::load(&db).await.unwrap_or_else(|error| {
         warn!(error = %error, "Auto-download: failed to load the release blocklist; continuing without it");
         Blocklist::default()
@@ -1327,7 +1331,6 @@ pub async fn run_scoped(
         db: db.clone(),
         sources: sources_manager,
         torrent: torrent_service,
-        user_id,
         blocklist,
     };
 

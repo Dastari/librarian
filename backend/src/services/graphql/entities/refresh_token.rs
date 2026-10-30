@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
     plural = "RefreshTokens",
     default_sort = "created_at",
     read_policy = "admin.read",
-    write_policy = "admin.write"
+    write_policy = "admin.write",
+    index = "session_id",
+    index = "user_id"
 )]
 pub struct RefreshToken {
     #[graphql(name = "id")]
@@ -44,6 +46,17 @@ pub struct RefreshToken {
 
     #[graphql_orm(private)]
     pub session: String,
+
+    // Nullable for pre-0.20 agql-auth sessions, which must reauthenticate.
+    // Never infer their provenance from the old session's auth method.
+    #[graphql_orm(private)]
+    pub grant_source: Option<String>,
+
+    #[graphql_orm(private)]
+    pub roles: Option<String>,
+
+    #[graphql_orm(private)]
+    pub authorization_roles: Option<String>,
 
     #[graphql_orm(private)]
     pub ip_address: Option<String>,

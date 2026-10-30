@@ -186,6 +186,23 @@ describe("TvGuide", () => {
     expect(screen.getByText(/Nothing on tomorrow/)).toBeInTheDocument();
   });
 
+  it("moves day-tab focus with arrows and activates the programme panel with Enter", async () => {
+    await mount([
+      libraryMock([libraryEpisode("ep-1", {}), libraryEpisode("ep-2", { episode: 6, airDate: "2026-09-08", title: "Tomorrow's episode" })]),
+      laterMock([]),
+    ]);
+    await screen.findByRole("button", { name: /Andor/ });
+    const today = dayTab(/Today/);
+    today.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    const tomorrow = dayTab(/Tomorrow/);
+    expect(tomorrow).toHaveFocus();
+    expect(today).toHaveAttribute("aria-selected", "true");
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(tomorrow).toHaveAttribute("aria-selected", "true"));
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("Tomorrow's episode");
+  });
+
   it("numbers a special without an episode number", async () => {
     await mount([libraryMock([libraryEpisode("ep-1", { episode: 0 })]), laterMock([])]);
     expect(await screen.findByText(/S02 Special/)).toBeInTheDocument();
@@ -226,7 +243,7 @@ describe("TvGuide across every show", () => {
       weekMock("GB", [scheduleRow("sc-3", { showName: "Doctor Who", showNetwork: "BBC One", tvmazeEpisodeId: 3, countryCode: "GB" })]),
     ]);
     await screen.findByRole("button", { name: /Andor/ });
-    await userEvent.click(screen.getByRole("radio", { name: "All shows" }));
+    await userEvent.click(screen.getByRole("button", { name: "All shows" }));
     return result;
   };
 
@@ -241,9 +258,9 @@ describe("TvGuide across every show", () => {
   it("offers the synced countries and reloads the week when one is picked", async () => {
     await allShows();
     await screen.findByRole("button", { name: /The Bear/ });
-    const picker = screen.getByRole("radiogroup", { name: "Country" });
-    expect(within(picker).getAllByRole("radio").map((radio) => radio.textContent)).toEqual(["US", "GB"]);
-    await userEvent.click(within(picker).getByRole("radio", { name: "GB" }));
+    const picker = screen.getByRole("group", { name: "Country" });
+    expect(within(picker).getAllByRole("button").map((button) => button.textContent)).toEqual(["US", "GB"]);
+    await userEvent.click(within(picker).getByRole("button", { name: "GB" }));
     expect(await screen.findByRole("button", { name: /Doctor Who/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /The Bear/ })).toBeNull();
   });
@@ -251,7 +268,7 @@ describe("TvGuide across every show", () => {
   it("marks a discovered show as addable", async () => {
     await allShows();
     const bear = await screen.findByRole("button", { name: /The Bear/ });
-    expect(bear.querySelector("svg.tabler-icon-plus")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Andor/ }).querySelector("svg.tabler-icon-plus")).toBeNull();
+    expect(bear.querySelector('svg[data-icon="plus"]')).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Andor/ }).querySelector('svg[data-icon="plus"]')).toBeNull();
   });
 });

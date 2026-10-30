@@ -41,6 +41,13 @@ query EntityNotificationGet($id: String!) {
   }
 }
 
+query EntityNotificationKeyset($where: NotificationWhereInput, $page: KeysetPageInput!) {
+  notificationsKeyset(where: $where, page: $page) {
+    edges { cursor node { ...NotificationFields } }
+    pageInfo { hasNextPage hasPreviousPage startCursor endCursor totalCount }
+  }
+}
+
 mutation EntityNotificationCreate($input: CreateNotificationInput!) {
   createNotification(input: $input) {
     success
@@ -91,8 +98,5 @@ subscription EntityNotificationChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    notification {
-      ...NotificationFields
-    }
   }
 }

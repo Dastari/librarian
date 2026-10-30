@@ -90,8 +90,5 @@ subscription EntityUsenetServerChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    usenetServer {
-      ...UsenetServerFields
-    }
   }
 }

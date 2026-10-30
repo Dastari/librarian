@@ -87,7 +87,8 @@ pub struct Artist {
         target = "Library",
         from = "library_id",
         to = "id",
-        on_delete = "cascade"
+        on_delete = "cascade",
+        propagate_change = "up"
     )]
     pub library: Option<Library>,
 
@@ -95,6 +96,19 @@ pub struct Artist {
     #[serde(skip)]
     #[relation(target = "Album", from = "id", to = "artist_id", multiple)]
     pub albums: Vec<Album>,
+
+    // Query relations do not add physical FKs or change existing delete behavior.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Track",
+        from = "id",
+        to = "artist_id",
+        multiple,
+        emit_fk = false
+    )]
+    pub tracks: Vec<Track>,
 }
 
 #[derive(Default)]

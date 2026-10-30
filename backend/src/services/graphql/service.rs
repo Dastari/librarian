@@ -298,6 +298,8 @@ async fn graphql_handler(
         if let Some(auth) = state.services.get_auth().await {
             match auth.authenticate_access_token(&token).await {
                 Ok(user) => {
+                    let authority = super::session_authority::SessionAuthority(user.clone());
+                    request = request.data(authority.subject()).data(authority);
                     let user = AuthUser::from(user);
                     let user_id = user.user_id.clone();
                     tracing::debug!("Auth successful for user: {}", user.user_id);
@@ -330,11 +332,7 @@ async fn graphql_ws_handler(
     }
     let auth = state.services.get_auth().await;
     let auth_user = match (extract_token(&headers), auth.as_ref()) {
-        (Some(token), Some(auth)) => auth
-            .authenticate_access_token(&token)
-            .await
-            .ok()
-            .map(AuthUser::from),
+        (Some(token), Some(auth)) => auth.authenticate_access_token(&token).await.ok(),
         _ => None,
     };
     let auth_for_init = auth.clone();
@@ -345,6 +343,10 @@ async fn graphql_ws_handler(
                 async_graphql_axum::GraphQLWebSocket::new(socket, state.schema.clone(), protocol);
             if let Some(user) = auth_user {
                 let mut data = async_graphql::Data::default();
+                let authority = super::session_authority::SessionAuthority(user.clone());
+                data.insert(authority.subject());
+                data.insert(authority);
+                let user = AuthUser::from(user);
                 data.insert(user.user_id.clone());
                 data.insert(user);
                 ws = ws.with_data(data);
@@ -362,6 +364,10 @@ async fn graphql_ws_handler(
                             && let Ok(user) = auth.authenticate_access_token(token).await
                         {
                             let mut data = async_graphql::Data::default();
+                            let authority =
+                                super::session_authority::SessionAuthority(user.clone());
+                            data.insert(authority.subject());
+                            data.insert(authority);
                             let user = AuthUser::from(user);
                             data.insert(user.user_id.clone());
                             data.insert(user);

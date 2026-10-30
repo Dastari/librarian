@@ -99,8 +99,5 @@ subscription EntityUsenetDownloadChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    usenetDownload {
-      ...UsenetDownloadFields
-    }
   }
 }

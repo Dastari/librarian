@@ -108,8 +108,5 @@ subscription EntityMovieChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    movie {
-      ...MovieFields
-    }
   }
 }

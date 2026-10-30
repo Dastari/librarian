@@ -91,8 +91,5 @@ subscription EntityLibraryScanIssueChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    libraryScanIssue {
-      ...LibraryScanIssueFields
-    }
   }
 }

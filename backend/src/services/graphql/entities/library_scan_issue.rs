@@ -4,8 +4,16 @@ use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    async_graphql::SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
 )]
+#[graphql(complex)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
@@ -27,18 +35,22 @@ pub struct LibraryScanIssue {
 
     #[graphql(name = "userId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owner.id")]
     pub user_id: String,
 
     #[graphql(name = "scanRunId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub scan_run_id: String,
 
     #[graphql(name = "libraryId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub library_id: String,
 
     #[graphql(name = "mediaFileId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub media_file_id: Option<String>,
 
     #[graphql(name = "stage")]
@@ -89,6 +101,44 @@ pub struct LibraryScanIssue {
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,
+
+    // Query relations do not add physical FKs or change existing delete behavior.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "LibraryScanRun",
+        from = "scan_run_id",
+        to = "id",
+        on_delete = "cascade",
+        propagate_change = "up",
+        emit_fk = false
+    )]
+    pub scan_run: Option<Box<LibraryScanRun>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Library",
+        from = "library_id",
+        to = "id",
+        on_delete = "cascade",
+        emit_fk = false
+    )]
+    pub library: Option<Box<Library>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "MediaFile",
+        from = "media_file_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub media_file: Option<Box<MediaFile>>,
 }
 
 #[derive(Default)]

@@ -1,5 +1,6 @@
-import { useMutation, useQuery } from "@apollo/client/react";
-import { toast } from "@heroui/react";
+import { useMutation } from "@apollo/client/react";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+import { toast } from "glass-ux/toast";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate } from "@tanstack/react-router";
 import { IconFolder, IconTrash } from "@tabler/icons-react";
@@ -104,7 +105,7 @@ export function LibrarySettingsForm({ library }: { library: LibraryFieldsFragmen
         <FieldGroup>
           <FormTextField control={form.control} name="name" label="Name" isRequired />
           <div className="flex items-end gap-2">
-            <FormTextField control={form.control} name="path" label="Folder" mono isRequired className="flex-1" />
+            <FormTextField control={form.control} name="path" label="Folder" mono isRequired className="min-w-0 flex-1" />
             <Button variant="secondary" onPress={() => setPickingFolder(true)} aria-label="Browse folders" isIconOnly className="mb-px">
               <IconFolder size={18} />
             </Button>

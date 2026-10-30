@@ -1,5 +1,5 @@
-
-import { IconAlertTriangle, IconRefresh } from "@tabler/icons-react";
+import { EmptyState } from "glass-ux/empty-state";
+import { IconRefresh, IconWarning } from "glass-ux/icons";
 import type { ReactNode } from "react";
 
 import { errorMessage } from "@/lib/graphql/errors";
@@ -17,25 +17,11 @@ interface ErrorStateProps {
 
 export function ErrorState({ error, title = "Couldn't load this", onRetry, className, compact }: ErrorStateProps) {
   return (
-    <div
-      role="alert"
-      className={cn(
-        "flex flex-col items-center justify-center gap-3 rounded-card border border-danger/30 bg-danger/5 text-center",
-        compact ? "px-4 py-6" : "px-6 py-12",
-        className,
-      )}
-    >
-      <IconAlertTriangle size={compact ? 22 : 28} className="text-danger" stroke={1.75} />
-      <div className="max-w-md">
-        <p className="text-title-md text-foreground">{title}</p>
-        <p className="mt-1 text-body-sm text-muted">{errorMessage(error)}</p>
-      </div>
-      {onRetry ? (
-        <Button size="sm" variant="secondary" onPress={onRetry}>
-          <IconRefresh size={16} />
-          Try again
-        </Button>
-      ) : null}
+    <div className={cn("w-full min-w-0", compact ? "h-40" : "h-64", className)}>
+      <EmptyState tone="danger" icon={<IconWarning />} action={onRetry ? <Button size="sm" variant="secondary" onPress={onRetry} icon={<IconRefresh />}>Try again</Button> : undefined}>
+        {title}
+        <span className="block type-body text-muted">{errorMessage(error)}</span>
+      </EmptyState>
     </div>
   );
 }
