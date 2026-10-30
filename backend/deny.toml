@@ -6,7 +6,25 @@ unmaintained = "workspace"
 unsound = "all"
 # See docs/dependency-advisory-exceptions.md. Librarian uses agql-auth's HS256
 # mode only; the affected RSA private-key path is not configured.
-ignore = ["RUSTSEC-2023-0071"]
+ignore = [
+    "RUSTSEC-2023-0071", # rsa, unreachable (HS256 only)
+    "RUSTSEC-2026-0387", # crypto-bigint via p256, unreachable (HS256 only)
+    "RUSTSEC-2026-0293", # ringbuf via librqbit-utp, elements are u8
+    "RUSTSEC-2026-0391", # zstd 0.13 via graphql-orm-backup, no reused contexts
+    "RUSTSEC-2026-0403", # zstd-safe 7 via graphql-orm-backup, local self-written backups
+    "RUSTSEC-2026-0398", # zstd-safe 7 Seekable API, unused
+    # zstd-safe 7 unsound-API notices via graphql-orm-backup; none of these APIs are called.
+    "RUSTSEC-2026-0395",
+    "RUSTSEC-2026-0396",
+    "RUSTSEC-2026-0397",
+    "RUSTSEC-2026-0399",
+    "RUSTSEC-2026-0400",
+    "RUSTSEC-2026-0401",
+    "RUSTSEC-2026-0402",
+    "RUSTSEC-2026-0404",
+    "RUSTSEC-2026-0405",
+    "RUSTSEC-2026-0406",
+]
 
 [licenses]
 confidence-threshold = 0.8

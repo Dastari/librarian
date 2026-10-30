@@ -242,7 +242,13 @@ describe("complete collection filtering and infinite rendering", () => {
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("menu", { hidden: true })).toBeNull());
     rerender(<DataTable columns={[...columns, { ...statusColumn, value: (row) => row.id === "2" ? "Ready" : "Waiting" }]} rows={rows} getRowId={getRowId} />);
-    await userEvent.click(screen.getByRole("button", { name: /^Filters/ }));
+    // A click straight after Escape can land while the menu is still closing and be ignored on
+    // slow runners, so reopen until the trigger reports the menu as expanded.
+    const filters = screen.getByRole("button", { name: /^Filters/ });
+    await waitFor(async () => {
+      if (filters.getAttribute("aria-expanded") !== "true") await userEvent.click(filters);
+      expect(filters).toHaveAttribute("aria-expanded", "true");
+    });
     await waitFor(() => expect(screen.getByRole("menuitem", { name: "Status" })).toBeInTheDocument());
     await userEvent.keyboard("{Escape}");
     await userEvent.type(await searchBox(), "Ready");

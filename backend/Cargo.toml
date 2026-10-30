@@ -132,7 +132,7 @@ libc = "0.2.189"
 # Archive extraction (docs/design.md "Archive Extraction").
 # Pure-Rust for zip/7z; `unrar` statically links the vendored RARLAB unrar
 # C++ source, so no external `unrar`/`7z`/`unzip` binary is required.
-zip = { version = "8.6.0", default-features = false, features = ["deflate", "deflate64", "bzip2", "zstd", "lzma", "xz", "time"] }
+zip = { version = "9.1.3", default-features = false, features = ["deflate", "deflate64", "bzip2", "zstd", "lzma", "xz", "time"] }
 sevenz-rust2 = { version = "0.22.2", default-features = false, features = ["util", "compress", "aes256", "bzip2", "ppmd"] }
 unrar = "0.5.8"
 

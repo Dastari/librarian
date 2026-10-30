@@ -58,8 +58,10 @@ fn delivered_frequency(path: &Path) -> usize {
     );
     let samples: Vec<_> = output
         .stdout
-        .chunks_exact(2)
-        .map(|bytes| i16::from_le_bytes([bytes[0], bytes[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|bytes| i16::from_le_bytes(*bytes))
         .collect();
     assert!(
         samples.len() >= 7800,
