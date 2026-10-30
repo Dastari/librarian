@@ -1,8 +1,9 @@
 //! Database helpers for the torrent service.
-//! Uses the pool directly; table/column names must match the GraphQL entity schema (snake_case in DB).
+//! Reads use typed entity queries; writes use checked generated GraphQL mutations.
 
 use super::{add_torrent_opts, get_info_hash_hex};
 
+use anyhow::Context as _;
 use async_graphql::{Request, Variables};
 use std::fs;
 use uuid::Uuid;
@@ -56,7 +57,7 @@ fn open_fd_diagnostics() -> Option<String> {
     }
 }
 
-async fn execute_mutation(
+async fn execute_query(
     schema: &LibrarianSchema,
     auth_user: &AuthUser,
     query: &str,
@@ -65,6 +66,12 @@ async fn execute_mutation(
     let request = Request::new(query)
         .variables(Variables::from_json(variables))
         .data(auth_user.clone())
+        .data(graphql_orm::graphql::auth::AuthSubject::from_parts(
+            auth_user.user_id.clone(),
+            auth_user.role.iter().cloned().collect(),
+            Vec::new(),
+            None,
+        ))
         .data(auth_user.user_id.clone());
     let response = schema.execute(request).await;
     if !response.errors.is_empty() {
@@ -78,6 +85,59 @@ async fn execute_mutation(
     }
     let data = serde_json::to_value(&response.data)?;
     Ok(data)
+}
+
+async fn execute_mutation(
+    schema: &LibrarianSchema,
+    auth_user: &AuthUser,
+    query: &str,
+    variables: serde_json::Value,
+) -> Result<serde_json::Value, anyhow::Error> {
+    if let Some(owner) = variables.get("input").and_then(|input| input.get("userId")) {
+        let owner = owner
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Record ownership must be explicit"))?;
+        Uuid::parse_str(owner).map_err(|_| {
+            anyhow::anyhow!("System authority cannot own torrent records or notifications")
+        })?;
+    }
+    let data = execute_query(schema, auth_user, query, variables).await?;
+    check_mutation_payloads(&data)?;
+    Ok(data)
+}
+
+/// Transport success is not mutation success. These internal documents select a
+/// success/error payload for every mutation root, including compatibility aliases.
+fn check_mutation_payloads(data: &serde_json::Value) -> anyhow::Result<()> {
+    let roots = data
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("Mutation response is not an object"))?;
+    if roots.is_empty() {
+        anyhow::bail!("Mutation response has no result payload");
+    }
+    let mut checked = false;
+    for (name, payload) in roots {
+        if name == "__typename" {
+            continue;
+        }
+        checked = true;
+        let success = payload
+            .get("success")
+            .or_else(|| payload.get("Success"))
+            .and_then(serde_json::Value::as_bool);
+        if success != Some(true) {
+            let error = payload
+                .get("error")
+                .or_else(|| payload.get("Error"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("missing or unsuccessful mutation payload");
+            anyhow::bail!("{name}: {error}");
+        }
+    }
+    if !checked {
+        anyhow::bail!("Mutation response has no result payload");
+    }
+    Ok(())
 }
 
 /// Parse a hex info_hash string into a 20-byte `Id20`.
@@ -112,13 +172,61 @@ pub fn session_handle(
 pub async fn create_service_notification(
     db: &Database,
     schema: &LibrarianSchema,
+    actor: &AuthUser,
+    title: &str,
+    message: &str,
+) -> Result<(), anyhow::Error> {
+    let recipients = if actor.user_id == "system" && actor.is_admin() {
+        let mut recipients = Vec::new();
+        let mut offset = 0;
+        loop {
+            let page = User::query(db.pool())
+                .limit(100)
+                .offset(offset)
+                .fetch_all()
+                .await?;
+            if page.is_empty() {
+                break;
+            }
+            offset += page.len() as i64;
+            recipients.extend(
+                page.into_iter()
+                    .filter(|user| {
+                        user.is_active
+                            && crate::services::graphql::auth::Role::parse(&user.role)
+                                == Some(crate::services::graphql::auth::Role::Admin)
+                    })
+                    .map(|user| user.id),
+            );
+        }
+        recipients
+    } else {
+        let user = User::get(db.pool(), &actor.user_id)
+            .await?
+            .filter(|user| user.is_active)
+            .ok_or_else(|| anyhow::anyhow!("Notification recipient is unknown"))?;
+        vec![user.id]
+    };
+    if recipients.is_empty() {
+        anyhow::bail!("No active administrator is available for this service notification");
+    }
+    for owner in recipients {
+        create_service_notification_for_owner(db, schema, actor, &owner, title, message).await?;
+    }
+    Ok(())
+}
+
+async fn create_service_notification_for_owner(
+    db: &Database,
+    schema: &LibrarianSchema,
     auth_user: &AuthUser,
+    owner_id: &str,
     title: &str,
     message: &str,
 ) -> Result<(), anyhow::Error> {
     let duplicate = Notification::query(db.pool())
         .filter(NotificationWhereInput {
-            user_id: Some(string_eq(&auth_user.user_id)),
+            user_id: Some(string_eq(owner_id)),
             category: Some(string_eq("torrent")),
             title: Some(string_eq(title)),
             resolved_at: Some(DateFilter {
@@ -143,7 +251,7 @@ pub async fn create_service_notification(
         }"#,
         serde_json::json!({
             "input": {
-                "userId": auth_user.user_id.clone(),
+                "userId": owner_id,
                 "notificationType": "error",
                 "category": "torrent",
                 "title": title,
@@ -220,14 +328,53 @@ pub async fn get_setting<T: serde::de::DeserializeOwned>(
     }
 }
 
-/// First user id from users table (for fallback when creating torrent records).
-pub async fn get_default_user_id(pool: &Database) -> Result<Option<Uuid>, anyhow::Error> {
-    Ok(User::query(pool.pool())
-        .fetch_all()
-        .await?
-        .into_iter()
-        .min_by(|a, b| a.created_at.cmp(&b.created_at))
-        .and_then(|user| Uuid::parse_str(&user.id).ok()))
+/// Unscoped authority for maintenance of already-owned torrent records.
+pub fn system_auth_user() -> AuthUser {
+    AuthUser::system_admin()
+}
+
+/// Internal acquisition boundary: intersect the authenticated role ceiling with
+/// the current stored account before any administrator-only identity insertion.
+async fn current_acquisition_actor(
+    schema: &LibrarianSchema,
+    actor: &AuthUser,
+) -> anyhow::Result<AuthUser> {
+    use crate::services::graphql::auth::Role;
+    if actor.user_id == "system" && actor.is_admin() {
+        return Ok(actor.clone());
+    }
+    if !actor.has_role(Role::Member) {
+        anyhow::bail!("Torrent acquisition requires authenticated authority");
+    }
+    let data = execute_query(
+        schema,
+        &system_auth_user(),
+        "query TorrentAcquisitionActor($id: String!) { user(id: $id) { id role isActive } }",
+        serde_json::json!({"id": actor.user_id}),
+    )
+    .await?;
+    let user = &data["user"];
+    let role = user["role"]
+        .as_str()
+        .and_then(Role::parse)
+        .context("Torrent caller is unavailable")?;
+    if user["id"].as_str() != Some(actor.user_id.as_str())
+        || user["isActive"].as_bool() != Some(true)
+    {
+        anyhow::bail!("Torrent caller is unavailable");
+    }
+    Ok(AuthUser {
+        user_id: actor.user_id.clone(),
+        email: actor.email.clone(),
+        role: Some(
+            if actor.is_admin() && role == Role::Admin {
+                "admin"
+            } else {
+                "member"
+            }
+            .to_string(),
+        ),
+    })
 }
 
 /// Wanted-item linkage to stamp on a newly created torrent (auto-download,
@@ -242,6 +389,164 @@ pub struct WantedLinkage<'a> {
     pub show_id: Option<&'a str>,
     pub album_id: Option<&'a str>,
     pub audiobook_id: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TorrentCreateScope {
+    pub(super) owner_id: String,
+    pub(super) library_id: Option<String>,
+}
+
+async fn torrent_library_owner(
+    schema: &LibrarianSchema,
+    actor: &AuthUser,
+    id: &str,
+) -> Result<String, anyhow::Error> {
+    let data = execute_query(
+        schema,
+        actor,
+        "query TorrentLibraryOwner($id: String!) { library(id: $id) { id userId } }",
+        serde_json::json!({"id": id}),
+    )
+    .await?;
+    data["library"]["userId"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("Torrent library not found or access denied"))
+}
+
+pub(super) async fn resolve_torrent_create_owner(
+    schema: &LibrarianSchema,
+    actor: &AuthUser,
+    library_id: Option<&str>,
+    wanted: WantedLinkage<'_>,
+    source_feed_id: Option<&str>,
+) -> Result<TorrentCreateScope, anyhow::Error> {
+    if !actor.has_role(crate::services::graphql::auth::Role::Member) {
+        anyhow::bail!("Torrent creation requires authenticated authority");
+    }
+    let target_classes = [
+        wanted.movie_id.is_some(),
+        wanted.show_id.is_some() || wanted.episode_id.is_some(),
+        wanted.album_id.is_some() || wanted.track_id.is_some(),
+        wanted.audiobook_id.is_some() || wanted.chapter_id.is_some(),
+    ];
+    if target_classes
+        .into_iter()
+        .filter(|present| *present)
+        .count()
+        > 1
+    {
+        anyhow::bail!("Torrent linkage targets have incompatible media types");
+    }
+    let mut owner: Option<String> = None;
+    let mut target_library: Option<String> = library_id.map(str::to_string);
+    if let Some(id) = library_id {
+        owner = Some(torrent_library_owner(schema, actor, id).await?);
+    }
+    if let Some(id) = source_feed_id {
+        let data = execute_query(
+            schema,
+            actor,
+            "query TorrentSourceFeedOwner($id: String!) { rssFeed(id: $id) { userId libraryId } }",
+            serde_json::json!({ "id": id }),
+        )
+        .await?;
+        let feed_owner = data["rssFeed"]["userId"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Torrent source feed not found or access denied"))?;
+        let feed_library = data["rssFeed"]["libraryId"].as_str();
+        if let Some(library) = feed_library
+            && torrent_library_owner(schema, actor, library).await? != feed_owner
+        {
+            anyhow::bail!("Torrent feed ownership disagrees with its library");
+        }
+        if owner.as_deref().is_some_and(|owner| owner != feed_owner)
+            || target_library
+                .as_deref()
+                .zip(feed_library)
+                .is_some_and(|(library, feed)| library != feed)
+        {
+            anyhow::bail!("Torrent feed and target do not share an owner and library");
+        }
+        owner = Some(feed_owner.to_string());
+        if target_library.is_none() {
+            target_library = feed_library.map(str::to_string);
+        }
+    }
+    for (root, id, nested) in [
+        ("movie", wanted.movie_id, None),
+        ("show", wanted.show_id, None),
+        ("album", wanted.album_id, None),
+        ("audiobook", wanted.audiobook_id, None),
+        ("episode", wanted.episode_id, Some("show")),
+        ("track", wanted.track_id, Some("album")),
+        ("chapter", wanted.chapter_id, Some("audiobook")),
+    ] {
+        let Some(id) = id else { continue };
+        let selection = match nested {
+            Some(parent) if root == "track" => {
+                format!("libraryId {parent} {{ id libraryId userId }}")
+            }
+            Some(parent) => format!("{parent} {{ id libraryId userId }}"),
+            None => "libraryId userId".to_string(),
+        };
+        let document = format!(
+            "query TorrentTargetOwner($id: String!) {{ {root}(id: $id) {{ {selection} }} }}"
+        );
+        let data = execute_query(schema, actor, &document, serde_json::json!({"id": id})).await?;
+        let node = nested.map_or(&data[root], |parent| &data[root][parent]);
+        let target_owner = node["userId"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Torrent target not found or access denied"))?;
+        let library = node["libraryId"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Torrent target library is unknown"))?;
+        let requested_parent = match root {
+            "episode" => wanted.show_id,
+            "track" => wanted.album_id,
+            "chapter" => wanted.audiobook_id,
+            _ => None,
+        };
+        if requested_parent.is_some_and(|id| node["id"].as_str() != Some(id))
+            || (root == "track" && data[root]["libraryId"].as_str() != Some(library))
+        {
+            anyhow::bail!("Torrent child does not belong to the requested parent and library");
+        }
+        if torrent_library_owner(schema, actor, library).await? != target_owner {
+            anyhow::bail!("Torrent target ownership disagrees with its library");
+        }
+        if owner.as_deref().is_some_and(|owner| owner != target_owner)
+            || target_library.as_deref().is_some_and(|id| id != library)
+        {
+            anyhow::bail!("Torrent linkage targets do not share an owner and library");
+        }
+        owner = Some(target_owner.to_string());
+        target_library = Some(library.to_string());
+    }
+    let owner = owner.unwrap_or_else(|| actor.user_id.clone());
+    Uuid::parse_str(&owner).map_err(|_| {
+        anyhow::anyhow!("Torrent ownership is unknown; system authority is not a record owner")
+    })?;
+    if !actor.is_admin() && owner != actor.user_id {
+        anyhow::bail!("Torrent target not found or access denied");
+    }
+    if actor.is_admin() {
+        let data = execute_query(
+            schema,
+            actor,
+            "query TorrentRecordOwner($id: String!) { user(id: $id) { id } }",
+            serde_json::json!({ "id": owner }),
+        )
+        .await?;
+        if data["user"]["id"].as_str() != Some(owner.as_str()) {
+            anyhow::bail!("Torrent record owner is unknown");
+        }
+    }
+    Ok(TorrentCreateScope {
+        owner_id: owner,
+        library_id: target_library,
+    })
 }
 
 /// Insert a new torrent record.
@@ -264,19 +569,25 @@ pub async fn create_torrent(
     uploaded_bytes: i64,
     wanted: WantedLinkage<'_>,
 ) -> Result<(), anyhow::Error> {
+    let actor = current_acquisition_actor(schema, auth_user).await?;
+    let scope =
+        resolve_torrent_create_owner(schema, &actor, library_id, wanted, source_feed_id).await?;
     let ts = now_iso_string();
     let data = execute_mutation(
         schema,
-        auth_user,
+        // `infoHash` is intentionally administrator-only through public CRUD.
+        // This checked internal action supplies the validated owner explicitly;
+        // worker authority is never used as ownership or returned to the caller.
+        &system_auth_user(),
         r#"mutation CreateTorrent($input: CreateTorrentInput!) {
             CreateTorrent: createTorrent(input: $input) { Success: success Error: error }
         }"#,
         serde_json::json!({
             "input": {
-                "userId": auth_user.user_id.clone(),
+                "userId": scope.owner_id,
                 "infoHash": info_hash,
                 "magnetUri": magnet_uri,
-                "libraryId": library_id,
+                "libraryId": scope.library_id,
                 "sourceUrl": source_url,
                 "sourceIndexerId": source_indexer_id,
                 "sourceFeedId": source_feed_id,
@@ -376,6 +687,9 @@ pub async fn upsert_from_session(
 ) -> Result<Torrent, anyhow::Error> {
     match find_torrent_by_info_hash(pool, info_hash).await? {
         Some(existing) => {
+            if !auth_user.is_admin() && auth_user.user_id != existing.user_id {
+                anyhow::bail!("Torrent not found or access denied");
+            }
             // librqbit's `uploaded_bytes` is per-session and resets on
             // restart, so the row keeps both the last session reading (as the
             // delta baseline) and a monotonic cumulative total.
@@ -791,19 +1105,22 @@ async fn find_setting(db: &Database, key: &str) -> Result<Option<AppSetting>, an
         .next())
 }
 
-async fn find_torrent_by_info_hash(
+pub(super) async fn find_torrent_by_info_hash(
     db: &Database,
     info_hash: &str,
 ) -> Result<Option<Torrent>, anyhow::Error> {
-    Ok(Torrent::query(db.pool())
+    let mut rows = Torrent::query(db.pool())
         .filter(TorrentWhereInput {
             info_hash: Some(string_eq(info_hash)),
             ..Default::default()
         })
+        .limit(2)
         .fetch_all()
-        .await?
-        .into_iter()
-        .next())
+        .await?;
+    if rows.len() > 1 {
+        anyhow::bail!("Ambiguous persisted torrent identity");
+    }
+    Ok(rows.pop())
 }
 
 /// Torrents that finished downloading but whose completed-file post-processing
@@ -1062,6 +1379,8 @@ mod tests {
                 0.0
             },
             media_file_id: None,
+            torrent: None,
+            media_file: None,
             is_excluded: false,
             created_at: "2026-01-01T00:00:00.000Z".to_string(),
             updated_at: "2026-01-01T00:00:00.000Z".to_string(),
@@ -1209,5 +1528,498 @@ mod tests {
         let plan = plan_torrent_file_sync(&[existing], &[desired.clone()]);
 
         assert_eq!(plan.to_update, vec![("row-0".to_string(), desired)]);
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+    use crate::graphql::entities::{
+        AutoDownloadMode, CreateEpisodeInput, CreateLibraryInput, CreateShowInput, CreateUserInput,
+        Episode, Library, Show, User,
+    };
+    use std::sync::Arc;
+
+    async fn database() -> Database {
+        let db = Database::new(
+            graphql_orm::DbPool::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        crate::services::database::bootstrap_schema(&db)
+            .await
+            .unwrap();
+        crate::services::DatabaseService::new(db).pool().clone()
+    }
+
+    async fn user(db: &Database) -> User {
+        User::insert(
+            db,
+            CreateUserInput {
+                username: uuid::Uuid::new_v4().to_string(),
+                email: None,
+                password_hash: "fixture password_hash".to_string(),
+                role: "member".to_string(),
+                display_name: None,
+                avatar_url: None,
+                is_active: true,
+                last_login_at: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+    async fn library(db: &Database, user: &User) -> Library {
+        Library::insert(
+            db,
+            CreateLibraryInput {
+                user_id: user.id.clone(),
+                name: "fixture library".to_string(),
+                path: format!("/fixture/{}", uuid::Uuid::new_v4()),
+                library_type: "music".to_string(),
+                icon: None,
+                color: None,
+                auto_scan: false,
+                auto_organize: false,
+                naming_pattern: "fixture naming_pattern".to_string(),
+                scan_interval_minutes: 0,
+                watch_for_changes: false,
+                scanning: false,
+                last_scanned_at: None,
+                quality_profile_id: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+    async fn show(db: &Database, library: &Library) -> Show {
+        Show::insert(
+            db,
+            CreateShowInput {
+                library_id: library.id.clone(),
+                user_id: library.user_id.clone(),
+                name: "fixture show".to_string(),
+                sort_name: None,
+                year: None,
+                tvmaze_id: None,
+                tmdb_id: None,
+                tvdb_id: None,
+                imdb_id: None,
+                overview: None,
+                network: None,
+                runtime: None,
+                genres: Vec::new(),
+                poster_url: None,
+                backdrop_url: None,
+                content_rating: None,
+                auto_download: false,
+                auto_download_mode: AutoDownloadMode::None,
+                quality_profile_id: None,
+                path: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn episode(db: &Database, show: &Show, file_id: Option<&str>) -> Episode {
+        Episode::insert(
+            db,
+            CreateEpisodeInput {
+                show_id: show.id.clone(),
+                season: 0,
+                episode: 0,
+                absolute_number: None,
+                title: None,
+                overview: None,
+                air_date: None,
+                air_stamp: None,
+                runtime: None,
+                still_url: None,
+                tvmaze_id: None,
+                tmdb_id: None,
+                tvdb_id: None,
+                wanted: file_id.is_none(),
+                ignored: None,
+                media_file_id: file_id.map(str::to_string),
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    fn schema(db: &Database) -> LibrarianSchema {
+        crate::services::graphql::build_schema(
+            db.clone(),
+            (),
+            Arc::new(crate::services::ServicesManager::new()),
+        )
+    }
+
+    async fn create(
+        schema: &LibrarianSchema,
+        actor: &AuthUser,
+        hash: &str,
+        library: Option<&str>,
+    ) -> anyhow::Result<()> {
+        create_torrent(
+            schema,
+            actor,
+            hash,
+            None,
+            library,
+            None,
+            None,
+            None,
+            "fixture",
+            "/fixture/downloads",
+            "initializing",
+            0.0,
+            10,
+            0,
+            0,
+            WantedLinkage::default(),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn admin_library_import_keeps_target_owner_and_system_sync_preserves_it() {
+        let db = database().await;
+        let owner = user(&db).await;
+        let admin = user(&db).await;
+        User::update_by_id(
+            &db,
+            &admin.id,
+            crate::graphql::entities::UpdateUserInput {
+                role: Some("admin".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let lib = library(&db, &owner).await;
+        let schema = schema(&db);
+        let actor = AuthUser::system_admin_for(&admin.id);
+        let hash = "a".repeat(40);
+        create(&schema, &actor, &hash, Some(&lib.id)).await.unwrap();
+        let created = find_torrent_by_info_hash(&db, &hash)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(created.user_id, owner.id);
+        upsert_from_session(
+            &db,
+            &schema,
+            &system_auth_user(),
+            &hash,
+            "renamed",
+            "live",
+            0.5,
+            10,
+            5,
+            0,
+            "/fixture/downloads",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            find_torrent_by_info_hash(&db, &hash)
+                .await
+                .unwrap()
+                .unwrap()
+                .user_id,
+            owner.id
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_runtime_owner_and_foreign_library_creation_fail_closed() {
+        let db = database().await;
+        let owner = user(&db).await;
+        let other = user(&db).await;
+        let lib = library(&db, &owner).await;
+        let schema = schema(&db);
+        assert_eq!(system_auth_user().user_id, "system");
+        let actor = AuthUser {
+            user_id: other.id.clone(),
+            email: None,
+            role: Some("member".to_string()),
+        };
+        assert!(
+            create(&schema, &actor, &"b".repeat(40), Some(&lib.id))
+                .await
+                .is_err()
+        );
+        assert!(
+            upsert_from_session(
+                &db,
+                &schema,
+                &system_auth_user(),
+                &"c".repeat(40),
+                "unknown",
+                "live",
+                0.0,
+                1,
+                0,
+                0,
+                "/fixture/downloads"
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            Torrent::query(db.pool())
+                .fetch_all()
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        create(&schema, &actor, &"d".repeat(40), None)
+            .await
+            .unwrap();
+        let row = find_torrent_by_info_hash(&db, &"d".repeat(40))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.user_id, other.id);
+    }
+
+    #[tokio::test]
+    async fn checked_member_acquisition_persists_identity_but_public_member_identity_writes_fail() {
+        let db = database().await;
+        let owner = user(&db).await;
+        let other = user(&db).await;
+        let lib = library(&db, &owner).await;
+        let foreign = library(&db, &other).await;
+        let schema = schema(&db);
+        let actor = AuthUser {
+            user_id: owner.id.clone(),
+            email: None,
+            role: Some("member".to_string()),
+        };
+        let hash = "f".repeat(40);
+        let public_create = execute_mutation(&schema, &actor,
+            "mutation($input: CreateTorrentInput!) { createTorrent(input: $input) { success error } }",
+            serde_json::json!({"input": {"userId": owner.id, "infoHash":hash, "libraryId":lib.id, "name":"member grab", "state":"paused", "progress":0.0,
+                "totalBytes":1,"downloadedBytes":0,"uploadedBytes":0,"uploadedBytesTotal":0,"savePath":"/fixture/downloads","excludedFiles":[],"addedAt":now_iso_string()}}),
+        ).await;
+        assert!(public_create.is_err());
+        assert!(
+            find_torrent_by_info_hash(&db, &hash)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        create(&schema, &actor, &hash, Some(&lib.id)).await.unwrap();
+        let row = find_torrent_by_info_hash(&db, &hash)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.user_id, owner.id);
+        assert_eq!(row.library_id, Some(lib.id.clone()));
+        assert!(execute_mutation(&schema, &actor,
+            "mutation($id: String!, $input: UpdateTorrentInput!) { updateTorrent(id: $id, input: $input) { success error } }",
+            serde_json::json!({"id":row.id,"input":{"infoHash":"0".repeat(40)}}),
+        ).await.is_err());
+        assert_eq!(
+            find_torrent_by_info_hash(&db, &hash)
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+            row.id
+        );
+        assert!(
+            create(
+                &schema,
+                &AuthUser::system_admin_for(&owner.id),
+                &"1".repeat(40),
+                Some(&foreign.id)
+            )
+            .await
+            .is_err()
+        );
+        User::update_by_id(
+            &db,
+            &owner.id,
+            crate::graphql::entities::UpdateUserInput {
+                is_active: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            create(&schema, &actor, &"2".repeat(40), Some(&lib.id))
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn system_target_bindings_require_one_real_parent_library_and_owner() {
+        let db = database().await;
+        let owner = user(&db).await;
+        let other = user(&db).await;
+        let lib = library(&db, &owner).await;
+        let other_lib = library(&db, &other).await;
+        let parent = show(&db, &lib).await;
+        let sibling = show(&db, &lib).await;
+        let child = episode(&db, &parent, None).await;
+        let schema = schema(&db);
+        let actor = system_auth_user();
+        let wanted = WantedLinkage {
+            episode_id: Some(&child.id),
+            show_id: Some(&parent.id),
+            ..Default::default()
+        };
+        let scope = resolve_torrent_create_owner(&schema, &actor, None, wanted, None)
+            .await
+            .unwrap();
+        assert_eq!(scope.owner_id, owner.id);
+        assert_eq!(scope.library_id.as_deref(), Some(lib.id.as_str()));
+        assert!(
+            resolve_torrent_create_owner(&schema, &actor, Some(&other_lib.id), wanted, None)
+                .await
+                .is_err()
+        );
+        assert!(
+            resolve_torrent_create_owner(
+                &schema,
+                &actor,
+                None,
+                WantedLinkage {
+                    show_id: Some(&sibling.id),
+                    ..wanted
+                },
+                None
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            resolve_torrent_create_owner(
+                &schema,
+                &actor,
+                None,
+                WantedLinkage {
+                    movie_id: Some("unknown"),
+                    ..wanted
+                },
+                None
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            resolve_torrent_create_owner(
+                &schema,
+                &actor,
+                None,
+                WantedLinkage {
+                    episode_id: Some("unknown"),
+                    ..Default::default()
+                },
+                None
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            Torrent::query(db.pool())
+                .fetch_all()
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn system_updates_and_cleanup_do_not_require_an_arbitrary_human_actor() {
+        let db = database().await;
+        let owner = user(&db).await;
+        let lib = library(&db, &owner).await;
+        let schema = schema(&db);
+        let hash = "e".repeat(40);
+        create(&schema, &system_auth_user(), &hash, Some(&lib.id))
+            .await
+            .unwrap();
+        update_state(&db, &schema, &system_auth_user(), &hash, "error")
+            .await
+            .unwrap();
+        let failed = find_torrent_by_info_hash(&db, &hash)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(failed.user_id, owner.id);
+        assert_eq!(failed.state, "error");
+        delete_torrent(&db, &schema, &system_auth_user(), &hash)
+            .await
+            .unwrap();
+        assert!(
+            find_torrent_by_info_hash(&db, &hash)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        delete_torrent(&db, &schema, &system_auth_user(), &hash)
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn torrent_mutation_payload_failure_is_not_transport_success() {
+        assert!(
+            check_mutation_payloads(
+                &serde_json::json!({"createTorrent": {"success": false, "error": "denied"}})
+            )
+            .is_err()
+        );
+        assert!(
+            check_mutation_payloads(&serde_json::json!({"CreateTorrent": {"Success": true}}))
+                .is_ok()
+        );
+        assert!(check_mutation_payloads(&serde_json::json!({"createTorrent": null})).is_err());
+    }
+
+    #[tokio::test]
+    async fn service_notifications_have_explicit_admin_recipients_and_never_pick_a_member() {
+        let db = database().await;
+        let member = user(&db).await;
+        let admin = user(&db).await;
+        let schema = schema(&db);
+        let actor = system_auth_user();
+        assert!(
+            create_service_notification(&db, &schema, &actor, "storage", "unavailable")
+                .await
+                .is_err()
+        );
+        assert!(
+            Notification::query(db.pool())
+                .fetch_all()
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        User::update_by_id(
+            &db,
+            &admin.id,
+            crate::graphql::entities::UpdateUserInput {
+                role: Some("admin".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        for _ in 0..2 {
+            create_service_notification(&db, &schema, &actor, "storage", "unavailable")
+                .await
+                .unwrap();
+        }
+        let notifications = Notification::query(db.pool()).fetch_all().await.unwrap();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].user_id, admin.id);
+        assert_ne!(notifications[0].user_id, member.id);
     }
 }

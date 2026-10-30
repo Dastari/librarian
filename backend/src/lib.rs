@@ -8,6 +8,11 @@
 
 #![recursion_limit = "512"]
 
+#[cfg(all(feature = "schema-export-only", any(test, doctest)))]
+compile_error!(
+    "schema-export-only cannot qualify runtime tests; disable it for all backend test runs"
+);
+
 pub mod api;
 pub mod app;
 pub mod app_mode;
@@ -16,6 +21,7 @@ pub mod config;
 pub mod db;
 pub mod jobs;
 pub mod platform;
+pub mod repair;
 pub mod services;
 
 #[cfg(feature = "embed-frontend")]
@@ -27,7 +33,9 @@ pub mod tui;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::cli::{CliOptions, CredentialCommand, SchemaCommand};
+use crate::cli::{
+    BackupRestoreCommand, CliOptions, CredentialCommand, MaintenanceCommand, SchemaCommand,
+};
 use crate::config::Config;
 use crate::db::Database;
 use crate::jobs::AutoDownloadServiceConfig;
@@ -52,6 +60,7 @@ pub async fn get_db_pool(services: &ServicesManager) -> Option<Database> {
 }
 
 /// Build the Tokio runtime and run the backend to completion.
+#[cfg(not(feature = "schema-export-only"))]
 pub fn run() -> anyhow::Result<()> {
     let worker_threads = runtime_thread_count(
         "LIBRARIAN_TOKIO_WORKER_THREADS",
@@ -71,6 +80,14 @@ pub fn run() -> anyhow::Result<()> {
         .build()
         .context("failed to build Tokio runtime")?
         .block_on(async_main())
+}
+
+/// Schema tooling must never start the stubbed application runtime.
+#[cfg(feature = "schema-export-only")]
+pub fn run() -> anyhow::Result<()> {
+    anyhow::bail!(
+        "schema-export-only cannot run Librarian; rebuild without this feature for runtime use"
+    )
 }
 
 fn default_tokio_worker_threads() -> usize {
@@ -136,8 +153,14 @@ async fn async_main() -> anyhow::Result<()> {
             "Forwarded scheme headers will only be accepted from configured trusted proxies"
         );
     }
+    if let Some(command) = cli.backup_restore {
+        return run_backup_restore(config.as_ref(), command).await;
+    }
     if let Some(command) = cli.schema_command {
         return run_schema_command(config.as_ref(), command).await;
+    }
+    if let Some(command) = cli.maintenance {
+        return run_maintenance_command(config.as_ref(), command).await;
     }
     if let Some(command) = cli.credential_command {
         return run_credential_command(config.as_ref(), command).await;
@@ -283,6 +306,136 @@ async fn async_main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Offline administrative boundary: no service manager, HTTP listener, workers
+/// or startup seeding is installed against these exclusively-created targets.
+async fn run_backup_restore(config: &Config, command: BackupRestoreCommand) -> anyhow::Result<()> {
+    let database_path = PathBuf::from(&command.database_path);
+    let object_root = PathBuf::from(&command.object_root);
+    anyhow::ensure!(
+        !database_path.as_os_str().is_empty() && !object_root.as_os_str().is_empty(),
+        "Recovery paths must not be empty"
+    );
+    uuid::Uuid::parse_str(&command.snapshot_id).context("Invalid backup snapshot ID")?;
+    // A recovery command never adopts an existing target, even an apparently
+    // empty one that another process might own. Failure leaves staging in place.
+    let _claim = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&database_path)
+        .context("Recovery requires a new database file; existing targets are refused")?;
+    std::fs::create_dir(&object_root)
+        .context("Recovery requires a new object directory; existing targets are refused")?;
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&database_path)
+        .foreign_keys(true)
+        .create_if_missing(false);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await?;
+    let db = Database::new(pool);
+    crate::services::database::bootstrap_schema(&db).await?;
+    let backup = crate::services::backup::BackupService::new_for_offline_restore(
+        db,
+        ObjectStorageServiceConfig {
+            backend: "local".into(),
+            local_path: object_root.clone(),
+        },
+        BackupServiceConfig {
+            repository_path: PathBuf::from(&config.backup_path),
+        },
+    )?;
+    backup
+        .restore_full_backup(&command.snapshot_id)
+        .await
+        .context("Recovery did not complete; discard these staging targets before retrying")?;
+    println!(
+        "Verified snapshot {} restored to database {} and managed objects {}. Targets remain offline; publish both together only after verification.",
+        command.snapshot_id,
+        database_path.display(),
+        object_root.display()
+    );
+    Ok(())
+}
+
+/// Offline maintenance against the configured database. Stop the server first: these
+/// commands assume nothing else is writing.
+async fn run_maintenance_command(
+    config: &Config,
+    command: MaintenanceCommand,
+) -> anyhow::Result<()> {
+    let database = DatabaseService::from_config(
+        DatabaseServiceConfig {
+            database_url: config.database_url.clone(),
+            connect_timeout: Duration::from_secs(30),
+        },
+        None,
+    )
+    .await
+    .context("Failed to connect for offline maintenance")?;
+    // Bring the schema current the way ordinary startup does: additive plans apply, anything
+    // else is left for `schema apply`. A backup still runs then, since it is what that
+    // reviewed apply needs; a repair does not, because it writes through the new schema.
+    use crate::services::database::{SchemaChangeClass, plan_schema, schema_plan_class};
+    match plan_schema(database.pool()).await? {
+        Some(plan) if schema_plan_class(&plan) == SchemaChangeClass::Additive => {
+            crate::services::database::bootstrap_schema(database.pool()).await?;
+            println!("Applied pending additive schema changes.");
+        }
+        Some(_) if matches!(command, MaintenanceCommand::RepairDuplicateTorrents { .. }) => {
+            anyhow::bail!(
+                "A non-additive schema plan is pending; review it with `librarian schema plan` \
+                 and apply it before repairing"
+            );
+        }
+        _ => {}
+    }
+    match command {
+        MaintenanceCommand::BackupCreate => {
+            let storage = std::sync::Arc::new(crate::services::ObjectStorageService::new(
+                ObjectStorageServiceConfig {
+                    backend: config.storage_backend.clone(),
+                    local_path: PathBuf::from(&config.storage_path),
+                },
+            )?);
+            let backup = crate::services::backup::BackupService::new(
+                database.pool().clone(),
+                storage,
+                BackupServiceConfig {
+                    repository_path: PathBuf::from(&config.backup_path),
+                },
+            );
+            let summary = backup
+                .create_full_backup()
+                .await?
+                .context("The backup repository returned no snapshot")?;
+            backup.verify_snapshot(&summary.snapshot_id).await?;
+            println!(
+                "Verified full backup {} in {}.",
+                summary.snapshot_id, config.backup_path
+            );
+        }
+        MaintenanceCommand::RepairDuplicateTorrents { apply } => {
+            let report = crate::repair::repair_duplicate_torrents(database.pool(), apply).await?;
+            println!(
+                "{} duplicated info hashes; {} rows {}; {} files preserved on the kept rows.",
+                report.duplicate_hashes,
+                report.removed_rows,
+                if apply {
+                    "merged and removed"
+                } else {
+                    "would be merged (dry run; pass --apply)"
+                },
+                report.preserved_files
+            );
+            for hash in report.skipped_hashes {
+                println!("Skipped {hash}: rows belong to different users.");
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn run_schema_command(config: &Config, command: SchemaCommand) -> anyhow::Result<()> {
     let database = DatabaseService::from_config(
         DatabaseServiceConfig {
@@ -296,7 +449,9 @@ async fn run_schema_command(config: &Config, command: SchemaCommand) -> anyhow::
 
     match command {
         SchemaCommand::Plan => {
-            if let Some(plan) = crate::services::database::plan_schema(database.pool()).await? {
+            if let Some(plan) =
+                crate::services::database::plan_reviewed_schema(database.pool()).await?
+            {
                 println!("{}", crate::services::database::format_schema_plan(&plan));
                 println!(
                     "\nNo changes were applied. Create and verify a full backup before using \
@@ -310,7 +465,7 @@ async fn run_schema_command(config: &Config, command: SchemaCommand) -> anyhow::
             plan_hash,
             backup_snapshot_id,
         } => {
-            let plan = crate::services::database::plan_schema(database.pool())
+            let plan = crate::services::database::plan_reviewed_schema(database.pool())
                 .await?
                 .context("Database schema is current; no migration plan is pending")?;
             let source_schema_hash = plan

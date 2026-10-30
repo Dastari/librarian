@@ -81,8 +81,5 @@ subscription EntityAppSettingChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    appSetting {
-      ...AppSettingFields
-    }
   }
 }

@@ -452,7 +452,7 @@ fn torrent_exposes_the_seeding_and_season_pack_columns() {
 }
 
 #[test]
-fn generated_changed_subscription_streams_creates_and_updates() {
+fn generated_changed_subscription_streams_creates_updates_and_deletes() {
     common::run_app_test(|| async {
         let app = TestApp::start().await;
         let mut admin = app.admin_client().await;
@@ -508,6 +508,17 @@ fn generated_changed_subscription_streams_creates_and_updates() {
             update_event["data"]["libraryChanged"]["library"]["name"],
             "Streamed again"
         );
+
+        let deleted = admin
+            .query(
+                "mutation D($id: String!) { deleteLibrary(id: $id) { success error } }",
+                json!({ "id": library_id }),
+            )
+            .await;
+        assert_eq!(deleted["deleteLibrary"]["success"], true);
+        let delete_event = ws.next_payload("libs").await;
+        assert_eq!(delete_event["data"]["libraryChanged"]["action"], "DELETED");
+        assert_eq!(delete_event["data"]["libraryChanged"]["id"], library_id);
 
         app.shutdown().await;
     });

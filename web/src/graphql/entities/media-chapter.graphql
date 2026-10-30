@@ -81,8 +81,5 @@ subscription EntityMediaChapterChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    mediaChapter {
-      ...MediaChapterFields
-    }
   }
 }

@@ -107,6 +107,7 @@ pub struct TorrentService {
     manager: Arc<crate::services::manager::ServicesManager>,
     config: TorrentServiceConfig,
     inner: tokio::sync::RwLock<Option<Arc<TorrentRuntime>>>,
+    add_lock: tokio::sync::Mutex<()>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -128,6 +129,78 @@ pub struct TorrentAddMetadata {
     pub audiobook_id: Option<String>,
 }
 
+/// `created` means a new owned persisted record. Reusing a registered runtime identity
+/// never authorizes a caller to rewrite its linkage or tracker/grab provenance.
+#[derive(Debug)]
+pub struct TorrentAddOutcome {
+    pub info: TorrentInfo,
+    pub created: bool,
+}
+
+async fn current_add_actor(db: &Database, actor: &AuthUser) -> Result<AuthUser> {
+    if actor.user_id == "system" && actor.is_admin() {
+        return Ok(actor.clone());
+    }
+    crate::services::graphql::entities::torrent::current_torrent_user(db, actor)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))
+}
+
+fn wanted_linkage(metadata: &TorrentAddMetadata) -> database::WantedLinkage<'_> {
+    database::WantedLinkage {
+        episode_id: metadata.episode_id.as_deref(),
+        movie_id: metadata.movie_id.as_deref(),
+        track_id: metadata.track_id.as_deref(),
+        chapter_id: metadata.chapter_id.as_deref(),
+        show_id: metadata.show_id.as_deref(),
+        album_id: metadata.album_id.as_deref(),
+        audiobook_id: metadata.audiobook_id.as_deref(),
+    }
+}
+
+fn authorize_existing_add(
+    actor: &AuthUser,
+    existing: Option<&Torrent>,
+    scope: &database::TorrentCreateScope,
+    metadata: &TorrentAddMetadata,
+) -> Result<()> {
+    if !actor.has_role(crate::services::graphql::auth::Role::Member) {
+        anyhow::bail!("Torrent access denied");
+    }
+    let row = existing
+        .context("Runtime torrent has no persisted owner; explicit recovery is required")?;
+    if !actor.is_admin() && row.user_id != actor.user_id {
+        anyhow::bail!("Torrent not found or access denied");
+    }
+    let has_binding = metadata.library_id.is_some()
+        || metadata.movie_id.is_some()
+        || metadata.episode_id.is_some()
+        || metadata.track_id.is_some()
+        || metadata.chapter_id.is_some()
+        || metadata.show_id.is_some()
+        || metadata.album_id.is_some()
+        || metadata.audiobook_id.is_some()
+        || metadata.source_feed_id.is_some();
+    if has_binding && (row.user_id != scope.owner_id || row.library_id != scope.library_id) {
+        anyhow::bail!("Existing torrent belongs to a different owner or library");
+    }
+    for (requested, stored) in [
+        (&metadata.movie_id, &row.movie_id),
+        (&metadata.episode_id, &row.episode_id),
+        (&metadata.track_id, &row.track_id),
+        (&metadata.chapter_id, &row.chapter_id),
+        (&metadata.show_id, &row.show_id),
+        (&metadata.album_id, &row.album_id),
+        (&metadata.audiobook_id, &row.audiobook_id),
+        (&metadata.source_feed_id, &row.source_feed_id),
+    ] {
+        if requested.is_some() && requested != stored {
+            anyhow::bail!("Existing torrent linkage cannot be replaced by an add request");
+        }
+    }
+    Ok(())
+}
+
 impl TorrentService {
     /// Create the service. It will not connect or start until [Service::start] is called.
     pub fn new(
@@ -138,6 +211,7 @@ impl TorrentService {
             manager,
             config,
             inner: tokio::sync::RwLock::new(None),
+            add_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -172,68 +246,145 @@ impl TorrentService {
         user_id: Option<Uuid>,
         metadata: TorrentAddMetadata,
     ) -> Result<TorrentInfo> {
+        let user_id = user_id.context("A caller identity or explicit system actor is required")?;
+        let caller = AuthUser {
+            user_id: user_id.to_string(),
+            email: None,
+            role: Some("member".to_string()),
+        };
+        self.add_magnet_for_actor(magnet, &caller, metadata).await
+    }
+
+    /// Request-aware add boundary used by GraphQL. Internal jobs pass `system_auth_user()`
+    /// with explicit target bindings, rather than manufacturing an administrator from a user ID.
+    pub async fn add_magnet_for_actor(
+        &self,
+        magnet: &str,
+        actor: &AuthUser,
+        metadata: TorrentAddMetadata,
+    ) -> Result<TorrentInfo> {
+        Ok(self
+            .add_magnet_for_actor_with_outcome(magnet, actor, metadata)
+            .await?
+            .info)
+    }
+
+    /// The outcome lets callers stamp grab details only for genuinely new persisted records.
+    pub async fn add_magnet_for_actor_with_outcome(
+        &self,
+        magnet: &str,
+        actor: &AuthUser,
+        metadata: TorrentAddMetadata,
+    ) -> Result<TorrentAddOutcome> {
+        let _add_guard = self.add_lock.lock().await;
         let r = self
             .runtime()
             .await
-            .ok_or_else(|| anyhow::anyhow!("torrent service not started"))?;
-        let session = &r.session;
-        let config = &r.config;
-        let schema = &r.schema;
-        let event_tx = &r.event_tx;
-
-        // Refuse rather than write the payload somewhere the operator never
-        // configured. See `start` for how this is detected and reported.
-        if let Some(ref problem) = r.download_dir_error {
+            .context("torrent service not started")?;
+        let actor = current_add_actor(&r.db, actor).await?;
+        let scope = database::resolve_torrent_create_owner(
+            &r.schema,
+            &actor,
+            metadata.library_id.as_deref(),
+            wanted_linkage(&metadata),
+            metadata.source_feed_id.as_deref(),
+        )
+        .await?;
+        if let Some(problem) = &r.download_dir_error {
             anyhow::bail!("{problem}");
         }
-
-        let start_paused = should_start_paused(
-            config.max_concurrent,
-            count_active_downloads(session.as_ref()),
-        );
-
-        let add_result = tokio::time::timeout(
-            ADD_TORRENT_TIMEOUT,
-            session.add_torrent(
+        let deadline = tokio::time::Instant::now() + ADD_TORRENT_TIMEOUT;
+        // A URL can hide an already-owned hash. Resolve its metadata in list-only mode,
+        // which the pinned client returns before creating storage or a managed handle.
+        let (request, hash) = match librqbit::Magnet::parse(magnet)
+            .ok()
+            .and_then(|magnet| magnet.as_id20())
+        {
+            Some(hash) => (
                 AddTorrent::from_url(magnet),
-                Some(add_torrent_opts(start_paused)),
+                hash.0
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>(),
             ),
+            None => {
+                let mut options = add_torrent_opts(true);
+                options.list_only = true;
+                let resolved = tokio::time::timeout_at(
+                    deadline,
+                    r.session
+                        .add_torrent(AddTorrent::from_url(magnet), Some(options)),
+                )
+                .await
+                .context("Timed out resolving torrent metadata")??;
+                let AddTorrentResponse::ListOnly(resolved) = resolved else {
+                    anyhow::bail!("Torrent metadata resolution did not return a read-only result");
+                };
+                let hash = resolved
+                    .info_hash
+                    .0
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>();
+                (AddTorrent::from_bytes(resolved.torrent_bytes), hash)
+            }
+        };
+        let actor = current_add_actor(&r.db, &actor).await?;
+        let existing = database::find_torrent_by_info_hash(&r.db, &hash).await?;
+        if let Some(row) = existing.as_ref() {
+            authorize_existing_add(&actor, Some(row), &scope, &metadata)?;
+        }
+        if let Some(handle) = database::session_handle(&r.session, &hash) {
+            authorize_existing_add(&actor, existing.as_ref(), &scope, &metadata)?;
+            return Ok(TorrentAddOutcome {
+                info: get_torrent_info_impl(&r.session, handle.id()).await?,
+                created: false,
+            });
+        }
+        // New handles stay paused until their persisted owner has been established.
+        let added = tokio::time::timeout_at(
+            deadline,
+            r.session.add_torrent(request, Some(add_torrent_opts(true))),
         )
         .await
-        .map_err(|_| {
-            anyhow::anyhow!(
-                "Timed out after {}s adding torrent '{}': metadata could not be resolved (no peers answered, or the .torrent URL did not respond). Check DHT/tracker connectivity.",
-                ADD_TORRENT_TIMEOUT.as_secs(),
-                magnet
-            )
-        })?
-        .context("Failed to add torrent")?;
-
-        match add_result {
+        .context("Timed out adding torrent")??;
+        match added {
+            AddTorrentResponse::AlreadyManaged(id, handle) => {
+                let actor = current_add_actor(&r.db, &actor).await?;
+                let row =
+                    database::find_torrent_by_info_hash(&r.db, &get_info_hash_hex(&handle)).await?;
+                authorize_existing_add(&actor, row.as_ref(), &scope, &metadata)?;
+                Ok(TorrentAddOutcome {
+                    info: get_torrent_info_impl(&r.session, id).await?,
+                    created: false,
+                })
+            }
             AddTorrentResponse::Added(id, handle) => {
                 let info_hash = get_info_hash_hex(&handle);
-                if start_paused {
-                    r.download_queue.lock().push_back(info_hash.clone());
-                    info!(
-                        info_hash = %info_hash,
-                        max_concurrent = config.max_concurrent,
-                        "Torrent queued (concurrent download limit reached): info_hash={}, max_concurrent={}",
-                        info_hash,
-                        config.max_concurrent
-                    );
-                }
                 let name = handle.name().unwrap_or_else(|| "Unknown".to_string());
-                let stats = handle.stats();
-
-                if let Some(uid) = user_id {
-                    let auth_user = AuthUser {
-                        user_id: uid.to_string(),
-                        email: None,
-                        role: Some("admin".to_string()),
-                    };
-                    if let Err(e) = database::create_torrent(
-                        schema,
-                        &auth_user,
+                let result: Result<bool> = async {
+                    let actor = current_add_actor(&r.db, &actor).await?;
+                    let current_scope = database::resolve_torrent_create_owner(
+                        &r.schema,
+                        &actor,
+                        metadata.library_id.as_deref(),
+                        wanted_linkage(&metadata),
+                        metadata.source_feed_id.as_deref(),
+                    )
+                    .await?;
+                    if current_scope != scope {
+                        anyhow::bail!("Torrent target ownership changed while resolving metadata");
+                    }
+                    if let Some(row) =
+                        database::find_torrent_by_info_hash(&r.db, &info_hash).await?
+                    {
+                        authorize_existing_add(&actor, Some(&row), &scope, &metadata)?;
+                        return Ok(false);
+                    }
+                    let stats = handle.stats();
+                    database::create_torrent(
+                        &r.schema,
+                        &actor,
                         &info_hash,
                         Some(magnet),
                         metadata.library_id.as_deref(),
@@ -241,43 +392,66 @@ impl TorrentService {
                         metadata.source_indexer_id.as_deref(),
                         metadata.source_feed_id.as_deref(),
                         &name,
-                        // The session's real destination for this torrent
-                        // (multi-file torrents get their own sub-folder), so
-                        // the row matches what the file sync will write.
                         &handle.output_folder().to_string_lossy(),
-                        if start_paused {
-                            "paused"
-                        } else {
-                            "downloading"
-                        },
+                        "paused",
                         0.0,
                         stats.total_bytes as i64,
                         0,
                         0,
-                        database::WantedLinkage {
-                            episode_id: metadata.episode_id.as_deref(),
-                            movie_id: metadata.movie_id.as_deref(),
-                            track_id: metadata.track_id.as_deref(),
-                            chapter_id: metadata.chapter_id.as_deref(),
-                            show_id: metadata.show_id.as_deref(),
-                            album_id: metadata.album_id.as_deref(),
-                            audiobook_id: metadata.audiobook_id.as_deref(),
-                        },
+                        wanted_linkage(&metadata),
                     )
-                    .await
-                    {
-                        error!(error = %e, "Failed to persist torrent to database");
-                    }
+                    .await?;
+                    let row = database::find_torrent_by_info_hash(&r.db, &info_hash).await?;
+                    authorize_existing_add(&actor, row.as_ref(), &scope, &metadata)?;
+                    Ok(true)
                 }
-
-                let _ = event_tx.send(TorrentEvent::Added {
+                .await;
+                let created = match result {
+                    Ok(created) => created,
+                    Err(error) => {
+                        if let Err(cleanup) = r.session.delete(TorrentIdOrHash::Id(id), false).await
+                        {
+                            error!(info_hash, error = %cleanup, "Failed to remove unadmitted torrent handle; payload bytes retained");
+                        }
+                        return Err(error)
+                            .context("Torrent admission failed; no payload bytes were deleted");
+                    }
+                };
+                if should_start_paused(
+                    r.config.max_concurrent,
+                    count_active_downloads(r.session.as_ref()),
+                ) {
+                    r.download_queue.lock().push_back(info_hash.clone());
+                } else {
+                    r.session
+                        .unpause(&handle)
+                        .await
+                        .context("Owned torrent remains registered; resume failed")?;
+                    let stats = handle.stats();
+                    let state = torrent_state_from_stats(
+                        &stats.state,
+                        progress_ratio(stats.progress_bytes, stats.total_bytes),
+                    )
+                    .to_string();
+                    database::update_state(
+                        &r.db,
+                        &r.schema,
+                        &database::system_auth_user(),
+                        &info_hash,
+                        &state,
+                    )
+                    .await?;
+                }
+                let _ = r.event_tx.send(TorrentEvent::Added {
                     id,
-                    name: name.clone(),
-                    info_hash: info_hash.clone(),
+                    name,
+                    info_hash,
                 });
-                get_torrent_info_impl(session, id).await
+                Ok(TorrentAddOutcome {
+                    info: get_torrent_info_impl(&r.session, id).await?,
+                    created,
+                })
             }
-            AddTorrentResponse::AlreadyManaged(id, _) => get_torrent_info_impl(session, id).await,
             AddTorrentResponse::ListOnly(_) => anyhow::bail!("Torrent was added in list-only mode"),
         }
     }
@@ -438,26 +612,14 @@ impl TorrentService {
             .delete(TorrentIdOrHash::Id(id), delete_files)
             .await?;
         r.download_queue.lock().retain(|hash| hash != &info_hash);
-        let auth_user = database::get_default_user_id(&r.db)
-            .await
-            .ok()
-            .flatten()
-            .map(|uid| AuthUser {
-                user_id: uid.to_string(),
-                email: None,
-                role: Some("admin".to_string()),
-            });
-        if let Some(auth_user) = auth_user
-            && let Err(e) = database::delete_torrent(&r.db, &r.schema, &auth_user, &info_hash).await
-        {
-            warn!(error = %e, "Failed to delete torrent from database");
-        }
+        let auth_user = database::system_auth_user();
+        let cleanup = database::delete_torrent(&r.db, &r.schema, &auth_user, &info_hash).await;
         let _ = r.event_tx.send(TorrentEvent::Removed {
             id,
             info_hash: info_hash.clone(),
         });
         r.completed.write().remove(&info_hash);
-        Ok(())
+        cleanup.context("Torrent runtime removed but persisted cleanup failed")
     }
 
     /// Pause a torrent by info hash (hex string).
@@ -647,27 +809,17 @@ impl Service for TorrentService {
                     "{}",
                     message
                 );
-                if let Some(user) = database::get_default_user_id(&db).await.ok().flatten() {
-                    let auth_user = AuthUser {
-                        user_id: user.to_string(),
-                        email: None,
-                        role: Some("admin".to_string()),
-                    };
-                    if let Err(notify_error) = database::create_service_notification(
-                        &db,
-                        &schema,
-                        &auth_user,
-                        "Torrent download directory unusable",
-                        &message,
-                    )
-                    .await
-                    {
-                        warn!(
-                            error = %notify_error,
-                            "Failed to record a notification for the unusable torrent download directory: error={}",
-                            notify_error
-                        );
-                    }
+                let auth_user = database::system_auth_user();
+                if let Err(notify_error) = database::create_service_notification(
+                    &db,
+                    &schema,
+                    &auth_user,
+                    "Torrent download directory unusable",
+                    &message,
+                )
+                .await
+                {
+                    warn!(error = %notify_error, "Failed to record torrent directory notification");
                 }
                 Some(message)
             }
@@ -739,19 +891,12 @@ impl Service for TorrentService {
         config.download_dir = effective_download_dir;
         config.session_dir = effective_session_dir;
 
-        let auth_user = database::get_default_user_id(&db)
-            .await
-            .ok()
-            .flatten()
-            .map(|uid| AuthUser {
-                user_id: uid.to_string(),
-                email: None,
-                role: Some("admin".to_string()),
-            });
+        let auth_user = database::system_auth_user();
 
         // Initial session -> DB sync can be expensive when many torrent files exist.
         // Run it in the background so service startup (and TUI boot) is not blocked.
-        if let Some(ref user) = auth_user {
+        {
+            let user = &auth_user;
             let session_sync = session.clone();
             let db_sync = db.clone();
             let schema_sync = schema.clone();
@@ -775,8 +920,6 @@ impl Service for TorrentService {
                     tracing::info!("Finished background initial torrent session-to-DB sync");
                 }
             });
-        } else {
-            warn!("No default user found in database; skipping initial torrent session-to-DB sync");
         }
         let active_downloads = count_active_downloads(session.as_ref());
         let download_queue: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
@@ -784,7 +927,7 @@ impl Service for TorrentService {
             &session,
             &db,
             &schema,
-            auth_user.as_ref(),
+            Some(&auth_user),
             config.max_concurrent,
             active_downloads,
             ADD_TORRENT_TIMEOUT,
@@ -1125,36 +1268,14 @@ async fn db_sync_loop(
     cancel: CancellationToken,
 ) {
     let mut interval = tokio::time::interval(Duration::from_secs(10));
-    let mut auth_user = database::get_default_user_id(&db)
-        .await
-        .ok()
-        .flatten()
-        .map(|uid| AuthUser {
-            user_id: uid.to_string(),
-            email: None,
-            role: Some("admin".to_string()),
-        });
+    let auth_user = database::system_auth_user();
     loop {
         tokio::select! {
             _ = cancel.cancelled() => break,
             _ = interval.tick() => {
-                if auth_user.is_none() {
-                    auth_user = database::get_default_user_id(&db)
-                        .await
-                        .ok()
-                        .flatten()
-                        .map(|uid| AuthUser {
-                            user_id: uid.to_string(),
-                            email: None,
-                            role: Some("admin".to_string()),
-                        });
+                if let Err(error) = database::sync_session_to_database(&session, &db, &schema, &auth_user).await {
+                    tracing::trace!(error = %error, "db_sync iteration failed");
                 }
-                if let Some(ref user) = auth_user
-                    && let Err(e) =
-                        database::sync_session_to_database(&session, &db, &schema, user).await
-                    {
-                        tracing::trace!(error = %e, "db_sync iteration failed");
-                    }
             }
         }
     }
@@ -1182,15 +1303,7 @@ async fn completion_handler_loop(
     processing: Arc<Mutex<std::collections::HashSet<String>>>,
     cancel: CancellationToken,
 ) {
-    let mut auth_user: Option<AuthUser> = database::get_default_user_id(&db)
-        .await
-        .ok()
-        .flatten()
-        .map(|uid| AuthUser {
-            user_id: uid.to_string(),
-            email: None,
-            role: Some("admin".to_string()),
-        });
+    let auth_user = database::system_auth_user();
 
     loop {
         tokio::select! {
@@ -1214,30 +1327,6 @@ async fn completion_handler_loop(
                     _ => continue,
                 };
 
-                // Ensure we have an auth user
-                if auth_user.is_none() {
-                    auth_user = database::get_default_user_id(&db)
-                        .await
-                        .ok()
-                        .flatten()
-                        .map(|uid| AuthUser {
-                            user_id: uid.to_string(),
-                            email: None,
-                            role: Some("admin".to_string()),
-                        });
-                }
-
-                let Some(ref user) = auth_user else {
-                    warn!(
-                        info_hash = %info_hash,
-                        torrent_name = %name,
-                        "Skipping completed-file processing: no default user available for info_hash={}, name='{}'",
-                        info_hash,
-                        name
-                    );
-                    continue;
-                };
-
                 if !processing.lock().insert(info_hash.clone()) {
                     info!(
                         info_hash = %info_hash,
@@ -1259,7 +1348,7 @@ async fn completion_handler_loop(
                 let session_task = session.clone();
                 let db_task = db.clone();
                 let scan_task = scan_service.clone();
-                let user_task = user.clone();
+                let user_task = auth_user.clone();
                 let processing_task = processing.clone();
                 let info_hash_task = info_hash.clone();
                 let name_task = name.clone();
@@ -1408,16 +1497,7 @@ async fn run_reconciliation_sweep(
     scan_service: &Arc<LibraryScanService>,
     processing: &Arc<Mutex<std::collections::HashSet<String>>>,
 ) -> Result<()> {
-    let Some(user) = database::get_default_user_id(db)
-        .await?
-        .map(|uid| AuthUser {
-            user_id: uid.to_string(),
-            email: None,
-            role: Some("admin".to_string()),
-        })
-    else {
-        return Ok(());
-    };
+    let user = database::system_auth_user();
 
     reconcile_orphaned_torrents(session, db, schema, &user).await;
 
@@ -1587,16 +1667,7 @@ async fn enforce_seeding_policy(
         return Ok(());
     }
 
-    let Some(auth_user) = database::get_default_user_id(db)
-        .await?
-        .map(|uid| AuthUser {
-            user_id: uid.to_string(),
-            email: None,
-            role: Some("admin".to_string()),
-        })
-    else {
-        return Ok(());
-    };
+    let auth_user = database::system_auth_user();
 
     let now = Utc::now();
     for torrent in database::find_completed_torrents(db).await? {
@@ -2118,5 +2189,172 @@ mod tests {
             format!("{error:#}").contains("could not create directory"),
             "unexpected error: {error:#}"
         );
+    }
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+    use crate::graphql::entities::{CreateUserInput, UpdateUserInput, User};
+    use crate::services::graphql::policy::{AppEntityPolicy, AppFieldPolicy};
+    use crate::services::graphql::row_policy::OwnershipRowPolicy;
+
+    fn base_torrent() -> Torrent {
+        Torrent {
+            id: "t1".to_string(),
+            user_id: "u1".to_string(),
+            info_hash: "hash".to_string(),
+            magnet_uri: None,
+            name: "Some.Release".to_string(),
+            state: "downloading".to_string(),
+            progress: 1.0,
+            total_bytes: 100,
+            downloaded_bytes: 100,
+            uploaded_bytes: 0,
+            uploaded_bytes_total: 0,
+            save_path: "/tmp".to_string(),
+            download_path: None,
+            source_url: None,
+            source_feed_id: None,
+            source_indexer_id: None,
+            library_id: None,
+            post_process_status: None,
+            post_process_error: None,
+            processed_at: None,
+            episode_id: Some("ep1".to_string()),
+            movie_id: None,
+            track_id: None,
+            chapter_id: None,
+            show_id: Some("show1".to_string()),
+            album_id: None,
+            audiobook_id: None,
+            minimum_ratio: None,
+            minimum_seed_time_minutes: None,
+            season: None,
+            excluded_files: vec![],
+            added_at: Utc::now().to_rfc3339(),
+            created_at: Utc::now().to_rfc3339(),
+            updated_at: Utc::now().to_rfc3339(),
+            completed_at: None,
+            files: vec![],
+        }
+    }
+
+    async fn user(db: &Database) -> User {
+        User::insert(
+            db,
+            CreateUserInput {
+                username: uuid::Uuid::new_v4().to_string(),
+                email: None,
+                password_hash: "fixture password_hash".to_string(),
+                role: "member".to_string(),
+                display_name: None,
+                avatar_url: None,
+                is_active: true,
+                last_login_at: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    fn member(id: &str) -> AuthUser {
+        AuthUser {
+            user_id: id.to_string(),
+            email: None,
+            role: Some("member".to_string()),
+        }
+    }
+
+    #[test]
+    fn existing_runtime_identity_requires_persisted_authorized_owner_and_matching_bindings() {
+        let row = base_torrent();
+        let owner = member(&row.user_id);
+        let scope = database::TorrentCreateScope {
+            owner_id: row.user_id.clone(),
+            library_id: row.library_id.clone(),
+        };
+        let empty = TorrentAddMetadata::default();
+        assert!(authorize_existing_add(&owner, Some(&row), &scope, &empty).is_ok());
+        assert!(authorize_existing_add(&member("foreign"), Some(&row), &scope, &empty).is_err());
+        assert!(authorize_existing_add(&owner, None, &scope, &empty).is_err());
+        let admin = AuthUser::system_admin();
+        assert!(authorize_existing_add(&admin, Some(&row), &scope, &empty).is_ok());
+        assert!(authorize_existing_add(&admin, None, &scope, &empty).is_err());
+        let mut requested = empty.clone();
+        requested.episode_id = Some("other-episode".to_string());
+        assert!(authorize_existing_add(&owner, Some(&row), &scope, &requested).is_err());
+        requested.episode_id = row.episode_id.clone();
+        assert!(authorize_existing_add(&owner, Some(&row), &scope, &requested).is_ok());
+        let foreign_scope = database::TorrentCreateScope {
+            owner_id: "foreign".to_string(),
+            library_id: None,
+        };
+        assert!(authorize_existing_add(&admin, Some(&row), &foreign_scope, &requested).is_err());
+        let no_role = AuthUser {
+            role: None,
+            ..owner
+        };
+        assert!(authorize_existing_add(&no_role, Some(&row), &scope, &empty).is_err());
+        assert_eq!(row.episode_id.as_deref(), Some("ep1"));
+        assert_eq!(row.source_url, None);
+    }
+
+    #[tokio::test]
+    async fn caller_cannot_manufacture_admin_authority_and_system_needs_no_account() {
+        let mut db = Database::new(
+            graphql_orm::DbPool::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        // Match application authorization without installing service lifecycle hooks.
+        db.set_entity_policy(AppEntityPolicy);
+        db.set_field_policy(AppFieldPolicy);
+        db.set_row_policy(OwnershipRowPolicy);
+        crate::services::database::bootstrap_schema(&db)
+            .await
+            .unwrap();
+        assert_eq!(
+            current_add_actor(&db, &AuthUser::system_admin())
+                .await
+                .unwrap()
+                .user_id,
+            "system"
+        );
+        let user = user(&db).await;
+        let claimed_admin = AuthUser::system_admin_for(&user.id);
+        assert!(
+            !current_add_actor(&db, &claimed_admin)
+                .await
+                .unwrap()
+                .is_admin()
+        );
+        User::update_by_id(
+            &db,
+            &user.id,
+            UpdateUserInput {
+                role: Some("admin".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            current_add_actor(&db, &claimed_admin)
+                .await
+                .unwrap()
+                .is_admin()
+        );
+        User::update_by_id(
+            &db,
+            &user.id,
+            UpdateUserInput {
+                is_active: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(current_add_actor(&db, &claimed_admin).await.is_err());
     }
 }

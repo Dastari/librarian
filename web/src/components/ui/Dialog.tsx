@@ -1,7 +1,5 @@
-import { Modal } from "@heroui/react";
-import type { ReactNode } from "react";
-
-import { cn } from "@/lib/utils";
+import { Dialog as GlassDialog, type DialogSize } from "glass-ux/dialog";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 
 interface DialogProps {
   isOpen: boolean;
@@ -10,29 +8,41 @@ interface DialogProps {
   description?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
-  /** `xl` and `wide` are Librarian additions for dialogs that contain tables. */
   size?: "xs" | "sm" | "md" | "lg" | "xl" | "wide" | "full" | "cover";
   className?: string;
   isDismissable?: boolean;
 }
 
-/** Standard glass dialog. Forms and pickers use this; confirmations use ConfirmDialog. */
+const SIZE: Record<NonNullable<DialogProps["size"]>, DialogSize> = {
+  xs: "sm", sm: "sm", md: "md", lg: "lg", xl: "xl", wide: "full", full: "full", cover: "full",
+};
+
+/** Controlled overlays have no library Trigger, so remember the host opener explicitly. */
+export function useDialogReturnFocus(open: boolean) {
+  const opener = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    if (open && document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
+      opener.current = document.activeElement;
+    }
+  }, [open]);
+  return () => opener.current?.isConnected ? opener.current : undefined;
+}
+
 export function Dialog({ isOpen, onOpenChange, title, description, children, footer, size = "md", className, isDismissable = true }: DialogProps) {
+  const finalFocus = useDialogReturnFocus(isOpen);
   return (
-    <Modal isOpen={isOpen} onOpenChange={onOpenChange}>
-      <Modal.Backdrop variant="blur" isDismissable={isDismissable}>
-        <Modal.Container size={size === "xl" || size === "wide" ? "lg" : size} placement="auto" scroll="inside" className={cn(size === "xl" && "[&_.modal__dialog]:!max-w-[min(64rem,94vw)]", size === "wide" && "[&_.modal__dialog]:!max-w-[min(84rem,96vw)]")}>
-          <Modal.Dialog className={cn("glass-surface glass-highlight overflow-hidden", size === "xl" && "!max-w-[min(64rem,94vw)]", size === "wide" && "!max-w-[min(84rem,96vw)]", className)}>
-            <Modal.Header>
-              <Modal.Heading>{title}</Modal.Heading>
-              {description ? <p className="mt-1 text-body-sm text-muted">{description}</p> : null}
-              <Modal.CloseTrigger />
-            </Modal.Header>
-            <Modal.Body className="scrollbar-thin overflow-x-hidden">{children}</Modal.Body>
-            {footer ? <Modal.Footer>{footer}</Modal.Footer> : null}
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
-    </Modal>
+    <GlassDialog.Root open={isOpen} disablePointerDismissal={!isDismissable} onOpenChange={(open, details) => {
+      if (!open && !isDismissable) details.cancel();
+      else onOpenChange(open);
+    }}>
+      <GlassDialog.Popup size={SIZE[size]} className={className} finalFocus={finalFocus}>
+        <GlassDialog.Header title={title} close={isDismissable} />
+        <GlassDialog.Body>
+          {description ? <GlassDialog.Description>{description}</GlassDialog.Description> : null}
+          {children}
+        </GlassDialog.Body>
+        {footer ? <GlassDialog.Footer>{footer}</GlassDialog.Footer> : null}
+      </GlassDialog.Popup>
+    </GlassDialog.Root>
   );
 }

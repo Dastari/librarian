@@ -19,7 +19,8 @@ use serde::{Deserialize, Serialize};
     write_policy = "admin.write",
     index = "timestamp",
     index = "target",
-    index = "level"
+    index = "level",
+    keyset = "timestamp desc, id desc"
 )]
 pub struct AppLog {
     #[graphql(name = "id")]

@@ -6,13 +6,15 @@ use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::super::auth::AuthExt;
+use super::super::auth::{AuthExt, AuthUser, Role};
 use super::torrent_file::TorrentFile;
+use crate::db::Database;
 use crate::services::ServicesManager;
 use crate::services::torrent::{
     TorrentAddMetadata, TorrentInfo as ServiceTorrentInfo, TorrentService,
     TorrentState as ServiceTorrentState,
 };
+use graphql_orm::graphql::filters::StringFilter;
 
 #[derive(
     GraphQLEntity,
@@ -41,6 +43,8 @@ pub struct Torrent {
 
     #[graphql(name = "infoHash")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "admin.write")]
+    #[unique]
     pub info_hash: String,
 
     #[graphql(name = "magnetUri")]
@@ -105,7 +109,7 @@ pub struct Torrent {
 
     #[graphql(name = "libraryId")]
     #[filterable(type = "string")]
-    #[graphql_orm(write_policy = "owned.link")]
+    #[graphql_orm(write_policy = "owned.mutable-link")]
     pub library_id: Option<String>,
 
     #[graphql(name = "postProcessStatus")]
@@ -312,8 +316,275 @@ fn service_torrent_to_live(t: ServiceTorrentInfo) -> LiveTorrent {
     }
 }
 
+/// Recheck persisted authority for runtime operations and long-lived streams.
+/// Repository reads are trusted: their results do not inherit GraphQL row policy.
+/// Never acquire new admin privileges from a stale member authentication context.
+pub(crate) async fn current_torrent_user(
+    db: &Database,
+    authenticated: &AuthUser,
+) -> Result<AuthUser> {
+    if !authenticated.has_role(Role::Member) {
+        return Err(async_graphql::Error::new("Torrent access denied"));
+    }
+    let user = User::get(db.pool(), &authenticated.user_id)
+        .await
+        .map_err(|error| async_graphql::Error::new(error.to_string()))?
+        .filter(|user| user.is_active)
+        .ok_or_else(|| async_graphql::Error::new("Torrent access denied"))?;
+    let current_role = Role::parse(&user.role)
+        .ok_or_else(|| async_graphql::Error::new("Torrent access denied"))?;
+    Ok(AuthUser {
+        user_id: user.id,
+        email: user.email,
+        role: Some(
+            if authenticated.is_admin() && current_role == Role::Admin {
+                "admin"
+            } else {
+                "member"
+            }
+            .to_string(),
+        ),
+    })
+}
+
+pub(crate) fn owns_runtime_torrent(user: &AuthUser, torrent: &Torrent) -> bool {
+    user.is_admin() || (user.has_role(Role::Member) && torrent.user_id == user.user_id)
+}
+
+/// Exact hash lookup through the generated entity layer. Two matches are enough
+/// to detect ambiguity, rather than choosing a possibly foreign persisted ID.
+/// Lookup per runtime identity avoids a capped scan of unrelated persisted rows.
+pub(crate) async fn persisted_runtime_torrent(
+    db: &Database,
+    info_hash: &str,
+) -> Result<Option<Torrent>> {
+    let mut rows = Torrent::query(db.pool())
+        .filter(TorrentWhereInput {
+            info_hash: Some(StringFilter {
+                eq: Some(info_hash.to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .limit(2)
+        .fetch_all()
+        .await
+        .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+    if rows.len() > 1 {
+        return Err(async_graphql::Error::new("Ambiguous torrent identity"));
+    }
+    Ok(rows.pop())
+}
+
+async fn require_runtime_torrent(
+    db: &Database,
+    user: &AuthUser,
+    info_hash: &str,
+) -> Result<Torrent> {
+    persisted_runtime_torrent(db, info_hash)
+        .await?
+        .filter(|torrent| owns_runtime_torrent(user, torrent))
+        .ok_or_else(|| async_graphql::Error::new("Torrent not found or access denied"))
+}
+
+/// Bind requested acquisition targets to one readable library before any runtime
+/// add, and keep actor authority distinct from the owner stamped on new rows.
+pub(crate) async fn authorize_add_torrent_targets(
+    db: &Database,
+    caller: &AuthUser,
+    input: &AddTorrentInput,
+) -> Result<Uuid> {
+    use std::collections::BTreeSet;
+    let caller = current_torrent_user(db, caller).await?;
+    let deny = || async_graphql::Error::new("Torrent target not found or access denied");
+    let classes = [
+        input.movie_id.is_some(),
+        input.show_id.is_some() || input.episode_id.is_some(),
+        input.album_id.is_some() || input.track_id.is_some(),
+        input.audiobook_id.is_some() || input.chapter_id.is_some(),
+    ];
+    if classes.into_iter().filter(|present| *present).count() > 1 {
+        return Err(deny());
+    }
+    let mut libraries = BTreeSet::new();
+    if let Some(id) = &input.library_id {
+        libraries.insert(id.clone());
+    }
+    macro_rules! owned {
+        ($key:expr, $id:expr) => {
+            if !caller.is_admin()
+                && !crate::services::graphql::policy::AppFieldPolicy::owns_link(
+                    db,
+                    &caller.user_id,
+                    $key,
+                    $id,
+                )
+                .await?
+            {
+                return Err(deny());
+            }
+        };
+    }
+    macro_rules! direct {
+        ($field:ident, $ty:ty, $key:literal) => {
+            if let Some(id) = &input.$field {
+                owned!($key, id);
+                let row = <$ty>::get(db.pool(), id)
+                    .await
+                    .map_err(|_| deny())?
+                    .ok_or_else(deny)?;
+                libraries.insert(row.library_id);
+            }
+        };
+    }
+    direct!(movie_id, Movie, "movieId");
+    direct!(show_id, Show, "showId");
+    direct!(album_id, Album, "albumId");
+    direct!(audiobook_id, Audiobook, "audiobookId");
+    if let Some(id) = &input.episode_id {
+        owned!("episodeId", id);
+        let episode = Episode::get(db.pool(), id)
+            .await
+            .map_err(|_| deny())?
+            .ok_or_else(deny)?;
+        if input
+            .show_id
+            .as_ref()
+            .is_some_and(|show| show != &episode.show_id)
+        {
+            return Err(deny());
+        }
+        let show = Show::get(db.pool(), &episode.show_id)
+            .await
+            .map_err(|_| deny())?
+            .ok_or_else(deny)?;
+        libraries.insert(show.library_id);
+    }
+    if let Some(id) = &input.track_id {
+        owned!("trackId", id);
+        let track = Track::get(db.pool(), id)
+            .await
+            .map_err(|_| deny())?
+            .ok_or_else(deny)?;
+        if input
+            .album_id
+            .as_ref()
+            .is_some_and(|album| album != &track.album_id)
+        {
+            return Err(deny());
+        }
+        libraries.insert(track.library_id);
+    }
+    if let Some(id) = &input.chapter_id {
+        owned!("chapterId", id);
+        let chapter = Chapter::get(db.pool(), id)
+            .await
+            .map_err(|_| deny())?
+            .ok_or_else(deny)?;
+        if input
+            .audiobook_id
+            .as_ref()
+            .is_some_and(|book| book != &chapter.audiobook_id)
+        {
+            return Err(deny());
+        }
+        let book = Audiobook::get(db.pool(), &chapter.audiobook_id)
+            .await
+            .map_err(|_| deny())?
+            .ok_or_else(deny)?;
+        libraries.insert(book.library_id);
+    }
+    if let Some(id) = &input.source_feed_id {
+        owned!("feedId", id);
+        let feed = RssFeed::get(db.pool(), id)
+            .await
+            .map_err(|_| deny())?
+            .ok_or_else(deny)?;
+        if let Some(library) = feed.library_id {
+            libraries.insert(library);
+        } else if feed.user_id != caller.user_id {
+            return Err(deny());
+        }
+    }
+    if libraries.len() > 1 {
+        return Err(deny());
+    }
+    let owner = if let Some(id) = libraries.first() {
+        let library = Library::get(db.pool(), id)
+            .await
+            .map_err(|_| deny())?
+            .ok_or_else(deny)?;
+        if !caller.is_admin() && library.user_id != caller.user_id {
+            return Err(deny());
+        }
+        library.user_id
+    } else {
+        caller.user_id
+    };
+    Uuid::parse_str(&owner).map_err(|_| deny())
+}
+
+fn runtime_id(id: i32) -> Result<usize> {
+    usize::try_from(id).map_err(|_| async_graphql::Error::new("Invalid torrent ID"))
+}
+
+async fn authorized_runtime_hash(
+    ctx: &Context<'_>,
+    service: &TorrentService,
+    id: i32,
+) -> Result<String> {
+    let id = runtime_id(id)?;
+    let info = service
+        .get_torrent_info(id)
+        .await
+        .map_err(|_| async_graphql::Error::new("Torrent not found or access denied"))?;
+    // Control by the checked hash so reusing a numeric runtime slot cannot
+    // redirect the operation to a different torrent.
+    authorized_info_hash(ctx, &info.info_hash).await
+}
+
+async fn authorized_info_hash(ctx: &Context<'_>, info_hash: &str) -> Result<String> {
+    let db = ctx.data::<Database>()?;
+    let user = current_torrent_user(db, ctx.librarian_auth_user()?).await?;
+    let hash = info_hash.trim().to_ascii_lowercase();
+    let torrent = require_runtime_torrent(db, &user, &hash).await?;
+    let current = current_torrent_user(db, ctx.librarian_auth_user()?).await?;
+    if !owns_runtime_torrent(&current, &torrent) {
+        return Err(async_graphql::Error::new(
+            "Torrent not found or access denied",
+        ));
+    }
+    Ok(torrent.info_hash)
+}
+
+async fn visible_runtime_torrents(
+    db: &Database,
+    user: &AuthUser,
+    list: Vec<ServiceTorrentInfo>,
+) -> Result<Vec<LiveTorrent>> {
+    let mut visible = Vec::new();
+    for info in list {
+        // Administrators intentionally see the entire live session, including
+        // runtime orphans; controls still require an unambiguous persisted row.
+        if user.is_admin()
+            || persisted_runtime_torrent(db, &info.info_hash)
+                .await?
+                .is_some_and(|torrent| owns_runtime_torrent(user, &torrent))
+        {
+            visible.push(service_torrent_to_live(info));
+        }
+    }
+    // Runtime enumeration and mapping both await. Do not release a snapshot
+    // built with admin privileges if the account was demoted in the meantime.
+    let current = current_torrent_user(db, user).await?;
+    if current.parsed_role() != user.parsed_role() {
+        return Err(async_graphql::Error::new("Torrent authority changed"));
+    }
+    Ok(visible)
+}
+
 /// Input for adding a torrent
-#[derive(InputObject)]
+#[derive(InputObject, Default)]
 #[graphql(name = "AddTorrentInput")]
 #[graphql(rename_fields = "camelCase")]
 pub struct AddTorrentInput {
@@ -389,7 +660,8 @@ impl TorrentCustomOperations {
     /// Get all torrents with live state from the torrent client
     #[graphql(name = "liveTorrents")]
     async fn live_torrents(&self, ctx: &Context<'_>) -> Result<Vec<LiveTorrent>> {
-        let _user = ctx.librarian_auth_user()?;
+        let db = ctx.data::<Database>()?;
+        let user = current_torrent_user(db, ctx.librarian_auth_user()?).await?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let service = manager
             .get_torrent()
@@ -399,7 +671,7 @@ impl TorrentCustomOperations {
             .list_torrents()
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        Ok(list.into_iter().map(service_torrent_to_live).collect())
+        visible_runtime_torrents(db, &user, list).await
     }
 
     /// Get a single live torrent by numeric id
@@ -409,23 +681,25 @@ impl TorrentCustomOperations {
         ctx: &Context<'_>,
         #[graphql(name = "id")] id: i32,
     ) -> Result<Option<LiveTorrent>> {
-        let _user = ctx.librarian_auth_user()?;
+        let db = ctx.data::<Database>()?;
+        let user = current_torrent_user(db, ctx.librarian_auth_user()?).await?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let service = manager.get_torrent().await;
-        Ok(match service {
-            Some(svc) => svc
-                .get_torrent_info(id as usize)
-                .await
-                .ok()
-                .map(service_torrent_to_live),
-            None => None,
-        })
+        let id = runtime_id(id)?;
+        let Some(service) = service else {
+            return Ok(None);
+        };
+        let Ok(info) = service.get_torrent_info(id).await else {
+            return Ok(None);
+        };
+        Ok(visible_runtime_torrents(db, &user, vec![info]).await?.pop())
     }
 
     /// Count of active (downloading/checking) torrents
     #[graphql(name = "activeDownloadCount")]
     async fn active_download_count(&self, ctx: &Context<'_>) -> Result<i32> {
-        let _user = ctx.librarian_auth_user()?;
+        let db = ctx.data::<Database>()?;
+        let user = current_torrent_user(db, ctx.librarian_auth_user()?).await?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let service: Arc<TorrentService> = manager
             .get_torrent()
@@ -435,7 +709,7 @@ impl TorrentCustomOperations {
             .list_active_downloads()
             .await
             .map_err(|e: anyhow::Error| async_graphql::Error::new(e.to_string()))?;
-        Ok(list.len() as i32)
+        Ok(visible_runtime_torrents(db, &user, list).await?.len() as i32)
     }
 }
 
@@ -561,13 +835,14 @@ impl TorrentClientMutations {
         ctx: &Context<'_>,
         #[graphql(name = "input")] input: AddTorrentInput,
     ) -> Result<AddTorrentResult> {
-        let user = ctx.librarian_auth_user()?;
+        let db = ctx.data::<Database>()?;
+        let user = current_torrent_user(db, ctx.require_member()?).await?;
+        let owner_id = authorize_add_torrent_targets(db, &user, &input).await?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let service = manager
             .get_torrent()
             .await
             .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
-        let user_id = Uuid::parse_str(&user.user_id).ok();
         let Some(uri) = input
             .magnet
             .as_deref()
@@ -582,9 +857,9 @@ impl TorrentClientMutations {
             });
         };
         let result = service
-            .add_magnet_with_metadata(
+            .add_magnet_for_actor_with_outcome(
                 uri,
-                user_id,
+                &user,
                 TorrentAddMetadata {
                     library_id: input.library_id,
                     movie_id: input.movie_id,
@@ -601,7 +876,16 @@ impl TorrentClientMutations {
             )
             .await;
         match result {
-            Ok(info) => {
+            Ok(outcome) => {
+                let info = outcome.info;
+                let current = current_torrent_user(db, &user).await?;
+                let persisted = require_runtime_torrent(db, &current, &info.info_hash).await?;
+                if persisted.user_id != owner_id.to_string() {
+                    return Err(async_graphql::Error::new(
+                        "Torrent not found or access denied",
+                    ));
+                }
+
                 // `season` and the tracker seeding floors are not part of
                 // `TorrentAddMetadata` (owned by the torrent service); stamp
                 // them on the row the service just created, through the
@@ -611,7 +895,7 @@ impl TorrentClientMutations {
                     input.minimum_ratio,
                     input.minimum_seed_time,
                 );
-                if !details.is_empty() {
+                if outcome.created && !details.is_empty() {
                     let db = ctx.data::<crate::db::Database>()?;
                     if let Err(error) =
                         stamp_torrent_grab_details(db, &info.info_hash, details).await
@@ -651,7 +935,8 @@ impl TorrentClientMutations {
             .get_torrent()
             .await
             .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
-        match service.pause(id as usize).await {
+        let info_hash = authorized_runtime_hash(ctx, &service, id).await?;
+        match service.pause_by_info_hash(&info_hash).await {
             Ok(()) => Ok(TorrentActionResult {
                 success: true,
                 error: None,
@@ -676,7 +961,8 @@ impl TorrentClientMutations {
             .get_torrent()
             .await
             .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
-        match service.resume(id as usize).await {
+        let info_hash = authorized_runtime_hash(ctx, &service, id).await?;
+        match service.resume_by_info_hash(&info_hash).await {
             Ok(()) => Ok(TorrentActionResult {
                 success: true,
                 error: None,
@@ -702,7 +988,8 @@ impl TorrentClientMutations {
             .get_torrent()
             .await
             .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
-        match service.remove(id as usize, delete_files).await {
+        let info_hash = authorized_runtime_hash(ctx, &service, id).await?;
+        match service.remove_by_info_hash(&info_hash, delete_files).await {
             Ok(()) => Ok(TorrentActionResult {
                 success: true,
                 error: None,
@@ -726,6 +1013,7 @@ impl TorrentClientMutations {
             .get_torrent()
             .await
             .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
+        let info_hash = authorized_info_hash(ctx, &info_hash).await?;
         match service.pause_by_info_hash(&info_hash).await {
             Ok(()) => Ok(TorrentActionResult {
                 success: true,
@@ -750,6 +1038,7 @@ impl TorrentClientMutations {
             .get_torrent()
             .await
             .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
+        let info_hash = authorized_info_hash(ctx, &info_hash).await?;
         match service.resume_by_info_hash(&info_hash).await {
             Ok(()) => Ok(TorrentActionResult {
                 success: true,
@@ -775,6 +1064,7 @@ impl TorrentClientMutations {
             .get_torrent()
             .await
             .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
+        let info_hash = authorized_info_hash(ctx, &info_hash).await?;
         match service.remove_by_info_hash(&info_hash, delete_files).await {
             Ok(()) => Ok(TorrentActionResult {
                 success: true,
@@ -950,3 +1240,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "torrent_authorization_tests.rs"]
+pub(crate) mod authorization_tests;

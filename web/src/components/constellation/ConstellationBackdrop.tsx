@@ -11,7 +11,7 @@ const FilmConstellation = lazy(() => import("./FilmConstellation").then((module)
 export function ConstellationBackdrop({ className, clearRef }: { className?: string; clearRef?: RefObject<HTMLElement | null> }) {
   return (
     <div className={cn("pointer-events-none absolute inset-0 -z-10 overflow-hidden", className)} aria-hidden>
-      <div className="ambient-canvas absolute inset-0" />
+      <div className="canvas-ambient absolute inset-0" />
       <Suspense fallback={null}>
         <FilmConstellation className="absolute inset-0 size-full" opacity={0.62} clearRef={clearRef} />
       </Suspense>

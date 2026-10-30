@@ -1,4 +1,4 @@
-import { toast } from "@heroui/react";
+import { toast } from "glass-ux/toast";
 import { IconFile, IconFileSearch, IconLinkOff, IconRefresh, IconWand } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
@@ -171,8 +171,9 @@ export function FilesBrowser({ libraryId }: { libraryId: string }) {
   const availabilityLabels: Record<AvailabilityFilter, string> = { all: "All files", available: "Below quality target", wanted: "Unmatched", missing: "Unmatched" };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 sm:gap-4">
       <BrowserToolbar
+        tableOnly
         query={filters.query}
         onQueryChange={filters.setQuery}
         letter={null}
@@ -192,10 +193,15 @@ export function FilesBrowser({ libraryId }: { libraryId: string }) {
         }
       />
       <DataTable<FileRow>
+        height="fill"
+        className="min-h-0 min-w-0 flex-1"
         columns={columns}
         rows={list.rows}
         getRowId={getRowId}
         isLoading={list.loading}
+          refetching={list.fetching}
+          queryKey={list.queryKey} loadRevision={list.loadRevision}
+          externalBrowserToolbar
         totalCount={list.totalCount}
         noun="files"
         density="compact"

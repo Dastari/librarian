@@ -4,8 +4,16 @@ use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    async_graphql::SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
 )]
+#[graphql(complex)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
@@ -26,10 +34,12 @@ pub struct LibraryScanRun {
 
     #[graphql(name = "userId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owner.id")]
     pub user_id: String,
 
     #[graphql(name = "libraryId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub library_id: String,
 
     #[graphql(name = "status")]
@@ -101,6 +111,32 @@ pub struct LibraryScanRun {
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,
+
+    // Query relations do not add physical FKs or change existing delete behavior.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Library",
+        from = "library_id",
+        to = "id",
+        on_delete = "cascade",
+        propagate_change = "up",
+        emit_fk = false
+    )]
+    pub library: Option<Box<Library>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "LibraryScanIssue",
+        from = "id",
+        to = "scan_run_id",
+        multiple,
+        emit_fk = false
+    )]
+    pub issues: Vec<LibraryScanIssue>,
 }
 
 #[derive(Default)]

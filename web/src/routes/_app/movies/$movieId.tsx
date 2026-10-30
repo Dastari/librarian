@@ -1,3 +1,4 @@
+import { useLiveRoute } from "@/lib/graphql/live/hooks";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { MoviePage } from "@/features/media/MoviePage";
@@ -9,5 +10,9 @@ export const Route = createFileRoute("/_app/movies/$movieId")({
     const { data } = await context.apollo.query({ query: MovieDetailDocument, variables: { id: params.movieId }, fetchPolicy: "cache-first" });
     return { crumb: data?.movie?.title ?? "Movie" };
   },
-  component: () => <MoviePage movieId={Route.useParams().movieId} />,
+  component: () => {
+    const { movieId } = Route.useParams();
+    useLiveRoute(MovieDetailDocument, { id: movieId });
+    return <MoviePage movieId={movieId} />;
+  },
 });

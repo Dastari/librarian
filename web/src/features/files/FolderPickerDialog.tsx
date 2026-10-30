@@ -1,11 +1,11 @@
-import { useQuery } from "@apollo/client/react";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 
-import { IconArrowUp, IconFolder, IconFolderOpen, IconLock } from "@tabler/icons-react";
+import { IconArrowUp, IconFolder, IconFolderOpen, IconLock } from "glass-ux/icons";
+import { ListRow } from "glass-ux/list-row";
 import { useEffect, useState } from "react";
 
 import { Button, Dialog, EmptyState, Spinner } from "@/components/ui";
 import { BrowseDirectoryDocument } from "@/graphql/generated/graphql";
-import { cn } from "@/lib/utils";
 
 interface FolderPickerDialogProps {
   isOpen: boolean;
@@ -21,8 +21,8 @@ export function FolderPickerDialog({ isOpen, onOpenChange, initialPath, onPick }
     if (isOpen) setPath(initialPath || null);
   }, [isOpen, initialPath]);
 
-  const { data, loading, error } = useQuery(BrowseDirectoryDocument, { variables: { input: { path, dirsOnly: true, showHidden: false } }, skip: !isOpen });
-  const listing = data?.browseDirectory;
+  const { data, previousData, loading, error } = useQuery(BrowseDirectoryDocument, { variables: { input: { path, dirsOnly: true, showHidden: false } }, skip: !isOpen });
+  const listing = (data ?? previousData)?.browseDirectory;
 
   return (
     <Dialog
@@ -37,7 +37,7 @@ export function FolderPickerDialog({ isOpen, onOpenChange, initialPath, onPick }
           </Button>
           <Button
             variant="primary"
-            isDisabled={!listing}
+            isDisabled={!listing || loading || Boolean(error)}
             onPress={() => {
               if (listing) onPick(listing.currentPath);
               onOpenChange(false);
@@ -51,7 +51,7 @@ export function FolderPickerDialog({ isOpen, onOpenChange, initialPath, onPick }
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-2">
           <Button variant="secondary" size="sm" isIconOnly aria-label="Parent folder" isDisabled={!listing?.parentPath} onPress={() => listing?.parentPath && setPath(listing.parentPath)}>
-            <IconArrowUp size={16} />
+            <IconArrowUp />
           </Button>
           <code className="min-w-0 flex-1 truncate rounded-lg bg-surface-secondary px-3 py-2 font-mono text-label text-foreground">{listing?.currentPath ?? path ?? "/"}</code>
         </div>
@@ -59,7 +59,7 @@ export function FolderPickerDialog({ isOpen, onOpenChange, initialPath, onPick }
           <div className="flex flex-wrap gap-1.5">
             {listing.quickPaths.map((quick) => (
               <Button key={quick.path} size="sm" variant="ghost" onPress={() => setPath(quick.path)}>
-                <IconFolder size={14} className="text-media-audiobooks" /> {quick.name}
+                <IconFolder /> {quick.name}
               </Button>
             ))}
           </div>
@@ -77,21 +77,21 @@ export function FolderPickerDialog({ isOpen, onOpenChange, initialPath, onPick }
             <ul>
               {listing?.entries.map((entry) => (
                 <li key={entry.path}>
-                  <button
-                    type="button"
-                    data-focusable
+                  <ListRow
                     disabled={!entry.readable}
+                    selected={entry.path === listing.currentPath}
                     onClick={() => setPath(entry.path)}
                     onDoubleClick={() => {
+                      if (!entry.readable) return;
                       onPick(entry.path);
                       onOpenChange(false);
                     }}
-                    className={cn("nav-focus flex w-full items-center gap-3 px-3 py-2 text-left text-body-sm hover:bg-surface-hover disabled:opacity-50", entry.path === listing.currentPath && "bg-brand-soft")}
-                  >
-                    <IconFolder size={18} className="shrink-0 text-media-audiobooks" />
-                    <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                    {!entry.writable ? <IconLock size={14} className="text-muted" /> : null}
-                  </button>
+                    icon={<IconFolder />}
+                    title={entry.name}
+                    trailing={!entry.writable ? <IconLock size="sm" className="text-muted" /> : undefined}
+                    className="w-full"
+                    data-focusable
+                  />
                 </li>
               ))}
             </ul>

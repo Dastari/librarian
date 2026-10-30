@@ -97,8 +97,5 @@ subscription EntityShowChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    show {
-      ...ShowFields
-    }
   }
 }

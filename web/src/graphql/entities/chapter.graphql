@@ -86,8 +86,5 @@ subscription EntityChapterChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    chapter {
-      ...ChapterFields
-    }
   }
 }

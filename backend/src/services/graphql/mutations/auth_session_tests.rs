@@ -1,6 +1,6 @@
 //! Exercise the actual ORM records and GraphQL cookie responses, not a mock store.
 use super::auth::*;
-use crate::graphql::entities::{RefreshToken, UpdateRefreshTokenInput};
+use crate::graphql::entities::{RefreshToken, UpdateRefreshTokenInput, UpdateUserInput, User};
 use crate::services::auth::{AuthConfig, RegisterInput};
 use crate::services::{DatabaseServiceConfig, ServicesManager};
 use async_graphql::{EmptySubscription, Object, Request, Response, Schema};
@@ -52,14 +52,19 @@ async fn refresh_session_rotates_persisted_tokens_for_thirty_days() {
     let auth = services.get_auth().await.unwrap();
     let db_service = services.get_database().await.unwrap();
     let db = db_service.pool();
-    auth.register(RegisterInput {
-        email: "session-test@example.test".into(),
-        name: "Session Test".into(),
-        password: "test-fixture-password-only".into(),
-        invite_token: None,
-    })
-    .await
-    .unwrap();
+    let registered = auth
+        .register(RegisterInput {
+            email: "session-test@example.test".into(),
+            name: "Session Test".into(),
+            password: "test-fixture-password-only".into(),
+            invite_token: None,
+        })
+        .await
+        .unwrap();
+    // Account creation must issue a StoredUser grant, just like password login.
+    auth.refresh_token(&registered.tokens.refresh_token)
+        .await
+        .expect("a newly registered account must have a refreshable session");
     let schema = Schema::build(TestQuery, AuthMutations, EmptySubscription)
         .data(auth.clone())
         .finish();
@@ -92,6 +97,22 @@ async fn refresh_session_rotates_persisted_tokens_for_thirty_days() {
     }
     let rows = RefreshToken::query(db.pool()).fetch_all().await.unwrap();
     for row in &rows {
+        assert_eq!(
+            serde_json::from_str::<agql_auth::RefreshGrantSource>(
+                row.grant_source.as_deref().unwrap()
+            )
+            .unwrap(),
+            agql_auth::RefreshGrantSource::StoredUser,
+        );
+        assert_eq!(
+            serde_json::from_str::<Vec<String>>(row.roles.as_deref().unwrap()).unwrap(),
+            vec!["admin"]
+        );
+        assert_eq!(
+            serde_json::from_str::<Vec<String>>(row.authorization_roles.as_deref().unwrap())
+                .unwrap(),
+            Vec::<String>::new()
+        );
         // This generated timestamp previously made every refresh fail to deserialize.
         let created = row
             .created_at
@@ -192,6 +213,97 @@ async fn refresh_session_rotates_persisted_tokens_for_thirty_days() {
         auth.refresh_token(&fresh.tokens.refresh_token)
             .await
             .is_err()
+    );
+
+    // Old rows carry no trustworthy grant source. They must reauthenticate;
+    // do not guess provenance from the password auth method in session JSON.
+    let legacy = auth
+        .login("session-test@example.test", "test-fixture-password-only")
+        .await
+        .unwrap();
+    for row in RefreshToken::query(db.pool()).fetch_all().await.unwrap() {
+        if row.revoked_at.is_none() {
+            RefreshToken::update_by_id(
+                db,
+                &row.id,
+                UpdateRefreshTokenInput {
+                    grant_source: Some(None),
+                    roles: Some(None),
+                    authorization_roles: Some(None),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
+    }
+    assert!(
+        auth.refresh_token(&legacy.tokens.refresh_token)
+            .await
+            .is_err()
+    );
+
+    // A deliberately narrowed persisted role ceiling must survive rotation
+    // even while the current user still has the broader admin authority.
+    let privileged = auth
+        .login("session-test@example.test", "test-fixture-password-only")
+        .await
+        .unwrap();
+    for row in RefreshToken::query(db.pool()).fetch_all().await.unwrap() {
+        if row.revoked_at.is_none() {
+            RefreshToken::update_by_id(
+                db,
+                &row.id,
+                UpdateRefreshTokenInput {
+                    roles: Some(Some("[]".into())),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
+    }
+    let narrowed = auth
+        .refresh_token(&privileged.tokens.refresh_token)
+        .await
+        .unwrap();
+    assert!(
+        auth.authenticate_access_token(&narrowed.access_token)
+            .await
+            .unwrap()
+            .roles
+            .is_empty()
+    );
+    let still_narrowed = auth.refresh_token(&narrowed.refresh_token).await.unwrap();
+    assert!(
+        auth.authenticate_access_token(&still_narrowed.access_token)
+            .await
+            .unwrap()
+            .roles
+            .is_empty()
+    );
+
+    // Librarian additionally revokes sessions immediately on a role change.
+    User::update_by_id(
+        db,
+        &registered.user.id,
+        UpdateUserInput {
+            role: Some("member".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        auth.refresh_token(&still_narrowed.refresh_token)
+            .await
+            .is_err()
+    );
+    assert!(
+        auth.authenticate_access_token(&still_narrowed.access_token)
+            .await
+            .is_err(),
+        "demotion must revoke even an already narrowed session"
     );
 
     // A transient store failure must not delete an otherwise usable refresh cookie.

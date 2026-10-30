@@ -16,6 +16,7 @@ use axum::http::header::{
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use graphql_orm::graphql::filters::{IntFilter, StringFilter};
 use serde::Deserialize;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -25,9 +26,11 @@ use tracing::{debug, error, warn};
 use crate::AppState;
 use crate::api::auth_guard::require_authenticated_user;
 use crate::graphql::AuthUser;
-use crate::graphql::entities::{CastSession, Library, MediaFile};
+use crate::graphql::entities::{
+    AudioStream, AudioStreamWhereInput, CastSession, Library, MediaFile, Subtitle,
+};
 use crate::services::transcode::TranscodeKind;
-use crate::services::transcode::ffmpeg::PLAYLIST_FILENAME;
+use crate::services::transcode::ffmpeg::{MAX_SUBTITLE_BYTES, PLAYLIST_FILENAME, SubtitleError};
 use crate::services::transcode::session::sanitize_segment_name;
 
 /// Create media routes
@@ -35,6 +38,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/media/{file_id}/stream", get(stream_media))
         .route("/media/{file_id}/info", get(media_info))
+        .route("/media/{file_id}/subtitles/{subtitle}", get(subtitle_vtt))
         .route("/media/{file_id}/hls/playlist.m3u8", get(hls_playlist))
         .route("/media/{file_id}/hls/{segment}", get(hls_segment))
 }
@@ -49,6 +53,9 @@ pub struct StreamParams {
     /// Cast-owned HLS mode selected by the capability decision.
     #[serde(rename = "castMode")]
     pub cast_mode: Option<String>,
+    /// Absolute ffprobe stream index, not an ordinal in the audio list.
+    #[serde(rename = "audioStream")]
+    pub audio_stream: Option<i32>,
 }
 
 #[derive(Debug, Clone)]
@@ -123,10 +130,24 @@ async fn stream_media(
     let file_size = metadata.len();
     let content_type = get_content_type(&media_file.path);
 
-    let range = headers
-        .get(RANGE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| parse_range_header(s, file_size));
+    let range = if let Some(value) = headers.get(RANGE) {
+        let parsed = value
+            .to_str()
+            .ok()
+            .and_then(|value| parse_range_header(value, file_size));
+        if headers.get_all(RANGE).iter().count() != 1 || parsed.is_none() {
+            return Ok(Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header(CONTENT_RANGE, format!("bytes */{file_size}"))
+                .header(ACCEPT_RANGES, "bytes")
+                .header(CONTENT_LENGTH, "0")
+                .body(Body::empty())
+                .expect("valid range rejection"));
+        }
+        parsed
+    } else {
+        None
+    };
 
     match range {
         Some((start, end)) => {
@@ -199,9 +220,15 @@ async fn media_info(
     State(state): State<AppState>,
     AxumPath(file_id): AxumPath<String>,
     headers: HeaderMap,
+    Query(params): Query<StreamParams>,
 ) -> Result<impl IntoResponse, StatusCode> {
     let media_file = fetch_media_file(&state, &file_id).await?;
     authorize_browser_media(&state, &headers, &media_file).await?;
+    let selected_audio = selected_audio_stream(&state, &media_file.id, params.audio_stream).await?;
+    let audio_codec = selected_audio
+        .as_ref()
+        .map(|stream| stream.codec.as_str())
+        .or(media_file.audio_codec.as_deref());
     let path = Path::new(&media_file.path);
     let exists = path.exists();
     let content_type = get_content_type(&media_file.path);
@@ -209,24 +236,30 @@ async fn media_info(
     let chromecast_compatible = is_chromecast_compatible(
         media_file.container.as_deref(),
         media_file.video_codec.as_deref(),
-        media_file.audio_codec.as_deref(),
+        audio_codec,
     );
 
     // Browser-playback decision (distinct from `chromecast_compatible` above:
     // cast devices often have hardware HEVC decoders a browser tab doesn't,
     // so the two must stay independently computed — see
     // `docs/design.md`'s transcode-decision-matrix Q entry).
-    let transcode_decision = needs_transcode(
+    let mut transcode_decision = needs_transcode(
         media_file.container.as_deref(),
         media_file.video_codec.as_deref(),
-        media_file.audio_codec.as_deref(),
+        audio_codec,
     );
+    if params.audio_stream.is_some() && transcode_decision == TranscodeDecision::None {
+        transcode_decision = TranscodeDecision::Remux;
+    }
     let needs_hls = transcode_decision != TranscodeDecision::None;
-    let playback_url = if needs_hls {
+    let mut playback_url = if needs_hls {
         format!("/api/media/{}/hls/playlist.m3u8", media_file.id)
     } else {
         format!("/api/media/{}/stream", media_file.id)
     };
+    if let Some(index) = params.audio_stream {
+        playback_url.push_str(&format!("?audioStream={index}"));
+    }
 
     let info = serde_json::json!({
         "id": media_file.id,
@@ -236,7 +269,7 @@ async fn media_info(
         "content_type": content_type,
         "container": media_file.container,
         "video_codec": media_file.video_codec,
-        "audio_codec": media_file.audio_codec,
+        "audio_codec": audio_codec,
         "resolution": media_file.resolution,
         "width": media_file.width,
         "height": media_file.height,
@@ -288,26 +321,8 @@ async fn hls_playlist(
         return Err(StatusCode::NOT_FOUND);
     }
 
-    // A client that explicitly hits this endpoint has already decided (via
-    // `media_info`'s `needsHls` hint) that HLS is needed; a `None` decision
-    // here just means "codecs are fine, only the container needs repackaging"
-    // which the (cheap, lossless) remux path handles too.
-    let kind = match (
-        params.cast_grant.as_deref(),
-        params.cast_mode.as_deref().map(str::to_ascii_lowercase),
-    ) {
-        (Some(_), Some(mode)) if mode == "transcode" => TranscodeKind::Transcode,
-        (Some(_), Some(mode)) if mode == "remux" => TranscodeKind::Remux,
-        (Some(_), _) => return Err(StatusCode::BAD_REQUEST),
-        (None, _) => match needs_transcode(
-            media_file.container.as_deref(),
-            media_file.video_codec.as_deref(),
-            media_file.audio_codec.as_deref(),
-        ) {
-            TranscodeDecision::Transcode => TranscodeKind::Transcode,
-            TranscodeDecision::Remux | TranscodeDecision::None => TranscodeKind::Remux,
-        },
-    };
+    let selected_audio = selected_audio_stream(&state, &file_id, params.audio_stream).await?;
+    let kind = hls_kind(&media_file, &params, selected_audio.as_ref())?;
 
     let transcode = state.services.get_transcode().await.ok_or_else(|| {
         error!(
@@ -319,7 +334,7 @@ async fn hls_playlist(
     })?;
 
     let output_dir = transcode
-        .get_or_start_session(&file_id, path, kind)
+        .get_or_start_session_with_audio(&file_id, path, kind, params.audio_stream)
         .await
         .map_err(|e| {
             error!(
@@ -360,22 +375,7 @@ async fn hls_playlist(
         );
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    if let Some(grant) = params.cast_grant.as_deref() {
-        let playlist = String::from_utf8(bytes).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let encoded_grant = urlencoding::encode(grant);
-        bytes = playlist
-            .lines()
-            .map(|line| {
-                if line.starts_with('#') || line.trim().is_empty() {
-                    line.to_string()
-                } else {
-                    format!("{line}?castGrant={encoded_grant}")
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-            .into_bytes();
-    }
+    bytes = rewrite_playlist(&bytes, &params)?;
 
     Response::builder()
         .status(StatusCode::OK)
@@ -392,14 +392,22 @@ async fn hls_segment(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     AxumPath((file_id, segment)): AxumPath<(String, String)>,
     headers: HeaderMap,
-    Query(params): Query<StreamParams>,
+    Query(mut params): Query<StreamParams>,
 ) -> Result<Response, StatusCode> {
     let media_file = fetch_media_file(&state, &file_id).await?;
     if let Some(grant) = params.cast_grant.as_deref() {
-        authorize_cast_grant(&state, grant, &file_id, peer).await?;
+        let session = authorize_cast_grant(&state, grant, &file_id, peer).await?;
+        // Older playlists carried only the grant. Resolve their variant from
+        // the already-authorized Cast session while new URIs carry castMode.
+        if params.cast_mode.is_none() {
+            params.cast_mode = session.playback_decision;
+        }
     } else {
         authorize_browser_media(&state, &headers, &media_file).await?;
     }
+
+    let selected_audio = selected_audio_stream(&state, &file_id, params.audio_stream).await?;
+    let kind = hls_kind(&media_file, &params, selected_audio.as_ref())?;
 
     let Some(segment_name) = sanitize_segment_name(&segment) else {
         warn!(
@@ -418,7 +426,10 @@ async fn hls_segment(
         .await
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
-    let Some(output_dir) = transcode.touch_session(&file_id).await else {
+    let Some(output_dir) = transcode
+        .touch_session_with_audio(&file_id, kind, params.audio_stream)
+        .await
+    else {
         warn!(
             media_file_id = %file_id,
             "HLS segment requested with no active transcode session: media_file_id={}",
@@ -485,6 +496,235 @@ async fn wait_for_nonempty_file(path: &Path, poll_interval: Duration, timeout: D
         }
         tokio::time::sleep(poll_interval).await;
     }
+}
+
+/// Only call after authorizing the file: trusted entity queries do not apply
+/// the HTTP caller's policy. Match both file and absolute stream index.
+async fn selected_audio_stream(
+    state: &AppState,
+    file_id: &str,
+    index: Option<i32>,
+) -> Result<Option<AudioStream>, StatusCode> {
+    let Some(index) = index else {
+        return Ok(None);
+    };
+    if index < 0 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let rows = AudioStream::query(state.db.pool())
+        .filter(AudioStreamWhereInput {
+            media_file_id: Some(StringFilter {
+                eq: Some(file_id.to_owned()),
+                ..Default::default()
+            }),
+            stream_index: Some(IntFilter {
+                eq: Some(index),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .fetch_all()
+        .await
+        .map_err(|error| {
+            error!(media_file_id = %file_id, audio_stream = index, %error,
+                "Failed querying selected audio stream");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    rows.into_iter()
+        .next()
+        .map(Some)
+        .ok_or(StatusCode::NOT_FOUND)
+}
+
+fn hls_kind(
+    media_file: &MediaFileRecord,
+    params: &StreamParams,
+    selected: Option<&AudioStream>,
+) -> Result<TranscodeKind, StatusCode> {
+    match (
+        params.cast_grant.as_deref(),
+        params.cast_mode.as_deref().map(str::to_ascii_lowercase),
+    ) {
+        (Some(_), Some(mode)) if mode == "transcode" => Ok(TranscodeKind::Transcode),
+        (Some(_), Some(mode)) if mode == "remux" => Ok(TranscodeKind::Remux),
+        (Some(_), _) => Err(StatusCode::BAD_REQUEST),
+        (None, _) => Ok(
+            match needs_transcode(
+                media_file.container.as_deref(),
+                media_file.video_codec.as_deref(),
+                selected
+                    .map(|stream| stream.codec.as_str())
+                    .or(media_file.audio_codec.as_deref()),
+            ) {
+                TranscodeDecision::Transcode => TranscodeKind::Transcode,
+                TranscodeDecision::Remux | TranscodeDecision::None => TranscodeKind::Remux,
+            },
+        ),
+    }
+}
+
+fn rewrite_playlist(bytes: &[u8], params: &StreamParams) -> Result<Vec<u8>, StatusCode> {
+    let mut query = Vec::new();
+    if let Some(index) = params.audio_stream {
+        query.push(format!("audioStream={index}"));
+    }
+    if let Some(grant) = params.cast_grant.as_deref() {
+        query.push(format!("castGrant={}", urlencoding::encode(grant)));
+    }
+    if let Some(mode) = params.cast_mode.as_deref() {
+        query.push(format!("castMode={}", urlencoding::encode(mode)));
+    }
+    if query.is_empty() {
+        return Ok(bytes.to_vec());
+    }
+    let playlist = std::str::from_utf8(bytes).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let query = query.join("&");
+    let mut rewritten = playlist
+        .lines()
+        .map(|line| {
+            if line.starts_with('#') || line.trim().is_empty() {
+                line.to_owned()
+            } else {
+                format!(
+                    "{line}{}{query}",
+                    if line.contains('?') { '&' } else { '?' }
+                )
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    rewritten.push('\n');
+    Ok(rewritten.into_bytes())
+}
+
+/// The URL suffix is parsed explicitly because Axum does not support a
+/// partial capture such as `{subtitle_id}.vtt`.
+async fn subtitle_vtt(
+    State(state): State<AppState>,
+    AxumPath((file_id, subtitle)): AxumPath<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Response, StatusCode> {
+    let media_file = fetch_media_file(&state, &file_id).await?;
+    authorize_browser_media(&state, &headers, &media_file).await?;
+    let subtitle_id = subtitle
+        .strip_suffix(".vtt")
+        .filter(|id| !id.is_empty())
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let row = Subtitle::get(state.db.pool(), &subtitle_id.to_owned()).await.map_err(|error| {
+        error!(media_file_id = %file_id, %subtitle_id, %error, "Failed querying subtitle for playback");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?.ok_or(StatusCode::NOT_FOUND)?;
+    if row.media_file_id != file_id {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let library_id = media_file
+        .library_id
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let library = Library::get(state.db.pool(), library_id).await
+        .map_err(|error| {
+            error!(media_file_id = %file_id, %library_id, %error, "Failed querying subtitle library root");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?.ok_or(StatusCode::NOT_FOUND)?;
+    let root = tokio::fs::canonicalize(&library.path)
+        .await
+        .map_err(subtitle_path_error)?;
+    let embedded = row.source_type.eq_ignore_ascii_case("embedded");
+    let (source, index, format) = if embedded {
+        if !text_subtitle_codec(row.codec.as_deref()) {
+            return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        }
+        let index = row
+            .stream_index
+            .filter(|index| *index >= 0)
+            .ok_or(StatusCode::UNSUPPORTED_MEDIA_TYPE)?;
+        (
+            std::path::PathBuf::from(&media_file.path),
+            Some(index),
+            None,
+        )
+    } else {
+        if !matches!(
+            row.source_type.to_ascii_lowercase().as_str(),
+            "external" | "sidecar" | "downloaded"
+        ) {
+            return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        }
+        let path = Path::new(row.file_path.as_deref().ok_or(StatusCode::NOT_FOUND)?);
+        if row.codec.is_some() && !text_subtitle_codec(row.codec.as_deref()) {
+            return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        }
+        let format = match path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("srt") => "srt",
+            Some("vtt") => "webvtt",
+            Some("ass" | "ssa") => "ass",
+            _ => return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE),
+        };
+        (
+            if path.is_absolute() {
+                path.to_owned()
+            } else {
+                root.join(path)
+            },
+            None,
+            Some(format),
+        )
+    };
+    let source = tokio::fs::canonicalize(source)
+        .await
+        .map_err(subtitle_path_error)?;
+    if !source.starts_with(&root) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let metadata = tokio::fs::metadata(&source)
+        .await
+        .map_err(subtitle_path_error)?;
+    if !metadata.is_file() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    if !embedded && metadata.len() > MAX_SUBTITLE_BYTES {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
+    }
+    let transcode = state
+        .services
+        .get_transcode()
+        .await
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let bytes = transcode.subtitle_webvtt(&source, index, format).await.map_err(|error| {
+        warn!(media_file_id = %file_id, %subtitle_id, ?error, "Subtitle WebVTT conversion failed");
+        match error {
+            SubtitleError::Busy | SubtitleError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+            SubtitleError::Timeout => StatusCode::GATEWAY_TIMEOUT,
+            SubtitleError::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            SubtitleError::Conversion => StatusCode::UNPROCESSABLE_ENTITY,
+        }
+    })?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "text/vtt; charset=utf-8")
+        .header(CACHE_CONTROL, "private, no-store")
+        .body(Body::from(bytes))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+fn subtitle_path_error(error: std::io::Error) -> StatusCode {
+    match error.kind() {
+        std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
+        std::io::ErrorKind::PermissionDenied => StatusCode::FORBIDDEN,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+fn text_subtitle_codec(codec: Option<&str>) -> bool {
+    matches!(
+        codec.map(str::to_ascii_lowercase).as_deref(),
+        Some("subrip" | "srt" | "ass" | "ssa" | "webvtt" | "mov_text" | "text")
+    )
 }
 
 async fn fetch_media_file(state: &AppState, file_id: &str) -> Result<MediaFileRecord, StatusCode> {
@@ -582,51 +822,37 @@ async fn authorize_cast_grant(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let session = CastSession::get(state.db.pool(), &claims.session_id)
+    crate::graphql::entities::cast::validate_cast_grant_authority(&state.services, &claims)
         .await
-        .map_err(|error| {
-            tracing::error!(
-                cast_session_id = %claims.session_id,
-                error = %error,
-                "Failed to verify Cast grant session"
-            );
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-    let active_state = matches!(
-        session.player_state.as_str(),
-        "STARTING" | "PLAYING" | "PAUSED" | "BUFFERING"
-    );
-    if !active_state
-        || session.ended_at.is_some()
-        || session.user_id.as_deref() != Some(claims.user_id.as_str())
-        || session.media_file_id.as_deref() != Some(media_file_id)
-        || session.receiver_address.as_deref() != Some(claims.receiver_address.as_str())
-    {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-    Ok(session)
+        .map_err(|_| StatusCode::UNAUTHORIZED)
 }
 
-/// Parse HTTP Range header.
+/// Parse one byte range. Reject multipart requests deterministically (416 at
+/// the route), clamp overshooting ends, and support suffixes without empty-file
+/// subtraction or zero-suffix underflow.
 fn parse_range_header(header: &str, file_size: u64) -> Option<(u64, u64)> {
-    let header = header.strip_prefix("bytes=")?;
-    let parts: Vec<&str> = header.split('-').collect();
-    if parts.len() != 2 {
+    if file_size == 0 {
         return None;
     }
-
-    let start: u64 = parts[0].parse().ok()?;
-    let end: u64 = if parts[1].is_empty() {
-        file_size.saturating_sub(1)
-    } else {
-        parts[1].parse().ok()?
+    let range = header.trim().strip_prefix("bytes=")?;
+    let (start, end) = range.split_once('-')?;
+    let number = |value: &str| -> Option<u64> {
+        if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        value.parse().ok()
     };
-
-    if start >= file_size || end >= file_size || start > end {
-        return None;
+    if start.is_empty() {
+        let suffix = number(end)?;
+        return (suffix > 0).then(|| (file_size.saturating_sub(suffix), file_size - 1));
     }
-    Some((start, end))
+    let start = number(start)?;
+    let end = if end.is_empty() {
+        file_size - 1
+    } else {
+        number(end)?.min(file_size - 1)
+    };
+    (start < file_size && start <= end).then_some((start, end))
 }
 
 /// Determine content type from file extension.
@@ -873,5 +1099,39 @@ mod tests {
         assert_eq!(parse_range_header("bytes=1000-1001", 1000), None);
         assert_eq!(parse_range_header("bytes=100-50", 1000), None);
         assert_eq!(parse_range_header("not-a-range", 1000), None);
+    }
+
+    #[test]
+    fn ranges_support_suffixes_clamp_ends_and_reject_empty_or_multipart() {
+        assert_eq!(parse_range_header("bytes=-3", 10), Some((7, 9)));
+        assert_eq!(parse_range_header("bytes=-20", 10), Some((0, 9)));
+        assert_eq!(parse_range_header("bytes=3-99", 10), Some((3, 9)));
+        for range in ["bytes=0-", "bytes=-1", "bytes=0-0"] {
+            assert_eq!(parse_range_header(range, 0), None);
+        }
+        for range in [
+            "bytes=-0",
+            "bytes=-",
+            "bytes=1-2,4-5",
+            "bytes=+1-2",
+            "bytes=1--2",
+            "bytes=1-+2",
+        ] {
+            assert_eq!(parse_range_header(range, 10), None, "{range}");
+        }
+    }
+
+    #[test]
+    fn playlist_retains_audio_and_both_cast_parameters() {
+        let params = StreamParams {
+            audio_stream: Some(3),
+            cast_grant: Some("a+b&c".to_owned()),
+            cast_mode: Some("remux".to_owned()),
+        };
+        let rewritten = rewrite_playlist(b"#EXTM3U\n#EXTINF:6,\nseg_000.ts\n", &params).unwrap();
+        assert_eq!(
+            String::from_utf8(rewritten).unwrap(),
+            "#EXTM3U\n#EXTINF:6,\nseg_000.ts?audioStream=3&castGrant=a%2Bb%26c&castMode=remux\n"
+        );
     }
 }

@@ -90,8 +90,5 @@ subscription EntityAudioStreamChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    audioStream {
-      ...AudioStreamFields
-    }
   }
 }

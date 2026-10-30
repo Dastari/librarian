@@ -4,8 +4,16 @@ use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    async_graphql::SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
 )]
+#[graphql(complex)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
@@ -23,6 +31,7 @@ pub struct VideoStream {
 
     #[graphql(name = "mediaFileId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub media_file_id: String,
 
     #[graphql(name = "streamIndex")]
@@ -97,6 +106,20 @@ pub struct VideoStream {
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
+
+    // Query relations do not add physical FKs or change existing delete behavior.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "MediaFile",
+        from = "media_file_id",
+        to = "id",
+        on_delete = "cascade",
+        propagate_change = "up",
+        emit_fk = false
+    )]
+    pub media_file: Option<Box<MediaFile>>,
 }
 
 #[derive(Default)]

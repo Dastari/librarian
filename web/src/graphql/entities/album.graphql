@@ -99,8 +99,5 @@ subscription EntityAlbumChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    album {
-      ...AlbumFields
-    }
   }
 }

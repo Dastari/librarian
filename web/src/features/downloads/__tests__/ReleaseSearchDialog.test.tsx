@@ -1,11 +1,21 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AddTorrentDocument, EntitySourceListDocument, SearchSourcesDocument } from "@/graphql/generated/graphql";
+import { AddTorrentDocument, HasEnabledSourcesDocument, SearchSourcesDocument } from "@/graphql/generated/graphql";
 import { renderWithProviders } from "@/test";
 
 import { ReleaseSearchDialog } from "../ReleaseSearchDialog";
+
+// The public Glass table uses measured viewport geometry to render its rows.
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 1200, height: 700, top: 0, left: 0, bottom: 700, right: 1200, x: 0, y: 0, toJSON: () => ({}) });
+  vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) { return this.classList.contains("fa-dt-probe") ? 32 : 1200; });
+  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) { return this.classList.contains("fa-dt-probe") ? 48 : 700; });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1200);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(700);
+});
+afterEach(() => vi.restoreAllMocks());
 
 type Parsed = Partial<{
   resolution: string | null;
@@ -45,6 +55,7 @@ const release = (guid: string, overrides: Partial<Record<string, unknown>> = {})
   __typename: "SourceRelease" as const,
   title: `Release ${guid}`,
   guid,
+  stableId: `${String(overrides.sourceId ?? "src-1")}:${guid}`,
   link: `https://tracker/${guid}.torrent`,
   magnetUri: `magnet:?xt=urn:btih:${guid}`,
   infoHash: guid,
@@ -82,7 +93,7 @@ const searchInput = (overrides: Partial<Record<string, unknown>> = {}) => ({
   movieId: null,
   albumId: null,
   audiobookId: null,
-  limit: 100,
+  limit: null,
   ...overrides,
 });
 
@@ -103,6 +114,7 @@ const searchMock = (releases: unknown[], sourceOverrides: Partial<Record<string,
             elapsedMs: 120,
             fromCache: false,
             error: null,
+            pageInfo: { support: "UNSUPPORTED", state: "UNKNOWN", hasMore: null, nextCursor: null, retryCursor: null, returnedCount: releases.length },
             releases,
             ...sourceOverrides,
           },
@@ -112,49 +124,31 @@ const searchMock = (releases: unknown[], sourceOverrides: Partial<Record<string,
   },
 });
 
-const source = (id: string) => ({
-  __typename: "SourceEdge" as const,
-  node: {
-    __typename: "Source" as const,
-    id,
-    name: "Tracker",
-    sourceType: "torznab",
-    definitionId: "generic",
-    enabled: true,
-    priority: 1,
-    mediaTypes: ["tv"],
-    siteUrl: "https://tracker",
-    supportsSearch: true,
-    supportsTvSearch: true,
-    supportsMovieSearch: true,
-    supportsMusicSearch: false,
-    supportsBookSearch: false,
-    settings: "{}",
-    lastError: null,
-    errorCount: 0,
-    lastSuccessAt: null,
-    lastErrorAt: null,
-    createdAt: "2026-01-01T00:00:00Z",
-    updatedAt: "2026-01-01T00:00:00Z",
-  },
-});
-
-const sourcesMock = (edges: unknown[]) => ({
-  request: { query: EntitySourceListDocument, variables: { where: { enabled: { eq: true } }, page: { limit: 50, offset: 0 } } },
-  result: {
-    data: { sources: { __typename: "SourceConnection", edges, pageInfo: { __typename: "PageInfo", hasNextPage: false, hasPreviousPage: false, totalCount: edges.length } } },
-  },
+// Release search needs only this member-safe boolean, never a Source row.
+const sourcesMock = (enabled: boolean) => ({
+  request: { query: HasEnabledSourcesDocument, variables: {} },
+  result: { data: { hasEnabledSources: enabled } },
 });
 
 const mount = (mocks: unknown[]) =>
   renderWithProviders(
     <ReleaseSearchDialog isOpen onOpenChange={() => {}} query="Andor" season={2} episode={5} libraryId="lib-1" target={{ showId: "show-1", episodeId: "ep-1" }} />,
-    { mocks: [sourcesMock([source("src-1")]), ...mocks] as never },
+    { mocks: [sourcesMock(true), ...mocks] as never },
   );
 
-const releaseRow = async (title: string) => (await screen.findByText(title)).closest("tr")!;
+const releaseRow = async (title: string) => (await screen.findByText(title)).closest<HTMLElement>('[role="row"]')!;
 
 describe("ReleaseSearchDialog results", () => {
+  it("reads the member-safe capability without requiring an admin Source projection", async () => {
+    const capability = vi.fn(() => ({ data: { hasEnabledSources: true } }));
+    await renderWithProviders(
+      <ReleaseSearchDialog isOpen onOpenChange={() => {}} query="Andor" season={2} episode={5} libraryId="lib-1" target={{ showId: "show-1", episodeId: "ep-1" }} />,
+      { mocks: [{ ...sourcesMock(true), result: capability }, searchMock([release("member")])] as never },
+    );
+    await releaseRow("Release member");
+    expect(capability).toHaveBeenCalledOnce();
+  });
+
   it("lists the releases with the source, size, seeds and peers", async () => {
     await mount([searchMock([release("a")])]);
     const row = await releaseRow("Release a");
@@ -162,7 +156,7 @@ describe("ReleaseSearchDialog results", () => {
     expect(row).toHaveTextContent("1.9 GB");
     expect(within(row).getByText("10")).toBeInTheDocument();
     expect(within(row).getByText("2")).toBeInTheDocument();
-    expect(await screen.findByText("1 releases from 1 sources in 120 ms")).toBeInTheDocument();
+    expect(await screen.findByText("1 returned releases from 1 sources · latest response 120 ms")).toBeInTheDocument();
   });
 
   it("turns everything the backend parsed into tags", async () => {
@@ -227,7 +221,7 @@ describe("ReleaseSearchDialog results", () => {
       ]),
     ]);
     await screen.findByText("Release optimal-high");
-    const titles = screen.getAllByRole("row").slice(1).map((row) => row.querySelector("span.break-words")?.textContent);
+    const titles = screen.getAllByRole("row").slice(1).map((row) => within(row).getByText(/^Release /).textContent);
     expect(titles).toEqual(["Release optimal-high", "Release optimal-low", "Release suboptimal", "Release rejected"]);
   });
 
@@ -236,10 +230,10 @@ describe("ReleaseSearchDialog results", () => {
     expect(await screen.findByText("Tracker: 429 Too Many Requests")).toBeInTheDocument();
   });
 
-  it("points at settings when nothing is configured to search", async () => {
+  it("uses the member-safe false capability when nothing is configured to search", async () => {
     await renderWithProviders(
       <ReleaseSearchDialog isOpen onOpenChange={() => {}} query="Andor" season={2} episode={5} libraryId="lib-1" target={{ showId: "show-1", episodeId: "ep-1" }} />,
-      { mocks: [sourcesMock([]), searchMock([])] as never },
+      { mocks: [sourcesMock(false), searchMock([])] as never },
     );
     expect(await screen.findByText("No sources configured")).toBeInTheDocument();
   });
@@ -253,6 +247,18 @@ describe("ReleaseSearchDialog results", () => {
   it("says when nothing came back at all", async () => {
     await mount([searchMock([])]);
     expect(await screen.findByText("No releases found")).toBeInTheDocument();
+  });
+});
+
+describe("ReleaseSearchDialog result scope", () => {
+  it("labels source results as potentially partial", async () => {
+    await mount([searchMock([release("single")])]);
+    expect(await screen.findByText("Source results may be partial. Filters apply to returned releases.")).toBeInTheDocument();
+  });
+
+  it("counts all returned releases beyond the old 100 record limit", async () => {
+    await mount([searchMock(Array.from({ length: 125 }, (_, index) => release(String(index))))]);
+    expect(await screen.findByText("125 of 125")).toBeInTheDocument();
   });
 });
 
@@ -275,7 +281,7 @@ describe("ReleaseSearchDialog filters", () => {
   it("filters by resolution", async () => {
     await mount([searchMock(mixed)]);
     await screen.findByText("Release uhd");
-    await userEvent.click(screen.getByRole("radio", { name: "2160p" }));
+    await userEvent.click(screen.getByRole("button", { name: "2160p" }));
     expect(screen.getByText("1 of 4")).toBeInTheDocument();
     expect(screen.queryByText("Release hd")).toBeNull();
   });
@@ -283,7 +289,7 @@ describe("ReleaseSearchDialog filters", () => {
   it("filters by codec", async () => {
     await mount([searchMock(mixed)]);
     await screen.findByText("Release uhd");
-    await userEvent.click(screen.getByRole("radio", { name: "HEVC" }));
+    await userEvent.click(screen.getByRole("button", { name: "HEVC" }));
     expect(screen.getByText("1 of 4")).toBeInTheDocument();
     expect(screen.getByText("Release uhd")).toBeInTheDocument();
   });
@@ -291,10 +297,10 @@ describe("ReleaseSearchDialog filters", () => {
   it("filters season packs in and out", async () => {
     await mount([searchMock(mixed)]);
     await screen.findByText("Release uhd");
-    await userEvent.click(screen.getByRole("radio", { name: "Season packs" }));
+    await userEvent.click(screen.getByRole("button", { name: "Season packs" }));
     expect(screen.getByText("1 of 4")).toBeInTheDocument();
     expect(screen.getByText("Release pack")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("radio", { name: "Single" }));
+    await userEvent.click(screen.getByRole("button", { name: "Single" }));
     expect(screen.getByText("2 of 4")).toBeInTheDocument();
     expect(screen.queryByText("Release pack")).toBeNull();
   });
@@ -313,7 +319,7 @@ describe("ReleaseSearchDialog filters", () => {
   it("explains an over-tight filter", async () => {
     await mount([searchMock(mixed)]);
     await screen.findByText("Release uhd");
-    await userEvent.click(screen.getByRole("radio", { name: "2160p" }));
+    await userEvent.click(screen.getByRole("button", { name: "2160p" }));
     await userEvent.click(screen.getByRole("button", { name: "Freeleech" }));
     expect(await screen.findByText("Nothing matches these filters")).toBeInTheDocument();
   });
@@ -418,12 +424,12 @@ describe("ReleaseSearchDialog grabbing", () => {
     ]);
     await screen.findByText("Release single");
     await userEvent.click(screen.getByRole("button", { name: /Grab/ }));
-    expect(await screen.findByText("Disk is full")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Disk is full");
   });
 
   it("cannot grab a release with neither a magnet nor a link", async () => {
     await mount([searchMock([release("empty", { magnetUri: null, link: null })])]);
     await screen.findByText("Release empty");
-    expect(screen.getByText("Grab").closest("button")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Grab" })).toBeDisabled();
   });
 });

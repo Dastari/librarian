@@ -11,6 +11,7 @@ fragment EpisodeFields on Episode {
   airDate
   airStamp
   runtime
+  stillUrl
   tvmazeId
   tmdbId
   tvdbId
@@ -92,8 +93,5 @@ subscription EntityEpisodeChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    episode {
-      ...EpisodeFields
-    }
   }
 }

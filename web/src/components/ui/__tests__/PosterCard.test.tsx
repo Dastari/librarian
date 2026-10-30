@@ -13,7 +13,8 @@ describe("PosterCard", () => {
     expect(screen.getByText("Andor")).toBeInTheDocument();
     expect(screen.getByText("2022 · 24 episodes")).toBeInTheDocument();
     const image = document.querySelector("img");
-    expect(image).toHaveAttribute("src", "/api/artwork/show/s1/poster");
+    // Cached artwork is requested at a stored size close to the tile's width.
+    expect(image?.getAttribute("src")).toMatch(/^\/api\/artwork\/show\/s1\/poster\?w=\d+$/);
     // Artwork is decorative; the title beneath the card names it.
     expect(image).toHaveAttribute("alt", "");
   });
@@ -38,10 +39,10 @@ describe("PosterCard", () => {
   });
 
   it("renders the badge, status dot and progress bar", async () => {
-    const { container } = await renderWithProviders(<PosterCard title="Dune" image={null} badge="12/24" status={statusMeta("DOWNLOADING")} progress={0.42} />);
+    await renderWithProviders(<PosterCard title="Dune" image={null} badge="12/24" status={statusMeta("DOWNLOADING")} progress={0.42} />);
     expect(screen.getByText("12/24")).toBeInTheDocument();
-    expect(container.querySelector('[title="Downloading"]')).toBeTruthy();
-    expect(container.querySelector('[style*="width: 42%"]')).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Downloading" })).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Watched progress for Dune" })).toHaveAttribute("aria-valuetext", "42%");
   });
 
   it("hides the progress bar when nothing has been watched", async () => {
@@ -77,6 +78,9 @@ describe("PosterCard", () => {
 
   it("marks itself selected for the table's card view", async () => {
     await renderWithProviders(<PosterCard title="Dune" image={null} onPress={() => {}} selected />);
-    expect(screen.getByRole("button", { name: /Dune/ }).className).toContain("ring-brand");
+    const card = screen.getByRole("button", { name: /Dune/ }).closest("article");
+    expect(card).toHaveAttribute("data-selected", "true");
+    // The artwork is the card; its ring marks the selection, not the caption underneath.
+    expect(card?.querySelector(".poster-art")?.className).toContain("ring-brand");
   });
 });

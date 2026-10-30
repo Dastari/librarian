@@ -336,8 +336,8 @@ impl MockIndexer {
         let mut zip = zip::ZipWriter::new(file);
         // Stored, not deflated: the filler is random-ish, and the test cares
         // about the entries, not the codec.
-        let options: zip::write::FileOptions<'_, ()> =
-            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
         for (index, (name, size)) in entries.iter().enumerate() {
             use std::io::Write;
             zip.start_file(*name, options).expect("zip entry");

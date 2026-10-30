@@ -59,12 +59,12 @@ fn starts_uppercase_ascii(name: &str) -> bool {
 fn backend_uses_shared_graphql_orm_and_agql_auth_dependencies() {
     let cargo_toml = read(backend_root().join("Cargo.toml"));
     let monorepo_url = "https://github.com/Dastari/graphql-orm.git";
-    let monorepo_revision = "39181034b02eca6a487eeadcf8d281aaf155a398";
+    let monorepo_revision = "a90b5bd41f952b02416f23999c729b9ceffcbb8d";
 
     for (package, version) in [
-        ("graphql-orm", "0.30.0"),
-        ("graphql-orm-storage", "0.6.2"),
-        ("graphql-orm-backup", "0.7.2"),
+        ("graphql-orm", "0.57.0"),
+        ("graphql-orm-storage", "0.7.5"),
+        ("graphql-orm-backup", "0.10.0"),
     ] {
         let dependency = cargo_toml
             .lines()
@@ -82,7 +82,12 @@ fn backend_uses_shared_graphql_orm_and_agql_auth_dependencies() {
 
     assert!(!cargo_toml.contains("bcrypt"));
     assert!(!cargo_toml.contains("jsonwebtoken"));
-    assert!(!cargo_toml.contains("macros ="));
+    assert!(
+        !cargo_toml
+            .lines()
+            .any(|line| line.trim_start().starts_with("macros =")),
+        "the retired local macros dependency must not return"
+    );
 }
 
 #[test]
@@ -103,7 +108,13 @@ fn backend_source_does_not_contain_direct_sql_access() {
 
     let mut checked = 0usize;
     for path in rust_files_under(backend_root().join("src")) {
-        let contents = read(&path);
+        // Documentation about operations is not executable SQL. Retain every
+        // code/string line and reject the same patterns there.
+        let contents = read(&path)
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
         assert_not_contains(&path, &contents, &forbidden);
         checked += 1;
     }

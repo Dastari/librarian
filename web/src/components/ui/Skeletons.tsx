@@ -1,34 +1,33 @@
+import { Skeleton } from "glass-ux/skeleton";
+
 import { cn } from "@/lib/utils";
 
 import type { ArtworkAspect } from "./Artwork";
 
 const ASPECT: Record<ArtworkAspect, string> = {
-  poster: "aspect-[2/3]",
+  poster: "aspect-[210/297]",
   square: "aspect-square",
   backdrop: "aspect-video",
   banner: "aspect-[5/1]",
 };
 
 export function SkeletonBlock({ className }: { className?: string }) {
-  return <div aria-hidden className={cn("skeleton", className)} />;
+  return <Skeleton.Block className={className} />;
 }
 
 export function SkeletonText({ lines = 2, className }: { lines?: number; className?: string }) {
-  return (
-    <div aria-hidden className={cn("flex flex-col gap-2", className)}>
-      {Array.from({ length: lines }, (_, index) => (
-        <div key={index} className="skeleton h-3.5" style={{ width: `${index === lines - 1 ? 60 : 100 - index * 8}%` }} />
-      ))}
-    </div>
-  );
+  return <Skeleton.Text type="body" lines={lines} width="60%" className={className} />;
 }
 
 export function SkeletonCard({ aspect = "poster", className }: { aspect?: ArtworkAspect; className?: string }) {
+  if (aspect === "poster") {
+    return <Skeleton.Block aria-hidden radius="tile" className={cn(ASPECT.poster, className)} />;
+  }
   return (
     <div aria-hidden className={cn("flex flex-col gap-2", className)}>
-      <div className={cn("skeleton rounded-poster", ASPECT[aspect])} />
-      <div className="skeleton h-3.5 w-4/5" />
-      <div className="skeleton h-3 w-1/2" />
+      <Skeleton.Block radius="tile" className={ASPECT[aspect]} />
+      <Skeleton.Text type="label" width="80%" />
+      <Skeleton.Text type="caption" width="50%" />
     </div>
   );
 }
@@ -54,5 +53,5 @@ export function SkeletonGrid({ count = 12, aspect = "poster" }: { count?: number
 }
 
 export function SkeletonHero() {
-  return <div aria-hidden className="skeleton h-[52svh] min-h-80 w-full rounded-none" />;
+  return <Skeleton.Block radius="surface" className="h-[52svh] min-h-80 w-full" />;
 }

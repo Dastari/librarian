@@ -84,8 +84,5 @@ subscription EntityNamingPatternChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    namingPattern {
-      ...NamingPatternFields
-    }
   }
 }

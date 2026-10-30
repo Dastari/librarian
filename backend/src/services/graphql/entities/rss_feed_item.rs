@@ -4,8 +4,16 @@ use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    async_graphql::SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
 )]
+#[graphql(complex)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
@@ -23,6 +31,7 @@ pub struct RssFeedItem {
 
     #[graphql(name = "feedId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub feed_id: String,
 
     #[graphql(name = "guid")]
@@ -92,6 +101,7 @@ pub struct RssFeedItem {
 
     #[graphql(name = "torrentId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub torrent_id: Option<String>,
 
     #[graphql(name = "skippedReason")]
@@ -101,6 +111,32 @@ pub struct RssFeedItem {
     #[filterable(type = "date")]
     #[sortable]
     pub seen_at: String,
+
+    // Query relations do not add physical FKs or change existing delete behavior.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "RssFeed",
+        from = "feed_id",
+        to = "id",
+        on_delete = "cascade",
+        propagate_change = "up",
+        emit_fk = false
+    )]
+    pub feed: Option<Box<RssFeed>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Torrent",
+        from = "torrent_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub torrent: Option<Box<Torrent>>,
 }
 
 #[derive(Default)]

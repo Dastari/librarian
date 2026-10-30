@@ -1,18 +1,20 @@
-import { useMutation, useQuery } from "@apollo/client/react";
-import { toast } from "@heroui/react";
+import { useMutation } from "@apollo/client/react";
+import { toast } from "glass-ux/toast";
 import { useNavigate } from "@tanstack/react-router";
 import { IconBookmark, IconBookmarkOff, IconDownload, IconEyeOff, IconListSearch, IconRefresh, IconSearch, IconTargetArrow } from "@tabler/icons-react";
 import { parseAsStringEnum, useQueryState } from "nuqs";
-import { useMemo, useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 
 import { Artwork, Button, DataTable, type DataTableColumn, type DataTableRowAction, EmptyState, ErrorState, PageHeader, SegmentTabs, StatusChip } from "@/components/ui";
 import { ReleaseSearchDialog, type ReleaseTarget } from "@/features/downloads/ReleaseSearchDialog";
+import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
 import {
+  type ContentStatus,
   EntityChapterUpdateManyDocument,
   EntityEpisodeUpdateManyDocument,
   EntityMovieUpdateManyDocument,
   EntityTrackUpdateManyDocument,
-  NavLibrariesDocument,
+  EntityLibraryListDocument,
   SearchMissingDocument,
 } from "@/graphql/generated/graphql";
 import { useIsAdmin } from "@/lib/auth/useSession";
@@ -29,6 +31,11 @@ const KIND_META: Record<WantedKind, { label: string; tint: string }> = {
   track: { label: "Music", tint: LIBRARY_TYPES.music.tintVar },
   chapter: { label: "Audiobook", tint: LIBRARY_TYPES.audiobooks.tintVar },
 };
+
+const WantedStatusesContext = createContext<Map<string, ContentStatus>>(new Map());
+function WantedStatusCell({ group }: { group: WantedGroup }) {
+  return <StatusChip status={statusMeta(useContext(WantedStatusesContext).get(`${group.kind}:${group.items[0]!.id}`))} />;
+}
 
 const EMPTY: Record<WantedTab, { title: string; description: string }> = {
   missing: { title: "Nothing is missing", description: "Items without a file that are not marked wanted appear here." },
@@ -50,7 +57,7 @@ export function WantedPage() {
   const [updateTracks] = useMutation(EntityTrackUpdateManyDocument);
   const [updateChapters] = useMutation(EntityChapterUpdateManyDocument);
   const [searchMissing, { loading: triggering }] = useMutation(SearchMissingDocument);
-  const libraries = useQuery(NavLibrariesDocument, { skip: !isAdmin });
+  const libraries = useCompleteConnection(EntityLibraryListDocument, { orderBy: [{ name: "ASC" }] }, (data) => data.libraries, { skip: !isAdmin });
 
   const apply = async (group: WantedGroup, input: { wanted?: boolean; ignored?: boolean }, message: string) => {
     const ids = group.items.map((item) => item.id);
@@ -69,7 +76,7 @@ export function WantedPage() {
 
   /** `searchMissing` needs a scope, so "search everything" is one call per library. */
   const searchAll = async () => {
-    const ids = libraries.data?.libraries.edges.map((edge) => edge.node.id) ?? [];
+    const ids = libraries.rows.map((library) => library.id);
     if (ids.length === 0) return;
     try {
       let searched = 0;
@@ -135,17 +142,18 @@ export function WantedPage() {
           </span>
         ),
       },
-      { id: "kind", header: "Type", size: 120, hideBelow: "sm", cell: (group) => <span className="text-muted">{KIND_META[group.kind].label}</span> },
-      { id: "count", header: "Items", size: 90, align: "end", numeric: true, cell: (group) => group.items.length },
+      { id: "kind", value: (group) => KIND_META[group.kind].label, header: "Type", size: 120, hideBelow: "sm", cell: (group) => <span className="text-muted">{KIND_META[group.kind].label}</span> },
+      { id: "count", value: (group) => group.items.length, header: "Items", size: 90, align: "end", numeric: true, cell: (group) => group.items.length },
       {
         id: "status",
         header: "Status",
         size: 150,
         hideBelow: "md",
-        cell: (group) => <StatusChip status={statusMeta(list.statuses.get(`${group.kind}:${group.items[0]!.id}`))} />,
+        cell: (group) => <WantedStatusCell group={group} />,
+        filter: { none: "Use the identifying fields to filter this list" },
       },
     ],
-    [list.statuses],
+    [],
   );
 
   const rowActions = useMemo<Array<DataTableRowAction<WantedGroup>>>(
@@ -159,13 +167,15 @@ export function WantedPage() {
             { key: "ignore", label: "Ignore", icon: <IconEyeOff size={16} />, onAction: (group) => apply(group, { ignored: true, wanted: false }, "ignored") },
           ]
         : [],
-    [isAdmin],
+    [isAdmin, list.refetch],
   );
 
   return (
-    <div className="page-gutter flex flex-col gap-6 py-8">
+    <WantedStatusesContext value={list.statuses}>
+    <div data-print-flow className="page-gutter flex min-h-0 flex-1 flex-col gap-4 overflow-hidden py-4 md:gap-6 md:py-6 [@media(max-height:35rem)]:gap-2 [@media(max-height:35rem)]:py-2">
       <PageHeader
         title="Wanted"
+        titleVisibility="accessible"
         meta={list.groups.length > 0 ? <span className="text-numeric">{list.groups.length} titles · {list.itemCount} items</span> : undefined}
         actions={
           <>
@@ -173,7 +183,7 @@ export function WantedPage() {
               <IconRefresh size={18} />
             </Button>
             {isAdmin ? (
-              <Button variant="primary" onPress={() => void searchAll()} isPending={triggering}>
+              <Button variant="primary" onPress={() => void searchAll()} isPending={triggering || libraries.loading} isDisabled={Boolean(libraries.error)}>
                 <IconDownload size={16} /> Search all missing
               </Button>
             ) : null}
@@ -181,7 +191,10 @@ export function WantedPage() {
         }
       />
       <SegmentTabs ariaLabel="Wanted filter" items={WANTED_TABS.map((key) => ({ key, label: WANTED_TAB_LABEL[key] }))} selected={tab} onSelect={(key) => void setTab(key as WantedTab)} />
+      {isAdmin && libraries.error ? <ErrorState compact error={libraries.error} onRetry={() => void libraries.refetch()} /> : null}
+      {list.error && list.groups.length > 0 ? <ErrorState compact error={list.error} onRetry={list.refetch} /> : null}
       <DataTable<WantedGroup>
+        height="fill"
         columns={columns}
         rows={list.groups}
         getRowId={(group) => group.key}
@@ -189,7 +202,9 @@ export function WantedPage() {
         rowActions={rowActions}
         noun="titles"
         onRowClick={open}
-        infinite={{ hasMore: list.hasMore, loadMore: list.loadMore, loadingMore: list.loadingMore }}
+        dataSource="complete"
+        queryKey={list.queryKey}
+        refetching={list.refreshing}
         error={list.error && list.groups.length === 0 ? <ErrorState error={list.error} onRetry={() => list.refetch()} /> : undefined}
         emptyState={<EmptyState icon={IconListSearch} title={EMPTY[tab].title} description={EMPTY[tab].description} />}
       />
@@ -207,6 +222,7 @@ export function WantedPage() {
         target={searching ? releaseTarget(searching) : undefined}
       />
     </div>
+    </WantedStatusesContext>
   );
 }
 

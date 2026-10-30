@@ -1,0 +1,23 @@
+/* Application-owned brand parameters. Glass UX derives all semantic roles. */
+@layer base {
+  [data-palette="cinema"] {
+    --accent-h: 74; --accent-c: 0.15; --accent-l: 0.62; --accent-2-h: 285; --accent-fg-l: 0.18;
+    --neutral-h: 285; --neutral-c: 0.012; --ambient-1-h: 290; --ambient-2-h: 230; --ambient-3-h: 60; --chart-h: 250;
+  }
+  [data-palette="midnight"] {
+    --accent-h: 210; --accent-c: 0.11; --accent-l: 0.53; --accent-2-h: 260; --accent-fg-l: 0.18;
+    --neutral-h: 255; --neutral-c: 0.03; --ambient-1-h: 260; --ambient-2-h: 210; --ambient-3-h: 285; --chart-h: 250;
+  }
+  [data-palette="ember"] {
+    --accent-h: 35; --accent-c: 0.17; --accent-l: 0.56; --accent-2-h: 60; --accent-fg-l: 0.18;
+    --neutral-h: 40; --neutral-c: 0.015; --ambient-1-h: 30; --ambient-2-h: 60; --ambient-3-h: 320; --chart-h: 250;
+  }
+  [data-palette="forest"] {
+    --accent-h: 160; --accent-c: 0.15; --accent-l: 0.51; --accent-2-h: 190; --accent-fg-l: 0.18;
+    --neutral-h: 160; --neutral-c: 0.025; --ambient-1-h: 160; --ambient-2-h: 190; --ambient-3-h: 110; --chart-h: 250;
+  }
+  [data-mode="dark"][data-palette="cinema"], [data-mode="dark"] [data-palette="cinema"] { --accent-l: 0.8; }
+  [data-mode="dark"][data-palette="midnight"], [data-mode="dark"] [data-palette="midnight"] { --accent-l: 0.82; }
+  [data-mode="dark"][data-palette="ember"], [data-mode="dark"] [data-palette="ember"] { --accent-l: 0.74; }
+  [data-mode="dark"][data-palette="forest"], [data-mode="dark"] [data-palette="forest"] { --accent-l: 0.82; }
+}

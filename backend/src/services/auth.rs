@@ -1,15 +1,21 @@
 //! Authentication service backed by `agql-auth` and GraphQL ORM entities.
 
+#[cfg(test)]
+#[path = "auth_alignment_tests.rs"]
+mod alignment_tests;
+
 use std::sync::Arc;
 
 use agql_auth::{
-    AuthConfig as AgqlAuthConfig, AuthMethod, AuthPayload as AgqlAuthPayload,
-    AuthService as AgqlAuthService, AuthUser, ClientMetadata, RefreshTokenRevocationReason,
-    RefreshTokenStore, SessionContext, StoredRefreshToken, StoredUser, UserStore,
+    AuthConfig as AgqlAuthConfig, AuthPayload as AgqlAuthPayload, AuthService as AgqlAuthService,
+    AuthUser, ClientMetadata, RefreshTokenRevocationReason, RefreshTokenStore, SessionContext,
+    StoredRefreshToken, StoredUser, UserStore,
 };
 use anyhow::{Result, anyhow};
 use async_graphql::SimpleObject;
 use async_trait::async_trait;
+use graphql_orm::graphql::filters::{DateFilter, IntFilter, StringFilter};
+use graphql_orm::graphql::orm::{MutationContext, TransactionMode};
 use serde::{Deserialize, Serialize};
 use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
@@ -19,8 +25,8 @@ use uuid::Uuid;
 
 use crate::db::Database;
 use crate::graphql::entities::{
-    CreateRefreshTokenInput, CreateUserInput, InviteToken, RefreshToken, UpdateInviteTokenInput,
-    UpdateRefreshTokenInput, UpdateUserInput, User,
+    CreateRefreshTokenInput, CreateUserInput, InviteToken, InviteTokenWhereInput, RefreshToken,
+    RefreshTokenWhereInput, UpdateInviteTokenInput, UpdateRefreshTokenInput, UpdateUserInput, User,
 };
 use crate::services::graphql::auth::Role;
 use crate::services::manager::{Service, ServiceHealth};
@@ -186,17 +192,35 @@ impl LibrarianAuthStore {
     }
 
     async fn users(&self) -> agql_auth::AuthResult<Vec<User>> {
-        User::query(self.db.pool())
-            .fetch_all()
-            .await
-            .map_err(|err| agql_auth::AuthError::Store(err.to_string()))
+        let mut rows = Vec::new();
+        loop {
+            let page = User::query(self.db.pool())
+                .limit(100)
+                .offset(rows.len() as i64)
+                .fetch_all()
+                .await
+                .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?;
+            if page.is_empty() {
+                return Ok(rows);
+            }
+            rows.extend(page);
+        }
     }
 
     async fn refresh_tokens(&self) -> agql_auth::AuthResult<Vec<RefreshToken>> {
-        RefreshToken::query(self.db.pool())
-            .fetch_all()
-            .await
-            .map_err(|err| agql_auth::AuthError::Store(err.to_string()))
+        let mut rows = Vec::new();
+        loop {
+            let page = RefreshToken::query(self.db.pool())
+                .limit(100)
+                .offset(rows.len() as i64)
+                .fetch_all()
+                .await
+                .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?;
+            if page.is_empty() {
+                return Ok(rows);
+            }
+            rows.extend(page);
+        }
     }
 }
 
@@ -239,6 +263,27 @@ fn to_stored_refresh_token(token: RefreshToken) -> agql_auth::AuthResult<StoredR
             .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?,
         session_family_id: Uuid::parse_str(&token.session_family_id)
             .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?,
+        grant_source: token
+            .grant_source
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?
+            .unwrap_or_default(),
+        roles: token
+            .roles
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?
+            .unwrap_or_default(),
+        authorization_roles: token
+            .authorization_roles
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?
+            .unwrap_or_default(),
         scopes: token.scopes,
         session: serde_json::from_str(&token.session).unwrap_or_default(),
         refreshable_metadata: None,
@@ -288,31 +333,48 @@ impl UserStore for LibrarianAuthStore {
     }
 }
 
+// Private credential-store boundary: generated transaction writes preserve hooks
+// and commit-scoped events without exposing token material through public CRUD.
+fn refresh_token_input(
+    token: StoredRefreshToken,
+) -> agql_auth::AuthResult<CreateRefreshTokenInput> {
+    Ok(CreateRefreshTokenInput {
+        id: token.id.to_string(),
+        user_id: token.user_id,
+        token_hash: token.token_hash,
+        session_id: token.session_id.to_string(),
+        session_family_id: token.session_family_id.to_string(),
+        scopes: token.scopes,
+        session: serde_json::to_string(&token.session).unwrap_or_default(),
+        grant_source: Some(
+            serde_json::to_string(&token.grant_source)
+                .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?,
+        ),
+        roles: Some(
+            serde_json::to_string(&token.roles)
+                .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?,
+        ),
+        authorization_roles: Some(
+            serde_json::to_string(&token.authorization_roles)
+                .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?,
+        ),
+        ip_address: token.ip_address,
+        user_agent: token.user_agent,
+        expires_at: format_time(token.expires_at),
+        last_used_at: token.last_used_at.map(format_time),
+        revoked_at: token.revoked_at.map(format_time),
+        replaced_by_token_id: token.replaced_by_token_id.map(|id| id.to_string()),
+        revocation_reason: None,
+    })
+}
+
 #[async_trait]
 impl RefreshTokenStore for LibrarianAuthStore {
     async fn insert_refresh_token(&self, token: StoredRefreshToken) -> agql_auth::AuthResult<()> {
-        RefreshToken::insert(
-            &self.db,
-            CreateRefreshTokenInput {
-                id: token.id.to_string(),
-                user_id: token.user_id,
-                token_hash: token.token_hash,
-                session_id: token.session_id.to_string(),
-                session_family_id: token.session_family_id.to_string(),
-                scopes: token.scopes,
-                session: serde_json::to_string(&token.session).unwrap_or_default(),
-                ip_address: token.ip_address,
-                user_agent: token.user_agent,
-                expires_at: format_time(token.expires_at),
-                last_used_at: token.last_used_at.map(format_time),
-                revoked_at: token.revoked_at.map(format_time),
-                replaced_by_token_id: token.replaced_by_token_id.map(|id| id.to_string()),
-                revocation_reason: None,
-            },
-        )
-        .await
-        .map(|_| ())
-        .map_err(|err| agql_auth::AuthError::Store(err.to_string()))
+        RefreshToken::insert(&self.db, refresh_token_input(token)?)
+            .await
+            .map(|_| ())
+            .map_err(|err| agql_auth::AuthError::Store(err.to_string()))
     }
 
     async fn find_refresh_token_by_hash(
@@ -355,21 +417,54 @@ impl RefreshTokenStore for LibrarianAuthStore {
         revoked_at: OffsetDateTime,
         reason: RefreshTokenRevocationReason,
     ) -> agql_auth::AuthResult<()> {
-        for token in self.refresh_tokens().await? {
-            if token.session_family_id == session_family_id.to_string()
-                && token.revoked_at.is_none()
-            {
-                self.revoke_refresh_token(
-                    Uuid::parse_str(&token.id)
-                        .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?,
-                    revoked_at,
-                    None,
-                    reason.clone(),
-                )
-                .await?;
+        // Serialize family selection and every revocation against rotation's
+        // StateMachine transaction. A snapshot outside this transaction could
+        // miss a successor inserted between selection and revocation.
+        let mut transaction = MutationContext::begin(&self.db, TransactionMode::StateMachine)
+            .await
+            .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?;
+        let mut tokens = Vec::new();
+        loop {
+            let batch = transaction
+                .query::<RefreshToken>()
+                .filter(RefreshTokenWhereInput {
+                    session_family_id: Some(StringFilter {
+                        eq: Some(session_family_id.to_string()),
+                        ..Default::default()
+                    }),
+                    revoked_at: Some(DateFilter {
+                        is_null: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                .limit(100)
+                .offset(tokens.len() as i64)
+                .fetch_all()
+                .await
+                .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?;
+            if batch.is_empty() {
+                break;
             }
+            tokens.extend(batch);
         }
-        Ok(())
+        for token in tokens {
+            transaction
+                .update_by_id::<RefreshToken>(
+                    &token.id,
+                    UpdateRefreshTokenInput {
+                        revoked_at: Some(Some(format_time(revoked_at))),
+                        revocation_reason: Some(Some(format!("{reason:?}"))),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?;
+        }
+        transaction
+            .commit_and_emit()
+            .await
+            .map_err(|err| agql_auth::AuthError::Store(err.to_string()))
     }
 
     async fn touch_refresh_token(
@@ -402,38 +497,54 @@ impl RefreshTokenStore for LibrarianAuthStore {
         ip_address: Option<String>,
         user_agent: Option<String>,
     ) -> agql_auth::AuthResult<bool> {
-        let current = RefreshToken::get(self.db.pool(), &current_token_id.to_string())
+        let mut transaction = MutationContext::begin(&self.db, TransactionMode::StateMachine)
             .await
             .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?;
-        let Some(current) = current else {
-            return Ok(false);
-        };
-        if current.revoked_at.is_some() {
+        let replacement_id = replacement.id.to_string();
+        let updated = transaction
+            .update_where::<RefreshToken>(
+                RefreshTokenWhereInput {
+                    id: Some(StringFilter {
+                        eq: Some(current_token_id.to_string()),
+                        ..Default::default()
+                    }),
+                    revoked_at: Some(DateFilter {
+                        is_null: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                UpdateRefreshTokenInput {
+                    revoked_at: Some(Some(format_time(rotated_at))),
+                    replaced_by_token_id: Some(Some(replacement_id)),
+                    revocation_reason: Some(Some(format!(
+                        "{:?}",
+                        RefreshTokenRevocationReason::Rotation
+                    ))),
+                    last_used_at: Some(Some(format_time(rotated_at))),
+                    ip_address: Some(ip_address),
+                    user_agent: Some(user_agent),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?;
+        if updated != 1 {
+            transaction
+                .rollback()
+                .await
+                .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?;
             return Ok(false);
         }
-
-        let replacement_id = replacement.id.to_string();
-        self.insert_refresh_token(replacement).await?;
-
-        RefreshToken::update_by_id(
-            &self.db,
-            &current_token_id.to_string(),
-            UpdateRefreshTokenInput {
-                revoked_at: Some(Some(format_time(rotated_at))),
-                replaced_by_token_id: Some(Some(replacement_id)),
-                revocation_reason: Some(Some(format!(
-                    "{:?}",
-                    RefreshTokenRevocationReason::Rotation
-                ))),
-                last_used_at: Some(Some(format_time(rotated_at))),
-                ip_address: Some(ip_address),
-                user_agent: Some(user_agent),
-                ..Default::default()
-            },
-        )
-        .await
-        .map(|_| true)
-        .map_err(|err| agql_auth::AuthError::Store(err.to_string()))
+        transaction
+            .insert::<RefreshToken>(refresh_token_input(replacement)?)
+            .await
+            .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?;
+        transaction
+            .commit_and_emit()
+            .await
+            .map_err(|err| agql_auth::AuthError::Store(err.to_string()))?;
+        Ok(true)
     }
 }
 
@@ -487,15 +598,94 @@ impl AuthService {
     }
 
     pub async fn authenticate_access_token(&self, token: &str) -> Result<AuthUser> {
-        self.inner()
+        let user = self
+            .inner()
             .await?
             .authenticate_bearer(token)
-            .map_err(|err| anyhow!(err.to_string()))
+            .map_err(|err| anyhow!(err.to_string()))?;
+        self.validate_session_authority(&user).await?;
+        Ok(user)
+    }
+
+    /// Current authority for HTTP admission and each subscription response.
+    /// A signed access token alone does not preserve a disabled/revoked session.
+    pub(crate) async fn validate_session_authority(
+        &self,
+        authenticated: &agql_auth::AuthUser,
+    ) -> Result<()> {
+        if authenticated
+            .token_claims
+            .expires_at
+            .is_some_and(|expires| expires <= OffsetDateTime::now_utc())
+        {
+            return Err(anyhow!("Session expired"));
+        }
+        let db = self.db().await?;
+        let current = User::get(db.pool(), &authenticated.user_id)
+            .await?
+            .filter(|user| user.is_active)
+            .ok_or_else(|| anyhow!("Session is no longer authorized"))?;
+        let role =
+            Role::parse(&current.role).ok_or_else(|| anyhow!("Session is no longer authorized"))?;
+        let claimed_role = if authenticated
+            .roles
+            .iter()
+            .any(|value| Role::parse(value) == Some(Role::Admin))
+        {
+            Some(Role::Admin)
+        } else if authenticated
+            .roles
+            .iter()
+            .any(|value| Role::parse(value) == Some(Role::Member))
+        {
+            Some(Role::Member)
+        } else {
+            None
+        };
+        // A session may deliberately carry a narrower role ceiling than its
+        // account, including no application roles. Never elevate those claims
+        // to the current account role. Demotion still rejects broader claims;
+        // account changes also revoke the persisted session checked below.
+        if matches!((claimed_role, role), (Some(Role::Admin), Role::Member))
+            || (claimed_role.is_none() && !authenticated.roles.is_empty())
+        {
+            return Err(anyhow!("Session authority changed"));
+        }
+        let active = RefreshToken::query(db.pool())
+            .filter(RefreshTokenWhereInput {
+                user_id: Some(StringFilter {
+                    eq: Some(authenticated.user_id.clone()),
+                    ..Default::default()
+                }),
+                session_id: Some(StringFilter {
+                    eq: Some(authenticated.session_id.to_string()),
+                    ..Default::default()
+                }),
+                revoked_at: Some(DateFilter {
+                    is_null: Some(true),
+                    ..Default::default()
+                }),
+                expires_at: Some(DateFilter {
+                    gt: Some(format_time(OffsetDateTime::now_utc())),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .limit(1)
+            .fetch_all()
+            .await?;
+        if active.is_empty() {
+            return Err(anyhow!("Session is no longer authorized"));
+        }
+        Ok(())
     }
 
     pub async fn needs_setup(&self) -> Result<bool> {
         let db = self.db().await?;
-        let users = User::query(db.pool()).fetch_all().await?;
+        let users = LibrarianAuthStore::new(db)
+            .users()
+            .await
+            .map_err(|error| anyhow!(error.to_string()))?;
         Ok(!users.into_iter().any(|user| {
             user.is_active && user.role == "admin" && user.password_hash.starts_with("$argon2")
         }))
@@ -508,8 +698,8 @@ impl AuthService {
 
         // InviteToken's `token` field is `#[graphql_orm(private)]` (not filterable via
         // the generated WhereInput), so - matching the existing lookup pattern for
-        // RefreshToken's private `token_hash` field in this file - fetch all invite
-        // tokens and match in memory. The table is small (admin-issued invites only).
+        // RefreshToken's private `token_hash` field in this file - page through
+        // typed private-store reads. Never infer absence from the first page.
         let matched_token = if needs_setup {
             None
         } else {
@@ -522,11 +712,24 @@ impl AuthService {
             if raw_token.is_empty() {
                 None
             } else {
-                InviteToken::query(db.pool())
-                    .fetch_all()
-                    .await?
-                    .into_iter()
-                    .find(|candidate| candidate.token == raw_token)
+                let mut offset = 0;
+                loop {
+                    let page = InviteToken::query(db.pool())
+                        .limit(100)
+                        .offset(offset)
+                        .fetch_all()
+                        .await?;
+                    if page.is_empty() {
+                        break None;
+                    }
+                    offset += page.len() as i64;
+                    if let Some(candidate) = page
+                        .into_iter()
+                        .find(|candidate| candidate.token == raw_token)
+                    {
+                        break Some(candidate);
+                    }
+                }
             }
         };
 
@@ -543,15 +746,6 @@ impl AuthService {
         validate_invite_token(needs_setup, token_state.as_ref(), now)
             .map_err(|message| anyhow!(message))?;
 
-        let role = if needs_setup {
-            Role::Admin
-        } else {
-            matched_token
-                .as_ref()
-                .and_then(|token| Role::parse(&token.role))
-                .unwrap_or(Role::Member)
-        };
-
         let password_hash = inner
             .hash_password(&input.password)
             .map_err(|err| anyhow!(err.to_string()))?;
@@ -562,9 +756,93 @@ impl AuthService {
             .filter(|value| !value.is_empty())
             .unwrap_or("admin")
             .to_string();
-        let user = User::insert(
-            &db,
-            CreateUserInput {
+        let mut transaction = MutationContext::begin(&db, TransactionMode::StateMachine).await?;
+        // MutationQuery has a bounded default page. Bootstrap and duplicate
+        // decisions must inspect the entire pinned snapshot, including an admin
+        // after the first page. Continue to an empty batch even if limits clamp.
+        let mut users = Vec::new();
+        loop {
+            let batch = transaction
+                .query::<User>()
+                .limit(100)
+                .offset(users.len() as i64)
+                .fetch_all()
+                .await?;
+            if batch.is_empty() {
+                break;
+            }
+            users.extend(batch);
+        }
+        if users.iter().any(|user| {
+            user.email
+                .as_deref()
+                .is_some_and(|email| email.eq_ignore_ascii_case(&input.email))
+        }) {
+            return Err(anyhow!("An account with that email already exists"));
+        }
+        let needs_setup = !users.iter().any(|user| {
+            user.is_active && user.role == "admin" && user.password_hash.starts_with("$argon2")
+        });
+        let matched_token = if needs_setup {
+            None
+        } else if let Some(candidate) = matched_token {
+            transaction.find_by_id::<InviteToken>(&candidate.id).await?
+        } else {
+            None
+        };
+        let token_state = matched_token.as_ref().map(|token| InviteTokenState {
+            is_active: token.is_active,
+            expires_at: token
+                .expires_at
+                .as_deref()
+                .and_then(|value| parse_time(value).ok()),
+            use_count: token.use_count,
+            max_uses: token.max_uses,
+        });
+        validate_invite_token(needs_setup, token_state.as_ref(), OffsetDateTime::now_utc())
+            .map_err(|message| anyhow!(message))?;
+        let role = if needs_setup {
+            Role::Admin
+        } else {
+            matched_token
+                .as_ref()
+                .and_then(|token| Role::parse(&token.role))
+                .unwrap_or(Role::Member)
+        };
+        if let Some(token) = &matched_token {
+            let new_use_count = token
+                .use_count
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("Invite use count exhausted"))?;
+            let exhausted = token
+                .max_uses
+                .is_some_and(|maximum| maximum > 0 && new_use_count >= maximum);
+            let changed = transaction
+                .update_where::<InviteToken>(
+                    InviteTokenWhereInput {
+                        id: Some(StringFilter {
+                            eq: Some(token.id.clone()),
+                            ..Default::default()
+                        }),
+                        use_count: Some(IntFilter {
+                            eq: Some(token.use_count),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                    UpdateInviteTokenInput {
+                        use_count: Some(new_use_count),
+                        is_active: exhausted.then_some(false),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            if changed != 1 {
+                return Err(anyhow!(INVITE_TOKEN_REQUIRED_MESSAGE));
+            }
+        }
+        let user = transaction
+            .insert::<User>(CreateUserInput {
                 username,
                 email: Some(input.email.clone()),
                 password_hash,
@@ -573,35 +851,14 @@ impl AuthService {
                 avatar_url: None,
                 is_active: true,
                 last_login_at: None,
-            },
-        )
-        .await?;
-
-        if let Some(token) = &matched_token {
-            let new_use_count = token.use_count + 1;
-            let exhausted = token
-                .max_uses
-                .map(|max_uses| max_uses > 0 && new_use_count >= max_uses)
-                .unwrap_or(false);
-            InviteToken::update_by_id(
-                &db,
-                &token.id,
-                UpdateInviteTokenInput {
-                    use_count: Some(new_use_count),
-                    is_active: if exhausted { Some(false) } else { None },
-                    ..UpdateInviteTokenInput::default()
-                },
-            )
+            })
             .await?;
-        }
+        transaction.commit_and_emit().await?;
 
         let payload = inner
-            .issue_verified_user_session(
-                user.id.clone(),
-                vec![user.role.clone()],
-                AuthMethod::Password,
-                ClientMetadata::default(),
-            )
+            // Use password issuance so the refresh grant is tied to StoredUser
+            // authority, including current roles on every subsequent rotation.
+            .login(&input.email, &input.password, ClientMetadata::default())
             .await
             .map_err(|err| anyhow!(err.to_string()))?;
         Ok(to_login_result(user, payload))
@@ -672,7 +929,7 @@ impl AuthService {
     pub async fn logout(&self, refresh_token: &str) -> Result<()> {
         self.inner()
             .await?
-            .logout(refresh_token, false)
+            .logout(refresh_token, true)
             .await
             .map_err(|err| anyhow!(err.to_string()))
     }

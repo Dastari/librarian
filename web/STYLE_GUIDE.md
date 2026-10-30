@@ -1,109 +1,181 @@
 # Librarian web style guide
 
-This document is the visual contract for `web/`. Every screen follows it; nothing here is
-optional. Tokens live in `src/styles/tokens.css`; components that implement the rules live in
-`src/components/ui`.
+Glass UX 0.11.7 owns the shared UI and appearance runtime. Follow the
+[migration plan](../docs/glass-ux-migration-plan.md),
+[shared design rules](../docs/glass-ux/ui-rules.md) and
+[layout contract](../docs/glass-ux/layout-contract.md). The
+[foundation progress record](../docs/glass-ux/foundation-progress.md) identifies
+implemented components and the remaining compatibility boundary.
 
-## Principles
+## Product layout
 
-1. **Full bleed.** No centred max-width container. Pages fill the viewport and use
-   `page-gutter` for horizontal breathing room. Hero art and poster rows may bleed to the edge
-   with `bleed-gutter`.
-2. **Content first.** Artwork carries the design. Chrome is glass, translucent and quiet.
-3. **One rhythm.** Spacing steps are 4px based. Section gaps are `gap-8` (desktop) and `gap-6`
-   (mobile). Card padding is `p-4`; dense list rows are `py-2.5`.
-4. **Remote friendly.** Everything focusable has a visible ring (`nav-focus`) and is reachable
-   with arrow keys. Hover is an enhancement, never the only way to reach an action.
-5. **Plain language.** Headings name the thing ("Movies", "Downloads"). No marketing copy, no
-   explanatory sub-headings unless the content is genuinely ambiguous.
+- Keep the full-screen media app: rail on desktop, bottom navigation on phones,
+  persistent player, artwork shelves and full-bleed heroes. Use `page-gutter` for
+  page content; preserve safe areas and dock offsets.
+- Artwork and media facts carry the page. Use factual labels and reserve space for
+  loading, artwork failures, validation and live results. Avoid repeated headings
+  when navigation already names the view.
+- Remote users need visible focus and reachable actions. Preserve `data-input-mode`
+  independently of Glass appearance. TV mode multiplies the chosen UI scale and
+  enlarges host poster geometry and navigation focus.
 
-## Tokens
+## Tokens, materials and typography
 
-| Group | Tokens | Notes |
-| --- | --- | --- |
-| Background | `bg-background`, `bg-background-secondary`, `bg-background-tertiary` | Page canvas |
-| Surface | `bg-surface`, `bg-surface-secondary`, `bg-surface-tertiary`, `bg-surface-hover` | Cards, panels |
-| Overlay | `bg-overlay` | Popovers, menus, modals |
-| Text | `text-foreground`, `text-muted` | Only two text colours plus status colours |
-| Brand | `bg-brand`, `text-brand`, `bg-brand-soft` | Warm gold. Primary action and focus |
-| Accent | `bg-accent`, `text-accent` | Blue. Links and informational state |
-| Status | `success`, `warning`, `danger`, and `status-*` aliases | Mapped from `ContentStatus` in `lib/status.ts` |
-| Media types | `media-movies`, `media-tv`, `media-music`, `media-audiobooks` | Tinting placeholders and icons |
-| Glass | `glass-chrome`, `glass-surface`, `glass-control`, `glass-brand`, `glass-highlight` | See "Liquid glass" below |
-| Radius | `rounded-lg` (controls), `rounded-card`, `rounded-poster`, `rounded-pill` | Never mix radii inside one element |
-| Shadow | `shadow-surface`, `shadow-overlay`, `shadow-poster`, `shadow-poster-hover`, `shadow-dock` | |
-| Motion | `duration-fast/base/slow`, `ease-fluid`, `animate-rise-in` | Respect `prefers-reduced-motion` |
+Import `glass-ux/styles.css` once through `src/styles/app.css`. Glass owns mode,
+palette, fonts, density, glass amount, motion and geometry. Register host palette
+parameters in `palettes.css`; do not reproduce complete themes. Device choices
+persist under `librarian.appearance.v1`, migrated once from `librarian.theme`.
 
-## Liquid glass
+Use `Surface` material/radius/padding props and `PanelHeader`, `PanelBody` and
+`PanelFooter` slots. Raw material classes supply neither content insets nor the
+appropriate geometry. Repeated media tiles use card material; content over art
+uses `.over-imagery`. Respect Solid mode. The old SVG filters, LiquidGlass hook
+and custom backdrop filters are retired.
 
-Every translucent surface uses one of three tiers from `src/styles/glass.css`; nothing draws its
-own backdrop blur.
+Use Glass typography roles and bundled fonts. The old `text-body-sm`,
+`text-title-md`, `brand`, `foreground`, `surface` and similar names are temporary
+aliases to Glass roles in `tokens.css`/`typography.css`, for existing callers.
+Do not add independent values to these aliases or override library geometry.
 
-| Tier | Where | Recipe |
-| --- | --- | --- |
-| `glass-chrome` | Navigation rail, bottom tabs, top bar, player dock | 26px blur, 180% saturation, refraction filter |
-| `glass-surface` | Dialogs, drawers, popovers, panels, cards, tables | 20px blur, top reflection, bottom inner shadow, drop shadow |
-| `glass-control` | Buttons, inputs, switches, segmented controls, chips | 12px blur, crisp rim, fine refraction filter |
+## Controls, navigation and forms
 
-The refraction comes from two SVG filters mounted once by `GlassFilters` (fractal-noise
-displacement through `backdrop-filter: url()`); browsers without support get the same blur and
-saturation without the warp. `glass-brand` tints a control with the brand colour (primary
-buttons, active pills, checked switches). The page canvas is `ambient-canvas`, soft colour
-fields that give the glass something to bend. Themes tune the fill, rim, reflection and ambient
-colours through tokens; components never hard-code glass values.
+Import new components from public Glass UX feature entries. The exported host
+`Button`, `Dialog`, `ConfirmDialog`, `Panel`, state/skeleton, field and tab APIs
+are temporary bridges for existing callers. They render library controls; do not
+extend them into another generic design system. Host Button supports legacy
+`onPress`, pending/disabled spellings and leading icons in children.
 
-## Typography
+Routed tabs are links. Local tabs and Segmented keep their native composite
+keyboard behavior. `RouteVerticalTabs` wraps the settings outlet so it measures
+the complete pane: rail when wide, horizontal tabs with More when narrow. The outlet remains
+available to spatial navigation. Inside dialogs, ordinary buttons use scoped
+remote navigation; composites, text inputs and sliders own their arrows.
 
-Use only the scale classes: `text-display-xl/lg/md`, `text-title-lg/md/sm`, `text-body-lg`,
-`text-body`, `text-body-sm`, `text-label`, `text-label-sm`, `text-overline`. Numbers in tables
-and stats use `text-numeric`. Display and title classes use the Outfit face; body uses Inter.
+Existing React Hook Form schemas remain the validation owner while their field
+bridge uses Glass inputs/selects/numbers/switches. Preserve blur/ref behavior and
+nullable numeric values. New complete form migrations should use the library's
+form bindings; remove the bridge when its final consumer moves.
 
-## Layout
+## Tables and media compositions
 
-- **Shell:** left navigation rail (`NavRail`) on tablet and desktop, bottom tab bar
-  (`BottomTabs`) on phones, top bar (`TopBar`) with breadcrumbs, search and account.
-- **Player dock:** persistent `PlayerDock` at the bottom; pages reserve space with
-  `pb-dock` when a session is active.
-- **Page header:** `PageHeader` with title, optional eyebrow, actions on the right. One per page.
-- **Sections:** `Section` renders an `h2` in `text-title-lg` plus an optional trailing link.
-- **Tabs:** horizontal tabs (`Tabs`) for peer views within a page; vertical tabs
-  (`SideTabs`) only in settings-style pages with many sections. On phones, vertical tabs
-  collapse into a horizontally scrollable strip.
-- **Breadcrumbs:** derived from the route tree via `staticData.crumb` or loader data. Always
-  shown in the top bar; never duplicated inside the page.
+Use public Glass DataTable for migrated data views. Logs, season episodes, album tracks and audiobook chapters now use it.
+Typed host adapters translate its controlled state to generated camelCase
+GraphQL variables; the bundled PascalCase ORM adapter is incompatible.
+Preserve server filters, infinite loading, live updates, authorization and stable row IDs.
+Main dataset routes use `fixedHeight` and a bounded `min-height: 0` flex chain.
+Pass `height="fill"` to their table: search, column headings and the footer remain
+inside the viewport while rows/cards scroll and load more internally. Reserve the
+mobile navigation and active-player space through the shell; do not size tables
+with a whole-screen height or scroll their footer away with the page. Poster
+galleries use a Glass ScrollArea and keep their count footer outside it. Tables
+embedded in scrolling artwork/detail pages use `height="auto"`. Failed refreshes
+keep readable loaded rows and offer retry.
 
-## Cards
+`components/ui/DataTable.tsx` is now a compatibility adapter over public Glass
+DataTable. Its 21 feature consumers share that runtime; its old pager is removed.
+Main-page tables sit directly on the page canvas, without an enclosing glass
+surface or frame. The adapter defaults to `frame={false}`; do not add a Panel
+solely to surround a primary table.
+Complete datasets filter before incrementally rendering batches. Server lists send
+filters to their query and supply both dataset identity and refresh/load revision.
+Reset selection on a changed dataset, preserve it on append and ordinary refresh.
+`LoadedDataTable` provides the complete-collection contract for media detail lists.
+Its poster `renderCard` mode is a host media gallery, separate from the
+Glass table's narrow row cards. `PosterCard` shows the artwork uncropped (2:3, or
+square for albums) as the card itself, with the title and one meta line on the canvas
+underneath and watched progress along the art's bottom edge; never fit a caption
+inside the artwork's ratio. Keep posters, heroes, shelves, alphabet jump,
+acquisition and playback behavior as product compositions over Glass primitives.
+See [responsive audit](../docs/responsive-media-audit.md) for route coverage and
+the release-source continuation limitation. Never filter a partial server batch
+while presenting it as the complete dataset.
 
-- **Poster card** (`PosterCard`): 2:3 for movies, shows, books; 1:1 for albums and artists.
-  Title and one meta line below. Progress bar at the bottom edge when partially watched.
-  Status badge top-left; actions appear on hover or focus.
-- **Backdrop card** (`BackdropCard`): 16:9 for episodes and continue-watching.
-- **Panel** (`Panel`): flat surface card with `p-4`, used in settings and detail pages.
+The pinned Glass 0.11.7 dependency has a small pnpm patch at
+`patches/glass-ux@0.11.7.patch`: grid focus capture synchronizes the virtualizer's
+active row after native focus, retaining alphabet-jump and cell focus while
+scrolling. Its additive `infinite.revision` also rearms replaced batches without
+using the semantic query key or resetting the reader. See [patch notes](patches/README.md).
+Keep these reproducible fixes until a library release includes them.
 
-## Data tables
+## Media pages
 
-`DataTable` (our own, in `components/ui/DataTable.tsx`) is the only list component. It renders
-sortable columns, responsive column hiding, selection with bulk actions, row action menus, server
-pagination and a card grid through `renderCard`. Card mode reuses `PosterCard`/`BackdropCard`, so
-list and grid views always agree. Filters live in the URL (`useBrowserFilters`), the view mode in
-device preferences.
+Detail pages (`DetailShell`) and Home put the title's artwork behind the whole page,
+not in a boxed banner. `MediaBackdrop` draws the backdrop under the transparent top
+bar, fades it into the canvas and spreads a single static blur of the same image as
+a colour wash (hidden in Solid). A poster is only ever used as that wash. With wide
+art the `HeroBanner` fills exactly the first screen (`--view-h`, the scroller's
+visible height), so the next section starts at the fold rather than half on screen;
+without it (albums, books, missing art) the hero sizes to its text.
 
-## Buttons
+Hero actions lead with a large Play button (`data-tv-autofocus`); the other actions
+come from the same action set through `ActionBar`, which is told the remaining room.
+Play keeps its menu and command-palette entries. Short facts (director, genres) sit
+under the overview with `HeroFacts`; technical file details stay in their panel.
+Shows put a compact Seasons row (when there is more than one season; the show poster
+stands in until season artwork exists) above the chosen season's episodes as a row of
+stills, with the focused episode's summary in reserved space underneath. A still with a
+file plays; a missing one opens its actions (members can still browse onto it). Seasons
+and episodes form one section so they share the screen; the table is the Manage view.
 
-- `Button` from `components/ui` is the only button. `primary` (brand glass) for the single main
-  action of a view, `secondary` (glass) for supporting actions, `ghost` for toolbar icons,
-  `danger`/`danger-soft` for destructive actions after confirmation.
-- `GlassButton` is the pill variant used over artwork (hero, player).
-- Icon-only buttons always have `aria-label`.
+Movie and TV libraries open on **Recommended** (`/libraries/$id/recommended`): a
+spotlight over the title's art (drawn behind the library tabs through
+`LibraryArtContext`), then shelves — continue watching, recently added, not watched yet,
+newest releases and collections for films; continue watching, recently added and recently
+updated for series. The spotlight and first shelf share the first screen: the block is
+measured to the space under the tabs and the spotlight takes what the shelf leaves.
+After those come genre shelves (`libraryGenreShelves`: the library's largest genres with
+their newest titles, two or more titles each). **Browse** keeps the complete filterable wall as its own tab, so filters, sorting and the
+letter jump stay pinned and in the URL; shelves link to it with "See all". Browse and the
+other tabs are bounded panes (`fixedHeight` on each child route); Recommended scrolls.
 
-## Feedback
+## Artwork
 
-- Loading: skeletons shaped like the final content. Never a full-page spinner.
-- Empty: `EmptyState` with icon, one sentence, and a primary action when one exists.
-- Errors: `ErrorState` inline where the data would have been, with a retry.
-- Toasts for the result of a mutation; inline validation for forms.
+Library artwork always comes from the local cache (`lib/artwork.ts`): never pass an
+entity's provider URL to an image. Give `Artwork` a `displayWidth` (CSS px) so it asks
+the cache for a stored size near the rendered width (`?w=`, density-aware); posters, stills,
+portraits, the hero backdrop and its blurred wash all do. Seasons use their own cached
+poster, with the show poster standing in until one exists. Provider search and discover
+results that are not in the library keep their remote URLs.
 
-## Icons
+## Remote focus
 
-`@tabler/icons-react` only. Sizes: 16 in buttons and rows, 20 in navigation, 24 in headers,
-40+ in empty states. Media-type icons use the media tint; status icons use status colours.
+`lib/input-mode.tsx` owns TV behaviour; mark structure, do not script focus per page:
+
+- `data-nav-section` on each hero/row. Up/Down moves to the nearest section, then the
+  nearest row inside it; a remote reveals the whole section when it fits on screen.
+- `data-nav-group` on a row or grid of cards: returning to it resumes at the card
+  last focused there; the first entry lands on `data-nav-default` (the selected season,
+  the next episode to watch). `MediaRow` and episode rows already set it. A remote
+  reveals the largest enclosing section that fits on screen.
+- `data-nav-zone` + `data-nav-side` for side rails (navigation, letters): entered and
+  left with Left/Right only; leaving returns to the content control left behind.
+  The top bar is a zone reached by Up when content has nothing further up.
+- `data-tv-autofocus` names a page's starting control; `data-tv-skip` marks pointer
+  shortcuts (a tile's play button, "See all") that a remote reaches another way. The
+  remote's Play key plays a focused tile.
+- In TV mode single-line fields, ⋯ menu buttons and horizontal tab strips never trap
+  the remote; Backspace/Escape and the webOS/Tizen Back keys go back through in-app
+  history, then Home. Focused tiles grow with a transform only.
+
+## Motion
+
+Routes cross-fade with the View Transitions API (`defaultViewTransition`). Only the
+routed view moves; the rail and top bar are named layers that stay still (R6.3). An
+opened tile's artwork morphs into the detail poster (`claimMorph`). Hero text rises
+in and backdrops settle once; nothing loops, and every duration multiplies by
+`--motion-scale`, so Still and reduced motion stop it all.
+
+## Feedback, icons and compatibility
+
+Glass `ActionProvider` owns Toaster and ConfirmHost; do not mount duplicate hosts.
+Use `glass-ux/toast` for mutation results, inline field validation for forms, and
+reserved status space for refresh/connection feedback. Confirm destructive actions.
+
+Use `glass-ux/icons` for migrated presentation; let controls size their icons.
+Existing Tabler icons remain where product compositions or library gaps require
+them until their slice migrates.
+
+HeroUI, React Aria components and their component recipes are retired. Do not
+restore their providers, dependencies or styles. Host API bridges compose public
+Glass controls; media-specific artwork targets and buffered seeking remain owned
+by Librarian.

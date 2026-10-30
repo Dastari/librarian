@@ -1,8 +1,9 @@
-import { useQuery } from "@apollo/client/react";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo } from "react";
 
-import { EntityMediaFileGetDocument, EpisodeDetailDocument, MovieDetailDocument, ShowEpisodesDocument } from "@/graphql/generated/graphql";
+import { EntityMediaFileGetDocument, EpisodeDetailDocument, MovieDetailDocument } from "@/graphql/generated/graphql";
+import { useShowEpisodes } from "@/features/media/useShowEpisodes";
 import { moviePoster, showPoster } from "@/lib/artwork";
 
 import { playerStore, usePlayerState, type PlayItem } from "./store";
@@ -59,13 +60,14 @@ export function WatchPage({ mediaFileId, onBack }: WatchPageProps) {
 
   // Next episode lookup for shows.
   const showId = resolved?.entity.kind === "episode" ? (episode.data?.episode?.showId ?? state.video?.href?.split("/").pop() ?? null) : null;
-  const episodes = useQuery(ShowEpisodesDocument, { variables: { showId: showId ?? "" }, skip: !showId });
+  const episodes = useShowEpisodes(showId ?? "");
   const nextEpisode = useMemo(() => {
-    if (!resolved || resolved.entity.kind !== "episode") return null;
-    const list = episodes.data?.episodes.edges.map((edge) => edge.node) ?? [];
+    if (!resolved || resolved.entity.kind !== "episode" || !episodes.complete) return null;
+    const list = episodes.rows;
     const index = list.findIndex((candidate) => candidate.id === resolved.entity.id);
+    if (index < 0) return null;
     return list.slice(index + 1).find((candidate) => candidate.mediaFileId) ?? null;
-  }, [episodes.data, resolved]);
+  }, [episodes.rows, episodes.complete, resolved]);
 
   const playNext = useCallback(() => {
     if (!nextEpisode?.mediaFileId || !resolved) return;

@@ -5,6 +5,9 @@ capabilities. Current releases provide Docker, Linux archives, and a portable Wi
 Windows installer, service, tray, bundled FFmpeg, and VM lifecycle items below remain unimplemented and
 must not be advertised until their qualification gates pass.
 
+For installable LG webOS, Samsung Tizen, and Android TV / Google TV frontend clients, see the
+separate [TV applications implementation plan](tv-applications-plan.md).
+
 ---
 
 ## Future goals

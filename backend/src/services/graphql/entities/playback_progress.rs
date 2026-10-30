@@ -4,15 +4,24 @@ use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    async_graphql::SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
 )]
+#[graphql(complex)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
     table = "playback_progress",
     plural = "PlaybackProgresses",
     default_sort = "updated_at",
-    index = "user_id"
+    index = "user_id",
+    keyset = "updated_at desc, id desc"
 )]
 pub struct PlaybackProgress {
     #[graphql(name = "id")]
@@ -60,6 +69,19 @@ pub struct PlaybackProgress {
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,
+
+    // Query relations do not add physical FKs or change existing delete behavior.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "MediaFile",
+        from = "media_file_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub media_file: Option<Box<MediaFile>>,
 }
 
 #[derive(Default)]

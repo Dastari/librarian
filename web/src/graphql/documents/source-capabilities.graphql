@@ -1,0 +1,2 @@
+query HasEnabledSources { hasEnabledSources }
+subscription EnabledSourcesChanged { enabledSourcesChanged }

@@ -104,6 +104,12 @@ impl Service for ScheduleSyncService {
                 *error.write().await = result.err().map(|e| {
                     tracing::warn!(service="schedule_sync", error=%e, "TV guide sync failed; keeping cached entries and retrying in one hour"); e.to_string()
                 });
+                // Library shows added before seasons, backdrops and stills were stored
+                // catch up a few at a time, within TVMaze's rate limit.
+                tokio::select! {
+                    _ = token.cancelled() => break,
+                    _ = backfill_show_artwork(&manager) => {}
+                }
             }
         });
         *runtime = Some((cancel, task));
@@ -132,6 +138,32 @@ impl Service for ScheduleSyncService {
                 ServiceHealth::degraded("schedule_sync worker is not running")
             },
         )
+    }
+}
+
+/// Shows per hourly run: each needs up to four TVMaze requests plus artwork downloads.
+const SHOW_ARTWORK_BACKFILL_PER_RUN: usize = 5;
+
+async fn backfill_show_artwork(manager: &Arc<ServicesManager>) {
+    let Some(database) = manager.get_database().await else {
+        return;
+    };
+    let metadata = crate::services::metadata::providers::MetadataService::new_default(
+        database.pool().clone(),
+        manager.clone(),
+    );
+    if let Err(error) = metadata
+        .backfill_show_artwork(SHOW_ARTWORK_BACKFILL_PER_RUN)
+        .await
+    {
+        tracing::warn!(service = "schedule_sync", error = %error, "Show artwork backfill failed; retrying next run");
+    }
+    // Artwork of entities deleted before the delete hook existed (or by paths around it).
+    if let Some(storage) = manager.get_storage().await {
+        let artwork = crate::services::ArtworkService::new(database.pool().clone(), storage);
+        if let Err(error) = artwork.sweep_orphans().await {
+            tracing::warn!(service = "schedule_sync", error = %error, "Orphaned artwork sweep failed; retrying next run");
+        }
     }
 }
 

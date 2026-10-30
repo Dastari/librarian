@@ -794,7 +794,14 @@ fn extract_zip(
             kind: "ZIP",
             reason: error.to_string(),
         })?;
-        let raw_name = entry.name().to_string();
+        let raw_name = entry
+            .name()
+            .map_err(|error| ExtractError::Corrupt {
+                archive: archive_name.clone(),
+                kind: "ZIP",
+                reason: error.to_string(),
+            })?
+            .to_string();
         if entry.is_symlink() {
             return Err(ExtractError::UnsafeEntry {
                 archive: archive_name.clone(),

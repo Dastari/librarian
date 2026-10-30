@@ -82,8 +82,5 @@ subscription EntityCastSettingChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    castSetting {
-      ...CastSettingFields
-    }
   }
 }

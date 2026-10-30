@@ -1,24 +1,32 @@
 import { useMutation } from "@apollo/client/react";
-import { toast } from "@heroui/react";
+import { SearchField } from "glass-ux/input";
+import { Select } from "glass-ux/select";
+import { toast } from "glass-ux/toast";
 import { IconCheck, IconHistory, IconRefresh, IconTrash } from "@tabler/icons-react";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import { parseAsBoolean, parseAsString, parseAsStringEnum, useQueryState } from "nuqs";
 
 import { Button, DataTable, type DataTableColumn, type DataTableRowAction, EmptyState, ErrorState, Panel, StatTile, StatusChip } from "@/components/ui";
 import {
-  LibraryScanIssuesDocument,
-  LibraryScanRunsDocument,
+  EntityLibraryScanIssueListDocument,
+  EntityLibraryScanRunListDocument,
   ResolveScanIssueDocument,
   RetryScanIssueDocument,
   TrashDuplicateScanIssueDocument,
   type LibraryScanIssuesQuery,
   type LibraryScanRunsQuery,
+  type LibraryScanIssueWhereInput,
+  type LibraryScanIssueOrderByInput,
+  type LibraryScanRunOrderByInput,
 } from "@/graphql/generated/graphql";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useServerTable } from "@/hooks/useServerTable";
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { formatDateTime, formatRelative } from "@/lib/format";
 import { errorMessage } from "@/lib/graphql/errors";
 import { scanStatus } from "@/lib/status";
 
-import { useConnection } from "./browser/useConnection";
+import { useInfiniteConnection } from "./browser/useInfiniteConnection";
 import { useLibraryScan } from "./useLibraryScan";
 
 type RunRow = LibraryScanRunsQuery["libraryScanRuns"]["edges"][number]["node"];
@@ -34,12 +42,21 @@ const SEVERITY: Record<string, { tone: "danger" | "warning" | "accent" | "defaul
 export function ScansPanel({ libraryId }: { libraryId: string }) {
   const isAdmin = useIsAdmin();
   const scan = useLibraryScan(libraryId);
-  const [showResolved, setShowResolved] = useState(false);
-  const [issuePage, setIssuePage] = useState(0);
-  const [runPage, setRunPage] = useState(0);
-
-  const runs = useConnection(LibraryScanRunsDocument, { libraryId, page: { limit: 10, offset: runPage * 10 } }, (data) => data.libraryScanRuns);
-  const issues = useConnection(LibraryScanIssuesDocument, { libraryId, unresolvedOnly: !showResolved, page: { limit: 25, offset: issuePage * 25 } }, (data) => data.libraryScanIssues);
+  const [showResolved, setShowResolved] = useQueryState("resolved", parseAsBoolean.withDefault(false).withOptions({ history: "push" }));
+  const [query, setQuery] = useQueryState("q", parseAsString.withDefault(""));
+  const [severity, setSeverity] = useQueryState("severity", parseAsStringEnum<string>(["all", "ERROR", "WARNING", "INFO"]).withDefault("all").withOptions({ history: "push" }));
+  const [runStatus, setRunStatus] = useQueryState("status", parseAsStringEnum<string>(["all", "QUEUED", "RUNNING", "COMPLETED", "COMPLETED_WITH_ISSUES", "FAILED", "CANCELLED"]).withDefault("all").withOptions({ history: "push" }));
+  const search = useDebouncedValue(query.trim(), 250);
+  const issueTable = useServerTable<LibraryScanIssueOrderByInput>({ persistKey: `scan-issues.${libraryId}`, defaultSorting: [{ id: "updatedAt", desc: true }] });
+  const runTable = useServerTable<LibraryScanRunOrderByInput>({ persistKey: `scan-runs.${libraryId}`, defaultSorting: [{ id: "createdAt", desc: true }] });
+  const issueWhere = useMemo<LibraryScanIssueWhereInput>(() => ({
+    libraryId: { eq: libraryId },
+    ...(!showResolved ? { resolvedAt: { isNull: true } } : {}),
+    ...(search ? { issueCode: { contains: search } } : {}),
+    ...(severity !== "all" ? { severity: { eq: severity } } : {}),
+  }), [libraryId, showResolved, search, severity]);
+  const runs = useInfiniteConnection(EntityLibraryScanRunListDocument, { where: { libraryId: { eq: libraryId }, ...(runStatus !== "all" ? { status: { eq: runStatus } } : {}) }, orderBy: runTable.orderBy }, (data) => data.libraryScanRuns);
+  const issues = useInfiniteConnection(EntityLibraryScanIssueListDocument, { where: issueWhere, orderBy: issueTable.orderBy }, (data) => data.libraryScanIssues);
 
   const [retryIssue] = useMutation(RetryScanIssueDocument);
   const [resolveIssue] = useMutation(ResolveScanIssueDocument);
@@ -60,8 +77,8 @@ export function ScansPanel({ libraryId }: { libraryId: string }) {
 
   const runColumns = useMemo<Array<DataTableColumn<RunRow>>>(
     () => [
-      { id: "startedAt", header: "Started", cell: (row) => <span className="text-foreground">{formatDateTime(row.startedAt ?? row.createdAt)}</span> },
-      { id: "status", header: "Status", size: 160, cell: (row) => <StatusChip status={scanStatus(row.status)} /> },
+      { id: "createdAt", header: "Started", sortable: true, cell: (row) => <span className="text-foreground">{formatDateTime(row.startedAt ?? row.createdAt)}</span> },
+      { id: "status", header: "Status", size: 160, sortable: true, cell: (row) => <StatusChip status={scanStatus(row.status)} /> },
       { id: "discovered", header: "Found", size: 90, align: "end", numeric: true, cell: (row) => row.discoveredCount },
       { id: "matched", header: "Matched", size: 90, align: "end", numeric: true, cell: (row) => row.matchedCount },
       { id: "unmatched", header: "Unmatched", size: 100, align: "end", numeric: true, hideBelow: "md", cell: (row) => row.unmatchedCount },
@@ -78,15 +95,15 @@ export function ScansPanel({ libraryId }: { libraryId: string }) {
         header: "Issue",
         cell: (row) => (
           <span className="min-w-0">
-            <span className="block truncate text-body-sm text-foreground">{row.message}</span>
-            <span className="block truncate text-label-sm text-muted">{[row.issueCode, row.remediation].filter(Boolean).join(" · ")}</span>
+            <span className="block break-words text-body-sm text-foreground">{row.message}</span>
+            <span className="block break-words text-label-sm text-muted">{[row.issueCode, row.remediation].filter(Boolean).join(" · ")}</span>
           </span>
         ),
       },
       { id: "severity", header: "Severity", size: 120, cell: (row) => <StatusChip status={{ label: row.severity.charAt(0) + row.severity.slice(1).toLowerCase(), ...(SEVERITY[row.severity] ?? SEVERITY.INFO!) }} /> },
       { id: "stage", header: "Stage", size: 130, hideBelow: "md", cell: (row) => <span className="text-muted">{row.stage.toLowerCase().replace(/_/g, " ")}</span> },
       { id: "count", header: "Seen", size: 80, align: "end", numeric: true, hideBelow: "lg", cell: (row) => row.occurrenceCount },
-      { id: "updated", header: "Last", size: 130, hideBelow: "md", cell: (row) => <span className="text-muted">{formatRelative(row.updatedAt)}</span> },
+      { id: "updatedAt", header: "Last", size: 130, sortable: true, hideBelow: "md", cell: (row) => <span className="text-muted">{formatRelative(row.updatedAt)}</span> },
     ],
     [],
   );
@@ -128,35 +145,48 @@ export function ScansPanel({ libraryId }: { libraryId: string }) {
           </Button>
         }
       >
+        <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+          <SearchField aria-label="Filter issue codes" placeholder="Filter issue codes" value={query} onValueChange={(value) => void setQuery(value)} className="w-full sm:w-64" />
+          <Select aria-label="Issue severity" value={severity} onValueChange={(value) => setSeverity(value ?? "all")} options={[{ value: "all", label: "All severities" }, { value: "ERROR", label: "Error" }, { value: "WARNING", label: "Warning" }, { value: "INFO", label: "Info" }]} />
+        </div>
         <DataTable<IssueRow>
           className="px-4 pb-4" frame={false}
           columns={issueColumns}
           rows={issues.rows}
           getRowId={(row) => row.id}
           isLoading={issues.loading}
+          refetching={issues.fetching}
+          queryKey={issues.queryKey} loadRevision={issues.loadRevision}
+          externalBrowserToolbar
           totalCount={issues.totalCount}
-          pageIndex={issuePage}
-          pageSize={25}
-          onPageIndexChange={setIssuePage}
+          infinite={{ hasMore: issues.hasMore, loadMore: issues.loadMore, loadingMore: issues.loadingMore }}
+          sorting={issueTable.sorting}
+          onSortingChange={issueTable.setSorting}
           rowActions={issueActions}
           density="compact"
           noun="issues"
           error={issues.error && issues.rows.length === 0 ? <ErrorState error={issues.error} onRetry={() => void issues.refetch()} compact /> : undefined}
-          emptyState={<EmptyState compact icon={IconCheck} title="No open issues" description="The last scan finished without anything to review." />}
+          emptyState={<EmptyState compact icon={IconCheck} title={search || severity !== "all" ? "No issues match" : showResolved ? "No issues" : "No open issues"} />}
         />
       </Panel>
 
       <Panel title="History" flush>
+        <div className="px-4 pb-3">
+          <Select aria-label="Scan status" value={runStatus} onValueChange={(value) => setRunStatus(value ?? "all")} options={[{ value: "all", label: "All scans" }, ...["QUEUED", "RUNNING", "COMPLETED", "COMPLETED_WITH_ISSUES", "FAILED", "CANCELLED"].map((value) => ({ value, label: scanStatus(value).label }))]} />
+        </div>
         <DataTable<RunRow>
           className="px-4 pb-4" frame={false}
           columns={runColumns}
           rows={runs.rows}
           getRowId={(row) => row.id}
           isLoading={runs.loading}
+          refetching={runs.fetching}
+          queryKey={runs.queryKey} loadRevision={runs.loadRevision}
+          externalBrowserToolbar
           totalCount={runs.totalCount}
-          pageIndex={runPage}
-          pageSize={10}
-          onPageIndexChange={setRunPage}
+          infinite={{ hasMore: runs.hasMore, loadMore: runs.loadMore, loadingMore: runs.loadingMore }}
+          sorting={runTable.sorting}
+          onSortingChange={runTable.setSorting}
           density="compact"
           noun="scans"
           error={runs.error && runs.rows.length === 0 ? <ErrorState error={runs.error} onRetry={() => void runs.refetch()} compact /> : undefined}

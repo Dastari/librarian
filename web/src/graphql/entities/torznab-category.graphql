@@ -78,8 +78,5 @@ subscription EntityTorznabCategoryChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    torznabCategory {
-      ...TorznabCategoryFields
-    }
   }
 }

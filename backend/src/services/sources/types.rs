@@ -176,10 +176,11 @@ pub struct SourceQuery {
     /// Categories to search in (Torznab category IDs)
     pub categories: Vec<i32>,
 
-    /// Maximum number of results
+    /// Requested batch size. Qualified paged reads count provider items (YTS
+    /// counts movies), preserving every release variant in the returned batch.
     pub limit: Option<i32>,
 
-    /// Offset for pagination
+    /// Provider item offset, interpreted only by adapters with qualified paging.
     pub offset: Option<i32>,
 
     /// Whether to use caching
@@ -445,5 +446,91 @@ mod tests {
         assert_eq!(query.get_episode_string().as_deref(), Some("S01"));
         query.season = None;
         assert_eq!(query.get_episode_string(), None);
+    }
+}
+
+/// Whether an adapter has a qualified remote paging mechanism.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, async_graphql::Enum)]
+#[graphql(name = "SourceContinuationSupport")]
+pub enum SourceContinuationSupport {
+    Supported,
+    Unsupported,
+    Unknown,
+}
+
+/// Completion describes this remote page, never an invented global total.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, async_graphql::Enum)]
+#[graphql(name = "SourceSearchPageState")]
+pub enum SourceSearchPageState {
+    More,
+    Exhausted,
+    Unknown,
+    Partial,
+    Error,
+}
+
+/// Adapter page. Offsets are provider item offsets (YTS items are movies,
+/// which may each contain several release variants). Never truncate variants.
+#[derive(Debug, Clone)]
+pub struct SourcePage {
+    pub releases: Vec<SourceRelease>,
+    pub support: SourceContinuationSupport,
+    pub state: SourceSearchPageState,
+    pub next_offset: Option<i32>,
+}
+
+impl SourcePage {
+    pub fn unsupported(releases: Vec<SourceRelease>) -> Self {
+        Self {
+            releases,
+            support: SourceContinuationSupport::Unsupported,
+            state: SourceSearchPageState::Unknown,
+            next_offset: None,
+        }
+    }
+}
+
+/// Public page metadata contains opaque handles, never provider URLs or keys.
+#[derive(Debug, Clone, async_graphql::SimpleObject)]
+#[graphql(name = "SourceSearchPageInfo", rename_fields = "camelCase")]
+pub struct SourceSearchPageInfo {
+    pub support: SourceContinuationSupport,
+    pub state: SourceSearchPageState,
+    pub has_more: Option<bool>,
+    pub next_cursor: Option<String>,
+    pub retry_cursor: Option<String>,
+    pub returned_count: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct PagedSourceSearchResult {
+    pub result: super::SourceSearchResult,
+    pub page_info: SourceSearchPageInfo,
+}
+
+/// A stable source-scoped identity; hashing avoids exposing GUID query secrets
+/// through the new identity field. Hashes distinguish variants sharing a GUID.
+impl SourceRelease {
+    pub fn stable_id(&self, source_id: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let identity = if let Some(hash) = self
+            .info_hash
+            .as_deref()
+            .filter(|hash| !hash.trim().is_empty())
+        {
+            format!("hash:{}", hash.trim().to_ascii_lowercase())
+        } else if !self.guid.trim().is_empty() {
+            format!("guid:{}", self.guid.trim())
+        } else {
+            format!(
+                "fallback:{}:{}:{}",
+                self.title,
+                self.size.unwrap_or_default(),
+                self.link.as_deref().unwrap_or_default()
+            )
+        };
+        hex::encode(Sha256::digest(
+            serde_json::to_vec(&(source_id, identity)).expect("string identity serializes"),
+        ))
     }
 }

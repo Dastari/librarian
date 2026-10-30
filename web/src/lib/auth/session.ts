@@ -40,6 +40,9 @@ class SessionStore {
   private inflight: Promise<boolean> | null = null;
   private client: ApolloClient | null = null;
   private onAuthChange: Array<(authenticated: boolean) => void> = [];
+  private reconciliation: Promise<void> | null = null;
+  private reconciliationDirty = false;
+  private authorityEpoch = 0;
   private bootPromise: Promise<void> | null = null;
 
   attach(client: ApolloClient): void {
@@ -57,6 +60,9 @@ class SessionStore {
   };
 
   getSnapshot = (): SessionState => this.state;
+
+  /** Changes on login, logout and authority replacement, including the same user. */
+  getEpoch = (): number => this.authorityEpoch;
 
   /** Fires after login/logout so infrastructure (websocket, cache) can reset. */
   onChange(listener: (authenticated: boolean) => void): () => void {
@@ -92,27 +98,55 @@ class SessionStore {
   }
 
   private async loadUser(): Promise<void> {
+    await this.reconcile();
+  }
+
+  /** Reload the authoritative account after a private session signal. A failed
+   * read retains the current session; an explicit null/UNAUTHORIZED ends it. */
+  reconcile(): Promise<void> {
+    this.reconciliationDirty = true;
+    if (this.reconciliation) return this.reconciliation;
+    this.reconciliation = (async () => {
+      do {
+        this.reconciliationDirty = false;
+        await this.readAuthorizedUser(this.authorityEpoch);
+      } while (this.reconciliationDirty);
+    })().finally(() => {
+      this.reconciliation = null;
+      if (this.reconciliationDirty) void this.reconcile();
+    });
+    return this.reconciliation;
+  }
+
+  private async readAuthorizedUser(epoch: number): Promise<void> {
     if (!this.client) return;
     try {
-      const { data } = await this.client.query({ query: CurrentUserDocument, fetchPolicy: "network-only" });
+      const { data } = await this.client.query({ query: CurrentUserDocument, fetchPolicy: "no-cache", context: { queryDeduplication: false } });
+      if (epoch !== this.authorityEpoch) return;
       if (data?.me) {
+        const changed = this.state.user?.id !== data.me.id || this.state.user.role !== data.me.role;
+        if (changed) this.authorityEpoch++;
         this.set({ status: "authenticated", user: data.me });
-        return;
-      }
-    } catch {
-      // A transient failure keeps the previous status; the timer will retry.
+        if (changed) this.notify(true);
+      } else if (data && data.me === null) this.expire();
+      else if (this.state.status === "booting") this.set({ status: "anonymous", user: null, expiresAt: null });
+    } catch (error) {
+      if (epoch !== this.authorityEpoch) return;
+      if (isUnauthorizedError(error as never)) this.expire();
+      else if (this.state.status === "booting") this.set({ status: "anonymous", user: null, expiresAt: null });
     }
-    if (this.state.status === "booting") this.set({ status: "anonymous", user: null, expiresAt: null });
   }
 
   /** Marks the session as authenticated after a successful login or registration. */
   establish(user: SessionUser, expiresInSeconds: number): void {
+    this.authorityEpoch++;
     this.set({ status: "authenticated", user, expiresAt: Date.now() + expiresInSeconds * 1000 });
     this.schedule();
     this.notify(true);
   }
 
   async logout(): Promise<void> {
+    this.authorityEpoch++;
     try {
       await this.client?.mutate({ mutation: LogoutDocument });
     } catch {
@@ -142,13 +176,16 @@ class SessionStore {
 
   private async performRefresh(): Promise<boolean> {
     if (!this.client) return false;
+    const epoch = this.authorityEpoch;
     try {
       const { data } = await this.client.mutate({ mutation: RefreshSessionDocument, fetchPolicy: "no-cache" });
+      if (epoch !== this.authorityEpoch) return false;
       const payload = data?.refreshToken;
       if (payload?.success && payload.tokens) {
         const expiresAt = Date.now() + payload.tokens.expiresIn * 1000;
         this.set({ expiresAt, status: this.state.user ? "authenticated" : this.state.status });
         this.schedule();
+        if (this.state.user) void this.reconcile();
         return true;
       }
       this.expire();
@@ -165,6 +202,7 @@ class SessionStore {
   }
 
   private expire(): void {
+    this.authorityEpoch++;
     const wasAuthenticated = this.state.status === "authenticated";
     this.clearTimer();
     this.set({ status: "anonymous", user: null, expiresAt: null });

@@ -1,9 +1,12 @@
-import { useMutation, useQuery } from "@apollo/client/react";
-import { Label, Select, toast } from "@heroui/react";
-import { IconSearch } from "@tabler/icons-react";
+import { useMutation } from "@apollo/client/react";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+import { Field } from "glass-ux/field";
+import { Select } from "glass-ux/select";
+import { toast } from "glass-ux/toast";
+import { IconSearch } from "glass-ux/icons";
 import { useEffect, useState } from "react";
 
-import { Button, Dialog, GlassSegmented, GlassSwitch, SelectList } from "@/components/ui";
+import { Button, Dialog, GlassSegmented, GlassSwitch } from "@/components/ui";
 import {
   EntityAlbumUpdateDocument,
   EntityAudiobookUpdateDocument,
@@ -154,20 +157,13 @@ export function AcquisitionDialog({ isOpen, onOpenChange, target, onSaved }: Acq
           </div>
         )}
 
-        <Select aria-label="Quality profile" selectedKey={profileKey} onSelectionChange={(key) => key !== null && setProfileKey(String(key))} fullWidth>
-          <Label>Quality profile</Label>
-          <Select.Trigger>
-            <Select.Value />
-            <Select.Indicator />
-          </Select.Trigger>
-          <Select.Popover>
-            <SelectList options={options} />
-          </Select.Popover>
-        </Select>
+        <Field label="Quality profile" nativeLabel={false}>
+          <Select value={profileKey} onValueChange={(value) => value !== null && setProfileKey(value)} options={options.map((option) => ({ value: option.key, label: option.label, detail: "description" in option ? option.description : undefined }))} />
+        </Field>
 
         <div className="flex flex-col gap-2 border-t border-separator pt-4">
           <Button variant="secondary" fullWidth onPress={() => void searchNow()} isPending={searching}>
-            <IconSearch size={16} /> Search now
+            <IconSearch /> Search now
           </Button>
           <p className="text-label-sm text-muted">Searches your sources for everything still missing here, ignoring the usual retry delay.</p>
         </div>

@@ -1,3 +1,9 @@
+/* Host focus can be stronger than Glass focus, particularly in TV mode. Keep
+ * the public reach token large enough for both host rings and library halos. */
+:root {
+  --focus-reach: max(4px, calc(var(--nav-focus-width) + var(--nav-focus-offset)));
+}
+
 /* Layout helpers shared by every page. */
 
 @utility page-gutter {
@@ -27,7 +33,8 @@
   overflow-y: visible;
   scroll-snap-type: x proximity;
   scroll-padding-inline: calc(var(--page-gutter) + var(--safe-left));
-  padding-block: 0.5rem;
+  /* overflow-x makes the other axis clip too; leave room for TV focus. */
+  padding-block: max(0.5rem, var(--focus-reach));
   scrollbar-width: none;
   &::-webkit-scrollbar { display: none; }
   & > * { scroll-snap-align: start; flex: 0 0 auto; }
@@ -35,8 +42,11 @@
 
 @utility poster-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--poster-min), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--poster-min)), 1fr));
   gap: var(--poster-gap);
+  @media (width < 40rem) {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 8.5rem), 1fr));
+  }
 }
 
 /* Focus ring used by every focusable custom element. */
@@ -98,4 +108,103 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 22rem));
   gap: 1rem;
+}
+
+/* The main region spans its clipping viewport: paint focus inside it. Poster tiles ring
+ * their artwork instead (media.css). */
+.app-shell-main:is(:focus-visible, [data-focus-visible="true"]) {
+  outline: var(--nav-focus-width) solid var(--focus);
+  outline-offset: calc(-1 * var(--nav-focus-width));
+}
+
+@media (forced-colors: active) {
+  /* Host native targets need boundaries even when fills/shadows disappear. */
+  .nav-focus:is(a, button) {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
+
+  .nav-focus[aria-current="page"],
+  .poster-card[data-selected="true"] {
+    outline: var(--nav-focus-width) solid Highlight;
+    outline-offset: calc(-1 * var(--nav-focus-width));
+  }
+
+  .poster-card[data-selected="true"] { border-color: Highlight; }
+
+  .nav-focus:is(:focus-visible, [data-focus-visible="true"]),
+  .app-shell-main:focus-visible {
+    outline-color: Highlight;
+    outline-width: var(--nav-focus-width);
+  }
+
+  .nav-focus:is(:disabled, [aria-disabled="true"]) {
+    color: GrayText;
+    outline-color: GrayText;
+    opacity: 1;
+  }
+
+  .nav-focus svg { color: inherit; }
+}
+
+/* Adapt the host shell, not private Glass selectors. Screen tables keep their
+ * bounded viewport; paper uses document flow and only already-loaded content. */
+@media print {
+  #root,
+  .app-shell,
+  .app-shell-body,
+  .app-shell-scroll,
+  .app-shell-main,
+  .app-shell-main > *,
+  [data-print-flow] {
+    position: static;
+    display: block;
+    block-size: auto;
+    min-block-size: 0;
+    max-block-size: none;
+    overflow: visible;
+  }
+
+  /* Host panes are block flow on paper, including nested clipped outlets. The
+   * shared table adapter must opt its own wrapper in with data-print-flow too. */
+  [data-print-flow] {
+    inline-size: auto;
+    max-inline-size: none;
+    contain: none;
+  }
+
+  /* Navigation is absent on paper; restore the accessible route title there. */
+  .route-print-title {
+    position: static;
+    inline-size: auto;
+    block-size: auto;
+    padding: 0;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    white-space: normal;
+  }
+
+  .app-shell-main { padding-block-end: 0; }
+
+  .app-shell-top {
+    position: static;
+    margin: 0;
+  }
+
+  /* A kept custom chrome element must also leave fixed/sticky screen geometry. */
+  .app-shell [data-print="keep"] {
+    position: static;
+    block-size: auto;
+    overflow: visible;
+  }
+
+  .snap-row {
+    flex-wrap: wrap;
+    overflow: visible;
+    scroll-snap-type: none;
+  }
+
+  .poster-card { break-inside: avoid; }
 }

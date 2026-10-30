@@ -1,80 +1,27 @@
-# Home feed: continue watching, recently added and per-library rows.
-
-query ContinueWatching($userId: String!) {
-  playbackProgresses(
-    where: { userId: { eq: $userId }, isWatched: { eq: false }, progressPercent: { gt: 1 } }
-    orderBy: [{ updatedAt: DESC }]
-    page: { limit: 12, offset: 0 }
-  ) {
-    edges {
-      node {
-        ...PlaybackProgressFields
-      }
-    }
-  }
-}
-
-query MediaFilesByIds($ids: [String!]!) {
-  mediaFiles(where: { id: { inList: $ids } }, page: { limit: 50, offset: 0 }) {
-    edges {
-      node {
-        ...MediaFileFields
-      }
-    }
-  }
-}
-
-query MoviesByIds($ids: [String!]!) {
-  movies(where: { id: { inList: $ids } }, page: { limit: 50, offset: 0 }) {
-    edges {
-      node {
-        ...MovieFields
-      }
-    }
-  }
-}
-
-query EpisodesByIds($ids: [String!]!) {
-  episodes(where: { id: { inList: $ids } }, page: { limit: 50, offset: 0 }) {
-    edges {
-      node {
-        ...EpisodeFields
-        show {
-          id
-          name
-          posterUrl
-          backdropUrl
+# Home feed: an authoritative resume window plus recently added shelves.
+query ResumeShelf($limit: Int! = 20, $libraryId: String) {
+  resumeShelf(limit: $limit, libraryId: $libraryId) {
+    hasMore
+    complete
+    scannedCount
+    error
+    items {
+      ...PlaybackProgressFields
+      mediaFile {
+        id
+        duration
+        movie { id title year }
+        episode {
+          id showId season episode title
+          show { id name posterUrl backdropUrl }
         }
-      }
-    }
-  }
-}
-
-query TracksByIds($ids: [String!]!) {
-  tracks(where: { id: { inList: $ids } }, page: { limit: 50, offset: 0 }) {
-    edges {
-      node {
-        ...TrackFields
-        album {
-          id
-          name
-          coverUrl
+        track {
+          id albumId title artistName
+          album { id name coverUrl }
         }
-      }
-    }
-  }
-}
-
-query ChaptersByIds($ids: [String!]!) {
-  chapters(where: { id: { inList: $ids } }, page: { limit: 50, offset: 0 }) {
-    edges {
-      node {
-        ...ChapterFields
-        audiobook {
-          id
-          title
-          coverUrl
-          authorName
+        chapter {
+          id audiobookId title chapterNumber
+          audiobook { id title coverUrl authorName }
         }
       }
     }

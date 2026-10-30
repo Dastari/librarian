@@ -1,5 +1,5 @@
-query LibrariesOverview {
-  libraries(orderBy: [{ name: ASC }], page: { limit: 100, offset: 0 }) {
+query LibrariesOverview($page: PageInput = { limit: 100, offset: 0 }) {
+  libraries(orderBy: [{ name: ASC }], page: $page) {
     edges {
       node {
         ...LibraryFields
@@ -52,6 +52,10 @@ query LibrariesOverview {
           }
         }
       }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
     }
   }
 }

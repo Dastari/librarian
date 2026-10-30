@@ -82,10 +82,9 @@ impl BackupMutations {
         }
     }
 
-    /// Restores a full database backup into an **empty** database. This does not touch a
-    /// database that already has data (the underlying runtime rejects non-empty targets), so
-    /// it is intended for disaster recovery onto a fresh instance, not for restoring over a
-    /// live, populated database.
+    /// Restore is unavailable on a live service. Disaster recovery must construct an
+    /// offline restore service with an empty staging database and object root, verify
+    /// both records and managed bytes, and publish them only after successful completion.
     #[graphql(name = "restoreFullBackup", guard = "RoleGuard::new(\"Admin\")")]
     async fn restore_full_backup(
         &self,

@@ -1,12 +1,12 @@
 
 import { useNavigate } from "@tanstack/react-router";
 import { IconMovie, IconPlus } from "@tabler/icons-react";
-import { useMemo, useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 
 import { Button, DataTable, type DataTableColumn, EmptyState, ErrorState, PosterCard, StatusChip } from "@/components/ui";
 import { ProviderSearchDialog } from "@/features/library-add/ProviderSearchDialog";
 import { usePlayer } from "@/features/player/usePlayer";
-import { LibraryMoviesDocument, type LibraryMoviesQuery, type MovieOrderByInput, type MovieWhereInput } from "@/graphql/generated/graphql";
+import { LibraryMoviesDocument, type LibraryMoviesQuery, type MovieOrderByInput, type MovieWhereInput, type ContentStatus } from "@/graphql/generated/graphql";
 import { useContentStatuses } from "@/hooks/useContentStatuses";
 import { useServerTable } from "@/hooks/useServerTable";
 import { moviePoster } from "@/lib/artwork";
@@ -23,6 +23,11 @@ import { useLetterJump } from "./useLetterJump";
 type MovieRow = LibraryMoviesQuery["movies"]["edges"][number]["node"];
 
 const getRowId = (row: MovieRow) => row.id;
+const MovieStatusesContext = createContext<Map<string, ContentStatus>>(new Map());
+function MovieStatusCell({ id }: { id: string }) {
+  return <StatusChip status={statusMeta(useContext(MovieStatusesContext).get(id))} />;
+}
+
 
 export function MoviesBrowser({ libraryId }: { libraryId: string }) {
   const navigate = useNavigate();
@@ -54,6 +59,9 @@ export function MoviesBrowser({ libraryId }: { libraryId: string }) {
     getRowId,
     getTitle: (row) => row.title,
     hasMore: list.hasMore,
+    loading: list.fetching || list.loadingMore,
+    queryKey: JSON.stringify([where, filters.view]),
+    isTitleSorted: table.sorting.length === 1 && table.sorting[0]?.id === "title" && !table.sorting[0].desc,
     loadMore: list.loadMore,
     ensureTitleSort: () => table.setSorting([{ id: "title", desc: false }]),
   });
@@ -82,14 +90,14 @@ export function MoviesBrowser({ libraryId }: { libraryId: string }) {
           </span>
         ),
       },
-      { id: "status", header: "Status", size: 150, cell: (row) => <StatusChip status={statusMeta(statuses.get(row.id))} /> },
+      { id: "status", header: "Status", size: 150, cell: (row) => <MovieStatusCell id={row.id} /> },
       { id: "quality", header: "Quality", size: 190, hideBelow: "md", cell: (row) => <QualityCell file={row.mediaFile} /> },
       { id: "runtime", header: "Runtime", size: 100, sortable: true, align: "end", numeric: true, hideBelow: "lg", cell: (row) => formatRuntime(row.runtime, "minutes") },
       { id: "year", header: "Year", size: 80, sortable: true, align: "end", numeric: true, hideBelow: "sm", cell: (row) => row.year ?? "—" },
       { id: "genres", header: "Genres", size: 220, hideBelow: "xl", cell: (row) => <span className="text-muted">{row.genres.join(", ")}</span> },
       { id: "createdAt", header: "Added", size: 130, sortable: true, hideBelow: "md", cell: (row) => <span className="text-muted">{formatDate(row.createdAt)}</span> },
     ],
-    [statuses],
+    [],
   );
 
   const filtered = Boolean(filters.debouncedQuery) || filters.availability !== "all";
@@ -103,7 +111,8 @@ export function MoviesBrowser({ libraryId }: { libraryId: string }) {
   );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
+    <MovieStatusesContext value={statuses}>
+    <div ref={jump.containerRef} className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 sm:gap-4">
       <BrowserToolbar
         query={filters.query}
         onQueryChange={filters.setQuery}
@@ -117,14 +126,18 @@ export function MoviesBrowser({ libraryId }: { libraryId: string }) {
         placeholder="Filter movies"
         trailing={isAdmin ? <Button variant="primary" size="sm" onPress={() => setAdding(true)}><IconPlus size={16} /> Add</Button> : null}
       />
-      <div className="flex min-h-0 flex-1 gap-4">
+      <div className="flex min-h-0 min-w-0 flex-1 gap-3 sm:gap-4">
         <DataTable<MovieRow>
-          className="min-w-0 flex-1"
+          height="fill"
+          className="min-h-0 min-w-0 flex-1"
           view={filters.view}
           columns={columns}
           rows={list.rows}
           getRowId={getRowId}
           isLoading={list.loading}
+          refetching={list.fetching}
+          queryKey={list.queryKey} loadRevision={list.loadRevision}
+          externalBrowserToolbar
           totalCount={list.totalCount}
           noun="movies"
           sorting={table.sorting}
@@ -150,6 +163,7 @@ export function MoviesBrowser({ libraryId }: { libraryId: string }) {
       </div>
       <ProviderSearchDialog kind="movie" libraryId={libraryId} isOpen={adding} onOpenChange={setAdding} onAdded={() => void list.refetch()} />
     </div>
+    </MovieStatusesContext>
   );
 }
 

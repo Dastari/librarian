@@ -30,8 +30,9 @@ pub mod service;
 pub mod types;
 
 pub use types::{
-    BookSearchParam, MovieSearchParam, MusicSearchParam, QueryType, SourceCapabilities,
-    SourceQuery, SourceRelease, TvSearchParam,
+    BookSearchParam, MovieSearchParam, MusicSearchParam, PagedSourceSearchResult, QueryType,
+    SourceCapabilities, SourceContinuationSupport, SourcePage, SourceQuery, SourceRelease,
+    SourceSearchPageInfo, SourceSearchPageState, TvSearchParam,
 };
 
 use anyhow::Result;
@@ -144,6 +145,12 @@ pub trait Source: Send + Sync {
 
     /// Perform a search query
     async fn search(&self, query: &SourceQuery) -> Result<Vec<SourceRelease>>;
+
+    /// External computed read with qualified paging metadata. A short first
+    /// batch from an unqualified/HTML adapter cannot establish exhaustion.
+    async fn search_page(&self, query: &SourceQuery) -> Result<SourcePage> {
+        Ok(SourcePage::unsupported(self.search(query).await?))
+    }
 
     /// Download a file by its link (torrent file, NZB, etc.)
     async fn download(&self, link: &str) -> Result<Vec<u8>>;

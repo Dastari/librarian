@@ -4,8 +4,16 @@ use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    async_graphql::SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
 )]
+#[graphql(complex)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
@@ -16,6 +24,15 @@ use serde::{Deserialize, Serialize};
     write_policy = "admin.write"
 )]
 pub struct MediaFile {
+    /// General data revision, including stream/marker relation changes. Managed
+    /// by generated writes; distinct from analysis or metadata refresh times.
+    #[graphql(name = "updatedAt")]
+    #[filterable(type = "date")]
+    #[sortable]
+    #[serde(default)]
+    #[graphql_orm(default = false)]
+    pub updated_at: Option<String>,
+
     #[graphql(name = "id")]
     #[primary_key]
     #[filterable(type = "string")]
@@ -23,22 +40,27 @@ pub struct MediaFile {
 
     #[graphql(name = "libraryId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub library_id: Option<String>,
 
     #[graphql(name = "episodeId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub episode_id: Option<String>,
 
     #[graphql(name = "movieId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub movie_id: Option<String>,
 
     #[graphql(name = "trackId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub track_id: Option<String>,
 
     #[graphql(name = "chapterId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub chapter_id: Option<String>,
 
     #[graphql(name = "path")]
@@ -152,6 +174,116 @@ pub struct MediaFile {
     #[graphql(name = "qualityStatus")]
     #[filterable(type = "string")]
     pub quality_status: Option<String>,
+
+    // Query relations do not add physical FKs or change existing delete behavior.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Library",
+        from = "library_id",
+        to = "id",
+        on_delete = "set_null",
+        propagate_change = "up",
+        emit_fk = false
+    )]
+    pub library: Option<Box<Library>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Episode",
+        from = "episode_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub episode: Option<Box<Episode>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Movie",
+        from = "movie_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub movie: Option<Box<Movie>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Track",
+        from = "track_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub track: Option<Box<Track>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Chapter",
+        from = "chapter_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub chapter: Option<Box<Chapter>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "VideoStream",
+        from = "id",
+        to = "media_file_id",
+        multiple,
+        emit_fk = false
+    )]
+    pub video_streams: Vec<VideoStream>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "AudioStream",
+        from = "id",
+        to = "media_file_id",
+        multiple,
+        emit_fk = false
+    )]
+    pub audio_streams: Vec<AudioStream>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Subtitle",
+        from = "id",
+        to = "media_file_id",
+        multiple,
+        emit_fk = false
+    )]
+    pub subtitles: Vec<Subtitle>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "MediaChapter",
+        from = "id",
+        to = "media_file_id",
+        multiple,
+        emit_fk = false
+    )]
+    pub media_chapters: Vec<MediaChapter>,
 }
 
 #[derive(Default)]

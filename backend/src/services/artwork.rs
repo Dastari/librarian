@@ -6,13 +6,13 @@
 //! This is a utility service (not a lifecycle Service) - no background tasks,
 //! just on-demand operations called during metadata operations.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use graphql_orm::graphql::filters::StringFilter;
+use graphql_orm::graphql::filters::{IntFilter, StringFilter};
 use graphql_orm_storage::{StorageNamespace, StoragePutRequest, StoredObject};
 use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE, LOCATION};
 use reqwest::{StatusCode, Url};
@@ -24,8 +24,10 @@ use url::Host;
 
 use crate::db::Database;
 use crate::graphql::entities::{
-    AppSetting, AppSettingWhereInput, ArtworkCache, ArtworkCacheWhereInput,
-    CreateArtworkCacheInput, CreateStorageObjectInput, StorageObject,
+    Album, AppSetting, AppSettingWhereInput, Artist, ArtworkCache, ArtworkCacheWhereInput,
+    Audiobook, Collection, CollectionWhereInput, CreateArtworkCacheInput, CreateStorageObjectInput,
+    Episode, Movie, Person, ScheduleCache, ScheduleCacheWhereInput, Season, Show, StorageObject,
+    UpdateArtworkCacheInput,
 };
 use crate::services::ObjectStorageService;
 
@@ -42,6 +44,59 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 const BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Widths a client may ask for. Requests snap up to the next step so a handful of variants
+/// serve every layout (grid posters, shelf tiles, episode stills, full-screen backdrops).
+pub const ARTWORK_WIDTHS: &[u32] = &[185, 342, 500, 780, 1280, 1920];
+const VARIANT_JPEG_QUALITY: u8 = 84;
+
+/// One download per artwork at a time: concurrent requests for the same uncached image
+/// (a grid of tiles, two devices) wait for the first instead of fetching it again.
+static IN_FLIGHT: LazyLock<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    LazyLock::new(Default::default);
+
+struct InFlightGuard {
+    key: String,
+    lock: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        if let Ok(mut map) = IN_FLIGHT.lock() {
+            // Only this guard and the map hold the lock: nobody else is waiting.
+            if Arc::strong_count(&self.lock) <= 2 {
+                map.remove(&self.key);
+            }
+        }
+    }
+}
+
+async fn lock_artwork(key: String) -> (InFlightGuard, tokio::sync::OwnedMutexGuard<()>) {
+    let lock = {
+        let mut map = IN_FLIGHT
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        map.entry(key.clone()).or_default().clone()
+    };
+    let held = lock.clone().lock_owned().await;
+    (InFlightGuard { key, lock }, held)
+}
+
+/// Snap a requested width to the next supported step (`None` when no resize is wanted).
+pub fn normalize_artwork_width(requested: Option<u32>) -> Option<u32> {
+    let width = requested.filter(|width| *width > 0)?;
+    Some(
+        ARTWORK_WIDTHS
+            .iter()
+            .copied()
+            .find(|step| *step >= width)
+            .unwrap_or(*ARTWORK_WIDTHS.last().unwrap_or(&1920)),
+    )
+}
+
+fn variant_type(artwork_type: &str, width: u32) -> String {
+    format!("{artwork_type}@w{width}")
+}
 
 #[derive(Debug, Error)]
 pub enum ArtworkFetchError {
@@ -112,10 +167,15 @@ impl ArtworkService {
             "Caching artwork from URL"
         );
 
-        // Check if already cached
-        if let Some(_existing) = self
+        let _lock = lock_artwork(format!("{entity_type}/{entity_id}/{artwork_type}")).await;
+
+        // Already cached from this source: nothing to do. A different source (the
+        // provider changed its artwork) downloads the new image and replaces the old one.
+        let existing = self
             .get_cached_entry(entity_type, entity_id, artwork_type)
-            .await?
+            .await?;
+        if let Some(existing) = &existing
+            && (existing.source_url.as_deref() == Some(source_url) || existing.source_url.is_none())
         {
             debug!(
                 entity_type = %entity_type,
@@ -169,6 +229,48 @@ impl ArtworkService {
                 return Err(err).context("Failed to insert artwork storage object metadata");
             }
         };
+
+        if let Some(existing) = existing {
+            if let Err(err) = ArtworkCache::update_by_id(
+                &self.db,
+                &existing.id,
+                UpdateArtworkCacheInput {
+                    storage_object_id: Some(storage_row.id.clone()),
+                    source_url: Some(Some(source_url.to_string())),
+                    width: Some(Some(width)),
+                    height: Some(Some(height)),
+                    ..Default::default()
+                },
+            )
+            .await
+            {
+                // Deleting the row defers its bytes through the storage hook; only an orphan
+                // without metadata needs direct cleanup.
+                if StorageObject::delete_by_id(&self.db, &storage_row.id)
+                    .await
+                    .is_err()
+                {
+                    self.cleanup_object_after_db_failure(&stored, "artwork cache update")
+                        .await;
+                }
+                return Err(err).context("Failed to replace artwork cache metadata");
+            }
+            self.release_storage_object(&existing.storage_object_id)
+                .await;
+            self.delete_variants(entity_type, entity_id, artwork_type)
+                .await;
+            info!(
+                entity_type = %entity_type,
+                entity_id = %entity_id,
+                artwork_type = %artwork_type,
+                source_host = %final_host,
+                size_kb = size_bytes / 1024,
+                "Replaced cached artwork with the provider's new image"
+            );
+            return Ok(format!(
+                "/api/artwork/{entity_type}/{entity_id}/{artwork_type}"
+            ));
+        }
 
         if let Err(err) = ArtworkCache::insert(
             &self.db,
@@ -404,6 +506,346 @@ impl ArtworkService {
         }
     }
 
+    /// The provider URL an entity's artwork is downloaded from, read through the entity
+    /// layer. `None` when the entity or its artwork does not exist.
+    pub async fn source_url(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        artwork_type: &str,
+    ) -> Result<Option<String>> {
+        let pool = self.db.pool();
+        let id = entity_id.to_string();
+        Ok(match (entity_type, artwork_type) {
+            ("movie", "poster") => Movie::get(pool, &id).await?.and_then(|row| row.poster_url),
+            ("movie", "backdrop") => Movie::get(pool, &id)
+                .await?
+                .and_then(|row| row.backdrop_url),
+            ("show", "poster") => Show::get(pool, &id).await?.and_then(|row| row.poster_url),
+            ("show", "backdrop") => Show::get(pool, &id).await?.and_then(|row| row.backdrop_url),
+            ("season", "poster") => Season::get(pool, &id).await?.and_then(|row| row.poster_url),
+            ("episode", "thumbnail") => {
+                Episode::get(pool, &id).await?.and_then(|row| row.still_url)
+            }
+            ("album", "cover") => Album::get(pool, &id).await?.and_then(|row| row.cover_url),
+            ("artist", "poster") => Artist::get(pool, &id).await?.and_then(|row| row.image_url),
+            ("audiobook", "cover") => Audiobook::get(pool, &id)
+                .await?
+                .and_then(|row| row.cover_url),
+            ("person", "profile") => Person::get(pool, &id)
+                .await?
+                .and_then(|row| row.profile_url),
+            // TV guide posters, addressed by TVMaze show id: the guide lists shows that are
+            // not in any library, and is rebuilt daily from the same few hundred posters.
+            ("guide", "poster") => {
+                let Ok(tvmaze_show_id) = entity_id.parse::<i32>() else {
+                    return Ok(None);
+                };
+                ScheduleCache::query(pool)
+                    .filter(ScheduleCacheWhereInput {
+                        tvmaze_show_id: Some(IntFilter {
+                            eq: Some(tvmaze_show_id),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    })
+                    .limit(1)
+                    .fetch_all()
+                    .await?
+                    .into_iter()
+                    .find_map(|row| row.show_poster_url)
+            }
+            // Collection artwork is addressed by its TMDB collection id, shared by libraries.
+            ("collection", "poster" | "backdrop") => {
+                let Ok(tmdb_id) = entity_id.parse::<i32>() else {
+                    return Ok(None);
+                };
+                let rows = Collection::query(pool)
+                    .filter(CollectionWhereInput {
+                        tmdb_collection_id: Some(IntFilter {
+                            eq: Some(tmdb_id),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    })
+                    .fetch_all()
+                    .await?;
+                rows.into_iter().find_map(|row| {
+                    if artwork_type == "poster" {
+                        row.poster_url
+                    } else {
+                        row.backdrop_url
+                    }
+                })
+            }
+            _ => None,
+        })
+    }
+
+    /// Cache-through lookup: the cached entry, downloading it from the entity's source URL
+    /// on first use. Artwork is always served from local storage, never hotlinked.
+    pub async fn ensure_cached(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        artwork_type: &str,
+    ) -> Result<Option<ArtworkCache>> {
+        if let Some(entry) = self
+            .get_cached_entry(entity_type, entity_id, artwork_type)
+            .await?
+        {
+            return Ok(Some(entry));
+        }
+        let Some(source) = self
+            .source_url(entity_type, entity_id, artwork_type)
+            .await?
+        else {
+            return Ok(None);
+        };
+        self.cache_image(&source, entity_type, entity_id, artwork_type)
+            .await?;
+        self.get_cached_entry(entity_type, entity_id, artwork_type)
+            .await
+    }
+
+    /// A resized copy of cached artwork at one of `ARTWORK_WIDTHS`, generated once and
+    /// stored beside the original. Never upscales: a narrower original is returned as is.
+    pub async fn cached_variant(
+        &self,
+        original: &ArtworkCache,
+        width: u32,
+    ) -> Result<ArtworkCache> {
+        if original
+            .width
+            .is_some_and(|original_width| original_width <= width as i32)
+        {
+            return Ok(original.clone());
+        }
+        let kind = variant_type(&original.artwork_type, width);
+        let _lock = lock_artwork(format!(
+            "{}/{}/{}",
+            original.entity_type, original.entity_id, kind
+        ))
+        .await;
+        if let Some(existing) = self
+            .get_cached_entry(&original.entity_type, &original.entity_id, &kind)
+            .await?
+        {
+            return Ok(existing);
+        }
+
+        let source_row = StorageObject::get(self.db.pool(), &original.storage_object_id)
+            .await?
+            .context("Original artwork storage object is missing")?;
+        let stored = self.storage.stored_object_from_entity(&source_row)?;
+        let bytes = self.storage.storage().get_object(&stored).await?.bytes;
+        let (data, mime_type, variant_width, variant_height) =
+            tokio::task::spawn_blocking(move || resize_artwork(&bytes, width))
+                .await
+                .context("Artwork resize task failed")??;
+
+        let stored = self
+            .storage
+            .storage()
+            .put_object(StoragePutRequest {
+                namespace: StorageNamespace::Derivatives,
+                file_name: Some(format!(
+                    "{kind}.{}",
+                    if mime_type == "image/png" {
+                        "png"
+                    } else {
+                        "jpg"
+                    }
+                )),
+                mime_type: Some(mime_type),
+                bytes: data,
+            })
+            .await
+            .context("Failed to store resized artwork")?;
+        let storage_row = match self.insert_storage_object(&stored).await {
+            Ok(row) => row,
+            Err(err) => {
+                self.cleanup_object_after_db_failure(&stored, "variant storage object insert")
+                    .await;
+                return Err(err);
+            }
+        };
+        match ArtworkCache::insert(
+            &self.db,
+            CreateArtworkCacheInput {
+                entity_type: original.entity_type.clone(),
+                entity_id: original.entity_id.clone(),
+                artwork_type: kind,
+                storage_object_id: storage_row.id.clone(),
+                source_url: None,
+                width: Some(variant_width),
+                height: Some(variant_height),
+            },
+        )
+        .await
+        {
+            Ok(entry) => Ok(entry),
+            Err(err) => {
+                if StorageObject::delete_by_id(&self.db, &storage_row.id)
+                    .await
+                    .is_err()
+                {
+                    self.cleanup_object_after_db_failure(&stored, "variant cache insert")
+                        .await;
+                }
+                Err(err).context("Failed to insert resized artwork metadata")
+            }
+        }
+    }
+
+    /// Resized copies belong to one original; drop them when it is replaced.
+    async fn delete_variants(&self, entity_type: &str, entity_id: &str, artwork_type: &str) {
+        let rows = ArtworkCache::query(self.db.pool())
+            .filter(ArtworkCacheWhereInput {
+                entity_type: Some(StringFilter {
+                    eq: Some(entity_type.to_string()),
+                    ..Default::default()
+                }),
+                entity_id: Some(StringFilter {
+                    eq: Some(entity_id.to_string()),
+                    ..Default::default()
+                }),
+                artwork_type: Some(StringFilter {
+                    starts_with: Some(format!("{artwork_type}@w")),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await;
+        let Ok(rows) = rows else {
+            warn!(
+                entity_type,
+                entity_id, artwork_type, "Failed to list resized artwork for removal"
+            );
+            return;
+        };
+        for row in rows {
+            // The ArtworkCache delete hook releases the storage object and its bytes.
+            if let Err(error) = ArtworkCache::delete_by_id(&self.db, &row.id).await {
+                warn!(artwork_cache_id = %row.id, error = %error, "Failed to remove resized artwork metadata");
+            }
+        }
+    }
+
+    /// Drop a storage object no artwork references any more. The StorageObject delete hook
+    /// removes its bytes after the transaction commits.
+    async fn release_storage_object(&self, storage_object_id: &str) {
+        if let Err(error) =
+            StorageObject::delete_by_id(&self.db, &storage_object_id.to_string()).await
+        {
+            warn!(storage_object_id, error = %error, "Failed to release replaced artwork object");
+        }
+    }
+
+    /// Whether the entity an artwork row belongs to still exists. Unknown kinds count as
+    /// existing so a sweep never removes artwork it does not understand.
+    async fn artwork_owner_exists(&self, entity_type: &str, entity_id: &str) -> Result<bool> {
+        let pool = self.db.pool();
+        let id = entity_id.to_string();
+        Ok(match entity_type {
+            "movie" => Movie::get(pool, &id).await?.is_some(),
+            "show" => Show::get(pool, &id).await?.is_some(),
+            "season" => Season::get(pool, &id).await?.is_some(),
+            "episode" => Episode::get(pool, &id).await?.is_some(),
+            "album" => Album::get(pool, &id).await?.is_some(),
+            "artist" => Artist::get(pool, &id).await?.is_some(),
+            "audiobook" => Audiobook::get(pool, &id).await?.is_some(),
+            "person" => Person::get(pool, &id).await?.is_some(),
+            "collection" => {
+                let Ok(tmdb_id) = entity_id.parse::<i32>() else {
+                    return Ok(false);
+                };
+                !Collection::query(pool)
+                    .filter(CollectionWhereInput {
+                        tmdb_collection_id: Some(IntFilter {
+                            eq: Some(tmdb_id),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    })
+                    .limit(1)
+                    .fetch_all()
+                    .await?
+                    .is_empty()
+            }
+            "guide" => {
+                let Ok(tvmaze_show_id) = entity_id.parse::<i32>() else {
+                    return Ok(false);
+                };
+                !ScheduleCache::query(pool)
+                    .filter(ScheduleCacheWhereInput {
+                        tvmaze_show_id: Some(IntFilter {
+                            eq: Some(tvmaze_show_id),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    })
+                    .limit(1)
+                    .fetch_all()
+                    .await?
+                    .is_empty()
+            }
+            _ => true,
+        })
+    }
+
+    /// Remove cached artwork whose entity is gone: rows left by deletions made before the
+    /// delete hook existed, or by paths that bypass it. Storage rows and bytes follow
+    /// through the ArtworkCache and StorageObject delete hooks. Returns rows removed.
+    pub async fn sweep_orphans(&self) -> Result<usize> {
+        let rows = ArtworkCache::query(self.db.pool()).fetch_all().await?;
+        let mut owners: HashMap<(String, String), Vec<String>> = HashMap::new();
+        for row in rows {
+            owners
+                .entry((row.entity_type, row.entity_id))
+                .or_default()
+                .push(row.id);
+        }
+        let mut removed = 0;
+        for ((entity_type, entity_id), ids) in owners {
+            if self.artwork_owner_exists(&entity_type, &entity_id).await? {
+                continue;
+            }
+            for id in ids {
+                match ArtworkCache::delete_by_id(&self.db, &id).await {
+                    Ok(_) => removed += 1,
+                    Err(error) => {
+                        warn!(artwork_cache_id = %id, error = %error, "Failed to remove orphaned artwork")
+                    }
+                }
+            }
+        }
+        if removed > 0 {
+            info!(
+                removed,
+                "Removed cached artwork whose entity no longer exists"
+            );
+        }
+        Ok(removed)
+    }
+
+    /// Cache a season poster.
+    pub async fn cache_season_artwork(
+        &self,
+        season_id: &str,
+        poster_url: Option<&str>,
+    ) -> Option<String> {
+        let url = poster_url?;
+        match self.cache_image(url, "season", season_id, "poster").await {
+            Ok(cached_url) => Some(cached_url),
+            Err(e) => {
+                warn!(season_id = %season_id, error = %e, "Failed to cache season poster");
+                None
+            }
+        }
+    }
+
     /// Cache movie artwork (poster and backdrop)
     ///
     /// Returns tuple of (cached_poster_url, cached_backdrop_url)
@@ -538,6 +980,34 @@ impl ArtworkService {
 struct ResolvedArtworkDestination {
     host: String,
     socket_addr: Option<SocketAddr>,
+}
+
+/// Downscale artwork to `width` (aspect preserved). Images with transparency stay PNG;
+/// everything else becomes a progressive-quality JPEG, which is far smaller for photos.
+fn resize_artwork(bytes: &[u8], width: u32) -> Result<(Vec<u8>, String, i32, i32)> {
+    let image = image::load_from_memory(bytes).map_err(|_| ArtworkFetchError::InvalidImage)?;
+    let height =
+        ((image.height() as u64 * width as u64) / image.width().max(1) as u64).max(1) as u32;
+    let resized = image.resize_exact(width, height, image::imageops::FilterType::Lanczos3);
+    let mut out = std::io::Cursor::new(Vec::new());
+    let mime = if resized.color().has_alpha() {
+        resized
+            .write_to(&mut out, image::ImageFormat::Png)
+            .context("Failed to encode resized artwork")?;
+        "image/png"
+    } else {
+        let rgb = resized.to_rgb8();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, VARIANT_JPEG_QUALITY)
+            .encode_image(&rgb)
+            .context("Failed to encode resized artwork")?;
+        "image/jpeg"
+    };
+    Ok((
+        out.into_inner(),
+        mime.to_string(),
+        width as i32,
+        height as i32,
+    ))
 }
 
 fn normalize_allowed_host(input: &str) -> Option<String> {
@@ -791,5 +1261,41 @@ mod tests {
         assert!(normalize_image_mime("image/svg+xml").is_none());
         assert!(normalize_image_mime("text/html").is_none());
         assert!(normalize_image_mime("").is_none());
+    }
+
+    #[test]
+    fn requested_widths_snap_up_to_a_supported_step() {
+        assert_eq!(normalize_artwork_width(None), None);
+        assert_eq!(normalize_artwork_width(Some(0)), None);
+        assert_eq!(normalize_artwork_width(Some(150)), Some(185));
+        assert_eq!(normalize_artwork_width(Some(342)), Some(342));
+        assert_eq!(normalize_artwork_width(Some(343)), Some(500));
+        assert_eq!(normalize_artwork_width(Some(9000)), Some(1920));
+    }
+
+    #[test]
+    fn resized_photos_become_jpeg_and_transparent_art_stays_png() {
+        let encode = |image: image::DynamicImage, format| {
+            let mut out = std::io::Cursor::new(Vec::new());
+            image.write_to(&mut out, format).expect("encode test image");
+            out.into_inner()
+        };
+        let photo = encode(
+            image::DynamicImage::new_rgb8(1000, 1500),
+            image::ImageFormat::Png,
+        );
+        let (bytes, mime, width, height) = resize_artwork(&photo, 342).expect("resize photo");
+        assert_eq!((mime.as_str(), width, height), ("image/jpeg", 342, 513));
+        assert_eq!(
+            image::guess_format(&bytes).ok(),
+            Some(image::ImageFormat::Jpeg)
+        );
+
+        let logo = encode(
+            image::DynamicImage::new_rgba8(800, 400),
+            image::ImageFormat::Png,
+        );
+        let (_, mime, width, height) = resize_artwork(&logo, 500).expect("resize logo");
+        assert_eq!((mime.as_str(), width, height), ("image/png", 500, 250));
     }
 }

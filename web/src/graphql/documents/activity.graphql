@@ -1,6 +1,7 @@
-query PendingUpgrades($libraryId: String) {
-  pendingUpgrades(libraryId: $libraryId) {
-    ...NotificationFields
+query PendingUpgradeNotifications($where: NotificationWhereInput = {actionType: {eq: "quality_upgrade"}, resolvedAt: {isNull: true}}, $page: PageInput) {
+  notifications(where: $where, page: $page, orderBy: [{createdAt: DESC}]) {
+    edges { node { ...NotificationFields } }
+    pageInfo { hasNextPage totalCount }
   }
 }
 

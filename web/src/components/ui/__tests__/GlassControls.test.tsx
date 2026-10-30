@@ -11,38 +11,39 @@ const items = [
 ];
 
 describe("GlassSegmented", () => {
-  it("is a radio group with exactly one checked option", () => {
+  it("is a group with exactly one pressed option", () => {
     render(<GlassSegmented ariaLabel="Guide scope" items={items} value="all" onChange={() => {}} />);
-    const group = screen.getByRole("radiogroup", { name: "Guide scope" });
+    const group = screen.getByRole("group", { name: "Guide scope" });
     expect(group).toBeInTheDocument();
-    const radios = screen.getAllByRole("radio");
+    const radios = screen.getAllByRole("button");
     expect(radios).toHaveLength(3);
-    expect(screen.getByRole("radio", { name: "All shows" })).toBeChecked();
-    expect(radios.filter((radio) => radio.getAttribute("aria-checked") === "true")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "All shows" })).toHaveAttribute("aria-pressed", "true");
+    expect(radios.filter((radio) => radio.getAttribute("aria-pressed") === "true")).toHaveLength(1);
   });
 
   it("reports the picked key", async () => {
     const onChange = vi.fn();
     render(<GlassSegmented ariaLabel="Guide scope" items={items} value="mine" onChange={onChange} />);
-    await userEvent.click(screen.getByRole("radio", { name: "All shows" }));
+    await userEvent.click(screen.getByRole("button", { name: "All shows" }));
     expect(onChange).toHaveBeenCalledWith("all");
   });
 
-  it("moves through the options with the arrow keys and wraps around", async () => {
+  it("moves focus with arrow keys, wraps, and activates with Enter", async () => {
     const onChange = vi.fn();
     render(<GlassSegmented ariaLabel="Guide scope" items={items} value="mine" onChange={onChange} />);
-    const selected = screen.getByRole("radio", { name: "My shows" });
-    selected.focus();
+    screen.getByRole("button", { name: "My shows" }).focus();
     await userEvent.keyboard("{ArrowRight}");
+    expect(screen.getByRole("button", { name: "All shows" })).toHaveFocus();
+    expect(onChange).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Enter}");
     expect(onChange).toHaveBeenLastCalledWith("all");
-    await userEvent.keyboard("{ArrowLeft}");
+    await userEvent.keyboard("{ArrowLeft}{ArrowLeft}{Enter}");
     expect(onChange).toHaveBeenLastCalledWith("none");
   });
 
   it("keeps a single tab stop", () => {
     render(<GlassSegmented ariaLabel="Guide scope" items={items} value="all" onChange={() => {}} />);
-    expect(screen.getByRole("radio", { name: "All shows" })).toHaveAttribute("tabindex", "0");
-    expect(screen.getByRole("radio", { name: "My shows" })).toHaveAttribute("tabindex", "-1");
+    expect(screen.getAllByRole("button").filter((button) => button.tabIndex === 0)).toHaveLength(1);
   });
 });
 

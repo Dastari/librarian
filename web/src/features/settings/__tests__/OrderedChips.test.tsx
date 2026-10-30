@@ -67,7 +67,7 @@ describe("OrderedChips with fixed options", () => {
   it("offers only the options that are not already listed", async () => {
     render(<OrderedChips label="Resolution preference" value={["2160p"]} onChange={() => {}} options={options} />);
     expect(screen.queryByRole("textbox")).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: /Add to Resolution preference/ }));
+    await userEvent.click(screen.getByRole("combobox", { name: /Add to Resolution preference/ }));
     const listbox = await screen.findByRole("listbox");
     expect(listbox).toHaveTextContent("1080p");
     expect(listbox.textContent).not.toContain("2160p");
@@ -76,14 +76,14 @@ describe("OrderedChips with fixed options", () => {
   it("adds the option that was picked", async () => {
     const onChange = vi.fn();
     render(<OrderedChips label="Resolution preference" value={[]} onChange={onChange} options={options} />);
-    await userEvent.click(screen.getByRole("button", { name: /Add to Resolution preference/ }));
+    await userEvent.click(screen.getByRole("combobox", { name: /Add to Resolution preference/ }));
     await userEvent.click(await screen.findByRole("option", { name: "1080p" }));
     expect(onChange).toHaveBeenCalledWith(["1080p"]);
   });
 
   it("hides the picker once every option is used", () => {
     render(<OrderedChips label="Resolution preference" value={["2160p", "1080p"]} onChange={() => {}} options={options} />);
-    expect(screen.queryByRole("button", { name: /Add to/ })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: /Add to/ })).toBeNull();
   });
 
   it("renders codes through the label function", () => {

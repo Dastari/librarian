@@ -41,6 +41,9 @@ export function CollectionsBrowser({ libraryId }: { libraryId: string }) {
     getRowId,
     getTitle: (row) => row.name,
     hasMore: list.hasMore,
+    loading: list.fetching || list.loadingMore,
+    queryKey: JSON.stringify([where, filters.view]),
+    isTitleSorted: table.sorting.length === 1 && table.sorting[0]?.id === "name" && !table.sorting[0].desc,
     loadMore: list.loadMore,
     ensureTitleSort: () => table.setSorting([{ id: "name", desc: false }]),
   });
@@ -68,7 +71,7 @@ export function CollectionsBrowser({ libraryId }: { libraryId: string }) {
   );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
+    <div ref={jump.containerRef} className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 sm:gap-4">
       <BrowserToolbar
         query={filters.query}
         onQueryChange={filters.setQuery}
@@ -80,14 +83,18 @@ export function CollectionsBrowser({ libraryId }: { libraryId: string }) {
         placeholder="Filter collections"
         trailing={isAdmin ? <Button variant="primary" size="sm" onPress={() => setAdding(true)}><IconPlus size={16} /> Add</Button> : null}
       />
-      <div className="flex min-h-0 flex-1 gap-4">
+      <div className="flex min-h-0 min-w-0 flex-1 gap-3 sm:gap-4">
         <DataTable<CollectionRow>
-          className="min-w-0 flex-1"
+          height="fill"
+          className="min-h-0 min-w-0 flex-1"
           view={filters.view}
           columns={columns}
           rows={list.rows}
           getRowId={getRowId}
           isLoading={list.loading}
+          refetching={list.fetching}
+          queryKey={list.queryKey} loadRevision={list.loadRevision}
+          externalBrowserToolbar
           totalCount={list.totalCount}
           noun="collections"
           sorting={table.sorting}

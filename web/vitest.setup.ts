@@ -65,9 +65,6 @@ afterEach(async () => {
   if (typeof window !== "undefined") {
     const { cleanup } = await import("@testing-library/react");
     cleanup();
-    // The HeroUI toast queue lives outside React, so it survives unmounting.
-    const { toast } = await import("@heroui/react");
-    toast.clear();
     window.localStorage.clear();
     window.sessionStorage.clear();
   }

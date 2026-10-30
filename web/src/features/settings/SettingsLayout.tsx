@@ -1,4 +1,4 @@
-import { Outlet } from "@tanstack/react-router";
+import { Outlet, useRouterState } from "@tanstack/react-router";
 import {
   IconAdjustments,
   IconCast,
@@ -15,6 +15,7 @@ import {
 } from "@tabler/icons-react";
 
 import { PageHeader, SideTabs, type TabItem } from "@/components/ui";
+import { cn } from "@/lib/utils";
 import { useIsAdmin } from "@/lib/auth/useSession";
 
 const SECTIONS: Array<TabItem & { adminOnly?: boolean }> = [
@@ -34,16 +35,16 @@ const SECTIONS: Array<TabItem & { adminOnly?: boolean }> = [
 
 export function SettingsLayout() {
   const isAdmin = useIsAdmin();
+  const tablePane = useRouterState({ select: (state) => state.location.pathname === "/settings/logs" });
   const items = SECTIONS.filter((section) => !section.adminOnly || isAdmin);
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-6 page-gutter pt-8">
+    <div data-print-flow className="flex min-h-0 flex-1 flex-col gap-6 page-gutter pt-8">
       <PageHeader title="Settings" />
-      <div className="grid min-h-0 flex-1 gap-6 lg:grid-cols-[14rem_minmax(0,1fr)]">
-        <SideTabs ariaLabel="Settings sections" items={items} className="lg:sticky lg:top-0 lg:self-start" />
-        <div className="scrollbar-thin -mx-1 min-h-0 overflow-y-auto px-1 pb-8">
+      <SideTabs ariaLabel="Settings sections" items={items} className="min-h-0 flex-1">
+        <div data-print-flow className={cn("fa-focus-room scrollbar-thin h-full min-h-0 pb-[calc(var(--space-8)+var(--focus-reach))]", tablePane ? "flex flex-col overflow-hidden" : "overflow-y-auto")}>
           <Outlet />
         </div>
-      </div>
+      </SideTabs>
     </div>
   );
 }

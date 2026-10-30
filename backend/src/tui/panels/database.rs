@@ -64,6 +64,7 @@ async fn fetch_all_table_counts(pool: &DbPool) -> TableCounts {
         "cast_settings",
         "chapters",
         "episodes",
+        "seasons",
         "indexer_configs",
         "indexer_credentials",
         "indexer_search_cache",

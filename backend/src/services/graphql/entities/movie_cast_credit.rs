@@ -34,6 +34,7 @@ pub struct MovieCastCredit {
 
     #[graphql(name = "movieId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub movie_id: String,
 
     #[graphql(name = "personId")]
@@ -60,7 +61,13 @@ pub struct MovieCastCredit {
     pub updated_at: String,
     #[graphql(skip)]
     #[serde(skip)]
-    #[relation(target = "Movie", from = "movie_id", to = "id", on_delete = "cascade")]
+    #[relation(
+        target = "Movie",
+        from = "movie_id",
+        to = "id",
+        on_delete = "cascade",
+        propagate_change = "up"
+    )]
     pub movie: Option<Movie>,
     #[graphql(skip)]
     #[serde(skip)]

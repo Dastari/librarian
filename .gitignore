@@ -25,6 +25,8 @@ Cargo.lock
 # Librarian's backend is an application, so its audited dependency resolution
 # must be reproducible. Other crate/library lockfiles remain ignored.
 !backend/Cargo.lock
+# CI tests the vendored macro crate's schema-export-only build from its own manifest.
+!vendor/graphql-orm-macros/Cargo.lock
 
 # Node.js
 node_modules/

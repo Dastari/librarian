@@ -5,7 +5,7 @@ import { PRIMARY_NAV, isNavActive } from "../nav";
 
 describe("primary navigation", () => {
   it("lists the destinations in rail order with unique keys and hrefs", () => {
-    expect(PRIMARY_NAV.map((item) => item.key)).toEqual(["home", "libraries", "search", "wanted", "downloads", "activity", "settings"]);
+    expect(PRIMARY_NAV.map((item) => item.key)).toEqual(["home", "libraries", "search", "lists", "wanted", "downloads", "activity", "settings"]);
     expect(new Set(PRIMARY_NAV.map((item) => item.href)).size).toBe(PRIMARY_NAV.length);
     for (const item of PRIMARY_NAV) {
       expect(item.href.startsWith("/")).toBe(true);
@@ -14,7 +14,7 @@ describe("primary navigation", () => {
     }
   });
 
-  it("puts everything except Activity on the phone tab bar", () => {
+  it("keeps personal lists and Activity in the secondary phone destinations", () => {
     expect(PRIMARY_NAV.filter((item) => item.mobile).map((item) => item.key)).toEqual(["home", "libraries", "search", "wanted", "downloads", "settings"]);
   });
 

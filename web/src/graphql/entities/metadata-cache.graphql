@@ -83,8 +83,5 @@ subscription EntityMetadataCacheChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    metadataCache {
-      ...MetadataCacheFields
-    }
   }
 }

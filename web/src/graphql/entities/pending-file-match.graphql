@@ -100,8 +100,5 @@ subscription EntityPendingFileMatchChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    pendingFileMatch {
-      ...PendingFileMatchFields
-    }
   }
 }

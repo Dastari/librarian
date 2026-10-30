@@ -1,7 +1,7 @@
-import { useQuery } from "@apollo/client/react";
-import { SearchField } from "@heroui/react";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+import { SearchField } from "glass-ux/input";
 import { useNavigate } from "@tanstack/react-router";
-import { IconDownload, IconSearch, IconX } from "@tabler/icons-react";
+import { IconDownload, IconSearch } from "glass-ux/icons";
 import { parseAsString, parseAsStringEnum, useQueryState } from "nuqs";
 import { useEffect, useRef, useState } from "react";
 
@@ -66,22 +66,12 @@ export function SearchPage() {
         actions={
           isAdmin && debounced ? (
             <Button variant="secondary" onPress={() => setReleases(true)}>
-              <IconDownload size={16} /> Find releases
+              <IconDownload /> Find releases
             </Button>
           ) : null
         }
       />
-      <SearchField aria-label="Search" value={query} onChange={(value) => void setQuery(value || null)} className="w-full max-w-2xl" data-spatial-start>
-        <SearchField.Group className="h-14 rounded-pill px-2 text-body-lg">
-          <SearchField.SearchIcon>
-            <IconSearch size={20} />
-          </SearchField.SearchIcon>
-          <SearchField.Input ref={inputRef} placeholder="Titles, people, albums…" />
-          <SearchField.ClearButton>
-            <IconX size={16} />
-          </SearchField.ClearButton>
-        </SearchField.Group>
-      </SearchField>
+      <SearchField ref={inputRef} aria-label="Search" value={query} onValueChange={(value) => void setQuery(value || null)} placeholder="Titles, people, albums…" size="lg" className="w-full max-w-2xl" data-spatial-start />
       {availableScopes.length > 1 ? <SegmentTabs ariaLabel="Search scope" items={availableScopes} selected={scope} onSelect={(key) => void setScope(key as Scope)} size="sm" className="max-w-2xl" /> : null}
 
       {scope !== "library" ? (

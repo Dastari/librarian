@@ -83,8 +83,5 @@ subscription EntitySourcePriorityRuleChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    sourcePriorityRule {
-      ...SourcePriorityRuleFields
-    }
   }
 }

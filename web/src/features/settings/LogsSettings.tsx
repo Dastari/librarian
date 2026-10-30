@@ -1,79 +1,137 @@
-import { useMutation, useSubscription } from "@apollo/client/react";
-import { toast } from "@heroui/react";
-import { IconFileText, IconPlayerPause, IconPlayerPlay, IconTrash } from "@tabler/icons-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMutation } from "@apollo/client/react";
+import { AlertDialog } from "glass-ux/alert-dialog";
+import { Badge, type BadgeTone } from "glass-ux/badge";
+import { createDataTableColumns, DataTable, filters, RelativeTime, TextCell, type DataTableSearch, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
+import { Dialog } from "glass-ux/dialog";
+import { IconFileText, IconPause, IconPlay, IconRefresh, IconTrash } from "glass-ux/icons";
+import { useMemo, useRef, useState } from "react";
 
-import { Button, DataTable, type DataTableColumn, EmptyState, ErrorState, Panel, SegmentTabs, StatusChip } from "@/components/ui";
-import { useConnection } from "@/features/libraries/browser/useConnection";
-import { EntityAppLogChangedDocument, EntityAppLogDeleteManyDocument, EntityAppLogListDocument, type AppLogFieldsFragment, type AppLogWhereInput } from "@/graphql/generated/graphql";
-import { useServerTable } from "@/hooks/useServerTable";
-import { formatDateTime } from "@/lib/format";
-import { errorMessage } from "@/lib/graphql/errors";
-import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui";
+import { useSettingsConnection } from "./useSettingsConnection";
+import { EntityAppLogDeleteManyDocument, EntityAppLogKeysetDocument, EntityAppLogListDocument, type AppLogFieldsFragment } from "@/graphql/generated/graphql";
+import { useSession } from "@/lib/auth/useSession";
+import { assertSuccess } from "@/lib/graphql/errors";
+import { changeLogTableState, initialLogTableState, LOG_LEVELS, logTableVariables } from "@/lib/graphql/glass-table";
+import { usePref } from "@/lib/prefs";
+import { tableUrlFilters, useTableUrlState } from "@/hooks/useTableUrlState";
+import { usePrintMode } from "@/hooks/usePrintMode";
 
-const LEVELS = ["all", "ERROR", "WARN", "INFO", "DEBUG"] as const;
-type Level = (typeof LEVELS)[number];
-const LEVEL_TONE: Record<string, { tone: "danger" | "warning" | "accent" | "default"; dot: string }> = {
-  ERROR: { tone: "danger", dot: "bg-danger" },
-  WARN: { tone: "warning", dot: "bg-warning" },
-  INFO: { tone: "accent", dot: "bg-info" },
-  DEBUG: { tone: "default", dot: "bg-muted" },
-  TRACE: { tone: "default", dot: "bg-muted" },
+const LEVEL_TONE: Record<string, BadgeTone> = { ERROR: "danger", WARN: "warning", INFO: "info", DEBUG: "neutral", TRACE: "neutral" };
+const column = createDataTableColumns<AppLogFieldsFragment>();
+const columns = column.columns([
+  column.accessor("timestamp", { header: "Time", width: 11, priority: 2, cardRole: "subtitle", sortable: true, sortDescFirst: true, cell: ({ row }) => <RelativeTime value={row.original.timestamp} /> }),
+  column.accessor("level", {
+    header: "Level", width: 6, grow: false, priority: 2, cardRole: "status", sortable: true,
+    filter: filters.options({ field: "level", nullable: false, operators: ["in", "notIn"], options: LOG_LEVELS.map((value) => ({ value, label: value })) }),
+    cell: ({ row }) => <Badge size="sm" marker="dot" tone={LEVEL_TONE[row.original.level] ?? "neutral"}>{row.original.level}</Badge>,
+  }),
+  column.accessor("target", { header: "Module", width: 14, priority: 4, sortable: true, filter: filters.text({ field: "target", nullable: false, operators: ["contains", "eq", "ne"] }), cell: ({ row }) => <TextCell identifier muted>{row.original.target}</TextCell> }),
+  column.accessor("message", { header: "Message", width: 28, priority: 1, cardRole: "title", truncate: "wrap", filter: filters.text({ field: "message", nullable: false, operators: ["contains", "eq", "ne"] }) }),
+  column.accessor("id", { header: "Entry ID", width: 16, priority: 5, cardRole: "hidden", cell: ({ row }) => <TextCell identifier>{row.original.id}</TextCell> }),
+]);
+const search: DataTableSearch<AppLogFieldsFragment> = {
+  fields: ["message", "target"], placeholder: "Search message or module",
+  toCondition: (query) => ({ or: [{ message: { contains: query } }, { target: { contains: query } }] }),
 };
+const logUrlSchema = {
+  columns,
+  sortableColumns: ["timestamp", "level", "target"],
+  filters: { level: tableUrlFilters.options(LOG_LEVELS), target: tableUrlFilters.text(), message: tableUrlFilters.text() },
+};
+const hiddenColumns = ["id"];
+const getRowId = (log: AppLogFieldsFragment) => log.id;
+const getRowLabel = (log: AppLogFieldsFragment) => log.message;
+const noun = { one: "entry", other: "entries" };
 
 export function LogsSettings() {
-  const [level, setLevel] = useState<Level>("all");
+  const { user } = useSession();
+  const [pageSize] = usePref<number>("table.logs.pageSize", 100);
+  const printing = usePrintMode();
+  const initial = useMemo(() => initialLogTableState(pageSize), [pageSize]);
+  const url = useTableUrlState({ namespace: "settings.logs", ...logUrlSchema, defaultSorting: initial.sorting });
+  const state = useMemo(() => ({ ...initial, ...url.state }), [initial, url.state]);
   const [live, setLive] = useState(true);
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const table = useServerTable({ persistKey: "logs", defaultPageSize: 100 });
-  useEffect(() => table.resetPage(), [level, table.resetPage]);
-  const where = useMemo<AppLogWhereInput>(() => (level === "all" ? {} : { level: { eq: level } }), [level]);
-  const list = useConnection(EntityAppLogListDocument, { where, orderBy: [{ timestamp: "DESC" }], page: table.page }, (data) => data.appLogs);
-  useSubscription(EntityAppLogChangedDocument, { skip: !live || table.pageIndex > 0, onData: () => void list.refetch() });
+  const [entry, setEntry] = useState<AppLogFieldsFragment | null>(null);
+  const focusReturn = useRef<HTMLElement | null>(null);
+  const variables = useMemo(() => logTableVariables(state), [state]);
+  const defaultOrder = state.sorting.length === 0 || (state.sorting.length === 1 && state.sorting[0]?.id === "timestamp" && state.sorting[0]?.desc === true);
+  const cursor = useSettingsConnection(EntityAppLogKeysetDocument, { where: variables.where }, (data) => data.appLogsKeyset, { infinite: true, keyset: true, batchSize: variables.page?.limit ?? 100, live, skip: !defaultOrder });
+  const offset = useSettingsConnection(EntityAppLogListDocument, { where: variables.where, orderBy: variables.orderBy }, (data) => data.appLogs, { infinite: true, batchSize: variables.page?.limit ?? 100, live, skip: Boolean(defaultOrder) });
+  const list = defaultOrder ? cursor : offset;
   const [clear, { loading: clearing }] = useMutation(EntityAppLogDeleteManyDocument);
 
-  const columns: Array<DataTableColumn<AppLogFieldsFragment>> = [
-    { id: "time", header: "Time", size: 170, cell: (log) => <span className="text-numeric text-muted">{formatDateTime(log.timestamp)}</span> },
-    { id: "level", header: "Level", size: 90, cell: (log) => <StatusChip minimal status={{ label: log.level, ...(LEVEL_TONE[log.level] ?? LEVEL_TONE.INFO!) }} /> },
-    { id: "target", header: "Module", size: 220, hideBelow: "lg", cell: (log) => <span className="truncate font-mono text-label-sm text-muted">{log.target}</span> },
-    { id: "message", header: "Message", cell: (log) => <span className={cn("font-mono text-label text-foreground", expanded === log.id ? "whitespace-pre-wrap" : "truncate")}>{log.message}{expanded === log.id && log.fields ? `\n${log.fields}` : ""}</span> },
-  ];
+  const onStateChange = (next: DataTableState, change: DataTableStateChange) => {
+    const changed = changeLogTableState(next, change);
+    url.onStateChange(changed, change);
+  };
 
   return (
-    <Panel
-      title="System log"
-      flush
-      actions={
-        <>
-          <Button size="sm" variant="ghost" onPress={() => setLive((value) => !value)}>
-            {live ? <IconPlayerPause size={16} /> : <IconPlayerPlay size={16} />} {live ? "Live" : "Paused"}
-          </Button>
-          <Button size="sm" variant="danger-soft" isPending={clearing} onPress={async () => { try { await clear({ variables: { where: { level: { ne: "__never__" } } } }); toast.success("Log cleared"); void list.refetch(); } catch (error) { toast.danger(errorMessage(error)); } }}>
-            <IconTrash size={16} /> Clear
-          </Button>
-        </>
-      }
-    >
-      <div className="px-4 pb-4">
-        <SegmentTabs ariaLabel="Log level" size="sm" items={LEVELS.map((item) => ({ key: item, label: item === "all" ? "All" : item.charAt(0) + item.slice(1).toLowerCase() }))} selected={level} onSelect={(key) => setLevel(key as Level)} className="mb-3" />
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
         <DataTable<AppLogFieldsFragment>
-          frame={false}
+          id={`librarian.${user?.id ?? "session"}.settings.logs`}
+          label="System log"
+          queryKey={JSON.stringify([user?.id, variables.where, variables.orderBy])}
+          height="fill"
           columns={columns}
+          defaultHiddenColumns={hiddenColumns}
           rows={list.rows}
-          getRowId={(log) => log.id}
-          isLoading={list.loading}
-          totalCount={list.totalCount}
-          hasNextPage={list.hasNextPage}
-          density="compact"
-          noun="entries"
-          {...table.tableProps}
-          sorting={[]}
-          onSortingChange={undefined}
-          onRowClick={(log) => setExpanded((current) => (current === log.id ? null : log.id))}
-          error={list.error && list.rows.length === 0 ? <ErrorState error={list.error} onRetry={() => void list.refetch()} compact /> : undefined}
-          emptyState={<EmptyState compact icon={IconFileText} title="No log entries" />}
+          getRowId={getRowId}
+          getRowLabel={getRowLabel}
+          loading={list.loading}
+          refetching={list.fetching && !list.loading}
+          rowCount={list.totalCount}
+          state={state}
+          onStateChange={onStateChange}
+          infinite={{ revision: list.revision, hasMore: !printing && list.hasMore, onLoadMore: list.loadMore, loadingMore: list.loadingMore, error: list.moreError?.message }}
+          search={search}
+          selectable={false}
+          live={live}
+          noun={noun}
+          onRowOpen={(log) => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setEntry(log); }}
+          rowOpen="click"
+          error={list.error && list.rows.length === 0 ? "Couldn't load log entries. Retry to reconnect." : undefined}
+          onRetry={() => { void list.refetch().catch(() => {}); }}
+          emptyMessage="No log entries"
+          status={list.error && list.rows.length > 0 ? "Refresh failed. Showing loaded entries." : !live ? "Paused" : "Live"}
+          toolbar={
+            <>
+              <Button size="sm" variant="ghost" aria-pressed={live} onPress={() => setLive((value) => !value)}>
+                {live ? <IconPause /> : <IconPlay />} {live ? "Live" : "Paused"}
+              </Button>
+              <Button size="sm" variant="ghost" isIconOnly aria-label="Refresh system log" isPending={list.fetching} onPress={() => { void list.refetch().catch(() => {}); }}><IconRefresh /></Button>
+              <AlertDialog
+                trigger={<Button size="sm" variant="danger-soft" aria-label="Clear system log" isPending={clearing}><IconTrash /> Clear</Button>}
+                title="Clear all log entries?"
+                description="This permanently deletes all system log entries, including entries outside the current filters. This cannot be undone."
+                confirmLabel="Clear all logs"
+                pendingLabel="Clearing logs"
+                onConfirm={async () => {
+                  // IDs are non-null. Use an explicit non-empty predicate for bulk deletion.
+                  const result = await clear({ variables: { where: { id: { isNull: false } } } });
+                  assertSuccess(result.data?.deleteAppLogs, "Couldn't clear system logs");
+                  setEntry(null);
+                  // Discard loaded batches after clearing, even if the reader was far down the feed.
+                  void list.refetch({ reset: true });
+                }}
+              />
+            </>
+          }
         />
+        <Dialog.Root open={entry !== null} onOpenChange={(open) => { if (!open) setEntry(null); }}>
+          <Dialog.Popup size="lg" finalFocus={focusReturn}>
+            <Dialog.Header title="Log entry" icon={<IconFileText />} subtitle={entry?.timestamp} />
+            <Dialog.Body>
+              {entry ? <div className="flex flex-col gap-4" data-spatial-ignore>
+                <div className="flex flex-wrap items-center gap-2"><Badge size="sm" marker="dot" tone={LEVEL_TONE[entry.level] ?? "neutral"}>{entry.level}</Badge><TextCell identifier>{entry.target}</TextCell></div>
+                <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-mono">{entry.message}</p>
+                {entry.fields ? <pre className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{entry.fields}</pre> : null}
+                {entry.spanName ? <p>Span: {entry.spanName}{entry.spanId ? ` (${entry.spanId})` : ""}</p> : null}
+              </div> : null}
+            </Dialog.Body>
+          </Dialog.Popup>
+        </Dialog.Root>
       </div>
-    </Panel>
+    </div>
   );
 }

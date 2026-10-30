@@ -4,21 +4,17 @@
 //! member access is scoped either by a row's direct `user_id`, its library, or
 //! its nearest owned parent. Administrators retain an explicit override.
 //!
-//! The current graphql-orm row-policy hook evaluates after fetching candidate
-//! rows. That is a correctness boundary, but not the final scalability design;
-//! large list roots must additionally inject owner filters before pagination.
+//! Generated reads receive complete typed owner predicates before pagination.
+//! Subscription dispatch retains callbacks for deleted-preimage authorization;
+//! complete SQL visibility deliberately suppresses deleted preimages upstream.
 
 use futures::future::BoxFuture;
-use graphql_orm::graphql::orm::{EntityAccessSurface, RowPolicy};
+use graphql_orm::DefaultBackend;
+use graphql_orm::graphql::filters::StringFilter;
+use graphql_orm::graphql::orm::{EntityAccessSurface, ReadPredicate, ReadVisibility, RowPolicy};
 
 use crate::db::Database;
-use crate::graphql::entities::{
-    Album, Artist, AudioStream, Audiobook, CastSession, Chapter, Collection, Episode, Library,
-    LibraryScanIssue, LibraryScanRun, MediaChapter, MediaFile, Movie, MovieCastCredit,
-    NamingPattern, Notification, PendingFileMatch, PlaybackProgress, PlaybackSession, RssFeed,
-    RssFeedItem, Show, SourcePriorityRule, Subtitle, Torrent, TorrentFile, Track, UsenetDownload,
-    VideoStream,
-};
+use crate::graphql::entities::*;
 use crate::services::graphql::auth::{AuthUser, Role};
 
 #[derive(Debug, Default)]
@@ -54,16 +50,116 @@ fn ownership_allowed(role: Option<Role>, row_user_id: &str, requester_user_id: &
 }
 
 impl OwnershipRowPolicy {
+    fn member_read_predicate(
+        entity_name: &str,
+        owner: &str,
+    ) -> async_graphql::Result<Option<ReadPredicate>> {
+        let owner_filter = || StringFilter {
+            eq: Some(owner.to_owned()),
+            ..Default::default()
+        };
+        macro_rules! direct {
+            ($where_type:ident) => {
+                ReadPredicate::from_filter::<DefaultBackend, _>(&$where_type {
+                    user_id: Some(owner_filter()),
+                    ..Default::default()
+                })?
+            };
+        }
+        let library = || {
+            ReadPredicate::from_filter::<DefaultBackend, _>(&LibraryWhereInput {
+                user_id: Some(owner_filter()),
+                ..Default::default()
+            })
+        };
+        let file = || {
+            ReadPredicate::related::<DefaultBackend, MediaFile, Library>(
+                &[("library_id", "id")],
+                library()?,
+            )
+        };
+        let predicate = match entity_name {
+            "Library" => direct!(LibraryWhereInput),
+            "LibraryScanRun" => direct!(LibraryScanRunWhereInput),
+            "LibraryScanIssue" => direct!(LibraryScanIssueWhereInput),
+            "Movie" => direct!(MovieWhereInput),
+            "Collection" => direct!(CollectionWhereInput),
+            "Show" => direct!(ShowWhereInput),
+            "Artist" => direct!(ArtistWhereInput),
+            "Album" => direct!(AlbumWhereInput),
+            "Audiobook" => direct!(AudiobookWhereInput),
+            "PendingFileMatch" => direct!(PendingFileMatchWhereInput),
+            "PlaybackProgress" => direct!(PlaybackProgressWhereInput),
+            "PlaybackSession" => direct!(PlaybackSessionWhereInput),
+            "Notification" => direct!(NotificationWhereInput),
+            "RssFeed" => direct!(RssFeedWhereInput),
+            "Torrent" => direct!(TorrentWhereInput),
+            "UsenetDownload" => direct!(UsenetDownloadWhereInput),
+            "NamingPattern" => direct!(NamingPatternWhereInput),
+            "SourcePriorityRule" => direct!(SourcePriorityRuleWhereInput),
+            "CastSession" => direct!(CastSessionWhereInput),
+            "MediaFile" => file()?,
+            "Track" => ReadPredicate::related::<DefaultBackend, Track, Library>(
+                &[("library_id", "id")],
+                library()?,
+            )?,
+            "Episode" => ReadPredicate::related::<DefaultBackend, Episode, Show>(
+                &[("show_id", "id")],
+                direct!(ShowWhereInput),
+            )?,
+            "Season" => ReadPredicate::related::<DefaultBackend, Season, Show>(
+                &[("show_id", "id")],
+                direct!(ShowWhereInput),
+            )?,
+            "Chapter" => ReadPredicate::related::<DefaultBackend, Chapter, Audiobook>(
+                &[("audiobook_id", "id")],
+                direct!(AudiobookWhereInput),
+            )?,
+            "TorrentFile" => ReadPredicate::related::<DefaultBackend, TorrentFile, Torrent>(
+                &[("torrent_id", "id")],
+                direct!(TorrentWhereInput),
+            )?,
+            "MovieCastCredit" => ReadPredicate::related::<DefaultBackend, MovieCastCredit, Movie>(
+                &[("movie_id", "id")],
+                direct!(MovieWhereInput),
+            )?,
+            "RssFeedItem" => ReadPredicate::related::<DefaultBackend, RssFeedItem, RssFeed>(
+                &[("feed_id", "id")],
+                direct!(RssFeedWhereInput),
+            )?,
+            "VideoStream" => ReadPredicate::related::<DefaultBackend, VideoStream, MediaFile>(
+                &[("media_file_id", "id")],
+                file()?,
+            )?,
+            "AudioStream" => ReadPredicate::related::<DefaultBackend, AudioStream, MediaFile>(
+                &[("media_file_id", "id")],
+                file()?,
+            )?,
+            "Subtitle" => ReadPredicate::related::<DefaultBackend, Subtitle, MediaFile>(
+                &[("media_file_id", "id")],
+                file()?,
+            )?,
+            "MediaChapter" => ReadPredicate::related::<DefaultBackend, MediaChapter, MediaFile>(
+                &[("media_file_id", "id")],
+                file()?,
+            )?,
+            _ => return Ok(None),
+        };
+        Ok(Some(predicate))
+    }
+
     fn scope_class(entity_name: &str) -> Option<ScopeClass> {
+        if super::personal_policy::is_personal(entity_name) {
+            return Some(ScopeClass::Owner);
+        }
         Some(match entity_name {
             "Library" | "LibraryScanRun" | "LibraryScanIssue" | "Movie" | "Collection" | "Show"
             | "Artist" | "Album" | "Audiobook" | "PendingFileMatch" | "PlaybackProgress"
             | "PlaybackSession" | "Notification" | "RssFeed" | "Torrent" | "UsenetDownload"
             | "NamingPattern" | "SourcePriorityRule" | "CastSession" => ScopeClass::Owner,
-            "MovieCastCredit" | "Episode" | "MediaFile" | "Track" | "Chapter" | "TorrentFile"
-            | "RssFeedItem" | "VideoStream" | "AudioStream" | "Subtitle" | "MediaChapter" => {
-                ScopeClass::Derived
-            }
+            "MovieCastCredit" | "Episode" | "Season" | "MediaFile" | "Track" | "Chapter"
+            | "TorrentFile" | "RssFeedItem" | "VideoStream" | "AudioStream" | "Subtitle"
+            | "MediaChapter" => ScopeClass::Derived,
             "Person" | "CastDevice" | "CastSetting" | "ScheduleCache" | "TorznabCategory"
             | "QualityProfile" | "ReleaseBlocklist" => ScopeClass::Shared,
             "Source" | "User" | "InviteToken" | "RefreshToken" | "AppSetting" | "AppLog"
@@ -162,6 +258,15 @@ impl OwnershipRowPolicy {
                     .map_err(|error| async_graphql::Error::new(error.to_string()))?;
                 parent.is_some_and(|show| show.user_id == requester_user_id)
             }
+            "Season" => {
+                let Some(record) = row.downcast_ref::<Season>() else {
+                    return Ok(Some(false));
+                };
+                let parent = Show::get(db.pool(), &record.show_id)
+                    .await
+                    .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+                parent.is_some_and(|show| show.user_id == requester_user_id)
+            }
             "Track" => {
                 let Some(record) = row.downcast_ref::<Track>() else {
                     return Ok(Some(false));
@@ -246,6 +351,10 @@ impl OwnershipRowPolicy {
         let Some(user) = ctx.and_then(|ctx| ctx.data_opt::<AuthUser>()) else {
             return Ok(false);
         };
+        if super::personal_policy::is_personal(entity_name) {
+            return Ok(user.has_role(Role::Member)
+                && super::personal_policy::owner(entity_name, row) == Some(user.user_id.as_str()));
+        }
         if user.is_admin() {
             return Ok(true);
         }
@@ -268,6 +377,73 @@ impl OwnershipRowPolicy {
 }
 
 impl RowPolicy for OwnershipRowPolicy {
+    fn read_visibility<'a>(
+        &'a self,
+        ctx: Option<&'a async_graphql::Context<'_>>,
+        _db: &'a Database,
+        entity_name: &'static str,
+        _policy_key: Option<&'static str>,
+        surface: EntityAccessSurface,
+    ) -> BoxFuture<'a, async_graphql::Result<ReadVisibility>> {
+        Box::pin(async move {
+            if ctx.is_none() || surface == EntityAccessSurface::Repository {
+                return Ok(ReadVisibility::Unrestricted);
+            }
+            // Preserve explicit delete-preimage checks on event delivery. Query
+            // predicate completeness must not silently disable DELETE notices.
+            if surface == EntityAccessSurface::GraphqlSubscription {
+                return Ok(ReadVisibility::CallbackOnly);
+            }
+            let user = ctx
+                .and_then(|ctx| ctx.data_opt::<AuthUser>())
+                .ok_or_else(|| async_graphql::Error::new("Authentication required"))?;
+            if super::personal_policy::is_personal(entity_name) {
+                if !user.has_role(Role::Member) {
+                    return Err(async_graphql::Error::new("Access denied"));
+                }
+                return super::personal_policy::read_predicate(entity_name, &user.user_id)?
+                    .map(ReadVisibility::Complete)
+                    .ok_or_else(|| {
+                        async_graphql::Error::new("Missing personal ownership predicate")
+                    });
+            }
+            if user.is_admin() {
+                return Ok(ReadVisibility::Unrestricted);
+            }
+            if user.parsed_role() != Some(Role::Member) {
+                return Err(async_graphql::Error::new("Access denied"));
+            }
+            if Self::scope_class(entity_name) == Some(ScopeClass::Shared) {
+                return Ok(ReadVisibility::Unrestricted);
+            }
+            match Self::member_read_predicate(entity_name, &user.user_id)? {
+                Some(predicate) => Ok(ReadVisibility::Complete(predicate)),
+                None => Ok(ReadVisibility::CallbackOnly),
+            }
+        })
+    }
+
+    fn can_read_deleted_preimage<'a>(
+        &'a self,
+        ctx: Option<&'a async_graphql::Context<'_>>,
+        db: &'a Database,
+        entity_name: &'static str,
+        _policy_key: Option<&'static str>,
+        surface: EntityAccessSurface,
+        row: &'a (dyn std::any::Any + Send + Sync),
+    ) -> BoxFuture<'a, async_graphql::Result<bool>> {
+        Box::pin(async move {
+            if ctx.is_none() || surface != EntityAccessSurface::GraphqlSubscription {
+                return Ok(false);
+            }
+            // SQLite has no separate database-session/RLS policy here. Recheck
+            // this application's explicit ownership policy on the trusted
+            // generated preimage so deletions can invalidate clients' queries.
+            // Derived ownership still requires a currently visible parent.
+            Self::decide(ctx, db, surface, entity_name, row).await
+        })
+    }
+
     fn can_read_row<'a>(
         &'a self,
         ctx: Option<&'a async_graphql::Context<'_>>,

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- Android TV specifies a 320x180 xhdpi launcher banner. The launcher icon has all densities. -->
+    <issue id="IconMissingDensityFolder">
+        <ignore path="src/main/res" />
+    </issue>
+</lint>

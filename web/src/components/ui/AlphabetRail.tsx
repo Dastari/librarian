@@ -1,3 +1,5 @@
+import { Button } from "glass-ux/button";
+
 import { cn } from "@/lib/utils";
 
 const LETTERS = ["#", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
@@ -18,9 +20,11 @@ export function AlphabetRail({ value, onChange, available, className, orientatio
     <div
       role="group"
       aria-label="Jump to letter"
+      data-nav-zone="letters"
+      data-nav-side={orientation === "horizontal" ? undefined : ""}
       className={cn(
         "scrollbar-none flex text-label-sm",
-        orientation === "vertical" ? "flex-col items-center gap-px" : "flex-row gap-0.5 overflow-x-auto",
+        orientation === "vertical" ? "flex-col items-center gap-px overflow-y-auto" : "flex-row gap-0.5 overflow-x-auto",
         className,
       )}
     >
@@ -28,19 +32,18 @@ export function AlphabetRail({ value, onChange, available, className, orientatio
         const active = value === letter;
         const has = !available || available.has(letter);
         return (
-          <button
+          <Button
             key={letter}
             type="button"
-            data-focusable
+            size="xs"
+            variant={active ? "primary" : "ghost"}
             aria-pressed={active}
             onClick={() => onChange(letter)}
-            className={cn(
-              "nav-focus grid size-6 place-items-center rounded-md transition-colors duration-fast",
-              active ? "bg-brand text-brand-foreground" : has ? "text-muted hover:bg-surface-hover hover:text-foreground" : "text-muted/40",
-            )}
+            className={cn("shrink-0", !has && !active && "text-muted/40")}
+            data-focusable
           >
             {letter}
-          </button>
+          </Button>
         );
       })}
     </div>

@@ -1,6 +1,6 @@
 import { IconX } from "@tabler/icons-react";
 
-import { KeyValueList, Panel, StatusChip } from "@/components/ui";
+import { Button, KeyValueList, Panel, StatusChip } from "@/components/ui";
 import { formatBytes, formatDateTime, formatSpeed } from "@/lib/format";
 import { torrentState } from "@/lib/status";
 
@@ -15,9 +15,9 @@ export function TorrentDetail({ row, onClose }: { row: TorrentRow; onClose: () =
       actions={
         <>
           <StatusChip status={state} />
-          <button type="button" data-focusable aria-label="Close" onClick={onClose} className="nav-focus grid size-8 place-items-center rounded-full text-muted hover:bg-surface-hover hover:text-foreground">
+          <Button variant="ghost" size="sm" isIconOnly aria-label="Close download details" onPress={onClose}>
             <IconX size={16} />
-          </button>
+          </Button>
         </>
       }
       className="self-start xl:sticky xl:top-4"
@@ -42,9 +42,9 @@ export function TorrentDetail({ row, onClose }: { row: TorrentRow; onClose: () =
       <ul className="scrollbar-thin max-h-80 overflow-y-auto text-body-sm">
         {row.live.files.map((file) => (
           <li key={file.index} className="flex items-center gap-3 border-b border-separator py-1.5 last:border-b-0">
-            <span className="min-w-0 flex-1 truncate font-mono text-label text-foreground">{file.path.split(/[\\/]/).pop()}</span>
-            <span className="text-numeric text-label-sm text-muted">{formatBytes(file.size)}</span>
-            <span className="h-1 w-16 overflow-hidden rounded-full bg-surface-tertiary">
+            <span title={file.path} className="min-w-0 flex-1 break-all font-mono text-label text-foreground">{file.path.split(/[\\/]/).pop()}</span>
+            <span className="text-numeric shrink-0 text-label-sm text-muted">{formatBytes(file.size)}</span>
+            <span className="h-1 w-16 shrink-0 overflow-hidden rounded-full bg-surface-tertiary">
               <span className="block h-full bg-info" style={{ width: `${Math.min(100, file.progress * 100)}%` }} />
             </span>
           </li>

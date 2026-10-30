@@ -1,0 +1,5 @@
+mutation ReconcileStoredMediaSummaries($dryRun: Boolean! = true) {
+  reconcileStoredMediaSummaries(dryRun: $dryRun) {
+    dryRun artistsExamined artistsChanged albumsExamined albumsChanged audiobooksExamined audiobooksChanged
+  }
+}

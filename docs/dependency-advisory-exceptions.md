@@ -26,7 +26,65 @@
   and is reviewed by Dependabot/security CI.
 - **Review trigger:** remove this exception as soon as `rsa` publishes a fixed release or
   `agql-auth` can compile without its RS256 dependency.
-- **Expiry:** 2026-10-30.
+- **Expiry:** 2027-01-31. Re-reviewed 2026-10-30 for the 0.3.0 release: still no patched `rsa`
+  release, and Librarian still configures HS256 only.
+
+### RUSTSEC-2026-0387 — `crypto-bigint` 0.5.5
+
+- **Owner:** Librarian backend/security maintainers.
+- **Affected scope:** linked through `elliptic-curve`/`ecdsa`/`p256` by `jsonwebtoken` 10's
+  `rust_crypto` feature, which `agql-auth` enables for its ES256 support.
+- **Librarian exposure:** none. The timing variability affects elliptic-curve operations on secret
+  scalars; Librarian signs and verifies HS256 only (see RUSTSEC-2023-0071) and never loads an EC key.
+- **Why not upgraded:** the fix is `crypto-bigint` 0.7, which needs the RustCrypto 0.14 curve stack
+  that `jsonwebtoken` 10 does not use. Dropping it needs an `agql-auth` feature boundary.
+- **Compensating controls:** as for RUSTSEC-2023-0071; the advisory stays listed in both configs.
+- **Review trigger:** a `jsonwebtoken` release on the patched curve stack, or an `agql-auth` build
+  without EC algorithms.
+- **Expiry:** 2027-01-31.
+
+### RUSTSEC-2026-0293 — `ringbuf` 0.4.8
+
+- **Owner:** Librarian backend maintainers.
+- **Affected scope:** `librqbit-utp` 0.7.0 (via `librqbit` 9.0.1) uses `ringbuf` for uTP send buffers.
+- **Librarian exposure:** none. The double free needs an element whose `Drop` panics during
+  `Consumer::skip`/`clear`; `librqbit-utp`'s buffers are `SharedRb<Heap<u8>>`, and `u8` has no `Drop`.
+- **Why not upgraded:** the fix is `ringbuf` 0.5, a breaking change only `librqbit-utp` can adopt; no
+  newer `librqbit-utp` 0.7.x exists.
+- **Review trigger:** a `librqbit`/`librqbit-utp` release on `ringbuf` 0.5.
+- **Expiry:** 2027-01-31.
+
+### RUSTSEC-2026-0391, RUSTSEC-2026-0403, RUSTSEC-2026-0398 — `zstd` 0.13.3 / `zstd-safe` 7.3.0
+
+- **Owner:** Librarian backend maintainers (with `graphql-orm`).
+- **Affected scope:** `graphql-orm-backup` (pinned `graphql-orm` revision) compresses and decompresses
+  logical backup payloads with `zstd` 0.13. The archive extractor already uses the fixed `zstd` 0.14
+  through `zip` 9.
+- **Librarian exposure:**
+  - 0391 needs a compression/decompression context reused after an abandoned stream. Each backup
+    payload uses its own `encode_all` call or `Encoder`/`Decoder`, so no context is reused.
+  - 0398 is in the `Seekable` API, which is never called.
+  - 0403 exposes uninitialised memory when streaming decompression of a *legacy* (pre-v0.8) frame
+    fails. Librarian only decompresses payloads it wrote itself, as current-format frames, in a
+    local backup repository that only the server account and administrators can write. Anyone who
+    can plant a crafted frame there already controls restore contents.
+  - `cargo deny` (which fails on unsound advisories) also lists ten `zstd-safe` 7 unsound-API notices:
+    RUSTSEC-2026-0395/0396/0397/0399/0400/0401/0402/0404/0405/0406. They cover context cloning
+    (`try_clone`), dictionaries (`init_using_cdict`/`ddict`, `train_from_buffer`), multithreaded
+    contexts, `CParameter::StableInBuffer`, `Seekable`, and caller-supplied out-of-range
+    `InBuffer`/`OutBuffer` positions. `graphql-orm-backup` calls none of these; it uses only the `zstd`
+    crate's single-threaded stream wrappers, which keep buffer positions in range. `cargo audit`
+    reports them as allowed warnings.
+- **Why not upgraded:** the fixes are `zstd` 0.14 / `zstd-safe` 8, which must be adopted in
+  `graphql-orm-backup`; Librarian pins that crate by commit.
+- **Review trigger:** the next `graphql-orm` revision bump, which should move `graphql-orm-backup`
+  to `zstd` 0.14.
+- **Expiry:** 2027-01-31.
+
+The 0.3.0 release also updated `rustls` 0.23.46, `rustls-webpki` 0.103.16, `webpki-roots`/
+`webpki-root-certs` 1.0.11, `quinn-proto` 0.11.19, `ctutils` 0.4.7, `zstd-sys` 2.1.2 and `tokio`
+1.54.1, and moved archive extraction to `zip` 9 (RUSTSEC-2026-0367/0368/0369). Librarian's extractor
+already rejected symlinks and special modes itself, so those `zip` advisories were not reachable.
 
 The 2026-09-05 dependency refresh moves the torrent client to stable `librqbit` 9.0.1 and removes
 the temporary Git-pinned UPnP override; the published release carries the fixed `quick-xml` line.

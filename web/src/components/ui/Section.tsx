@@ -15,10 +15,11 @@ interface SectionProps {
 
 export function Section({ title, trailing, children, className, bleed, id }: SectionProps) {
   return (
-    <section id={id} className={cn("flex flex-col gap-3", className)} aria-label={typeof title === "string" ? title : undefined}>
+    <section id={id} data-nav-section data-bleed={bleed ? "" : undefined} className={cn("flex flex-col gap-3", className)} aria-label={typeof title === "string" ? title : undefined}>
       <div className={cn("flex items-baseline justify-between gap-4", bleed && "page-gutter")}>
         <h2 className="text-title-lg text-foreground">{title}</h2>
-        {trailing ? <div className="text-label text-muted">{trailing}</div> : null}
+        {/* A remote reaches these destinations from the rail; rows stay one press apart. */}
+        {trailing ? <div data-tv-skip className="text-label text-muted">{trailing}</div> : null}
       </div>
       <div>{children}</div>
     </section>

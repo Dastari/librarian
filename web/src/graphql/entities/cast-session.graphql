@@ -97,8 +97,5 @@ subscription EntityCastSessionChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    castSession {
-      ...CastSessionFields
-    }
   }
 }

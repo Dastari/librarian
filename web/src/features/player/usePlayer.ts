@@ -25,6 +25,7 @@ export function usePlayer() {
       setPlaying: (playing: boolean) => playerStore.updateTransport({ playing }),
       togglePlaying: () => playerStore.updateTransport({ playing: !snapshot.transport.playing }),
       seek: (position: number) => audioCommands.seek?.(position),
+      retry: () => audioCommands.retry?.(),
       setVolume: (volume: number) => playerStore.updateTransport({ volume, muted: volume === 0 ? true : false }),
       setMuted: (muted: boolean) => playerStore.updateTransport({ muted }),
       setRate: (rate: number) => playerStore.updateTransport({ rate }),
@@ -36,4 +37,4 @@ export function usePlayer() {
 }
 
 /** Imperative hooks the audio engine registers so seeking works from anywhere. */
-export const audioCommands: { seek?: (position: number) => void } = {};
+export const audioCommands: { seek?: (position: number) => void; retry?: () => void } = {};

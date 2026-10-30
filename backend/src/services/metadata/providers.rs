@@ -7,7 +7,7 @@ use anyhow::Result;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -18,10 +18,52 @@ use super::tmdb::TmdbClient;
 use super::tvmaze::TvMazeClient;
 use crate::db::Database;
 use crate::services::graphql::entities::common::AutoDownloadMode;
-use crate::services::graphql::entities::{Album, Artist, Audiobook, CreateShowInput, Movie, Show};
+use crate::services::graphql::entities::{
+    Album, Artist, Audiobook, Episode, EpisodeWhereInput, Library, Movie, Season, SeasonWhereInput,
+    Show,
+};
 use crate::services::graphql::{AuthUser, LibrarianSchema};
 use crate::services::manager::ServicesManager;
 use async_graphql::{Request, Variables};
+use graphql_orm::graphql::filters::StringFilter;
+
+/// Transport success is not mutation success. These internal documents select a
+/// success/error payload for every mutation root, including compatibility aliases.
+fn check_mutation_payloads(data: &serde_json::Value) -> anyhow::Result<()> {
+    let roots = data
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("Mutation response is not an object"))?;
+    if roots.is_empty() {
+        anyhow::bail!("Mutation response has no result payload");
+    }
+    let mut checked = false;
+    for (name, payload) in roots {
+        if name == "__typename" {
+            continue;
+        }
+        checked = true;
+        let success = payload
+            .get("success")
+            .or_else(|| payload.get("Success"))
+            .and_then(serde_json::Value::as_bool);
+        if success != Some(true) {
+            let error = payload
+                .get("error")
+                .or_else(|| payload.get("Error"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("missing or unsuccessful mutation payload");
+            anyhow::bail!("{name}: {error}");
+        }
+    }
+    if !checked {
+        anyhow::bail!("Mutation response has no result payload");
+    }
+    Ok(())
+}
+
+fn timestamp_touch_variables(id: &str) -> serde_json::Value {
+    serde_json::json!({ "id": id, "input": {} })
+}
 
 /// Metadata provider enum
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -403,23 +445,6 @@ impl MetadataService {
         if score >= 70 { Some(score) } else { None }
     }
 
-    fn is_high_confidence_heuristic_collection_match(
-        local: &LocalCollectionMovieRow,
-        part_title: &str,
-        part_year: Option<i32>,
-    ) -> bool {
-        let title_exact = Self::normalize_title_for_collection_match(&local.title)
-            == Self::normalize_title_for_collection_match(part_title);
-        if !title_exact {
-            return false;
-        }
-
-        match (local.year, part_year) {
-            (Some(local_year), Some(target_year)) => local_year == target_year,
-            _ => false,
-        }
-    }
-
     pub fn new(
         db: Database,
         services: Arc<ServicesManager>,
@@ -463,6 +488,12 @@ impl MetadataService {
         let request = Request::new(query)
             .variables(Variables::from_json(variables))
             .data(auth_user.clone())
+            .data(graphql_orm::graphql::auth::AuthSubject::from_parts(
+                auth_user.user_id.clone(),
+                auth_user.role.iter().cloned().collect(),
+                Vec::new(),
+                None,
+            ))
             .data(auth_user.user_id.clone());
         let response = schema.execute(request).await;
         if !response.errors.is_empty() {
@@ -483,7 +514,44 @@ impl MetadataService {
         mutation: &str,
         variables: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        self.execute_query(auth_user, mutation, variables).await
+        let data = self.execute_query(auth_user, mutation, variables).await?;
+        check_mutation_payloads(&data)?;
+        Ok(data)
+    }
+
+    /// Check the actual caller before entering trusted metadata orchestration.
+    /// Imports belong to the target library's owner, including admin imports.
+    pub async fn authorize_library_import(
+        &self,
+        caller: &AuthUser,
+        library_id: Uuid,
+    ) -> Result<Uuid> {
+        if !caller.has_role(crate::services::graphql::auth::Role::Member) {
+            anyhow::bail!("Library not found or access denied");
+        }
+        let data = self
+            .execute_query(
+                caller,
+                "query ImportLibrary($id: String!) { library(id: $id) { userId } }",
+                serde_json::json!({ "id": library_id.to_string() }),
+            )
+            .await?;
+        let owner = data
+            .get("library")
+            .and_then(|library| library.get("userId"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("Library not found or access denied"))?;
+        Ok(Uuid::parse_str(owner)?)
+    }
+
+    /// Trusted callers must still supply the target library's owner. Check
+    /// before provider calls, cache writes, or creation of an admin context.
+    async fn require_import_owner(&self, library_id: Uuid, user_id: Uuid) -> Result<()> {
+        let library = Library::get(self.db.pool(), &library_id.to_string()).await?;
+        if library.is_none_or(|library| library.user_id != user_id.to_string()) {
+            anyhow::bail!("Library not found or access denied");
+        }
+        Ok(())
     }
 
     async fn execute_internal_query(
@@ -500,6 +568,12 @@ impl MetadataService {
         let request = Request::new(query)
             .variables(Variables::from_json(variables))
             .data(auth_user.clone())
+            .data(graphql_orm::graphql::auth::AuthSubject::from_parts(
+                auth_user.user_id.clone(),
+                auth_user.role.iter().cloned().collect(),
+                Vec::new(),
+                None,
+            ))
             .data(auth_user.user_id.clone());
         let response = schema.execute(request).await;
         if !response.errors.is_empty() {
@@ -941,85 +1015,64 @@ impl MetadataService {
         Ok(())
     }
 
-    /// Trigger a lightweight Movie update to emit subscription notifications after
+    /// Apply a generated timestamp-only Movie update to emit subscription notifications after
     /// non-GraphQL side effects (e.g., artwork cache writes).
     async fn notify_movie_changed(&self, auth_user: &AuthUser, movie: &Movie) -> Result<()> {
-        let _ = self
+        self
             .execute_mutation(
                 auth_user,
                 r#"mutation NotifyMovieChanged($id: String!, $input: UpdateMovieInput!) {
                     UpdateMovie: updateMovie(id: $id, input: $input) { Success: success Error: error }
                 }"#,
-                serde_json::json!({
-                    "id": movie.id,
-                    "input": {
-                        "title": movie.title
-                    }
-                }),
+                timestamp_touch_variables(&movie.id),
             )
             .await?;
         Ok(())
     }
 
-    /// Trigger a lightweight Show update to emit subscription notifications after
+    /// Apply a generated timestamp-only Show update to emit subscription notifications after
     /// non-GraphQL side effects (e.g., artwork cache writes).
     async fn notify_show_changed(&self, auth_user: &AuthUser, show: &Show) -> Result<()> {
-        let _ = self
-            .execute_mutation(
-                auth_user,
-                r#"mutation NotifyShowChanged($id: String!, $input: UpdateShowInput!) {
+        self.execute_mutation(
+            auth_user,
+            r#"mutation NotifyShowChanged($id: String!, $input: UpdateShowInput!) {
                     UpdateShow: updateShow(id: $id, input: $input) { Success: success Error: error }
                 }"#,
-                serde_json::json!({
-                    "id": show.id,
-                    "input": {
-                        "name": show.name
-                    }
-                }),
-            )
-            .await?;
+            timestamp_touch_variables(&show.id),
+        )
+        .await?;
         Ok(())
     }
 
-    /// Trigger a lightweight Album update to emit subscription notifications after
+    /// Apply a generated timestamp-only Album update to emit subscription notifications after
     /// non-GraphQL side effects (e.g., artwork cache writes).
     async fn notify_album_changed(&self, auth_user: &AuthUser, album: &Album) -> Result<()> {
-        let _ = self
+        self
             .execute_mutation(
                 auth_user,
                 r#"mutation NotifyAlbumChanged($id: String!, $input: UpdateAlbumInput!) {
                     UpdateAlbum: updateAlbum(id: $id, input: $input) { Success: success Error: error }
                 }"#,
-                serde_json::json!({
-                    "id": album.id,
-                    "input": {
-                        "name": album.name
-                    }
-                }),
+                timestamp_touch_variables(&album.id),
             )
             .await?;
         Ok(())
     }
 
-    /// Trigger a lightweight Audiobook update to emit subscription notifications after
+    /// Apply a generated timestamp-only Audiobook update to emit subscription notifications after
     /// non-GraphQL side effects (e.g., artwork cache writes).
     async fn notify_audiobook_changed(
         &self,
         auth_user: &AuthUser,
         audiobook: &Audiobook,
     ) -> Result<()> {
-        let _ = self
+        self
             .execute_mutation(
                 auth_user,
                 r#"mutation NotifyAudiobookChanged($id: String!, $input: UpdateAudiobookInput!) {
                     UpdateAudiobook: updateAudiobook(id: $id, input: $input) { Success: success Error: error }
                 }"#,
-                serde_json::json!({
-                    "id": audiobook.id,
-                    "input": {
-                        "title": audiobook.title
-                    }
-                }),
+                timestamp_touch_variables(&audiobook.id),
             )
             .await?;
         Ok(())
@@ -1798,6 +1851,14 @@ impl MetadataService {
 
         let tvmaze = self.get_tvmaze_client().await?;
         let show = tvmaze.get_show(tvmaze_id).await?;
+        // The show resource carries only a poster; wide backgrounds live in its image list.
+        let backdrop_url = match tvmaze.get_show_images(tvmaze_id).await {
+            Ok(images) => super::tvmaze::best_background(&images),
+            Err(error) => {
+                warn!(tvmaze_id, error = %error, "Failed to fetch TVMaze show images; keeping the show without a backdrop");
+                None
+            }
+        };
 
         let network = show
             .network
@@ -1821,7 +1882,7 @@ impl MetadataService {
             runtime: show.average_runtime.or(show.runtime).map(|v| v as i32),
             genres: show.genres.clone(),
             poster_url: show.image.as_ref().and_then(|i| i.original.clone()),
-            backdrop_url: None,
+            backdrop_url,
             tvdb_id: show
                 .externals
                 .as_ref()
@@ -1984,11 +2045,50 @@ impl MetadataService {
         Ok(details)
     }
 
+    async fn create_movie_from_details(
+        &self,
+        actor: &AuthUser,
+        details: &MovieDetails,
+        options: &AddMovieOptions,
+    ) -> Result<Movie> {
+        let rating = details
+            .vote_average
+            .and_then(rust_decimal::Decimal::from_f64_retain)
+            .map(|value| value.to_string());
+        let data = self.execute_mutation(actor,
+            r#"mutation CreateImportedMovie($input: CreateMovieInput!) {
+                createMovie(input: $input) { success error movie { id } }
+            }"#,
+            serde_json::json!({ "input": {
+                "libraryId": options.library_id.to_string(), "userId": options.user_id.to_string(),
+                "title": details.title, "sortTitle": null, "originalTitle": details.original_title,
+                "year": details.year, "tmdbId": details.provider_id as i32, "imdbId": details.imdb_id,
+                "overview": details.overview, "tagline": details.tagline, "runtime": details.runtime,
+                "genres": details.genres, "director": details.director, "castNames": details.cast_names,
+                "productionCountries": details.production_countries, "spokenLanguages": details.spoken_languages,
+                "tmdbRating": rating, "tmdbVoteCount": details.vote_count,
+                "posterUrl": details.poster_url, "backdropUrl": details.backdrop_url,
+                "collectionId": details.collection_id, "collectionName": details.collection_name,
+                "collectionPosterUrl": details.collection_poster_url, "releaseDate": details.release_date,
+                "certification": details.certification, "monitored": options.monitored,
+                "tmdbStatus": details.tmdb_status, "wanted": options.monitored,
+                "hasFile": false
+            }})).await?;
+        let id = data["createMovie"]["movie"]["id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("createMovie returned no movie identity"))?;
+        Movie::get(self.db.pool(), &id.to_string())
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Imported movie disappeared after creation"))
+    }
+
     /// Add a movie from TMDB to a library
     ///
-    /// Fetches movie metadata from TMDB and creates a movie record using the
-    /// entity's create_from_metadata method (single source of truth pattern).
+    /// Fetches movie metadata from TMDB and persists it through checked generated
+    /// GraphQL mutations after validating the target library's owner.
     pub async fn add_movie_from_provider(&self, options: AddMovieOptions) -> Result<Movie> {
+        self.require_import_owner(options.library_id, options.user_id)
+            .await?;
         debug!(
             "Adding movie from {:?} (ID: {}) to library",
             options.provider, options.provider_id
@@ -2046,16 +2146,9 @@ impl MetadataService {
 
         let mut movie_details_for_create = movie_details.clone();
         movie_details_for_create.collection_poster_url = cached_collection_poster_url;
-        let movie = match Movie::create_from_metadata(
-            &self.db,
-            &movie_details_for_create,
-            CreateMovieFromMetadataOptions {
-                library_id: options.library_id,
-                user_id: options.user_id,
-                monitored: options.monitored,
-            },
-        )
-        .await
+        let movie = match self
+            .create_movie_from_details(&auth_user, &movie_details_for_create, &options)
+            .await
         {
             Ok(movie) => movie,
             Err(error) => {
@@ -2127,6 +2220,8 @@ impl MetadataService {
         &self,
         options: AddMovieCollectionOptions,
     ) -> Result<MovieCollectionImportSummary> {
+        self.require_import_owner(options.library_id, options.user_id)
+            .await?;
         if options.provider != MetadataProvider::Tmdb {
             anyhow::bail!("Only TMDB is supported for movie collections");
         }
@@ -2223,37 +2318,30 @@ impl MetadataService {
         &self,
         collection_id: i32,
         library_id: Uuid,
-        user_id: Uuid,
+        caller: &AuthUser,
     ) -> Result<MovieCollectionDetails> {
+        self.authorize_library_import(caller, library_id).await?;
         let tmdb = self.get_tmdb_client().await?;
         let collection = tmdb.get_collection(collection_id).await?;
-        let collection_poster_url = tmdb.poster_url(collection.poster_path.as_deref());
-        let collection_backdrop_url = tmdb.backdrop_url(collection.backdrop_path.as_deref());
-        let cached_collection_poster_url = self
-            .cache_collection_poster_artwork(Some(collection_id), collection_poster_url.as_deref())
+        self.overlay_movie_collection_details(&tmdb, collection, library_id, caller)
             .await
-            .or(collection_poster_url);
-        let cached_collection_backdrop_url = self
-            .cache_collection_backdrop_artwork(
-                Some(collection_id),
-                collection_backdrop_url.as_deref(),
-            )
-            .await
-            .or(collection_backdrop_url);
+    }
 
-        let auth_user = AuthUser {
-            user_id: user_id.to_string(),
-            email: None,
-            role: Some("admin".to_string()),
-        };
-
+    /// Overlay only authorized local reads onto an already fetched catalog.
+    async fn overlay_movie_collection_details(
+        &self,
+        tmdb: &TmdbClient,
+        collection: super::tmdb::TmdbCollection,
+        library_id: Uuid,
+        caller: &AuthUser,
+    ) -> Result<MovieCollectionDetails> {
         let mut local_movies: Vec<LocalCollectionMovieRow> = Vec::new();
         let mut offset = 0usize;
         let page_limit = 500usize;
         loop {
             let local_data = self
                 .execute_query(
-                    &auth_user,
+                    caller,
                     r#"query CollectionLibraryMovies($where: MovieWhereInput, $page: PageInput) {
                         Movies: movies(where: $where, page: $page) {
                             Edges: edges {
@@ -2364,11 +2452,28 @@ impl MetadataService {
             offset += page_limit;
         }
 
+        Ok(Self::movie_collection_overlay(
+            tmdb,
+            collection,
+            library_id,
+            local_movies,
+        ))
+    }
+
+    /// Pure catalog/local overlay: no service/database handle, no persistence.
+    fn movie_collection_overlay(
+        tmdb: &TmdbClient,
+        collection: super::tmdb::TmdbCollection,
+        library_id: Uuid,
+        local_movies: Vec<LocalCollectionMovieRow>,
+    ) -> MovieCollectionDetails {
+        let collection_id = collection.id;
+        let collection_poster_url = tmdb.poster_url(collection.poster_path.as_deref());
+        let collection_backdrop_url = tmdb.backdrop_url(collection.backdrop_path.as_deref());
         let mut merged_movies: Vec<MovieCollectionMovieDetails> = Vec::new();
         let mut used_local_movie_ids: HashSet<String> = HashSet::new();
         let mut exact_tmdb_matches = 0usize;
         let mut heuristic_matches = 0usize;
-        let mut pending_movie_metadata_updates: Vec<(String, i32)> = Vec::new();
         for part in collection.parts.iter() {
             let mut best_index: Option<usize> = None;
             let mut best_score = i32::MIN;
@@ -2395,20 +2500,8 @@ impl MetadataService {
             if let Some(local_match) = local.as_ref() {
                 if local_match.tmdb_id == Some(part.id) {
                     exact_tmdb_matches += 1;
-                    if local_match.collection_id != Some(collection_id) {
-                        pending_movie_metadata_updates.push((local_match.id.clone(), part.id));
-                    }
                 } else {
                     heuristic_matches += 1;
-                    if local_match.tmdb_id.is_none()
-                        && Self::is_high_confidence_heuristic_collection_match(
-                            local_match,
-                            &part.title,
-                            part.year(),
-                        )
-                    {
-                        pending_movie_metadata_updates.push((local_match.id.clone(), part.id));
-                    }
                 }
                 used_local_movie_ids.insert(local_match.id.clone());
             }
@@ -2457,80 +2550,28 @@ impl MetadataService {
             });
         }
 
-        let mut persisted_collection_links = 0usize;
-        for (movie_id, tmdb_id) in pending_movie_metadata_updates {
-            let update_data = self
-                .execute_mutation(
-                    &auth_user,
-                    r#"mutation PersistCollectionMovieLink($id: String!, $input: UpdateMovieInput!) {
-                        UpdateMovie: updateMovie(id: $id, input: $input) { Success: success Error: error }
-                    }"#,
-                    serde_json::json!({
-                        "id": movie_id,
-                        "input": {
-                            "tmdbId": tmdb_id,
-                            "collectionId": collection_id,
-                            "collectionName": collection.name,
-                            "collectionPosterUrl": cached_collection_poster_url
-                        }
-                    }),
-                )
-                .await?;
-            let updated = update_data
-                .get("UpdateMovie")
-                .and_then(|v| v.get("Success"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if !updated {
-                let error = update_data
-                    .get("UpdateMovie")
-                    .and_then(|v| v.get("Error"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Failed to persist movie collection metadata link");
-                warn!(
-                    movie_id = %movie_id,
-                    library_id = %library_id,
-                    user_id = %user_id,
-                    collection_id = collection_id,
-                    tmdb_id = tmdb_id,
-                    error = %error,
-                    "Failed to persist matched movie collection metadata link from collection details"
-                );
-                continue;
-            }
-            persisted_collection_links += 1;
-        }
-
-        info!(
+        debug!(
             library_id = %library_id,
-            user_id = %user_id,
-            collection_id = collection_id,
-            tmdb_part_count = collection.parts.len(),
-            exact_tmdb_matches = exact_tmdb_matches,
-            heuristic_matches = heuristic_matches,
-            persisted_collection_links = persisted_collection_links,
-            "Built movie collection details overlay with local library matching: library_id={}, user_id={}, collection_id={}, tmdb_part_count={}, exact_tmdb_matches={}, heuristic_matches={}, persisted_collection_links={}",
-            library_id,
-            user_id,
             collection_id,
-            collection.parts.len(),
             exact_tmdb_matches,
             heuristic_matches,
-            persisted_collection_links
+            "Built read-only collection details overlay"
         );
 
-        Ok(MovieCollectionDetails {
+        MovieCollectionDetails {
             collection_id: collection.id,
             name: collection.name,
             overview: collection.overview,
-            poster_url: cached_collection_poster_url,
-            backdrop_url: cached_collection_backdrop_url,
+            poster_url: collection_poster_url,
+            backdrop_url: collection_backdrop_url,
             movies: merged_movies,
-        })
+        }
     }
 
     /// Add a TV show from TVMaze to a library
     pub async fn add_tv_show_from_provider(&self, options: AddTvShowOptions) -> Result<Show> {
+        self.require_import_owner(options.library_id, options.user_id)
+            .await?;
         debug!(
             "Adding TV show from {:?} (ID: {}) to library",
             options.provider, options.provider_id
@@ -2586,6 +2627,8 @@ impl MetadataService {
                 wanted_default,
             )
             .await?;
+            self.sync_show_seasons_best_effort(&auth_user, &existing_show.id, options.provider_id)
+                .await;
             debug!("Show '{}' already exists in library", existing_show.name);
             return Ok(existing_show);
         }
@@ -2593,34 +2636,26 @@ impl MetadataService {
         let details = self.get_tv_show(options.provider_id).await?;
 
         let auto_download = options.monitor_type != AutoDownloadMode::None;
-        let show = Show::upsert(
-            &self.db,
-            CreateShowInput {
-                library_id: options.library_id.to_string(),
-                user_id: options.user_id.to_string(),
-                name: details.name.clone(),
-                sort_name: details.sort_name.clone(),
-                year: details.year,
-                tvmaze_id: Some(details.provider_id as i32),
-                tmdb_id: None,
-                tvdb_id: details.tvdb_id,
-                imdb_id: details.imdb_id.clone(),
-                overview: details.overview.clone(),
-                network: details.network.clone(),
-                runtime: details.runtime,
-                genres: details.genres.clone(),
-                poster_url: details.poster_url.clone(),
-                backdrop_url: details.backdrop_url.clone(),
-                content_rating: details.status.clone(),
-                auto_download,
-                auto_download_mode: options.monitor_type,
-                quality_profile_id: None,
-                path: options.path.clone(),
-            },
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?
-        .entity;
+        let data = self.execute_mutation(&auth_user,
+            r#"mutation UpsertImportedShow($input: CreateShowInput!) {
+                upsertShow(input: $input) { success error show { id } }
+            }"#,
+            serde_json::json!({ "input": {
+                "libraryId": options.library_id.to_string(), "userId": options.user_id.to_string(),
+                "name": details.name, "sortName": details.sort_name, "year": details.year,
+                "tvmazeId": details.provider_id as i32, "tmdbId": null, "tvdbId": details.tvdb_id,
+                "imdbId": details.imdb_id, "overview": details.overview, "network": details.network,
+                "runtime": details.runtime, "genres": details.genres, "posterUrl": details.poster_url,
+                "backdropUrl": details.backdrop_url, "contentRating": details.status,
+                "autoDownload": auto_download, "autoDownloadMode": options.monitor_type.to_string().to_uppercase(),
+                "qualityProfileId": null, "path": options.path
+            }})).await?;
+        let id = data["upsertShow"]["show"]["id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("upsertShow returned no show identity"))?;
+        let show = Show::get(self.db.pool(), &id.to_string())
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Imported show disappeared after upsert"))?;
 
         // Populate episodes through generated mutations so subscription notifications fire.
         self.sync_show_episodes_from_tvmaze(
@@ -2630,6 +2665,8 @@ impl MetadataService {
             auto_download,
         )
         .await?;
+        self.sync_show_seasons_best_effort(&auth_user, &show.id, options.provider_id)
+            .await;
 
         // Cache artwork, then emit a lightweight entity update so library routes
         // subscribed to change events refresh when artwork becomes available.
@@ -2647,6 +2684,202 @@ impl MetadataService {
         }
 
         Ok(show)
+    }
+
+    /// Season sync never blocks adding or refreshing a show: posters arrive later otherwise.
+    async fn sync_show_seasons_best_effort(
+        &self,
+        auth_user: &AuthUser,
+        show_id: &str,
+        tvmaze_id: u32,
+    ) {
+        if let Err(error) = self
+            .sync_show_seasons_from_tvmaze(auth_user, show_id, tvmaze_id)
+            .await
+        {
+            warn!(show_id, tvmaze_id, error = %error, "Failed to sync seasons from TVMaze");
+        }
+    }
+
+    /// Upsert a show's seasons from TVMaze through the generated Season mutation and cache
+    /// each season poster into object storage.
+    async fn sync_show_seasons_from_tvmaze(
+        &self,
+        auth_user: &AuthUser,
+        show_id: &str,
+        tvmaze_id: u32,
+    ) -> Result<usize> {
+        let tvmaze = self.get_tvmaze_client().await?;
+        let seasons = tvmaze.get_seasons(tvmaze_id).await?;
+        let artwork = self.artwork_service().await;
+        let mut synced = 0;
+        for season in &seasons {
+            let poster_url = season
+                .image
+                .as_ref()
+                .and_then(|image| image.original.clone().or_else(|| image.medium.clone()));
+            let data = self
+                .execute_mutation(
+                    auth_user,
+                    r#"mutation UpsertSeasonFromTvmaze($input: CreateSeasonInput!) {
+                        UpsertSeason: upsertSeason(input: $input) {
+                            Success: success
+                            Error: error
+                            Season: season { Id: id }
+                        }
+                    }"#,
+                    serde_json::json!({ "input": {
+                        "showId": show_id,
+                        "season": season.number as i32,
+                        "tvmazeId": season.id as i32,
+                        "name": season.name.as_deref().map(str::trim).filter(|name| !name.is_empty()),
+                        "overview": season.clean_summary(),
+                        "premiereDate": season.premiere_date,
+                        "endDate": season.end_date,
+                        "episodeOrder": season.episode_order.map(|count| count as i32),
+                        "posterUrl": poster_url,
+                    }}),
+                )
+                .await?;
+            let result = &data["UpsertSeason"];
+            if result["Success"].as_bool() != Some(true) {
+                anyhow::bail!(
+                    "{}",
+                    result["Error"].as_str().unwrap_or("Failed to save season")
+                );
+            }
+            synced += 1;
+            if let (Some(artwork), Some(season_id), Some(url)) = (
+                &artwork,
+                result["Season"]["Id"].as_str(),
+                poster_url.as_deref(),
+            ) {
+                artwork.cache_season_artwork(season_id, Some(url)).await;
+            }
+        }
+        debug!(show_id, count = synced, "Synced seasons from TVMaze");
+        Ok(synced)
+    }
+
+    /// Bring shows added before seasons, backdrops and stills were stored up to date: up
+    /// to `limit` shows per call, each attempted once per process so a show TVMaze has no
+    /// art for is not fetched again every run. Returns how many shows were processed.
+    pub async fn backfill_show_artwork(&self, limit: usize) -> Result<usize> {
+        static ATTEMPTED: LazyLock<std::sync::Mutex<HashSet<String>>> =
+            LazyLock::new(Default::default);
+        let shows = Show::query(self.db.pool()).fetch_all().await?;
+        let mut processed = 0;
+        for show in shows {
+            if processed >= limit {
+                break;
+            }
+            let Some(tvmaze_id) = show.tvmaze_id else {
+                continue;
+            };
+            if ATTEMPTED
+                .lock()
+                .map(|set| set.contains(&show.id))
+                .unwrap_or(true)
+            {
+                continue;
+            }
+            let has_seasons = !Season::query(self.db.pool())
+                .filter(SeasonWhereInput {
+                    show_id: Some(StringFilter {
+                        eq: Some(show.id.clone()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                .limit(1)
+                .fetch_all()
+                .await?
+                .is_empty();
+            let missing_stills = !Episode::query(self.db.pool())
+                .filter(EpisodeWhereInput {
+                    show_id: Some(StringFilter {
+                        eq: Some(show.id.clone()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                .fetch_all()
+                .await?
+                .iter()
+                .any(|episode| episode.still_url.is_some());
+            if has_seasons && show.backdrop_url.is_some() && !missing_stills {
+                continue;
+            }
+            if let Ok(mut set) = ATTEMPTED.lock() {
+                set.insert(show.id.clone());
+            }
+            processed += 1;
+
+            let auth_user = AuthUser {
+                user_id: show.user_id.clone(),
+                email: None,
+                role: Some("admin".to_string()),
+            };
+            if show.backdrop_url.is_none() {
+                match self
+                    .get_tv_show_with_policy(tvmaze_id as u32, MetadataFetchPolicy::ForceRefresh)
+                    .await
+                {
+                    Ok(details) if details.backdrop_url.is_some() => {
+                        let saved = self
+                            .execute_mutation(
+                                &auth_user,
+                                r#"mutation BackfillShowBackdrop($id: String!, $input: UpdateShowInput!) {
+                                    UpdateShow: updateShow(id: $id, input: $input) { Success: success Error: error }
+                                }"#,
+                                serde_json::json!({ "id": show.id, "input": { "backdropUrl": details.backdrop_url } }),
+                            )
+                            .await;
+                        if let Err(error) = saved {
+                            warn!(show_id = %show.id, error = %error, "Failed to save backfilled show backdrop");
+                        } else if let Some(artwork) = self.artwork_service().await {
+                            artwork
+                                .cache_show_artwork(
+                                    &show.id,
+                                    details.poster_url.as_deref(),
+                                    details.backdrop_url.as_deref(),
+                                )
+                                .await;
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        warn!(show_id = %show.id, error = %error, "Failed to fetch show details for artwork backfill")
+                    }
+                }
+            }
+            if !has_seasons {
+                self.sync_show_seasons_best_effort(&auth_user, &show.id, tvmaze_id as u32)
+                    .await;
+            }
+            if missing_stills
+                && let Err(error) = self
+                    .sync_show_episodes_from_tvmaze(
+                        &auth_user,
+                        &show.id,
+                        tvmaze_id as u32,
+                        show.auto_download,
+                    )
+                    .await
+            {
+                warn!(show_id = %show.id, error = %error, "Failed to backfill episode stills");
+            }
+            if let Err(error) = self.notify_show_changed(&auth_user, &show).await {
+                warn!(show_id = %show.id, error = %error, "Failed to notify show change after artwork backfill");
+            }
+        }
+        if processed > 0 {
+            info!(
+                processed,
+                "Backfilled show seasons, backdrops and episode stills"
+            );
+        }
+        Ok(processed)
     }
 
     /// Sync episodes for a show from TVMaze using generated Episode mutations.
@@ -2705,6 +2938,10 @@ impl MetadataService {
             let title = Some(ep.name.clone());
             let overview = ep.clean_summary();
             let runtime = ep.runtime.map(|r| r as i32);
+            let still_url = ep
+                .image
+                .as_ref()
+                .and_then(|image| image.original.clone().or_else(|| image.medium.clone()));
 
             if let Some(node) = existing_edge {
                 let existing_id = node
@@ -2736,6 +2973,7 @@ impl MetadataService {
                                 "airDate": ep.airdate,
                                 "airStamp": ep.air_stamp,
                                 "runtime": runtime,
+                                "stillUrl": still_url,
                                 "tvmazeId": tvmaze_ep_id,
                                 "wanted": existing_wanted
                             }
@@ -2776,6 +3014,7 @@ impl MetadataService {
                                 "airDate": ep.airdate,
                                 "airStamp": ep.air_stamp,
                                 "runtime": runtime,
+                                "stillUrl": still_url,
                                 "tvmazeId": tvmaze_ep_id,
                                 "wanted": wanted_default
                             }
@@ -2804,6 +3043,8 @@ impl MetadataService {
 
     /// Add an album from MusicBrainz to a library.
     pub async fn add_album_from_provider(&self, options: AddAlbumOptions) -> Result<Album> {
+        self.require_import_owner(options.library_id, options.user_id)
+            .await?;
         if options.provider != MetadataProvider::Musicbrainz {
             anyhow::bail!("Only MusicBrainz is supported for album metadata");
         }
@@ -3126,6 +3367,8 @@ impl MetadataService {
         &self,
         options: AddAudiobookOptions,
     ) -> Result<Audiobook> {
+        self.require_import_owner(options.library_id, options.user_id)
+            .await?;
         if options.provider != MetadataProvider::OpenLibrary {
             anyhow::bail!("Only OpenLibrary is supported for audiobook metadata");
         }
@@ -3903,6 +4146,8 @@ impl MetadataService {
             show.auto_download,
         )
         .await?;
+        self.sync_show_seasons_best_effort(&auth_user, &show.id, tvmaze_id as u32)
+            .await;
 
         // Refresh cached artwork, then emit a lightweight entity update so
         // subscribers refresh once cached artwork is ready.
@@ -4030,5 +4275,171 @@ mod guide_cache_tests {
             1
         ));
         services.stop_all().await.unwrap();
+    }
+}
+
+#[cfg(test)]
+#[path = "providers_alignment_tests.rs"]
+mod alignment_tests;
+
+#[cfg(test)]
+mod timestamp_notification_tests {
+    use super::*;
+    use crate::graphql::entities::{
+        CreateLibraryInput, CreateMovieInput, CreateUserInput, Library, Movie, MovieMutations,
+        UpdateMovieInput, User,
+    };
+    use graphql_orm::DbPool;
+
+    async fn database() -> Database {
+        let db = Database::new(DbPool::connect("sqlite::memory:").await.unwrap());
+        crate::services::database::bootstrap_schema(&db)
+            .await
+            .unwrap();
+        crate::services::DatabaseService::new(db).pool().clone()
+    }
+    async fn user(db: &Database) -> User {
+        User::insert(
+            db,
+            CreateUserInput {
+                username: uuid::Uuid::new_v4().to_string(),
+                email: None,
+                password_hash: "fixture password_hash".to_string(),
+                role: "member".to_string(),
+                display_name: None,
+                avatar_url: None,
+                is_active: true,
+                last_login_at: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn library(db: &Database, user: &User) -> Library {
+        Library::insert(
+            db,
+            CreateLibraryInput {
+                user_id: user.id.clone(),
+                name: "fixture library".to_string(),
+                path: format!("/fixture/{}", uuid::Uuid::new_v4()),
+                library_type: "music".to_string(),
+                icon: None,
+                color: None,
+                auto_scan: false,
+                auto_organize: false,
+                naming_pattern: "fixture naming_pattern".to_string(),
+                scan_interval_minutes: 0,
+                watch_for_changes: false,
+                scanning: false,
+                last_scanned_at: None,
+                quality_profile_id: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn movie(db: &Database, library: &Library) -> Movie {
+        Movie::insert(
+            db,
+            CreateMovieInput {
+                library_id: library.id.clone(),
+                user_id: library.user_id.clone(),
+                title: "fixture movie".to_string(),
+                sort_title: None,
+                original_title: None,
+                year: None,
+                tmdb_id: None,
+                imdb_id: None,
+                overview: None,
+                tagline: None,
+                runtime: None,
+                genres: Vec::new(),
+                director: None,
+                cast_names: Vec::new(),
+                production_countries: Vec::new(),
+                spoken_languages: Vec::new(),
+                tmdb_rating: None,
+                tmdb_vote_count: None,
+                poster_url: None,
+                backdrop_url: None,
+                collection_id: None,
+                collection_name: None,
+                collection_poster_url: None,
+                release_date: None,
+                certification: None,
+                monitored: false,
+                tmdb_status: None,
+                wanted: true,
+                ignored: None,
+                download_status: None,
+                has_file: false,
+                media_file_id: None,
+                quality_profile_id: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+    #[derive(Default)]
+    struct TouchQuery;
+    #[async_graphql::Object]
+    impl TouchQuery {
+        async fn ready(&self) -> bool {
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn generated_timestamp_notification_preserves_a_newer_title_and_owner() {
+        let db = database().await;
+        let owner = user(&db).await;
+        let lib = library(&db, &owner).await;
+        let stale = movie(&db, &lib).await;
+        Movie::update_by_id(
+            &db,
+            &stale.id,
+            UpdateMovieInput {
+                title: Some("newer title".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let schema = async_graphql::Schema::build(
+            TouchQuery,
+            MovieMutations,
+            async_graphql::EmptySubscription,
+        )
+        .data(db.clone())
+        .finish();
+        let actor = AuthUser::system_admin_for(&owner.id);
+        let response = schema.execute(Request::new(
+            "mutation Notify($id: String!, $input: UpdateMovieInput!) { updateMovie(id: $id, input: $input) { success error } }")
+            .variables(Variables::from_json(timestamp_touch_variables(&stale.id)))
+            .data(graphql_orm::graphql::auth::AuthSubject::from_parts(actor.user_id.clone(), vec!["admin".to_string()], Vec::new(), None))
+            .data(actor.clone()).data(actor.user_id)).await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        check_mutation_payloads(&response.data.into_json().unwrap()).unwrap();
+        let current = Movie::get(db.pool(), &stale.id).await.unwrap().unwrap();
+        assert_eq!(current.title, "newer title");
+        assert_eq!(current.user_id, owner.id);
+        assert_eq!(current.library_id, lib.id);
+    }
+
+    #[test]
+    fn notification_payload_failure_is_not_reported_as_success() {
+        for invalid in [
+            serde_json::json!({}),
+            serde_json::json!({"UpdateMovie": null}),
+            serde_json::json!({"UpdateMovie": {"Success": false, "Error": "denied"}}),
+            serde_json::json!({"updateShow": {"success": false, "error": "not found"}}),
+        ] {
+            assert!(check_mutation_payloads(&invalid).is_err());
+        }
+        assert!(
+            check_mutation_payloads(&serde_json::json!({"UpdateMovie": {"Success": true}})).is_ok()
+        );
     }
 }

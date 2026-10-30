@@ -1,0 +1,5 @@
+# Test threads get the stack the server's Tokio runtime uses (src/lib.rs, 8 MiB). Tests that
+# execute the whole generated GraphQL schema in-process otherwise run on the harness's 2 MiB
+# default, which deep async-graphql futures outgrow as entities are added.
+[env]
+RUST_MIN_STACK = "8388608"

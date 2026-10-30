@@ -13,13 +13,17 @@ use crate::db::Database;
 use crate::services::graphql::entities::*;
 use crate::services::graphql::mutations::{
     ArtworkMutations, AuthMutations, AutoDownloadMutations, BackupMutations, FilesystemMutations,
-    LibraryScanMutations, NotificationFeedMutations, QualityMutations,
+    LibraryScanMutations, MaintenanceMutations, NotificationFeedMutations, QualityMutations,
 };
 use crate::services::graphql::queries::{
-    BackupQueries, ContentStatusQueries, FilesystemQueries, QualityQueries,
+    BackupQueries, ContentStatusQueries, FilesystemQueries, GenreQueries, ResumeQueries,
+    SourceCapabilityQueries,
 };
 use crate::services::graphql::subscriptions::filesystem::FilesystemChangeBroker;
-use crate::services::graphql::subscriptions::{FilesystemSubscriptions, TorrentSubscriptions};
+use crate::services::graphql::subscriptions::{
+    BackupSubscriptions, FilesystemSubscriptions, SessionSubscriptions,
+    SourceCapabilitySubscriptions, TorrentSubscriptions as TorrentRuntimeSubscriptions,
+};
 use crate::services::manager::ServicesManager;
 use crate::services::metadata::providers::{MetadataServiceConfig, create_metadata_service};
 
@@ -34,6 +38,7 @@ schema_roots! {
         MovieCastCredit,
         Collection,
         Show,
+        Season,
         Episode,
         MediaFile,
         Artist,
@@ -58,6 +63,11 @@ schema_roots! {
         MediaChapter,
         PlaybackSession,
         PlaybackProgress,
+        PersonalList,
+        ListEntry,
+        SavedView,
+        HomeShelf,
+        LibraryPreference,
         CastDevice,
         CastSession,
         CastSetting,
@@ -73,9 +83,9 @@ schema_roots! {
         QualityProfile,
         ReleaseBlocklist,
     ],
-    extra_query_types: [FilesystemQueries, SourceCustomQueries, BackupQueries, QualityQueries, ContentStatusQueries],
-    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations],
-    extra_subscription_types: [FilesystemSubscriptions, TorrentSubscriptions],
+    extra_query_types: [FilesystemQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries],
+    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations],
+    extra_subscription_types: [BackupSubscriptions, FilesystemSubscriptions, TorrentRuntimeSubscriptions, SessionSubscriptions, SourceCapabilitySubscriptions],
 }
 
 /// The GraphQL schema type
@@ -105,6 +115,7 @@ where
     // top out around depth 7-8) — generous enough that legitimate queries never hit it,
     // but finite so a malicious/misbehaving client can't force unbounded work server-side.
     let mut builder = schema_builder(db)
+        .extension(super::session_authority::SessionDeliveryGuard)
         .data(auth_service)
         .data(services)
         .data(metadata_service)
@@ -185,6 +196,7 @@ mod tests {
             MovieCastCredit,
             Collection,
             Show,
+            Season,
             Episode,
             MediaFile,
             Artist,
@@ -209,6 +221,11 @@ mod tests {
             MediaChapter,
             PlaybackSession,
             PlaybackProgress,
+            PersonalList,
+            ListEntry,
+            SavedView,
+            HomeShelf,
+            LibraryPreference,
             CastDevice,
             CastSession,
             CastSetting,

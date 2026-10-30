@@ -1,11 +1,13 @@
-import { Tooltip } from "@heroui/react";
+import { Tooltip } from "glass-ux/tooltip";
+import { Surface } from "glass-ux/surface";
 
-import { BrandMark } from "@/components/ui";
+import { BrandMark, Button } from "@/components/ui";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { IconChevronsLeft, IconChevronsRight } from "@tabler/icons-react";
-import { useQuery } from "@apollo/client/react";
+import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
+import { useLibraryPreferences } from "@/features/personal/usePersonalLibrary";
 
-import { NavLibrariesDocument } from "@/graphql/generated/graphql";
+import { EntityLibraryListDocument } from "@/graphql/generated/graphql";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { libraryType } from "@/lib/library-types";
 import { usePref } from "@/lib/prefs";
@@ -24,13 +26,19 @@ export function NavRail() {
   const counts = useShellCounts();
   const isAdmin = useIsAdmin();
   const { status } = useSession();
-  const libraries = useQuery(NavLibrariesDocument, { skip: status !== "authenticated" });
+  const libraries = useCompleteConnection(EntityLibraryListDocument, {}, (data) => data.libraries, { skip: status !== "authenticated" });
+  const preferences = useLibraryPreferences();
+  const favouriteIds = new Set(preferences.rows.filter((row) => row.favourite).map((row) => row.libraryId));
+  const libraryRows = [...libraries.rows].sort((a, b) => Number(favouriteIds.has(b.id)) - Number(favouriteIds.has(a.id)));
 
   return (
-    <aside
+    <Surface as="aside" material="chrome" radius="none" padding="none"
       data-expanded={expanded}
+      data-nav-zone="rail"
+      data-nav-side=""
+      data-print="hide"
       className={cn(
-        "glass-chrome sticky top-0 z-30 hidden h-svh shrink-0 flex-col rounded-none border-0 border-r pt-[calc(var(--safe-top)+0.75rem)] pb-[calc(var(--safe-bottom)+0.75rem)] transition-[width] duration-base ease-fluid md:flex",
+        "app-shell-rail sticky top-0 z-30 hidden h-svh shrink-0 flex-col rounded-none border-0 border-e pt-[calc(var(--safe-top)+0.75rem)] pb-[calc(var(--safe-bottom)+0.75rem)] transition-[width] duration-base ease-fluid md:flex",
         expanded ? "w-rail-expanded" : "w-rail",
       )}
     >
@@ -61,7 +69,7 @@ export function NavRail() {
                 <span
                   className={cn(
                     "text-numeric grid min-w-5 place-items-center rounded-full bg-brand px-1.5 text-label-sm leading-5 text-brand-foreground",
-                    expanded ? "ml-auto" : "absolute right-1 top-1 min-w-4 text-[10px] leading-4",
+                    expanded ? "ms-auto" : "absolute end-1 top-1 min-w-4 text-[10px] leading-4",
                   )}
                 >
                   {badge > 99 ? "99+" : badge}
@@ -71,19 +79,18 @@ export function NavRail() {
           );
           if (expanded) return <div key={item.key}>{link}</div>;
           return (
-            <Tooltip key={item.key} delay={300} closeDelay={0}>
+            <Tooltip key={item.key} content={item.label} side="right">
               {link}
-              <Tooltip.Content placement="right">{item.label}</Tooltip.Content>
             </Tooltip>
           );
         })}
       </nav>
 
-      {libraries.data?.libraries.edges.length ? (
+      {libraryRows.length ? (
         <div className="mt-4 flex min-h-0 flex-1 flex-col px-2">
           {expanded ? <p className="text-overline mb-1.5 px-3 text-muted">Libraries</p> : <div className="mx-3 mb-2 h-px bg-separator" />}
-          <div className="scrollbar-none flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
-            {libraries.data.libraries.edges.map(({ node }) => {
+          <div className="fa-focus-room scrollbar-none flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
+            {libraryRows.map((node) => {
               const meta = libraryType(node.libraryType);
               const href = `/libraries/${node.id}`;
               const active = isNavActive(href, pathname);
@@ -105,9 +112,8 @@ export function NavRail() {
               );
               if (expanded) return <div key={node.id}>{link}</div>;
               return (
-                <Tooltip key={node.id} delay={300} closeDelay={0}>
+                <Tooltip key={node.id} content={node.name} side="right">
                   {link}
-                  <Tooltip.Content placement="right">{node.name}</Tooltip.Content>
                 </Tooltip>
               );
             })}
@@ -117,15 +123,15 @@ export function NavRail() {
         <div className="flex-1" />
       )}
 
-      <button
-        type="button"
+      <Button
+        variant="ghost"
         data-focusable
-        onClick={() => setExpanded((value) => !value)}
+        onPress={() => setExpanded((value) => !value)}
         aria-label={expanded ? "Collapse navigation" : "Expand navigation"}
         className="nav-focus mx-2 mt-2 flex h-10 items-center justify-center rounded-xl text-muted transition-colors duration-fast hover:bg-surface-hover hover:text-foreground"
       >
-        {expanded ? <IconChevronsLeft size={20} /> : <IconChevronsRight size={20} />}
-      </button>
-    </aside>
+        {expanded ? <IconChevronsLeft size={20} className="rtl:rotate-180" /> : <IconChevronsRight size={20} className="rtl:rotate-180" />}
+      </Button>
+    </Surface>
   );
 }

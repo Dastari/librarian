@@ -1,6 +1,6 @@
 import { Outlet, createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_app/activity")({
-  staticData: { crumb: "Activity" },
+  staticData: { crumb: "Activity", fixedHeight: true },
   component: () => <Outlet />,
 });

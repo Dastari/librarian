@@ -32,7 +32,7 @@ use crate::graphql::entities::{
 };
 use crate::services::ServicesManager;
 use crate::services::manager::{Service, ServiceHealth};
-use crate::services::torrent::get_default_user_id;
+use crate::services::torrent::system_auth_user;
 use graphql_orm::graphql::filters::{DateFilter, StringFilter};
 
 use super::auto_download::{self, AutoDownloadRunSummary, HuntScope};
@@ -496,14 +496,7 @@ pub async fn run_retry_sweep(
         .await
         .ok_or_else(|| anyhow::anyhow!("torrent service not available"))?;
 
-    let Some(user_id) = get_default_user_id(&db).await? else {
-        return Ok(());
-    };
-    let auth_user = crate::services::graphql::AuthUser {
-        user_id: user_id.to_string(),
-        email: None,
-        role: Some("admin".to_string()),
-    };
+    let auth_user = system_auth_user();
 
     let now = Utc::now();
     let window = find_window_torrents(&db, retry_window_days).await?;

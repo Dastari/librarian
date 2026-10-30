@@ -1,8 +1,8 @@
-import { useMutation, useQuery } from "@apollo/client/react";
-import { toast } from "@heroui/react";
+import { useMutation } from "@apollo/client/react";
+import { toast } from "glass-ux/toast";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { IconPlus, IconStar, IconStarFilled, IconTags, IconTrash } from "@tabler/icons-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -11,13 +11,16 @@ import {
   EntityQualityProfileCreateDocument,
   EntityQualityProfileDeleteDocument,
   EntityQualityProfileUpdateDocument,
-  QualityProfilesListDocument,
+  EntityQualityProfileListDocument,
   type QualityProfileFieldsFragment,
 } from "@/graphql/generated/graphql";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { LANGUAGES, languageName } from "@/lib/languages";
 
 import { FormOrderedChips } from "./OrderedChips";
+
+import { SettingsLoadError } from "./SettingsLoadError";
+import { useSettingsConnection } from "./useSettingsConnection";
 
 const list = z.string();
 const splitList = (value: string) => value.split(/[,\n]/).map((item) => item.trim()).filter(Boolean);
@@ -76,8 +79,8 @@ const toInput = (profile?: QualityProfileFieldsFragment | null): Input => ({
 });
 
 export function QualitySettings() {
-  const { data, previousData, loading, refetch } = useQuery(QualityProfilesListDocument);
-  const profiles = (data ?? previousData)?.qualityProfiles.edges.map((edge) => edge.node) ?? [];
+  const list = useSettingsConnection(EntityQualityProfileListDocument, { orderBy: [{ name: "ASC" }] }, (data) => data.qualityProfiles);
+  const { rows: profiles, loading, refetch } = list;
   const [editing, setEditing] = useState<QualityProfileFieldsFragment | null | "new">(null);
   const [removing, setRemoving] = useState<QualityProfileFieldsFragment | null>(null);
   const [create, { loading: creating }] = useMutation(EntityQualityProfileCreateDocument);
@@ -125,7 +128,7 @@ export function QualitySettings() {
     }
   };
 
-  const columns: Array<DataTableColumn<QualityProfileFieldsFragment>> = [
+  const columns = useMemo<Array<DataTableColumn<QualityProfileFieldsFragment>>>(() => [
     {
       id: "name",
       header: "Profile",
@@ -142,7 +145,7 @@ export function QualitySettings() {
     { id: "kind", header: "Kind", size: 100, cell: (profile) => <StatusChip status={{ label: profile.mediaKind === "VIDEO" ? "Video" : "Audio", tone: "accent", dot: "bg-info" }} /> },
     { id: "cutoff", header: "Upgrade until", size: 140, hideBelow: "md", cell: (profile) => <span className="text-muted">{profile.upgradeUntilCutoff ? (profile.cutoffResolution ?? "best available") : "Off"}</span> },
     { id: "sources", header: "Sources", size: 180, hideBelow: "lg", cell: (profile) => <span className="text-muted">{profile.allowedSources.join(", ") || "Any"}</span> },
-  ];
+  ], []);
   const actions: Array<DataTableRowAction<QualityProfileFieldsFragment>> = [
     { key: "default", label: "Make default", icon: <IconStar size={16} />, hidden: (profile) => profile.isDefault, onAction: makeDefault },
     { key: "delete", label: "Delete", icon: <IconTrash size={16} />, destructive: true, hidden: (profile) => profile.isDefault, onAction: (profile) => setRemoving(profile) },
@@ -154,6 +157,7 @@ export function QualitySettings() {
   return (
     <div className="flex flex-col gap-6">
       <Panel title="Quality profiles" description="Decide which releases are acceptable and when a better file should replace an existing one." flush actions={<Button variant="primary" size="sm" onPress={() => setEditing("new")}><IconPlus size={16} /> New profile</Button>}>
+        <SettingsLoadError error={list.error} retry={list.refetch} hasRows={profiles.length > 0} />
         <DataTable<QualityProfileFieldsFragment> className="px-4 pb-4" frame={false} columns={columns} rows={profiles} getRowId={(profile) => profile.id} isLoading={loading && profiles.length === 0} rowActions={actions} onRowClick={(profile) => setEditing(profile)} noun="profiles" emptyState={<EmptyState compact icon={IconTags} title="No profiles yet" />} />
       </Panel>
 

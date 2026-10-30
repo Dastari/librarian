@@ -1,4 +1,5 @@
-import { IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
+import { IconChevronLeft, IconChevronRight } from "glass-ux/icons";
+import { Button } from "glass-ux/button";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
@@ -22,8 +23,9 @@ export function MediaRow({ children, className, ariaLabel }: MediaRowProps) {
   const update = useCallback(() => {
     const element = ref.current;
     if (!element) return;
-    setCanBack(element.scrollLeft > 8);
-    setCanForward(element.scrollLeft + element.clientWidth < element.scrollWidth - 8);
+    const offset = Math.abs(element.scrollLeft);
+    setCanBack(offset > 8);
+    setCanForward(offset + element.clientWidth < element.scrollWidth - 8);
   }, []);
 
   useEffect(() => {
@@ -42,35 +44,28 @@ export function MediaRow({ children, className, ariaLabel }: MediaRowProps) {
   const page = (direction: 1 | -1) => {
     const element = ref.current;
     if (!element) return;
-    element.scrollBy({ left: direction * element.clientWidth * 0.85, behavior: "smooth" });
+    const inlineDirection = getComputedStyle(element).direction === "rtl" ? -1 : 1;
+    element.scrollBy({ left: inlineDirection * direction * element.clientWidth * 0.85, behavior: "smooth" });
   };
 
   return (
     <div className={cn("group/row relative", className)}>
-      <div ref={ref} role="list" aria-label={ariaLabel} className="snap-row page-gutter">
+      <div ref={ref} role="list" aria-label={ariaLabel} data-nav-group className="snap-row page-gutter">
         {children}
       </div>
-      <RowArrow side="left" visible={canBack} onPress={() => page(-1)} />
-      <RowArrow side="right" visible={canForward} onPress={() => page(1)} />
+      <RowArrow side="start" visible={canBack} onPress={() => page(-1)} />
+      <RowArrow side="end" visible={canForward} onPress={() => page(1)} />
     </div>
   );
 }
 
-function RowArrow({ side, visible, onPress }: { side: "left" | "right"; visible: boolean; onPress: () => void }) {
-  const Icon = side === "left" ? IconChevronLeft : IconChevronRight;
+function RowArrow({ side, visible, onPress }: { side: "start" | "end"; visible: boolean; onPress: () => void }) {
+  const Icon = side === "start" ? IconChevronLeft : IconChevronRight;
   return (
-    <button
-      type="button"
-      tabIndex={-1}
-      aria-hidden
-      onClick={onPress}
-      className={cn(
-        "glass-control absolute top-1/2 z-10 hidden size-11 -translate-y-1/2 place-items-center rounded-full text-foreground opacity-0 transition-opacity duration-fast hover-capable:grid group-hover/row:opacity-100 tv:hidden",
-        !visible && "pointer-events-none group-hover/row:opacity-0",
-        side === "left" ? "left-[calc(var(--page-gutter)/2-1.375rem)]" : "right-[calc(var(--page-gutter)/2-1.375rem)]",
-      )}
-    >
-      <Icon size={22} />
-    </button>
+    <Button
+      variant="secondary" shape="circle" icon={<Icon className="rtl:rotate-180" />} aria-label={side === "start" ? "Previous items" : "Next items"}
+      onClick={onPress} disabled={!visible} data-print="hide"
+      className={cn("absolute top-1/2 z-10 -translate-y-1/2", !visible && "invisible", side === "start" ? "start-2" : "end-2")}
+    />
   );
 }

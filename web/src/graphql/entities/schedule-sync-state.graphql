@@ -81,8 +81,5 @@ subscription EntityScheduleSyncStateChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    scheduleSyncState {
-      ...ScheduleSyncStateFields
-    }
   }
 }

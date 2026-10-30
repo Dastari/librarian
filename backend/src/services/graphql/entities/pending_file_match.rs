@@ -4,8 +4,16 @@ use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    async_graphql::SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
 )]
+#[graphql(complex)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
@@ -123,6 +131,68 @@ pub struct PendingFileMatch {
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,
+
+    // Query relations do not add physical FKs or change existing delete behavior.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Episode",
+        from = "episode_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub episode: Option<Box<Episode>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Movie",
+        from = "movie_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub movie: Option<Box<Movie>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Track",
+        from = "track_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub track: Option<Box<Track>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Chapter",
+        from = "chapter_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub chapter: Option<Box<Chapter>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Torrent",
+        from = ["source_id", "user_id"],
+        to = ["info_hash", "user_id"],
+        on_delete = "restrict",
+        source_condition(field = "source_type", equals = "torrent"),
+        emit_fk = false
+    )]
+    pub torrent: Option<Box<Torrent>>,
 }
 
 #[derive(Default)]

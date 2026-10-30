@@ -1,4 +1,16 @@
-export { cn } from "@heroui/react";
+import { clsx, type ClassValue } from "clsx";
+import { twMerge } from "tailwind-merge";
+
+/** Preserve the former helper's numeric tokens, including nested class arrays. */
+function normalizeClassValue(value: ClassValue): ClassValue {
+  if (value === 0 || typeof value === "bigint") return String(value);
+  return Array.isArray(value) ? value.map(normalizeClassValue) : value;
+}
+
+/** Combine conditional classes and resolve conflicting Tailwind utilities. */
+export function cn(...inputs: ClassValue[]): string | undefined {
+  return twMerge(clsx(inputs.map(normalizeClassValue))) || undefined;
+}
 
 /** Narrow a nullable to a value; useful in `.filter(isPresent)` chains. */
 export function isPresent<T>(value: T | null | undefined): value is T {

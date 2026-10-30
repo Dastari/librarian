@@ -12,8 +12,8 @@
  * For each entity this writes `src/graphql/entities/<entity>.graphql` containing a
  * `<Entity>Fields` fragment with every scalar field plus the standard operations.
  * Hand-written documents in `src/graphql/documents` spread these fragments and add
- * relation selections. Everything then flows through graphql-codegen, so no GraphQL
- * type or document is ever written by hand.
+ * relation selections. Schema types and TypedDocumentNodes come from codegen;
+ * handwritten selection documents remain validated compositions of that schema.
  */
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -29,21 +29,25 @@ import {
 } from "graphql";
 
 const root = process.cwd();
-const schemaPath = resolve(root, "schema.graphql");
-const outputDir = resolve(root, "src/graphql/entities");
+const args = process.argv.slice(2);
+const option = (name, fallback) => args.includes(name) ? args[args.indexOf(name) + 1] : fallback;
+const schemaPath = resolve(root, option("--schema", "schema.graphql"));
+const outputDir = resolve(root, option("--output", "src/graphql/entities"));
+const check = args.includes("--check");
+const expectedFiles = new Map();
 
 const schema = buildSchema(readFileSync(schemaPath, "utf8"));
 const queryType = schema.getQueryType();
 const mutationType = schema.getMutationType();
 const subscriptionType = schema.getSubscriptionType();
 
-if (!queryType || !mutationType || !subscriptionType) {
-  throw new Error("Schema is missing a root operation type");
+if (!queryType) {
+  throw new Error("Schema is missing its query root");
 }
 
 const queryFields = queryType.getFields();
-const mutationFields = mutationType.getFields();
-const subscriptionFields = subscriptionType.getFields();
+const mutationFields = mutationType?.getFields() ?? {};
+const subscriptionFields = subscriptionType?.getFields() ?? {};
 
 const lowerFirst = (value) => value.charAt(0).toLowerCase() + value.slice(1);
 const upperFirst = (value) => value.charAt(0).toUpperCase() + value.slice(1);
@@ -67,6 +71,9 @@ for (const [fieldName, field] of Object.entries(queryFields)) {
   if (!isObjectType(returnType) || !returnType.name.endsWith("Connection")) continue;
   const argNames = new Set(field.args.map((arg) => arg.name));
   if (!argNames.has("where") || !argNames.has("page")) continue;
+  // Opt-in keyset roots return the same connection, but are not a second
+  // entity. Discover the canonical offset root; generate keysets separately.
+  if (getNamedType(field.args.find((arg) => arg.name === "page").type).name !== "PageInput") continue;
 
   const edgesField = returnType.getFields().edges;
   const edgeType = edgesField ? unwrap(edgesField.type) : undefined;
@@ -96,8 +103,17 @@ for (const [fieldName, field] of Object.entries(queryFields)) {
   });
 }
 
-rmSync(outputDir, { recursive: true, force: true });
-mkdirSync(outputDir, { recursive: true });
+const names = entities.map((entity) => entity.name);
+if (new Set(names).size !== names.length) throw new Error("Ambiguous generated entity list roots");
+// The authorization matrix deliberately enumerates every public registered
+// entity. Missing roots must not disappear silently from schema-driven output.
+if (!args.includes("--schema")) {
+  const registry = JSON.parse(readFileSync(resolve(root, "../backend/tests/fixtures/authorization-matrix.json"), "utf8"));
+  for (const { entity } of registry) {
+    if (!names.includes(entity)) throw new Error(`Registered entity ${entity} has no generated list root`);
+    if (!subscriptionFields[`${lowerFirst(entity)}Changed`]) throw new Error(`Registered entity ${entity} has no generated change subscription`);
+  }
+}
 
 function inputTypeName(field, argName) {
   const arg = field?.args.find((candidate) => candidate.name === argName);
@@ -151,12 +167,27 @@ for (const entity of entities) {
   lines.push("");
 
   if (singleField) {
-    lines.push(`query Entity${name}Get($id: String!) {`);
+    lines.push(`query Entity${name}Get($id: ${inputTypeName(queryFields[singleField], "id")}) {`);
     lines.push(`  ${singleField}(id: $id) {`);
     lines.push(`    ...${fragmentName}`);
     lines.push(`  }`);
     lines.push(`}`);
     lines.push("");
+  }
+
+  const keyset = Object.values(queryFields).find((field) => unwrap(field.type) === unwrap(queryFields[pluralField].type)
+    && field.args.some((arg) => arg.name === "page" && getNamedType(arg.type).name === "KeysetPageInput"));
+  if (keyset) {
+    const keysetWhere = inputTypeName(keyset, "where");
+    const keysetPage = inputTypeName(keyset, "page");
+    const variables = [keysetWhere ? `$where: ${keysetWhere}` : null, `$page: ${keysetPage}`].filter(Boolean);
+    const arguments_ = [keysetWhere ? "where: $where" : null, "page: $page"].filter(Boolean);
+    lines.push(`query Entity${name}Keyset(${variables.join(", ")}) {`);
+    lines.push(`  ${keyset.name}(${arguments_.join(", ")}) {`);
+    lines.push(`    edges { cursor node { ...${fragmentName} } }`);
+    lines.push(`    pageInfo { hasNextPage hasPreviousPage startCursor endCursor totalCount }`);
+    lines.push(`  }`);
+    lines.push(`}`, "");
   }
 
   const createField = mutationFields[`create${name}`];
@@ -239,7 +270,6 @@ for (const entity of entities) {
   if (changedField) {
     const eventType = unwrap(changedField.type);
     const eventFields = isObjectType(eventType) ? eventType.getFields() : {};
-    const entityField = Object.values(eventFields).find((field) => unwrap(field.type) === type);
     const filterInput = inputTypeName(changedField, "filter");
     lines.push(
       filterInput
@@ -250,19 +280,32 @@ for (const entity of entities) {
     for (const key of ["action", "changeKind", "id", "sourceEntity", "sourceId", "path"]) {
       if (eventFields[key]) lines.push(`    ${key}`);
     }
-    if (entityField) {
-      lines.push(`    ${entityField.name} {`);
-      lines.push(`      ...${fragmentName}`);
-      lines.push(`    }`);
-    }
+    // ORM 0.45+ authorizes changed events as invalidations. Full entity
+    // fragments can include computed/object-valued fields that are rejected
+    // at subscription admission. Fetch rich data with the authorized query.
     lines.push(`  }`);
     lines.push(`}`);
     lines.push("");
   }
 
-  writeFileSync(resolve(outputDir, `${toKebab(name)}.graphql`), `${lines.join("\n").trimEnd()}\n`);
+  expectedFiles.set(`${toKebab(name)}.graphql`, `${lines.join("\n").trimEnd()}\n`);
   generatedCount += 1;
 }
 
-const written = readdirSync(outputDir).length;
+const coverage = entities.map(({ name, pluralField, singleField }) => ({
+  entity: name, list: pluralField, get: singleField ?? null,
+  changed: subscriptionFields[`${lowerFirst(name)}Changed`]?.name ?? null,
+}));
+expectedFiles.set("coverage.json", `${JSON.stringify(coverage, null, 2)}\n`);
+if (check) {
+  const actual = readdirSync(outputDir);
+  const differences = [...expectedFiles].filter(([file, content]) => !actual.includes(file) || readFileSync(resolve(outputDir, file), "utf8") !== content).map(([file]) => file);
+  differences.push(...actual.filter((file) => !expectedFiles.has(file)));
+  if (differences.length) throw new Error(`Generated documents differ: ${differences.join(", ")}`);
+} else {
+  rmSync(outputDir, { recursive: true, force: true });
+  mkdirSync(outputDir, { recursive: true });
+  for (const [file, content] of expectedFiles) writeFileSync(resolve(outputDir, file), content);
+}
+const written = expectedFiles.size;
 console.log(`Generated ${generatedCount} entity documents (${written} files) in src/graphql/entities`);

@@ -1,3 +1,4 @@
+import { useLiveRoute } from "@/lib/graphql/live/hooks";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { ArtistPage } from "@/features/media/ArtistPage";
@@ -9,5 +10,9 @@ export const Route = createFileRoute("/_app/artists/$artistId")({
     const { data } = await context.apollo.query({ query: ArtistDetailDocument, variables: { id: params.artistId }, fetchPolicy: "cache-first" });
     return { crumb: data?.artist?.name ?? "Artist" };
   },
-  component: () => <ArtistPage artistId={Route.useParams().artistId} />,
+  component: () => {
+    const { artistId } = Route.useParams();
+    useLiveRoute(ArtistDetailDocument, { id: artistId });
+    return <ArtistPage artistId={artistId} />;
+  },
 });

@@ -94,8 +94,5 @@ subscription EntityScheduleCacheChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    scheduleCache {
-      ...ScheduleCacheFields
-    }
   }
 }

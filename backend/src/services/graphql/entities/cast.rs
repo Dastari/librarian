@@ -1,16 +1,24 @@
 use std::sync::Arc;
 
 use async_graphql::{Context, InputObject, Object, Request, Result, Variables};
+use graphql_orm::graphql::filters::{DateFilter, StringFilter};
+use graphql_orm::graphql::orm::{MutationContext, OrderDirection, TransactionMode};
 use serde::Deserialize;
 
-use super::super::auth::{AuthExt, AuthUser};
+use super::super::auth::{AuthExt, AuthUser, Role};
+use super::super::session_authority::SessionAuthority;
 use crate::graphql::entities::{
-    CastSession, CreateCastSessionInput, Library, UpdateCastSessionInput,
+    CastDevice, CastSession, CreateCastSessionInput, CreatePlaybackProgressInput, Library,
+    MediaFile, PlaybackProgress, PlaybackProgressOrderByInput, PlaybackProgressWhereInput,
+    RefreshToken, RefreshTokenWhereInput, UpdateCastSessionInput, UpdatePlaybackProgressInput,
+    User,
 };
 use crate::services::ServicesManager;
 use crate::services::cast::{CastDeviceType, CastGrantClaims, CastPlaybackMode};
 
-const CAST_GRANT_TTL_SECONDS: i64 = 15 * 60;
+#[cfg(test)]
+#[path = "cast_tests.rs"]
+mod tests;
 
 #[derive(Clone, Debug, async_graphql::SimpleObject)]
 pub struct LegacyCastDevice {
@@ -168,10 +176,30 @@ impl CastMutations {
     ) -> Result<CastSessionOperationResult> {
         let auth_user = ctx.require_member()?.clone();
         let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let issuer = ctx.data::<SessionAuthority>()?;
         let cast = manager
             .get_cast()
             .await
             .ok_or_else(|| async_graphql::Error::new("Cast service not available"))?;
+        if issuer.0.user_id != auth_user.user_id {
+            return Err(async_graphql::Error::new(
+                "Cast issuing authority does not match the actor",
+            ));
+        }
+        let auth = manager
+            .get_auth()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Authentication service not available"))?;
+        auth.validate_session_authority(&issuer.0)
+            .await
+            .map_err(|_| {
+                async_graphql::Error::new("Cast issuing session is no longer authorized")
+            })?;
+        if !AuthUser::from(issuer.0.clone()).has_role(Role::Member) {
+            return Err(async_graphql::Error::new(
+                "Member issuing authority required",
+            ));
+        }
         cast.validate_advertised_media_url()
             .map_err(|error| async_graphql::Error::new(error.to_string()))?;
 
@@ -186,6 +214,21 @@ impl CastMutations {
             }
         };
 
+        let (_, receiver_port) =
+            crate::services::cast::CastService::validate_target(&device.address, device.port)
+                .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+        let operation = cast
+            .lock_session_operations(&device.address, receiver_port)
+            .await
+            .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+        // Admission may have waited for a detached SDK worker. Recheck the
+        // actual caller after the wait, before preparing replacement playback.
+        validate_cast_caller(manager, &auth_user, issuer)
+            .await
+            .map_err(|_| {
+                async_graphql::Error::new("Cast issuing session is no longer authorized")
+            })?;
+
         let media_file = match query_media_file(manager, &auth_user, &input.media_file_id).await? {
             Some(media_file) => media_file,
             None => {
@@ -197,7 +240,7 @@ impl CastMutations {
             }
         };
 
-        if !auth_user.is_admin() {
+        {
             let Some(library_id) = media_file.library_id.as_ref() else {
                 return Ok(CastSessionOperationResult {
                     success: false,
@@ -297,7 +340,17 @@ impl CastMutations {
         );
         let default_volume = settings.default_volume;
         let default_muted = settings.default_muted;
-        let expires_at = chrono::Utc::now() + chrono::Duration::seconds(CAST_GRANT_TTL_SECONDS);
+        let expires_at_unix = CastGrantClaims::expiry_for_duration(
+            chrono::Utc::now().timestamp(),
+            media_file.duration,
+        );
+        let expires_at = chrono::DateTime::from_timestamp(expires_at_unix, 0)
+            .ok_or_else(|| async_graphql::Error::new("Invalid Cast grant expiration"))?;
+        for previous in
+            cast.release_receiver(&device.id, &receiver_address.to_string(), receiver_port)
+        {
+            retire_cast_monitor(manager, &previous).await;
+        }
         let session = create_cast_session(
             manager,
             CreateCastSessionArgs {
@@ -316,7 +369,10 @@ impl CastMutations {
                 playback_reason: Some(decision.reason.to_string()),
                 player_state: "STARTING".to_string(),
                 current_position: start_position,
-                duration: None,
+                duration: media_file
+                    .duration
+                    .filter(|duration| *duration > 0)
+                    .map(f64::from),
                 volume: default_volume,
                 is_muted: default_muted,
             },
@@ -328,7 +384,14 @@ impl CastMutations {
             auth_user.user_id.clone(),
             receiver_address.to_string(),
             expires_at.timestamp(),
+            issuer.0.session_id.to_string(),
+            issuer.0.roles.clone(),
+            input.device_id.clone(),
+            receiver_port,
         );
+        validate_cast_grant_authority(manager, &claims)
+            .await
+            .map_err(|_| async_graphql::Error::new("Cast authority changed before launch"))?;
         let grant = cast
             .mint_grant(&claims)
             .map_err(|error| async_graphql::Error::new(error.to_string()))?;
@@ -352,6 +415,7 @@ impl CastMutations {
 
         let launch = match cast
             .cast_media(
+                &operation,
                 &receiver_address.to_string(),
                 receiver_port,
                 &stream_url,
@@ -361,13 +425,12 @@ impl CastMutations {
             .await
         {
             Ok(launch) => launch,
-            Err(err) => {
+            Err(_err) => {
                 let correlation_id = uuid::Uuid::new_v4().to_string();
                 tracing::error!(
                     correlation_id,
                     cast_session_id = %session.id,
                     cast_device_id = %input.device_id,
-                    error = %err,
                     "Cast media launch failed"
                 );
                 let _ = update_cast_session(
@@ -396,6 +459,7 @@ impl CastMutations {
 
         let default_error = match cast
             .set_volume(
+                &operation,
                 &receiver_address.to_string(),
                 receiver_port,
                 default_volume as f32,
@@ -403,27 +467,32 @@ impl CastMutations {
             .await
         {
             Ok(()) if default_muted => cast
-                .set_muted(&receiver_address.to_string(), receiver_port, true)
+                .set_muted(
+                    &operation,
+                    &receiver_address.to_string(),
+                    receiver_port,
+                    true,
+                )
                 .await
                 .err(),
             Ok(()) => None,
             Err(error) => Some(error),
         };
-        if let Some(error) = &default_error {
+        if default_error.is_some() {
             tracing::warn!(
                 cast_session_id = %session.id,
-                error = %error,
                 "Cast playback started but receiver defaults could not be applied"
             );
         }
         let monitor_transport_id = launch.receiver_transport_id.clone();
+        let monitor_receiver_session_id = launch.receiver_session_id.clone();
         let monitor_media_session_id = launch.media_session_id;
         let session = update_cast_session(
             manager,
             &session.id,
             CastSessionPatch {
                 player_state: Some("PLAYING".to_string()),
-                duration: Some(launch.duration),
+                duration: launch.duration.map(Some),
                 receiver_transport_id: Some(Some(launch.receiver_transport_id)),
                 receiver_session_id: Some(Some(launch.receiver_session_id)),
                 media_session_id: Some(Some(launch.media_session_id)),
@@ -435,6 +504,12 @@ impl CastMutations {
             },
         )
         .await?;
+        cast.manage_session(
+            claims.clone(),
+            monitor_transport_id.clone(),
+            monitor_receiver_session_id,
+            monitor_media_session_id,
+        );
         let monitor_cast = Arc::clone(&cast);
         let monitor_manager = Arc::clone(manager);
         let monitor_session_id = session.id.clone();
@@ -449,6 +524,7 @@ impl CastMutations {
                 receiver_port,
                 monitor_transport_id,
                 monitor_media_session_id,
+                claims,
             ),
         )
         .await;
@@ -480,71 +556,12 @@ impl CastMutations {
 
     #[graphql(name = "castStop")]
     async fn cast_stop(&self, ctx: &Context<'_>, session_id: String) -> Result<CastActionResult> {
-        let auth_user = ctx.require_member()?.clone();
-        let manager = ctx.data::<Arc<ServicesManager>>()?;
-        let cast = manager
-            .get_cast()
+        update_cast_session_state(ctx, &session_id, SessionCommand::Stop)
             .await
-            .ok_or_else(|| async_graphql::Error::new("Cast service not available"))?;
-
-        let Some(session) = query_session_by_id(manager, &auth_user, &session_id).await? else {
-            return Ok(CastActionResult {
-                success: false,
-                error: Some("Cast session not found".to_string()),
-            });
-        };
-        let Some(device_id) = session.device_id.clone() else {
-            return Ok(CastActionResult {
-                success: false,
-                error: Some("Cast session has no device".to_string()),
-            });
-        };
-        let Some(device) = query_device_by_id(manager, &auth_user, &device_id).await? else {
-            return Ok(CastActionResult {
-                success: false,
-                error: Some("Cast device not found".to_string()),
-            });
-        };
-
-        let Some((transport_id, media_session_id)) = session_receiver_ids(&session) else {
-            return Ok(CastActionResult {
-                success: false,
-                error: Some("Cast session has no active receiver state".to_string()),
-            });
-        };
-        if let Err(err) = cast
-            .stop(
-                &device.address,
-                validated_device_port(&device)?,
-                transport_id,
-                media_session_id,
-            )
-            .await
-        {
-            tracing::warn!(cast_session_id = %session_id, error = %err, "Cast stop failed");
-            return Ok(CastActionResult {
-                success: false,
-                error: Some("Unable to stop playback on this receiver".to_string()),
-            });
-        }
-
-        let now = chrono::Utc::now().to_rfc3339();
-        let _ = update_cast_session(
-            manager,
-            &session_id,
-            CastSessionPatch {
-                player_state: Some("IDLE".to_string()),
-                ended_at: Some(Some(now)),
-                last_position: Some(Some(session.current_position)),
-                ..Default::default()
-            },
-        )
-        .await?;
-
-        Ok(CastActionResult {
-            success: true,
-            error: None,
-        })
+            .map(|result| CastActionResult {
+                success: result.success,
+                error: result.error,
+            })
     }
 
     #[graphql(name = "castSeek")]
@@ -811,10 +828,6 @@ struct SessionNode {
     episode_id: Option<String>,
     #[serde(skip)]
     stream_url: String,
-    #[serde(rename = "ReceiverTransportId")]
-    receiver_transport_id: Option<String>,
-    #[serde(rename = "MediaSessionId")]
-    media_session_id: Option<i32>,
     #[serde(rename = "LastError")]
     last_error: Option<String>,
     #[serde(rename = "PlaybackDecision")]
@@ -855,6 +868,8 @@ struct SettingNode {
 struct MediaFileNode {
     #[serde(rename = "Path")]
     path: String,
+    #[serde(rename = "Duration")]
+    duration: Option<i32>,
     #[serde(rename = "ContentType")]
     content_type: Option<String>,
     #[serde(rename = "LibraryId")]
@@ -911,6 +926,7 @@ struct CastSessionPatch {
 }
 
 enum SessionCommand {
+    Stop,
     Play,
     Pause,
     Seek(f64),
@@ -925,104 +941,197 @@ async fn update_cast_session_state(
 ) -> Result<CastSessionOperationResult> {
     let auth_user = ctx.require_member()?.clone();
     let manager = ctx.data::<Arc<ServicesManager>>()?;
+    let caller = ctx.data::<SessionAuthority>()?;
+    control_cast_session(manager, &auth_user, caller, session_id, command)
+        .await
+        .map_err(|error| async_graphql::Error::new(error.to_string()))
+}
+
+/// Admission uses the original server-managed grant. Historical rows are never
+/// sufficient authority, even when their old receiver IDs are still present.
+async fn admit_managed_cast_session(
+    manager: &Arc<ServicesManager>,
+    cast: &crate::services::cast::CastService,
+    session_id: &str,
+) -> anyhow::Result<(
+    crate::services::cast::service::ManagedCastSession,
+    CastSession,
+)> {
+    let managed = cast
+        .managed_session(session_id)
+        .ok_or_else(|| anyhow::anyhow!("Cast session is no longer managed"))?;
+    let session = validate_cast_grant_authority(manager, &managed.claims).await?;
+    validate_managed_receiver(&managed, &session)?;
+    Ok((managed, session))
+}
+
+fn validate_managed_receiver(
+    managed: &crate::services::cast::service::ManagedCastSession,
+    session: &CastSession,
+) -> anyhow::Result<()> {
+    if session.receiver_transport_id.as_deref() != Some(managed.transport_id.as_str())
+        || session.receiver_session_id.as_deref() != Some(managed.receiver_session_id.as_str())
+        || session.media_session_id != Some(managed.media_session_id)
+    {
+        anyhow::bail!("Cast receiver session binding changed");
+    }
+    Ok(())
+}
+
+async fn validate_cast_caller(
+    manager: &Arc<ServicesManager>,
+    actor: &AuthUser,
+    caller: &SessionAuthority,
+) -> anyhow::Result<()> {
+    let authenticated = AuthUser::from(caller.0.clone());
+    if actor.user_id != authenticated.user_id
+        || !authenticated.has_role(Role::Member)
+        || actor.is_admin() != authenticated.is_admin()
+    {
+        anyhow::bail!("Cast caller authority does not match the actor");
+    }
+    let auth = manager
+        .get_auth()
+        .await
+        .ok_or_else(|| anyhow::anyhow!("Authentication service not available"))?;
+    auth.validate_session_authority(&caller.0).await
+}
+
+async fn control_cast_session(
+    manager: &Arc<ServicesManager>,
+    actor: &AuthUser,
+    caller: &SessionAuthority,
+    session_id: &str,
+    command: SessionCommand,
+) -> anyhow::Result<CastSessionOperationResult> {
     let cast = manager
         .get_cast()
         .await
-        .ok_or_else(|| async_graphql::Error::new("Cast service not available"))?;
-
-    let Some(session) = query_session_by_id(manager, &auth_user, session_id).await? else {
-        return Ok(CastSessionOperationResult {
-            success: false,
-            session: None,
-            error: Some("Cast session not found".to_string()),
-        });
+        .ok_or_else(|| anyhow::anyhow!("Cast service not available"))?;
+    let binding = cast
+        .managed_session(session_id)
+        .ok_or_else(|| anyhow::anyhow!("Cast session is no longer managed"))?;
+    let operation = cast
+        .lock_session_operations(
+            &binding.claims.receiver_address,
+            binding.claims.receiver_port,
+        )
+        .await?;
+    validate_cast_caller(manager, actor, caller).await?;
+    let (managed, session) = admit_managed_cast_session(manager, &cast, session_id).await?;
+    if managed.claims != binding.claims {
+        anyhow::bail!("Cast managed session changed while awaiting admission");
+    }
+    if !actor.is_admin() && session.user_id.as_deref() != Some(actor.user_id.as_str()) {
+        anyhow::bail!("Cast session not found");
+    }
+    let claims = &managed.claims;
+    let device_name = query_device_by_id(manager, actor, &claims.receiver_device_id)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))?
+        .map(|device| device.name);
+    let mut status = crate::services::cast::CastRemoteStatus {
+        player_state: session.player_state.clone(),
+        finished: false,
+        current_position: session.current_position,
+        duration: session.duration,
+        volume: session.volume,
+        is_muted: session.is_muted,
     };
-    let Some(device_id) = session.device_id.clone() else {
-        return Ok(CastSessionOperationResult {
-            success: false,
-            session: None,
-            error: Some("Cast session has no device".to_string()),
-        });
-    };
-    let Some(device) = query_device_by_id(manager, &auth_user, &device_id).await? else {
-        return Ok(CastSessionOperationResult {
-            success: false,
-            session: None,
-            error: Some("Cast device not found".to_string()),
-        });
-    };
-    let Some((transport_id, media_session_id)) = session_receiver_ids(&session) else {
-        return Ok(CastSessionOperationResult {
-            success: false,
-            session: None,
-            error: Some("Cast session has no active receiver state".to_string()),
-        });
-    };
-    let port = validated_device_port(&device)?;
-
-    let update_input = match command {
+    let result = match command {
+        SessionCommand::Stop => {
+            status.player_state = "IDLE".into();
+            cast.stop(
+                &operation,
+                &claims.receiver_address,
+                claims.receiver_port,
+                &managed.transport_id,
+                managed.media_session_id,
+            )
+            .await
+        }
         SessionCommand::Play => {
-            cast.play(&device.address, port, transport_id, media_session_id)
-                .await
-                .map_err(|error| cast_control_error("play", session_id, error))?;
-            CastSessionPatch {
-                player_state: Some("PLAYING".to_string()),
-                ..Default::default()
-            }
+            status.player_state = "PLAYING".into();
+            cast.play(
+                &operation,
+                &claims.receiver_address,
+                claims.receiver_port,
+                &managed.transport_id,
+                managed.media_session_id,
+            )
+            .await
         }
         SessionCommand::Pause => {
-            cast.pause(&device.address, port, transport_id, media_session_id)
-                .await
-                .map_err(|error| cast_control_error("pause", session_id, error))?;
-            CastSessionPatch {
-                player_state: Some("PAUSED".to_string()),
-                ..Default::default()
-            }
+            status.player_state = "PAUSED".into();
+            cast.pause(
+                &operation,
+                &claims.receiver_address,
+                claims.receiver_port,
+                &managed.transport_id,
+                managed.media_session_id,
+            )
+            .await
         }
         SessionCommand::Seek(position) => {
-            let position = crate::services::cast::CastService::validate_position(position)
-                .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+            status.current_position =
+                crate::services::cast::CastService::validate_position(position)?;
             cast.seek(
-                &device.address,
-                port,
-                transport_id,
-                media_session_id,
+                &operation,
+                &claims.receiver_address,
+                claims.receiver_port,
+                &managed.transport_id,
+                managed.media_session_id,
                 position,
             )
             .await
-            .map_err(|error| cast_control_error("seek", session_id, error))?;
-            CastSessionPatch {
-                current_position: Some(position),
-                last_position: Some(Some(position)),
-                ..Default::default()
-            }
         }
         SessionCommand::SetVolume(volume) => {
-            let volume = crate::services::cast::CastService::validate_volume(volume)
-                .map_err(|error| async_graphql::Error::new(error.to_string()))?;
-            cast.set_volume(&device.address, port, volume)
-                .await
-                .map_err(|error| cast_control_error("set volume", session_id, error))?;
-            CastSessionPatch {
-                volume: Some(f64::from(volume)),
-                ..Default::default()
-            }
+            let volume = crate::services::cast::CastService::validate_volume(volume)?;
+            status.volume = f64::from(volume);
+            cast.set_volume(
+                &operation,
+                &claims.receiver_address,
+                claims.receiver_port,
+                volume,
+            )
+            .await
         }
         SessionCommand::SetMuted(muted) => {
-            cast.set_muted(&device.address, port, muted)
-                .await
-                .map_err(|error| cast_control_error("set mute", session_id, error))?;
-            CastSessionPatch {
-                is_muted: Some(muted),
-                ..Default::default()
-            }
+            status.is_muted = muted;
+            cast.set_muted(
+                &operation,
+                &claims.receiver_address,
+                claims.receiver_port,
+                muted,
+            )
+            .await
         }
     };
-
-    let updated = update_cast_session(manager, session_id, update_input).await?;
+    result.map_err(|error| {
+        let error = cast_control_error("control playback", session_id, error);
+        anyhow::anyhow!(error.message)
+    })?;
+    validate_cast_caller(manager, actor, caller).await?;
+    let ended = checkpoint_cast_status_for_caller(
+        manager,
+        claims,
+        status,
+        &managed.transport_id,
+        managed.media_session_id,
+        Some(caller),
+        Some(&session),
+    )
+    .await?;
+    if ended {
+        cast.forget_session(session_id);
+    }
+    let updated = query_session_by_id(manager, actor, session_id)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))?
+        .ok_or_else(|| anyhow::anyhow!("Cast session not found"))?;
     Ok(CastSessionOperationResult {
         success: true,
-        session: Some(map_session(updated, Some(device.name))),
+        session: Some(map_session(updated, device_name)),
         error: None,
     })
 }
@@ -1082,30 +1191,16 @@ fn parse_device_type(value: &str) -> CastDeviceType {
     }
 }
 
-fn validated_device_port(device: &DeviceNode) -> Result<u16> {
-    crate::services::cast::CastService::validate_target(&device.address, device.port)
-        .map(|(_, port)| port)
-        .map_err(|error| async_graphql::Error::new(error.to_string()))
-}
-
-fn session_receiver_ids(session: &SessionNode) -> Option<(&str, i32)> {
-    Some((
-        session.receiver_transport_id.as_deref()?,
-        session.media_session_id?,
-    ))
-}
-
 fn cast_control_error(
     action: &str,
     session_id: &str,
-    error: anyhow::Error,
+    _error: anyhow::Error,
 ) -> async_graphql::Error {
     let correlation_id = uuid::Uuid::new_v4().to_string();
     tracing::error!(
         correlation_id,
         cast_session_id = session_id,
         action,
-        error = %error,
         "Cast control command failed"
     );
     async_graphql::Error::new(format!(
@@ -1113,6 +1208,419 @@ fn cast_control_error(
     ))
 }
 
+/// Shared admission boundary for receiver media requests and the server monitor.
+/// The caller must first verify the grant signature and request media/IP. All
+/// persisted reads use one snapshot; checkpoint writes reuse the same checks in
+/// their write transaction so revocation/reassignment cannot race the write.
+pub(crate) async fn validate_cast_grant_authority(
+    manager: &Arc<ServicesManager>,
+    claims: &CastGrantClaims,
+) -> anyhow::Result<CastSession> {
+    let database = manager
+        .get_database()
+        .await
+        .ok_or_else(|| anyhow::anyhow!("Database service not available"))?;
+    let mut tx =
+        MutationContext::begin_with_auth(database.pool(), TransactionMode::Default, None).await?;
+    let result = validate_cast_authority_in_transaction(&mut tx, claims).await;
+    tx.rollback().await?;
+    result
+}
+
+async fn validate_cast_authority_in_transaction(
+    tx: &mut MutationContext<'_>,
+    claims: &CastGrantClaims,
+) -> anyhow::Result<CastSession> {
+    let now = chrono::Utc::now();
+    if claims.expires_at <= now.timestamp()
+        || claims.issuer_session_id.is_empty()
+        || uuid::Uuid::parse_str(&claims.issuer_session_id).is_err()
+    {
+        anyhow::bail!("Cast issuing authority has expired or is missing");
+    }
+    validate_cast_principal_in_transaction(
+        tx,
+        &claims.user_id,
+        &claims.issuer_session_id,
+        &claims.issuer_roles,
+    )
+    .await?;
+    let file = tx
+        .find_by_id::<MediaFile>(&claims.media_file_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Cast media file no longer exists"))?;
+    let library_id = file
+        .library_id
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Cast media file has no current library"))?;
+    let library = tx
+        .find_by_id::<Library>(library_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Cast library no longer exists"))?;
+    if library.user_id != claims.user_id {
+        anyhow::bail!("Cast media ownership changed");
+    }
+    let session = tx
+        .find_by_id::<CastSession>(&claims.session_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Cast session no longer exists"))?;
+    let expiry_matches = session
+        .grant_expires_at
+        .as_deref()
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .is_some_and(|expiry| expiry.timestamp() == claims.expires_at);
+    if session.user_id.as_deref() != Some(claims.user_id.as_str())
+        || session.media_file_id.as_deref() != Some(claims.media_file_id.as_str())
+        || session.device_id.as_deref() != Some(claims.receiver_device_id.as_str())
+        || session.receiver_address.as_deref() != Some(claims.receiver_address.as_str())
+        || session.ended_at.is_some()
+        || !expiry_matches
+        || !matches!(
+            session.player_state.as_str(),
+            "STARTING" | "PLAYING" | "PAUSED" | "BUFFERING"
+        )
+    {
+        anyhow::bail!("Cast session binding is no longer active");
+    }
+    // STARTING admits the receiver's initial LOAD fetch, before the SDK has
+    // returned its transport/media IDs. Established sessions require all IDs.
+    if session.player_state != "STARTING"
+        && (session
+            .receiver_transport_id
+            .as_deref()
+            .is_none_or(str::is_empty)
+            || session
+                .receiver_session_id
+                .as_deref()
+                .is_none_or(str::is_empty)
+            || session.media_session_id.is_none())
+    {
+        anyhow::bail!("Cast receiver session binding is missing");
+    }
+    let device = tx
+        .find_by_id::<CastDevice>(&claims.receiver_device_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Cast receiver no longer exists"))?;
+    let (address, port) =
+        crate::services::cast::CastService::validate_target(&device.address, device.port)?;
+    if device.enabled != Some(true)
+        || device.playback_supported != Some(true)
+        || !matches!(
+            parse_device_type(&device.device_type),
+            CastDeviceType::Chromecast | CastDeviceType::ChromecastAudio
+        )
+        || address.to_string() != claims.receiver_address
+        || port != claims.receiver_port
+    {
+        anyhow::bail!("Cast receiver binding is no longer allowed");
+    }
+    Ok(session)
+}
+
+/// Rechecks real persisted login authority without manufacturing token claims.
+async fn validate_cast_principal_in_transaction(
+    tx: &mut MutationContext<'_>,
+    user_id: &str,
+    issuer_session_id: &str,
+    issuer_roles: &[String],
+) -> anyhow::Result<()> {
+    let now = chrono::Utc::now();
+    let owner_id = user_id.to_string();
+    let user = tx
+        .find_by_id::<User>(&owner_id)
+        .await?
+        .filter(|user| user.is_active)
+        .ok_or_else(|| anyhow::anyhow!("Cast owner is no longer active"))?;
+    let current_role = Role::parse(&user.role)
+        .ok_or_else(|| anyhow::anyhow!("Cast owner role is no longer allowed"))?;
+    let roles: Option<Vec<Role>> = issuer_roles.iter().map(|role| Role::parse(role)).collect();
+    let roles = roles
+        .filter(|roles| !roles.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("Cast issuing claims are not allowed"))?;
+    if current_role != Role::Admin && roles.contains(&Role::Admin) {
+        anyhow::bail!("Cast issuing role is no longer allowed");
+    }
+    let active = tx
+        .query::<RefreshToken>()
+        .filter(RefreshTokenWhereInput {
+            user_id: Some(cast_eq(user_id)),
+            session_id: Some(cast_eq(issuer_session_id)),
+            revoked_at: Some(DateFilter {
+                is_null: Some(true),
+                ..Default::default()
+            }),
+            expires_at: Some(DateFilter {
+                gt: Some(now.to_rfc3339()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .limit(1)
+        .fetch_all()
+        .await?;
+    let active = active
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("Cast issuing session is no longer active"))?;
+    let persisted_roles = active
+        .roles
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok())
+        .ok_or_else(|| anyhow::anyhow!("Cast persisted claims are missing"))?;
+    if !roles.iter().all(|role| {
+        persisted_roles
+            .iter()
+            .any(|value| Role::parse(value) == Some(*role))
+    }) {
+        anyhow::bail!("Cast issuing claims are no longer allowed");
+    }
+    Ok(())
+}
+
+fn cast_eq(value: &str) -> StringFilter {
+    StringFilter {
+        eq: Some(value.to_string()),
+        ..Default::default()
+    }
+}
+
+/// Revalidate and save the canonical personal checkpoint and Cast diagnostics
+/// atomically. No request user is impersonated: this trusted job uses the owner
+/// checked against the current file/library and the signed issuing session.
+#[cfg(test)]
+async fn checkpoint_cast_status(
+    manager: &Arc<ServicesManager>,
+    claims: &CastGrantClaims,
+    status: crate::services::cast::CastRemoteStatus,
+    transport_id: &str,
+    media_session_id: i32,
+) -> anyhow::Result<bool> {
+    checkpoint_cast_status_for_caller(
+        manager,
+        claims,
+        status,
+        transport_id,
+        media_session_id,
+        None,
+        None,
+    )
+    .await
+}
+
+async fn checkpoint_cast_status_for_caller(
+    manager: &Arc<ServicesManager>,
+    claims: &CastGrantClaims,
+    status: crate::services::cast::CastRemoteStatus,
+    transport_id: &str,
+    media_session_id: i32,
+    caller: Option<&SessionAuthority>,
+    observed: Option<&CastSession>,
+) -> anyhow::Result<bool> {
+    let database = manager
+        .get_database()
+        .await
+        .ok_or_else(|| anyhow::anyhow!("Database service not available"))?;
+    let mut tx =
+        MutationContext::begin_with_auth(database.pool(), TransactionMode::StateMachine, None)
+            .await?;
+    if let Some(caller) = caller {
+        validate_cast_principal_in_transaction(
+            &mut tx,
+            &caller.0.user_id,
+            &caller.0.session_id.to_string(),
+            &caller.0.roles,
+        )
+        .await?;
+    }
+    let session = validate_cast_authority_in_transaction(&mut tx, claims).await?;
+    if let Some(observed) = observed {
+        // A poll fetched before a confirmed command cannot roll its checkpoint
+        // back, even if a future caller accidentally splits the lifecycle lock.
+        if session.updated_at != observed.updated_at
+            || session.current_position != observed.current_position
+            || session.player_state != observed.player_state
+            || session.volume != observed.volume
+            || session.is_muted != observed.is_muted
+            || session.receiver_transport_id != observed.receiver_transport_id
+            || session.receiver_session_id != observed.receiver_session_id
+            || session.media_session_id != observed.media_session_id
+        {
+            anyhow::bail!("Cast checkpoint changed after admission");
+        }
+    }
+    if session.receiver_transport_id.as_deref() != Some(transport_id)
+        || session.media_session_id != Some(media_session_id)
+    {
+        anyhow::bail!("Cast receiver media session changed during status poll");
+    }
+    let (position, duration, ended, finished) = checkpoint_values(&session, &status)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let existing = tx
+        .query::<PlaybackProgress>()
+        .filter(PlaybackProgressWhereInput {
+            user_id: Some(cast_eq(&claims.user_id)),
+            media_file_id: Some(cast_eq(&claims.media_file_id)),
+            ..Default::default()
+        })
+        .order_by(PlaybackProgressOrderByInput {
+            updated_at: Some(OrderDirection::Desc),
+            ..Default::default()
+        })
+        .limit(1)
+        .fetch_all()
+        .await?;
+    let percent = duration
+        .map(|duration| (position / duration * 100.0).clamp(0.0, 100.0))
+        .unwrap_or(0.0);
+    if let Some(existing) = existing.first() {
+        tx.update_by_id::<PlaybackProgress>(
+            &existing.id,
+            UpdatePlaybackProgressInput {
+                current_position: Some(position),
+                duration: Some(duration),
+                progress_percent: Some(percent),
+                is_watched: Some(existing.is_watched || finished),
+                watched_at: if finished && existing.watched_at.is_none() {
+                    Some(Some(now.clone()))
+                } else {
+                    None
+                },
+                ..Default::default()
+            },
+        )
+        .await?;
+    } else {
+        tx.insert::<PlaybackProgress>(CreatePlaybackProgressInput {
+            user_id: claims.user_id.clone(),
+            media_file_id: Some(claims.media_file_id.clone()),
+            current_position: position,
+            duration,
+            progress_percent: percent,
+            is_watched: finished,
+            watched_at: finished.then(|| now.clone()),
+        })
+        .await?;
+    }
+    tx.update_by_id::<CastSession>(
+        &claims.session_id,
+        UpdateCastSessionInput {
+            player_state: Some(if ended {
+                "ENDED".to_string()
+            } else {
+                status.player_state
+            }),
+            current_position: Some(position),
+            last_position: Some(Some(position)),
+            duration: Some(duration),
+            volume: Some(status.volume),
+            is_muted: Some(status.is_muted),
+            last_error: Some(None),
+            ended_at: ended.then_some(Some(now)),
+            ..Default::default()
+        },
+    )
+    .await?;
+    tx.commit_and_emit().await?;
+    Ok(ended)
+}
+
+fn checkpoint_values(
+    session: &CastSession,
+    status: &crate::services::cast::CastRemoteStatus,
+) -> anyhow::Result<(f64, Option<f64>, bool, bool)> {
+    crate::services::cast::CastService::validate_position(status.current_position)?;
+    crate::services::cast::CastService::validate_volume(status.volume)?;
+    if !matches!(
+        status.player_state.as_str(),
+        "PLAYING" | "PAUSED" | "BUFFERING" | "IDLE"
+    ) {
+        anyhow::bail!("Invalid receiver playback state");
+    }
+    let valid_duration = |value: &f64| value.is_finite() && *value > 0.0;
+    let duration = status
+        .duration
+        .filter(valid_duration)
+        .or_else(|| session.duration.filter(valid_duration));
+    let ended = status.player_state == "IDLE";
+    let finished = ended && status.finished;
+    // Receivers commonly clear currentTime on terminal status. Preserve the
+    // checkpoint on cancel/error; only FINISHED advances to the known duration.
+    crate::services::cast::CastService::validate_position(session.current_position)?;
+    let position = if finished {
+        duration.unwrap_or(session.current_position.max(status.current_position))
+    } else if ended && status.current_position == 0.0 {
+        session.current_position
+    } else {
+        status.current_position
+    };
+    Ok((
+        duration
+            .map(|duration| position.min(duration))
+            .unwrap_or(position),
+        duration,
+        ended,
+        finished,
+    ))
+}
+
+async fn retire_cast_monitor(manager: &Arc<ServicesManager>, claims: &CastGrantClaims) {
+    retire_cast_monitor_with_binding(manager, claims, None).await;
+}
+
+async fn retire_cast_monitor_with_binding(
+    manager: &Arc<ServicesManager>,
+    claims: &CastGrantClaims,
+    receiver_binding: Option<(&str, i32)>,
+) {
+    let Some(database) = manager.get_database().await else {
+        return;
+    };
+    let Ok(mut tx) =
+        MutationContext::begin_with_auth(database.pool(), TransactionMode::StateMachine, None)
+            .await
+    else {
+        return;
+    };
+    let Ok(Some(session)) = tx.find_by_id::<CastSession>(&claims.session_id).await else {
+        return;
+    };
+    // Never mutate a reparented session or someone else's playback state.
+    if session.user_id.as_deref() != Some(claims.user_id.as_str())
+        || session.media_file_id.as_deref() != Some(claims.media_file_id.as_str())
+        || session.device_id.as_deref() != Some(claims.receiver_device_id.as_str())
+        || session.receiver_address.as_deref() != Some(claims.receiver_address.as_str())
+        || session
+            .grant_expires_at
+            .as_deref()
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+            .is_none_or(|expiry| expiry.timestamp() != claims.expires_at)
+        || receiver_binding.is_some_and(|(transport, media)| {
+            session.receiver_transport_id.as_deref() != Some(transport)
+                || session.media_session_id != Some(media)
+        })
+        || session.ended_at.is_some()
+    {
+        return;
+    }
+    let result = tx
+        .update_by_id::<CastSession>(
+            &claims.session_id,
+            UpdateCastSessionInput {
+                player_state: Some("DISCONNECTED".into()),
+                ended_at: Some(Some(chrono::Utc::now().to_rfc3339())),
+                last_position: Some(Some(session.current_position)),
+                last_error: Some(Some(
+                    "Cast access ended or the receiver stopped responding.".into(),
+                )),
+                ..Default::default()
+            },
+        )
+        .await;
+    if result.is_ok() {
+        let _ = tx.commit_and_emit().await;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn monitor_cast_session(
     manager: Arc<ServicesManager>,
     cast: Arc<crate::services::cast::CastService>,
@@ -1121,38 +1629,33 @@ async fn monitor_cast_session(
     receiver_port: u16,
     transport_id: String,
     media_session_id: i32,
+    claims: CastGrantClaims,
 ) {
     let mut failures = 0u8;
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(5));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         ticker.tick().await;
-        let Some(database) = manager.get_database().await else {
+        let Ok(operation) = cast
+            .lock_session_operations(&receiver_address, receiver_port)
+            .await
+        else {
             return;
         };
-        let session = match CastSession::get(database.pool().pool(), &session_id).await {
-            Ok(Some(session)) => session,
-            Ok(None) => return,
-            Err(error) => {
-                tracing::warn!(
-                    cast_session_id = %session_id,
-                    error = %error,
-                    "Cast session monitor could not read session state"
-                );
-                return;
-            }
+        let Ok((managed, observed)) =
+            admit_managed_cast_session(&manager, &cast, &session_id).await
+        else {
+            break;
         };
-        if session.ended_at.is_some()
-            || matches!(
-                session.player_state.as_str(),
-                "ENDED" | "FAILED" | "DISCONNECTED" | "IDLE"
-            )
+        if managed.claims != claims
+            || managed.transport_id != transport_id
+            || managed.media_session_id != media_session_id
         {
-            return;
+            break;
         }
-
         match cast
             .session_status(
+                &operation,
                 &receiver_address,
                 receiver_port,
                 &transport_id,
@@ -1162,64 +1665,69 @@ async fn monitor_cast_session(
         {
             Ok(status) => {
                 failures = 0;
-                let ended = status.player_state == "IDLE";
-                let update = UpdateCastSessionInput {
-                    player_state: Some(if ended {
-                        "ENDED".to_string()
-                    } else {
-                        status.player_state
-                    }),
-                    current_position: Some(status.current_position),
-                    last_position: Some(Some(status.current_position)),
-                    duration: status.duration.map(Some),
-                    volume: Some(status.volume),
-                    is_muted: Some(status.is_muted),
-                    last_error: Some(None),
-                    ended_at: if ended {
-                        Some(Some(chrono::Utc::now().to_rfc3339()))
-                    } else {
-                        None
-                    },
-                    ..Default::default()
-                };
-                if CastSession::update_by_id(database.pool(), &session_id, update)
-                    .await
-                    .is_err()
+                match checkpoint_cast_status_for_caller(
+                    &manager,
+                    &claims,
+                    status,
+                    &transport_id,
+                    media_session_id,
+                    None,
+                    Some(&observed),
+                )
+                .await
                 {
-                    return;
-                }
-                if ended {
-                    return;
+                    Ok(true) => {
+                        cast.forget_session(&session_id);
+                        return;
+                    }
+                    Ok(false) => {}
+                    Err(_) => break,
                 }
             }
-            Err(error) => {
+            Err(_error) => {
                 failures = failures.saturating_add(1);
-                tracing::warn!(
-                    cast_session_id = %session_id,
-                    failures,
-                    error = %error,
-                    "Cast receiver status poll failed"
-                );
+                tracing::warn!(cast_session_id = %session_id, failures,
+                    "Cast receiver status poll failed");
                 if failures >= 3 {
-                    let _ = CastSession::update_by_id(
-                        database.pool(),
-                        &session_id,
-                        UpdateCastSessionInput {
-                            player_state: Some("DISCONNECTED".to_string()),
-                            ended_at: Some(Some(chrono::Utc::now().to_rfc3339())),
-                            last_position: Some(Some(session.current_position)),
-                            last_error: Some(Some(
-                                "The receiver stopped responding; the Cast grant was revoked."
-                                    .to_string(),
-                            )),
-                            ..Default::default()
-                        },
-                    )
-                    .await;
-                    return;
+                    break;
                 }
             }
         }
+    }
+    let Ok(operation) = cast
+        .lock_session_operations(&receiver_address, receiver_port)
+        .await
+    else {
+        return;
+    };
+    // A disabled/ended/rebound/historical session has no remaining hardware
+    // authority. In particular never send a late STOP to replacement playback.
+    if admit_managed_cast_session(&manager, &cast, &session_id)
+        .await
+        .is_ok_and(|(managed, _)| {
+            managed.claims == claims
+                && managed.transport_id == transport_id
+                && managed.media_session_id == media_session_id
+        })
+    {
+        let _ = cast
+            .stop(
+                &operation,
+                &receiver_address,
+                receiver_port,
+                &transport_id,
+                media_session_id,
+            )
+            .await;
+    }
+    retire_cast_monitor_with_binding(&manager, &claims, Some((&transport_id, media_session_id)))
+        .await;
+    if cast.managed_session(&session_id).is_some_and(|managed| {
+        managed.claims == claims
+            && managed.transport_id == transport_id
+            && managed.media_session_id == media_session_id
+    }) {
+        cast.forget_session(&session_id);
     }
 }
 
@@ -1478,6 +1986,7 @@ async fn query_media_file(
         query MediaFileById($id: String!) {
             MediaFile: mediaFile(id: $id) {
                 Path: path
+                Duration: duration
                 ContentType: contentType
                 LibraryId: libraryId
                 Container: container
@@ -1834,8 +2343,6 @@ fn session_node_from_entity(session: CastSession) -> SessionNode {
         media_file_id: session.media_file_id,
         episode_id: session.episode_id,
         stream_url: session.stream_url,
-        receiver_transport_id: session.receiver_transport_id,
-        media_session_id: session.media_session_id,
         last_error: session.last_error,
         playback_decision: session.playback_decision,
         playback_reason: session.playback_reason,

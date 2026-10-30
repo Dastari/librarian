@@ -100,8 +100,5 @@ subscription EntityQualityProfileChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    qualityProfile {
-      ...QualityProfileFields
-    }
   }
 }

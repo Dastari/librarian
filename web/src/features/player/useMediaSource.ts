@@ -1,9 +1,16 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 import { resolvePlaybackSource, type PlaybackSource } from "@/lib/api/urls";
 
 type HlsModule = typeof import("hls.js");
 type HlsInstance = import("hls.js").default;
+
+export interface MediaSourceOptions {
+  audioStreamIndex?: number;
+  retryKey?: number;
+  /** A new playback activation restarts even when it uses the same file. */
+  activationKey?: string | number;
+}
 
 export interface MediaSourceState {
   source: PlaybackSource | null;
@@ -12,89 +19,178 @@ export interface MediaSourceState {
   /** Full file duration; growing HLS playlists under-report it. */
   duration: number | undefined;
   hls: HlsInstance | null;
+  retry: () => void;
+  /** Synchronous guard for pause/time events emitted by source teardown and loading. */
+  isTransitioning: () => boolean;
 }
 
-/**
- * Attaches a media file to a <video>/<audio> element. Asks the backend whether the file needs
- * HLS; uses hls.js where MSE is available and the element's native HLS support otherwise.
- * hls.js is loaded lazily so direct-play sessions never download it.
- */
-export function useMediaSource(mediaFileId: string | null, element: RefObject<HTMLMediaElement | null>, startPosition?: number): MediaSourceState {
-  const [state, setState] = useState<MediaSourceState>({ source: null, loading: Boolean(mediaFileId), error: null, duration: undefined, hls: null });
-  const hlsRef = useRef<HlsInstance | null>(null);
+type SourceSnapshot = Omit<MediaSourceState, "retry" | "isTransitioning">;
+const emptySource: SourceSnapshot = { source: null, loading: false, error: null, duration: undefined, hls: null };
+const MAX_HLS_RECOVERIES = 2;
+
+/** Attaches one source generation; late promises and media listeners belong only to it. */
+export function useMediaSource(
+  mediaFileId: string | null,
+  element: RefObject<HTMLMediaElement | null>,
+  startPosition?: number,
+  options?: MediaSourceOptions,
+): MediaSourceState {
+  const [state, setState] = useState<SourceSnapshot>(emptySource);
+  const [attempt, setAttempt] = useState(0);
   const startRef = useRef(startPosition);
   startRef.current = startPosition;
+  const transition = useRef(true);
+  const previous = useRef<{ fileId: string; activationKey?: string | number; position: number } | null>(null);
+  const { audioStreamIndex, retryKey, activationKey } = options ?? {};
+  // Used as well as effect cancellation: a render for another item must never expose
+  // the previous item's source or let its event handlers write the new transport.
+  const key = JSON.stringify([mediaFileId, activationKey, audioStreamIndex, retryKey, attempt]);
+  const currentKey = useRef(key);
+  currentKey.current = key;
+  const attachedKey = useRef<string | null>(null);
+  const retry = useCallback(() => {
+    transition.current = true;
+    setAttempt((value) => value + 1);
+  }, []);
+  const isTransitioning = useCallback(() => transition.current || attachedKey.current !== currentKey.current, []);
 
   useEffect(() => {
     const media = element.current;
-    if (!mediaFileId || !media) return;
+    transition.current = true;
+    attachedKey.current = key;
+    if (!mediaFileId || !media) {
+      previous.current = null;
+      setState(emptySource);
+      return;
+    }
     const controller = new AbortController();
     let cancelled = false;
-
-    setState({ source: null, loading: true, error: null, duration: undefined, hls: null });
-
-    const applyStart = () => {
-      const start = startRef.current;
-      if (start && start > 0 && Number.isFinite(start)) media.currentTime = start;
+    let terminal = false;
+    let hls: HlsInstance | null = null;
+    let recoveries = 0;
+    const saved = previous.current;
+    const start = saved?.fileId === mediaFileId && saved.activationKey === activationKey ? saved.position : startRef.current;
+    const position = typeof start === "number" && Number.isFinite(start) && start > 0 ? start : 0;
+    let lastPosition = position;
+    let metadataReady = false;
+    const rememberPosition = () => {
+      if (!terminal && metadataReady && Number.isFinite(media.currentTime)) lastPosition = media.currentTime;
     };
+    const active = () => !cancelled && currentKey.current === key;
+    setState({ ...emptySource, loading: true });
 
-    void (async () => {
-      const source = await resolvePlaybackSource(mediaFileId, controller.signal);
-      if (cancelled) return;
-
-      if (!source.isHls) {
-        media.src = source.url;
-        media.addEventListener("loadedmetadata", applyStart, { once: true });
-        setState({ source, loading: false, error: null, duration: source.duration, hls: null });
+    const fail = (message: string) => {
+      if (!active() || terminal) return;
+      rememberPosition();
+      terminal = true;
+      // destroy() can call media.load(), emitting pause/timeupdate at zero. Keep
+      // those events suppressed and the last real position frozen until Retry.
+      transition.current = true;
+      hls?.destroy();
+      hls = null;
+      setState((snapshot) => ({ ...snapshot, error: message, loading: false, hls: null }));
+    };
+    const applyStart = () => {
+      if (!active() || terminal) return;
+      try {
+        media.currentTime = position;
+      } catch {
+        fail("Playback could not resume at the saved position. Retry playback.");
         return;
       }
+      metadataReady = true;
+      lastPosition = position;
+      transition.current = false;
+      setState((snapshot) => ({ ...snapshot, loading: false }));
+    };
+    const ready = () => {
+      if (!active() || terminal) return;
+      transition.current = false;
+      setState((snapshot) => snapshot.loading ? { ...snapshot, loading: false } : snapshot);
+    };
+    const onError = () => {
+      fail("This media could not be played. Retry playback.");
+    };
+    media.addEventListener("loadedmetadata", applyStart, { once: true });
+    media.addEventListener("canplay", ready);
+    media.addEventListener("playing", ready);
+    media.addEventListener("error", onError);
+    media.addEventListener("timeupdate", rememberPosition);
 
-      const nativeHls = media.canPlayType("application/vnd.apple.mpegurl") !== "";
-      const { default: Hls }: HlsModule = await import("hls.js");
-      if (cancelled) return;
+    void (async () => {
+      try {
+        const source = await resolvePlaybackSource(mediaFileId, controller.signal, { audioStreamIndex });
+        if (!active() || terminal) return;
+        if (!source.isHls) {
+          setState({ source, loading: true, error: null, duration: source.duration, hls: null });
+          media.src = source.url;
+          return;
+        }
 
-      if (Hls.isSupported()) {
-        const hls = new Hls({
-          lowLatencyMode: false,
-          backBufferLength: 90,
-          maxBufferLength: 60,
-          enableWorker: true,
-          startPosition: startRef.current && startRef.current > 0 ? startRef.current : -1,
+        // Native HLS does not need the lazy hls.js bundle.
+        if (media.canPlayType("application/vnd.apple.mpegurl")) {
+          setState({ source, loading: true, error: null, duration: source.duration, hls: null });
+          media.src = source.url;
+          return;
+        }
+        const { default: Hls }: HlsModule = await import("hls.js");
+        if (!active() || terminal) return;
+        if (!Hls.isSupported()) {
+          fail("This browser cannot play streamed media.");
+          return;
+        }
+        const instance = new Hls({
+          lowLatencyMode: false, backBufferLength: 90, maxBufferLength: 60,
+          enableWorker: true, startPosition: position > 0 ? position : -1,
+          // Bound hls.js's own request attempts as well as our fatal recoveries.
+          manifestLoadingMaxRetry: 2, levelLoadingMaxRetry: 2, fragLoadingMaxRetry: 2,
         });
-        hlsRef.current = hls;
-        hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (!data.fatal) return;
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-            hls.startLoad();
-            return;
+        hls = instance;
+        instance.on(Hls.Events.ERROR, (_event, data) => {
+          if (!active() || terminal || !data.fatal) return;
+          if (recoveries < MAX_HLS_RECOVERIES) {
+            recoveries += 1;
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+              instance.startLoad();
+              return;
+            }
+            if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+              instance.recoverMediaError();
+              return;
+            }
           }
-          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-            hls.recoverMediaError();
-            return;
-          }
-          setState((previous) => ({ ...previous, error: "Playback failed. The server could not prepare this file.", loading: false }));
+          fail("Playback failed. The server could not prepare this file. Retry playback.");
         });
-        hls.attachMedia(media);
-        hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(source.url));
-        setState({ source, loading: false, error: null, duration: source.duration, hls });
-      } else if (nativeHls) {
-        media.src = source.url;
-        media.addEventListener("loadedmetadata", applyStart, { once: true });
-        setState({ source, loading: false, error: null, duration: source.duration, hls: null });
-      } else {
-        setState({ source, loading: false, error: "This browser cannot play streamed video.", duration: source.duration, hls: null });
+        instance.on(Hls.Events.MEDIA_ATTACHED, () => {
+          if (active() && !terminal) instance.loadSource(source.url);
+        });
+        setState({ source, loading: true, error: null, duration: source.duration, hls: instance });
+        instance.attachMedia(media);
+      } catch (error) {
+        if (active() && !controller.signal.aborted) {
+          fail(error instanceof Error ? error.message : "The media source could not be loaded. Retry playback.");
+        }
       }
     })();
 
     return () => {
       cancelled = true;
+      transition.current = true;
+      if (!terminal) rememberPosition();
+      previous.current = { fileId: mediaFileId, activationKey, position: lastPosition };
       controller.abort();
-      hlsRef.current?.destroy();
-      hlsRef.current = null;
+      media.removeEventListener("loadedmetadata", applyStart);
+      media.removeEventListener("canplay", ready);
+      media.removeEventListener("playing", ready);
+      media.removeEventListener("error", onError);
+      media.removeEventListener("timeupdate", rememberPosition);
+      hls?.destroy();
+      hls = null;
       media.removeAttribute("src");
       media.load();
     };
-  }, [mediaFileId, element]);
+  }, [mediaFileId, element, activationKey, audioStreamIndex, retryKey, attempt, key]);
 
-  return state;
+  const snapshot = attachedKey.current === key ? state : { ...emptySource, loading: Boolean(mediaFileId) };
+  return { ...snapshot, retry, isTransitioning };
 }

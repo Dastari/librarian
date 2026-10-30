@@ -2,7 +2,7 @@
 //!
 //! Boots the *real* service stack (`ServicesManager` + the real Axum router
 //! from [`librarian::build_app`]) against a temp SQLite database and temp
-//! directories, on an ephemeral loopback port. Nothing here re-implements
+//! directories, on an ephemeral loopback port by default. Nothing here re-implements
 //! product behaviour: tests drive the app through GraphQL over HTTP exactly
 //! like a browser does, cookies included.
 //!
@@ -12,9 +12,10 @@
 #![allow(dead_code)]
 
 pub mod mock_indexer;
+pub mod playback;
 
 use std::collections::BTreeMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -24,6 +25,7 @@ use librarian::app_mode::RunMode;
 use librarian::config::Config;
 use librarian::db::Database;
 use librarian::jobs::AutoDownloadServiceConfig;
+use librarian::services::cast::CastServiceConfig;
 use librarian::services::sources::encryption::CredentialEncryption;
 use librarian::services::sources::service::SourcesServiceConfig;
 use librarian::services::torrent::TorrentServiceConfig;
@@ -76,7 +78,12 @@ fn reserve_port(bind: &str) -> u16 {
 
 /// Knobs a test can change before the stack boots.
 pub struct TestAppOptions {
-    /// Extra allowed origins on top of the app's own `http://127.0.0.1:<port>`.
+    /// Opt-in assigned RFC1918 address for physical-device acceptance only.
+    /// None preserves the ordinary loopback harness; never read global env here.
+    pub bind_ip: Option<Ipv4Addr>,
+    /// Register real Cast support without discovery or an automatic receiver LOAD.
+    pub with_cast: bool,
+    /// Extra allowed origins on top of the app's own HTTP origin.
     pub extra_cors_origins: Vec<String>,
     pub secure_cookies: bool,
     /// Register the torrent service (librqbit session). Off by default: the
@@ -87,6 +94,9 @@ pub struct TestAppOptions {
     /// disabled by default (`auto_download.enabled`), so this only makes
     /// `manager.get_auto_download()` available for `searchMissing`.
     pub with_auto_download: bool,
+    /// Real HLS packaging for media acceptance tests; disabled for other tests.
+    pub with_transcode: bool,
+    pub transcode_ffmpeg_path: Option<String>,
     pub torrent_max_concurrent: usize,
     pub torrent_seed_ratio_limit: f64,
     pub torrent_seed_time_minutes: i64,
@@ -96,10 +106,14 @@ pub struct TestAppOptions {
 impl Default for TestAppOptions {
     fn default() -> Self {
         Self {
+            bind_ip: None,
+            with_cast: false,
             extra_cors_origins: Vec::new(),
             secure_cookies: false,
             with_torrent: false,
             with_auto_download: false,
+            with_transcode: false,
+            transcode_ffmpeg_path: None,
             torrent_max_concurrent: 5,
             torrent_seed_ratio_limit: 0.0,
             torrent_seed_time_minutes: 0,
@@ -132,6 +146,29 @@ impl TestApp {
 
     pub async fn start_with(options: TestAppOptions) -> Self {
         init_tracing();
+        // Check assignment, not just bindability: ip_nonlocal_bind can otherwise
+        // allow a foreign address. Keep the LAN listener reserved through startup.
+        let lan_listener = if let Some(ip) = options.bind_ip {
+            assert!(
+                ip.is_private(),
+                "Test bind_ip must be an RFC1918 IPv4 address"
+            );
+            let interfaces = local_ip_address::list_afinet_netifas()
+                .expect("list locally assigned addresses for test bind_ip");
+            assert!(
+                interfaces
+                    .iter()
+                    .any(|(_, address)| *address == IpAddr::V4(ip)),
+                "Test bind_ip {ip} is not assigned to this host"
+            );
+            Some(
+                tokio::net::TcpListener::bind((ip, 0))
+                    .await
+                    .expect("bind assigned LAN test address on an ephemeral port"),
+            )
+        } else {
+            None
+        };
         let temp = tempfile::tempdir().expect("test temp dir");
         let root = temp.path().to_path_buf();
         for sub in [
@@ -146,13 +183,17 @@ impl TestApp {
             std::fs::create_dir_all(root.join(sub)).expect("create test dir");
         }
 
-        let port = free_port();
-        let origin = format!("http://127.0.0.1:{port}");
+        let bind_ip = options.bind_ip.unwrap_or(Ipv4Addr::LOCALHOST);
+        let port = lan_listener
+            .as_ref()
+            .map(|listener| listener.local_addr().expect("LAN listener addr").port())
+            .unwrap_or_else(free_port);
+        let origin = format!("http://{bind_ip}:{port}");
         let mut cors_origins = vec![origin.clone()];
         cors_origins.extend(options.extra_cors_origins.iter().cloned());
 
         let config = Arc::new(Config {
-            host: Some("127.0.0.1".to_string()),
+            host: Some(bind_ip.to_string()),
             port,
             database_url: format!("sqlite://{}", root.join("data/librarian.db").display()),
             jwt_secret: String::new(),
@@ -171,9 +212,9 @@ impl TestApp {
             torrent_max_concurrent: options.torrent_max_concurrent,
             cast_auto_discovery: false,
             cast_discovery_interval_secs: 3600,
-            cast_discovery_timeout_ms: 100,
+            cast_discovery_timeout_ms: if options.with_cast { 1500 } else { 100 },
             cast_discovery_retention_days: 30,
-            advertised_media_url: None,
+            advertised_media_url: options.with_cast.then(|| origin.clone()),
             run_mode: RunMode::Server,
             tray_autostart: false,
             cors_origins,
@@ -245,6 +286,27 @@ impl TestApp {
         if options.with_auto_download {
             builder = builder.add_service(AutoDownloadServiceConfig::default());
         }
+        if options.with_transcode {
+            builder = builder.add_service(librarian::services::transcode::TranscodeServiceConfig {
+                cache_path: root.join("cache"),
+                ffmpeg_path: options
+                    .transcode_ffmpeg_path
+                    .clone()
+                    .unwrap_or_else(|| "ffmpeg".into()),
+                ..Default::default()
+            });
+        }
+        if options.with_cast {
+            builder = builder.add_service(CastServiceConfig {
+                media_base_url: origin.clone(),
+                auto_discovery: false,
+                discovery_interval_secs: config.cast_discovery_interval_secs,
+                discovery_timeout_ms: config.cast_discovery_timeout_ms,
+                discovery_retention_days: config.cast_discovery_retention_days,
+                // Public, disposable fixture secret, like the test login.
+                grant_secret: TEST_JWT_SECRET.as_bytes().to_vec(),
+            });
+        }
 
         let services = builder
             .add_api_routes("artwork", |_| librarian::api::artwork::router())
@@ -275,9 +337,12 @@ impl TestApp {
             services: services.clone(),
         };
         let app = build_app(state).await;
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
-            .await
-            .expect("bind test http listener");
+        let listener = match lan_listener {
+            Some(listener) => listener,
+            None => tokio::net::TcpListener::bind(("127.0.0.1", port))
+                .await
+                .expect("bind test http listener"),
+        };
         let addr = listener.local_addr().expect("listener addr");
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
@@ -625,6 +690,17 @@ impl GqlClient {
 
     /// Register a user. The first user on an empty database becomes admin.
     pub async fn register_admin(&mut self, name: &str, email: &str) -> Value {
+        self.register_admin_with_password(name, email, DEFAULT_PASSWORD)
+            .await
+    }
+
+    /// LAN acceptance uses a fresh password instead of exposing the known test default.
+    pub async fn register_admin_with_password(
+        &mut self,
+        name: &str,
+        email: &str,
+        password: &str,
+    ) -> Value {
         let data = self
             .query(
                 REGISTER_MUTATION,
@@ -632,7 +708,7 @@ impl GqlClient {
                     "input": {
                         "email": email,
                         "name": name,
-                        "password": DEFAULT_PASSWORD,
+                        "password": password,
                     }
                 }),
             )

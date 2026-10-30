@@ -41,6 +41,7 @@ pub struct Album {
 
     #[graphql(name = "artistId")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
     pub artist_id: String,
 
     #[graphql(name = "libraryId")]
@@ -147,7 +148,8 @@ pub struct Album {
         target = "Library",
         from = "library_id",
         to = "id",
-        on_delete = "cascade"
+        on_delete = "cascade",
+        propagate_change = "up"
     )]
     pub library: Option<Library>,
 
@@ -157,6 +159,31 @@ pub struct Album {
     #[skip_db]
     #[relation(target = "Track", to = "album_id", multiple)]
     pub tracks: Vec<Track>,
+
+    // Query relations do not add physical FKs or change existing delete behavior.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Artist",
+        from = "artist_id",
+        to = "id",
+        on_delete = "restrict",
+        emit_fk = false
+    )]
+    pub artist: Option<Box<Artist>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "QualityProfile",
+        from = "quality_profile_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub quality_profile: Option<Box<QualityProfile>>,
 }
 #[derive(Default)]
 pub struct AlbumCustomOperations;
@@ -275,13 +302,15 @@ impl AlbumMetadataMutations {
         ctx: &Context<'_>,
         #[graphql(name = "input")] input: AddAlbumInput,
     ) -> Result<AlbumOperationResult> {
-        let user = ctx.librarian_auth_user()?;
+        let user = ctx.require_member()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 
         let library_id = uuid::Uuid::parse_str(&input.library_id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
-        let user_id = uuid::Uuid::parse_str(&user.user_id)
-            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+        let user_id = metadata
+            .authorize_library_import(user, library_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
         let monitor_type = input.auto_download_mode.unwrap_or({
             if input.auto_download.unwrap_or(false) {

@@ -84,8 +84,5 @@ subscription EntityUserChanged($filter: SubscriptionFilterInput) {
     sourceEntity
     sourceId
     path
-    user {
-      ...UserFields
-    }
   }
 }

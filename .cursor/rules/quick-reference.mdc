@@ -17,8 +17,8 @@ alwaysApply: true
 - ✅ Return `{ success, error }` from mutations
 
 ### Frontend
-- ✅ Use HeroUI components (Button, Card, Input, Modal, etc.)
-- ✅ Use `@tabler/icons-react` for all icons (not emojis or custom SVGs)
+- ✅ Use Glass UX public components for new/migrated screens; see `frontend-ui.mdc`
+- ✅ Use `glass-ux/icons` in migrated screens; Tabler remains in legacy slices
 - ✅ Use TanStack Router for routing
 - ✅ Use Apollo Client for GraphQL (queries, mutations, subscriptions)
 - ✅ Define GraphQL operations in `web/src/graphql/documents/` (entity fragments are generated)
@@ -67,11 +67,11 @@ alwaysApply: true
 - ❌ Skip authentication checks
 
 ### Frontend
-- ❌ Use raw HTML elements when HeroUI has a component
-- ❌ Use emojis for icons (use `@tabler/icons-react` instead)
+- ❌ Use raw interactive HTML when Glass UX has the required component
+- ❌ Use emojis for icons (use the icon library for the current migration slice)
 - ❌ Create custom SVG icon components
 - ❌ Use Redux or other state managers (use React hooks + Apollo cache)
-- ❌ Create custom form components (use HeroUI Input, Select, etc.)
+- ❌ Duplicate Glass UX form controls; compose its typed fields and host adapters
 - ❌ Hard-code API URLs (use VITE_API_URL env var)
 
 ### Backend

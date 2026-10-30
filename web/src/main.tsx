@@ -7,7 +7,9 @@ import "@/styles/app.css";
 import { AppProviders } from "@/app/providers";
 import { router } from "@/app/router";
 import { session } from "@/lib/auth/session";
+import { bootAppearance } from "@/lib/glass/appearance";
 
+bootAppearance();
 // Start rebuilding the session from cookies immediately; route guards await it.
 void session.boot();
 

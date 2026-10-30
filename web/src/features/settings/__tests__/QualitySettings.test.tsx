@@ -1,18 +1,28 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   EntityQualityProfileCreateDocument,
   EntityQualityProfileDeleteDocument,
   EntityQualityProfileUpdateDocument,
-  QualityProfilesListDocument,
+  EntityQualityProfileListDocument,
 } from "@/graphql/generated/graphql";
 import { renderWithProviders } from "@/test";
 
 import { QualitySettings } from "../QualitySettings";
 
 vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => true, useSession: () => ({ status: "authenticated", user: null, expiresAt: null }) }));
+
+// The real Glass virtualizer needs the dimensions normally supplied by the browser.
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, top: 0, left: 0, bottom: 800, right: 1440, width: 1440, height: 800, toJSON: () => ({}) });
+  vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) { return this.classList.contains("fa-dt-probe") ? 32 : 1440; });
+  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) { return this.classList.contains("fa-dt-probe") ? 48 : 800; });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1440);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+});
+afterEach(() => { vi.restoreAllMocks(); });
 
 type Profile = Record<string, unknown>;
 
@@ -48,8 +58,8 @@ const profile = (overrides: Profile = {}): Profile => ({
 });
 
 const listMock = (profiles: Profile[]) => ({
-  request: { query: QualityProfilesListDocument, variables: {} },
-  result: { data: { qualityProfiles: { __typename: "QualityProfileConnection", edges: profiles.map((node) => ({ __typename: "QualityProfileEdge", node })) } } },
+  request: { query: EntityQualityProfileListDocument, variables: { orderBy: [{ name: "ASC" }], page: { limit: 100, offset: 0 } } },
+  result: { data: { qualityProfiles: { __typename: "QualityProfileConnection", edges: profiles.map((node) => ({ __typename: "QualityProfileEdge", node })), pageInfo: { hasNextPage: false, hasPreviousPage: false, totalCount: profiles.length } } } },
 });
 
 /** Everything the form sends for the default profile above, so tests only state their delta. */
@@ -95,11 +105,11 @@ const openEditor = async (name = "Standard") => {
 describe("QualitySettings list", () => {
   it("summarises each profile", async () => {
     await mount([profile({ requireHdr: true }), profile({ id: "qp-2", name: "Lossless", mediaKind: "AUDIO", allowedAudioFormats: ["flac", "alac"], upgradeUntilCutoff: false, allowedSources: [] })]);
-    const video = (await screen.findByText("Standard")).closest("tr")!;
+    const video = (await screen.findByText("Standard")).closest<HTMLElement>('[role="row"]')!;
     expect(video).toHaveTextContent("2160p/1080p · hevc/h264 · HDR required");
     expect(within(video).getByText("Video")).toBeInTheDocument();
     expect(video).toHaveTextContent("1080p");
-    const audio = screen.getByText("Lossless").closest("tr")!;
+    const audio = screen.getByText("Lossless").closest<HTMLElement>('[role="row"]')!;
     expect(audio).toHaveTextContent("flac/alac");
     expect(within(audio).getByText("Audio")).toBeInTheDocument();
     expect(audio).toHaveTextContent("Off");
@@ -158,7 +168,7 @@ describe("QualitySettings editor", () => {
   it("offers only the allowed resolutions as preferences", async () => {
     await mount([profile({ resolutionPreference: [] })]);
     const dialog = await openEditor();
-    await userEvent.click(within(dialog).getByRole("button", { name: /Add to Resolution preference/ }));
+    await userEvent.click(within(dialog).getByRole("combobox", { name: /Add to Resolution preference/ }));
     const listbox = await screen.findByRole("listbox");
     expect(listbox).toHaveTextContent("2160p");
     expect(listbox).toHaveTextContent("1080p");
@@ -188,7 +198,7 @@ describe("QualitySettings editor", () => {
     await mount([profile()], [mock]);
     const dialog = await openEditor();
     await userEvent.click(within(dialog).getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("Name already used")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Name already used");
   });
 
   it("creates a new profile from the built-in defaults", async () => {
@@ -245,7 +255,7 @@ describe("QualitySettings row actions", () => {
     const clear = updateMock("qp-2", { isDefault: false });
     const set = updateMock("qp-1", { isDefault: true });
     await mount([profile(), profile({ id: "qp-2", name: "Old default", isDefault: true })], [clear.mock, set.mock]);
-    await userEvent.click(within((await screen.findByText("Standard")).closest("tr")!).getByRole("button", { name: /Row actions|Actions|More/ }));
+    await userEvent.click(within((await screen.findByText("Standard")).closest<HTMLElement>('[role="row"]')!).getByRole("button", { name: /Row actions|Actions|More/ }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Make default" }));
     await vi.waitFor(() => expect(set.called).toHaveBeenCalled());
     expect(clear.called).toHaveBeenCalled();
@@ -255,7 +265,7 @@ describe("QualitySettings row actions", () => {
     const audio = updateMock("qp-3", { isDefault: false });
     const set = updateMock("qp-1", { isDefault: true });
     await mount([profile(), profile({ id: "qp-3", name: "Lossless", mediaKind: "AUDIO", isDefault: true })], [audio.mock, set.mock]);
-    await userEvent.click(within((await screen.findByText("Standard")).closest("tr")!).getByRole("button", { name: /Row actions|Actions|More/ }));
+    await userEvent.click(within((await screen.findByText("Standard")).closest<HTMLElement>('[role="row"]')!).getByRole("button", { name: /Row actions|Actions|More/ }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Make default" }));
     await vi.waitFor(() => expect(set.called).toHaveBeenCalled());
     expect(audio.called).not.toHaveBeenCalled();
@@ -264,7 +274,7 @@ describe("QualitySettings row actions", () => {
   it("confirms before deleting a profile", async () => {
     const deleted = vi.fn(() => ({ data: { deleteQualityProfile: { __typename: "DeleteQualityProfileResult", success: true, error: null } } }));
     await mount([profile()], [{ request: { query: EntityQualityProfileDeleteDocument, variables: { id: "qp-1" } }, result: deleted }]);
-    await userEvent.click(within((await screen.findByText("Standard")).closest("tr")!).getByRole("button", { name: /Row actions|Actions|More/ }));
+    await userEvent.click(within((await screen.findByText("Standard")).closest<HTMLElement>('[role="row"]')!).getByRole("button", { name: /Row actions|Actions|More/ }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     expect(await screen.findByText("Delete Standard?")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -273,7 +283,7 @@ describe("QualitySettings row actions", () => {
 
   it("hides both actions on the default profile", async () => {
     await mount([profile({ isDefault: true })]);
-    const row = (await screen.findByText("Standard")).closest("tr")!;
+    const row = (await screen.findByText("Standard")).closest<HTMLElement>('[role="row"]')!;
     expect(within(row).queryByRole("button", { name: /Row actions|Actions|More/ })).toBeNull();
   });
 });

@@ -1,0 +1,314 @@
+[
+  {
+    "entity": "Library",
+    "list": "libraries",
+    "get": "library",
+    "changed": "libraryChanged"
+  },
+  {
+    "entity": "LibraryScanRun",
+    "list": "libraryScanRuns",
+    "get": "libraryScanRun",
+    "changed": "libraryScanRunChanged"
+  },
+  {
+    "entity": "LibraryScanIssue",
+    "list": "libraryScanIssues",
+    "get": "libraryScanIssue",
+    "changed": "libraryScanIssueChanged"
+  },
+  {
+    "entity": "Movie",
+    "list": "movies",
+    "get": "movie",
+    "changed": "movieChanged"
+  },
+  {
+    "entity": "Person",
+    "list": "people",
+    "get": "person",
+    "changed": "personChanged"
+  },
+  {
+    "entity": "MovieCastCredit",
+    "list": "movieCastCredits",
+    "get": "movieCastCredit",
+    "changed": "movieCastCreditChanged"
+  },
+  {
+    "entity": "Collection",
+    "list": "collections",
+    "get": "collection",
+    "changed": "collectionChanged"
+  },
+  {
+    "entity": "Show",
+    "list": "shows",
+    "get": "show",
+    "changed": "showChanged"
+  },
+  {
+    "entity": "Season",
+    "list": "seasons",
+    "get": "season",
+    "changed": "seasonChanged"
+  },
+  {
+    "entity": "Episode",
+    "list": "episodes",
+    "get": "episode",
+    "changed": "episodeChanged"
+  },
+  {
+    "entity": "MediaFile",
+    "list": "mediaFiles",
+    "get": "mediaFile",
+    "changed": "mediaFileChanged"
+  },
+  {
+    "entity": "Artist",
+    "list": "artists",
+    "get": "artist",
+    "changed": "artistChanged"
+  },
+  {
+    "entity": "Album",
+    "list": "albums",
+    "get": "album",
+    "changed": "albumChanged"
+  },
+  {
+    "entity": "Track",
+    "list": "tracks",
+    "get": "track",
+    "changed": "trackChanged"
+  },
+  {
+    "entity": "Audiobook",
+    "list": "audiobooks",
+    "get": "audiobook",
+    "changed": "audiobookChanged"
+  },
+  {
+    "entity": "Chapter",
+    "list": "chapters",
+    "get": "chapter",
+    "changed": "chapterChanged"
+  },
+  {
+    "entity": "Torrent",
+    "list": "torrents",
+    "get": "torrent",
+    "changed": "torrentChanged"
+  },
+  {
+    "entity": "TorrentFile",
+    "list": "torrentFiles",
+    "get": "torrentFile",
+    "changed": "torrentFileChanged"
+  },
+  {
+    "entity": "RssFeed",
+    "list": "rssFeeds",
+    "get": "rssFeed",
+    "changed": "rssFeedChanged"
+  },
+  {
+    "entity": "RssFeedItem",
+    "list": "rssFeedItems",
+    "get": "rssFeedItem",
+    "changed": "rssFeedItemChanged"
+  },
+  {
+    "entity": "PendingFileMatch",
+    "list": "pendingFileMatches",
+    "get": "pendingFileMatch",
+    "changed": "pendingFileMatchChanged"
+  },
+  {
+    "entity": "Source",
+    "list": "sources",
+    "get": "source",
+    "changed": "sourceChanged"
+  },
+  {
+    "entity": "User",
+    "list": "users",
+    "get": "user",
+    "changed": "userChanged"
+  },
+  {
+    "entity": "InviteToken",
+    "list": "inviteTokens",
+    "get": "inviteToken",
+    "changed": "inviteTokenChanged"
+  },
+  {
+    "entity": "RefreshToken",
+    "list": "refreshTokens",
+    "get": "refreshToken",
+    "changed": "refreshTokenChanged"
+  },
+  {
+    "entity": "AppSetting",
+    "list": "appSettings",
+    "get": "appSetting",
+    "changed": "appSettingChanged"
+  },
+  {
+    "entity": "AppLog",
+    "list": "appLogs",
+    "get": "appLog",
+    "changed": "appLogChanged"
+  },
+  {
+    "entity": "VideoStream",
+    "list": "videoStreams",
+    "get": "videoStream",
+    "changed": "videoStreamChanged"
+  },
+  {
+    "entity": "AudioStream",
+    "list": "audioStreams",
+    "get": "audioStream",
+    "changed": "audioStreamChanged"
+  },
+  {
+    "entity": "Subtitle",
+    "list": "subtitles",
+    "get": "subtitle",
+    "changed": "subtitleChanged"
+  },
+  {
+    "entity": "MediaChapter",
+    "list": "mediaChapters",
+    "get": "mediaChapter",
+    "changed": "mediaChapterChanged"
+  },
+  {
+    "entity": "PlaybackSession",
+    "list": "playbackSessions",
+    "get": "playbackSession",
+    "changed": "playbackSessionChanged"
+  },
+  {
+    "entity": "PlaybackProgress",
+    "list": "playbackProgresses",
+    "get": "playbackProgress",
+    "changed": "playbackProgressChanged"
+  },
+  {
+    "entity": "PersonalList",
+    "list": "personalLists",
+    "get": "personalList",
+    "changed": "personalListChanged"
+  },
+  {
+    "entity": "ListEntry",
+    "list": "listEntries",
+    "get": "listEntry",
+    "changed": "listEntryChanged"
+  },
+  {
+    "entity": "SavedView",
+    "list": "savedViews",
+    "get": "savedView",
+    "changed": "savedViewChanged"
+  },
+  {
+    "entity": "HomeShelf",
+    "list": "homeShelves",
+    "get": "homeShelf",
+    "changed": "homeShelfChanged"
+  },
+  {
+    "entity": "LibraryPreference",
+    "list": "libraryPreferences",
+    "get": "libraryPreference",
+    "changed": "libraryPreferenceChanged"
+  },
+  {
+    "entity": "CastDevice",
+    "list": "castDevices",
+    "get": "castDevice",
+    "changed": "castDeviceChanged"
+  },
+  {
+    "entity": "CastSession",
+    "list": "castSessions",
+    "get": "castSession",
+    "changed": "castSessionChanged"
+  },
+  {
+    "entity": "CastSetting",
+    "list": "castSettings",
+    "get": "castSetting",
+    "changed": "castSettingChanged"
+  },
+  {
+    "entity": "UsenetServer",
+    "list": "usenetServers",
+    "get": "usenetServer",
+    "changed": "usenetServerChanged"
+  },
+  {
+    "entity": "UsenetDownload",
+    "list": "usenetDownloads",
+    "get": "usenetDownload",
+    "changed": "usenetDownloadChanged"
+  },
+  {
+    "entity": "ScheduleCache",
+    "list": "scheduleCaches",
+    "get": "scheduleCache",
+    "changed": "scheduleCacheChanged"
+  },
+  {
+    "entity": "ScheduleSyncState",
+    "list": "scheduleSyncStates",
+    "get": "scheduleSyncState",
+    "changed": "scheduleSyncStateChanged"
+  },
+  {
+    "entity": "NamingPattern",
+    "list": "namingPatterns",
+    "get": "namingPattern",
+    "changed": "namingPatternChanged"
+  },
+  {
+    "entity": "MetadataCache",
+    "list": "metadataCaches",
+    "get": "metadataCache",
+    "changed": "metadataCacheChanged"
+  },
+  {
+    "entity": "SourcePriorityRule",
+    "list": "sourcePriorityRules",
+    "get": "sourcePriorityRule",
+    "changed": "sourcePriorityRuleChanged"
+  },
+  {
+    "entity": "Notification",
+    "list": "notifications",
+    "get": "notification",
+    "changed": "notificationChanged"
+  },
+  {
+    "entity": "TorznabCategory",
+    "list": "torznabCategories",
+    "get": "torznabCategory",
+    "changed": "torznabCategoryChanged"
+  },
+  {
+    "entity": "QualityProfile",
+    "list": "qualityProfiles",
+    "get": "qualityProfile",
+    "changed": "qualityProfileChanged"
+  },
+  {
+    "entity": "ReleaseBlocklist",
+    "list": "releaseBlocklists",
+    "get": "releaseBlocklist",
+    "changed": "releaseBlocklistChanged"
+  }
+]

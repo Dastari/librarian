@@ -1,10 +1,12 @@
-import { useMutation, useQuery } from "@apollo/client/react";
-import { toast } from "@heroui/react";
+import { IconInfo } from "glass-ux/icons";
+import { useApolloClient, useMutation } from "@apollo/client/react";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+import { toast } from "glass-ux/toast";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { IconAdjustments, IconBookmark, IconBookmarkFilled, IconDownload, IconInfoCircle, IconPhoto, IconPlayerPlayFilled, IconRefresh, IconTrash } from "@tabler/icons-react";
+import { IconInfoCircle, IconPhoto } from "@tabler/icons-react";
 import { useState } from "react";
 
-import { Artwork, ConfirmDialog, ErrorState, KeyValueList, MediaRow, MetaLine, Panel, PosterCard, Section, SkeletonHero, StatusChip, GlassButton } from "@/components/ui";
+import { Artwork, ConfirmDialog, EmptyState, ErrorState, HeroFacts, KeyValueList, MediaRow, MetaLine, Panel, PosterCard, Section, SkeletonHero, StatusChip } from "@/components/ui";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
 import { AcquisitionDialog } from "@/features/acquisition/AcquisitionDialog";
 import { movieAcquisitionMeta } from "@/features/acquisition/mode";
@@ -21,29 +23,33 @@ import {
   RefreshMovieDocument,
 } from "@/graphql/generated/graphql";
 import { useContentStatuses } from "@/hooks/useContentStatuses";
-import { movieBackdrop, moviePoster } from "@/lib/artwork";
+import { movieBackdrop, moviePoster, personProfile } from "@/lib/artwork";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { formatClock, formatDate, formatRuntime } from "@/lib/format";
+import { activeContentStatusQueries } from "@/lib/graphql/content-status";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { LIBRARY_TYPES } from "@/lib/library-types";
 import { statusMeta } from "@/lib/status";
 
+import { MediaActions } from "./MediaActions";
 import { DetailShell } from "./DetailShell";
 import { FileDetails } from "./FileDetails";
 
 export function MoviePage({ movieId }: { movieId: string }) {
+  const client = useApolloClient();
   const navigate = useNavigate();
   const player = usePlayer();
   const isAdmin = useIsAdmin();
   const { user } = useSession();
   const { data, previousData, loading, error, refetch } = useQuery(MovieDetailDocument, { variables: { id: movieId } });
-  const movie = (data ?? previousData)?.movie ?? null;
+  const candidate = (data ?? previousData)?.movie;
+  const movie = candidate?.id === movieId ? candidate : null;
   const cast = useQuery(MovieCastCreditsDocument, { variables: { movieId } });
   const collection = useQuery(MovieCollectionDetailsDocument, { variables: { collectionId: movie?.collectionId ?? 0, libraryId: movie?.libraryId ?? "" }, skip: !movie?.collectionId || !movie.libraryId });
   const progress = useQuery(PlaybackProgressForFileDocument, { variables: { userId: user?.id ?? "", mediaFileId: movie?.mediaFileId ?? "" }, skip: !user || !movie?.mediaFileId });
   const statuses = useContentStatuses("MOVIE", movie ? [movie.id] : []);
 
-  const [updateMovie] = useMutation(EntityMovieUpdateDocument);
+  const [updateMovie] = useMutation(EntityMovieUpdateDocument, { refetchQueries: () => activeContentStatusQueries(client) });
   const [deleteMovie, { loading: deleting }] = useMutation(EntityMovieDeleteDocument);
   const [refreshMovie, { loading: refreshing }] = useMutation(RefreshMovieDocument);
   const [recache] = useMutation(RecacheMovieArtworkDocument);
@@ -52,7 +58,7 @@ export function MoviePage({ movieId }: { movieId: string }) {
   const [acquisition, setAcquisition] = useState(false);
 
   if (error && !movie) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
-  if (!movie) return loading ? <SkeletonHero /> : null;
+  if (!movie) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Movie not found" description="This item may have been removed from the library." className="page-gutter my-8" />;
 
   const resume = progress.data?.playbackProgresses.edges[0]?.node;
   const resumeAt = resume && !resume.isWatched && resume.currentPosition > 5 ? resume.currentPosition : undefined;
@@ -65,24 +71,14 @@ export function MoviePage({ movieId }: { movieId: string }) {
   };
 
   const toggleWanted = async () => {
-    try {
-      const { data: result } = await updateMovie({ variables: { id: movie.id, input: { wanted: !movie.wanted, monitored: !movie.wanted } } });
-      assertSuccess(result?.updateMovie, "Could not update");
-      toast.success(movie.wanted ? "No longer wanted" : "Marked as wanted");
-    } catch (mutationError) {
-      toast.danger(errorMessage(mutationError));
-    }
+    const { data: result } = await updateMovie({ variables: { id: movie.id, input: { wanted: !movie.wanted, monitored: !movie.wanted } } });
+    assertSuccess(result?.updateMovie, "Could not update movie");
   };
 
   const refresh = async () => {
-    try {
-      const { data: result } = await refreshMovie({ variables: { id: movie.id } });
-      assertSuccess(result?.refreshMovie, "Could not refresh metadata");
-      await recache({ variables: { movieId: movie.id } });
-      toast.success("Metadata refreshed");
-    } catch (mutationError) {
-      toast.danger(errorMessage(mutationError));
-    }
+    const { data: result } = await refreshMovie({ variables: { id: movie.id } });
+    assertSuccess(result?.refreshMovie, "Could not refresh metadata");
+    await recache({ variables: { movieId: movie.id } });
   };
 
   const remove = async () => {
@@ -101,8 +97,8 @@ export function MoviePage({ movieId }: { movieId: string }) {
 
   return (
     <DetailShell
+      backdrop={movieBackdrop(movie.id)}
       hero={{
-        backdrop: movieBackdrop(movie.id),
         poster: moviePoster(movie.id),
         tint: LIBRARY_TYPES.movies.tintVar,
         eyebrow: movie.library ? (
@@ -115,52 +111,36 @@ export function MoviePage({ movieId }: { movieId: string }) {
           <>
             <MetaLine items={[movie.year, movie.runtime ? formatRuntime(movie.runtime, "minutes") : null, movie.certification, movie.tmdbRating ? `★ ${Number(movie.tmdbRating).toFixed(1)}` : null]} />
             <StatusChip status={status} />
-            <AcquisitionChip status={movieAcquisitionMeta(movie)} onPress={() => setAcquisition(true)} />
+            <AcquisitionChip status={movieAcquisitionMeta(movie)} onPress={isAdmin ? () => setAcquisition(true) : undefined} />
           </>
         ),
-        description: movie.overview,
         actions: (
-          <>
-            {movie.mediaFileId ? (
-              <GlassButton emphasis="brand" size="lg" refract onPress={play}>
-                <IconPlayerPlayFilled /> {resumeAt ? `Resume · ${formatClock(resumeAt)}` : "Play"}
-              </GlassButton>
-            ) : null}
-            {isAdmin ? (
-              <>
-                <GlassButton size="lg" refract onPress={() => void toggleWanted()}>
-                  {movie.wanted ? <IconBookmarkFilled className="text-brand" /> : <IconBookmark />} {movie.wanted ? "Wanted" : "Want"}
-                </GlassButton>
-                {!movie.hasFile ? (
-                  <GlassButton size="lg" refract onPress={() => setSearching(true)}>
-                    <IconDownload /> Find release
-                  </GlassButton>
-                ) : null}
-                <GlassButton size="lg" refract isIconOnly aria-label="Download settings" onPress={() => setAcquisition(true)}>
-                  <IconAdjustments />
-                </GlassButton>
-                <GlassButton size="lg" refract isIconOnly aria-label="Refresh metadata" onPress={() => void refresh()} isDisabled={refreshing}>
-                  <IconRefresh className={refreshing ? "animate-spin" : undefined} />
-                </GlassButton>
-                <GlassButton size="lg" refract isIconOnly aria-label="Remove from library" onPress={() => setConfirmDelete(true)}>
-                  <IconTrash />
-                </GlassButton>
-              </>
-            ) : null}
-          </>
+          <MediaActions
+            personal={movie.userId === user?.id ? { kind: "movie", id: movie.id } : undefined}
+            id={movie.id}
+            label={movie.title}
+            play={movie.mediaFileId ? { label: resumeAt ? `Resume · ${formatClock(resumeAt)}` : "Play", run: play } : undefined}
+            wanted={isAdmin ? { value: movie.wanted, run: toggleWanted } : undefined}
+            find={isAdmin && !movie.hasFile ? () => setSearching(true) : undefined}
+            settings={isAdmin ? () => setAcquisition(true) : undefined}
+            refresh={isAdmin ? { pending: refreshing, run: refresh } : undefined}
+            remove={isAdmin ? () => setConfirmDelete(true) : undefined}
+          />
         ),
-        children: movie.tagline ? <p className="mt-4 text-body-sm italic text-foreground/60">{movie.tagline}</p> : null,
+        tagline: movie.tagline,
+        description: movie.overview,
+        facts: <HeroFacts items={[{ label: "Director", value: movie.director }, { label: "Genres", value: movie.genres.join(", ") }]} />,
       }}
     >
       {castList.length > 0 ? (
         <Section title="Cast" bleed>
           <MediaRow ariaLabel="Cast">
             {castList.map((credit) => (
-              <div key={credit.id} className="w-28 shrink-0 text-center">
-                <Artwork src={credit.person?.profileUrl} alt="" aspect="square" className="mx-auto w-24 rounded-full" fallback={<IconPhoto size={24} />} />
+              <Link key={credit.id} to="/search" search={{ q: credit.person?.name ?? "" }} data-focusable className="tv-lift nav-focus group w-28 shrink-0 rounded-tile p-1 text-center" aria-label={[credit.person?.name, credit.characterName].filter(Boolean).join(" as ")}>
+                <Artwork src={personProfile(credit.person)} alt="" aspect="square" displayWidth={96} className="tv-lift-target mx-auto w-24 overflow-clip rounded-full" fallback={<IconPhoto size={24} />} />
                 <p className="mt-2 truncate text-label text-foreground">{credit.person?.name}</p>
                 <p className="truncate text-label-sm text-muted">{credit.characterName}</p>
-              </div>
+              </Link>
             ))}
           </MediaRow>
         </Section>
@@ -173,19 +153,17 @@ export function MoviePage({ movieId }: { movieId: string }) {
               item.libraryMovieId ? (
                 <PosterCard key={item.tmdbId} width="row" title={item.title} meta={item.year ?? undefined} image={moviePoster(item.libraryMovieId)} tint={LIBRARY_TYPES.movies.tintVar} to="/movies/$movieId" params={{ movieId: item.libraryMovieId }} selected={item.libraryMovieId === movie.id} />
               ) : (
-                <PosterCard key={item.tmdbId} width="row" title={item.title} meta={item.year ? `${item.year} · not in library` : "Not in library"} image={item.posterUrl} tint={LIBRARY_TYPES.movies.tintVar} className="opacity-70" onPress={() => undefined} />
+                <PosterCard key={item.tmdbId} width="row" title={item.title} meta={item.year ? `${item.year} · not in library` : "Not in library"} image={item.posterUrl} tint={LIBRARY_TYPES.movies.tintVar} className="opacity-70" />
               ),
             )}
           </MediaRow>
         </Section>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
         <Panel title="Details">
           <KeyValueList
             items={[
-              { label: "Director", value: movie.director },
-              { label: "Genres", value: movie.genres.join(", ") || undefined },
               { label: "Released", value: formatDate(movie.releaseDate) },
               { label: "Original title", value: movie.originalTitle !== movie.title ? movie.originalTitle : undefined },
               { label: "Countries", value: movie.productionCountries.join(", ") || undefined },

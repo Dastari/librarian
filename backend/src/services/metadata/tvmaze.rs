@@ -113,6 +113,72 @@ pub struct TvMazeEpisode {
     pub rating: Option<TvMazeRating>,
 }
 
+/// Season from TVMaze (`/shows/{id}/seasons`)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TvMazeSeason {
+    pub id: u32,
+    pub number: u32,
+    pub name: Option<String>,
+    #[serde(rename = "episodeOrder")]
+    pub episode_order: Option<u32>,
+    #[serde(rename = "premiereDate")]
+    pub premiere_date: Option<String>,
+    #[serde(rename = "endDate")]
+    pub end_date: Option<String>,
+    pub image: Option<TvMazeImage>,
+    pub summary: Option<String>,
+}
+
+impl TvMazeSeason {
+    /// Get clean summary (strip HTML tags)
+    pub fn clean_summary(&self) -> Option<String> {
+        self.summary
+            .as_ref()
+            .map(|summary| strip_summary_html(summary))
+            .filter(|summary| !summary.is_empty())
+    }
+}
+
+/// One image from `/shows/{id}/images` (posters, backgrounds, banners, typography).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TvMazeShowImage {
+    pub id: u32,
+    #[serde(rename = "type")]
+    pub image_type: Option<String>,
+    #[serde(default)]
+    pub main: bool,
+    pub resolutions: TvMazeImageResolutions,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TvMazeImageResolutions {
+    pub original: Option<TvMazeImageResolution>,
+    pub medium: Option<TvMazeImageResolution>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TvMazeImageResolution {
+    pub url: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+/// The show's wide background: the main one when flagged, else the widest.
+pub fn best_background(images: &[TvMazeShowImage]) -> Option<String> {
+    images
+        .iter()
+        .filter(|image| image.image_type.as_deref() == Some("background"))
+        .filter_map(|image| {
+            image
+                .resolutions
+                .original
+                .as_ref()
+                .map(|original| (image.main, original))
+        })
+        .max_by_key(|(main, original)| (*main, original.width.unwrap_or(0)))
+        .map(|(_, original)| original.url.clone())
+}
+
 /// Broadcast schedules embed `show`; streaming schedules use `_embedded.show`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TvMazeScheduleEntry {
@@ -290,6 +356,59 @@ impl TvMazeClient {
         .await
     }
 
+    /// Get all seasons for a show, with their posters (rate limited, retried).
+    pub async fn get_seasons(&self, tvmaze_id: u32) -> Result<Vec<TvMazeSeason>> {
+        self.get_json(&format!("/shows/{tvmaze_id}/seasons"), "tvmaze_get_seasons")
+            .await
+    }
+
+    /// Get every image TVMaze holds for a show: posters, backgrounds, banners.
+    pub async fn get_show_images(&self, tvmaze_id: u32) -> Result<Vec<TvMazeShowImage>> {
+        self.get_json(
+            &format!("/shows/{tvmaze_id}/images"),
+            "tvmaze_get_show_images",
+        )
+        .await
+    }
+
+    /// Rate-limited, retried GET of a JSON document under the API base URL.
+    async fn get_json<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        operation: &'static str,
+    ) -> Result<T> {
+        let url = format!("{}{}", self.base_url, path);
+        let client = self.client.clone();
+        retry_async(
+            || {
+                let url = url.clone();
+                let client = client.clone();
+                async move {
+                    let response = client.get(&url).await?;
+                    if response.status().as_u16() == 429 {
+                        warn!(operation, "TVMaze rate limit hit (HTTP 429); retrying");
+                        anyhow::bail!("Rate limited (429)");
+                    }
+                    if !response.status().is_success() {
+                        anyhow::bail!(
+                            "TVMaze {operation} failed with status: {}",
+                            response.status()
+                        );
+                    }
+                    crate::services::http_client::response_json_limited(
+                        response,
+                        crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                    )
+                    .await
+                    .with_context(|| format!("Failed to parse TVMaze {operation} response"))
+                }
+            },
+            &self.retry_config,
+            operation,
+        )
+        .await
+    }
+
     /// Get all episodes for a show (with rate limiting and retry)
     pub async fn get_episodes(&self, tvmaze_id: u32) -> Result<Vec<TvMazeEpisode>> {
         debug!("Fetching episodes from TVMaze for show {}", tvmaze_id);
@@ -372,4 +491,47 @@ fn strip_summary_html(summary: &str) -> String {
         .as_ref()
         .map(|html_tag| html_tag.replace_all(summary, "").trim().to_string())
         .unwrap_or_else(|_| summary.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seasons_parse_with_posters_and_plain_summaries() {
+        let seasons: Vec<TvMazeSeason> = serde_json::from_value(serde_json::json!([
+            {"id": 1, "number": 1, "name": "", "episodeOrder": 10, "premiereDate": "2023-05-05",
+             "endDate": "2023-06-30", "image": {"medium": "https://static.tvmaze.com/m.jpg", "original": "https://static.tvmaze.com/o.jpg"},
+             "summary": "<p>Juliette <b>investigates</b>.</p>"},
+            {"id": 2, "number": 2, "name": null, "episodeOrder": null, "premiereDate": null,
+             "endDate": null, "image": null, "summary": null}
+        ]))
+        .expect("TVMaze seasons");
+        assert_eq!(seasons[0].number, 1);
+        assert_eq!(
+            seasons[0]
+                .image
+                .as_ref()
+                .and_then(|image| image.original.as_deref()),
+            Some("https://static.tvmaze.com/o.jpg")
+        );
+        assert_eq!(
+            seasons[0].clean_summary().as_deref(),
+            Some("Juliette investigates.")
+        );
+        assert!(seasons[1].image.is_none() && seasons[1].clean_summary().is_none());
+    }
+
+    #[test]
+    fn best_background_prefers_the_main_image_then_the_widest() {
+        let images: Vec<TvMazeShowImage> = serde_json::from_value(serde_json::json!([
+            {"id": 1, "type": "poster", "main": true, "resolutions": {"original": {"url": "poster", "width": 680}}},
+            {"id": 2, "type": "background", "main": false, "resolutions": {"original": {"url": "wide", "width": 3840}}},
+            {"id": 3, "type": "background", "main": true, "resolutions": {"original": {"url": "main", "width": 1920}}}
+        ]))
+        .expect("TVMaze images");
+        assert_eq!(best_background(&images).as_deref(), Some("main"));
+        assert_eq!(best_background(&images[..2]).as_deref(), Some("wide"));
+        assert_eq!(best_background(&images[..1]), None);
+    }
 }

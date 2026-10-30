@@ -196,7 +196,8 @@ pub struct Movie {
         target = "Library",
         from = "library_id",
         to = "id",
-        on_delete = "cascade"
+        on_delete = "cascade",
+        propagate_change = "up"
     )]
     pub library: Option<Library>,
     #[graphql(skip)]
@@ -208,6 +209,31 @@ pub struct Movie {
         on_delete = "set_null"
     )]
     pub media_file: Option<MediaFile>,
+
+    // Query relations do not add physical FKs or change existing delete behavior.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "MovieCastCredit",
+        from = "id",
+        to = "movie_id",
+        multiple,
+        emit_fk = false
+    )]
+    pub cast_credits: Vec<MovieCastCredit>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "QualityProfile",
+        from = "quality_profile_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub quality_profile: Option<Box<QualityProfile>>,
 }
 
 // ============================================================================
@@ -420,22 +446,14 @@ impl MovieCustomOperations {
         use crate::graphql::auth::AuthExt;
         use crate::services::metadata::providers::MetadataService;
 
-        let user = ctx.librarian_auth_user()?;
+        let user = ctx.require_member()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
-
-        if !metadata.has_tmdb().await {
-            return Err(async_graphql::Error::new(
-                "TMDB API key not configured. Add tmdb_api_key to settings.",
-            ));
-        }
 
         let lib_id = uuid::Uuid::parse_str(&library_id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
-        let user_id = uuid::Uuid::parse_str(&user.user_id)
-            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
 
         let details = metadata
-            .get_movie_collection_details(collection_id, lib_id, user_id)
+            .get_movie_collection_details(collection_id, lib_id, user)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
@@ -652,13 +670,15 @@ impl MovieMetadataMutations {
             AddMovieOptions, MetadataProvider, MetadataService,
         };
 
-        let user = ctx.librarian_auth_user()?;
+        let user = ctx.require_member()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 
         let lib_id = uuid::Uuid::parse_str(&library_id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
-        let user_id = uuid::Uuid::parse_str(&user.user_id)
-            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+        let user_id = metadata
+            .authorize_library_import(user, lib_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
         if !metadata.has_tmdb().await {
             return Ok(MovieOperationResult {
@@ -717,13 +737,15 @@ impl MovieMetadataMutations {
             AddMovieCollectionOptions, MetadataProvider, MetadataService,
         };
 
-        let user = ctx.librarian_auth_user()?;
+        let user = ctx.require_member()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 
         let lib_id = uuid::Uuid::parse_str(&library_id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
-        let user_id = uuid::Uuid::parse_str(&user.user_id)
-            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+        let user_id = metadata
+            .authorize_library_import(user, lib_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
         if !metadata.has_tmdb().await {
             return Ok(MovieCollectionOperationResult {

@@ -6,7 +6,7 @@ import { LibrarySettingsForm } from "@/features/libraries/LibrarySettingsForm";
 const parent = getRouteApi("/_app/libraries/$libraryId");
 
 export const Route = createFileRoute("/_app/libraries/$libraryId/settings")({
-  staticData: { crumb: "Settings" },
+  staticData: { crumb: "Settings", fixedHeight: true },
   component: () => {
     const { library } = parent.useLoaderData();
     return <LibrarySettingsForm library={library} />;
