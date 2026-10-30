@@ -128,6 +128,16 @@ their newest titles, two or more titles each). **Browse** keeps the complete fil
 letter jump stay pinned and in the URL; shelves link to it with "See all". Browse and the
 other tabs are bounded panes (`fixedHeight` on each child route); Recommended scrolls.
 
+The TV guide groups episodes by show, never one chip per episode. Home's guide section
+(`GuideSpotlight`) puts the next of your shows to air over its feathered backdrop with a
+countdown and its release dates in batches (a weekly double bill is one row), your other
+upcoming shows beneath it, then "New tonight" from the TVmaze schedule (new series and
+premieres first; news, talk, sports and year-numbered daily shows filtered out). It links to
+`/guide`, which swaps between **Calendar** (a month of your shows with a day panel; the six
+week rows share the first screen through `.guide-day`) and **Streaming grid** (services ×
+days, defaulting to the subscription streamers listed that week, with the chosen services
+remembered per browser). `?view=grid` keeps the choice in the URL.
+
 ## Artwork
 
 Library artwork always comes from the local cache (`lib/artwork.ts`): never pass an

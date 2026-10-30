@@ -1,4 +1,4 @@
-import { IconBookmark, IconBell, IconDownload, IconHome, IconListSearch, IconSearch, IconSettings, IconStack2, type Icon as TablerIcon } from "@tabler/icons-react";
+import { IconBookmark, IconBell, IconCalendarEvent, IconDownload, IconHome, IconListSearch, IconSearch, IconSettings, IconStack2, type Icon as TablerIcon } from "@tabler/icons-react";
 
 export interface NavItem {
   key: string;
@@ -18,6 +18,7 @@ export const PRIMARY_NAV: NavItem[] = [
   { key: "libraries", label: "Libraries", href: "/libraries", icon: IconStack2, mobile: true },
   { key: "search", label: "Search", href: "/search", icon: IconSearch, mobile: true },
   { key: "lists", label: "My lists", href: "/lists", icon: IconBookmark },
+  { key: "guide", label: "TV guide", href: "/guide", icon: IconCalendarEvent },
   { key: "wanted", label: "Wanted", href: "/wanted", icon: IconListSearch, mobile: true },
   { key: "downloads", label: "Downloads", href: "/downloads", icon: IconDownload, mobile: true, badge: "downloads" },
   { key: "activity", label: "Activity", href: "/activity", icon: IconBell, badge: "notifications" },

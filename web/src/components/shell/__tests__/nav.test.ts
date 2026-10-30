@@ -5,7 +5,7 @@ import { PRIMARY_NAV, isNavActive } from "../nav";
 
 describe("primary navigation", () => {
   it("lists the destinations in rail order with unique keys and hrefs", () => {
-    expect(PRIMARY_NAV.map((item) => item.key)).toEqual(["home", "libraries", "search", "lists", "wanted", "downloads", "activity", "settings"]);
+    expect(PRIMARY_NAV.map((item) => item.key)).toEqual(["home", "libraries", "search", "lists", "guide", "wanted", "downloads", "activity", "settings"]);
     expect(new Set(PRIMARY_NAV.map((item) => item.href)).size).toBe(PRIMARY_NAV.length);
     for (const item of PRIMARY_NAV) {
       expect(item.href.startsWith("/")).toBe(true);

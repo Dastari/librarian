@@ -81,3 +81,30 @@ query NextLibraryEpisodes($from: String!) {
     }
   }
 }
+
+# The guide: every library episode in a date range, with what the spotlight and calendar
+# need from its show. Ranges are a month or two, well inside one page.
+query GuideEpisodes($from: String!, $to: String!) {
+  episodes(where: { airDate: { gte: $from, lte: $to } }, orderBy: [{ airDate: ASC }, { airStamp: ASC }, { season: ASC }, { episode: ASC }], page: { limit: 500, offset: 0 }) {
+    edges {
+      node {
+        id
+        showId
+        season
+        episode
+        title
+        airDate
+        airStamp
+        mediaFileId
+        show {
+          id
+          name
+          network
+          posterUrl
+          backdropUrl
+          autoDownload
+        }
+      }
+    }
+  }
+}
