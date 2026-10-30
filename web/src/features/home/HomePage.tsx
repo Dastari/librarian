@@ -17,8 +17,8 @@ import { formatClock, formatRuntime, formatYear } from "@/lib/format";
 import { LIBRARY_TYPES } from "@/lib/library-types";
 
 import { HomeSpotlight, spotlightItems } from "./HomeSpotlight";
+import { GuideSpotlight } from "@/features/guide/GuideSpotlight";
 import { MovieReleases } from "./MovieReleases";
-import { TvGuide } from "./TvGuide";
 import { useContinueWatching } from "./useContinueWatching";
 
 const ROW_LIMIT = 20;
@@ -149,7 +149,7 @@ export function HomePage() {
         </Section>
       ) : null),
     guide: (<div className="page-gutter">
-        <TvGuide />
+        <GuideSpotlight />
       </div>),
     releases: (<MovieReleases />),
   };

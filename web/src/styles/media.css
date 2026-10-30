@@ -207,3 +207,33 @@
 @media (width < 48rem) {
   [data-nav-section] { scroll-margin-block-end: calc(var(--tabbar-height) + var(--safe-bottom) + var(--space-4)); }
 }
+
+/* ---- TV guide spotlight ------------------------------------------------------------------ */
+
+/* The next show's art fills the panel and feathers out at the bottom and the reading side. */
+.guide-spotlight-art {
+  mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
+}
+
+.guide-spotlight-scrim {
+  background:
+    linear-gradient(to right, color-mix(in oklab, var(--canvas) 94%, transparent) 0%, color-mix(in oklab, var(--canvas) 72%, transparent) 38%, transparent 75%),
+    linear-gradient(to top, color-mix(in oklab, var(--canvas) 85%, transparent) 0%, transparent 45%);
+}
+
+@media (width < 64rem) {
+  .guide-spotlight-scrim {
+    background: linear-gradient(to top, color-mix(in oklab, var(--canvas) 92%, transparent) 0%, color-mix(in oklab, var(--canvas) 70%, transparent) 55%, color-mix(in oklab, var(--canvas) 35%, transparent) 100%);
+  }
+}
+
+/* Calendar days share the first screen with the guide header, so a six-week month never runs
+ * past the fold: each row takes a sixth of what is left, within readable bounds. */
+.guide-day {
+  block-size: clamp(4.25rem, calc((var(--view-h, 100svh) - 20rem) / 6), 7.5rem);
+}
+
+@media (width < 48rem) {
+  /* Phones also lose the tab bar and a wrapped header row. */
+  .guide-day { block-size: clamp(3.5rem, calc((var(--view-h, 100svh) - 25rem) / 6), 6rem); }
+}
