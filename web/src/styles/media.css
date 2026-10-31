@@ -150,8 +150,12 @@
 /* Posters grow upwards from their bottom edge so the title underneath stays readable. */
 .poster-art { transform-origin: 50% 100%; }
 
-/* Rows reserve room for the grown tile so nothing clips. */
-:root[data-input-mode="tv"] .snap-row { padding-block: 1.25rem; }
+/* Rows reserve room for the grown tile so nothing clips. A tile grows upwards by 5% of its
+ * height (1.5 × its width, at most --poster-max), and its focus ring, scaled with it, sits
+ * outside that; the row's overflow clips anything beyond its padding. */
+:root[data-input-mode="tv"] .snap-row {
+  padding-block: calc(var(--poster-max) * 1.5 * 0.05 + var(--focus-reach) * 1.05 + 0.25rem) 1.25rem;
+}
 
 /* ---- Entrance ------------------------------------------------------------------------- */
 

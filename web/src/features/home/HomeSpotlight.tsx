@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { Button } from "glass-ux/button";
 import { IconChevronLeft, IconChevronRight, IconInfo, IconPlay } from "glass-ux/icons";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { HeroBanner, MediaBackdrop, MetaLine } from "@/components/ui";
 import type { RecentMoviesQuery, RecentShowsQuery } from "@/graphql/generated/graphql";
@@ -10,8 +10,9 @@ import { formatRuntime } from "@/lib/format";
 import { LIBRARY_TYPES } from "@/lib/library-types";
 import { cn } from "@/lib/utils";
 
-type Movie = RecentMoviesQuery["movies"]["edges"][number]["node"];
-type Show = RecentShowsQuery["shows"]["edges"][number]["node"];
+/** The fields a spotlight needs; every movie and show list (MovieFields, ShowFields) has them. */
+type Movie = Pick<RecentMoviesQuery["movies"]["edges"][number]["node"], "id" | "title" | "year" | "runtime" | "certification" | "genres" | "overview" | "mediaFileId">;
+type Show = Pick<RecentShowsQuery["shows"]["edges"][number]["node"], "id" | "name" | "year" | "network" | "genres" | "overview" | "backdropUrl">;
 
 export interface SpotlightItem {
   key: string;
@@ -26,18 +27,26 @@ export interface SpotlightItem {
   mediaFileId?: string | null;
 }
 
-/** Recently added titles with something to show, alternating films and series. */
-export function spotlightItems(movies: Movie[], shows: Show[], limit = 6): SpotlightItem[] {
-  const films: SpotlightItem[] = movies.filter((movie) => movie.overview).map((movie) => ({
+export function movieSpotlight(movie: Movie): SpotlightItem {
+  return {
     key: `movie:${movie.id}`, kind: "movie", id: movie.id, title: movie.title,
     meta: [movie.year, movie.runtime ? formatRuntime(movie.runtime, "minutes") : null, movie.certification, movie.genres.slice(0, 2).join(", ") || null],
     overview: movie.overview, backdrop: movieBackdrop(movie.id), poster: moviePoster(movie.id), tint: LIBRARY_TYPES.movies.tintVar, mediaFileId: movie.mediaFileId,
-  }));
-  const series: SpotlightItem[] = shows.filter((show) => show.overview).map((show) => ({
+  };
+}
+
+export function showSpotlight(show: Show): SpotlightItem {
+  return {
     key: `show:${show.id}`, kind: "show", id: show.id, title: show.name,
     meta: [show.year, show.network, show.genres.slice(0, 2).join(", ") || null],
     overview: show.overview?.replace(/<[^>]+>/g, ""), backdrop: show.backdropUrl ? showBackdrop(show) : null, poster: showPoster(show), tint: LIBRARY_TYPES.tv.tintVar,
-  }));
+  };
+}
+
+/** Recently added titles with something to show, alternating films and series. */
+export function spotlightItems(movies: Movie[], shows: Show[], limit = 6): SpotlightItem[] {
+  const films = movies.filter((movie) => movie.overview).map(movieSpotlight);
+  const series = shows.filter((show) => show.overview).map(showSpotlight);
   const mixed: SpotlightItem[] = [];
   for (let index = 0; mixed.length < limit && (index < films.length || index < series.length); index += 1) {
     if (films[index]) mixed.push(films[index]!);
@@ -62,28 +71,46 @@ interface HomeSpotlightProps {
   eyebrow?: (item: SpotlightItem) => ReactNode;
   /** When the page draws the artwork itself (behind its own header), report it instead. */
   onArtChange?: (art: SpotlightArt) => void;
+  /** A title focused elsewhere on the page (a shelf card) shown in place of the carousel. */
+  preview?: SpotlightItem | null;
+  /** Paging the carousel; the page drops its preview so the carousel shows again. */
+  onBrowse?: () => void;
   className?: string;
 }
 
 /**
  * Home's opening screen: one recently added title over its own artwork, with Play and
  * details. People page through the titles themselves; nothing advances on a timer (R18.2).
+ * A `preview` (the shelf card a remote rests on) takes the stage until the carousel is paged.
  */
-export function HomeSpotlight({ items, onPlay, fill = "home", poster = true, eyebrow, onArtChange, className }: HomeSpotlightProps) {
+export function HomeSpotlight({ items, onPlay, fill = "home", poster = true, eyebrow, onArtChange, preview, onBrowse, className }: HomeSpotlightProps) {
   const [index, setIndex] = useState(0);
-  const item = items[Math.min(index, items.length - 1)];
+  const item = preview ?? items[Math.min(index, items.length - 1)];
+  const root = useRef<HTMLDivElement>(null);
+  const refocus = useRef<string | null>(null);
   useEffect(() => {
     if (item && onArtChange) onArtChange({ src: item.backdrop, fallback: item.poster, tint: item.tint });
   }, [item, onArtChange]);
+  // The hero remounts for each title; a remote paging through keeps its place on the arrow.
+  useLayoutEffect(() => {
+    const label = refocus.current;
+    refocus.current = null;
+    if (label) root.current?.querySelector<HTMLElement>(`[aria-label="${label}"]`)?.focus({ preventScroll: true });
+  }, [item?.key]);
   if (!item) return null;
-  const step = (delta: number) => setIndex((current) => (current + delta + items.length) % items.length);
+  const step = (delta: number) => {
+    refocus.current = delta > 0 ? "Next title" : "Previous title";
+    // Leaving a preview returns to the carousel title it replaced before paging on.
+    if (preview) onBrowse?.();
+    else setIndex((current) => (current + delta + items.length) % items.length);
+  };
   const detail = item.kind === "movie"
     ? <Link to="/movies/$movieId" params={{ movieId: item.id }} />
     : <Link to="/shows/$showId" params={{ showId: item.id }} />;
 
   return (
-    <div className={cn("relative isolate flex flex-col", className)} aria-roledescription="carousel" aria-label="Recently added">
-      {onArtChange ? null : <MediaBackdrop key={`art:${item.key}`} src={item.backdrop} fallback={item.poster} tint={item.tint} />}
+    <div ref={root} className={cn("relative isolate flex flex-col", className)} aria-roledescription="carousel" aria-label="Recently added">
+      {onArtChange ? null : <MediaBackdrop src={item.backdrop} fallback={item.poster} tint={item.tint} />}
       <HeroBanner
         key={`hero:${item.key}`}
         fill={fill}
@@ -101,7 +128,7 @@ export function HomeSpotlight({ items, onPlay, fill = "home", poster = true, eye
             {items.length > 1 ? (
               <span className="ms-auto flex items-center gap-2" role="group" aria-label="Choose a title">
                 <Button variant="ghost" shape="circle" icon={<IconChevronLeft className="rtl:rotate-180" />} aria-label="Previous title" onClick={() => step(-1)} data-focusable />
-                <span className="text-numeric text-label-sm text-muted" aria-live="polite">{index + 1} / {items.length}</span>
+                <span className="text-numeric text-label-sm text-muted" aria-live="polite">{preview ? null : `${index + 1} / ${items.length}`}</span>
                 <Button variant="ghost" shape="circle" icon={<IconChevronRight className="rtl:rotate-180" />} aria-label="Next title" onClick={() => step(1)} data-focusable />
               </span>
             ) : null}

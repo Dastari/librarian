@@ -4,7 +4,7 @@ import { IconPlay } from "glass-ux/icons";
 import { Progress } from "glass-ux/progress";
 import { Surface } from "glass-ux/surface";
 import { ToneDot } from "glass-ux/tone-dot";
-import { useId, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useId, type CSSProperties, type FocusEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 
 import type { StatusMeta } from "@/lib/status";
 import { cn } from "@/lib/utils";
@@ -33,6 +33,8 @@ export interface PosterCardProps {
   /** `row` sizes a shelf tile; `compact` a smaller one (seasons); `fill` takes the grid cell. */
   width?: "row" | "compact" | "fill";
   priority?: boolean;
+  /** Focus on the tile's link or button, so a page can preview the title (see `useFocusPreview`). */
+  onFocus?: (event: FocusEvent<HTMLElement>) => void;
 }
 
 /**
@@ -41,7 +43,7 @@ export interface PosterCardProps {
  * playback and extra actions are separate targets over the artwork and never hide on hover.
  * Watched progress runs along the poster's bottom edge.
  */
-export function PosterCard({ title, meta, image, aspect = "poster", tint, to, params, onPress, progress, status, badge, actions, onPlay, className, style, fallbackIcon, selected, width = "fill", priority }: PosterCardProps) {
+export function PosterCard({ title, meta, image, aspect = "poster", tint, to, params, onPress, progress, status, badge, actions, onPlay, className, style, fallbackIcon, selected, width = "fill", priority, onFocus }: PosterCardProps) {
   const labelId = useId();
   const navigationClass = "poster-navigation absolute inset-0 z-10 rounded-tile outline-none";
   const morph = (event: MouseEvent<HTMLElement>) => claimMorph(event.currentTarget.nextElementSibling);
@@ -53,8 +55,8 @@ export function PosterCard({ title, meta, image, aspect = "poster", tint, to, pa
   } : undefined;
   // The selected tile is where a remote enters its row (the current season).
   const entry = selected ? "" : undefined;
-  const navigation = to ? <Link to={to} params={params} aria-labelledby={labelId} className={navigationClass} data-focusable data-nav-default={entry} draggable={false} onClick={morph} onKeyDown={playKey} />
-    : onPress ? <button type="button" aria-labelledby={labelId} aria-pressed={selected === undefined ? undefined : selected} onClick={onPress} onKeyDown={playKey} className={navigationClass} data-focusable data-nav-default={entry} />
+  const navigation = to ? <Link to={to} params={params} aria-labelledby={labelId} className={navigationClass} data-focusable data-nav-default={entry} draggable={false} onClick={morph} onKeyDown={playKey} onFocus={onFocus} />
+    : onPress ? <button type="button" aria-labelledby={labelId} aria-pressed={selected === undefined ? undefined : selected} onClick={onPress} onKeyDown={playKey} onFocus={onFocus} className={navigationClass} data-focusable data-nav-default={entry} />
     : null;
   const watched = typeof progress === "number" && progress > 0 ? Math.max(0, Math.min(1, progress)) : null;
 

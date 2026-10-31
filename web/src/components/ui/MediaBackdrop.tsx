@@ -29,10 +29,20 @@ export function MediaBackdrop({ src, fallback, tint, className, onWideChange }: 
   const wide = primary && !failed.has(primary) ? primary : undefined;
   const image = wide ?? (secondary && !failed.has(secondary) ? secondary : undefined);
   // The sharp layer covers the viewport; the wash is blurred to nothing, so a thumbnail does.
-  const sharpSrc = sizedArtwork(wide, typeof window === "undefined" ? 1920 : Math.min(window.innerWidth, 1920));
+  const sharpWidth = typeof window === "undefined" ? 1920 : Math.min(window.innerWidth, 1920);
+  const sharpSrc = sizedArtwork(wide, sharpWidth);
   const washSrc = sizedArtwork(image, 320);
   const hasWide = Boolean(wide);
   useEffect(() => onWideChange?.(hasWide), [hasWide, onWideChange]);
+  // When the art changes (a remote moving along a shelf), the last picture stays underneath
+  // until the new one has faded in over it, instead of dropping to the bare tint between.
+  const [current, setCurrent] = useState(wide);
+  const [behind, setBehind] = useState<string | null>(null);
+  if (wide !== current) {
+    setCurrent(wide);
+    setBehind(loaded && loaded !== wide ? loaded : null);
+  }
+  const behindSrc = wide && behind ? sizedArtwork(behind, sharpWidth) : undefined;
 
   return (
     <div
@@ -53,6 +63,7 @@ export function MediaBackdrop({ src, fallback, tint, className, onWideChange }: 
             onError={() => fail(image)}
             className="media-backdrop-wash"
           />
+          {behindSrc ? <img key={behind!} src={behindSrc} alt="" decoding="async" draggable={false} data-loaded="true" className="media-backdrop-image" /> : null}
           {wide ? (
             <img
               key={wide}
