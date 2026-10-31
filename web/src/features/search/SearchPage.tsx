@@ -11,9 +11,12 @@ import { LibrariesOverviewDocument, LibrarySearchDocument } from "@/graphql/gene
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { albumCover, artistImage, audiobookCover, moviePoster, showPoster } from "@/lib/artwork";
 import { useIsAdmin } from "@/lib/auth/useSession";
+import { useInputMode } from "@/lib/input-mode";
 import { LIBRARY_TYPES, libraryType } from "@/lib/library-types";
+import { cn } from "@/lib/utils";
 
 import { ProviderResults } from "./ProviderResults";
+import { SearchKeyboardSlot } from "./SearchKeyboardSlot";
 
 const SCOPES = ["library", "movie", "show", "album", "audiobook"] as const;
 const ADD_LABELS = { movies: "Add movies", tv: "Add TV shows", music: "Add music", audiobooks: "Add audiobooks" } as const;
@@ -32,6 +35,9 @@ export function SearchPage() {
   const debounced = useDebouncedValue(query.trim(), 300);
   const inputRef = useRef<HTMLInputElement>(null);
   const [releases, setReleases] = useState(false);
+  // On a TV the page is two columns, like a TV app's search: field, scopes and the
+  // on-screen keyboard on the left, results beside them.
+  const tv = useInputMode().mode === "tv";
 
   const libraries = useQuery(LibrariesOverviewDocument);
   const libraryList = libraries.data?.libraries.edges.map((edge) => edge.node) ?? [];
@@ -71,8 +77,13 @@ export function SearchPage() {
           ) : null
         }
       />
+      <div className={tv ? "grid min-w-0 items-start gap-8 lg:grid-cols-[minmax(18rem,24rem)_minmax(0,1fr)]" : "contents"}>
+      <div data-nav-section className={tv ? "flex min-w-0 flex-col gap-4 lg:sticky lg:top-[calc(var(--topbar-height)+var(--space-4))]" : "contents"}>
       <SearchField ref={inputRef} aria-label="Search" value={query} onValueChange={(value) => void setQuery(value || null)} placeholder="Titles, people, albums…" size="lg" className="w-full max-w-2xl" data-spatial-start />
       {availableScopes.length > 1 ? <SegmentTabs ariaLabel="Search scope" items={availableScopes} selected={scope} onSelect={(key) => void setScope(key as Scope)} size="sm" className="max-w-2xl" /> : null}
+      {tv ? <SearchKeyboardSlot /> : null}
+      </div>
+      <div className={tv ? "search-results-tv flex min-w-0 flex-col gap-6" : "contents"}>
 
       {scope !== "library" ? (
         <ProviderResults kind={scope} query={debounced} libraries={libraryList} />
@@ -83,7 +94,7 @@ export function SearchPage() {
       ) : total === 0 ? (
         <EmptyState icon={IconSearch} title={`Nothing in your library matches “${debounced}”`} description={isAdmin ? "Switch to an “Add” tab to search metadata providers." : undefined} className="border-none" />
       ) : (
-        <div className="-mx-[calc(var(--page-gutter)+var(--safe-left))] flex flex-col gap-8">
+        <div className={cn("flex flex-col gap-8", tv ? "-me-[calc(var(--page-gutter)+var(--safe-right))]" : "-mx-[calc(var(--page-gutter)+var(--safe-left))]")}>
           {movies.length ? (
             <Section title="Movies" bleed={false} className="[&>div:first-child]:page-gutter">
               <MediaRow ariaLabel="Movies">
@@ -140,6 +151,8 @@ export function SearchPage() {
           ) : null}
         </div>
       )}
+      </div>
+      </div>
       <ReleaseSearchDialog isOpen={releases} onOpenChange={setReleases} query={debounced} />
     </div>
   );

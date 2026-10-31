@@ -237,3 +237,11 @@
   /* Phones also lose the tab bar and a wrapped header row. */
   .guide-day { block-size: clamp(3.5rem, calc((var(--view-h, 100svh) - 25rem) / 6), 6rem); }
 }
+
+/* TV search: results sit in the column beside the keyboard, so rows start at the column edge
+ * and bleed only to the right. */
+.search-results-tv .snap-row {
+  padding-inline: 0 calc(var(--page-gutter) + var(--safe-right));
+  scroll-padding-inline: 0;
+}
+.search-results-tv section > div:first-child { padding-inline: 0; }
