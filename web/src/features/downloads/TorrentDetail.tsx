@@ -4,6 +4,7 @@ import { EntityIdentity } from "glass-ux/entity";
 import { IconClose } from "glass-ux/icons";
 import { Progress } from "glass-ux/progress";
 
+import { EntityChip } from "@/components/entities/EntityChip";
 import { Button, KeyValueList, Panel } from "@/components/ui";
 import { ENTITY_KINDS } from "@/lib/entities/kinds";
 import { torrentImport, torrentStatus, torrentTarget } from "@/lib/entities/torrent";
@@ -20,7 +21,6 @@ export function TorrentDetail({ row, actions, onClose }: { row: DownloadRow; act
   const imported = torrentImport(record.postProcessStatus);
   const target = torrentTarget(record);
   const progress = live?.progress ?? record.progress;
-  const TargetGlyph = target ? ENTITY_KINDS[target.kind as keyof typeof ENTITY_KINDS]?.icon : undefined;
 
   return (
     <Panel className="self-start xl:sticky xl:top-0">
@@ -41,7 +41,7 @@ export function TorrentDetail({ row, actions, onClose }: { row: DownloadRow; act
         <Progress value={progress} max={1} size="sm" aria-label="Download progress" />
         <div className="flex flex-wrap items-center gap-2">
           <Badge size="sm" marker="dot" tone={imported.tone}>{imported.label}</Badge>
-          {target ? <EntityIdentity tier="chip" size="sm" kind={ENTITY_KINDS[target.kind as keyof typeof ENTITY_KINDS]?.noun} name={target.label} href={target.href} icon={TargetGlyph ? <TargetGlyph /> : undefined} preview={false} /> : null}
+          {target ? <EntityChip entity={target} /> : null}
         </div>
       </div>
       <KeyValueList

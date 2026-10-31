@@ -43,3 +43,8 @@ export function humanize(code: string): string {
   const words = code.replace(/[_-]+/g, " ").trim().toLowerCase();
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
+
+/** A legacy StatusMeta (StatusChip) as a Glass badge tone. */
+export function badgeTone(tone: string): "neutral" | "accent" | "success" | "warning" | "danger" | "info" {
+  return tone === "default" ? "neutral" : (tone as "accent" | "success" | "warning" | "danger");
+}

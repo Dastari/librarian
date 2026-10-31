@@ -5,12 +5,13 @@ import { IconArrowUpCircle } from "@tabler/icons-react";
 import { useMemo } from "react";
 
 import { ApproveQualityUpgradeDocument, EntityNotificationDeleteManyDocument, EntityNotificationUpdateDocument, EntityNotificationUpdateManyDocument } from "@/graphql/generated/graphql";
-import { ENTITY_KINDS, type EntityKindName } from "@/lib/entities/kinds";
+import { ENTITY_KINDS, glyph, type EntityKindName } from "@/lib/entities/kinds";
 import { notificationSubjects } from "@/lib/entities/notification";
 import { assertSuccess } from "@/lib/graphql/errors";
 
 import type { ActivityRow } from "./useActivity";
 
+const UpgradeIcon = glyph(IconArrowUpCircle, "arrow-up-circle");
 const plural = (rows: readonly ActivityRow[], one: string, many: string) => (rows.length === 1 ? one : many.replace("{n}", String(rows.length)));
 const now = () => new Date().toISOString();
 const pendingUpgrade = (row: ActivityRow) => row.actionType === "quality_upgrade" && !row.resolvedAt;
@@ -39,7 +40,7 @@ export function useNotificationActions(onChanged: () => void, isAdmin: boolean):
         run: async (rows) => { await updateMany({ variables: { where: ids(rows.filter((row) => !row.readAt)), input: { readAt: now() } } }); onChanged(); },
       },
       {
-        id: "approve", label: (rows) => plural(rows, "Approve upgrade", "Approve {n} upgrades"), icon: IconArrowUpCircle as never, group: "manage", priority: 1, bulk: true,
+        id: "approve", label: (rows) => plural(rows, "Approve upgrade", "Approve {n} upgrades"), icon: UpgradeIcon, group: "manage", priority: 1, bulk: true,
         visible: (rows) => isAdmin && rows.length > 0 && rows.every(pendingUpgrade),
         confirm: (rows) => ({ title: plural(rows, "Replace the file with the upgrade?", "Replace {n} files with their upgrades?"), body: "A copy of the download replaces the current library file, which is overwritten. The download stays where it is, so seeding continues. This cannot be undone.", confirmLabel: "Replace file", tone: "warning" }),
         run: async (rows) => {

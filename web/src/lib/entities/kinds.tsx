@@ -4,7 +4,7 @@ import { IconAlerts, IconDownload, IconFileVideo, IconLayers, IconPlug, IconUser
 import { IconBooks, IconDeviceTv, IconDisc, IconMicrophone2, IconMovie, IconMusic, IconStack2, IconUserStar, type TablerIcon } from "@tabler/icons-react";
 
 /** Tabler glyphs (media kinds Glass UX has no icon for) in Glass's icon contract. */
-function glyph(Icon: TablerIcon, name: string): IconComponent {
+export function glyph(Icon: TablerIcon, name: string): IconComponent {
   const size = { xs: 12, sm: 14, md: 16, lg: 20, xl: 24, "2xl": 32 } as const;
   const component = ({ size: token, label, tint: _tint, ...rest }: IconProps) => (
     <Icon size={token ? size[token] : "1em"} stroke={1.75} aria-hidden={label ? undefined : true} aria-label={label} {...(rest as object)} />

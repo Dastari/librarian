@@ -154,6 +154,7 @@ query LibraryMediaFiles($where: MediaFileWhereInput, $orderBy: [MediaFileOrderBy
     edges {
       node {
         ...MediaFileFields
+        ...LinkedMediaFile
       }
     }
     pageInfo {

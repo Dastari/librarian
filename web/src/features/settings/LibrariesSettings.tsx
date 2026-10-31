@@ -1,22 +1,27 @@
 import { useMutation } from "@apollo/client/react";
 import { toast } from "glass-ux/toast";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Link } from "@tanstack/react-router";
-import { IconFolder, IconPlus, IconSettings } from "@tabler/icons-react";
-import { useMemo, useState } from "react";
+import { defineActions } from "glass-ux/actions";
+import { Badge } from "glass-ux/badge";
+import { createDataTableColumns, DataTable, IdentityCell, RelativeTime, TextCell } from "glass-ux/data-table";
+import { IconExternalLink, IconPlus, IconRefresh, IconSettings } from "glass-ux/icons";
+import { useNavigate } from "@tanstack/react-router";
+import { IconFolder } from "@tabler/icons-react";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { Button, DataTable, type DataTableColumn, Dialog, EmptyState, FieldGroup, FormSelectField, FormSwitchField, FormTextField, Panel } from "@/components/ui";
+import { Button, Dialog, FieldGroup, FormSelectField, FormSwitchField, FormTextField } from "@/components/ui";
 import { FolderPickerDialog } from "@/features/files/FolderPickerDialog";
 import { libraryItemCount, type LibraryOverview } from "@/features/libraries/LibraryCard";
-import { EntityLibraryCreateDocument, LibrariesOverviewDocument } from "@/graphql/generated/graphql";
+import { EntityLibraryCreateDocument, LibrariesOverviewDocument, ScanLibraryDocument } from "@/graphql/generated/graphql";
 import { useSession } from "@/lib/auth/useSession";
-import { formatRelative, pluralize } from "@/lib/format";
+import { parseTimestamp, pluralize } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { LIBRARY_TYPE_OPTIONS, libraryType } from "@/lib/library-types";
 
 import { SettingsLoadError } from "./SettingsLoadError";
+import { SettingsSection } from "./SettingsSection";
 import { useSettingsConnection } from "./useSettingsConnection";
 
 const schema = z.object({
@@ -28,13 +33,28 @@ const schema = z.object({
 });
 type Values = z.infer<typeof schema>;
 
+const column = createDataTableColumns<LibraryOverview>();
+const columns = column.columns([
+  column.accessor("name", {
+    header: "Library", width: 26, priority: 1, cardRole: "title", sortable: true,
+    cell: ({ row }) => { const meta = libraryType(row.original.libraryType); return <IdentityCell icon={<meta.icon className={meta.tint} />} title={row.original.name} subtitle={row.original.path} status={row.original.scanning ? "installing" : "online"} statusLabel={row.original.scanning ? "Scanning" : "Idle"} />; },
+  }),
+  column.accessor((row) => libraryType(row.libraryType).label, { id: "type", header: "Type", width: 8, priority: 2, sortable: true, cell: ({ row }) => <Badge size="sm" tone="neutral">{libraryType(row.original.libraryType).label}</Badge> }),
+  column.accessor((row) => libraryItemCount(row).count, { id: "items", header: "Items", width: 8, priority: 2, align: "end", sortable: true, sortDescFirst: true, cell: ({ row }) => { const { count, noun } = libraryItemCount(row.original); return <TextCell>{pluralize(count, noun)}</TextCell>; } }),
+  column.display({ id: "schedule", header: "Scanning", width: 9, priority: 3, cell: ({ row }) => <TextCell muted>{row.original.autoScan ? `Every ${row.original.scanIntervalMinutes} min` : "Manual"}</TextCell> }),
+  column.accessor((row) => row.lastScannedAt ?? "", { id: "scanned", header: "Last scan", width: 9, priority: 3, sortable: true, sortDescFirst: true, cell: ({ row }) => <RelativeTime value={parseTimestamp(row.original.lastScannedAt)} fallback="Never" /> }),
+  column.display({ id: "organize", header: "Organize", width: 7, priority: 4, cell: ({ row }) => <Badge size="sm" tone={row.original.autoOrganize ? "success" : "neutral"}>{row.original.autoOrganize ? "On" : "Off"}</Badge> }),
+]);
+
 export function LibrariesSettings() {
   const { user } = useSession();
+  const navigate = useNavigate();
   const list = useSettingsConnection(LibrariesOverviewDocument, {}, (data) => data.libraries);
   const { rows: libraries, loading, refetch } = list;
   const [creating, setCreating] = useState(false);
   const [pickingFolder, setPickingFolder] = useState(false);
   const [create, { loading: saving }] = useMutation(EntityLibraryCreateDocument);
+  const [scan] = useMutation(ScanLibraryDocument);
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: { name: "", libraryType: "movies", path: "", autoScan: true, autoOrganize: false } });
 
   const submit = form.handleSubmit(async (values) => {
@@ -53,62 +73,44 @@ export function LibrariesSettings() {
     }
   });
 
-  const columns = useMemo<Array<DataTableColumn<LibraryOverview>>>(() => [
+  const actions = defineActions<LibraryOverview>("library", [
+    { id: "open", label: "Open library", icon: IconExternalLink, group: "open", priority: 1, visible: (rows) => rows.length === 1, run: (rows, context) => context.navigate(`/libraries/${rows[0]!.id}`) },
+    { id: "settings", label: "Library settings", icon: IconSettings, group: "open", priority: 2, visible: (rows) => rows.length === 1, run: (rows, context) => context.navigate(`/libraries/${rows[0]!.id}/settings`) },
     {
-      id: "name",
-      header: "Library",
-      cell: (row) => {
-        const meta = libraryType(row.libraryType);
-        return (
-          <span className="flex items-center gap-3">
-            <meta.icon size={18} className={meta.tint} />
-            <span className="min-w-0">
-              <span className="block truncate text-body-sm text-foreground">{row.name}</span>
-              <span className="block truncate font-mono text-label-sm text-muted">{row.path}</span>
-            </span>
-          </span>
-        );
+      id: "scan", label: (rows) => (rows.length === 1 ? "Scan now" : `Scan ${rows.length} libraries`), icon: IconRefresh, group: "manage", priority: 1, bulk: true,
+      disabledReason: (rows) => (rows.every((row) => row.scanning) ? "Already scanning" : false),
+      run: async (rows) => {
+        for (const row of rows.filter((item) => !item.scanning)) {
+          const result = (await scan({ variables: { id: row.id } })).data?.scanLibrary;
+          if (!result?.success) throw new Error(result?.message ?? `${row.name}: the scan could not start`);
+        }
+        void refetch();
       },
+      successMessage: (rows) => (rows.length === 1 ? "Scan started" : `Started ${rows.length} scans`),
     },
-    { id: "type", header: "Type", size: 120, cell: (row) => libraryType(row.libraryType).label },
-    { id: "items", header: "Items", size: 120, align: "end", numeric: true, cell: (row) => { const { count, noun } = libraryItemCount(row); return pluralize(count, noun); } },
-    { id: "scan", header: "Scanning", size: 160, hideBelow: "md", cell: (row) => <span className="text-muted">{row.autoScan ? `Every ${row.scanIntervalMinutes} min` : "Manual"}{row.lastScannedAt ? ` · ${formatRelative(row.lastScannedAt)}` : ""}</span> },
-    { id: "organize", header: "Organize", size: 100, hideBelow: "lg", cell: (row) => <span className="text-muted">{row.autoOrganize ? "On" : "Off"}</span> },
-    {
-      id: "open",
-      header: "",
-      size: 60,
-      align: "end",
-      cell: (row) => (
-        <Link to="/libraries/$libraryId/settings" params={{ libraryId: row.id }} aria-label="Library settings" className="nav-focus inline-grid size-8 place-items-center rounded-full text-muted hover:bg-surface-hover hover:text-foreground">
-          <IconSettings size={16} />
-        </Link>
-      ),
-    },
-  ], []);
+  ]);
 
   return (
     <div className="flex flex-col gap-6">
-      <Panel
-        title="Libraries"
-        flush
-        actions={
-          <Button variant="primary" size="sm" onPress={() => setCreating(true)}>
-            <IconPlus size={16} /> Add library
-          </Button>
-        }
-      >
+      <SettingsSection title="Libraries" actions={<Button variant="primary" size="sm" onPress={() => setCreating(true)}><IconPlus /> Add library</Button>}>
         <SettingsLoadError error={list.error} retry={list.refetch} hasRows={libraries.length > 0} />
-        <DataTable<LibraryOverview>
-          className="px-4 pb-4" frame={false}
+        <DataTable<LibraryOverview> height="auto"
+          id={`librarian.${user?.id ?? "session"}.settings.libraries`}
+          label="Libraries"
           columns={columns}
           rows={libraries}
           getRowId={(row) => row.id}
-          isLoading={loading && libraries.length === 0}
-          noun="libraries"
-          emptyState={<EmptyState compact icon={IconFolder} title="No libraries yet" action={<Button variant="primary" onPress={() => setCreating(true)}><IconPlus size={16} /> Add library</Button>} />}
+          getRowLabel={(row) => row.name}
+          loading={loading && libraries.length === 0}
+          actions={actions}
+          selectable
+          onRowOpen={(row) => void navigate({ to: "/libraries/$libraryId/settings", params: { libraryId: row.id } })}
+          rowOpen="click"
+          noun={{ one: "library", other: "libraries" }}
+          emptyMessage="No libraries yet."
+          emptyAction={<Button variant="primary" onPress={() => setCreating(true)}><IconPlus /> Add library</Button>}
         />
-      </Panel>
+      </SettingsSection>
 
       <Dialog
         isOpen={creating}

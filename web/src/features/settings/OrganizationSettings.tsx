@@ -1,19 +1,25 @@
 import { useMutation } from "@apollo/client/react";
 import { toast } from "glass-ux/toast";
 import { Form, FormActions, formBehaviour, useAppForm } from "glass-ux/form";
-import { IconFolders, IconPlus, IconTrash } from "@tabler/icons-react";
+import { defineActions } from "glass-ux/actions";
+import { Badge } from "glass-ux/badge";
+import { createDataTableColumns, DataTable, filters, IdentityCell } from "glass-ux/data-table";
+import { IconEdit, IconPlus, IconStar, IconTrash } from "glass-ux/icons";
+import { IconFolders } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
-import { Button, ConfirmDialog, DataTable, type DataTableColumn, type DataTableRowAction, Dialog, EmptyState, FieldGroup, Panel, StatusChip } from "@/components/ui";
+import { Button, Dialog, FieldGroup, Panel } from "@/components/ui";
 import { EntityNamingPatternCreateDocument, EntityNamingPatternDeleteDocument, EntityNamingPatternListDocument, EntityNamingPatternUpdateDocument, type NamingPatternFieldsFragment } from "@/graphql/generated/graphql";
 import { useSession } from "@/lib/auth/useSession";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
+import { glyph } from "@/lib/entities/kinds";
 import { LIBRARY_TYPE_OPTIONS, libraryType } from "@/lib/library-types";
 
 import { asBool, useAppSettings } from "./useAppSettings";
 
 import { SettingsLoadError } from "./SettingsLoadError";
+import { SettingsSection } from "./SettingsSection";
 import { useSettingsConnection } from "./useSettingsConnection";
 
 const globalSchema = z.object({ autoOrganize: z.boolean(), deleteEmptyFolders: z.boolean(), copyMode: z.string() });
@@ -21,6 +27,22 @@ type GlobalValues = z.infer<typeof globalSchema>;
 
 const patternSchema = z.object({ name: z.string().trim().min(1, "Name the pattern"), libraryType: z.string().min(1), pattern: z.string().trim().min(1, "Enter the pattern"), description: z.string().trim(), isDefault: z.boolean() });
 type PatternValues = z.infer<typeof patternSchema>;
+type Pattern = NamingPatternFieldsFragment;
+
+const PatternGlyph = glyph(IconFolders, "folders");
+const column = createDataTableColumns<Pattern>();
+const columns = column.columns([
+  column.accessor("name", { header: "Pattern", width: 30, priority: 1, cardRole: "title", sortable: true, cell: ({ row }) => <IdentityCell icon={<PatternGlyph />} title={row.original.name} subtitle={row.original.pattern} /> }),
+  column.accessor("libraryType", {
+    header: "Library type", width: 10, priority: 2, sortable: true,
+    filter: filters.options({ field: "libraryType", nullable: false, operators: ["in"], options: LIBRARY_TYPE_OPTIONS.map((option) => ({ value: option.type, label: option.label })) }),
+    cell: ({ row }) => <Badge size="sm" tone="neutral">{libraryType(row.original.libraryType).label}</Badge>,
+  }),
+  column.display({
+    id: "flags", header: "Use", width: 10, priority: 2, cardRole: "status",
+    cell: ({ row }) => <span className="flex gap-1">{row.original.isDefault ? <Badge size="sm" marker="dot" tone="accent">Default</Badge> : null}{row.original.isSystem ? <Badge size="sm" tone="neutral">Built-in</Badge> : null}</span>,
+  }),
+]);
 
 export function OrganizationSettings() {
   const { user } = useSession();
@@ -47,10 +69,9 @@ export function OrganizationSettings() {
   const patterns = useSettingsConnection(EntityNamingPatternListDocument, { orderBy: [{ libraryType: "ASC" }, { name: "ASC" }] }, (data) => data.namingPatterns);
   const rows = patterns.rows;
   const [editing, setEditing] = useState<NamingPatternFieldsFragment | null | "new">(null);
-  const [removing, setRemoving] = useState<NamingPatternFieldsFragment | null>(null);
   const [create] = useMutation(EntityNamingPatternCreateDocument);
   const [update] = useMutation(EntityNamingPatternUpdateDocument);
-  const [remove, { loading: deleting }] = useMutation(EntityNamingPatternDeleteDocument);
+  const [remove] = useMutation(EntityNamingPatternDeleteDocument);
   const patternDefaults = useMemo<PatternValues>(() => {
     const source = editing === "new" ? null : editing;
     return { name: source?.name ?? "", libraryType: source?.libraryType ?? "movies", pattern: source?.pattern ?? "", description: source?.description ?? "", isDefault: source?.isDefault ?? false };
@@ -70,15 +91,28 @@ export function OrganizationSettings() {
     if (editing !== null) patternForm.reset(patternDefaults);
   }, [editing, patternDefaults, patternForm]);
 
-  const columns = useMemo<Array<DataTableColumn<NamingPatternFieldsFragment>>>(() => [
-    { id: "name", header: "Pattern", cell: (row) => (<span className="min-w-0"><span className="block truncate text-body-sm text-foreground">{row.name}</span><span className="block truncate font-mono text-label-sm text-muted">{row.pattern}</span></span>) },
-    { id: "type", header: "Library type", size: 130, cell: (row) => libraryType(row.libraryType).label },
-    { id: "flags", header: "", size: 160, cell: (row) => (<span className="flex gap-1">{row.isDefault ? <StatusChip status={{ label: "Default", tone: "accent", dot: "bg-info" }} /> : null}{row.isSystem ? <StatusChip status={{ label: "Built-in", tone: "default", dot: "bg-muted" }} /> : null}</span>) },
-  ], []);
-  const actions: Array<DataTableRowAction<NamingPatternFieldsFragment>> = [
-    { key: "default", label: "Make default for type", hidden: (row) => row.isDefault, onAction: async (row) => { try { for (const other of rows.filter((item) => item.libraryType === row.libraryType && item.isDefault)) await update({ variables: { id: other.id, input: { isDefault: false } } }); await update({ variables: { id: row.id, input: { isDefault: true } } }); void patterns.refetch(); } catch (error) { toast.danger(errorMessage(error)); } } },
-    { key: "delete", label: "Delete", icon: <IconTrash size={16} />, destructive: true, hidden: (row) => row.isSystem, onAction: (row) => setRemoving(row) },
-  ];
+  const refreshPatterns = patterns.refetch;
+  const actions = useMemo(() => defineActions<Pattern>("naming-pattern", [
+    { id: "edit", label: "Edit", icon: IconEdit, group: "open", priority: 1, visible: (targets) => targets.length === 1 && !targets[0]!.isSystem, run: (targets) => setEditing(targets[0]!) },
+    {
+      id: "default", label: "Make default for its type", icon: IconStar, group: "manage", priority: 2,
+      visible: (targets) => targets.length === 1 && !targets[0]!.isDefault,
+      run: async (targets) => {
+        const row = targets[0]!;
+        for (const other of rows.filter((item) => item.libraryType === row.libraryType && item.isDefault)) await update({ variables: { id: other.id, input: { isDefault: false } } });
+        await update({ variables: { id: row.id, input: { isDefault: true } } });
+        void refreshPatterns();
+      },
+      successMessage: (targets) => `${targets[0]!.name} is now the default`,
+    },
+    {
+      id: "delete", label: "Delete", icon: IconTrash, group: "danger",
+      visible: (targets) => targets.length === 1 && !targets[0]!.isSystem,
+      confirm: (targets) => ({ title: `Delete ${targets[0]!.name}?`, body: "Files already organized with it stay where they are.", confirmLabel: "Delete", tone: "danger" }),
+      run: async (targets) => { assertSuccess((await remove({ variables: { id: targets[0]!.id } })).data?.deleteNamingPattern, "Could not delete"); void refreshPatterns(); },
+      successMessage: () => "Pattern deleted",
+    },
+  ]), [refreshPatterns, remove, rows, update]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -96,10 +130,10 @@ export function OrganizationSettings() {
         </FormActions>
       </Form>
 
-      <Panel title="Naming patterns" description="Tokens such as {title}, {year}, {season:00}, {episode:00}, {quality} are replaced when files are organized." flush actions={<Button variant="primary" size="sm" onPress={() => setEditing("new")}><IconPlus size={16} /> New pattern</Button>}>
+      <SettingsSection title="Naming patterns" description="Tokens such as {title}, {year}, {season:00}, {episode:00}, {quality} are replaced when files are organized." actions={<Button variant="primary" size="sm" onPress={() => setEditing("new")}><IconPlus /> New pattern</Button>}>
         <SettingsLoadError error={patterns.error} retry={patterns.refetch} hasRows={rows.length > 0} />
-        <DataTable<NamingPatternFieldsFragment> className="px-4 pb-4" frame={false} columns={columns} rows={rows} getRowId={(row) => row.id} isLoading={patterns.loading && rows.length === 0} rowActions={actions} onRowClick={(row) => (row.isSystem ? undefined : setEditing(row))} noun="patterns" density="compact" emptyState={<EmptyState compact icon={IconFolders} title="No naming patterns" />} />
-      </Panel>
+        <DataTable<Pattern> height="auto" id={`librarian.${user?.id ?? "session"}.settings.naming-patterns`} label="Naming patterns" columns={columns} rows={rows} getRowId={(row) => row.id} getRowLabel={(row) => row.name} loading={patterns.loading && rows.length === 0} actions={actions} onRowOpen={(row) => (row.isSystem ? undefined : setEditing(row))} rowOpen="click" noun={{ one: "pattern", other: "patterns" }} density="compact" emptyMessage="No naming patterns" />
+      </SettingsSection>
 
       <Dialog isOpen={editing !== null} onOpenChange={(open) => !open && setEditing(null)} title={editing === "new" || !editing ? "New naming pattern" : `Edit ${editing.name}`} size="md">
         <Form form={patternForm} onError={(error) => toast.danger(errorMessage(error))}>
@@ -116,7 +150,6 @@ export function OrganizationSettings() {
           </FormActions>
         </Form>
       </Dialog>
-      <ConfirmDialog isOpen={Boolean(removing)} onOpenChange={(open) => !open && setRemoving(null)} title={`Delete ${removing?.name}?`} confirmLabel="Delete" destructive isPending={deleting} onConfirm={async () => { if (!removing) return; try { assertSuccess((await remove({ variables: { id: removing.id } })).data?.deleteNamingPattern, "Could not delete"); setRemoving(null); void patterns.refetch(); } catch (error) { toast.danger(errorMessage(error)); } }} />
     </div>
   );
 }

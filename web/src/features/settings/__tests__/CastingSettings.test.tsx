@@ -13,7 +13,7 @@ const state = vi.hoisted(() => ({
   settingsRefetch: vi.fn(), devicesRefetch: vi.fn(),
   create: vi.fn(), update: vi.fn(), add: vi.fn(), discover: vi.fn(), other: vi.fn(),
 }));
-vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => state.admin }));
+vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => state.admin, useSession: () => ({ user: { id: "u1" } }) }));
 vi.mock("../useSettingsConnection", () => ({
   useSettingsConnection: () => ({ rows: [], loading: false, error: undefined, refetch: state.devicesRefetch }),
 }));

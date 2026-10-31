@@ -1,11 +1,14 @@
 import { useMutation } from "@apollo/client/react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
-import { IconBookmark, IconPlay } from "glass-ux/icons";
+import { defineActions } from "glass-ux/actions";
+import { Badge } from "glass-ux/badge";
+import { createDataTableColumns, DataTable, IdentityCell } from "glass-ux/data-table";
+import { IconArrowDown, IconArrowUp, IconBookmark, IconExternalLink, IconPlay, IconTrash } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
 import { Form, FormActions, FormStack, formBehaviour, useAppForm } from "glass-ux/form";
 import { z } from "zod";
-import { Button, ConfirmDialog, DataTable, Dialog, EmptyState, ErrorState, PageHeader, type DataTableColumn } from "@/components/ui";
+import { Artwork, Button, ConfirmDialog, Dialog, EmptyState, ErrorState, PageHeader } from "@/components/ui";
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
 import { usePlayer } from "@/features/player/usePlayer";
 import { EntityListEntryDeleteDocument, EntityListEntryUpdateDocument, EntityPersonalListDeleteDocument, EntityPersonalListGetDocument, EntityPersonalListUpdateDocument, EntitySavedViewGetDocument, PersonalEntriesDocument, type PersonalEntryFragment } from "@/graphql/generated/graphql";
@@ -16,14 +19,19 @@ import { SmartResults } from "./SmartResults";
 import { entryPresentation } from "./types";
 import { useHomeShelves } from "./usePersonalLibrary";
 
-const columns: Array<DataTableColumn<PersonalEntryFragment>> = [
-  { id: "title", header: "Title", cardRole: "title", value: (entry) => entryPresentation(entry)?.title ?? "Unavailable item", cell: (entry) => {
-    const item = entryPresentation(entry);
-    return item ? <Link to={item.href as never} className="nav-focus flex min-w-0 items-center gap-3 rounded">
-      {item.image ? <img src={item.image} alt="" loading="lazy" className="size-10 shrink-0 rounded object-cover" /> : null}<span className="min-w-0"><span className="block truncate">{item.title}</span><span className="block truncate text-body-sm text-muted">{item.subtitle}</span></span>
-    </Link> : <span className="text-muted">Unavailable item</span>;
-  } },
-];
+type Entry = PersonalEntryFragment;
+const entryKind = (entry: Entry) => (entry.movie ? "Movie" : entry.show ? "Show" : entry.album ? "Album" : entry.audiobook ? "Audiobook" : entry.track ? "Track" : "Unavailable");
+const column = createDataTableColumns<Entry>();
+const columns = column.columns([
+  column.accessor((entry) => entryPresentation(entry)?.title ?? "Unavailable item", {
+    id: "title", header: "Title", width: 28, priority: 1, cardRole: "title",
+    cell: ({ row }) => {
+      const item = entryPresentation(row.original);
+      return <IdentityCell icon={item?.image ? <Artwork src={item.image} alt="" aspect={item.square ? "square" : "poster"} className={item.square ? "w-8 rounded-sm" : "w-6 rounded-sm"} /> : undefined} title={item?.title ?? "Unavailable item"} subtitle={item?.subtitle} />;
+    },
+  }),
+  column.accessor(entryKind, { id: "kind", header: "Type", width: 8, priority: 2, cell: ({ row }) => <Badge size="sm" tone="neutral">{entryKind(row.original)}</Badge> }),
+]);
 
 export function PersonalListPage({ listId }: { listId: string }) {
   const navigate = useNavigate();
@@ -58,6 +66,26 @@ export function PersonalListPage({ listId }: { listId: string }) {
     for (const update of updates) { const { data } = await move({ variables: { id: update.id, input: { position: update.position } } }); assertSuccess(data?.updateListEntry, "Could not reorder list"); }
     await entries.refetch();
   };
+  const reorderTo = async (entry: Entry, target: number) => {
+    const index = entries.rows.findIndex((row) => row.id === entry.id);
+    if (index < 0 || target === index) return;
+    await reorder(entry, target - index);
+  };
+  const actions = defineActions<Entry>("list-entry", [
+    { id: "open", label: (rows) => `Open ${entryKind(rows[0]!).toLowerCase()}`, icon: IconExternalLink, group: "open", priority: 2, visible: (rows) => rows.length === 1 && Boolean(entryPresentation(rows[0]!)?.href), run: (rows, context) => { const href = entryPresentation(rows[0]!)?.href; if (href) context.navigate(href); } },
+    {
+      id: "play", label: "Play", icon: IconPlay, group: "open", priority: 1, visible: (rows) => rows.length === 1 && Boolean(rows[0]!.track?.mediaFileId),
+      run: (rows) => { const track = rows[0]!.track!; player.playAudio([{ mediaFileId: track.mediaFileId!, title: track.title, subtitle: track.artistName ?? undefined, artwork: entryPresentation(rows[0]!)?.image, href: `/albums/${track.albumId}`, entity: { kind: "track", id: track.id }, duration: track.durationSecs ?? undefined }]); },
+    },
+    { id: "up", label: "Move up", icon: IconArrowUp, group: "organise", visible: (rows) => rows.length === 1 && entries.rows[0]?.id !== rows[0]!.id, disabledReason: () => (pending ? "Saving list" : !entries.complete ? "Load the complete list to reorder" : false), run: (rows) => run(() => reorder(rows[0]!, -1)) },
+    { id: "down", label: "Move down", icon: IconArrowDown, group: "organise", visible: (rows) => rows.length === 1 && entries.rows.at(-1)?.id !== rows[0]!.id, disabledReason: () => (pending ? "Saving list" : !entries.complete ? "Load the complete list to reorder" : false), run: (rows) => run(() => reorder(rows[0]!, 1)) },
+    {
+      id: "remove", label: (rows) => (rows.length === 1 ? "Remove from list" : `Remove ${rows.length} from list`), icon: IconTrash, group: "danger", bulk: true,
+      disabledReason: () => (pending ? "Saving list" : false),
+      run: async (rows) => { for (const entry of rows) { const { data } = await remove({ variables: { id: entry.id } }); assertSuccess(data?.deleteListEntry, "Could not remove item"); } await entries.refetch(); },
+      successMessage: (rows) => (rows.length === 1 ? "Removed from the list" : `Removed ${rows.length} items`),
+    },
+  ]);
   if (list.error && !current) return <ErrorState error={list.error} onRetry={() => void list.refetch()} className="m-6" />;
   if (!current) return <div className="page-gutter py-6">{list.loading ? <p role="status">Loading list…</p> : <EmptyState icon={IconBookmark} title="List not found" />}</div>;
   const pinned = home.rows.find((shelf) => shelf.listId === listId && shelf.visible);
@@ -73,14 +101,11 @@ export function PersonalListPage({ listId }: { listId: string }) {
     {home.error ? <ErrorState error={home.error} onRetry={() => void home.refetch()} /> : null}
     {current.kind === "SMART" ? saved.data?.savedView ? <SmartResults view={saved.data.savedView} /> : saved.error ? <ErrorState error={saved.error} onRetry={() => void saved.refetch()} /> : <p role="status">Loading rules…</p> : <>
       {entries.error ? <ErrorState error={entries.error} onRetry={() => void entries.refetch()} /> : null}
-      <DataTable id={`personal:${listId}`} label={current.name} height="fill" columns={columns} rows={entries.rows} getRowId={(entry) => entry.id} isLoading={entries.loading} refetching={entries.fetching} selectable={false} dataSource={ready.current.complete ? "complete" : "server-infinite"} externalBrowserToolbar={!ready.current.complete}
-        getSearchText={(entry) => { const item = entryPresentation(entry); return `${item?.title ?? ""} ${item?.subtitle ?? ""}`; }}
-        emptyState={<EmptyState icon={IconBookmark} title="Nothing saved yet" description="Use Save on a title, or the track menu, to add items to this list." />}
-        rowActions={[
-          { key: "up", label: "Move up", hidden: (entry) => entries.rows[0]?.id === entry.id, disabledReason: () => pending ? "Saving list" : !entries.complete ? "Load the complete list to reorder" : false, onAction: (entry) => run(() => reorder(entry, -1)) },
-          { key: "down", label: "Move down", hidden: (entry) => entries.rows.at(-1)?.id === entry.id, disabledReason: () => pending ? "Saving list" : !entries.complete ? "Load the complete list to reorder" : false, onAction: (entry) => run(() => reorder(entry, 1)) },
-          { key: "remove", label: "Remove from list", disabledReason: () => pending ? "Saving list" : false, destructive: true, onAction: (entry) => run(async () => { const { data } = await remove({ variables: { id: entry.id } }); assertSuccess(data?.deleteListEntry, "Could not remove item"); await entries.refetch(); }) },
-        ]} />
+      <DataTable<Entry> id={`personal:${listId}`} label={current.name} height="fill" columns={columns} rows={entries.rows} getRowId={(entry) => entry.id} getRowLabel={(entry) => entryPresentation(entry)?.title ?? "Unavailable item"}
+        loading={entries.loading} refetching={entries.fetching && !entries.loading}
+        actions={actions} selectable onRowOpen={(entry) => { const href = entryPresentation(entry)?.href; if (href) void navigate({ href }); }} rowOpen="click"
+        reorder={{ disabled: pending ? "Saving list" : !entries.complete ? "Load the complete list to reorder" : false, onReorder: (change) => run(() => reorderTo(change.row, change.to)) }}
+        noun={{ one: "item", other: "items" }} emptyMessage="Nothing saved yet. Use Save on a title, or the track menu, to add items to this list." />
     </>}
     <ConfirmDialog isOpen={confirm} onOpenChange={setConfirm} title={`Delete ${current.name}?`} description="The list is removed. Media and download settings stay as they are." confirmLabel="Delete list" destructive isPending={deleting} onConfirm={() => run(async () => { const { data } = await deleteList({ variables: { id: listId } }); assertSuccess(data?.deletePersonalList, "Could not delete list"); await navigate({ to: "/lists" }); })} />
     {editing && saved.data?.savedView ? <ListEditor open={editing} onOpenChange={setEditing} initial={saved.data.savedView} personalListId={listId} /> : null}

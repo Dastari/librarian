@@ -1,12 +1,16 @@
 import { useMutation } from "@apollo/client/react";
 import { toast } from "glass-ux/toast";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { IconPlus, IconStar, IconStarFilled, IconTags, IconTrash } from "@tabler/icons-react";
+import { defineActions } from "glass-ux/actions";
+import { Badge } from "glass-ux/badge";
+import { createDataTableColumns, DataTable, filters, IdentityCell, TextCell } from "glass-ux/data-table";
+import { IconEdit, IconPlus, IconStar, IconTrash } from "glass-ux/icons";
+import { IconTags } from "@tabler/icons-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { Button, ConfirmDialog, DataTable, type DataTableColumn, type DataTableRowAction, Dialog, EmptyState, FieldGroup, FormNumberField, FormSelectField, FormSwitchField, FormTextField, Panel, StatusChip } from "@/components/ui";
+import { Button, Dialog, FieldGroup, FormNumberField, FormSelectField, FormSwitchField, FormTextField } from "@/components/ui";
 import {
   EntityQualityProfileCreateDocument,
   EntityQualityProfileDeleteDocument,
@@ -14,12 +18,15 @@ import {
   EntityQualityProfileListDocument,
   type QualityProfileFieldsFragment,
 } from "@/graphql/generated/graphql";
+import { useSession } from "@/lib/auth/useSession";
+import { glyph } from "@/lib/entities/kinds";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { LANGUAGES, languageName } from "@/lib/languages";
 
 import { FormOrderedChips } from "./OrderedChips";
 
 import { SettingsLoadError } from "./SettingsLoadError";
+import { SettingsSection } from "./SettingsSection";
 import { useSettingsConnection } from "./useSettingsConnection";
 
 const list = z.string();
@@ -78,14 +85,32 @@ const toInput = (profile?: QualityProfileFieldsFragment | null): Input => ({
   resolutionPreference: profile?.resolutionPreference ?? [],
 });
 
+type Profile = QualityProfileFieldsFragment;
+const ProfileGlyph = glyph(IconTags, "tags");
+const column = createDataTableColumns<Profile>();
+const columns = column.columns([
+  column.accessor("name", {
+    header: "Profile", width: 26, priority: 1, cardRole: "title", sortable: true,
+    cell: ({ row }) => { const profile = row.original; return <IdentityCell icon={<ProfileGlyph />} title={profile.name} subtitle={profile.mediaKind === "VIDEO" ? [profile.allowedResolutions.join("/"), profile.allowedVideoCodecs.join("/"), profile.requireHdr ? "HDR required" : null].filter(Boolean).join(" · ") : profile.allowedAudioFormats.join("/")} />; },
+  }),
+  column.accessor("mediaKind", {
+    header: "Kind", width: 7, priority: 2, sortable: true,
+    filter: filters.options({ field: "mediaKind", nullable: false, operators: ["in"], options: [{ value: "VIDEO", label: "Video" }, { value: "AUDIO", label: "Audio" }] }),
+    cell: ({ row }) => <Badge size="sm" tone="info">{row.original.mediaKind === "VIDEO" ? "Video" : "Audio"}</Badge>,
+  }),
+  column.display({ id: "default", header: "Use", width: 7, priority: 2, cardRole: "status", cell: ({ row }) => (row.original.isDefault ? <Badge size="sm" marker="dot" tone="accent">Default</Badge> : <TextCell muted>—</TextCell>) }),
+  column.display({ id: "cutoff", header: "Upgrade until", width: 9, priority: 3, cell: ({ row }) => <TextCell muted>{row.original.upgradeUntilCutoff ? (row.original.cutoffResolution ?? "Best available") : "Off"}</TextCell> }),
+  column.display({ id: "sources", header: "Sources", width: 12, priority: 4, cell: ({ row }) => <TextCell muted>{row.original.allowedSources.join(", ") || "Any"}</TextCell> }),
+]);
+
 export function QualitySettings() {
+  const { user } = useSession();
   const list = useSettingsConnection(EntityQualityProfileListDocument, { orderBy: [{ name: "ASC" }] }, (data) => data.qualityProfiles);
   const { rows: profiles, loading, refetch } = list;
   const [editing, setEditing] = useState<QualityProfileFieldsFragment | null | "new">(null);
-  const [removing, setRemoving] = useState<QualityProfileFieldsFragment | null>(null);
   const [create, { loading: creating }] = useMutation(EntityQualityProfileCreateDocument);
   const [update, { loading: updating }] = useMutation(EntityQualityProfileUpdateDocument);
-  const [remove, { loading: deleting }] = useMutation(EntityQualityProfileDeleteDocument);
+  const [remove] = useMutation(EntityQualityProfileDeleteDocument);
   const form = useForm<Input>({ resolver: zodResolver(schema), defaultValues: toInput() });
 
   useEffect(() => {
@@ -128,38 +153,27 @@ export function QualitySettings() {
     }
   };
 
-  const columns = useMemo<Array<DataTableColumn<QualityProfileFieldsFragment>>>(() => [
+  const actions = useMemo(() => defineActions<Profile>("quality-profile", [
+    { id: "edit", label: "Edit", icon: IconEdit, group: "open", priority: 1, visible: (targets) => targets.length === 1, run: (targets) => setEditing(targets[0]!) },
+    { id: "default", label: "Make default", icon: IconStar, group: "manage", priority: 2, visible: (targets) => targets.length === 1 && !targets[0]!.isDefault, run: (targets) => makeDefault(targets[0]!) },
     {
-      id: "name",
-      header: "Profile",
-      cell: (profile) => (
-        <span className="flex items-center gap-2">
-          {profile.isDefault ? <IconStarFilled size={14} className="text-brand" /> : null}
-          <span className="min-w-0">
-            <span className="block truncate text-body-sm text-foreground">{profile.name}</span>
-            <span className="block truncate text-label-sm text-muted">{profile.mediaKind === "VIDEO" ? [profile.allowedResolutions.join("/"), profile.allowedVideoCodecs.join("/"), profile.requireHdr ? "HDR required" : null].filter(Boolean).join(" · ") : profile.allowedAudioFormats.join("/")}</span>
-          </span>
-        </span>
-      ),
+      id: "delete", label: "Delete", icon: IconTrash, group: "danger",
+      visible: (targets) => targets.length === 1 && !targets[0]!.isDefault,
+      confirm: (targets) => ({ title: `Delete ${targets[0]!.name}?`, body: "Libraries using this profile fall back to the default.", confirmLabel: "Delete", tone: "danger" }),
+      run: async (targets) => { assertSuccess((await remove({ variables: { id: targets[0]!.id } })).data?.deleteQualityProfile, "Could not delete"); void refetch(); },
+      successMessage: () => "Profile deleted",
     },
-    { id: "kind", header: "Kind", size: 100, cell: (profile) => <StatusChip status={{ label: profile.mediaKind === "VIDEO" ? "Video" : "Audio", tone: "accent", dot: "bg-info" }} /> },
-    { id: "cutoff", header: "Upgrade until", size: 140, hideBelow: "md", cell: (profile) => <span className="text-muted">{profile.upgradeUntilCutoff ? (profile.cutoffResolution ?? "best available") : "Off"}</span> },
-    { id: "sources", header: "Sources", size: 180, hideBelow: "lg", cell: (profile) => <span className="text-muted">{profile.allowedSources.join(", ") || "Any"}</span> },
-  ], []);
-  const actions: Array<DataTableRowAction<QualityProfileFieldsFragment>> = [
-    { key: "default", label: "Make default", icon: <IconStar size={16} />, hidden: (profile) => profile.isDefault, onAction: makeDefault },
-    { key: "delete", label: "Delete", icon: <IconTrash size={16} />, destructive: true, hidden: (profile) => profile.isDefault, onAction: (profile) => setRemoving(profile) },
-  ];
+  ]), [makeDefault, refetch, remove]);
 
   const kind = form.watch("mediaKind");
   const resolutions = splitList(form.watch("allowedResolutions"));
 
   return (
     <div className="flex flex-col gap-6">
-      <Panel title="Quality profiles" description="Decide which releases are acceptable and when a better file should replace an existing one." flush actions={<Button variant="primary" size="sm" onPress={() => setEditing("new")}><IconPlus size={16} /> New profile</Button>}>
+      <SettingsSection title="Quality profiles" description="Decide which releases are acceptable and when a better file should replace an existing one." actions={<Button variant="primary" size="sm" onPress={() => setEditing("new")}><IconPlus /> New profile</Button>}>
         <SettingsLoadError error={list.error} retry={list.refetch} hasRows={profiles.length > 0} />
-        <DataTable<QualityProfileFieldsFragment> className="px-4 pb-4" frame={false} columns={columns} rows={profiles} getRowId={(profile) => profile.id} isLoading={loading && profiles.length === 0} rowActions={actions} onRowClick={(profile) => setEditing(profile)} noun="profiles" emptyState={<EmptyState compact icon={IconTags} title="No profiles yet" />} />
-      </Panel>
+        <DataTable<Profile> height="auto" id={`librarian.${user?.id ?? "session"}.settings.quality-profiles`} label="Quality profiles" columns={columns} rows={profiles} getRowId={(profile) => profile.id} getRowLabel={(profile) => profile.name} loading={loading && profiles.length === 0} actions={actions} onRowOpen={(profile) => setEditing(profile)} rowOpen="click" noun={{ one: "profile", other: "profiles" }} emptyMessage="No profiles yet" />
+      </SettingsSection>
 
       <Dialog isOpen={editing !== null} onOpenChange={(open) => !open && setEditing(null)} title={editing === "new" || !editing ? "New quality profile" : `Edit ${editing.name}`} size="xl" footer={<><Button variant="ghost" onPress={() => setEditing(null)}>Cancel</Button><Button variant="primary" onPress={() => void submit()} isPending={creating || updating}>Save</Button></>}>
         <form onSubmit={submit} noValidate>
@@ -228,7 +242,6 @@ export function QualitySettings() {
           </FieldGroup>
         </form>
       </Dialog>
-      <ConfirmDialog isOpen={Boolean(removing)} onOpenChange={(open) => !open && setRemoving(null)} title={`Delete ${removing?.name}?`} description="Libraries using this profile fall back to the default." confirmLabel="Delete" destructive isPending={deleting} onConfirm={async () => { if (!removing) return; try { assertSuccess((await remove({ variables: { id: removing.id } })).data?.deleteQualityProfile, "Could not delete"); setRemoving(null); void refetch(); } catch (error) { toast.danger(errorMessage(error)); } }} />
     </div>
   );
 }

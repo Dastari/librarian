@@ -1,63 +1,103 @@
 import { useMutation } from "@apollo/client/react";
+import { defineActions } from "glass-ux/actions";
+import { Badge } from "glass-ux/badge";
+import { createDataTableColumns, DataTable, IdentityCell, NumericCell, RelativeTime, TextCell } from "glass-ux/data-table";
+import { IconDatabase, IconDatabaseExport, IconRestore, IconShieldCheck } from "@tabler/icons-react";
+import { useMemo } from "react";
+
+import { Button } from "@/components/ui";
+import { BackupOverviewDocument, CreateFullBackupDocument, RestoreFullBackupDocument, VerifyBackupSnapshotDocument, type BackupOverviewQuery } from "@/graphql/generated/graphql";
+import { useSession } from "@/lib/auth/useSession";
+import { glyph } from "@/lib/entities/kinds";
+import { formatBytes, parseTimestamp } from "@/lib/format";
+import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { toast } from "glass-ux/toast";
-import { IconDatabase, IconDatabaseExport, IconRestore, IconShieldCheck } from "@tabler/icons-react";
-import { useMemo, useState } from "react";
-
-import { Button, ConfirmDialog, DataTable, type DataTableColumn, type DataTableRowAction, EmptyState, Panel, StatTile } from "@/components/ui";
-import { BackupOverviewDocument, CreateFullBackupDocument, RestoreFullBackupDocument, VerifyBackupSnapshotDocument, type BackupOverviewQuery } from "@/graphql/generated/graphql";
-import { formatBytes, formatDateTime } from "@/lib/format";
-import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 
 import { SettingsLoadError } from "./SettingsLoadError";
+import { SettingsSection } from "./SettingsSection";
 
 type Snapshot = BackupOverviewQuery["backupSnapshots"][number];
 
+const SnapshotGlyph = glyph(IconDatabase, "database");
+const VerifyIcon = glyph(IconShieldCheck, "shield-check");
+const RestoreIcon = glyph(IconRestore, "restore");
+const column = createDataTableColumns<Snapshot>();
+const columns = column.columns([
+  column.accessor("snapshotId", { header: "Snapshot", width: 22, priority: 1, cardRole: "title", cell: ({ row }) => <IdentityCell icon={<SnapshotGlyph />} title={row.original.snapshotId} subtitle={`${row.original.kind} · v${row.original.appVersion}`} /> }),
+  column.accessor("createdAt", { header: "Created", width: 9, priority: 2, sortable: true, sortDescFirst: true, cell: ({ row }) => <RelativeTime value={parseTimestamp(row.original.createdAt)} /> }),
+  column.accessor("tableCount", { header: "Tables", width: 6, priority: 3, align: "end", grow: false, cell: ({ row }) => <NumericCell value={row.original.tableCount} /> }),
+  column.accessor("objectCount", { header: "Objects", width: 6, priority: 3, align: "end", grow: false, cell: ({ row }) => <NumericCell value={row.original.objectCount} /> }),
+  column.accessor("totalObjectBytes", { header: "Size", width: 7, priority: 2, align: "end", sortable: true, sortDescFirst: true, cell: ({ row }) => <TextCell muted>{formatBytes(row.original.totalObjectBytes)}</TextCell> }),
+]);
+
+/** What this server can back up and restore, as one line of badges instead of status cards. */
+function Capability({ label, available }: { label: string; available: boolean | undefined }) {
+  return <Badge size="sm" marker="dot" tone={available ? "success" : "warning"}>{label} {available ? "available" : "unavailable"}</Badge>;
+}
+
 export function BackupSettings() {
+  const { user } = useSession();
   const { data, previousData, loading, error, refetch } = useQuery(BackupOverviewDocument);
   const overview = data ?? previousData;
-  const snapshots = overview?.backupSnapshots ?? [];
+  const snapshots = useMemo(() => [...(overview?.backupSnapshots ?? [])].sort((a, b) => b.createdAt - a.createdAt), [overview]);
   const capabilities = overview?.backupCapabilities;
   const [createBackup, { loading: creating }] = useMutation(CreateFullBackupDocument);
   const [verify] = useMutation(VerifyBackupSnapshotDocument);
-  const [restore, { loading: restoring }] = useMutation(RestoreFullBackupDocument);
-  const [restoreTarget, setRestoreTarget] = useState<Snapshot | null>(null);
+  const [restore] = useMutation(RestoreFullBackupDocument);
 
   const create = async () => {
     try {
       const snapshot = assertSuccess((await createBackup()).data?.createFullBackup, "Backup failed").snapshot;
       toast.success(`Backup ${snapshot?.snapshotId ?? "created"}`);
       void refetch();
-    } catch (error) {
-      toast.danger(errorMessage(error));
+    } catch (failure) {
+      toast.danger(errorMessage(failure));
     }
   };
 
-  const columns = useMemo<Array<DataTableColumn<Snapshot>>>(() => [
-    { id: "id", header: "Snapshot", cell: (snapshot) => (<span className="min-w-0"><span className="block truncate font-mono text-label text-foreground">{snapshot.snapshotId}</span><span className="block truncate text-label-sm text-muted">{snapshot.kind} · v{snapshot.appVersion}</span></span>) },
-    { id: "created", header: "Created", size: 170, cell: (snapshot) => formatDateTime(snapshot.createdAt) },
-    { id: "tables", header: "Tables", size: 90, align: "end", numeric: true, hideBelow: "md", cell: (snapshot) => snapshot.tableCount },
-    { id: "objects", header: "Objects", size: 100, align: "end", numeric: true, hideBelow: "md", cell: (snapshot) => snapshot.objectCount },
-    { id: "size", header: "Size", size: 100, align: "end", numeric: true, cell: (snapshot) => formatBytes(snapshot.totalObjectBytes) },
-  ], []);
-  const actions: Array<DataTableRowAction<Snapshot>> = [
-    { key: "verify", label: "Verify", icon: <IconShieldCheck size={16} />, onAction: async (snapshot) => { try { assertSuccess((await verify({ variables: { snapshotId: snapshot.snapshotId } })).data?.verifyBackupSnapshot, "Verification failed"); toast.success("Snapshot verified"); } catch (error) { toast.danger(errorMessage(error)); } } },
-    { key: "restore", label: "Restore…", icon: <IconRestore size={16} />, destructive: true, hidden: () => !capabilities?.restoreAvailable, onAction: (snapshot) => setRestoreTarget(snapshot) },
-  ];
+  const actions = useMemo(() => defineActions<Snapshot>("backup-snapshot", [
+    {
+      id: "verify", label: "Verify", icon: VerifyIcon, group: "manage", priority: 1, visible: (targets) => targets.length === 1,
+      run: async (targets) => { assertSuccess((await verify({ variables: { snapshotId: targets[0]!.snapshotId } })).data?.verifyBackupSnapshot, "Verification failed"); },
+      successMessage: () => "Snapshot verified",
+    },
+    {
+      id: "restore", label: "Restore…", icon: RestoreIcon, group: "danger",
+      visible: (targets) => targets.length === 1 && Boolean(capabilities?.restoreAvailable),
+      confirm: () => ({ title: "Restore this snapshot?", body: "The current catalogue is replaced with the snapshot's contents. Media files on disk are not touched. Restore only into an empty or freshly reinstalled server.", confirmLabel: "Restore", tone: "danger" }),
+      run: async (targets) => { assertSuccess((await restore({ variables: { snapshotId: targets[0]!.snapshotId } })).data?.restoreFullBackup, "Restore failed"); },
+      successMessage: () => "Restore complete. Reload to see the restored catalogue.",
+    },
+  ]), [capabilities?.restoreAvailable, restore, verify]);
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Database backup" value={capabilities?.fullDatabaseBackupAvailable ? "Available" : "Unavailable"} tone={capabilities?.fullDatabaseBackupAvailable ? "success" : "warning"} />
-        <StatTile label="Object backup" value={capabilities?.objectBackupAvailable ? "Available" : "Unavailable"} tone={capabilities?.objectBackupAvailable ? "success" : "warning"} />
-        <StatTile label="Restore" value={capabilities?.restoreAvailable ? "Available" : "Unavailable"} tone={capabilities?.restoreAvailable ? "success" : "warning"} hint={capabilities?.reason ?? undefined} />
-        <StatTile label="Snapshots" value={snapshots.length} icon={IconDatabase} />
-      </div>
-      <Panel title="Snapshots" description="Full backups of the catalogue database and stored objects such as artwork." flush actions={<Button size="sm" variant="primary" onPress={() => void create()} isPending={creating} isDisabled={!capabilities?.fullDatabaseBackupAvailable}><IconDatabaseExport size={16} /> Back up now</Button>}>
-        <SettingsLoadError error={error} retry={() => refetch().catch(() => {})} hasRows={snapshots.length > 0} />
-        <DataTable<Snapshot> className="px-4 pb-4" frame={false} columns={columns} rows={[...snapshots].sort((a, b) => b.createdAt - a.createdAt)} getRowId={(snapshot) => snapshot.snapshotId} isLoading={loading && snapshots.length === 0} rowActions={actions} noun="snapshots" emptyState={<EmptyState compact icon={IconDatabase} title="No snapshots yet" />} />
-      </Panel>
-      <ConfirmDialog isOpen={Boolean(restoreTarget)} onOpenChange={(open) => !open && setRestoreTarget(null)} title="Restore this snapshot?" description="The current catalogue is replaced with the snapshot's contents. Media files on disk are not touched. Restore only into an empty or freshly reinstalled server." confirmLabel="Restore" destructive isPending={restoring} onConfirm={async () => { if (!restoreTarget) return; try { assertSuccess((await restore({ variables: { snapshotId: restoreTarget.snapshotId } })).data?.restoreFullBackup, "Restore failed"); toast.success("Restore complete. Reload to see the restored catalogue."); setRestoreTarget(null); } catch (error) { toast.danger(errorMessage(error)); } }} />
-    </div>
+    <SettingsSection
+      title="Snapshots"
+      description="Full backups of the catalogue database and stored objects such as artwork."
+      actions={<Button size="sm" variant="primary" onPress={() => void create()} isPending={creating} isDisabled={!capabilities?.fullDatabaseBackupAvailable}><IconDatabaseExport size={16} /> Back up now</Button>}
+    >
+      {capabilities ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Capability label="Database backup" available={capabilities.fullDatabaseBackupAvailable} />
+          <Capability label="Object backup" available={capabilities.objectBackupAvailable} />
+          <Capability label="Restore" available={capabilities.restoreAvailable} />
+          {capabilities.reason ? <span className="text-label-sm text-muted">{capabilities.reason}</span> : null}
+        </div>
+      ) : null}
+      <SettingsLoadError error={error} retry={() => refetch().catch(() => {})} hasRows={snapshots.length > 0} />
+      <DataTable<Snapshot> height="auto"
+        id={`librarian.${user?.id ?? "session"}.settings.backups`}
+        label="Snapshots"
+        columns={columns}
+        rows={snapshots}
+        getRowId={(snapshot) => snapshot.snapshotId}
+        getRowLabel={(snapshot) => `Snapshot ${snapshot.snapshotId}`}
+        loading={loading && snapshots.length === 0}
+        actions={actions}
+        noun={{ one: "snapshot", other: "snapshots" }}
+        emptyMessage="No snapshots yet."
+      />
+    </SettingsSection>
   );
 }
