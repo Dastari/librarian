@@ -13827,6 +13827,30 @@ type Torrent {
 	Files
 	"""
 	files(where: TorrentFileWhereInput, orderBy: TorrentFileOrderByInput, page: PageInput): TorrentFileConnection!
+	"""
+	Library
+	"""
+	library: Library
+	"""
+	Movie
+	"""
+	movie: Movie
+	"""
+	Show
+	"""
+	show: Show
+	"""
+	Episode
+	"""
+	episode: Episode
+	"""
+	Album
+	"""
+	album: Album
+	"""
+	Audiobook
+	"""
+	audiobook: Audiobook
 }
 
 """
