@@ -6,10 +6,12 @@
 #   e2e/sandbox.sh start | stop | status | reset
 #
 # Sign in with toby / sandbox-password-123 (exists only in the sandbox copy).
+# LIBRARIAN_BIN picks the backend binary (default: the debug build), e.g. a release download.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 SB=/tmp/librarian-sandbox
 REPO=$(cd .. && pwd)
+BIN=${LIBRARIAN_BIN:-$REPO/backend/target/debug/librarian}
 
 start_backend() {
   if [ -f "$SB/backend.pid" ] && kill -0 "$(cat "$SB/backend.pid")" 2>/dev/null; then echo "backend running"; return; fi
@@ -17,7 +19,7 @@ start_backend() {
     && PORT=3011 HOST=127.0.0.1 DATABASE_PATH=$SB/data/librarian.db MEDIA_PATH=$SB/data/media DOWNLOADS_PATH=$SB/data/downloads \
        CACHE_PATH=$SB/data/cache SESSION_PATH=$SB/data/session STORAGE_PATH=$SB/data/storage BACKUP_PATH=$SB/data/backups \
        LIBRARIAN_CORS_ORIGINS="http://localhost:3003,http://127.0.0.1:3003" LIBRARIAN_SECURE_COOKIES=false TORRENT_LISTEN_PORT=6899 \
-       nohup "$REPO/backend/target/debug/librarian" --server > "$SB/backend.log" 2>&1 & echo $! > "$SB/backend.pid" )
+       nohup "$BIN" --server > "$SB/backend.log" 2>&1 & echo $! > "$SB/backend.pid" )
   for _ in $(seq 1 40); do curl -s -o /dev/null http://127.0.0.1:3011/graphql -H 'content-type: application/json' -d '{"query":"{ needsSetup }"}' && { echo "backend started"; return; }; sleep 0.5; done
   echo "backend failed"; tail -20 "$SB/backend.log"; exit 1
 }

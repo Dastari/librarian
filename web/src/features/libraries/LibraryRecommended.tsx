@@ -3,7 +3,8 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useContext, useLayoutEffect, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 
 import { BackdropCard, MediaRow, PosterCard, Section } from "@/components/ui";
-import { HomeSpotlight, spotlightItems, type SpotlightItem } from "@/features/home/HomeSpotlight";
+import { HomeSpotlight, movieSpotlight, showSpotlight, spotlightItems, type SpotlightItem } from "@/features/home/HomeSpotlight";
+import { useFocusPreview } from "@/features/home/useFocusPreview";
 import { useContinueWatching } from "@/features/home/useContinueWatching";
 import { useMediaProgress } from "@/features/media/useMediaProgress";
 import { usePlayer } from "@/features/player/usePlayer";
@@ -16,7 +17,7 @@ import { LIBRARY_TYPES, libraryType } from "@/lib/library-types";
 import { LibraryArtContext, type LibraryDetail } from "./LibraryLayout";
 
 type Movie = LibraryMoviesQuery["movies"]["edges"][number]["node"];
-type MovieTile = Pick<Movie, "id" | "title" | "year" | "runtime" | "mediaFileId">;
+type MovieTile = Pick<Movie, "id" | "title" | "year" | "runtime" | "certification" | "genres" | "overview" | "mediaFileId">;
 type GenreShelf = LibraryGenreShelvesQuery["libraryGenreShelves"][number];
 /** Genres need at least this many titles to earn a shelf; one-title rows are noise. */
 const GENRE_SHELF_MIN = 2;
@@ -48,6 +49,7 @@ function MoviesRecommended({ library }: { library: LibraryDetail }) {
   const collections = useQuery(LibraryCollectionsDocument, { variables: { where: { libraryId: { eq: libraryId } }, orderBy: [{ updatedAt: "DESC" }], page: { limit: SHELF, offset: 0 } } });
   const resume = useContinueWatching({ libraryId });
   const genres = useGenreShelves(libraryId);
+  const { preview, previewOnFocus, clearPreview } = useFocusPreview();
 
   const recentList = useMemo(() => recent.data?.movies.edges.map((edge) => edge.node) ?? [], [recent.data]);
   const releasedList = released.data?.movies.edges.map((edge) => edge.node) ?? [];
@@ -66,14 +68,21 @@ function MoviesRecommended({ library }: { library: LibraryDetail }) {
   const browse = <Link to="/libraries/$libraryId/movies" params={{ libraryId }} className="nav-focus rounded hover:text-foreground">See all</Link>;
   const poster = (movie: MovieTile) => (
     <PosterCard key={movie.id} width="row" title={movie.title} meta={[movie.year, movie.runtime ? formatRuntime(movie.runtime, "minutes") : null].filter(Boolean).join(" · ")}
-      image={moviePoster(movie.id)} tint={LIBRARY_TYPES.movies.tintVar} to="/movies/$movieId" params={{ movieId: movie.id }} onPlay={movie.mediaFileId ? () => play(movie) : undefined} />
+      image={moviePoster(movie.id)} tint={LIBRARY_TYPES.movies.tintVar} to="/movies/$movieId" params={{ movieId: movie.id }} onPlay={movie.mediaFileId ? () => play(movie) : undefined}
+      onFocus={previewOnFocus(movieSpotlight(movie))} />
   );
 
   return (
     <RecommendedPage
       loading={recent.loading && !recent.data}
       spotlight={spotlight}
-      onPlay={(item) => { const movie = recentList.find((candidate) => candidate.id === item.id); if (movie) play(movie); }}
+      preview={preview}
+      onBrowse={clearPreview}
+      onPlay={(item) => {
+        // A previewed title can come from any shelf, not only Recently added.
+        const movie = [recentList, releasedList, ...genres.map((shelf) => shelf.movies)].flat().find((candidate) => candidate.id === item.id);
+        if (movie) play(movie);
+      }}
       shelves={[
         resume.items.length > 0 ? <ResumeShelf key="resume" items={resume.items} /> : null,
         recentList.length > 0 ? <Section key="recent" title="Recently added" bleed trailing={browse}><MediaRow ariaLabel="Recently added">{recentList.map(poster)}</MediaRow></Section> : null,
@@ -104,17 +113,21 @@ function ShowsRecommended({ library }: { library: LibraryDetail }) {
   const updated = useQuery(LibraryShowsDocument, { variables: { where: { libraryId: { eq: libraryId } }, orderBy: [{ updatedAt: "DESC" }], page: { limit: SHELF, offset: 0 } } });
   const resume = useContinueWatching({ libraryId });
   const genres = useGenreShelves(libraryId);
+  const { preview, previewOnFocus, clearPreview } = useFocusPreview();
   const recentList = recent.data?.shows.edges.map((edge) => edge.node) ?? [];
   const updatedList = updated.data?.shows.edges.map((edge) => edge.node) ?? [];
   const spotlight = spotlightItems([], recentList);
-  const poster = (show: Pick<(typeof recentList)[number], "id" | "name" | "year" | "network">) => (
-    <PosterCard key={show.id} width="row" title={show.name} meta={[show.year, show.network].filter(Boolean).join(" · ")} image={showPoster(show)} tint={LIBRARY_TYPES.tv.tintVar} to="/shows/$showId" params={{ showId: show.id }} />
+  const poster = (show: Pick<(typeof recentList)[number], "id" | "name" | "year" | "network" | "genres" | "overview" | "backdropUrl">) => (
+    <PosterCard key={show.id} width="row" title={show.name} meta={[show.year, show.network].filter(Boolean).join(" · ")} image={showPoster(show)} tint={LIBRARY_TYPES.tv.tintVar} to="/shows/$showId" params={{ showId: show.id }}
+      onFocus={previewOnFocus(showSpotlight(show))} />
   );
   const browse = <Link to="/libraries/$libraryId/shows" params={{ libraryId }} className="nav-focus rounded hover:text-foreground">See all</Link>;
   return (
     <RecommendedPage
       loading={recent.loading && !recent.data}
       spotlight={spotlight}
+      preview={preview}
+      onBrowse={clearPreview}
       shelves={[
         resume.items.length > 0 ? <ResumeShelf key="resume" items={resume.items} /> : null,
         recentList.length > 0 ? <Section key="recent" title="Recently added" bleed trailing={browse}><MediaRow ariaLabel="Recently added">{recentList.map(poster)}</MediaRow></Section> : null,
@@ -129,7 +142,17 @@ function ShowsRecommended({ library }: { library: LibraryDetail }) {
   );
 }
 
-function RecommendedPage({ spotlight, shelves, loading, onPlay }: { spotlight: SpotlightItem[]; shelves: ReactNode[]; loading: boolean; onPlay?: (item: SpotlightItem) => void }) {
+interface RecommendedPageProps {
+  spotlight: SpotlightItem[];
+  shelves: ReactNode[];
+  loading: boolean;
+  onPlay?: (item: SpotlightItem) => void;
+  /** The shelf card a remote rests on, shown in the spotlight (see `useFocusPreview`). */
+  preview: SpotlightItem | null;
+  onBrowse: () => void;
+}
+
+function RecommendedPage({ spotlight, shelves, loading, onPlay, preview, onBrowse }: RecommendedPageProps) {
   const setArt = useContext(LibraryArtContext);
   const visible = shelves.filter(Boolean);
   const opening = useRef<HTMLDivElement>(null);
@@ -156,7 +179,7 @@ function RecommendedPage({ spotlight, shelves, loading, onPlay }: { spotlight: S
     <div data-print-flow className="flex min-w-0 flex-col gap-10 pb-12">
       <div ref={opening} className="flex min-w-0 flex-col gap-10 md:min-h-[calc(var(--view-h,100svh)-var(--above,0px)-var(--space-6))]">
         {spotlight.length > 0 ? (
-          <HomeSpotlight className="bleed-gutter min-w-0 flex-1 !px-0" items={spotlight} fill="library" poster={false} eyebrow={() => null} onArtChange={setArt} onPlay={onPlay ?? (() => {})} />
+          <HomeSpotlight className="bleed-gutter min-w-0 flex-1 !px-0" items={spotlight} preview={preview} onBrowse={onBrowse} fill="library" poster={false} eyebrow={() => null} onArtChange={setArt} onPlay={onPlay ?? (() => {})} />
         ) : loading ? <div aria-hidden data-fill="library" className="media-hero flex-1" /> : null}
         {visible[0] ? shelf(visible[0], 0) : null}
       </div>

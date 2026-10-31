@@ -65,7 +65,7 @@ export function LibraryLayout({ library }: { library: LibraryDetail }) {
     <LibraryArtContext value={setArt}>
     <div data-print-flow className={cn("relative isolate flex min-w-0 flex-col gap-3 page-gutter sm:gap-4 [@media(max-height:35rem)]:gap-2",
       flow ? "overflow-x-clip pt-[calc(var(--topbar-height)+var(--safe-top)+var(--space-3))]" : "min-h-0 flex-1 pt-3 sm:pt-5 [@media(max-height:35rem)]:pt-2")}>
-      {flow && art ? <MediaBackdrop key={art.src ?? art.fallback ?? "art"} src={art.src} fallback={art.fallback} tint={art.tint} /> : null}
+      {flow && art ? <MediaBackdrop src={art.src} fallback={art.fallback} tint={art.tint} /> : null}
       {/* The breadcrumb names the library; the heading stays for assistive technology and print. */}
       <PageHeader className="sr-only" titleVisibility="accessible" title={library.name} />
       <div className={cn("flex min-w-0 shrink-0 items-center gap-x-4 gap-y-2 max-sm:flex-wrap", flow && "over-imagery")}>
