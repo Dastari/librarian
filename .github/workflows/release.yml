@@ -17,6 +17,8 @@ env:
 
 jobs:
   build-and-push:
+    # Pre-release tags (v0.3.3-dev.1, v0.4.0-rc.1) are test builds: binaries only, no image.
+    if: ${{ !(startsWith(github.ref, 'refs/tags/v') && contains(github.ref_name, '-')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -168,9 +170,15 @@ jobs:
   create-release:
     needs: [build-and-push, build-distro-linux, build-windows-server]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      ${{ always() && startsWith(github.ref, 'refs/tags/v')
+      && needs.build-distro-linux.result == 'success'
+      && needs.build-windows-server.result == 'success'
+      && (needs.build-and-push.result == 'success' || needs.build-and-push.result == 'skipped') }}
     permissions:
       contents: write
+    env:
+      PRERELEASE: ${{ contains(github.ref_name, '-') }}
 
     steps:
       - name: Checkout repository
@@ -180,7 +188,8 @@ jobs:
         run: |
           VERSION=$(grep -E '^version[[:space:]]*=' backend/Cargo.toml | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
           TAG="${GITHUB_REF_NAME#v}"
-          if [ "$VERSION" != "$TAG" ]; then
+          # A pre-release tag carries the Cargo version plus a suffix: v0.3.3-dev.1 builds 0.3.3.
+          if [ "$VERSION" != "$TAG" ] && [ "$VERSION" != "${TAG%%-*}" ]; then
             echo "Cargo version ($VERSION) does not match tag ($GITHUB_REF_NAME)"
             exit 1
           fi
@@ -190,40 +199,55 @@ jobs:
         with:
           path: dist
 
+      - name: Write release notes
+        run: |
+          if [ "$PRERELEASE" = "true" ]; then
+            cat > release-notes.md <<'EOF'
+          Development pre-release for testing. No Docker image is published for this build.
+
+          EOF
+          else
+            cat > release-notes.md <<'EOF'
+          ## Docker Image
+
+          Pull the image:
+          ```bash
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+          ```
+
+          ## Quick Start
+
+          1. Download the docker-compose file:
+          ```bash
+          curl -O https://raw.githubusercontent.com/${{ github.repository }}/main/docker-compose.dist.yml
+          ```
+
+          2. Create a `.env` file:
+          ```bash
+          echo "JWT_SECRET=$(openssl rand -hex 32)" > .env
+          echo "LIBRARIAN_SOURCE_CREDENTIAL_KEY=$(openssl rand -base64 32)" >> .env
+          ```
+
+          3. Start the application:
+          ```bash
+          docker compose -f docker-compose.dist.yml up -d
+          ```
+
+          4. Open http://localhost:3000 and create your admin account.
+
+          EOF
+          fi
+          cat >> release-notes.md <<'EOF'
+          ## Portable builds
+
+          `librarian-<version>-linux-x86_64.tar.gz` and `librarian-<version>-windows-server-x86_64.zip` contain a single binary with the web app embedded; run it in server mode and open http://localhost:3000.
+          EOF
+
       - name: Create Release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
           generate_release_notes: true
+          prerelease: ${{ env.PRERELEASE == 'true' }}
           files: |
             dist/**
-          body: |
-            ## Docker Image
-
-            Pull the image:
-            ```bash
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
-            ```
-
-            ## Quick Start
-
-            1. Download the docker-compose file:
-            ```bash
-            curl -O https://raw.githubusercontent.com/${{ github.repository }}/main/docker-compose.dist.yml
-            ```
-
-            2. Create a `.env` file:
-            ```bash
-            echo "JWT_SECRET=$(openssl rand -hex 32)" > .env
-            echo "LIBRARIAN_SOURCE_CREDENTIAL_KEY=$(openssl rand -base64 32)" >> .env
-            ```
-
-            3. Start the application:
-            ```bash
-            docker compose -f docker-compose.dist.yml up -d
-            ```
-
-            4. Open http://localhost:3000 and create your admin account.
-
-            ## Portable builds
-
-            `librarian-<version>-linux-x86_64.tar.gz` and `librarian-<version>-windows-server-x86_64.zip` contain a single binary with the web app embedded; run it in server mode and open http://localhost:3000.
+          body_path: release-notes.md
