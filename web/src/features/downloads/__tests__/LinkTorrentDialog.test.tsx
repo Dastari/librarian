@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
 import { EntityTorrentUpdateDocument, RematchSourceDocument } from "@/graphql/generated/graphql";
-import type { TorrentRow } from "../useLiveTorrents";
+import type { DownloadRow } from "../useDownloads";
 import { LinkTorrentDialog } from "../LinkTorrentDialog";
 
 const calls = vi.hoisted(() => ({ update: vi.fn(), rematch: vi.fn(), success: vi.fn(), danger: vi.fn(), warning: vi.fn() }));
@@ -36,7 +36,7 @@ vi.mock("glass-ux/select", () => ({
 // Only the dialog's consumed fields are relevant to this mutation-contract test.
 const row = (libraryId: string | null = "library-a", progress = 1) => ({
   record: { id: "torrent-id", libraryId }, live: { id: 1, infoHash: "hash", name: "Download", progress },
-}) as unknown as TorrentRow;
+}) as unknown as DownloadRow;
 const saved = (libraryId: string | null, id = "torrent-id") => ({ data: { updateTorrent: { success: true, error: null, torrent: { id, libraryId } } } });
 const mount = (download = row()) => {
   const onClose = vi.fn(); const onLinked = vi.fn();

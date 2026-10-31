@@ -1,198 +1,224 @@
-import { useMutation } from "@apollo/client/react";
-import { toast } from "glass-ux/toast";
-import { Checkbox } from "glass-ux/checkbox";
-import { IconArrowDown, IconArrowUp, IconDownload, IconLink, IconPlayerPause, IconPlayerPlay, IconPlus, IconRefresh, IconTrash, IconWand } from "@tabler/icons-react";
-import { useMemo, useState } from "react";
+import { Badge } from "glass-ux/badge";
+import { createDataTableColumns, DataTable, filters, IdentityCell, NumericCell, RelativeTime, SparklineCell, TextCell, type DataTableSearch, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
+import { EntityIdentity } from "glass-ux/entity";
+import { IconPlus, IconRefresh } from "glass-ux/icons";
+import { LevelGauge, type GaugeLevel } from "glass-ux/level-gauge";
+import { MeterCell } from "glass-ux/meter-cell";
+import { Metric } from "glass-ux/metric";
+import { Segmented } from "glass-ux/segmented";
 import { parseAsStringEnum, useQueryState } from "nuqs";
+import { useCallback, useMemo, useState } from "react";
 
-import { Button, ConfirmDialog, DataTable, type DataTableColumn, type DataTableRowAction, Dialog, EmptyState, ErrorState, GlassSegmented, PageHeader, StatTile, StatusChip } from "@/components/ui";
+import { Button, Dialog } from "@/components/ui";
+import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
+import { EntityLibraryListDocument } from "@/graphql/generated/graphql";
+import { tableUrlFilters, useTableUrlState } from "@/hooks/useTableUrlState";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { PauseTorrentDocument, ProcessSourceDocument, RemoveTorrentDocument, ResumeTorrentDocument } from "@/graphql/generated/graphql";
-import { useIsAdmin } from "@/lib/auth/useSession";
+import { usePrintMode } from "@/hooks/usePrintMode";
+import { useIsAdmin, useSession } from "@/lib/auth/useSession";
+import { ENTITY_KINDS } from "@/lib/entities/kinds";
+import { ratioLevel, torrentImport, torrentStatus, torrentTarget, TORRENT_IMPORT_STATES, TORRENT_STATES, type RatioLevel } from "@/lib/entities/torrent";
 import { formatBytes, formatSpeed } from "@/lib/format";
-import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
-import { torrentState } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
 import { AddTorrentDialog } from "./AddTorrentDialog";
 import { LinkTorrentDialog } from "./LinkTorrentDialog";
 import { TorrentDetail } from "./TorrentDetail";
-import { useLiveTorrents, type TorrentRow } from "./useLiveTorrents";
+import { DOWNLOAD_PRESETS, useDownloads, type DownloadPreset, type DownloadRow } from "./useDownloads";
+import { useRateHistory, type RateSample } from "./useRateHistory";
+import { useTorrentActions } from "./useTorrentActions";
 
-const FILTERS = ["all", "active", "seeding", "paused", "done"] as const;
-type Filter = (typeof FILTERS)[number];
+const PRESET_LABEL: Record<DownloadPreset, string> = { all: "All", downloading: "Downloading", seeding: "Seeding", paused: "Paused", failed: "Needs attention" };
+const RATIO_LEVELS: readonly GaugeLevel<RatioLevel>[] = [
+  { value: "short", label: "Short", tone: "warning" },
+  { value: "close", label: "Close", tone: "info" },
+  { value: "met", label: "Met", tone: "success" },
+];
+const MB = 1024 * 1024;
+const TorrentGlyph = ENTITY_KINDS.torrent.icon;
 
-function matchesFilter(row: TorrentRow, filter: Filter): boolean {
-  const state = row.live.state.toLowerCase();
-  switch (filter) {
-    case "active":
-      return state === "downloading" || state === "checking" || state === "initializing" || state === "queued";
-    case "seeding":
-      return state === "seeding";
-    case "paused":
-      return state === "paused";
-    case "done":
-      return row.live.progress >= 1 || state === "completed";
-    default:
-      return true;
-  }
+const progressOf = (row: DownloadRow) => row.live?.progress ?? row.record.progress;
+const stateOf = (row: DownloadRow) => row.live?.state ?? row.record.state;
+const ratioOf = (row: DownloadRow) => (row.record.downloadedBytes > 0 ? row.record.uploadedBytesTotal / row.record.downloadedBytes : 0);
+
+function columnsFor(rates: ReturnType<typeof useRateHistory>, libraries: Array<{ id: string; name: string }>) {
+  const column = createDataTableColumns<DownloadRow>();
+  return column.columns([
+    column.accessor((row) => row.record.name, {
+      id: "name", header: "Download", width: 26, priority: 1, cardRole: "title", sortable: true, pin: true,
+      cell: ({ row }) => {
+        const state = torrentStatus(stateOf(row.original));
+        const target = torrentTarget(row.original.record);
+        return <IdentityCell icon={<TorrentGlyph />} title={row.original.record.name} subtitle={[state.label, target?.label ?? "Not linked", formatBytes(row.original.record.totalBytes)].join(" · ")} status={state.status} statusLabel={state.label} />;
+      },
+    }),
+    column.accessor((row) => stateOf(row), {
+      id: "state", header: "State", width: 8, priority: 4, cardRole: "hidden", sortable: true,
+      filter: filters.options({ field: "state", nullable: false, operators: ["in"], options: TORRENT_STATES.map((value) => ({ value, label: torrentStatus(value).label })) }),
+      cell: ({ row }) => <TextCell muted>{torrentStatus(stateOf(row.original)).label}</TextCell>,
+    }),
+    column.accessor(progressOf, {
+      id: "progress", header: "Progress", width: 11, priority: 2, sortable: true, align: "end",
+      cell: ({ row }) => {
+        const progress = progressOf(row.original);
+        return <MeterCell label="Progress" value={progress} max={1} tone="data" warningAt={2} dangerAt={2} valueText={progress >= 1 ? formatBytes(row.original.record.totalBytes) : `${Math.round(progress * 100)}% of ${formatBytes(row.original.record.totalBytes)}`} />;
+      },
+    }),
+    column.display({
+      id: "down", header: "Down", width: 9, priority: 3, align: "end", flash: false,
+      cell: ({ row }) => {
+        const series = rates.byHash.get(row.original.record.infoHash.toLowerCase())?.down ?? [];
+        return row.original.live ? <SparklineCell values={series.map((value) => value / MB)} label="Download speed, last two minutes" unit="MB/s" value={(row.original.live.downloadSpeed ?? 0) / MB} tone={row.original.live.downloadSpeed ? "info" : "neutral"} /> : <TextCell muted>—</TextCell>;
+      },
+    }),
+    column.display({
+      id: "up", header: "Up", width: 9, priority: 3, align: "end", flash: false,
+      cell: ({ row }) => {
+        const series = rates.byHash.get(row.original.record.infoHash.toLowerCase())?.up ?? [];
+        return row.original.live ? <SparklineCell values={series.map((value) => value / MB)} label="Upload speed, last two minutes" unit="MB/s" value={(row.original.live.uploadSpeed ?? 0) / MB} tone={row.original.live.uploadSpeed ? "success" : "neutral"} /> : <TextCell muted>—</TextCell>;
+      },
+    }),
+    column.display({
+      id: "peers", header: "Peers", width: 5, priority: 4, align: "end", grow: false,
+      cell: ({ row }) => row.original.live ? <NumericCell value={row.original.live.peers} /> : <TextCell muted>—</TextCell>,
+    }),
+    column.accessor(ratioOf, {
+      id: "ratio", header: "Share ratio", width: 11, priority: 3,
+      cell: ({ row }) => {
+        const ratio = ratioOf(row.original);
+        const target = row.original.record.minimumRatio;
+        return (
+          <span className="flex min-w-0 items-center gap-2" title={target ? `Tracker minimum ${target.toFixed(2)}` : "No tracker minimum; 1.00 is the goal"}>
+            <span className="text-numeric shrink-0 tabular-nums">{ratio.toFixed(2)}</span>
+            <LevelGauge label="Share ratio" levels={RATIO_LEVELS} value={ratioLevel(ratio, target)} />
+          </span>
+        );
+      },
+    }),
+    column.display({
+      id: "target", header: "For", width: 14, priority: 2, cardRole: "subtitle",
+      cell: ({ row }) => {
+        const target = torrentTarget(row.original.record);
+        if (!target) return <TextCell muted>Not linked</TextCell>;
+        const Glyph = ENTITY_KINDS[target.kind as keyof typeof ENTITY_KINDS]?.icon;
+        return <EntityIdentity tier="chip" size="sm" kind={ENTITY_KINDS[target.kind as keyof typeof ENTITY_KINDS]?.noun} name={target.label} href={target.href} icon={Glyph ? <Glyph /> : undefined} preview={false} />;
+      },
+    }),
+    column.accessor((row) => row.record.postProcessStatus ?? "waiting", {
+      id: "import", header: "Import", width: 9, priority: 2, cardRole: "status",
+      filter: filters.options({ field: "postProcessStatus", nullable: false, operators: ["in"], options: [...TORRENT_IMPORT_STATES, "waiting"].map((value) => ({ value, label: torrentImport(value === "waiting" ? null : value).label })) }),
+      cell: ({ row }) => { const state = torrentImport(row.original.record.postProcessStatus); return <Badge size="sm" marker="dot" tone={state.tone}>{state.label}</Badge>; },
+    }),
+    column.accessor((row) => row.record.libraryId ?? "none", {
+      id: "library", header: "Library", width: 9, priority: 5, cardRole: "hidden",
+      filter: filters.options({ field: "libraryId", nullable: false, operators: ["in"], options: [{ value: "none", label: "Not linked" }, ...libraries.map((library) => ({ value: library.id, label: library.name }))] }),
+      cell: ({ row }) => <TextCell muted>{row.original.record.library?.name ?? "Not linked"}</TextCell>,
+    }),
+    column.accessor((row) => row.record.totalBytes, { id: "size", header: "Size", width: 7, priority: 5, align: "end", sortable: true, sortDescFirst: true, cell: ({ row }) => <TextCell muted>{formatBytes(row.original.record.totalBytes)}</TextCell> }),
+    column.accessor((row) => row.record.addedAt, { id: "added", header: "Added", width: 8, priority: 4, sortable: true, sortDescFirst: true, cell: ({ row }) => <RelativeTime value={row.original.record.addedAt} /> }),
+    column.accessor((row) => row.record.infoHash, { id: "hash", header: "Info hash", width: 16, priority: 5, cardRole: "hidden", cell: ({ row }) => <TextCell identifier>{row.original.record.infoHash}</TextCell> }),
+  ]);
 }
 
+const search: DataTableSearch<DownloadRow> = { fields: [], placeholder: "Search downloads", toCondition: (query) => ({ name: { contains: query } }) };
+const urlSchema = {
+  sortableColumns: ["name", "progress", "size", "added", "state"],
+  filters: { state: tableUrlFilters.options(TORRENT_STATES, ["in"]), import: tableUrlFilters.options([...TORRENT_IMPORT_STATES, "waiting"], ["in"]), library: tableUrlFilters.text() },
+};
+const defaultSorting = [{ id: "added", desc: true }];
+const hiddenColumns = ["state", "library", "size", "hash"];
+const noun = { one: "download", other: "downloads" };
+const getRowId = (row: DownloadRow) => row.id;
+const getRowLabel = (row: DownloadRow) => row.record.name;
+
+/**
+ * Downloads: every stored torrent in one bounded table that loads as it scrolls, with the
+ * client's live speeds over it. Presets (with their counts) are server filters; live totals
+ * sit beside them as metrics rather than a strip of status cards (docs/entity-tables.md).
+ */
 export function DownloadsPage() {
   const isAdmin = useIsAdmin();
-  const torrents = useLiveTorrents();
-  const [filter, setFilter] = useQueryState("show", parseAsStringEnum<Filter>([...FILTERS]).withDefault("all").withOptions({ history: "push" }));
+  const { user } = useSession();
+  const printing = usePrintMode();
   const wide = useMediaQuery("(min-width: 1280px)");
+  const [preset, setPreset] = useQueryState("show", parseAsStringEnum<DownloadPreset>([...DOWNLOAD_PRESETS]).withDefault("all").withOptions({ history: "push" }));
+  const libraries = useCompleteConnection(EntityLibraryListDocument, { orderBy: [{ name: "ASC" }] }, (data) => data.libraries);
+  const libraryOptions = useMemo(() => libraries.rows.map((library) => ({ id: library.id, name: library.name })), [libraries.rows]);
+
+  const baseColumns = useMemo(() => columnsFor({ byHash: new Map(), total: { down: [], up: [] } }, libraryOptions), [libraryOptions]);
+  const url = useTableUrlState({ namespace: "downloads", columns: baseColumns, ...urlSchema, defaultSorting });
+  const state = useMemo<DataTableState>(() => ({ pagination: { pageIndex: 0, pageSize: 50 }, selection: {}, ...url.state }), [url.state]);
+  const onStateChange = (next: DataTableState, change: DataTableStateChange) => url.onStateChange(next, change);
+
+  const downloads = useDownloads(state, preset);
+  const samples = useMemo(() => new Map<string, RateSample>(downloads.live.map((torrent) => [torrent.infoHash.toLowerCase(), { down: torrent.downloadSpeed ?? 0, up: torrent.uploadSpeed ?? 0 }])), [downloads.live]);
+  const rates = useRateHistory(samples);
+  const columns = useMemo(() => columnsFor(rates, libraryOptions), [rates, libraryOptions]);
+  const totals = useMemo(() => downloads.live.reduce((sum, torrent) => ({ down: sum.down + (torrent.downloadSpeed ?? 0), up: sum.up + (torrent.uploadSpeed ?? 0) }), { down: 0, up: 0 }), [downloads.live]);
+
   const [adding, setAdding] = useState(false);
-  const [linking, setLinking] = useState<TorrentRow | null>(null);
-  const [removing, setRemoving] = useState<TorrentRow | null>(null);
-  const [deleteFiles, setDeleteFiles] = useState(false);
-  const [selected, setSelected] = useState<TorrentRow | null>(null);
-
-  const [pause] = useMutation(PauseTorrentDocument);
-  const [resume] = useMutation(ResumeTorrentDocument);
-  const [remove, { loading: removingBusy }] = useMutation(RemoveTorrentDocument);
-  const [process] = useMutation(ProcessSourceDocument);
-
-  const rows = useMemo(() => torrents.rows.filter((row) => matchesFilter(row, filter)), [torrents.rows, filter]);
-  const totals = useMemo(() => torrents.rows.reduce((acc, row) => ({ down: acc.down + row.live.downloadSpeed, up: acc.up + row.live.uploadSpeed, active: acc.active + (row.live.state.toLowerCase() === "downloading" ? 1 : 0), seeding: acc.seeding + (row.live.state.toLowerCase() === "seeding" ? 1 : 0) }), { down: 0, up: 0, active: 0, seeding: 0 }), [torrents.rows]);
-
-  const act = async (label: string, task: () => Promise<{ success: boolean; error?: string | null } | null | undefined>) => {
-    try {
-      assertSuccess(await task(), `${label} failed`);
-      torrents.refetch();
-    } catch (error) {
-      toast.danger(errorMessage(error, `${label} failed`));
-    }
-  };
-
-  const actions = useMemo<Array<DataTableRowAction<TorrentRow>>>(
-    () =>
-      isAdmin
-        ? [
-            { key: "pause", label: "Pause", icon: <IconPlayerPause size={16} />, hidden: (row) => row.live.state.toLowerCase() === "paused", onAction: (row) => act("Pause", async () => (await pause({ variables: { id: row.live.id } })).data?.pauseTorrent) },
-            { key: "resume", label: "Resume", icon: <IconPlayerPlay size={16} />, hidden: (row) => row.live.state.toLowerCase() !== "paused", onAction: (row) => act("Resume", async () => (await resume({ variables: { id: row.live.id } })).data?.resumeTorrent) },
-            { key: "link", label: "Link to library…", icon: <IconLink size={16} />, onAction: (row) => setLinking(row) },
-            {
-              key: "process",
-              label: "Import now",
-              icon: <IconWand size={16} />,
-              hidden: (row) => row.live.progress < 1 || !row.record,
-              onAction: (row) =>
-                act("Import", async () => {
-                  const result = (await process({ variables: { sourceId: row.record!.id, sourceType: "torrent" } })).data?.processSource;
-                  if (result?.success) toast.success(`${result.filesProcessed} files imported${result.filesFailed ? `, ${result.filesFailed} failed` : ""}`);
-                  return result;
-                }),
-            },
-            { key: "remove", label: "Remove", icon: <IconTrash size={16} />, destructive: true, onAction: (row) => { setDeleteFiles(false); setRemoving(row); } },
-          ]
-        : [],
-    [isAdmin, pause, process, resume],
-  );
-
-  const columns = useMemo<Array<DataTableColumn<TorrentRow>>>(
-    () => [
-      {
-        id: "name",
-        header: "Download",
-        sortable: true,
-        value: (row) => row.live.name,
-        wrap: true,
-        cell: (row) => {
-          const state = torrentState(row.live.state);
-          return (
-            <span className="flex min-w-0 flex-col gap-1.5">
-              <span className="flex items-center gap-2">
-                <span className={cn("size-2 shrink-0 rounded-full", state.dot, row.live.state.toLowerCase() === "downloading" && "animate-pulse-soft")} />
-                <span className="break-words text-body-sm text-foreground">{row.live.name}</span>
-              </span>
-              <span className="h-1 w-full overflow-hidden rounded-full bg-surface-tertiary">
-                <span className={cn("block h-full rounded-full", row.live.progress >= 1 ? "bg-success" : "bg-info")} style={{ width: `${Math.min(100, row.live.progress * 100)}%` }} />
-              </span>
-              <span className="break-words text-label-sm text-muted">
-                {state.label} · {Math.round(row.live.progress * 100)}% · {formatBytes(row.live.downloaded)} of {formatBytes(row.live.size)}
-                {row.record?.season !== null && row.record?.season !== undefined ? ` · S${String(row.record.season).padStart(2, "0")} pack` : ""}
-                {row.record?.postProcessStatus ? ` · ${row.record.postProcessStatus}` : ""}
-              </span>
-            </span>
-          );
-        },
-      },
-      { id: "down", sortable: true, value: (row) => row.live.downloadSpeed, header: "Down", size: 110, align: "end", numeric: true, cell: (row) => <span className={row.live.downloadSpeed ? "text-info" : "text-muted"}>{formatSpeed(row.live.downloadSpeed)}</span> },
-      { id: "up", sortable: true, value: (row) => row.live.uploadSpeed, header: "Up", size: 110, align: "end", numeric: true, hideBelow: "sm", cell: (row) => <span className={row.live.uploadSpeed ? "text-success" : "text-muted"}>{formatSpeed(row.live.uploadSpeed)}</span> },
-      { id: "peers", sortable: true, value: (row) => row.live.peers, header: "Peers", size: 80, align: "end", numeric: true, hideBelow: "md", cell: (row) => row.live.peers },
-      { id: "ratio", sortable: true, value: (row) => row.live.downloaded ? row.live.uploaded / row.live.downloaded : 0, header: "Ratio", size: 80, align: "end", numeric: true, hideBelow: "lg", cell: (row) => (row.live.downloaded ? (row.live.uploaded / row.live.downloaded).toFixed(2) : "0.00") },
-      { id: "linked", header: "Library", size: 130, hideBelow: "md", cell: (row) => (row.record?.libraryId ? <StatusChip minimal status={{ label: row.record.movieId ? "Movie" : row.record.showId ? "Show" : row.record.albumId ? "Album" : row.record.audiobookId ? "Audiobook" : "Linked", tone: "success", dot: "bg-success" }} /> : <span className="text-muted">Unlinked</span>) },
-    ],
-    [],
-  );
+  const [linking, setLinking] = useState<DownloadRow | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = downloads.rows.find((row) => row.id === selectedId) ?? null;
+  const refetch = downloads.refetch;
+  const onChanged = useCallback(() => refetch(), [refetch]);
+  const actions = useTorrentActions({ onLink: setLinking, onChanged }, isAdmin);
 
   return (
-    <div data-print-flow className="page-gutter flex min-h-0 flex-1 flex-col gap-4 overflow-hidden py-4 md:gap-6 md:py-6 [@media(max-height:35rem)]:gap-2 [@media(max-height:35rem)]:py-2">
-      <PageHeader
-        title="Downloads"
-        titleVisibility="accessible"
-        meta={<span className="inline-flex flex-wrap items-center gap-3"><span className="inline-flex items-center gap-1 text-info"><IconArrowDown size={14} /> {formatSpeed(totals.down)}</span><span className="inline-flex items-center gap-1 text-success"><IconArrowUp size={14} /> {formatSpeed(totals.up)}</span><span className="text-muted sm:hidden [@media(max-height:35rem)]:inline">{totals.active} downloading · {totals.seeding} seeding</span></span>}
-        actions={
-          <>
-            <Button variant="ghost" isIconOnly aria-label="Refresh" onPress={torrents.refetch}>
-              <IconRefresh size={18} />
-            </Button>
-            {isAdmin ? (
-              <Button variant="primary" onPress={() => setAdding(true)}>
-                <IconPlus size={16} /> Add torrent
-              </Button>
-            ) : null}
-          </>
-        }
-      />
-      <div className="hidden shrink-0 grid-cols-2 gap-3 sm:grid lg:grid-cols-4 [@media(max-height:35rem)]:hidden">
-        <StatTile label="Downloading" value={totals.active} icon={IconArrowDown} tone="accent" />
-        <StatTile label="Seeding" value={totals.seeding} icon={IconArrowUp} tone="success" />
-        <StatTile label="Download speed" value={formatSpeed(totals.down)} />
-        <StatTile label="Upload speed" value={formatSpeed(totals.up)} />
-      </div>
-      <GlassSegmented<Filter> className="shrink-0" ariaLabel="Download filter" value={filter} onChange={setFilter} items={FILTERS.map((option) => ({ key: option, label: option.charAt(0).toUpperCase() + option.slice(1) }))} />
-      {torrents.recordError && torrents.rows.length > 0 ? <ErrorState compact error={torrents.recordError} onRetry={torrents.refetch} /> : null}
-      <div data-print-flow className={cn("grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-6 overflow-hidden", selected && "xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]")}>
-        <DataTable<TorrentRow>
-          height="fill"
-          columns={columns}
-          rows={rows}
-          getRowId={(row) => row.live.infoHash}
-          isLoading={torrents.loading}
-          dataSource="complete"
-          rowActions={actions}
-          noun="downloads"
-          onRowClick={(row) => setSelected(row)}
-          error={torrents.error && rows.length === 0 ? <ErrorState error={torrents.error} onRetry={torrents.refetch} /> : undefined}
-          emptyState={<EmptyState icon={IconDownload} title={filter === "all" ? "No downloads" : `Nothing ${filter}`} description={filter === "all" ? "Add a torrent or magnet link, or find a release from a movie or show page." : undefined} action={isAdmin && filter === "all" ? <Button variant="primary" onPress={() => setAdding(true)}><IconPlus size={16} /> Add torrent</Button> : undefined} />}
+    <div data-print-flow className="page-gutter flex min-h-0 flex-1 flex-col gap-4 overflow-hidden py-4 md:py-6 [@media(max-height:35rem)]:gap-2 [@media(max-height:35rem)]:py-2">
+      <h1 className="sr-only">Downloads</h1>
+      <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-3">
+        <Segmented<DownloadPreset>
+          aria-label="Show downloads"
+          value={preset}
+          onValueChange={(value) => void setPreset(value === "all" ? null : value)}
+          options={DOWNLOAD_PRESETS.map((value) => ({ value, label: downloads.counts[value] !== undefined ? `${PRESET_LABEL[value]} ${downloads.counts[value]}` : PRESET_LABEL[value] }))}
         />
-        {selected && wide ? <div data-print-flow className="scrollbar-thin min-h-0 overflow-y-auto"><TorrentDetail row={torrents.rows.find((row) => row.live.infoHash === selected.live.infoHash) ?? selected} onClose={() => setSelected(null)} /></div> : null}
+        <div className="ms-auto flex min-w-0 items-center gap-3">
+          <div className="h-12 w-60 max-lg:hidden"><Metric label="Download" value={totals.down} data={rates.total.down} format={formatSpeed} range="Last two minutes" tone="info" better="none" /></div>
+          <div className="h-12 w-60 max-lg:hidden"><Metric label="Upload" value={totals.up} data={rates.total.up} format={formatSpeed} range="Last two minutes" tone="success" better="none" /></div>
+          {isAdmin ? <Button variant="primary" onPress={() => setAdding(true)}><IconPlus /> Add torrent</Button> : null}
+        </div>
       </div>
-      <Dialog isOpen={Boolean(selected) && !wide} onOpenChange={(open) => !open && setSelected(null)} title="Download details" size="md">
-        {selected ? <TorrentDetail row={torrents.rows.find((row) => row.live.infoHash === selected.live.infoHash) ?? selected} onClose={() => setSelected(null)} /> : null}
+      <div data-print-flow className={cn("grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-6 overflow-hidden", selected && wide && "xl:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]")}>
+        <div className="flex min-h-0 min-w-0 flex-col">
+          <DataTable<DownloadRow>
+            id={`librarian.${user?.id ?? "session"}.downloads`}
+            label="Downloads"
+            queryKey={JSON.stringify([user?.id, downloads.variables])}
+            height="fill"
+            columns={columns}
+            defaultHiddenColumns={hiddenColumns}
+            rows={downloads.rows}
+            getRowId={getRowId}
+            getRowLabel={getRowLabel}
+            loading={downloads.list.loading}
+            refetching={downloads.list.fetching && !downloads.list.loading}
+            rowCount={downloads.list.totalCount}
+            state={state}
+            onStateChange={onStateChange}
+            infinite={{ revision: downloads.list.revision, hasMore: !printing && downloads.list.hasMore, onLoadMore: downloads.list.loadMore, loadingMore: downloads.list.loadingMore, error: downloads.list.moreError?.message }}
+            search={search}
+            actions={actions}
+            selectable={isAdmin}
+            live
+            noun={noun}
+            onRowOpen={(row) => setSelectedId(row.id)}
+            rowOpen="click"
+            error={downloads.list.error && downloads.rows.length === 0 ? "Couldn't load downloads. Retry to reconnect." : undefined}
+            onRetry={refetch}
+            emptyMessage={preset === "all" ? "No downloads. Add a torrent or magnet link, or find a release from a movie or show page." : `Nothing ${PRESET_LABEL[preset].toLowerCase()}`}
+            toolbar={<Button size="sm" variant="ghost" isIconOnly aria-label="Refresh downloads" isPending={downloads.list.fetching} onPress={refetch}><IconRefresh /></Button>}
+          />
+        </div>
+        {selected && wide ? <div data-print-flow className="scrollbar-thin min-h-0 overflow-y-auto"><TorrentDetail row={selected} actions={actions} onClose={() => setSelectedId(null)} /></div> : null}
+      </div>
+      <Dialog isOpen={Boolean(selected) && !wide} onOpenChange={(open) => !open && setSelectedId(null)} title="Download details" size="md">
+        {selected ? <TorrentDetail row={selected} actions={actions} onClose={() => setSelectedId(null)} /> : null}
       </Dialog>
 
-      <AddTorrentDialog isOpen={adding} onOpenChange={setAdding} onAdded={torrents.refetch} />
-      <LinkTorrentDialog row={linking} onClose={() => setLinking(null)} onLinked={torrents.refetch} />
-      <ConfirmDialog
-        isOpen={Boolean(removing)}
-        onOpenChange={(open) => !open && setRemoving(null)}
-        title={`Remove ${removing?.live.name ?? "download"}?`}
-        description="Stops the transfer and forgets the torrent. Files already imported into a library are never affected."
-        confirmLabel={deleteFiles ? "Remove and delete files" : "Remove"}
-        destructive
-        isPending={removingBusy}
-        onConfirm={async () => {
-          if (!removing) return;
-          await act("Remove", async () => (await remove({ variables: { id: removing.live.id, deleteFiles } })).data?.removeTorrent);
-          setRemoving(null);
-        }}
-      >
-        <Checkbox checked={deleteFiles} onCheckedChange={setDeleteFiles} disabled={removingBusy} label="Also delete the downloaded files" className="mt-3" />
-      </ConfirmDialog>
+      <AddTorrentDialog isOpen={adding} onOpenChange={setAdding} onAdded={refetch} />
+      <LinkTorrentDialog row={linking} onClose={() => setLinking(null)} onLinked={refetch} />
     </div>
   );
 }

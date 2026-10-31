@@ -25,3 +25,162 @@ query UnresolvedScanIssues($limit: Int!, $offset: Int!) {
     }
   }
 }
+
+# Activity (notifications) and library scans as entity tables: each row carries the records it
+# names, so the table can link them as entity chips (docs/entity-tables.md).
+
+fragment LinkedMediaFile on MediaFile {
+  id
+  libraryId
+  path
+  size
+  resolution
+  qualityStatus
+  movie {
+    id
+    title
+    year
+  }
+  episode {
+    id
+    showId
+    season
+    episode
+    title
+    show {
+      id
+      name
+    }
+  }
+  track {
+    id
+    albumId
+    title
+  }
+  chapter {
+    id
+    audiobookId
+    title
+  }
+}
+
+query ActivityTable($where: NotificationWhereInput, $orderBy: [NotificationOrderByInput!], $page: PageInput) {
+  notifications(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        ...NotificationFields
+        library {
+          id
+          name
+          libraryType
+        }
+        torrent {
+          id
+          name
+        }
+        mediaFile {
+          ...LinkedMediaFile
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+query ActivityCounts {
+  unread: notifications(where: { readAt: { isNull: true } }, page: { limit: 1, offset: 0 }) { pageInfo { totalCount } }
+  action: notifications(where: { actionType: { isNull: false }, resolvedAt: { isNull: true } }, page: { limit: 1, offset: 0 }) { pageInfo { totalCount } }
+  all: notifications(page: { limit: 1, offset: 0 }) { pageInfo { totalCount } }
+}
+
+query ScanIssuesTable($where: LibraryScanIssueWhereInput, $orderBy: [LibraryScanIssueOrderByInput!], $page: PageInput) {
+  libraryScanIssues(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        id
+        scanRunId
+        libraryId
+        mediaFileId
+        stage
+        issueCode
+        severity
+        message
+        remediation
+        detailsJson
+        occurrenceCount
+        readAt
+        resolvedAt
+        resolution
+        createdAt
+        updatedAt
+        mediaFile {
+          ...LinkedMediaFile
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+query ScanRunsTable($where: LibraryScanRunWhereInput, $orderBy: [LibraryScanRunOrderByInput!], $page: PageInput) {
+  libraryScanRuns(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        id
+        libraryId
+        status
+        currentStage
+        startedAt
+        finishedAt
+        discoveredCount
+        existingCount
+        matchedCount
+        unmatchedCount
+        providerBlockedCount
+        analysisQueuedCount
+        analysisSucceededCount
+        analysisFailedCount
+        organizationSucceededCount
+        organizationFailedCount
+        missingCount
+        reconciledCount
+        summary
+        errorCode
+        createdAt
+        issues(page: { limit: 1, offset: 0 }) {
+          pageInfo {
+            totalCount
+          }
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+query ScanCounts($libraryId: String!) {
+  open: libraryScanIssues(where: { libraryId: { eq: $libraryId }, resolvedAt: { isNull: true } }, page: { limit: 1, offset: 0 }) { pageInfo { totalCount } }
+  resolved: libraryScanIssues(where: { libraryId: { eq: $libraryId }, resolvedAt: { isNull: false } }, page: { limit: 1, offset: 0 }) { pageInfo { totalCount } }
+  runs: libraryScanRuns(where: { libraryId: { eq: $libraryId } }, page: { limit: 1, offset: 0 }) { pageInfo { totalCount } }
+  recent: libraryScanRuns(where: { libraryId: { eq: $libraryId } }, orderBy: [{ createdAt: DESC }], page: { limit: 30, offset: 0 }) {
+    edges {
+      node {
+        id
+        createdAt
+        discoveredCount
+        matchedCount
+        unmatchedCount
+        missingCount
+      }
+    }
+  }
+}

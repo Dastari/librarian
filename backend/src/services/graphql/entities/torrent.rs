@@ -223,6 +223,80 @@ pub struct Torrent {
     #[serde(skip)]
     #[relation(target = "TorrentFile", from = "id", to = "torrent_id", multiple)]
     pub files: Vec<TorrentFile>,
+
+    // Query relations for naming and linking what the torrent was grabbed for. They do not
+    // add physical FKs or change existing delete behavior.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Library",
+        from = "library_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub library: Option<Box<Library>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Movie",
+        from = "movie_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub movie: Option<Box<Movie>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Show",
+        from = "show_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub show: Option<Box<Show>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Episode",
+        from = "episode_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub episode: Option<Box<Episode>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Album",
+        from = "album_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub album: Option<Box<Album>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Audiobook",
+        from = "audiobook_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub audiobook: Option<Box<Audiobook>>,
 }
 
 #[derive(Default)]

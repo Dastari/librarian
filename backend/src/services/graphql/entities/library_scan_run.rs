@@ -53,6 +53,7 @@ pub struct LibraryScanRun {
 
     #[graphql(name = "startedAt")]
     #[filterable(type = "date")]
+    #[sortable]
     pub started_at: Option<String>,
 
     #[graphql(name = "finishedAt")]
@@ -60,15 +61,18 @@ pub struct LibraryScanRun {
     pub finished_at: Option<String>,
 
     #[graphql(name = "discoveredCount")]
+    #[sortable]
     pub discovered_count: i32,
 
     #[graphql(name = "existingCount")]
     pub existing_count: i32,
 
     #[graphql(name = "matchedCount")]
+    #[sortable]
     pub matched_count: i32,
 
     #[graphql(name = "unmatchedCount")]
+    #[sortable]
     pub unmatched_count: i32,
 
     #[graphql(name = "providerBlockedCount")]
@@ -90,6 +94,7 @@ pub struct LibraryScanRun {
     pub organization_failed_count: i32,
 
     #[graphql(name = "missingCount")]
+    #[sortable]
     pub missing_count: i32,
 
     #[graphql(name = "reconciledCount")]

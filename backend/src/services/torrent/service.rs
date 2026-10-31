@@ -2237,6 +2237,12 @@ mod admission_tests {
             updated_at: Utc::now().to_rfc3339(),
             completed_at: None,
             files: vec![],
+            library: None,
+            movie: None,
+            show: None,
+            episode: None,
+            album: None,
+            audiobook: None,
         }
     }
 

@@ -9,10 +9,10 @@ import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
 
-import type { TorrentRow } from "./useLiveTorrents";
+import type { DownloadRow } from "./useDownloads";
 
 interface LinkTorrentDialogProps {
-  row: TorrentRow | null;
+  row: DownloadRow | null;
   onClose: () => void;
   onLinked?: () => void;
 }
@@ -40,7 +40,7 @@ export function LinkTorrentDialog({ row, onClose, onLinked }: LinkTorrentDialogP
       if (!updated.torrent || updated.torrent.id !== row.record.id || updated.torrent.libraryId !== libraryId) {
         throw new Error("The download's library link was not saved. Refresh and try again.");
       }
-      if (libraryId && row.live.progress >= 1) {
+      if (libraryId && (row.live?.progress ?? row.record.progress) >= 1) {
         const result = assertSuccess((await rematch({ variables: { sourceId: row.record.id, sourceType: "torrent", libraryId } })).data?.rematchSource, "Matching failed");
         toast.success(`Linked and matched ${result.matchCount} files`);
       } else toast.success(libraryId ? "Linked" : "Unlinked");
@@ -56,7 +56,7 @@ export function LinkTorrentDialog({ row, onClose, onLinked }: LinkTorrentDialogP
       isOpen={Boolean(row)}
       onOpenChange={(open) => !open && onClose()}
       title="Link to library"
-      description={row?.live.name}
+      description={row?.record.name}
       size="sm"
       footer={
         <>

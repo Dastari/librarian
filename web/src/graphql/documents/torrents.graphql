@@ -120,3 +120,58 @@ mutation RematchSource($sourceId: String!, $sourceType: String!, $libraryId: Str
     error
   }
 }
+
+# The Downloads table: stored torrents (server-side filters, sorting and batches) with what
+# each was grabbed for, named for entity chips. Live speeds and progress come from
+# LiveTorrents and the TorrentProgress subscription, joined by info hash.
+query DownloadsTable($where: TorrentWhereInput, $orderBy: [TorrentOrderByInput!], $page: PageInput) {
+  torrents(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        ...TorrentFields
+        library {
+          id
+          name
+          libraryType
+        }
+        movie {
+          id
+          title
+          year
+        }
+        show {
+          id
+          name
+        }
+        episode {
+          id
+          showId
+          season
+          episode
+          title
+        }
+        album {
+          id
+          name
+        }
+        audiobook {
+          id
+          title
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+# Counts for the filter presets, independent of the table's own filters.
+query DownloadCounts {
+  all: torrents(page: { limit: 1, offset: 0 }) { pageInfo { totalCount } }
+  downloading: torrents(where: { state: { inList: ["downloading", "checking", "initializing", "queued"] } }, page: { limit: 1, offset: 0 }) { pageInfo { totalCount } }
+  seeding: torrents(where: { state: { eq: "seeding" } }, page: { limit: 1, offset: 0 }) { pageInfo { totalCount } }
+  paused: torrents(where: { state: { eq: "paused" } }, page: { limit: 1, offset: 0 }) { pageInfo { totalCount } }
+  failed: torrents(where: { or: [{ state: { eq: "error" } }, { postProcessStatus: { eq: "failed" } }] }, page: { limit: 1, offset: 0 }) { pageInfo { totalCount } }
+}

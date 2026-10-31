@@ -55,6 +55,7 @@ pub struct LibraryScanIssue {
 
     #[graphql(name = "stage")]
     #[filterable(type = "string")]
+    #[sortable]
     pub stage: String,
 
     #[graphql(name = "issueCode")]
@@ -64,9 +65,11 @@ pub struct LibraryScanIssue {
 
     #[graphql(name = "severity")]
     #[filterable(type = "string")]
+    #[sortable]
     pub severity: String,
 
     #[graphql(name = "message")]
+    #[filterable(type = "string")]
     pub message: String,
 
     #[graphql(name = "remediation")]
@@ -78,6 +81,7 @@ pub struct LibraryScanIssue {
     pub details_json: Option<String>,
 
     #[graphql(name = "occurrenceCount")]
+    #[sortable]
     pub occurrence_count: i32,
 
     /// Acknowledgement is independent of remediation; reading never resolves an issue.

@@ -1,198 +1,262 @@
-import { useMutation } from "@apollo/client/react";
-import { SearchField } from "glass-ux/input";
-import { Select } from "glass-ux/select";
-import { toast } from "glass-ux/toast";
-import { IconCheck, IconHistory, IconRefresh, IconTrash } from "@tabler/icons-react";
-import { useMemo } from "react";
-import { parseAsBoolean, parseAsString, parseAsStringEnum, useQueryState } from "nuqs";
+import { defineActions, type ActionSet } from "glass-ux/actions";
+import { Badge } from "glass-ux/badge";
+import { createDataTableColumns, DataTable, filters, IdentityCell, NumericCell, RelativeTime, TextCell, type DataTableSearch, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
+import { IconClose, IconFilter, IconHistory, IconRefresh } from "glass-ux/icons";
+import { MeterCell } from "glass-ux/meter-cell";
+import { Metric } from "glass-ux/metric";
+import { Segmented } from "glass-ux/segmented";
+import { parseAsString, parseAsStringEnum, useQueryState } from "nuqs";
+import { useCallback, useMemo, useState } from "react";
 
-import { Button, DataTable, type DataTableColumn, type DataTableRowAction, EmptyState, ErrorState, Panel, StatTile, StatusChip } from "@/components/ui";
-import {
-  EntityLibraryScanIssueListDocument,
-  EntityLibraryScanRunListDocument,
-  ResolveScanIssueDocument,
-  RetryScanIssueDocument,
-  TrashDuplicateScanIssueDocument,
-  type LibraryScanIssuesQuery,
-  type LibraryScanRunsQuery,
-  type LibraryScanIssueWhereInput,
-  type LibraryScanIssueOrderByInput,
-  type LibraryScanRunOrderByInput,
-} from "@/graphql/generated/graphql";
-import { useDebouncedValue } from "@/hooks/useDebouncedValue";
-import { useServerTable } from "@/hooks/useServerTable";
-import { useIsAdmin } from "@/lib/auth/useSession";
-import { formatDateTime, formatRelative } from "@/lib/format";
-import { errorMessage } from "@/lib/graphql/errors";
-import { scanStatus } from "@/lib/status";
+import { EntityChip } from "@/components/entities/EntityChip";
+import { Button, Dialog } from "@/components/ui";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { usePrintMode } from "@/hooks/usePrintMode";
+import { tableUrlFilters, useTableUrlState } from "@/hooks/useTableUrlState";
+import { useIsAdmin, useSession } from "@/lib/auth/useSession";
+import { ENTITY_KINDS, type EntityKindName } from "@/lib/entities/kinds";
+import { linkedItem, mediaFileRef } from "@/lib/entities/linked";
+import { issueLabel, scanDuration, scanRunStatus, scanSeverity, scanStage, SCAN_RUN_STATUSES, SCAN_SEVERITIES, SCAN_STAGES } from "@/lib/entities/scan";
+import { formatDateTime, parseTimestamp } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
-import { useInfiniteConnection } from "./browser/useInfiniteConnection";
-import { useLibraryScan } from "./useLibraryScan";
+import { ScanIssueDetail } from "./scans/ScanIssueDetail";
+import { ScanRunDetail } from "./scans/ScanRunDetail";
+import { SCAN_VIEWS, useScanCounts, useScanIssues, useScanRuns, type IssueRow, type RunRow, type ScanView } from "./scans/useScans";
+import { useScanIssueActions } from "./scans/useScanIssueActions";
 
-type RunRow = LibraryScanRunsQuery["libraryScanRuns"]["edges"][number]["node"];
-type IssueRow = LibraryScanIssuesQuery["libraryScanIssues"]["edges"][number]["node"];
+const VIEW_LABEL: Record<ScanView, string> = { open: "Open issues", resolved: "Resolved", history: "Scan history" };
+/** Issue codes the scanner writes (library_scan.rs); the filter lists them by name. */
+const ISSUE_CODES = [
+  "BYTE_IDENTICAL_DUPLICATE", "DUPLICATE_HASH_FAILED", "NOT_ANALYZED", "FFPROBE_UNAVAILABLE", "FFPROBE_TIMEOUT", "FFPROBE_MALFORMED_OUTPUT", "FFPROBE_OUTPUT_TOO_LARGE",
+  "MEDIA_UNSUPPORTED_OR_CORRUPT", "MEDIA_PERMISSION_DENIED", "ANALYSIS_QUEUE_FAILED", "ANALYSIS_SETTLE_TIMEOUT", "ANALYSIS_INTERNAL_ERROR", "MATCH_PIPELINE_FAILED",
+  "PROVIDER_REQUEST_FAILED", "TMDB_NOT_CONFIGURED", "FILE_DISCOVERY_ERROR", "LIBRARY_ROOT_UNAVAILABLE", "QUEUE_UNAVAILABLE", "SCAN_FAILED", "SCAN_CANCELLED",
+];
+const IssueGlyph = ENTITY_KINDS.scanIssue.icon;
 
-const SEVERITY: Record<string, { tone: "danger" | "warning" | "accent" | "default"; dot: string }> = {
-  ERROR: { tone: "danger", dot: "bg-danger" },
-  WARNING: { tone: "warning", dot: "bg-warning" },
-  INFO: { tone: "accent", dot: "bg-info" },
+function issueColumns() {
+  const column = createDataTableColumns<IssueRow>();
+  return column.columns([
+    column.accessor((row) => row.issueCode, {
+      id: "code", header: "Issue", width: 22, priority: 1, cardRole: "title", sortable: true, pin: true,
+      filter: filters.options({ field: "issueCode", nullable: false, operators: ["in"], options: ISSUE_CODES.map((value) => ({ value, label: issueLabel(value) })) }),
+      cell: ({ row }) => {
+        const issue = row.original;
+        const severity = scanSeverity(issue.severity);
+        const item = issue.mediaFile ? linkedItem(issue.mediaFile) : null;
+        const Glyph = item ? ENTITY_KINDS[item.kind as EntityKindName]?.icon ?? IssueGlyph : issue.mediaFile ? ENTITY_KINDS.mediaFile.icon : IssueGlyph;
+        return <IdentityCell icon={<Glyph />} title={issueLabel(issue.issueCode)} subtitle={item?.label ?? (issue.mediaFile ? mediaFileRef(issue.mediaFile).label : scanStage(issue.stage))} status={issue.resolvedAt ? undefined : severity.status} statusLabel={severity.label} />;
+      },
+    }),
+    column.accessor((row) => row.severity, {
+      id: "severity", header: "Severity", width: 8, priority: 2, cardRole: "status", sortable: true,
+      filter: filters.options({ field: "severity", nullable: false, operators: ["in"], options: SCAN_SEVERITIES.map((value) => ({ value, label: scanSeverity(value).label })) }),
+      cell: ({ row }) => { const severity = scanSeverity(row.original.severity); return <Badge size="sm" marker="dot" tone={severity.tone}>{severity.label}</Badge>; },
+    }),
+    column.display({
+      id: "file", header: "File", width: 18, priority: 2, cardRole: "subtitle",
+      cell: ({ row }) => (row.original.mediaFile ? <EntityChip entity={mediaFileRef(row.original.mediaFile)} /> : <TextCell muted>—</TextCell>),
+    }),
+    column.accessor((row) => row.message, { id: "message", header: "Details", width: 26, priority: 4, cardRole: "hidden", cell: ({ row }) => <TextCell muted>{row.original.message}</TextCell> }),
+    column.accessor((row) => row.stage, {
+      id: "stage", header: "Stage", width: 9, priority: 3, sortable: true,
+      filter: filters.options({ field: "stage", nullable: false, operators: ["in"], options: SCAN_STAGES.map((value) => ({ value, label: scanStage(value) })) }),
+      cell: ({ row }) => <TextCell muted>{scanStage(row.original.stage)}</TextCell>,
+    }),
+    column.accessor((row) => row.occurrenceCount, { id: "seen", header: "Seen", width: 5, priority: 4, align: "end", grow: false, sortable: true, sortDescFirst: true, cell: ({ row }) => <NumericCell value={row.original.occurrenceCount} /> }),
+    column.accessor((row) => row.createdAt, { id: "first", header: "First seen", width: 8, priority: 5, sortable: true, sortDescFirst: true, cell: ({ row }) => <RelativeTime value={parseTimestamp(row.original.createdAt)} /> }),
+    column.accessor((row) => row.updatedAt, { id: "last", header: "Last seen", width: 8, priority: 3, sortable: true, sortDescFirst: true, cell: ({ row }) => <RelativeTime value={parseTimestamp(row.original.updatedAt)} /> }),
+  ]);
+}
+
+function runColumns() {
+  const column = createDataTableColumns<RunRow>();
+  return column.columns([
+    column.accessor((row) => row.startedAt ?? row.createdAt, {
+      id: "started", header: "Scan", width: 20, priority: 1, cardRole: "title", sortable: true, sortDescFirst: true, pin: true,
+      cell: ({ row }) => {
+        const status = scanRunStatus(row.original.status);
+        return <IdentityCell icon={<IconHistory />} title={formatDateTime(row.original.startedAt ?? row.original.createdAt)} subtitle={[scanDuration(row.original), row.original.errorCode ?? row.original.summary].filter(Boolean).join(" · ") || scanStage(row.original.currentStage)} status={status.status} statusLabel={status.label} />;
+      },
+    }),
+    column.accessor((row) => row.status, {
+      id: "status", header: "Status", width: 11, priority: 2, cardRole: "status", sortable: true,
+      filter: filters.options({ field: "status", nullable: false, operators: ["in"], options: SCAN_RUN_STATUSES.map((value) => ({ value, label: scanRunStatus(value).label })) }),
+      cell: ({ row }) => { const status = scanRunStatus(row.original.status); return <Badge size="sm" marker="dot" tone={status.tone}>{status.label}</Badge>; },
+    }),
+    column.accessor((row) => row.discoveredCount, { id: "found", header: "Files", width: 6, priority: 2, align: "end", grow: false, sortable: true, sortDescFirst: true, cell: ({ row }) => <NumericCell value={row.original.discoveredCount} /> }),
+    column.accessor((row) => row.matchedCount, {
+      id: "matched", header: "Matched", width: 12, priority: 2, sortable: true, sortDescFirst: true,
+      cell: ({ row }) => {
+        const total = row.original.matchedCount + row.original.unmatchedCount;
+        return total ? <MeterCell label="Matched" value={row.original.matchedCount / total} max={1} tone="data" warningAt={2} dangerAt={2} valueText={`${row.original.matchedCount} of ${total}`} /> : <TextCell muted>—</TextCell>;
+      },
+    }),
+    column.accessor((row) => row.unmatchedCount, { id: "unmatched", header: "Unmatched", width: 7, priority: 3, align: "end", grow: false, sortable: true, sortDescFirst: true, cell: ({ row }) => <NumericCell value={row.original.unmatchedCount} /> }),
+    column.accessor((row) => row.missingCount, { id: "missing", header: "Missing", width: 6, priority: 4, align: "end", grow: false, sortable: true, sortDescFirst: true, cell: ({ row }) => <NumericCell value={row.original.missingCount} /> }),
+    column.display({
+      id: "analysed", header: "Analysed", width: 12, priority: 4,
+      cell: ({ row }) => {
+        const { analysisSucceededCount: done, analysisFailedCount: failed } = row.original;
+        return done + failed ? <MeterCell label="Analysed" value={done / (done + failed)} max={1} tone="data" warningAt={2} dangerAt={2} valueText={failed ? `${done} · ${failed} failed` : String(done)} /> : <TextCell muted>—</TextCell>;
+      },
+    }),
+    column.display({ id: "issues", header: "Issues", width: 6, priority: 3, align: "end", grow: false, cell: ({ row }) => <NumericCell value={row.original.issues.pageInfo.totalCount ?? 0} /> }),
+  ]);
+}
+
+const issueSearch: DataTableSearch<IssueRow> = { fields: [], placeholder: "Search issues", toCondition: (query) => ({ message: { contains: query } }) };
+const runSearch: DataTableSearch<RunRow> = { fields: [], placeholder: "Search error codes", toCondition: (query) => ({ errorCode: { contains: query } }) };
+const issueUrl = {
+  sortableColumns: ["code", "severity", "stage", "seen", "first", "last"],
+  filters: { code: tableUrlFilters.options(ISSUE_CODES, ["in"]), severity: tableUrlFilters.options(SCAN_SEVERITIES, ["in"]), stage: tableUrlFilters.options([...SCAN_STAGES], ["in"]) },
+  defaultSorting: [{ id: "last", desc: true }],
 };
+const runUrl = {
+  sortableColumns: ["started", "status", "found", "matched", "unmatched", "missing"],
+  filters: { status: tableUrlFilters.options(SCAN_RUN_STATUSES, ["in"]) },
+  defaultSorting: [{ id: "started", desc: true }],
+};
+const tableState = (state: Partial<DataTableState>): DataTableState => ({ pagination: { pageIndex: 0, pageSize: 50 }, selection: {}, sorting: [], filters: [], ...state }) as DataTableState;
 
-/** Scan history and unresolved issues for one library. */
+/**
+ * A library's scans: open issues, resolved issues and the scan history as one bounded table
+ * at a time. Issues link the file and the item it belongs to; runs open a pipeline breakdown
+ * and lead to the issues they found. The header trends the last scans' totals instead of a
+ * strip of status cards (docs/entity-tables.md).
+ */
 export function ScansPanel({ libraryId }: { libraryId: string }) {
   const isAdmin = useIsAdmin();
-  const scan = useLibraryScan(libraryId);
-  const [showResolved, setShowResolved] = useQueryState("resolved", parseAsBoolean.withDefault(false).withOptions({ history: "push" }));
-  const [query, setQuery] = useQueryState("q", parseAsString.withDefault(""));
-  const [severity, setSeverity] = useQueryState("severity", parseAsStringEnum<string>(["all", "ERROR", "WARNING", "INFO"]).withDefault("all").withOptions({ history: "push" }));
-  const [runStatus, setRunStatus] = useQueryState("status", parseAsStringEnum<string>(["all", "QUEUED", "RUNNING", "COMPLETED", "COMPLETED_WITH_ISSUES", "FAILED", "CANCELLED"]).withDefault("all").withOptions({ history: "push" }));
-  const search = useDebouncedValue(query.trim(), 250);
-  const issueTable = useServerTable<LibraryScanIssueOrderByInput>({ persistKey: `scan-issues.${libraryId}`, defaultSorting: [{ id: "updatedAt", desc: true }] });
-  const runTable = useServerTable<LibraryScanRunOrderByInput>({ persistKey: `scan-runs.${libraryId}`, defaultSorting: [{ id: "createdAt", desc: true }] });
-  const issueWhere = useMemo<LibraryScanIssueWhereInput>(() => ({
-    libraryId: { eq: libraryId },
-    ...(!showResolved ? { resolvedAt: { isNull: true } } : {}),
-    ...(search ? { issueCode: { contains: search } } : {}),
-    ...(severity !== "all" ? { severity: { eq: severity } } : {}),
-  }), [libraryId, showResolved, search, severity]);
-  const runs = useInfiniteConnection(EntityLibraryScanRunListDocument, { where: { libraryId: { eq: libraryId }, ...(runStatus !== "all" ? { status: { eq: runStatus } } : {}) }, orderBy: runTable.orderBy }, (data) => data.libraryScanRuns);
-  const issues = useInfiniteConnection(EntityLibraryScanIssueListDocument, { where: issueWhere, orderBy: issueTable.orderBy }, (data) => data.libraryScanIssues);
+  const { user } = useSession();
+  const printing = usePrintMode();
+  const wide = useMediaQuery("(min-width: 1280px)");
+  const [view, setView] = useQueryState("view", parseAsStringEnum<ScanView>([...SCAN_VIEWS]).withDefault("open").withOptions({ history: "push" }));
+  const [scanRunId, setScanRunId] = useQueryState("scan", parseAsString.withOptions({ history: "push" }));
+  const counts = useScanCounts(libraryId);
 
-  const [retryIssue] = useMutation(RetryScanIssueDocument);
-  const [resolveIssue] = useMutation(ResolveScanIssueDocument);
-  const [trashDuplicate] = useMutation(TrashDuplicateScanIssueDocument);
+  const issueCols = useMemo(() => issueColumns(), []);
+  const runCols = useMemo(() => runColumns(), []);
+  const issueTable = useTableUrlState({ namespace: `scan-issues`, columns: issueCols, ...issueUrl });
+  const runTable = useTableUrlState({ namespace: `scan-runs`, columns: runCols, ...runUrl });
+  const issueState = useMemo(() => tableState(issueTable.state), [issueTable.state]);
+  const runState = useMemo(() => tableState(runTable.state), [runTable.state]);
 
-  const act = async (task: () => Promise<{ success: boolean; message: string }>) => {
-    try {
-      const result = await task();
-      if (result.success) toast.success(result.message);
-      else toast.warning(result.message);
-      void issues.refetch();
-    } catch (error) {
-      toast.danger(errorMessage(error));
-    }
-  };
+  const issues = useScanIssues(libraryId, issueState, view, scanRunId);
+  const runs = useScanRuns(libraryId, runState, view);
+  const refetch = useCallback(() => {
+    void issues.list.refetch().catch(() => {});
+    void runs.list.refetch().catch(() => {});
+    counts.refetch();
+  }, [counts, issues.list, runs.list]);
+  const issueActions = useScanIssueActions(refetch, isAdmin);
+  const runActions = useMemo<ActionSet<RunRow>>(() => defineActions("scan-run", [
+    {
+      id: "show-issues", label: "Show issues from this scan", icon: IconFilter, group: "open", priority: 1,
+      visible: (rows) => rows.length === 1 && (rows[0]!.issues.pageInfo.totalCount ?? 0) > 0,
+      run: (rows) => { void setScanRunId(rows[0]!.id); void setView("open"); },
+    },
+  ]), [setScanRunId, setView]);
 
-  const latest = scan.latestRun;
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const history = view === "history";
+  const selectedIssue = !history ? issues.list.rows.find((row) => row.id === selectedId) ?? null : null;
+  const selectedRun = history ? runs.list.rows.find((row) => row.id === selectedId) ?? null : null;
+  const selected = selectedIssue ?? selectedRun;
+  const close = () => setSelectedId(null);
+  const latest = counts.recent.at(-1);
+  const filteredRun = scanRunId ? runs.list.rows.find((row) => row.id === scanRunId) : null;
 
-  const runColumns = useMemo<Array<DataTableColumn<RunRow>>>(
-    () => [
-      { id: "createdAt", header: "Started", sortable: true, cell: (row) => <span className="text-foreground">{formatDateTime(row.startedAt ?? row.createdAt)}</span> },
-      { id: "status", header: "Status", size: 160, sortable: true, cell: (row) => <StatusChip status={scanStatus(row.status)} /> },
-      { id: "discovered", header: "Found", size: 90, align: "end", numeric: true, cell: (row) => row.discoveredCount },
-      { id: "matched", header: "Matched", size: 90, align: "end", numeric: true, cell: (row) => row.matchedCount },
-      { id: "unmatched", header: "Unmatched", size: 100, align: "end", numeric: true, hideBelow: "md", cell: (row) => row.unmatchedCount },
-      { id: "missing", header: "Missing", size: 90, align: "end", numeric: true, hideBelow: "md", cell: (row) => row.missingCount },
-      { id: "summary", header: "Summary", size: 320, hideBelow: "lg", cell: (row) => <span className="text-muted">{row.summary ?? row.errorCode ?? "—"}</span> },
-    ],
-    [],
-  );
-
-  const issueColumns = useMemo<Array<DataTableColumn<IssueRow>>>(
-    () => [
-      {
-        id: "message",
-        header: "Issue",
-        cell: (row) => (
-          <span className="min-w-0">
-            <span className="block break-words text-body-sm text-foreground">{row.message}</span>
-            <span className="block break-words text-label-sm text-muted">{[row.issueCode, row.remediation].filter(Boolean).join(" · ")}</span>
-          </span>
-        ),
-      },
-      { id: "severity", header: "Severity", size: 120, cell: (row) => <StatusChip status={{ label: row.severity.charAt(0) + row.severity.slice(1).toLowerCase(), ...(SEVERITY[row.severity] ?? SEVERITY.INFO!) }} /> },
-      { id: "stage", header: "Stage", size: 130, hideBelow: "md", cell: (row) => <span className="text-muted">{row.stage.toLowerCase().replace(/_/g, " ")}</span> },
-      { id: "count", header: "Seen", size: 80, align: "end", numeric: true, hideBelow: "lg", cell: (row) => row.occurrenceCount },
-      { id: "updatedAt", header: "Last", size: 130, sortable: true, hideBelow: "md", cell: (row) => <span className="text-muted">{formatRelative(row.updatedAt)}</span> },
-    ],
-    [],
-  );
-
-  const issueActions = useMemo<Array<DataTableRowAction<IssueRow>>>(
-    () =>
-      isAdmin
-        ? [
-            { key: "retry", label: "Retry", icon: <IconRefresh size={16} />, hidden: (row) => Boolean(row.resolvedAt) || row.stage !== "ANALYSIS", onAction: (row) => act(async () => (await retryIssue({ variables: { issueId: row.id } })).data!.retryScanIssue) },
-            { key: "resolve", label: "Mark resolved", icon: <IconCheck size={16} />, hidden: (row) => Boolean(row.resolvedAt), onAction: (row) => act(async () => (await resolveIssue({ variables: { issueId: row.id, resolution: "reviewed" } })).data!.resolveScanIssue) },
-            {
-              key: "trash",
-              label: "Move duplicate to trash",
-              icon: <IconTrash size={16} />,
-              destructive: true,
-              hidden: (row) => Boolean(row.resolvedAt) || row.issueCode !== "BYTE_IDENTICAL_DUPLICATE",
-              onAction: (row) => act(async () => (await trashDuplicate({ variables: { issueId: row.id } })).data!.trashDuplicateScanIssue),
-            },
-          ]
-        : [],
-    [isAdmin, resolveIssue, retryIssue, trashDuplicate],
-  );
+  const detail = selectedIssue ? <ScanIssueDetail row={selectedIssue} actions={issueActions} onClose={close} />
+    : selectedRun ? <ScanRunDetail row={selectedRun} actions={runActions} onClose={close} /> : null;
+  const refresh = <Button size="sm" variant="ghost" isIconOnly aria-label="Refresh scans" isPending={history ? runs.list.fetching : issues.list.fetching} onPress={refetch}><IconRefresh /></Button>;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile label="Last scan" value={latest ? formatRelative(latest.startedAt ?? latest.createdAt) : "Never"} hint={latest ? scanStatus(latest.status).label : undefined} tone={latest?.status === "FAILED" ? "danger" : latest?.status === "COMPLETED_WITH_ISSUES" ? "warning" : "default"} />
-        <StatTile label="Files found" value={latest?.discoveredCount ?? 0} hint={latest ? `${latest.existingCount} already known` : undefined} />
-        <StatTile label="Matched" value={latest?.matchedCount ?? 0} hint={latest ? `${latest.unmatchedCount} unmatched` : undefined} tone={latest && latest.unmatchedCount > 0 ? "warning" : "success"} />
-        <StatTile label="Open issues" value={scan.unresolvedIssues} tone={scan.unresolvedIssues > 0 ? "warning" : "success"} />
+    <div data-print-flow className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-3">
+        <Segmented<ScanView>
+          aria-label="Show"
+          value={view}
+          onValueChange={(value) => { setSelectedId(null); void setView(value === "open" ? null : value); }}
+          options={SCAN_VIEWS.map((value) => ({ value, label: counts.views[value] !== undefined ? `${VIEW_LABEL[value]} ${counts.views[value]}` : VIEW_LABEL[value] }))}
+        />
+        {scanRunId && !history ? (
+          <Badge tone="info" size="md">
+            From the scan of {filteredRun ? formatDateTime(filteredRun.startedAt ?? filteredRun.createdAt) : "the selected run"}
+            <button type="button" aria-label="Show issues from every scan" className="nav-focus -me-1 ms-1 rounded-full" onClick={() => void setScanRunId(null)}><IconClose size="xs" /></button>
+          </Badge>
+        ) : null}
+        {latest ? (
+          <div className="ms-auto flex min-w-0 items-center gap-3">
+            <div className="h-12 w-60 max-lg:hidden"><Metric label="Files found" value={latest.discoveredCount} data={counts.recent.map((run) => run.discoveredCount)} range={`Last ${counts.recent.length} scans`} tone="info" better="none" /></div>
+            <div className="h-12 w-60 max-lg:hidden"><Metric label="Unmatched" value={latest.unmatchedCount} data={counts.recent.map((run) => run.unmatchedCount)} range={`Last ${counts.recent.length} scans`} tone="warning" better="down" /></div>
+          </div>
+        ) : null}
       </div>
-
-      <Panel
-        title="Issues"
-        flush
-        actions={
-          <Button size="sm" variant="ghost" onPress={() => setShowResolved((value) => !value)}>
-            <IconHistory size={16} /> {showResolved ? "Hide resolved" : "Show resolved"}
-          </Button>
-        }
-      >
-        <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
-          <SearchField aria-label="Filter issue codes" placeholder="Filter issue codes" value={query} onValueChange={(value) => void setQuery(value)} className="w-full sm:w-64" />
-          <Select aria-label="Issue severity" value={severity} onValueChange={(value) => setSeverity(value ?? "all")} options={[{ value: "all", label: "All severities" }, { value: "ERROR", label: "Error" }, { value: "WARNING", label: "Warning" }, { value: "INFO", label: "Info" }]} />
+      <div data-print-flow className={cn("grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-6 overflow-hidden", selected && wide && "xl:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]")}>
+        <div className="flex min-h-0 min-w-0 flex-col">
+          {history ? (
+            <DataTable<RunRow>
+              id={`librarian.${user?.id ?? "session"}.scan-runs`}
+              label="Scan history"
+              queryKey={JSON.stringify([user?.id, runs.variables])}
+              height="fill"
+              columns={runCols}
+              rows={runs.list.rows}
+              getRowId={(row) => row.id}
+              getRowLabel={(row) => `Scan ${formatDateTime(row.startedAt ?? row.createdAt)}`}
+              loading={runs.list.loading}
+              refetching={runs.list.fetching && !runs.list.loading}
+              rowCount={runs.list.totalCount}
+              state={runState}
+              onStateChange={(next: DataTableState, change: DataTableStateChange) => runTable.onStateChange(next, change)}
+              infinite={{ revision: runs.list.revision, hasMore: !printing && runs.list.hasMore, onLoadMore: runs.list.loadMore, loadingMore: runs.list.loadingMore, error: runs.list.moreError?.message }}
+              search={runSearch}
+              actions={runActions}
+              live
+              noun={{ one: "scan", other: "scans" }}
+              onRowOpen={(row) => setSelectedId(row.id)}
+              rowOpen="click"
+              error={runs.list.error && runs.list.rows.length === 0 ? "Couldn't load the scan history. Retry to reconnect." : undefined}
+              onRetry={refetch}
+              emptyMessage="No scans yet. Scan the library to discover its files."
+              toolbar={refresh}
+            />
+          ) : (
+            <DataTable<IssueRow>
+              id={`librarian.${user?.id ?? "session"}.scan-issues`}
+              label={view === "open" ? "Open issues" : "Resolved issues"}
+              queryKey={JSON.stringify([user?.id, issues.variables])}
+              height="fill"
+              columns={issueCols}
+              defaultHiddenColumns={["message", "first"]}
+              rows={issues.list.rows}
+              getRowId={(row) => row.id}
+              getRowLabel={(row) => issueLabel(row.issueCode)}
+              loading={issues.list.loading}
+              refetching={issues.list.fetching && !issues.list.loading}
+              rowCount={issues.list.totalCount}
+              state={issueState}
+              onStateChange={(next: DataTableState, change: DataTableStateChange) => issueTable.onStateChange(next, change)}
+              infinite={{ revision: issues.list.revision, hasMore: !printing && issues.list.hasMore, onLoadMore: issues.list.loadMore, loadingMore: issues.list.loadingMore, error: issues.list.moreError?.message }}
+              search={issueSearch}
+              actions={issueActions}
+              selectable={isAdmin}
+              live
+              noun={{ one: "issue", other: "issues" }}
+              onRowOpen={(row) => setSelectedId(row.id)}
+              rowOpen="click"
+              error={issues.list.error && issues.list.rows.length === 0 ? "Couldn't load scan issues. Retry to reconnect." : undefined}
+              onRetry={refetch}
+              emptyMessage={view === "open" ? "No open issues. The last scans found nothing that needs you." : "No resolved issues yet."}
+              toolbar={refresh}
+            />
+          )}
         </div>
-        <DataTable<IssueRow>
-          className="px-4 pb-4" frame={false}
-          columns={issueColumns}
-          rows={issues.rows}
-          getRowId={(row) => row.id}
-          isLoading={issues.loading}
-          refetching={issues.fetching}
-          queryKey={issues.queryKey} loadRevision={issues.loadRevision}
-          externalBrowserToolbar
-          totalCount={issues.totalCount}
-          infinite={{ hasMore: issues.hasMore, loadMore: issues.loadMore, loadingMore: issues.loadingMore }}
-          sorting={issueTable.sorting}
-          onSortingChange={issueTable.setSorting}
-          rowActions={issueActions}
-          density="compact"
-          noun="issues"
-          error={issues.error && issues.rows.length === 0 ? <ErrorState error={issues.error} onRetry={() => void issues.refetch()} compact /> : undefined}
-          emptyState={<EmptyState compact icon={IconCheck} title={search || severity !== "all" ? "No issues match" : showResolved ? "No issues" : "No open issues"} />}
-        />
-      </Panel>
-
-      <Panel title="History" flush>
-        <div className="px-4 pb-3">
-          <Select aria-label="Scan status" value={runStatus} onValueChange={(value) => setRunStatus(value ?? "all")} options={[{ value: "all", label: "All scans" }, ...["QUEUED", "RUNNING", "COMPLETED", "COMPLETED_WITH_ISSUES", "FAILED", "CANCELLED"].map((value) => ({ value, label: scanStatus(value).label }))]} />
-        </div>
-        <DataTable<RunRow>
-          className="px-4 pb-4" frame={false}
-          columns={runColumns}
-          rows={runs.rows}
-          getRowId={(row) => row.id}
-          isLoading={runs.loading}
-          refetching={runs.fetching}
-          queryKey={runs.queryKey} loadRevision={runs.loadRevision}
-          externalBrowserToolbar
-          totalCount={runs.totalCount}
-          infinite={{ hasMore: runs.hasMore, loadMore: runs.loadMore, loadingMore: runs.loadingMore }}
-          sorting={runTable.sorting}
-          onSortingChange={runTable.setSorting}
-          density="compact"
-          noun="scans"
-          error={runs.error && runs.rows.length === 0 ? <ErrorState error={runs.error} onRetry={() => void runs.refetch()} compact /> : undefined}
-          emptyState={<EmptyState compact icon={IconHistory} title="No scans yet" description="Run a scan to discover files in this library." />}
-        />
-      </Panel>
+        {detail && wide ? <div data-print-flow className="scrollbar-thin min-h-0 overflow-y-auto">{detail}</div> : null}
+      </div>
+      <Dialog isOpen={Boolean(detail) && !wide} onOpenChange={(open) => !open && close()} title={history ? "Scan" : "Scan issue"} size="md">
+        {detail}
+      </Dialog>
     </div>
   );
 }
