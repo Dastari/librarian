@@ -23,7 +23,6 @@ export { Panel } from "./Panel";
 export { PosterCard, type PosterCardProps } from "./PosterCard";
 export { Section } from "./Section";
 export { SkeletonBlock, SkeletonCard, SkeletonGrid, SkeletonHero, SkeletonRow, SkeletonText } from "./Skeletons";
-export { StatTile } from "./StatTile";
 export { StatusChip } from "./StatusChip";
 export { ThemePicker } from "./ThemePicker";
 export { SegmentTabs, SideTabs, type TabItem } from "./Tabs";

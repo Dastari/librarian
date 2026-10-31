@@ -2,11 +2,15 @@ import { useMutation } from "@apollo/client/react";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { toast } from "glass-ux/toast";
 import { Form, FormActions, formBehaviour, useAppForm } from "glass-ux/form";
-import { IconCast, IconPlus, IconRadar, IconStar, IconStarFilled, IconTrash } from "@tabler/icons-react";
+import { defineActions } from "glass-ux/actions";
+import { Badge } from "glass-ux/badge";
+import { createDataTableColumns, DataTable, IdentityCell, RelativeTime, TextCell } from "glass-ux/data-table";
+import { IconPlus, IconStar, IconTrash } from "glass-ux/icons";
+import { IconCast, IconPower, IconRadar } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
-import { Button, ConfirmDialog, DataTable, type DataTableColumn, type DataTableRowAction, Dialog, EmptyState, FieldGroup, Panel, StatusChip } from "@/components/ui";
+import { Button, Dialog, FieldGroup, Panel } from "@/components/ui";
 import {
   AddCastDeviceDocument,
   DiscoverCastDevicesDocument,
@@ -18,12 +22,14 @@ import {
   RemoveCastDeviceDocument,
   type CastDeviceFieldsFragment,
 } from "@/graphql/generated/graphql";
-import { useIsAdmin } from "@/lib/auth/useSession";
-import { formatRelative } from "@/lib/format";
+import { useIsAdmin, useSession } from "@/lib/auth/useSession";
+import { glyph } from "@/lib/entities/kinds";
+import { parseTimestamp } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 
 
 import { SettingsLoadError } from "./SettingsLoadError";
+import { SettingsSection } from "./SettingsSection";
 import { useSettingsConnection } from "./useSettingsConnection";
 
 const requiredNumber = (rule: z.ZodNumber) => z.number().nullable().transform((value, context) => {
@@ -38,6 +44,21 @@ const settingsSchema = z.object({ autoDiscoveryEnabled: z.boolean(), discoveryIn
 type SettingsValues = z.input<typeof settingsSchema>;
 const deviceSchema = z.object({ name: z.string().trim(), address: z.string().trim().min(1, "Enter the device address"), port: requiredNumber(z.number().int().min(1).max(65535)) });
 type DeviceValues = z.input<typeof deviceSchema>;
+type Device = CastDeviceFieldsFragment;
+
+const CastGlyph = glyph(IconCast, "cast");
+const PowerIcon = glyph(IconPower, "power");
+const column = createDataTableColumns<Device>();
+const columns = column.columns([
+  column.accessor("name", {
+    header: "Device", width: 24, priority: 1, cardRole: "title", sortable: true,
+    cell: ({ row }) => { const device = row.original; return <IdentityCell icon={<CastGlyph />} title={`${device.isFavorite ? "★ " : ""}${device.name}`} subtitle={`${device.address}:${device.port}${device.model ? ` · ${device.model}` : ""}`} status={device.enabled === false ? "offline" : device.lastProbeError ? "error" : "online"} statusLabel={device.enabled === false ? "Disabled" : device.lastProbeError ? "Probe failed" : "Available"} />; },
+  }),
+  column.accessor("deviceType", { header: "Type", width: 9, priority: 3, sortable: true, cell: ({ row }) => <TextCell muted>{row.original.deviceType}</TextCell> }),
+  column.display({ id: "playback", header: "Playback", width: 9, priority: 2, cardRole: "status", cell: ({ row }) => (row.original.playbackSupported ? <Badge size="sm" marker="dot" tone="success">Supported</Badge> : <Badge size="sm" tone="neutral">Discovery only</Badge>) }),
+  column.accessor((device) => device.lastSeenAt ?? "", { id: "seen", header: "Seen", width: 8, priority: 3, sortable: true, sortDescFirst: true, cell: ({ row }) => <RelativeTime value={parseTimestamp(row.original.lastSeenAt)} fallback={row.original.isManual ? "Manual" : "—"} /> }),
+  column.display({ id: "probe", header: "Last probe", width: 14, priority: 4, cell: ({ row }) => (row.original.lastProbeError ? <TextCell><span className="text-danger">{row.original.lastProbeError}</span></TextCell> : <RelativeTime value={parseTimestamp(row.original.lastProbeAt)} />) }),
+]);
 
 export function CastingSettings() {
   const isAdmin = useIsAdmin();
@@ -48,12 +69,12 @@ export function CastingSettings() {
 
   const [discover, { loading: discovering }] = useMutation(DiscoverCastDevicesDocument);
   const [addDevice] = useMutation(AddCastDeviceDocument);
-  const [removeDevice, { loading: removingBusy }] = useMutation(RemoveCastDeviceDocument);
+  const [removeDevice] = useMutation(RemoveCastDeviceDocument);
+  const { user } = useSession();
   const [updateDevice] = useMutation(EntityCastDeviceUpdateDocument);
   const [createSetting] = useMutation(EntityCastSettingCreateDocument);
   const [updateSetting] = useMutation(EntityCastSettingUpdateDocument);
   const [addingOpen, setAddingOpen] = useState(false);
-  const [removing, setRemoving] = useState<CastDeviceFieldsFragment | null>(null);
 
   const storedValues = useMemo<SettingsValues>(() => ({
     autoDiscoveryEnabled: setting?.autoDiscoveryEnabled ?? true,
@@ -110,27 +131,30 @@ export function CastingSettings() {
     }
   };
 
-  const columns = useMemo<Array<DataTableColumn<CastDeviceFieldsFragment>>>(() => [
-    { id: "name", header: "Device", cell: (device) => (<span className="flex items-center gap-2">{device.isFavorite ? <IconStarFilled size={14} className="text-brand" /> : null}<span className="min-w-0"><span className="block truncate text-body-sm text-foreground">{device.name}</span><span className="block truncate font-mono text-label-sm text-muted">{device.address}:{device.port}{device.model ? ` · ${device.model}` : ""}</span></span></span>) },
-    { id: "type", header: "Type", size: 130, cell: (device) => <span className="text-muted">{device.deviceType}</span> },
-    { id: "playback", header: "Playback", size: 150, cell: (device) => (device.playbackSupported ? <StatusChip status={{ label: "Supported", tone: "success", dot: "bg-success" }} /> : <StatusChip status={{ label: "Discovery only", tone: "default", dot: "bg-muted" }} />) },
-    { id: "seen", header: "Seen", size: 140, hideBelow: "md", cell: (device) => <span className="text-muted">{device.lastSeenAt ? formatRelative(device.lastSeenAt) : device.isManual ? "Manual" : "—"}</span> },
-    { id: "probe", header: "Last probe", size: 200, hideBelow: "lg", cell: (device) => <span className={device.lastProbeError ? "text-danger" : "text-muted"}>{device.lastProbeError ?? (device.lastProbeAt ? formatRelative(device.lastProbeAt) : "—")}</span> },
-  ], []);
-  const actions: Array<DataTableRowAction<CastDeviceFieldsFragment>> = isAdmin
-    ? [
-        { key: "favorite", label: (device) => (device.isFavorite ? "Remove favourite" : "Favourite"), icon: <IconStar size={16} />, onAction: async (device) => { try { assertSuccess((await updateDevice({ variables: { id: device.id, input: { isFavorite: !device.isFavorite } } })).data?.updateCastDevice, "Could not update"); void devices.refetch(); } catch (error) { toast.danger(errorMessage(error)); } } },
-        { key: "toggle", label: (device) => (device.enabled === false ? "Enable" : "Disable"), onAction: async (device) => { try { assertSuccess((await updateDevice({ variables: { id: device.id, input: { enabled: device.enabled === false } } })).data?.updateCastDevice, "Could not update"); void devices.refetch(); } catch (error) { toast.danger(errorMessage(error)); } } },
-        { key: "remove", label: "Remove", icon: <IconTrash size={16} />, destructive: true, onAction: (device) => setRemoving(device) },
-      ]
-    : [];
+  const refreshDevices = devices.refetch;
+  const actions = useMemo(() => defineActions<Device>("cast-device", isAdmin ? [
+    {
+      id: "favorite", label: (targets) => (targets[0]!.isFavorite ? "Remove favourite" : "Make favourite"), icon: IconStar, group: "organise", priority: 2, visible: (targets) => targets.length === 1,
+      run: async (targets) => { const device = targets[0]!; assertSuccess((await updateDevice({ variables: { id: device.id, input: { isFavorite: !device.isFavorite } } })).data?.updateCastDevice, "Could not update"); void refreshDevices(); },
+    },
+    {
+      id: "toggle", label: (targets) => (targets[0]!.enabled === false ? "Enable" : "Disable"), icon: PowerIcon, group: "manage", priority: 1, visible: (targets) => targets.length === 1,
+      run: async (targets) => { const device = targets[0]!; assertSuccess((await updateDevice({ variables: { id: device.id, input: { enabled: device.enabled === false } } })).data?.updateCastDevice, "Could not update"); void refreshDevices(); },
+    },
+    {
+      id: "remove", label: "Remove", icon: IconTrash, group: "danger", visible: (targets) => targets.length === 1,
+      confirm: (targets) => ({ title: `Remove ${targets[0]!.name}?`, body: targets[0]!.isManual ? "It is forgotten until you add it again." : "Discovery may find it again on the network.", confirmLabel: "Remove", tone: "danger" }),
+      run: async (targets) => { assertSuccess((await removeDevice({ variables: { id: targets[0]!.id } })).data?.removeCastDevice, "Could not remove"); void refreshDevices(); },
+      successMessage: () => "Device removed",
+    },
+  ] : []), [isAdmin, refreshDevices, removeDevice, updateDevice]);
 
   return (
     <div className="flex flex-col gap-6">
-      <Panel title="Cast devices" description="Chromecast and Google TV receivers on your network. DLNA renderers are listed for information only." flush actions={<><Button size="sm" variant="ghost" onPress={() => void runDiscovery()} isPending={discovering}><IconRadar size={16} /> Discover</Button>{isAdmin ? <Button size="sm" variant="primary" onPress={() => { deviceForm.reset(deviceDefaults); setAddingOpen(true); }}><IconPlus size={16} /> Add manually</Button> : null}</>}>
+      <SettingsSection title="Cast devices" description="Chromecast and Google TV receivers on your network. DLNA renderers are listed for information only." actions={<><Button size="sm" variant="ghost" onPress={() => void runDiscovery()} isPending={discovering}><IconRadar size={16} /> Discover</Button>{isAdmin ? <Button size="sm" variant="primary" onPress={() => { deviceForm.reset(deviceDefaults); setAddingOpen(true); }}><IconPlus /> Add manually</Button> : null}</>}>
         <SettingsLoadError error={devices.error} retry={devices.refetch} hasRows={rows.length > 0} />
-        <DataTable<CastDeviceFieldsFragment> className="px-4 pb-4" frame={false} columns={columns} rows={rows} getRowId={(device) => device.id} isLoading={devices.loading && rows.length === 0} rowActions={actions} noun="devices" emptyState={<EmptyState compact icon={IconCast} title="No devices found" description="Run discovery on the same network as your receivers, or add one by address." />} />
-      </Panel>
+        <DataTable<Device> id={`librarian.${user?.id ?? "session"}.settings.cast-devices`} label="Cast devices" columns={columns} rows={rows} getRowId={(device) => device.id} getRowLabel={(device) => device.name} loading={devices.loading && rows.length === 0} actions={actions} noun={{ one: "device", other: "devices" }} emptyMessage="No devices found. Run discovery on the same network as your receivers, or add one by address." />
+      </SettingsSection>
 
       {isAdmin ? (
         <Form form={settingsForm} className="flex min-w-0 flex-col gap-6" onError={(error) => toast.danger(errorMessage(error, "Could not save settings"))}>
@@ -172,7 +196,6 @@ export function CastingSettings() {
           </deviceForm.Subscribe>
         </Form>
       </Dialog>
-      <ConfirmDialog isOpen={Boolean(removing)} onOpenChange={(open) => !open && setRemoving(null)} title={`Remove ${removing?.name}?`} confirmLabel="Remove" destructive isPending={removingBusy} onConfirm={async () => { if (!removing) return; try { assertSuccess((await removeDevice({ variables: { id: removing.id } })).data?.removeCastDevice, "Could not remove"); setRemoving(null); void devices.refetch(); } catch (error) { toast.danger(errorMessage(error)); } }} />
     </div>
   );
 }
