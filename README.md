@@ -32,6 +32,7 @@ and Windows service/tray lifecycle are not currently supported.
 ## For Developers
 - Design and architecture: `docs/design.md`
 - Development commands: `make dev`, `make test`, `make lint`
+- Releases: pushing a `v*` tag runs `.github/workflows/release.yml`. A plain tag (`v0.4.0`) is a production release: Linux and Windows binaries plus the multi-arch Docker image (about three hours). A tag with a suffix (`v0.4.0-dev.1`, `v0.4.0-rc.1`) is a test build: binaries only, published as a GitHub pre-release. Either way the tag must match the version in `backend/Cargo.toml`, ignoring the suffix.
 
 ---
 
