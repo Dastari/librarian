@@ -1,5 +1,25 @@
 import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { extendTailwindMerge } from "tailwind-merge";
+
+/**
+ * Glass UX and our typography define their own type scale (`text-label-sm`, `text-title`,
+ * `text-caption`…). Unregistered, tailwind-merge reads them as text colours, so
+ * `cn("text-label-sm text-muted")` would drop the size. `text-numeric` is a font feature,
+ * not a size, so it must merge with neither.
+ */
+const TYPE_SCALE = [
+  "body", "body-lg", "body-sm", "caption", "display", "display-lg", "display-md", "display-xl", "headline",
+  "label", "label-sm", "mono", "overline", "subtitle", "title", "title-lg", "title-md", "title-sm",
+];
+const twMerge = extendTailwindMerge<"font-numeric" | "text-effect">({
+  extend: {
+    classGroups: {
+      "font-size": [{ text: TYPE_SCALE }],
+      "font-numeric": ["text-numeric"],
+      "text-effect": ["text-accent-gradient", "text-shadow-hero"],
+    },
+  },
+});
 
 /** Preserve the former helper's numeric tokens, including nested class arrays. */
 function normalizeClassValue(value: ClassValue): ClassValue {

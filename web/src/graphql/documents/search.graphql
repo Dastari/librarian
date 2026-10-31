@@ -134,7 +134,7 @@ query SearchSources($input: SearchSourcesInput!) {
 
 # Library search: one query per type, matched on title with the backend's similarity filter.
 query LibrarySearch($needle: String!, $limit: Int!) {
-  movies(where: { title: { contains: $needle } }, orderBy: [{ title: ASC }], page: { limit: $limit, offset: 0 }) {
+  movies(where: { or: [{ title: { contains: $needle } }, { director: { contains: $needle } }] }, orderBy: [{ title: ASC }], page: { limit: $limit, offset: 0 }) {
     edges {
       node {
         ...MovieFields
@@ -174,7 +174,7 @@ query LibrarySearch($needle: String!, $limit: Int!) {
       totalCount
     }
   }
-  audiobooks(where: { title: { contains: $needle } }, orderBy: [{ title: ASC }], page: { limit: $limit, offset: 0 }) {
+  audiobooks(where: { or: [{ title: { contains: $needle } }, { authorName: { contains: $needle } }] }, orderBy: [{ title: ASC }], page: { limit: $limit, offset: 0 }) {
     edges {
       node {
         ...AudiobookFields
@@ -197,6 +197,15 @@ query LibrarySearch($needle: String!, $limit: Int!) {
     }
     pageInfo {
       totalCount
+    }
+  }
+  people(where: { name: { contains: $needle } }, orderBy: [{ name: ASC }], page: { limit: 8, offset: 0 }) {
+    edges {
+      node {
+        id
+        name
+        profileUrl
+      }
     }
   }
 }
@@ -267,5 +276,39 @@ mutation SearchMissing($input: SearchMissingInput!) {
     error
     queued
     searched
+  }
+}
+
+# Films a matched person appears in, for search results that follow a name.
+query SearchCredits($personIds: [String!]!, $limit: Int!) {
+  movieCastCredits(where: { personId: { inList: $personIds } }, orderBy: [{ castOrder: ASC }], page: { limit: $limit, offset: 0 }) {
+    edges {
+      node {
+        id
+        personId
+        characterName
+        movie {
+          ...MovieFields
+        }
+      }
+    }
+  }
+}
+
+# What search shows before anything is typed: the newest films and shows.
+query SearchStart($limit: Int!) {
+  movies(orderBy: [{ createdAt: DESC }], page: { limit: $limit, offset: 0 }) {
+    edges {
+      node {
+        ...MovieFields
+      }
+    }
+  }
+  shows(orderBy: [{ createdAt: DESC }], page: { limit: $limit, offset: 0 }) {
+    edges {
+      node {
+        ...ShowFields
+      }
+    }
   }
 }

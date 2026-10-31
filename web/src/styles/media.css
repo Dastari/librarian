@@ -240,8 +240,14 @@
 
 /* TV search: results sit in the column beside the keyboard, so rows start at the column edge
  * and bleed only to the right. */
-.search-results-tv .snap-row {
-  padding-inline: 0 calc(var(--page-gutter) + var(--safe-right));
-  scroll-padding-inline: 0;
+/* TV search: the alphabet grid and its suggestions in a column that stays put, results beside it. */
+.search-tv { grid-template-columns: clamp(19rem, 27vw, 30rem) minmax(0, 1fr); }
+.search-tv-keys {
+  position: sticky;
+  top: calc(var(--topbar-height, 0px) + var(--space-6));
 }
-.search-results-tv section > div:first-child { padding-inline: 0; }
+.search-tv-results { grid-template-columns: repeat(auto-fill, minmax(clamp(15rem, 19vw, 22rem), 1fr)); }
+.search-suggestion { transition: color calc(var(--duration-fast) * var(--motion-scale)) var(--ease-standard); }
+.search-suggestion:is(:hover, :focus-visible, [data-focus-visible="true"]) { color: var(--foreground); }
+/* Wide tiles grow from their centre; their title is written on the artwork. */
+.search-tile .poster-art { transform-origin: 50% 50%; }

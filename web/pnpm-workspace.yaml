@@ -3,7 +3,7 @@ allowBuilds:
   sharp: true
 
 patchedDependencies:
-  glass-ux@0.11.7: patches/glass-ux@0.11.7.patch
+  glass-ux@0.12.1: patches/glass-ux@0.12.1.patch
 
 # Patched releases of transitive build/test tooling flagged by `pnpm audit` (v0.3.0).
 overrides:

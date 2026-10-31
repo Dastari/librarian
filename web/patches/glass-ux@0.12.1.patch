@@ -1,0 +1,33 @@
+--- a/dist/ui/data-table/data-table.js
++++ b/dist/ui/data-table/data-table.js
+@@ -1714,7 +1714,7 @@
+                                                     : totalRows + 1, "aria-colcount": colCount, "aria-multiselectable": selectable || undefined, "aria-busy": loading ||
+                                                 refetching ||
+                                                 Boolean(infinite?.loadingMore) ||
+-                                                undefined, tabIndex: -1, onKeyDown: onGridKeyDown, children: [mode === "table" ? (_jsx("div", { role: "rowgroup", ref: headRef, className: "glass-inset fa-dt-head", children: _jsx(DataTableHeader, { columns: visibleColumns, sorting: sorting, sized: sized, selectable: selectable, pageSelection: pageSelection(selection, order), pageRowCount: order.length, loadedRows: Boolean(infinite), hiddenCount: hiddenColumns.length, expandedAll: expandAll, columnMenu: columnMenu, controller: headerController, filtered: filtered, settings: settingsMenu, reorderable: reorderable }) })) : null, _jsx("div", { className: "fa-dt-body", children: _jsx("div", { ref: scrollRef, className: "fa-dt-scroll", "data-scroll-container": "", onScroll: onScroll, children: body }) })] }), _jsx("div", { className: "fa-dt-progress", "aria-hidden": true }), liveRows.pending > 0 ? (_jsx("div", { className: "fa-dt-new", children: _jsx(Button, { size: "sm", variant: "primary", shape: "circle", icon: _jsx(IconArrowUp, {}), onClick: applyPending, children: m.newRows(liveRows.pending) }) })) : null] }), _jsx(DataTableFooter, { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, pageRows: data.length, rowCount: rowCount, pageSizes: pageSizes, cursor: cursor, onPageChange: (pageIndex) => setPagination((current) => ({ ...current, pageIndex })), onPageSizeChange: (pageSize) => setPagination({ pageIndex: 0, pageSize }), compact: compactFooter, disabled: showSkeleton, loading: showSkeleton, updatedAt: updatedAt, status: status, label: label, countLabel: countLabelText, counted: Boolean(grouping) || Boolean(infinite), bulk: {
++                                                undefined, tabIndex: -1, onFocusCapture: (event) => { const hit = lineFromEvent(event.target); if (hit) setActiveIndex(hit.index); }, onKeyDown: onGridKeyDown, children: [mode === "table" ? (_jsx("div", { role: "rowgroup", ref: headRef, className: "glass-inset fa-dt-head", children: _jsx(DataTableHeader, { columns: visibleColumns, sorting: sorting, sized: sized, selectable: selectable, pageSelection: pageSelection(selection, order), pageRowCount: order.length, loadedRows: Boolean(infinite), hiddenCount: hiddenColumns.length, expandedAll: expandAll, columnMenu: columnMenu, controller: headerController, filtered: filtered, settings: settingsMenu, reorderable: reorderable }) })) : null, _jsx("div", { className: "fa-dt-body", children: _jsx("div", { ref: scrollRef, className: "fa-dt-scroll", "data-scroll-container": "", onScroll: onScroll, children: body }) })] }), _jsx("div", { className: "fa-dt-progress", "aria-hidden": true }), liveRows.pending > 0 ? (_jsx("div", { className: "fa-dt-new", children: _jsx(Button, { size: "sm", variant: "primary", shape: "circle", icon: _jsx(IconArrowUp, {}), onClick: applyPending, children: m.newRows(liveRows.pending) }) })) : null] }), _jsx(DataTableFooter, { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, pageRows: data.length, rowCount: rowCount, pageSizes: pageSizes, cursor: cursor, onPageChange: (pageIndex) => setPagination((current) => ({ ...current, pageIndex })), onPageSizeChange: (pageSize) => setPagination({ pageIndex: 0, pageSize }), compact: compactFooter, disabled: showSkeleton, loading: showSkeleton, updatedAt: updatedAt, status: status, label: label, countLabel: countLabelText, counted: Boolean(grouping) || Boolean(infinite), bulk: {
+                                         count: selected,
+                                         targets: selectedTargets,
+                                         groups: bulkGroups,
+--- a/dist/ui/data-table/infinite.js
++++ b/dist/ui/data-table/infinite.js
+@@ -5,7 +5,7 @@
+ import { RetryButton, SkeletonRow } from "./body.js";
+ import { SkeletonCards } from "./cards.js";
+ export function useLoadMore({ infinite, resultKey, loaded, refetching, failedMessage, }) {
+-    const batch = `${resultKey}\u0000${loaded}`;
++    const batch = `${resultKey}\u0000${infinite?.revision ?? ""}\u0000${loaded}`;
+     const latest = useRef({ infinite, batch, refetching });
+     latest.current = { infinite, batch, refetching };
+     const inFlight = useRef(false);
+--- a/dist/ui/data-table/types.d.ts
++++ b/dist/ui/data-table/types.d.ts
+@@ -56,6 +56,8 @@
+  * the top, as it returns a paged table to page 1.
+  */
+ export interface DataTableInfinite {
++    /** Host snapshot generation. Rearm continuation without resetting scroll, focus or selection. */
++    revision?: string | number;
+     /** The server has rows after the last one in `rows`. */
+     hasMore: boolean;
+     /**

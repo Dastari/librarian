@@ -14,7 +14,7 @@ overrides:
   undici@>=8 <8.12.2: ^8.12.2
 
 patchedDependencies:
-  glass-ux@0.11.7: 4608ccae5bf236a258c19b22d2620506d70856da64025194ea014392ab006894
+  glass-ux@0.12.1: 90b064cc9c1e553a6546b2ae853305e7a370ceede4dfe6f986c088824c4a9793
 
 importers:
 
@@ -51,8 +51,8 @@ importers:
         specifier: ^2.1.1
         version: 2.1.1
       glass-ux:
-        specifier: https://github.com/Dastari/glass-ux/releases/download/v0.11.7/glass-ux-0.11.7.tgz
-        version: https://github.com/Dastari/glass-ux/releases/download/v0.11.7/glass-ux-0.11.7.tgz(patch_hash=4608ccae5bf236a258c19b22d2620506d70856da64025194ea014392ab006894)(@hookform/resolvers@5.9.1(@standard-schema/spec@1.1.0)(ajv@8.20.0)(react-hook-form@7.87.0(react@19.2.8))(zod@4.6.7))(@playwright/test@1.62.1)(@testing-library/react@16.3.3(@testing-library/dom@10.4.1)(@types/react-dom@19.2.7(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(@testing-library/user-event@14.6.7(@testing-library/dom@10.4.1))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react-hook-form@7.87.0(react@19.2.8))(react@19.2.8)(typescript@7.0.2)(yjs@13.6.33)
+        specifier: https://github.com/Dastari/glass-ux/releases/download/v0.12.1/glass-ux-0.12.1.tgz
+        version: https://github.com/Dastari/glass-ux/releases/download/v0.12.1/glass-ux-0.12.1.tgz(patch_hash=90b064cc9c1e553a6546b2ae853305e7a370ceede4dfe6f986c088824c4a9793)(@hookform/resolvers@5.9.1(@standard-schema/spec@1.1.0)(ajv@8.20.0)(react-hook-form@7.87.0(react@19.2.8))(zod@4.6.7))(@playwright/test@1.62.1)(@testing-library/react@16.3.3(@testing-library/dom@10.4.1)(@types/react-dom@19.2.7(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(@testing-library/user-event@14.6.7(@testing-library/dom@10.4.1))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react-hook-form@7.87.0(react@19.2.8))(react@19.2.8)(typescript@7.0.2)(yjs@13.6.33)
       graphql:
         specifier: ^16.14.2
         version: 16.14.2
@@ -3420,9 +3420,9 @@ packages:
   gl-matrix@3.4.4:
     resolution: {integrity: sha512-latSnyDNt/8zYUB6VIJ6PCh2jBjJX6gnDsoCZ7LyW7GkqrD51EWwa9qCoGixj8YqBtETQK/xY7OmpTF8xz1DdQ==}
 
-  glass-ux@https://github.com/Dastari/glass-ux/releases/download/v0.11.7/glass-ux-0.11.7.tgz:
-    resolution: {integrity: sha512-kV2kkedVYLljoz7bhfE2KingWZaaAJGVbb400YTSgec40tgccnYPIT+odxM8UzMTmXes1LgYkThqPft8jd49Lw==, tarball: https://github.com/Dastari/glass-ux/releases/download/v0.11.7/glass-ux-0.11.7.tgz}
-    version: 0.11.7
+  glass-ux@https://github.com/Dastari/glass-ux/releases/download/v0.12.1/glass-ux-0.12.1.tgz:
+    resolution: {integrity: sha512-qyyvKtBY9VT0nDIWvNKF3sE01f4723fLRplObLtYhpCLEgjQG/i3nZWibNgVrGIKk2z9DOtPMquO9AVkWa+95g==, tarball: https://github.com/Dastari/glass-ux/releases/download/v0.12.1/glass-ux-0.12.1.tgz}
+    version: 0.12.1
     engines: {node: '>=22.12.0'}
     hasBin: true
     peerDependencies:
@@ -8895,7 +8895,7 @@ snapshots:
 
   gl-matrix@3.4.4: {}
 
-  glass-ux@https://github.com/Dastari/glass-ux/releases/download/v0.11.7/glass-ux-0.11.7.tgz(patch_hash=4608ccae5bf236a258c19b22d2620506d70856da64025194ea014392ab006894)(@hookform/resolvers@5.9.1(@standard-schema/spec@1.1.0)(ajv@8.20.0)(react-hook-form@7.87.0(react@19.2.8))(zod@4.6.7))(@playwright/test@1.62.1)(@testing-library/react@16.3.3(@testing-library/dom@10.4.1)(@types/react-dom@19.2.7(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(@testing-library/user-event@14.6.7(@testing-library/dom@10.4.1))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react-hook-form@7.87.0(react@19.2.8))(react@19.2.8)(typescript@7.0.2)(yjs@13.6.33):
+  glass-ux@https://github.com/Dastari/glass-ux/releases/download/v0.12.1/glass-ux-0.12.1.tgz(patch_hash=90b064cc9c1e553a6546b2ae853305e7a370ceede4dfe6f986c088824c4a9793)(@hookform/resolvers@5.9.1(@standard-schema/spec@1.1.0)(ajv@8.20.0)(react-hook-form@7.87.0(react@19.2.8))(zod@4.6.7))(@playwright/test@1.62.1)(@testing-library/react@16.3.3(@testing-library/dom@10.4.1)(@types/react-dom@19.2.7(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(@testing-library/user-event@14.6.7(@testing-library/dom@10.4.1))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react-hook-form@7.87.0(react@19.2.8))(react@19.2.8)(typescript@7.0.2)(yjs@13.6.33):
     dependencies:
       '@base-ui/react': 1.9.0(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@lexical/code': 0.52.0(typescript@7.0.2)
