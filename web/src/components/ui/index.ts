@@ -28,3 +28,4 @@ export { StatusChip } from "./StatusChip";
 export { ThemePicker } from "./ThemePicker";
 export { SegmentTabs, SideTabs, type TabItem } from "./Tabs";
 export { Toolbar, ViewToggle, type ViewMode } from "./Toolbar";
+export { PosterGallery, type PosterGalleryProps } from "./PosterGallery";

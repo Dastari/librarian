@@ -48,7 +48,7 @@ export function TracksBrowser({ libraryId }: { libraryId: string }) {
   const ownLibrary = ownership.data?.library?.userId === user?.id && Boolean(user);
   const [savingTrack, setSavingTrack] = useState<{ id: string; title: string } | null>(null);
   const player = usePlayer();
-  const filters = useBrowserFilters(`tracks.${libraryId}`, "table");
+  const filters = useBrowserFilters();
   const table = useServerTable<TrackOrderByInput>({ persistKey: `tracks.${libraryId}`, defaultSorting: [{ id: "title", desc: false }] });
 
   const where = useMemo<TrackWhereInput>(() => {
@@ -104,8 +104,6 @@ export function TracksBrowser({ libraryId }: { libraryId: string }) {
         onLetterChange={() => undefined}
         availability={filters.availability}
         onAvailabilityChange={filters.setAvailability}
-        view="table"
-        onViewChange={() => undefined}
         total={list.totalCount}
         placeholder="Filter tracks"
       />
