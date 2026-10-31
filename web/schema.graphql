@@ -4006,7 +4006,10 @@ type LibraryScanIssueEdge {
 }
 
 input LibraryScanIssueOrderByInput {
+	stage: OrderDirection
 	issueCode: OrderDirection
+	severity: OrderDirection
+	occurrenceCount: OrderDirection
 	createdAt: OrderDirection
 	updatedAt: OrderDirection
 }
@@ -4029,6 +4032,7 @@ input LibraryScanIssueWhereInput {
 	stage: StringFilter
 	issueCode: StringFilter
 	severity: StringFilter
+	message: StringFilter
 	readAt: DateFilter
 	resolvedAt: DateFilter
 	createdAt: DateFilter
@@ -4124,6 +4128,11 @@ type LibraryScanRunEdge {
 
 input LibraryScanRunOrderByInput {
 	status: OrderDirection
+	startedAt: OrderDirection
+	discoveredCount: OrderDirection
+	matchedCount: OrderDirection
+	unmatchedCount: OrderDirection
+	missingCount: OrderDirection
 	createdAt: OrderDirection
 	updatedAt: OrderDirection
 }
@@ -8626,6 +8635,7 @@ type NotificationEdge {
 input NotificationOrderByInput {
 	notificationType: OrderDirection
 	category: OrderDirection
+	title: OrderDirection
 	createdAt: OrderDirection
 	updatedAt: OrderDirection
 }
@@ -8645,6 +8655,7 @@ input NotificationWhereInput {
 	notificationType: StringFilter
 	category: StringFilter
 	title: StringFilter
+	message: StringFilter
 	libraryId: StringFilter
 	torrentId: StringFilter
 	mediaFileId: StringFilter

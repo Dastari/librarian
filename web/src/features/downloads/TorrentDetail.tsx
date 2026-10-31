@@ -1,4 +1,4 @@
-import type { ActionSet } from "glass-ux/actions";
+import { ActionBar, type ActionSet } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
 import { EntityIdentity } from "glass-ux/entity";
 import { IconClose } from "glass-ux/icons";
@@ -33,11 +33,10 @@ export function TorrentDetail({ row, actions, onClose }: { row: DownloadRow; act
           name={record.name}
           icon={<TorrentGlyph />}
           facts={[state.label, formatBytes(record.totalBytes), record.library?.name ?? "No library"]}
-          actions={actions}
-          target={row}
         />
         <Button variant="ghost" size="sm" isIconOnly aria-label="Close download details" onPress={onClose}><IconClose /></Button>
       </div>
+      <ActionBar className="mt-3 justify-start" set={actions} targets={[row]} label={record.name} maxButtons={3} />
       <div className="mt-4 flex flex-col gap-2">
         <Progress value={progress} max={1} size="sm" aria-label="Download progress" />
         <div className="flex flex-wrap items-center gap-2">

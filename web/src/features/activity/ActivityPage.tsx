@@ -1,161 +1,169 @@
 import { useMutation } from "@apollo/client/react";
-import { toast } from "glass-ux/toast";
-import { Link } from "@tanstack/react-router";
-import { IconArrowUpCircle, IconBell, IconCheck, IconChecks, IconTrash } from "@tabler/icons-react";
-import { useMemo } from "react";
-import { parseAsString, parseAsStringEnum, useQueryState } from "nuqs";
-import { SearchField } from "glass-ux/input";
+import { Badge } from "glass-ux/badge";
+import { createDataTableColumns, DataTable, filters, IdentityCell, RelativeTime, TextCell, type DataTableSearch, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
+import { IconCheck, IconRefresh } from "glass-ux/icons";
+import { Segmented } from "glass-ux/segmented";
+import { parseAsStringEnum, useQueryState } from "nuqs";
+import { useCallback, useMemo, useState } from "react";
 
-import { Button, DataTable, type DataTableBulkAction, type DataTableColumn, type DataTableRowAction, EmptyState, ErrorState, PageHeader, SegmentTabs, StatusChip } from "@/components/ui";
-import { useInfiniteConnection } from "@/features/libraries/browser/useInfiniteConnection";
-import {
-  ApproveQualityUpgradeDocument,
-  EntityNotificationDeleteDocument,
-  EntityNotificationListDocument,
-  EntityNotificationUpdateDocument,
-  EntityNotificationUpdateManyDocument,
-  type EntityNotificationListQuery,
-  type NotificationWhereInput,
-  type NotificationOrderByInput,
-} from "@/graphql/generated/graphql";
-import { useDebouncedValue } from "@/hooks/useDebouncedValue";
-import { useServerTable } from "@/hooks/useServerTable";
-import { useIsAdmin } from "@/lib/auth/useSession";
-import { formatRelative } from "@/lib/format";
-import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
-import { notificationType } from "@/lib/status";
+import { EntityChip } from "@/components/entities/EntityChip";
+import { Button, Dialog } from "@/components/ui";
+import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
+import { EntityLibraryListDocument, EntityNotificationUpdateDocument, EntityNotificationUpdateManyDocument } from "@/graphql/generated/graphql";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { usePrintMode } from "@/hooks/usePrintMode";
+import { tableUrlFilters, useTableUrlState } from "@/hooks/useTableUrlState";
+import { useIsAdmin, useSession } from "@/lib/auth/useSession";
+import { ENTITY_KINDS, type EntityKindName } from "@/lib/entities/kinds";
+import { humanize } from "@/lib/entities/linked";
+import { notificationDecision, notificationLevel, notificationSubjects, NOTIFICATION_LEVELS } from "@/lib/entities/notification";
+import { parseTimestamp } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-type Row = EntityNotificationListQuery["notifications"]["edges"][number]["node"];
-const TABS = ["unread", "action", "all"] as const;
-type Tab = (typeof TABS)[number];
+import { ActivityDetail } from "./ActivityDetail";
+import { ACTIVITY_CATEGORIES, ACTIVITY_PRESETS, useActivity, type ActivityPreset, type ActivityRow } from "./useActivity";
+import { useNotificationActions } from "./useNotificationActions";
 
-/** Notifications, upgrade approvals and anything that needs a decision. */
+const PRESET_LABEL: Record<ActivityPreset, string> = { unread: "Unread", action: "Needs action", all: "Everything" };
+const NotificationGlyph = ENTITY_KINDS.notification.icon;
+
+function columnsFor(libraries: Array<{ id: string; name: string }>) {
+  const column = createDataTableColumns<ActivityRow>();
+  return column.columns([
+    column.accessor((row) => row.title, {
+      id: "title", header: "Notification", width: 28, priority: 1, cardRole: "title", sortable: true, pin: true,
+      cell: ({ row }) => {
+        const level = notificationLevel(row.original.notificationType);
+        const subject = notificationSubjects(row.original)[0];
+        const Glyph = subject ? ENTITY_KINDS[subject.kind as EntityKindName]?.icon ?? NotificationGlyph : NotificationGlyph;
+        return <IdentityCell icon={<Glyph />} title={row.original.title} subtitle={[humanize(row.original.category), subject?.label].filter(Boolean).join(" · ")} status={row.original.readAt ? undefined : level.status} statusLabel={row.original.readAt ? undefined : `Unread · ${level.label}`} />;
+      },
+    }),
+    column.accessor((row) => row.notificationType, {
+      id: "level", header: "Level", width: 9, priority: 2, cardRole: "status", sortable: true,
+      filter: filters.options({ field: "notificationType", nullable: false, operators: ["in"], options: NOTIFICATION_LEVELS.map((value) => ({ value, label: notificationLevel(value).label })) }),
+      cell: ({ row }) => { const level = notificationLevel(row.original.notificationType); return <Badge size="sm" marker="dot" tone={level.tone}>{level.label}</Badge>; },
+    }),
+    column.display({
+      id: "decision", header: "Decision", width: 10, priority: 3,
+      cell: ({ row }) => { const decision = notificationDecision(row.original); return decision ? <Badge size="sm" tone={decision.tone}>{decision.label}</Badge> : <TextCell muted>—</TextCell>; },
+    }),
+    column.display({
+      id: "subject", header: "About", width: 16, priority: 2, cardRole: "subtitle",
+      cell: ({ row }) => { const subject = notificationSubjects(row.original)[0]; return subject ? <EntityChip entity={subject} /> : <TextCell muted>—</TextCell>; },
+    }),
+    column.accessor((row) => row.message, { id: "message", header: "Details", width: 26, priority: 5, cardRole: "hidden", cell: ({ row }) => <TextCell muted>{row.original.message}</TextCell> }),
+    column.accessor((row) => row.category, {
+      id: "category", header: "Category", width: 9, priority: 4, sortable: true,
+      filter: filters.options({ field: "category", nullable: false, operators: ["in"], options: ACTIVITY_CATEGORIES.map((value) => ({ value, label: humanize(value) })) }),
+      cell: ({ row }) => <TextCell muted>{humanize(row.original.category)}</TextCell>,
+    }),
+    column.accessor((row) => row.libraryId ?? "", {
+      id: "library", header: "Library", width: 9, priority: 5, cardRole: "hidden",
+      filter: filters.options({ field: "libraryId", nullable: false, operators: ["in"], options: libraries.map((library) => ({ value: library.id, label: library.name })) }),
+      cell: ({ row }) => <TextCell muted>{row.original.library?.name ?? "—"}</TextCell>,
+    }),
+    column.accessor((row) => row.createdAt, { id: "when", header: "When", width: 8, priority: 2, sortable: true, sortDescFirst: true, cell: ({ row }) => <RelativeTime value={parseTimestamp(row.original.createdAt)} /> }),
+  ]);
+}
+
+const search: DataTableSearch<ActivityRow> = { fields: [], placeholder: "Search activity", toCondition: (query) => ({ title: { contains: query } }) };
+const urlSchema = {
+  sortableColumns: ["title", "level", "category", "when"],
+  filters: { level: tableUrlFilters.options(NOTIFICATION_LEVELS, ["in"]), category: tableUrlFilters.options([...ACTIVITY_CATEGORIES], ["in"]), library: tableUrlFilters.text() },
+};
+const defaultSorting = [{ id: "when", desc: true }];
+const hiddenColumns = ["category", "library", "message"];
+const noun = { one: "notification", other: "notifications" };
+const getRowId = (row: ActivityRow) => row.id;
+const getRowLabel = (row: ActivityRow) => row.title;
+
+/**
+ * Activity: notifications in one bounded table that loads as it scrolls. Each row names
+ * what it is about as an entity chip, decisions are actions (approve, dismiss), and opening
+ * a row reads it and shows it in full beside the table (docs/entity-tables.md).
+ */
 export function ActivityPage() {
   const isAdmin = useIsAdmin();
-  const [tab, setTab] = useQueryState("show", parseAsStringEnum<Tab>([...TABS]).withDefault("unread").withOptions({ history: "push" }));
-  const [query, setQuery] = useQueryState("q", parseAsString.withDefault(""));
-  const search = useDebouncedValue(query.trim(), 250);
-  const table = useServerTable<NotificationOrderByInput>({ persistKey: "activity", defaultSorting: [{ id: "createdAt", desc: true }] });
+  const { user } = useSession();
+  const printing = usePrintMode();
+  const wide = useMediaQuery("(min-width: 1280px)");
+  const [preset, setPreset] = useQueryState("show", parseAsStringEnum<ActivityPreset>([...ACTIVITY_PRESETS]).withDefault("unread").withOptions({ history: "push" }));
+  const libraries = useCompleteConnection(EntityLibraryListDocument, { orderBy: [{ name: "ASC" }] }, (data) => data.libraries);
+  const libraryOptions = useMemo(() => libraries.rows.map((library) => ({ id: library.id, name: library.name })), [libraries.rows]);
+  const columns = useMemo(() => columnsFor(libraryOptions), [libraryOptions]);
+  const url = useTableUrlState({ namespace: "activity", columns, ...urlSchema, defaultSorting });
+  const state = useMemo<DataTableState>(() => ({ pagination: { pageIndex: 0, pageSize: 50 }, selection: {}, ...url.state }), [url.state]);
+  const onStateChange = (next: DataTableState, change: DataTableStateChange) => url.onStateChange(next, change);
 
-  const where = useMemo<NotificationWhereInput>(() => {
-    const clause: NotificationWhereInput = {};
-    if (tab === "unread") clause.readAt = { isNull: true };
-    if (tab === "action") {
-      clause.actionType = { isNull: false };
-      clause.resolvedAt = { isNull: true };
-    }
-    if (search) clause.or = [{ title: { contains: search } }, { category: { contains: search } }];
-    return clause;
-  }, [tab, search]);
-  const list = useInfiniteConnection(EntityNotificationListDocument, { where, orderBy: table.orderBy }, (data) => data.notifications);
-
+  const activity = useActivity(state, preset);
+  const refetch = activity.refetch;
+  const onChanged = useCallback(() => refetch(), [refetch]);
+  const actions = useNotificationActions(onChanged, isAdmin);
   const [update] = useMutation(EntityNotificationUpdateDocument);
   const [updateMany] = useMutation(EntityNotificationUpdateManyDocument);
-  const [remove] = useMutation(EntityNotificationDeleteDocument);
-  const [approve] = useMutation(ApproveQualityUpgradeDocument);
 
-  const run = async (task: () => Promise<unknown>, success?: string) => {
-    try {
-      await task();
-      if (success) toast.success(success);
-      void list.refetch();
-    } catch (error) {
-      toast.danger(errorMessage(error));
-    }
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = activity.list.rows.find((row) => row.id === selectedId) ?? null;
+  const open = (row: ActivityRow) => {
+    setSelectedId(row.id);
+    if (!row.readAt) void update({ variables: { id: row.id, input: { readAt: new Date().toISOString() } } }).then(onChanged);
   };
-  const now = () => new Date().toISOString();
-
-  const markAllRead = () => run(() => updateMany({ variables: { where: { readAt: { isNull: true } }, input: { readAt: now() } } }), "Everything marked as read");
-
-  const rowActions = useMemo<Array<DataTableRowAction<Row>>>(
-    () => [
-      { key: "read", label: "Mark read", icon: <IconCheck size={16} />, hidden: (row) => Boolean(row.readAt), onAction: (row) => run(() => update({ variables: { id: row.id, input: { readAt: now() } } })) },
-      {
-        key: "approve",
-        label: "Approve upgrade",
-        icon: <IconArrowUpCircle size={16} />,
-        hidden: (row) => !isAdmin || row.actionType !== "quality_upgrade" || Boolean(row.resolvedAt),
-        onAction: (row) => run(async () => assertSuccess((await approve({ variables: { notificationId: row.id } })).data?.approveQualityUpgrade, "Could not approve"), "Upgrade approved"),
-      },
-      { key: "resolve", label: "Mark resolved", icon: <IconChecks size={16} />, hidden: (row) => !row.actionType || Boolean(row.resolvedAt), onAction: (row) => run(() => update({ variables: { id: row.id, input: { resolvedAt: now(), readAt: row.readAt ?? now(), resolution: "dismissed" } } }), "Resolved") },
-      { key: "delete", label: "Delete", icon: <IconTrash size={16} />, destructive: true, onAction: (row) => run(() => remove({ variables: { id: row.id } })) },
-    ],
-    [approve, isAdmin, remove, update],
-  );
-
-  const bulkActions = useMemo<Array<DataTableBulkAction<Row>>>(
-    () => [
-      { key: "read", label: "Mark read", icon: <IconCheck size={16} />, onAction: (rows) => run(() => updateMany({ variables: { where: { id: { inList: rows.map((row) => row.id) } }, input: { readAt: now() } } })) },
-      { key: "delete", label: "Delete", icon: <IconTrash size={16} />, destructive: true, onAction: (rows) => run(async () => Promise.all(rows.map((row) => remove({ variables: { id: row.id } })))) },
-    ],
-    [remove, updateMany],
-  );
-
-  const columns = useMemo<Array<DataTableColumn<Row>>>(
-    () => [
-      {
-        id: "title",
-        header: "Notification",
-        cell: (row) => {
-          const type = notificationType(row.notificationType);
-          return (
-            <span className="flex min-w-0 items-start gap-3">
-              <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", row.readAt ? "bg-transparent" : type.dot)} />
-              <span className="min-w-0">
-                <span className={cn("block break-words text-body-sm", row.readAt ? "text-muted" : "text-foreground")}>{row.title}</span>
-                <span className="block whitespace-pre-wrap break-words text-label-sm text-muted">{row.message}</span>
-                {row.libraryId ? (
-                  <Link to="/libraries/$libraryId" params={{ libraryId: row.libraryId }} className="nav-focus mt-0.5 inline-block rounded text-label-sm text-brand hover:underline" onClick={(event) => event.stopPropagation()}>
-                    Open library
-                  </Link>
-                ) : null}
-              </span>
-            </span>
-          );
-        },
-      },
-      { id: "category", header: "Category", size: 150, hideBelow: "md", cell: (row) => <span className="capitalize text-muted">{row.category.toLowerCase().replace(/_/g, " ")}</span> },
-      { id: "type", header: "Level", size: 130, cell: (row) => <StatusChip status={notificationType(row.notificationType)} /> },
-      { id: "createdAt", header: "When", size: 130, sortable: true, cell: (row) => <span className="text-muted">{formatRelative(row.createdAt)}</span> },
-    ],
-    [],
-  );
+  const markAllRead = async () => {
+    await updateMany({ variables: { where: { readAt: { isNull: true } }, input: { readAt: new Date().toISOString() } } });
+    onChanged();
+  };
 
   return (
-    <div data-print-flow className="page-gutter flex min-h-0 flex-1 flex-col gap-4 overflow-hidden py-4 md:gap-6 md:py-6 [@media(max-height:35rem)]:gap-2 [@media(max-height:35rem)]:py-2">
-      <PageHeader
-        title="Activity"
-        titleVisibility="accessible"
-        actions={
-          <Button variant="secondary" onPress={() => void markAllRead()}>
-            <IconChecks size={16} /> Mark all read
-          </Button>
-        }
-      />
-      <SegmentTabs ariaLabel="Activity filter" items={[{ key: "unread", label: "Unread" }, { key: "action", label: "Needs action" }, { key: "all", label: "Everything" }]} selected={tab} onSelect={(key) => setTab(key as Tab)} />
-      <SearchField aria-label="Filter activity" placeholder="Filter activity" value={query} onValueChange={(value) => void setQuery(value)} className="w-full shrink-0 sm:max-w-sm" />
-      <DataTable<Row>
-        height="fill"
-        columns={columns}
-        rows={list.rows}
-        getRowId={(row) => row.id}
-        isLoading={list.loading}
-        refetching={list.fetching}
-        queryKey={list.queryKey} loadRevision={list.loadRevision}
-        externalBrowserToolbar
-        totalCount={list.totalCount}
-        infinite={{ hasMore: list.hasMore, loadMore: list.loadMore, loadingMore: list.loadingMore }}
-        rowActions={rowActions}
-        bulkActions={bulkActions}
-        selectable
-        noun="notifications"
-        sorting={table.sorting}
-        onSortingChange={table.setSorting}
-        onRowClick={(row) => (row.readAt ? undefined : void run(() => update({ variables: { id: row.id, input: { readAt: now() } } })))}
-        error={list.error && list.rows.length === 0 ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : undefined}
-        emptyState={<EmptyState icon={IconBell} title={tab === "unread" ? "You're all caught up" : "Nothing here"} />}
-      />
+    <div data-print-flow className="page-gutter flex min-h-0 flex-1 flex-col gap-4 overflow-hidden py-4 md:py-6 [@media(max-height:35rem)]:gap-2 [@media(max-height:35rem)]:py-2">
+      <h1 className="sr-only">Activity</h1>
+      <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-3">
+        <Segmented<ActivityPreset>
+          aria-label="Show activity"
+          value={preset}
+          onValueChange={(value) => void setPreset(value === "unread" ? null : value)}
+          options={ACTIVITY_PRESETS.map((value) => ({ value, label: activity.counts[value] !== undefined ? `${PRESET_LABEL[value]} ${activity.counts[value]}` : PRESET_LABEL[value] }))}
+        />
+        <div className="ms-auto flex items-center gap-2">
+          <Button variant="secondary" isDisabled={!activity.counts.unread} onPress={() => void markAllRead()}><IconCheck /> Mark all read</Button>
+        </div>
+      </div>
+      <div data-print-flow className={cn("grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-6 overflow-hidden", selected && wide && "xl:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]")}>
+        <div className="flex min-h-0 min-w-0 flex-col">
+          <DataTable<ActivityRow>
+            id={`librarian.${user?.id ?? "session"}.activity`}
+            label="Activity"
+            queryKey={JSON.stringify([user?.id, activity.variables])}
+            height="fill"
+            columns={columns}
+            defaultHiddenColumns={hiddenColumns}
+            rows={activity.list.rows}
+            getRowId={getRowId}
+            getRowLabel={getRowLabel}
+            loading={activity.list.loading}
+            refetching={activity.list.fetching && !activity.list.loading}
+            rowCount={activity.list.totalCount}
+            state={state}
+            onStateChange={onStateChange}
+            infinite={{ revision: activity.list.revision, hasMore: !printing && activity.list.hasMore, onLoadMore: activity.list.loadMore, loadingMore: activity.list.loadingMore, error: activity.list.moreError?.message }}
+            search={search}
+            actions={actions}
+            selectable
+            live
+            noun={noun}
+            onRowOpen={open}
+            rowOpen="click"
+            error={activity.list.error && activity.list.rows.length === 0 ? "Couldn't load activity. Retry to reconnect." : undefined}
+            onRetry={refetch}
+            emptyMessage={preset === "unread" ? "You're all caught up." : preset === "action" ? "Nothing needs a decision." : "No activity yet."}
+            toolbar={<Button size="sm" variant="ghost" isIconOnly aria-label="Refresh activity" isPending={activity.list.fetching} onPress={refetch}><IconRefresh /></Button>}
+          />
+        </div>
+        {selected && wide ? <div data-print-flow className="scrollbar-thin min-h-0 overflow-y-auto"><ActivityDetail row={selected} actions={actions} onClose={() => setSelectedId(null)} /></div> : null}
+      </div>
+      <Dialog isOpen={Boolean(selected) && !wide} onOpenChange={(value) => !value && setSelectedId(null)} title="Notification" size="md">
+        {selected ? <ActivityDetail row={selected} actions={actions} onClose={() => setSelectedId(null)} /> : null}
+      </Dialog>
     </div>
   );
 }

@@ -45,9 +45,11 @@ pub struct Notification {
 
     #[graphql(name = "title")]
     #[filterable(type = "string")]
+    #[sortable]
     pub title: String,
 
     #[graphql(name = "message")]
+    #[filterable(type = "string")]
     pub message: String,
 
     #[graphql(name = "libraryId")]
