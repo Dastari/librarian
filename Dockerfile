@@ -21,12 +21,15 @@ RUN corepack enable && corepack prepare pnpm@11.25.0 --activate
 
 # Copy package files
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
+COPY web/patches ./patches
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
 
 # Copy source code
 COPY web/ ./
+# Entity document generation reads the backend's authorization matrix
+COPY backend/tests/fixtures/authorization-matrix.json /backend/tests/fixtures/authorization-matrix.json
 
 # Codegen, icons, type-check and bundle (the app always talks to its own origin)
 RUN pnpm run build
