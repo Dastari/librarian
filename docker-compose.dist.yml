@@ -19,7 +19,7 @@
 
 services:
   librarian:
-    image: ghcr.io/yourusername/librarian:latest
+    image: ghcr.io/dastari/librarian:latest
     container_name: librarian
     restart: unless-stopped
     ports:
