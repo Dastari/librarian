@@ -46,7 +46,7 @@ function linkedTo(row: FileRow): string | null {
  */
 export function FilesBrowser({ libraryId }: { libraryId: string }) {
   const isAdmin = useIsAdmin();
-  const filters = useBrowserFilters(`files.${libraryId}`, "table");
+  const filters = useBrowserFilters();
   const table = useServerTable<MediaFileOrderByInput>({ persistKey: `files.${libraryId}`, defaultSorting: [{ id: "addedAt", desc: true }] });
   const [matching, setMatching] = useState<FileRow | null>(null);
 
@@ -178,8 +178,6 @@ export function FilesBrowser({ libraryId }: { libraryId: string }) {
         onQueryChange={filters.setQuery}
         letter={null}
         onLetterChange={() => undefined}
-        view="table"
-        onViewChange={() => undefined}
         total={list.totalCount}
         placeholder="Filter by path"
         trailing={
