@@ -110,7 +110,7 @@ export function SourcesSettings() {
         actions={<Button variant="primary" size="sm" onPress={() => setEditing("new")}><IconPlus /> Add source</Button>}
       >
         <SettingsLoadError error={list.error} retry={list.refetch} hasRows={sources.length > 0} />
-        <DataTable<Source>
+        <DataTable<Source> height="auto"
           id={`librarian.${user?.id ?? "session"}.settings.sources`}
           label="Sources"
           columns={columns}

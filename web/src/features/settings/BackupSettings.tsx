@@ -86,7 +86,7 @@ export function BackupSettings() {
         </div>
       ) : null}
       <SettingsLoadError error={error} retry={() => refetch().catch(() => {})} hasRows={snapshots.length > 0} />
-      <DataTable<Snapshot>
+      <DataTable<Snapshot> height="auto"
         id={`librarian.${user?.id ?? "session"}.settings.backups`}
         label="Snapshots"
         columns={columns}

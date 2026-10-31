@@ -2,7 +2,6 @@ export { AlphabetRail } from "./AlphabetRail";
 export { Artwork, type ArtworkAspect } from "./Artwork";
 export { BackdropCard, type BackdropCardProps } from "./BackdropCard";
 export { ConfirmDialog } from "./ConfirmDialog";
-export { DataTable, type DataTableBulkAction, type DataTableColumn, type DataTableRowAction } from "./DataTable";
 export { Dialog } from "./Dialog";
 export { EmptyState } from "./EmptyState";
 export { ErrorState } from "./ErrorState";

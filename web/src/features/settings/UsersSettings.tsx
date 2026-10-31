@@ -134,11 +134,11 @@ export function UsersSettings() {
     <div className="flex flex-col gap-8">
       <SettingsSection title="Users" actions={<Button size="sm" variant="primary" onPress={() => setInviting(true)}><IconPlus /> Invite</Button>}>
         <SettingsLoadError error={users.error} retry={users.refetch} hasRows={userRows.length > 0} />
-        <DataTable<UserFieldsFragment> id={`librarian.${me?.id ?? "session"}.settings.users`} label="Users" columns={userColumns} rows={userRows} getRowId={(user) => user.id} getRowLabel={(user) => user.displayName ?? user.username} loading={users.loading && userRows.length === 0} actions={userActions} noun={{ one: "user", other: "users" }} emptyMessage="No users" />
+        <DataTable<UserFieldsFragment> height="auto" id={`librarian.${me?.id ?? "session"}.settings.users`} label="Users" columns={userColumns} rows={userRows} getRowId={(user) => user.id} getRowLabel={(user) => user.displayName ?? user.username} loading={users.loading && userRows.length === 0} actions={userActions} noun={{ one: "user", other: "users" }} emptyMessage="No users" />
       </SettingsSection>
       <SettingsSection title="Open invites" description="Share a link; it stops working after the last use or when it expires.">
         <SettingsLoadError error={invites.error} retry={invites.refetch} hasRows={inviteRows.length > 0} />
-        <DataTable<InviteTokenFieldsFragment> id={`librarian.${me?.id ?? "session"}.settings.invites`} label="Open invites" columns={inviteColumns} rows={inviteRows} getRowId={(token) => token.id} getRowLabel={(token) => `Invite ${token.id}`} loading={invites.loading && inviteRows.length === 0} actions={inviteActions} density="compact" noun={{ one: "invite", other: "invites" }} emptyMessage="No open invites" />
+        <DataTable<InviteTokenFieldsFragment> height="auto" id={`librarian.${me?.id ?? "session"}.settings.invites`} label="Open invites" columns={inviteColumns} rows={inviteRows} getRowId={(token) => token.id} getRowLabel={(token) => `Invite ${token.id}`} loading={invites.loading && inviteRows.length === 0} actions={inviteActions} density="compact" noun={{ one: "invite", other: "invites" }} emptyMessage="No open invites" />
       </SettingsSection>
 
       <Dialog isOpen={inviting} onOpenChange={setInviting} title="Invite someone" size="sm" footer={<><Button variant="ghost" onPress={() => setInviting(false)}>Cancel</Button><Button variant="primary" onPress={() => void submitInvite()} isPending={creatingInvite} isDisabled={libraries.loading || Boolean(libraries.error)}>Create and copy link</Button></>}>

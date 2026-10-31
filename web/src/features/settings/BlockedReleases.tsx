@@ -86,7 +86,7 @@ export function BlockedReleases() {
   return (
     <SettingsSection title="Blocked releases" description="Releases that failed to import or stalled. They are skipped until you unblock them.">
       <SettingsLoadError error={list.error} retry={list.refetch} hasRows={rows.length > 0} />
-      <DataTable<Row>
+      <DataTable<Row> height="auto"
         id={`librarian.${user?.id ?? "session"}.settings.blocked-releases`}
         label="Blocked releases"
         columns={columns}

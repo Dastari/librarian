@@ -94,7 +94,7 @@ export function LibrariesSettings() {
     <div className="flex flex-col gap-6">
       <SettingsSection title="Libraries" actions={<Button variant="primary" size="sm" onPress={() => setCreating(true)}><IconPlus /> Add library</Button>}>
         <SettingsLoadError error={list.error} retry={list.refetch} hasRows={libraries.length > 0} />
-        <DataTable<LibraryOverview>
+        <DataTable<LibraryOverview> height="auto"
           id={`librarian.${user?.id ?? "session"}.settings.libraries`}
           label="Libraries"
           columns={columns}

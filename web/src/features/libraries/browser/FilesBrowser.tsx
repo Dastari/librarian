@@ -1,8 +1,13 @@
+import { defineActions } from "glass-ux/actions";
+import { Badge } from "glass-ux/badge";
+import { createDataTableColumns, DataTable, IdentityCell, RelativeTime, TextCell, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
+import { IconExternalLink, IconRefresh } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
-import { IconFile, IconFileSearch, IconLinkOff, IconRefresh, IconWand } from "@tabler/icons-react";
+import { IconFile, IconFileSearch, IconLinkOff, IconWand } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
-import { DataTable, EmptyState, ErrorState, GlassSegmented, StatusChip, type DataTableColumn, type DataTableRowAction } from "@/components/ui";
+import { EntityChip } from "@/components/entities/EntityChip";
+import { ErrorState, GlassSegmented } from "@/components/ui";
 import { ManualMatchDialog } from "@/features/libraries/ManualMatchDialog";
 import { useMutation } from "@apollo/client/react";
 import {
@@ -16,8 +21,10 @@ import {
   type MediaFileWhereInput,
 } from "@/graphql/generated/graphql";
 import { useServerTable } from "@/hooks/useServerTable";
-import { useIsAdmin } from "@/lib/auth/useSession";
-import { formatBytes, formatDate, formatRuntime } from "@/lib/format";
+import { useIsAdmin, useSession } from "@/lib/auth/useSession";
+import { ENTITY_KINDS, glyph } from "@/lib/entities/kinds";
+import { badgeTone, linkedItem } from "@/lib/entities/linked";
+import { formatBytes, formatRuntime, parseTimestamp } from "@/lib/format";
 import { errorMessage } from "@/lib/graphql/errors";
 import { qualityStatus } from "@/lib/status";
 
@@ -31,6 +38,29 @@ const getRowId = (row: FileRow) => row.id;
 function fileName(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
 }
+
+const FileGlyph = ENTITY_KINDS.mediaFile.icon;
+const MatchIcon = glyph(IconWand, "wand");
+const ManualIcon = glyph(IconFileSearch, "file-search");
+const OrganizeIcon = glyph(IconFile, "file");
+const UnlinkIcon = glyph(IconLinkOff, "link-off");
+
+const column = createDataTableColumns<FileRow>();
+const columns = column.columns([
+  column.accessor("path", {
+    header: "File", width: 28, priority: 1, cardRole: "title", sortable: true,
+    cell: ({ row }) => <IdentityCell icon={<FileGlyph />} title={fileName(row.original.path)} subtitle={row.original.relativePath ?? row.original.path} status={linkedTo(row.original) ? "online" : "warning"} statusLabel={linkedTo(row.original) ? "Linked" : "Unmatched"} />,
+  }),
+  column.display({
+    id: "linked", header: "Linked to", width: 16, priority: 2, cardRole: "subtitle",
+    cell: ({ row }) => { const item = linkedItem(row.original); return item ? <EntityChip entity={item} /> : linkedTo(row.original) ? <Badge size="sm" tone="success">{linkedTo(row.original)}</Badge> : <Badge size="sm" marker="dot" tone="warning">Unmatched</Badge>; },
+  }),
+  column.display({ id: "quality", header: "Quality", width: 13, priority: 3, cell: ({ row }) => { const file = row.original; return <TextCell muted>{[file.resolution, file.videoCodec?.toUpperCase(), file.audioCodec?.toUpperCase(), file.isHdr ? (file.hdrType ?? "HDR") : null].filter(Boolean).join(" · ") || (file.analyzedAt ? "Audio" : "Not analyzed")}</TextCell>; } }),
+  column.display({ id: "qualityStatus", header: "Profile", width: 9, priority: 3, cardRole: "status", cell: ({ row }) => { const meta = qualityStatus(row.original.qualityStatus); return <Badge size="sm" marker="dot" tone={badgeTone(meta.tone)}>{meta.label}</Badge>; } }),
+  column.accessor("duration", { header: "Length", width: 6, priority: 4, align: "end", grow: false, sortable: true, cell: ({ row }) => <TextCell muted>{formatRuntime(row.original.duration)}</TextCell> }),
+  column.accessor("size", { header: "Size", width: 7, priority: 2, align: "end", grow: false, sortable: true, sortDescFirst: true, cell: ({ row }) => <TextCell muted>{formatBytes(row.original.size)}</TextCell> }),
+  column.accessor("addedAt", { header: "Added", width: 8, priority: 3, sortable: true, sortDescFirst: true, cell: ({ row }) => <RelativeTime value={parseTimestamp(row.original.addedAt)} /> }),
+]);
 
 function linkedTo(row: FileRow): string | null {
   if (row.movieId) return "Movie";
@@ -46,6 +76,7 @@ function linkedTo(row: FileRow): string | null {
  */
 export function FilesBrowser({ libraryId }: { libraryId: string }) {
   const isAdmin = useIsAdmin();
+  const { user } = useSession();
   const filters = useBrowserFilters();
   const table = useServerTable<MediaFileOrderByInput>({ persistKey: `files.${libraryId}`, defaultSorting: [{ id: "addedAt", desc: true }] });
   const [matching, setMatching] = useState<FileRow | null>(null);
@@ -81,92 +112,54 @@ export function FilesBrowser({ libraryId }: { libraryId: string }) {
     }
   };
 
-  const actions = useMemo<Array<DataTableRowAction<FileRow>>>(
-    () =>
-      isAdmin
-        ? [
-            {
-              key: "automatch",
-              label: "Match automatically",
-              icon: <IconWand size={16} />,
-              hidden: (row) => linkedTo(row) !== null,
-              onAction: (row) =>
-                run("Match", async () => {
-                  const { data } = await matchFile({ variables: { input: { mediaFileId: row.id, libraryId, autoMatch: true, allowProviderFallback: true } } });
-                  const result = data?.matchMediaFile;
-                  return { ok: Boolean(result?.success), message: result?.reason ?? (result?.matchedType ? `Linked to ${result.matchedType}` : null) };
-                }),
-            },
-            { key: "manual", label: "Match manually…", icon: <IconFileSearch size={16} />, onAction: (row) => setMatching(row) },
-            {
-              key: "analyze",
-              label: "Re-analyze",
-              icon: <IconRefresh size={16} />,
-              onAction: (row) =>
-                run("Analysis", async () => {
-                  const { data } = await analyzeFile({ variables: { mediaFileId: row.id, path: row.path } });
-                  return { ok: Boolean(data?.analyzeMediaFile.success), message: data?.analyzeMediaFile.message ?? (data?.analyzeMediaFile.queued ? "Analysis queued" : null) };
-                }),
-            },
-            {
-              key: "organize",
-              label: "Organize",
-              icon: <IconFile size={16} />,
-              hidden: (row) => linkedTo(row) === null,
-              onAction: (row) =>
-                run("Organize", async () => {
-                  const { data } = await organizeFile({ variables: { input: { mediaFileId: row.id } } });
-                  const result = data?.organizeMediaFile;
-                  return { ok: Boolean(result?.success), message: result?.reason ?? (result?.newPath ? `Moved to ${result.newPath}` : null) };
-                }),
-            },
-            {
-              key: "unmatch",
-              label: "Unlink",
-              icon: <IconLinkOff size={16} />,
-              destructive: true,
-              hidden: (row) => linkedTo(row) === null,
-              onAction: (row) =>
-                run("Unlink", async () => {
-                  const { data } = await unmatchFile({ variables: { mediaFileId: row.id } });
-                  return { ok: Boolean(data?.unmatchMediaFile.success), message: data?.unmatchMediaFile.reason };
-                }),
-            },
-          ]
-        : [],
-    [analyzeFile, isAdmin, libraryId, matchFile, organizeFile, unmatchFile],
-  );
-
-  const columns = useMemo<Array<DataTableColumn<FileRow>>>(
-    () => [
+  const actions = useMemo(() => defineActions<FileRow>("media-file", [
+    {
+      id: "open-item", label: "Open linked item", icon: IconExternalLink, group: "open", priority: 1,
+      visible: (rows) => rows.length === 1 && Boolean(linkedItem(rows[0]!)?.href),
+      run: (rows, context) => { const href = linkedItem(rows[0]!)?.href; if (href) context.navigate(href); },
+    },
+    ...(isAdmin ? [
       {
-        id: "path",
-        header: "File",
-        sortable: true,
-        cell: (row) => (
-          <span className="min-w-0">
-            <span className="block truncate text-body-sm text-foreground">{fileName(row.path)}</span>
-            <span className="block truncate font-mono text-label-sm text-muted">{row.relativePath ?? row.path}</span>
-          </span>
-        ),
+        id: "automatch", label: "Match automatically", icon: MatchIcon, group: "organise" as const, priority: 1,
+        visible: (rows: readonly FileRow[]) => rows.length === 1 && linkedTo(rows[0]!) === null,
+        run: (rows: readonly FileRow[]) => run("Match", async () => {
+          const { data } = await matchFile({ variables: { input: { mediaFileId: rows[0]!.id, libraryId, autoMatch: true, allowProviderFallback: true } } });
+          const result = data?.matchMediaFile;
+          return { ok: Boolean(result?.success), message: result?.reason ?? (result?.matchedType ? `Linked to ${result.matchedType}` : null) };
+        }),
       },
+      { id: "manual", label: "Match manually…", icon: ManualIcon, group: "organise" as const, priority: 2, visible: (rows: readonly FileRow[]) => rows.length === 1, run: (rows: readonly FileRow[]) => setMatching(rows[0]!) },
       {
-        id: "linked",
-        header: "Linked",
-        size: 120,
-        cell: (row) => {
-          const kind = linkedTo(row);
-          return kind ? <StatusChip status={{ label: kind, tone: "success", dot: "bg-success" }} /> : <StatusChip status={{ label: "Unmatched", tone: "warning", dot: "bg-warning" }} />;
+        id: "analyze", label: (rows: readonly FileRow[]) => (rows.length === 1 ? "Re-analyze" : `Re-analyze ${rows.length} files`), icon: IconRefresh, group: "manage" as const, priority: 2, bulk: true,
+        run: async (rows: readonly FileRow[]) => {
+          for (const row of rows) await run("Analysis", async () => {
+            const { data } = await analyzeFile({ variables: { mediaFileId: row.id, path: row.path } });
+            return { ok: Boolean(data?.analyzeMediaFile.success), message: data?.analyzeMediaFile.message ?? (data?.analyzeMediaFile.queued ? "Analysis queued" : null) };
+          });
         },
       },
-      { id: "quality", header: "Quality", size: 190, hideBelow: "md", cell: (row) => <span className="text-muted">{[row.resolution, row.videoCodec?.toUpperCase(), row.audioCodec?.toUpperCase(), row.isHdr ? (row.hdrType ?? "HDR") : null].filter(Boolean).join(" · ") || (row.analyzedAt ? "Audio" : "Not analyzed")}</span> },
-      { id: "qualityStatus", header: "Profile", size: 120, hideBelow: "lg", cell: (row) => <StatusChip minimal status={qualityStatus(row.qualityStatus)} /> },
-      { id: "duration", header: "Length", size: 90, align: "end", numeric: true, sortable: true, hideBelow: "lg", cell: (row) => formatRuntime(row.duration) },
-      { id: "size", header: "Size", size: 100, align: "end", numeric: true, sortable: true, cell: (row) => formatBytes(row.size) },
-      { id: "addedAt", header: "Added", size: 130, sortable: true, hideBelow: "md", cell: (row) => <span className="text-muted">{formatDate(row.addedAt)}</span> },
-    ],
-    [],
-  );
+      {
+        id: "organize", label: "Organize", icon: OrganizeIcon, group: "manage" as const, priority: 3,
+        visible: (rows: readonly FileRow[]) => rows.length === 1 && linkedTo(rows[0]!) !== null,
+        run: (rows: readonly FileRow[]) => run("Organize", async () => {
+          const { data } = await organizeFile({ variables: { input: { mediaFileId: rows[0]!.id } } });
+          const result = data?.organizeMediaFile;
+          return { ok: Boolean(result?.success), message: result?.reason ?? (result?.newPath ? `Moved to ${result.newPath}` : null) };
+        }),
+      },
+      {
+        id: "unmatch", label: "Unlink", icon: UnlinkIcon, group: "danger" as const,
+        visible: (rows: readonly FileRow[]) => rows.length === 1 && linkedTo(rows[0]!) !== null,
+        confirm: () => ({ title: "Unlink this file?", body: "The file stays on disk and in the library's file list, but is no longer attached to its item.", confirmLabel: "Unlink", tone: "warning" as const }),
+        run: (rows: readonly FileRow[]) => run("Unlink", async () => {
+          const { data } = await unmatchFile({ variables: { mediaFileId: rows[0]!.id } });
+          return { ok: Boolean(data?.unmatchMediaFile.success), message: data?.unmatchMediaFile.reason };
+        }),
+      },
+    ] : []),
+  ]), [analyzeFile, isAdmin, libraryId, matchFile, organizeFile, unmatchFile]);
+  const state = useMemo<DataTableState>(() => ({ pagination: { pageIndex: 0, pageSize: 50 }, selection: {}, filters: [], sorting: table.sorting }), [table.sorting]);
+  const onStateChange = (next: DataTableState, change: DataTableStateChange) => { if (change === "sorting") table.setSorting(next.sorting); };
 
   const availabilityLabels: Record<AvailabilityFilter, string> = { all: "All files", available: "Below quality target", wanted: "Unmatched", missing: "Unmatched" };
 
@@ -190,26 +183,30 @@ export function FilesBrowser({ libraryId }: { libraryId: string }) {
           />
         }
       />
-      <DataTable<FileRow>
-        height="fill"
-        className="min-h-0 min-w-0 flex-1"
-        columns={columns}
-        rows={list.rows}
-        getRowId={getRowId}
-        isLoading={list.loading}
-          refetching={list.fetching}
-          queryKey={list.queryKey} loadRevision={list.loadRevision}
-          externalBrowserToolbar
-        totalCount={list.totalCount}
-        noun="files"
-        density="compact"
-        rowActions={actions}
-        sorting={table.sorting}
-        onSortingChange={table.setSorting}
-        infinite={{ hasMore: list.hasMore, loadMore: list.loadMore, loadingMore: list.loadingMore }}
-        error={list.error && list.rows.length === 0 ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : undefined}
-        emptyState={<EmptyState icon={IconFile} title={filters.availability === "all" ? "No files yet" : "Nothing to show"} description={filters.availability === "all" ? "Scan the library to discover files." : "Every file matches this filter's opposite."} />}
-      />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <DataTable<FileRow>
+          id={`librarian.${user?.id ?? "session"}.files`}
+          label="Files"
+          queryKey={list.queryKey}
+          height="fill"
+          columns={columns}
+          rows={list.rows}
+          getRowId={getRowId}
+          getRowLabel={(row) => fileName(row.path)}
+          loading={list.loading}
+          refetching={list.fetching && !list.loading}
+          rowCount={list.totalCount}
+          state={state}
+          onStateChange={onStateChange}
+          infinite={{ revision: list.loadRevision, hasMore: list.hasMore, onLoadMore: list.loadMore, loadingMore: list.loadingMore }}
+          actions={actions}
+          selectable={isAdmin}
+          density="compact"
+          noun={{ one: "file", other: "files" }}
+          error={list.error && list.rows.length === 0 ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : undefined}
+          emptyMessage={filters.availability === "all" ? "No files yet. Scan the library to discover files." : "No files match this filter."}
+        />
+      </div>
       <ManualMatchDialog file={matching} libraryId={libraryId} onClose={() => setMatching(null)} onMatched={() => void list.refetch()} />
     </div>
   );

@@ -7,7 +7,6 @@ import { TooltipProvider } from "glass-ux/tooltip";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DataTable } from "../DataTable";
 import { LoadedDataTable } from "../LoadedDataTable";
 
 type Row = { id: string; title: string };
@@ -44,19 +43,6 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("complete-table router integration", () => {
-  it("hydrates shared filters in the compatibility table and restores history", async () => {
-    const { router, history } = await mount(<DataTable id="records" columns={[{ id: "title", header: "Title", sortable: true, cell: (row: Row) => row.title }]} rows={rows} getRowId={(row) => row.id} />, { search: "Recording 131", sorting: [], filters: [] });
-    expect(await screen.findByText("Recording 131")).toBeInTheDocument();
-    expect(await searchBox()).toHaveValue("Recording 131");
-    await userEvent.clear(await searchBox());
-    await screen.findByText("Recording 1");
-    expect((router.state.location.search as Record<string, unknown>).q).toBe("unrelated");
-    expect(router.state.location.searchStr).not.toMatch(/selection|offset|cursor|pageIndex/);
-    act(() => history.back());
-    expect(await screen.findByText("Recording 131")).toBeInTheDocument();
-    expect(await searchBox()).toHaveValue("Recording 131");
-  });
-
   it("rearms complete media continuation after restoring a shared query", async () => {
     const { history } = await mount(<LoadedDataTable id="records" label="Recordings" columns={columns} rows={rows} search={{ fields: ["title"] }} getRowId={(row) => row.id} height="auto" batchSize={50} />, { search: "Recording 131", sorting: [], filters: [] });
     expect(await screen.findByText("Recording 131")).toBeInTheDocument();

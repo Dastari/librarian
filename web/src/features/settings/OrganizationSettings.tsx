@@ -132,7 +132,7 @@ export function OrganizationSettings() {
 
       <SettingsSection title="Naming patterns" description="Tokens such as {title}, {year}, {season:00}, {episode:00}, {quality} are replaced when files are organized." actions={<Button variant="primary" size="sm" onPress={() => setEditing("new")}><IconPlus /> New pattern</Button>}>
         <SettingsLoadError error={patterns.error} retry={patterns.refetch} hasRows={rows.length > 0} />
-        <DataTable<Pattern> id={`librarian.${user?.id ?? "session"}.settings.naming-patterns`} label="Naming patterns" columns={columns} rows={rows} getRowId={(row) => row.id} getRowLabel={(row) => row.name} loading={patterns.loading && rows.length === 0} actions={actions} onRowOpen={(row) => (row.isSystem ? undefined : setEditing(row))} rowOpen="click" noun={{ one: "pattern", other: "patterns" }} density="compact" emptyMessage="No naming patterns" />
+        <DataTable<Pattern> height="auto" id={`librarian.${user?.id ?? "session"}.settings.naming-patterns`} label="Naming patterns" columns={columns} rows={rows} getRowId={(row) => row.id} getRowLabel={(row) => row.name} loading={patterns.loading && rows.length === 0} actions={actions} onRowOpen={(row) => (row.isSystem ? undefined : setEditing(row))} rowOpen="click" noun={{ one: "pattern", other: "patterns" }} density="compact" emptyMessage="No naming patterns" />
       </SettingsSection>
 
       <Dialog isOpen={editing !== null} onOpenChange={(open) => !open && setEditing(null)} title={editing === "new" || !editing ? "New naming pattern" : `Edit ${editing.name}`} size="md">

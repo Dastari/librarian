@@ -6,14 +6,17 @@ import { Select } from "glass-ux/select";
 import { Tooltip } from "glass-ux/tooltip";
 import { toast } from "glass-ux/toast";
 import { IconDownload, IconSearch } from "@tabler/icons-react";
+import { Badge, type BadgeTone } from "glass-ux/badge";
+import { createDataTableColumns, DataTable, IdentityCell, NumericCell, TextCell } from "glass-ux/data-table";
+import { LevelGauge, type GaugeLevel } from "glass-ux/level-gauge";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 
-import { Button, DataTable, type DataTableColumn, Dialog, EmptyState, ErrorState, GlassSegmented, Spinner, StatusChip } from "@/components/ui";
+import { Button, Dialog, EmptyState, ErrorState, GlassSegmented, Spinner } from "@/components/ui";
+import { ENTITY_KINDS } from "@/lib/entities/kinds";
 import { AddTorrentDocument, HasEnabledSourcesDocument, type SearchSourcesQuery } from "@/graphql/generated/graphql";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { languageName } from "@/lib/languages";
-import type { StatusMeta } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
 type Release = SearchSourcesQuery["searchSources"]["sources"][number]["releases"][number];
@@ -34,11 +37,49 @@ type Codec = "any" | "hevc" | "h264" | "av1";
 type Packs = "any" | "packs" | "episodes";
 
 /** The backend's verdict for the resolved quality profile. */
-const MATCH: Record<string, StatusMeta> = {
-  optimal: { label: "Optimal", tone: "success", dot: "bg-success" },
-  suboptimal: { label: "Suboptimal", tone: "warning", dot: "bg-warning" },
-  rejected: { label: "Rejected", tone: "danger", dot: "bg-danger" },
+const MATCH: Record<string, { label: string; tone: BadgeTone }> = {
+  optimal: { label: "Optimal", tone: "success" },
+  suboptimal: { label: "Suboptimal", tone: "warning" },
+  rejected: { label: "Rejected", tone: "danger" },
 };
+/** Seeders as swarm health: whether a grab is likely to finish. */
+type Health = "dead" | "weak" | "healthy";
+const HEALTH: readonly GaugeLevel<Health>[] = [
+  { value: "dead", label: "No seeders", tone: "danger" },
+  { value: "weak", label: "Few seeders", tone: "warning" },
+  { value: "healthy", label: "Well seeded", tone: "success" },
+];
+const health = (seeders: number | null | undefined): Health => (!seeders ? "dead" : seeders < 5 ? "weak" : "healthy");
+const ReleaseGlyph = ENTITY_KINDS.torrent.icon;
+
+function ProfileMatchCell({ release }: { release: Release }) {
+  if (!release.profileMatch) return <TextCell muted>—</TextCell>;
+  const match = MATCH[release.profileMatch] ?? MATCH.suboptimal!;
+  const badge = <Badge size="sm" marker="dot" tone={match.tone}>{match.label}</Badge>;
+  if (!release.rejectReasons.length) return badge;
+  return (
+    <Tooltip content={release.rejectReasons.join(" · ")}>
+      <Button variant="ghost" size="sm" data-focusable aria-label={`Why ${release.profileMatch}: ${release.rejectReasons.join(", ")}`} className="h-auto min-h-0 cursor-help rounded-pill border-0 bg-transparent p-0 shadow-none backdrop-blur-none">{badge}</Button>
+    </Tooltip>
+  );
+}
+
+const column = createDataTableColumns<Release>();
+const columns = column.columns([
+  column.accessor("title", {
+    header: "Release", width: 30, priority: 1, cardRole: "title",
+    cell: ({ row }) => <IdentityCell icon={<ReleaseGlyph />} title={row.original.title} subtitle={[row.original.sourceName, formatRelative(row.original.publishDate)].filter(Boolean).join(" · ")} />,
+  }),
+  column.display({ id: "tags", header: "Quality", width: 18, priority: 2, cell: ({ row }) => <span className="flex min-w-0 flex-wrap items-center gap-1"><ReleaseTags release={row.original} /></span> }),
+  column.accessor((release) => release.profileMatch ?? "", { id: "match", header: "Profile", width: 9, priority: 2, cardRole: "status", cell: ({ row }) => <ProfileMatchCell release={row.original} /> }),
+  column.accessor("size", { header: "Size", width: 7, priority: 2, align: "end", grow: false, cell: ({ row }) => <TextCell muted>{row.original.sizeFormatted ?? formatBytes(row.original.size)}</TextCell> }),
+  column.accessor((release) => release.seeders ?? 0, {
+    id: "seeders", header: "Seeds", width: 9, priority: 2,
+    cell: ({ row }) => <span className="flex items-center gap-2"><span className="text-numeric w-8 text-end tabular-nums">{row.original.seeders ?? "—"}</span><LevelGauge label="Swarm health" levels={HEALTH} value={health(row.original.seeders)} /></span>,
+  }),
+  column.accessor((release) => release.leechers ?? 0, { id: "leechers", header: "Peers", width: 5, priority: 4, align: "end", grow: false, cell: ({ row }) => (row.original.leechers === null || row.original.leechers === undefined ? <TextCell muted>—</TextCell> : <NumericCell value={row.original.leechers} />) }),
+  column.display({ id: "grab", header: "", width: 7, priority: 1, align: "end", grow: false, cell: ({ row }) => <GrabReleaseCell release={row.original} /> }),
+]);
 const MATCH_RANK: Record<string, number> = { optimal: 0, suboptimal: 1, rejected: 2 };
 
 /** Which of the segmented resolution buckets a parsed resolution belongs to. */
@@ -181,57 +222,6 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
     }
   };
 
-  const columns = useMemo<Array<DataTableColumn<Release>>>(
-    () => [
-      {
-        id: "title",
-        header: "Release",
-        wrap: true,
-        cell: (release) => (
-          <span className="min-w-0">
-            <span className="block break-words text-body-sm text-foreground">{release.title}</span>
-            <span className="mt-1 flex flex-wrap items-center gap-1">
-              <span className="text-label-sm text-muted">{[release.sourceName, formatRelative(release.publishDate)].filter(Boolean).join(" · ")}</span>
-              <ReleaseTags release={release} />
-            </span>
-          </span>
-        ),
-      },
-      {
-        id: "match",
-        header: "Profile",
-        value: (release) => release.profileMatch ?? "",
-        size: 130,
-        cell: (release) =>
-          release.profileMatch ? (
-            release.rejectReasons.length > 0 ? (
-              <Tooltip content={release.rejectReasons.join(" · ")}>
-                <Button variant="ghost" size="sm" data-focusable aria-label={`Why ${release.profileMatch}: ${release.rejectReasons.join(", ")}`} className="h-auto min-h-0 cursor-help rounded-pill border-0 bg-transparent p-0 shadow-none backdrop-blur-none">
-                  <StatusChip status={MATCH[release.profileMatch] ?? MATCH.suboptimal!} />
-                </Button>
-              </Tooltip>
-            ) : (
-              <StatusChip status={MATCH[release.profileMatch] ?? MATCH.suboptimal!} />
-            )
-          ) : (
-            <span className="text-muted">—</span>
-          ),
-      },
-      { id: "size", header: "Size", size: 100, align: "end", numeric: true, cell: (release) => release.sizeFormatted ?? formatBytes(release.size) },
-      { id: "seeders", header: "Seeds", size: 80, align: "end", numeric: true, cell: (release) => <span className={release.seeders ? "text-success" : "text-muted"}>{release.seeders ?? "—"}</span> },
-      { id: "leechers", header: "Peers", size: 80, align: "end", numeric: true, hideBelow: "md", cell: (release) => release.leechers ?? "—" },
-      {
-        id: "grab",
-        header: "",
-        filter: { none: "Use the identifying fields to filter this list" },
-        size: 110,
-        align: "end",
-        cell: (release) => <GrabReleaseCell release={release} />,
-      },
-    ],
-    [],
-  );
-
   return (
     <ReleaseActionsContext value={{ busy, grab }}>
     <Dialog isOpen={isOpen} onOpenChange={onOpenChange} title="Find a release" size="wide">
@@ -281,17 +271,18 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
             {failures.length ? <p className="text-label-sm text-warning">{failures.map((source) => `${source.sourceName}: ${source.error}`).join(" · ")}</p> : null}
             {result.data ? <p className="text-label-sm text-muted">Source results may be partial. Filters apply to returned releases.</p> : null}
             <DataTable<Release>
-              frame={false}
+              id="librarian.release-search"
+              label="Releases"
               columns={columns}
               rows={releases}
-              dataSource="server-infinite"
               queryKey={queryKey}
-              loadRevision={revision}
-              infinite={{ hasMore, loadMore, loadingMore: result.loadingMore, error: paginationError ? <ErrorState error={paginationError} onRetry={() => void retryPage()} /> : undefined }}
+              infinite={{ revision, hasMore, onLoadMore: loadMore, loadingMore: result.loadingMore, error: paginationError?.message }}
+              onRetry={() => void retryPage()}
               getRowId={releaseId}
+              getRowLabel={(release) => release.title}
               density="compact"
-              noun="releases"
-              emptyState={<EmptyState compact icon={IconSearch} title={allReleases.length ? "Nothing matches these filters" : "No releases found"} description={allReleases.length ? "Loosen a filter to see more." : "Try a shorter title or search without the year."} />}
+              noun={{ one: "release", other: "releases" }}
+              emptyMessage={<span className="flex flex-col items-center gap-1"><span>{allReleases.length ? "Nothing matches these filters" : "No releases found"}</span><span className="text-label-sm text-muted">{allReleases.length ? "Loosen a filter to see more." : "Try a shorter title or search without the year."}</span></span>}
             />
             {result.data ? <p className="text-label-sm text-muted">{allReleases.length} returned releases from {result.data.searchSources.sources.length} sources · latest response {result.data.searchSources.totalElapsedMs} ms</p> : null}
           </>

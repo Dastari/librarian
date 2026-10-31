@@ -172,7 +172,7 @@ export function QualitySettings() {
     <div className="flex flex-col gap-6">
       <SettingsSection title="Quality profiles" description="Decide which releases are acceptable and when a better file should replace an existing one." actions={<Button variant="primary" size="sm" onPress={() => setEditing("new")}><IconPlus /> New profile</Button>}>
         <SettingsLoadError error={list.error} retry={list.refetch} hasRows={profiles.length > 0} />
-        <DataTable<Profile> id={`librarian.${user?.id ?? "session"}.settings.quality-profiles`} label="Quality profiles" columns={columns} rows={profiles} getRowId={(profile) => profile.id} getRowLabel={(profile) => profile.name} loading={loading && profiles.length === 0} actions={actions} onRowOpen={(profile) => setEditing(profile)} rowOpen="click" noun={{ one: "profile", other: "profiles" }} emptyMessage="No profiles yet" />
+        <DataTable<Profile> height="auto" id={`librarian.${user?.id ?? "session"}.settings.quality-profiles`} label="Quality profiles" columns={columns} rows={profiles} getRowId={(profile) => profile.id} getRowLabel={(profile) => profile.name} loading={loading && profiles.length === 0} actions={actions} onRowOpen={(profile) => setEditing(profile)} rowOpen="click" noun={{ one: "profile", other: "profiles" }} emptyMessage="No profiles yet" />
       </SettingsSection>
 
       <Dialog isOpen={editing !== null} onOpenChange={(open) => !open && setEditing(null)} title={editing === "new" || !editing ? "New quality profile" : `Edit ${editing.name}`} size="xl" footer={<><Button variant="ghost" onPress={() => setEditing(null)}>Cancel</Button><Button variant="primary" onPress={() => void submit()} isPending={creating || updating}>Save</Button></>}>

@@ -1,11 +1,16 @@
 import { useMutation } from "@apollo/client/react";
+import { defineActions } from "glass-ux/actions";
+import { Badge } from "glass-ux/badge";
+import { createDataTableColumns, DataTable, filters, IdentityCell, NumericCell, type DataTableSearch } from "glass-ux/data-table";
+import { IconExternalLink, IconRefresh, IconSearch } from "glass-ux/icons";
+import { Segmented } from "glass-ux/segmented";
 import { toast } from "glass-ux/toast";
 import { useNavigate } from "@tanstack/react-router";
-import { IconBookmark, IconBookmarkOff, IconDownload, IconEyeOff, IconListSearch, IconRefresh, IconSearch, IconTargetArrow } from "@tabler/icons-react";
+import { IconBookmark, IconBookmarkOff, IconDownload, IconEyeOff, IconTargetArrow } from "@tabler/icons-react";
 import { parseAsStringEnum, useQueryState } from "nuqs";
-import { createContext, useContext, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
-import { Artwork, Button, DataTable, type DataTableColumn, type DataTableRowAction, EmptyState, ErrorState, PageHeader, SegmentTabs, StatusChip } from "@/components/ui";
+import { Artwork, Button, ErrorState } from "@/components/ui";
 import { ReleaseSearchDialog, type ReleaseTarget } from "@/features/downloads/ReleaseSearchDialog";
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
 import {
@@ -17,7 +22,9 @@ import {
   EntityLibraryListDocument,
   SearchMissingDocument,
 } from "@/graphql/generated/graphql";
-import { useIsAdmin } from "@/lib/auth/useSession";
+import { useIsAdmin, useSession } from "@/lib/auth/useSession";
+import { entityPath, glyph } from "@/lib/entities/kinds";
+import { badgeTone } from "@/lib/entities/linked";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { LIBRARY_TYPES } from "@/lib/library-types";
 import { statusMeta } from "@/lib/status";
@@ -25,17 +32,41 @@ import { statusMeta } from "@/lib/status";
 import { commonSeason, summariseItems, type WantedGroup, type WantedKind } from "./grouping";
 import { WANTED_TABS, WANTED_TAB_LABEL, useWanted, type WantedTab } from "./useWanted";
 
-const KIND_META: Record<WantedKind, { label: string; tint: string }> = {
-  episode: { label: "TV", tint: LIBRARY_TYPES.tv.tintVar },
-  movie: { label: "Movie", tint: LIBRARY_TYPES.movies.tintVar },
-  track: { label: "Music", tint: LIBRARY_TYPES.music.tintVar },
-  chapter: { label: "Audiobook", tint: LIBRARY_TYPES.audiobooks.tintVar },
+const KIND_META: Record<WantedKind, { label: string; tint: string; page: "show" | "movie" | "album" | "audiobook" }> = {
+  episode: { label: "TV", tint: LIBRARY_TYPES.tv.tintVar, page: "show" },
+  movie: { label: "Movie", tint: LIBRARY_TYPES.movies.tintVar, page: "movie" },
+  track: { label: "Music", tint: LIBRARY_TYPES.music.tintVar, page: "album" },
+  chapter: { label: "Audiobook", tint: LIBRARY_TYPES.audiobooks.tintVar, page: "audiobook" },
 };
+const HuntIcon = glyph(IconTargetArrow, "target-arrow");
+const WantIcon = glyph(IconBookmark, "bookmark");
+const UnwantIcon = glyph(IconBookmarkOff, "bookmark-off");
+const IgnoreIcon = glyph(IconEyeOff, "eye-off");
 
-const WantedStatusesContext = createContext<Map<string, ContentStatus>>(new Map());
-function WantedStatusCell({ group }: { group: WantedGroup }) {
-  return <StatusChip status={statusMeta(useContext(WantedStatusesContext).get(`${group.kind}:${group.items[0]!.id}`))} />;
+function columnsFor(statuses: Map<string, ContentStatus>) {
+  const column = createDataTableColumns<WantedGroup>();
+  const statusOf = (group: WantedGroup) => statusMeta(statuses.get(`${group.kind}:${group.items[0]!.id}`));
+  return column.columns([
+    column.accessor("title", {
+      header: "Title", width: 28, priority: 1, cardRole: "title", sortable: true,
+      cell: ({ row }) => {
+        const group = row.original;
+        const artwork = <Artwork src={group.poster} alt="" aspect={group.square ? "square" : "poster"} tint={KIND_META[group.kind].tint} className={group.square ? "w-8 rounded-sm" : "w-6 rounded-sm"} />;
+        return <IdentityCell icon={artwork} title={group.title} subtitle={[group.subtitle, group.kind === "movie" ? null : summariseItems(group.items)].filter(Boolean).join(" · ")} />;
+      },
+    }),
+    column.accessor((group) => group.kind, {
+      id: "kind", header: "Type", width: 8, priority: 2, sortable: true,
+      filter: filters.options({ field: "kind", nullable: false, operators: ["in"], options: (Object.keys(KIND_META) as WantedKind[]).map((value) => ({ value, label: KIND_META[value].label })) }),
+      cell: ({ row }) => <Badge size="sm" tone="neutral">{KIND_META[row.original.kind].label}</Badge>,
+    }),
+    column.accessor((group) => group.items.length, { id: "count", header: "Items", width: 6, priority: 2, align: "end", grow: false, sortable: true, sortDescFirst: true, cell: ({ row }) => <NumericCell value={row.original.items.length} /> }),
+    column.accessor((group) => statusOf(group).label, { id: "status", header: "Status", width: 10, priority: 2, cardRole: "status", sortable: true, cell: ({ row }) => { const meta = statusOf(row.original); return <Badge size="sm" marker="dot" tone={badgeTone(meta.tone)}>{meta.label}</Badge>; } }),
+  ]);
 }
+
+const search: DataTableSearch<WantedGroup> = { fields: ["title", "subtitle"], placeholder: "Search titles" };
+const pagePath = (group: WantedGroup) => entityPath(KIND_META[group.kind].page, group.parentId);
 
 const EMPTY: Record<WantedTab, { title: string; description: string }> = {
   missing: { title: "Nothing is missing", description: "Items without a file that are not marked wanted appear here." },
@@ -120,94 +151,59 @@ export function WantedPage() {
     }
   };
 
-  const open = (group: WantedGroup) => {
-    if (group.kind === "episode") void navigate({ to: "/shows/$showId", params: { showId: group.parentId } });
-    else if (group.kind === "movie") void navigate({ to: "/movies/$movieId", params: { movieId: group.parentId } });
-    else if (group.kind === "track") void navigate({ to: "/albums/$albumId", params: { albumId: group.parentId } });
-    else void navigate({ to: "/audiobooks/$audiobookId", params: { audiobookId: group.parentId } });
-  };
-
-  const columns = useMemo<Array<DataTableColumn<WantedGroup>>>(
-    () => [
-      {
-        id: "title",
-        header: "Title",
-        cell: (group) => (
-          <span className="flex items-center gap-3">
-            <Artwork src={group.poster} alt="" aspect={group.square ? "square" : "poster"} tint={KIND_META[group.kind].tint} className={group.square ? "w-12 shrink-0 rounded-sm" : "w-8 shrink-0 rounded-sm"} />
-            <span className="min-w-0">
-              <span className="block truncate text-body-sm text-foreground">{group.title}</span>
-              <span className="block truncate text-label-sm text-muted">{[group.subtitle, group.kind === "movie" ? null : summariseItems(group.items)].filter(Boolean).join(" · ")}</span>
-            </span>
-          </span>
-        ),
-      },
-      { id: "kind", value: (group) => KIND_META[group.kind].label, header: "Type", size: 120, hideBelow: "sm", cell: (group) => <span className="text-muted">{KIND_META[group.kind].label}</span> },
-      { id: "count", value: (group) => group.items.length, header: "Items", size: 90, align: "end", numeric: true, cell: (group) => group.items.length },
-      {
-        id: "status",
-        header: "Status",
-        size: 150,
-        hideBelow: "md",
-        cell: (group) => <WantedStatusCell group={group} />,
-        filter: { none: "Use the identifying fields to filter this list" },
-      },
-    ],
-    [],
-  );
-
-  const rowActions = useMemo<Array<DataTableRowAction<WantedGroup>>>(
-    () =>
-      isAdmin
-        ? [
-            { key: "hunt", label: "Search now", icon: <IconTargetArrow size={16} />, onAction: (group) => searchGroup(group) },
-            { key: "search", label: "Browse releases…", icon: <IconSearch size={16} />, onAction: (group) => setSearching(group) },
-            { key: "want", label: "Mark wanted", icon: <IconBookmark size={16} />, hidden: (group) => group.items.every((item) => item.wanted), onAction: (group) => apply(group, { wanted: true, ignored: false }, "marked wanted") },
-            { key: "unwant", label: "Unwant", icon: <IconBookmarkOff size={16} />, hidden: (group) => group.items.every((item) => !item.wanted), onAction: (group) => apply(group, { wanted: false }, "no longer wanted") },
-            { key: "ignore", label: "Ignore", icon: <IconEyeOff size={16} />, onAction: (group) => apply(group, { ignored: true, wanted: false }, "ignored") },
-          ]
-        : [],
-    [isAdmin, list.refetch],
-  );
+  const { user } = useSession();
+  const columns = useMemo(() => columnsFor(list.statuses), [list.statuses]);
+  const actions = useMemo(() => {
+    const each = async (groups: readonly WantedGroup[], input: { wanted?: boolean; ignored?: boolean }, message: string) => { for (const group of groups) await apply(group, input, message); };
+    return defineActions<WantedGroup>("wanted", [
+      { id: "open", label: (groups) => `Open ${KIND_META[groups[0]!.kind].page}`, icon: IconExternalLink, group: "open", priority: 3, visible: (groups) => groups.length === 1, run: (groups, context) => { const href = pagePath(groups[0]!); if (href) context.navigate(href); } },
+      ...(isAdmin ? [
+        { id: "hunt", label: (groups: readonly WantedGroup[]) => (groups.length === 1 ? "Search now" : `Search ${groups.length} titles now`), icon: HuntIcon, group: "manage" as const, priority: 1, bulk: true, run: async (groups: readonly WantedGroup[]) => { for (const group of groups) await searchGroup(group); } },
+        { id: "browse", label: "Browse releases…", icon: IconSearch, group: "manage" as const, priority: 2, visible: (groups: readonly WantedGroup[]) => groups.length === 1, run: (groups: readonly WantedGroup[]) => setSearching(groups[0]!) },
+        { id: "want", label: "Mark wanted", icon: WantIcon, group: "organise" as const, priority: 2, bulk: true, visible: (groups: readonly WantedGroup[]) => groups.some((group) => group.items.some((item) => !item.wanted)), run: (groups: readonly WantedGroup[]) => each(groups, { wanted: true, ignored: false }, "marked wanted") },
+        { id: "unwant", label: "Unwant", icon: UnwantIcon, group: "organise" as const, bulk: true, visible: (groups: readonly WantedGroup[]) => groups.some((group) => group.items.some((item) => item.wanted)), run: (groups: readonly WantedGroup[]) => each(groups, { wanted: false }, "no longer wanted") },
+        { id: "ignore", label: "Ignore", icon: IgnoreIcon, group: "danger" as const, bulk: true, run: (groups: readonly WantedGroup[]) => each(groups, { ignored: true, wanted: false }, "ignored") },
+      ] : []),
+    ]);
+  }, [apply, isAdmin, searchGroup]);
 
   return (
-    <WantedStatusesContext value={list.statuses}>
-    <div data-print-flow className="page-gutter flex min-h-0 flex-1 flex-col gap-4 overflow-hidden py-4 md:gap-6 md:py-6 [@media(max-height:35rem)]:gap-2 [@media(max-height:35rem)]:py-2">
-      <PageHeader
-        title="Wanted"
-        titleVisibility="accessible"
-        meta={list.groups.length > 0 ? <span className="text-numeric">{list.groups.length} titles · {list.itemCount} items</span> : undefined}
-        actions={
-          <>
-            <Button variant="ghost" isIconOnly aria-label="Refresh" onPress={() => list.refetch()}>
-              <IconRefresh size={18} />
-            </Button>
-            {isAdmin ? (
-              <Button variant="primary" onPress={() => void searchAll()} isPending={triggering || libraries.loading} isDisabled={Boolean(libraries.error)}>
-                <IconDownload size={16} /> Search all missing
-              </Button>
-            ) : null}
-          </>
-        }
-      />
-      <SegmentTabs ariaLabel="Wanted filter" items={WANTED_TABS.map((key) => ({ key, label: WANTED_TAB_LABEL[key] }))} selected={tab} onSelect={(key) => void setTab(key as WantedTab)} />
+    <div data-print-flow className="page-gutter flex min-h-0 flex-1 flex-col gap-4 overflow-hidden py-4 md:py-6 [@media(max-height:35rem)]:gap-2 [@media(max-height:35rem)]:py-2">
+      <h1 className="sr-only">Wanted</h1>
+      <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-3">
+        <Segmented<WantedTab> aria-label="Show" value={tab} onValueChange={(value) => void setTab(value === "wanted" ? null : value)} options={WANTED_TABS.map((value) => ({ value, label: WANTED_TAB_LABEL[value] }))} />
+        {list.groups.length > 0 ? <span className="text-numeric text-label-sm text-muted">{list.groups.length} titles · {list.itemCount} items</span> : null}
+        {isAdmin ? (
+          <div className="ms-auto">
+            <Button variant="primary" onPress={() => void searchAll()} isPending={triggering || libraries.loading} isDisabled={Boolean(libraries.error)}><IconDownload size={16} /> Search all missing</Button>
+          </div>
+        ) : null}
+      </div>
       {isAdmin && libraries.error ? <ErrorState compact error={libraries.error} onRetry={() => void libraries.refetch()} /> : null}
       {list.error && list.groups.length > 0 ? <ErrorState compact error={list.error} onRetry={list.refetch} /> : null}
-      <DataTable<WantedGroup>
-        height="fill"
-        columns={columns}
-        rows={list.groups}
-        getRowId={(group) => group.key}
-        isLoading={list.loading}
-        rowActions={rowActions}
-        noun="titles"
-        onRowClick={open}
-        dataSource="complete"
-        queryKey={list.queryKey}
-        refetching={list.refreshing}
-        error={list.error && list.groups.length === 0 ? <ErrorState error={list.error} onRetry={() => list.refetch()} /> : undefined}
-        emptyState={<EmptyState icon={IconListSearch} title={EMPTY[tab].title} description={EMPTY[tab].description} />}
-      />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <DataTable<WantedGroup>
+          id={`librarian.${user?.id ?? "session"}.wanted.${tab}`}
+          label="Wanted"
+          queryKey={list.queryKey}
+          height="fill"
+          columns={columns}
+          rows={list.groups}
+          getRowId={(group) => group.key}
+          getRowLabel={(group) => group.title}
+          loading={list.loading}
+          refetching={list.refreshing}
+          search={search}
+          actions={actions}
+          selectable={isAdmin}
+          noun={{ one: "title", other: "titles" }}
+          onRowOpen={(group) => { const href = pagePath(group); if (href) void navigate({ to: href }); }}
+          rowOpen="click"
+          error={list.error && list.groups.length === 0 ? <ErrorState error={list.error} onRetry={() => list.refetch()} /> : undefined}
+          emptyMessage={`${EMPTY[tab].title}. ${EMPTY[tab].description}`}
+          toolbar={<Button size="sm" variant="ghost" isIconOnly aria-label="Refresh" isPending={list.refreshing} onPress={() => list.refetch()}><IconRefresh /></Button>}
+        />
+      </div>
       <ReleaseSearchDialog
         isOpen={Boolean(searching)}
         onOpenChange={(open) => !open && setSearching(null)}
@@ -222,7 +218,6 @@ export function WantedPage() {
         target={searching ? releaseTarget(searching) : undefined}
       />
     </div>
-    </WantedStatusesContext>
   );
 }
 

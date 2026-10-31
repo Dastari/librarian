@@ -1,20 +1,23 @@
-import { useLiveQuery } from "@/lib/graphql/live/hooks";
-import { useSession } from "@/lib/auth/useSession";
-import { useState } from "react";
-import { Button as GlassButton } from "glass-ux/button";
-import { IconPlay } from "glass-ux/icons";
-import { SaveToListDialog } from "@/features/personal/SaveToListDialog";
-import { IconMusic } from "@tabler/icons-react";
-import { createContext, useContext, useMemo } from "react";
+import { defineActions } from "glass-ux/actions";
+import { Badge } from "glass-ux/badge";
+import { createDataTableColumns, DataTable, IdentityCell, TextCell, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
+import { IconExternalLink, IconPlay, IconPlus } from "glass-ux/icons";
+import { useMemo, useState } from "react";
 
-import { DataTable, EmptyState, ErrorState, StatusChip, type DataTableColumn } from "@/components/ui";
-import { usePlayer } from "@/features/player/usePlayer";
+import { EntityChip } from "@/components/entities/EntityChip";
+import { ErrorState } from "@/components/ui";
+import { SaveToListDialog } from "@/features/personal/SaveToListDialog";
 import type { PlayItem } from "@/features/player/store";
-import { EntityLibraryGetDocument, LibraryTracksDocument, type LibraryTracksQuery, type TrackOrderByInput, type TrackWhereInput, type ContentStatus } from "@/graphql/generated/graphql";
+import { usePlayer } from "@/features/player/usePlayer";
+import { EntityLibraryGetDocument, LibraryTracksDocument, type ContentStatus, type LibraryTracksQuery, type TrackOrderByInput, type TrackWhereInput } from "@/graphql/generated/graphql";
 import { useContentStatuses } from "@/hooks/useContentStatuses";
 import { useServerTable } from "@/hooks/useServerTable";
+import { useSession } from "@/lib/auth/useSession";
 import { albumCover } from "@/lib/artwork";
+import { ENTITY_KINDS, entityPath } from "@/lib/entities/kinds";
+import { badgeTone } from "@/lib/entities/linked";
 import { formatBytes, formatClock } from "@/lib/format";
+import { useLiveQuery } from "@/lib/graphql/live/hooks";
 import { statusMeta } from "@/lib/status";
 
 import { BrowserToolbar } from "./BrowserToolbar";
@@ -23,11 +26,22 @@ import { useInfiniteConnection } from "./useInfiniteConnection";
 
 type TrackRow = LibraryTracksQuery["tracks"]["edges"][number]["node"];
 const getRowId = (row: TrackRow) => row.id;
-const TrackCellsContext = createContext<{ statuses: Map<string, ContentStatus>; playFrom: (row: TrackRow) => void } | null>(null);
-function TrackStatusCell({ row }: { row: TrackRow }) {
-  return <StatusChip status={statusMeta(useContext(TrackCellsContext)!.statuses.get(row.id))} />;
-}
+const TrackGlyph = ENTITY_KINDS.track.icon;
 
+function columnsFor(statuses: Map<string, ContentStatus>) {
+  const column = createDataTableColumns<TrackRow>();
+  return column.columns([
+    column.accessor("title", {
+      header: "Track", width: 26, priority: 1, cardRole: "title", sortable: true,
+      cell: ({ row }) => <IdentityCell icon={<TrackGlyph />} title={row.original.title} subtitle={row.original.artistName ?? undefined} status={row.original.mediaFileId ? "online" : "offline"} statusLabel={row.original.mediaFileId ? "Playable" : "No file"} />,
+    }),
+    column.accessor("trackNumber", { header: "#", width: 4, priority: 3, align: "end", grow: false, sortable: true, cell: ({ row }) => <TextCell muted>{row.original.discNumber && row.original.discNumber > 1 ? `${row.original.discNumber}-${row.original.trackNumber}` : String(row.original.trackNumber ?? "")}</TextCell> }),
+    column.display({ id: "album", header: "Album", width: 16, priority: 2, cardRole: "subtitle", cell: ({ row }) => (row.original.album ? <EntityChip entity={{ kind: "album", id: row.original.album.id, label: row.original.album.name, href: entityPath("album", row.original.album.id) }} /> : <TextCell muted>—</TextCell>) }),
+    column.display({ id: "status", header: "Status", width: 9, priority: 2, cardRole: "status", cell: ({ row }) => { const meta = statusMeta(statuses.get(row.original.id)); return <Badge size="sm" marker="dot" tone={badgeTone(meta.tone)}>{meta.label}</Badge>; } }),
+    column.accessor("durationSecs", { header: "Length", width: 6, priority: 2, align: "end", grow: false, sortable: true, cell: ({ row }) => <TextCell muted>{formatClock(row.original.durationSecs)}</TextCell> }),
+    column.display({ id: "codec", header: "Format", width: 10, priority: 4, cell: ({ row }) => <TextCell muted>{row.original.mediaFile ? [row.original.mediaFile.audioCodec?.toUpperCase(), formatBytes(row.original.mediaFile.size)].filter(Boolean).join(" · ") : "—"}</TextCell> }),
+  ]);
+}
 
 export function trackToPlayItem(row: { id: string; title: string; mediaFileId?: string | null; artistName?: string | null; albumId: string; album?: { id: string; name: string; coverUrl?: string | null } | null; durationSecs?: number | null }): PlayItem | null {
   if (!row.mediaFileId) return null;
@@ -77,24 +91,16 @@ export function TracksBrowser({ libraryId }: { libraryId: string }) {
     if (index >= 0) player.playAudio(playable, index);
   };
 
-  const columns = useMemo<Array<DataTableColumn<TrackRow>>>(
-    () => [
-      {
-        id: "title",
-        header: "Track",
-        sortable: true,
-        cell: (row) => <TrackIdentityCell row={row} />,
-      },
-      { id: "trackNumber", header: "#", size: 70, align: "end", numeric: true, sortable: true, hideBelow: "sm", cell: (row) => (row.discNumber && row.discNumber > 1 ? `${row.discNumber}-${row.trackNumber}` : row.trackNumber) },
-      { id: "status", header: "Status", size: 140, cell: (row) => <TrackStatusCell row={row} /> },
-      { id: "durationSecs", header: "Length", size: 90, align: "end", numeric: true, sortable: true, cell: (row) => formatClock(row.durationSecs) },
-      { id: "codec", header: "Format", size: 150, hideBelow: "md", cell: (row) => <span className="text-muted">{row.mediaFile ? [row.mediaFile.audioCodec?.toUpperCase(), formatBytes(row.mediaFile.size)].filter(Boolean).join(" · ") : "—"}</span> },
-    ],
-    [],
-  );
+  const columns = useMemo(() => columnsFor(statuses), [statuses]);
+  const state = useMemo<DataTableState>(() => ({ pagination: { pageIndex: 0, pageSize: 50 }, selection: {}, filters: [], sorting: table.sorting }), [table.sorting]);
+  const onStateChange = (next: DataTableState, change: DataTableStateChange) => { if (change === "sorting") table.setSorting(next.sorting); };
+  const actions = useMemo(() => defineActions<TrackRow>("track", [
+    { id: "play", label: "Play from here", icon: IconPlay, group: "open", priority: 1, visible: (rows) => rows.length === 1 && Boolean(rows[0]!.mediaFileId), run: (rows) => playFrom(rows[0]!) },
+    { id: "open-album", label: "Open album", icon: IconExternalLink, group: "open", priority: 2, visible: (rows) => rows.length === 1, run: (rows, context) => context.navigate(`/albums/${rows[0]!.albumId}`) },
+    { id: "save", label: "Save to list…", icon: IconPlus, group: "organise", priority: 2, visible: (rows) => ownLibrary && rows.length === 1, run: (rows) => setSavingTrack(rows[0]!) },
+  ]), [ownLibrary, playFrom]);
 
   return (
-    <TrackCellsContext value={{ statuses, playFrom }}>
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 sm:gap-4">
       <BrowserToolbar
         tableOnly
@@ -107,46 +113,32 @@ export function TracksBrowser({ libraryId }: { libraryId: string }) {
         total={list.totalCount}
         placeholder="Filter tracks"
       />
-      <DataTable<TrackRow>
-        height="fill"
-        className="min-h-0 min-w-0 flex-1"
-        columns={columns}
-        rows={list.rows}
-        getRowId={getRowId}
-        isLoading={list.loading}
-          refetching={list.fetching}
-          queryKey={list.queryKey} loadRevision={list.loadRevision}
-          externalBrowserToolbar
-        totalCount={list.totalCount}
-        noun="tracks"
-        density="compact"
-        sorting={table.sorting}
-        onSortingChange={table.setSorting}
-        infinite={{ hasMore: list.hasMore, loadMore: list.loadMore, loadingMore: list.loadingMore }}
-        error={list.error && list.rows.length === 0 ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : undefined}
-        emptyState={<EmptyState icon={IconMusic} title="No tracks" description="Tracks appear once albums are added or scanned." />}
-        rowActions={ownLibrary ? [{ key: "save", label: "Save to list", onAction: (row) => setSavingTrack(row) }] : []}
-        onRowClick={(row) => row.mediaFileId && playFrom(row)}
-      />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <DataTable<TrackRow>
+          id={`librarian.${user?.id ?? "session"}.tracks`}
+          label="Tracks"
+          queryKey={list.queryKey}
+          height="fill"
+          columns={columns}
+          rows={list.rows}
+          getRowId={getRowId}
+          getRowLabel={(row) => row.title}
+          loading={list.loading}
+          refetching={list.fetching && !list.loading}
+          rowCount={list.totalCount}
+          state={state}
+          onStateChange={onStateChange}
+          infinite={{ revision: list.loadRevision, hasMore: list.hasMore, onLoadMore: list.loadMore, loadingMore: list.loadingMore }}
+          actions={actions}
+          density="compact"
+          noun={{ one: "track", other: "tracks" }}
+          onRowOpen={(row) => { if (row.mediaFileId) playFrom(row); }}
+          rowOpen="click"
+          error={list.error && list.rows.length === 0 ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : undefined}
+          emptyMessage="No tracks. Tracks appear once albums are added or scanned."
+        />
+      </div>
+      {savingTrack ? <SaveToListDialog open onOpenChange={(open) => { if (!open) setSavingTrack(null); }} target={{ kind: "track", id: savingTrack.id }} title={savingTrack.title} /> : null}
     </div>
-    {savingTrack ? <SaveToListDialog open onOpenChange={(open) => { if (!open) setSavingTrack(null); }} target={{ kind: "track", id: savingTrack.id }} title={savingTrack.title} /> : null}
-    </TrackCellsContext>
-  );
-}
-
-function TrackIdentityCell({ row }: { row: TrackRow }) {
-  const { playFrom } = useContext(TrackCellsContext)!;
-  return (
-          <span className="flex items-center gap-3">
-            <GlassButton
-              variant="ghost" shape="circle" icon={<IconPlay />}
-              aria-label={`Play ${row.title}`} disabled={!row.mediaFileId}
-              onClick={(event) => { event.stopPropagation(); playFrom(row); }}
-            />
-            <span className="min-w-0">
-              <span className="block truncate text-body-sm text-foreground">{row.title}</span>
-              <span className="block truncate text-label-sm text-muted">{[row.artistName, row.album?.name].filter(Boolean).join(" · ")}</span>
-            </span>
-          </span>
   );
 }

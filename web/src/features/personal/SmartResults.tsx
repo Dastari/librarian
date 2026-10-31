@@ -1,6 +1,8 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useRef } from "react";
-import { DataTable, EmptyState, ErrorState, MediaRow, PosterCard, type DataTableColumn } from "@/components/ui";
+import { createDataTableColumns, DataTable, IdentityCell, TextCell } from "glass-ux/data-table";
+import { EmptyState, ErrorState, MediaRow, PosterCard, PosterGallery } from "@/components/ui";
+import { ENTITY_KINDS } from "@/lib/entities/kinds";
 import { IconBookmark } from "glass-ux/icons";
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
 import { useInfiniteConnection } from "@/features/libraries/browser/useInfiniteConnection";
@@ -13,10 +15,12 @@ import {
 import { moviePoster, showPoster, albumCover, audiobookCover } from "@/lib/artwork";
 
 type Row = { image?: string; square?: boolean; id: string; title: string; detail: string; href: string };
-const columns: Array<DataTableColumn<Row>> = [
-  { id: "title", header: "Title", cardRole: "title", value: (row) => row.title, cell: (row) => row.title },
-  { id: "detail", header: "Details", value: (row) => row.detail, cell: (row) => row.detail },
-];
+const TrackGlyph = ENTITY_KINDS.track.icon;
+const column = createDataTableColumns<Row>();
+const trackColumns = column.columns([
+  column.accessor("title", { header: "Track", width: 26, priority: 1, cardRole: "title", cell: ({ row }) => <IdentityCell icon={<TrackGlyph />} title={row.original.title} subtitle={row.original.detail} /> }),
+  column.accessor("detail", { header: "Artist", width: 14, priority: 2, cell: ({ row }) => <TextCell muted>{row.original.detail}</TextCell> }),
+]);
 
 /** Compile the small saved-rule vocabulary into generated, caller-authorized queries. */
 export function smartRule(view: SavedViewFieldsFragment, ownedLibraryIds: string[]) {
@@ -39,11 +43,21 @@ export function smartRule(view: SavedViewFieldsFragment, ownedLibraryIds: string
 function Results({ rows, list, preview = false }: { preview?: boolean; rows: Row[]; list: { loading: boolean; fetching: boolean; error?: Error; refetch: () => Promise<unknown>; hasMore: boolean; loadMore: () => Promise<unknown>; queryKey: string; loadRevision: number; totalCount: number | undefined } }) {
   const navigate = useNavigate();
   if (preview) return <div className="flex min-w-0 flex-col gap-3">{list.error ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : null}{list.loading && rows.length === 0 ? <p role="status">Loading collection…</p> : null}<MediaRow ariaLabel="Smart collection">{rows.slice(0, 20).map((row) => <PosterCard key={row.id} title={row.title} meta={row.detail} image={row.image} aspect={row.square ? "square" : "poster"} width="row" onPress={() => void navigate({ href: row.href })} />)}</MediaRow></div>;
+  const infinite = { hasMore: list.hasMore, loadMore: list.loadMore };
+  // Titles are shown as posters, like the library browsers; tracks have no artwork of their own.
+  if (rows.some((row) => row.image)) {
+    return <div data-print-flow className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden">
+      {list.error ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : null}
+      <PosterGallery<Row> label="Smart collection" noun="items" rows={rows} getRowId={(row) => row.id} loading={list.loading} refetching={list.fetching} queryKey={list.queryKey} totalCount={list.totalCount} infinite={infinite}
+        emptyState={<EmptyState icon={IconBookmark} title="Nothing matches these rules yet" />}
+        renderCard={(row) => <PosterCard title={row.title} meta={row.detail} image={row.image} aspect={row.square ? "square" : "poster"} onPress={() => void navigate({ href: row.href })} />} />
+    </div>;
+  }
   return <div data-print-flow className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden">
     {list.error ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : null}
-    <DataTable height="fill" columns={columns} rows={rows} getRowId={(row) => row.id} noun="items" isLoading={list.loading} refetching={list.fetching} queryKey={list.queryKey} loadRevision={list.loadRevision}
-      totalCount={list.totalCount} dataSource="server-infinite" externalBrowserToolbar selectable={false} onRowClick={(row) => void navigate({ href: row.href })}
-      infinite={{ hasMore: list.hasMore, loadMore: list.loadMore }} />
+    <DataTable<Row> id={`smart:${list.queryKey}`} label="Smart collection" height="fill" columns={trackColumns} rows={rows} getRowId={(row) => row.id} getRowLabel={(row) => row.title} noun={{ one: "track", other: "tracks" }} loading={list.loading} refetching={list.fetching && !list.loading} queryKey={list.queryKey}
+      rowCount={list.totalCount} onRowOpen={(row) => void navigate({ href: row.href })} rowOpen="click" emptyMessage="Nothing matches these rules yet"
+      infinite={{ revision: list.loadRevision, hasMore: list.hasMore, onLoadMore: list.loadMore }} />
   </div>;
 }
 

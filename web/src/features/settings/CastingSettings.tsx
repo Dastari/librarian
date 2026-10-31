@@ -153,7 +153,7 @@ export function CastingSettings() {
     <div className="flex flex-col gap-6">
       <SettingsSection title="Cast devices" description="Chromecast and Google TV receivers on your network. DLNA renderers are listed for information only." actions={<><Button size="sm" variant="ghost" onPress={() => void runDiscovery()} isPending={discovering}><IconRadar size={16} /> Discover</Button>{isAdmin ? <Button size="sm" variant="primary" onPress={() => { deviceForm.reset(deviceDefaults); setAddingOpen(true); }}><IconPlus /> Add manually</Button> : null}</>}>
         <SettingsLoadError error={devices.error} retry={devices.refetch} hasRows={rows.length > 0} />
-        <DataTable<Device> id={`librarian.${user?.id ?? "session"}.settings.cast-devices`} label="Cast devices" columns={columns} rows={rows} getRowId={(device) => device.id} getRowLabel={(device) => device.name} loading={devices.loading && rows.length === 0} actions={actions} noun={{ one: "device", other: "devices" }} emptyMessage="No devices found. Run discovery on the same network as your receivers, or add one by address." />
+        <DataTable<Device> height="auto" id={`librarian.${user?.id ?? "session"}.settings.cast-devices`} label="Cast devices" columns={columns} rows={rows} getRowId={(device) => device.id} getRowLabel={(device) => device.name} loading={devices.loading && rows.length === 0} actions={actions} noun={{ one: "device", other: "devices" }} emptyMessage="No devices found. Run discovery on the same network as your receivers, or add one by address." />
       </SettingsSection>
 
       {isAdmin ? (

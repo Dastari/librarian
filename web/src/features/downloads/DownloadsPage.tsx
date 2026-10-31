@@ -1,6 +1,5 @@
 import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, DataTable, filters, IdentityCell, NumericCell, RelativeTime, SparklineCell, TextCell, type DataTableSearch, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
-import { EntityIdentity } from "glass-ux/entity";
 import { IconPlus, IconRefresh } from "glass-ux/icons";
 import { LevelGauge, type GaugeLevel } from "glass-ux/level-gauge";
 import { MeterCell } from "glass-ux/meter-cell";
@@ -9,6 +8,7 @@ import { Segmented } from "glass-ux/segmented";
 import { parseAsStringEnum, useQueryState } from "nuqs";
 import { useCallback, useMemo, useState } from "react";
 
+import { EntityChip } from "@/components/entities/EntityChip";
 import { Button, Dialog } from "@/components/ui";
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
 import { EntityLibraryListDocument } from "@/graphql/generated/graphql";
@@ -100,8 +100,7 @@ function columnsFor(rates: ReturnType<typeof useRateHistory>, libraries: Array<{
       cell: ({ row }) => {
         const target = torrentTarget(row.original.record);
         if (!target) return <TextCell muted>Not linked</TextCell>;
-        const Glyph = ENTITY_KINDS[target.kind as keyof typeof ENTITY_KINDS]?.icon;
-        return <EntityIdentity tier="chip" size="sm" kind={ENTITY_KINDS[target.kind as keyof typeof ENTITY_KINDS]?.noun} name={target.label} href={target.href} icon={Glyph ? <Glyph /> : undefined} preview={false} />;
+        return <EntityChip entity={target} />;
       },
     }),
     column.accessor((row) => row.record.postProcessStatus ?? "waiting", {
