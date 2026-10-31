@@ -42,7 +42,7 @@ export function LibrariesPage() {
       ) : loading && libraries.length === 0 ? (
         <div className="library-grid">
           {Array.from({ length: 3 }, (_, index) => (
-            <SkeletonBlock key={index} className="min-h-44 rounded-card" />
+            <SkeletonBlock key={index} className="min-h-[21rem] rounded-card" />
           ))}
         </div>
       ) : libraries.length === 0 ? (

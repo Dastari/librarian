@@ -68,14 +68,14 @@ test.describe("Search", () => {
   test("searches the library and clears again", async ({ page }) => {
     await gotoPage(page, "/search", "Search");
     const field = page.getByRole("searchbox", { name: "Search" }).or(page.getByPlaceholder("Titles, people, albums…"));
-    await expect(page.getByText("Search your library")).toBeVisible();
+    // Before anything is typed the grid shows what was added last.
+    await expect(page.getByText("Recently added")).toBeVisible();
+    // Results follow every letter, as on a TV app.
     await field.fill("a");
-    // One character is below the threshold, so the prompt stays put.
-    await expect(page.getByText("Search your library")).toBeVisible();
-    await field.fill("the");
-    await expect(page.getByText("Search your library")).toBeHidden();
+    await expect(page.getByText("Recently added")).toBeHidden();
+    await expect(page.getByText("Top results").or(page.getByText(/Nothing in your library matches/))).toBeVisible();
     await field.fill("");
-    await expect(page.getByText("Search your library")).toBeVisible();
+    await expect(page.getByText("Recently added")).toBeVisible();
   });
 
   test("says so when nothing matches", async ({ page }) => {

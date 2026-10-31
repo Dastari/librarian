@@ -65,15 +65,15 @@ export function LibraryCard({ library, className, size = "md" }: LibraryCardProp
       data-focusable
       className={cn(
         "tv-lift group nav-focus relative isolate flex flex-col justify-between overflow-hidden rounded-card border border-glass-rim transition-[transform,box-shadow] duration-base ease-fluid hover-capable:hover:shadow-poster-hover",
-        size === "lg" ? "min-h-48" : "min-h-40",
+        size === "lg" ? "min-h-[21rem]" : "min-h-40",
         className,
       )}
       style={{ ["--placeholder-tint" as string]: meta.tintVar }}
     >
       <div className="placeholder-gradient absolute inset-0 -z-20" />
-      <PosterStrip images={images} className="-z-10 opacity-80 saturate-[0.9] transition-opacity duration-slow group-hover:opacity-100" height={size === "lg" ? 210 : 170} square={meta.aspect === "square"} />
+      <PosterStrip images={images} className={cn("-z-10 opacity-80 saturate-[0.9] transition-opacity duration-slow group-hover:opacity-100", size === "lg" && "pb-16")} height={size === "lg" ? 250 : 170} square={meta.aspect === "square"} />
       {/* Glass band: the artwork stays crisp above, the text sits on frosted glass below. */}
-      <div className="glass-panel  absolute inset-x-0 bottom-0 -z-10 h-[46%] rounded-b-card border-x-0 border-b-0 shadow-none" />
+      <div className={cn("glass-panel absolute inset-x-0 bottom-0 -z-10 rounded-b-card border-x-0 border-b-0 shadow-none", size === "lg" ? "h-[6.5rem]" : "h-[46%]")} />
       <div className="absolute inset-0 -z-10 bg-gradient-to-t from-background/70 via-transparent to-background/20" />
       <div className="relative flex items-start justify-between p-4">
         <span className={cn("glass-control grid size-11 place-items-center rounded-xl", meta.tint)}>
