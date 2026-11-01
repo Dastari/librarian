@@ -184,7 +184,7 @@ function fixture() {
         if (success) authenticated = true;
         return { success, error: success ? null : 'Invalid username/email or password', user: success ? user : null, tokens: success ? tokens : null };
       }
-      if (['pauseTorrent','resumeTorrent','removeTorrent','processSource'].includes(key)) {
+      if (['pauseTorrent','resumeTorrent','processSource'].includes(key)) {
         const row=state.torrents[args.id-1];
         if(key==='pauseTorrent'&&row) row.state='paused';
         if(key==='resumeTorrent'&&row) row.state='seeding';

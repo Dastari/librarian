@@ -5,6 +5,8 @@ use uuid::Uuid;
 
 pub(crate) const INTERNAL_ERROR_CODE: &str = "INTERNAL_ERROR";
 pub(crate) const SERVICE_UNAVAILABLE_CODE: &str = "SERVICE_UNAVAILABLE";
+/// The request is valid but conflicts with the current state of the target.
+pub(crate) const CONFLICT_CODE: &str = "CONFLICT";
 
 pub(crate) fn public_error(code: &'static str, message: impl Into<String>) -> async_graphql::Error {
     async_graphql::Error::new(message.into()).extend_with(|_, extensions| {

@@ -96,13 +96,6 @@ mutation ResumeTorrent($id: Int!) {
   }
 }
 
-mutation RemoveTorrent($id: Int!, $deleteFiles: Boolean!) {
-  removeTorrent(id: $id, deleteFiles: $deleteFiles) {
-    success
-    error
-  }
-}
-
 mutation ProcessSource($sourceId: String!, $sourceType: String!) {
   processSource(sourceId: $sourceId, sourceType: $sourceType) {
     success

@@ -22,7 +22,7 @@ function download(): DownloadRow {
       sourceUrl: null, sourceFeedId: null, sourceIndexerId: null, libraryId: null,
       postProcessStatus: "failed", postProcessError: error, processedAt: null,
       episodeId: null, movieId: null, trackId: null, chapterId: null, showId: null, albumId: null, audiobookId: null,
-      minimumRatio: 1, minimumSeedTimeMinutes: 120, season: null, excludedFiles: [],
+      minimumRatio: 1, minimumSeedTimeMinutes: 120, season: null, excludedFiles: [], deleteFilesOnRemove: false,
       addedAt: "2026-09-07T12:57:00Z", createdAt: "2026-09-07T12:57:00Z", updatedAt: "2026-09-07T13:02:00Z", completedAt: "2026-09-07T13:02:00Z",
       library: null, movie: null, show: null, episode: null, album: null, audiobook: null,
     },

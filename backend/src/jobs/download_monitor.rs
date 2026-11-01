@@ -622,6 +622,7 @@ mod tests {
             downloaded_bytes: 100,
             uploaded_bytes: 0,
             uploaded_bytes_total: 0,
+            delete_files_on_remove: false,
             save_path: "/tmp".to_string(),
             download_path: None,
             source_url: None,
