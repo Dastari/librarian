@@ -59,25 +59,27 @@ fn starts_uppercase_ascii(name: &str) -> bool {
 fn backend_uses_shared_graphql_orm_and_agql_auth_dependencies() {
     let cargo_toml = read(backend_root().join("Cargo.toml"));
     let monorepo_url = "https://github.com/Dastari/graphql-orm.git";
-    let monorepo_revision = "a90b5bd41f952b02416f23999c729b9ceffcbb8d";
+    let monorepo_tag = "workspace-2026.11.01.1";
 
     for (package, version) in [
-        ("graphql-orm", "0.57.0"),
-        ("graphql-orm-storage", "0.7.5"),
-        ("graphql-orm-backup", "0.10.0"),
+        ("graphql-orm", "0.89.0"),
+        ("graphql-orm-storage", "0.8.0"),
+        ("graphql-orm-backup", "0.12.0"),
     ] {
         let dependency = cargo_toml
             .lines()
             .find(|line| line.starts_with(&format!("{package} = ")))
             .unwrap_or_else(|| panic!("missing direct {package} dependency"));
         assert!(dependency.contains(&format!("git = \"{monorepo_url}\"")));
-        assert!(dependency.contains(&format!("rev = \"{monorepo_revision}\"")));
+        assert!(dependency.contains(&format!("tag = \"{monorepo_tag}\"")));
         assert!(dependency.contains(&format!("version = \"{version}\"")));
     }
 
     assert!(!cargo_toml.contains("github.com/Dastari/graphql-orm-storage"));
     assert!(!cargo_toml.contains("github.com/Dastari/graphql-orm-backup"));
-    assert!(cargo_toml.contains("agql-auth = { git = \"https://github.com/Dastari/agql-auth\""));
+    assert!(
+        cargo_toml.contains("agql-auth = { git = \"https://github.com/Dastari/agql-auth.git\"")
+    );
     assert!(cargo_toml.contains("sqlite = [\"sqlx/sqlite\", \"graphql-orm/sqlite\"]"));
 
     assert!(!cargo_toml.contains("bcrypt"));

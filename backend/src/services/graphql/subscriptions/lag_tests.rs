@@ -83,8 +83,12 @@ async fn generated_subscription_reports_lag_then_reconciles_and_delivers_again()
             .extensions
             .as_ref()
             .and_then(|extensions| extensions.get("code"))
-            == Some(&async_graphql::Value::from("LIVE_RESYNC_REQUIRED"))),
+            == Some(&async_graphql::Value::from("SUBSCRIPTION_CONTINUITY_LOST"))),
         "{response:?}"
+    );
+    assert!(
+        stream.next().await.is_none(),
+        "the stream ends after the continuity error"
     );
     drop(stream);
 

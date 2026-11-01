@@ -378,6 +378,18 @@ type AppLogEdge {
 	cursor: String!
 }
 
+"""
+Scalar-only runtime keyset order. Each list entry must select
+exactly one field; NULL values sort last in either direction.
+"""
+input AppLogKeysetOrderByInput {
+	id: OrderDirection
+	timestamp: OrderDirection
+	level: OrderDirection
+	target: OrderDirection
+	createdAt: OrderDirection
+}
+
 input AppLogOrderByInput {
 	timestamp: OrderDirection
 	level: OrderDirection
@@ -3439,6 +3451,17 @@ type HomeShelfEdge {
 	cursor: String!
 }
 
+"""
+Scalar-only runtime keyset order. Each list entry must select
+exactly one field; NULL values sort last in either direction.
+"""
+input HomeShelfKeysetOrderByInput {
+	position: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+	id: OrderDirection
+}
+
 input HomeShelfOrderByInput {
 	position: OrderDirection
 	createdAt: OrderDirection
@@ -3878,6 +3901,17 @@ type LibraryPreferenceEdge {
 	cursor: String!
 }
 
+"""
+Scalar-only runtime keyset order. Each list entry must select
+exactly one field; NULL values sort last in either direction.
+"""
+input LibraryPreferenceKeysetOrderByInput {
+	position: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+	id: OrderDirection
+}
+
 input LibraryPreferenceOrderByInput {
 	position: OrderDirection
 	createdAt: OrderDirection
@@ -4283,6 +4317,17 @@ type ListEntryEdge {
 	A cursor for pagination
 	"""
 	cursor: String!
+}
+
+"""
+Scalar-only runtime keyset order. Each list entry must select
+exactly one field; NULL values sort last in either direction.
+"""
+input ListEntryKeysetOrderByInput {
+	position: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+	id: OrderDirection
 }
 
 input ListEntryOrderByInput {
@@ -8632,6 +8677,19 @@ type NotificationEdge {
 	cursor: String!
 }
 
+"""
+Scalar-only runtime keyset order. Each list entry must select
+exactly one field; NULL values sort last in either direction.
+"""
+input NotificationKeysetOrderByInput {
+	id: OrderDirection
+	notificationType: OrderDirection
+	category: OrderDirection
+	title: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
 input NotificationOrderByInput {
 	notificationType: OrderDirection
 	category: OrderDirection
@@ -9199,6 +9257,16 @@ type PlaybackProgressEdge {
 	A cursor for pagination
 	"""
 	cursor: String!
+}
+
+"""
+Scalar-only runtime keyset order. Each list entry must select
+exactly one field; NULL values sort last in either direction.
+"""
+input PlaybackProgressKeysetOrderByInput {
+	id: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
 }
 
 input PlaybackProgressOrderByInput {
@@ -10440,6 +10508,10 @@ type Query {
 		"""
 		where: AppLogWhereInput,
 		"""
+		Order by
+		"""
+		orderBy: [AppLogKeysetOrderByInput!],
+		"""
 		Page
 		"""
 		page: KeysetPageInput!
@@ -10625,6 +10697,10 @@ type Query {
 		"""
 		where: PlaybackProgressWhereInput,
 		"""
+		Order by
+		"""
+		orderBy: [PlaybackProgressKeysetOrderByInput!],
+		"""
 		Page
 		"""
 		page: KeysetPageInput!
@@ -10697,6 +10773,10 @@ type Query {
 		Where
 		"""
 		where: ListEntryWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [ListEntryKeysetOrderByInput!],
 		"""
 		Page
 		"""
@@ -10771,6 +10851,10 @@ type Query {
 		"""
 		where: HomeShelfWhereInput,
 		"""
+		Order by
+		"""
+		orderBy: [HomeShelfKeysetOrderByInput!],
+		"""
 		Page
 		"""
 		page: KeysetPageInput!
@@ -10815,6 +10899,10 @@ type Query {
 		Where
 		"""
 		where: LibraryPreferenceWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [LibraryPreferenceKeysetOrderByInput!],
 		"""
 		Page
 		"""
@@ -11140,6 +11228,10 @@ type Query {
 		Where
 		"""
 		where: NotificationWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [NotificationKeysetOrderByInput!],
 		"""
 		Page
 		"""
@@ -13106,7 +13198,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): LibraryChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13116,7 +13216,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): LibraryScanRunChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13126,7 +13234,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): LibraryScanIssueChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13136,7 +13252,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): MovieChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13146,7 +13270,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): PersonChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13156,7 +13288,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): MovieCastCreditChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13166,7 +13306,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): CollectionChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13176,7 +13324,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): ShowChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13186,7 +13342,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): SeasonChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13196,7 +13360,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): EpisodeChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13206,7 +13378,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): MediaFileChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13216,7 +13396,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): ArtistChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13226,7 +13414,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): AlbumChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13236,7 +13432,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): TrackChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13246,7 +13450,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): AudiobookChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13256,7 +13468,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): ChapterChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13266,7 +13486,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): TorrentChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13276,7 +13504,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): TorrentFileChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13286,7 +13522,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): RssFeedChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13296,7 +13540,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): RssFeedItemChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13306,7 +13558,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): PendingFileMatchChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13316,7 +13576,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): SourceChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13326,7 +13594,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): UserChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13336,7 +13612,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): InviteTokenChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13346,7 +13630,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): RefreshTokenChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13356,7 +13648,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): AppSettingChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13366,7 +13666,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): AppLogChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13376,7 +13684,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): VideoStreamChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13386,7 +13702,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): AudioStreamChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13396,7 +13720,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): SubtitleChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13406,7 +13738,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): MediaChapterChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13416,7 +13756,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): PlaybackSessionChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13426,7 +13774,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): PlaybackProgressChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13436,7 +13792,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): PersonalListChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13446,7 +13810,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): ListEntryChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13456,7 +13828,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): SavedViewChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13466,7 +13846,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): HomeShelfChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13476,7 +13864,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): LibraryPreferenceChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13486,7 +13882,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): CastDeviceChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13496,7 +13900,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): CastSessionChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13506,7 +13918,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): CastSettingChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13516,7 +13936,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): UsenetServerChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13526,7 +13954,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): UsenetDownloadChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13536,7 +13972,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): ScheduleCacheChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13546,7 +13990,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): ScheduleSyncStateChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13556,7 +14008,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): NamingPatternChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13566,7 +14026,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): MetadataCacheChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13576,7 +14044,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): SourcePriorityRuleChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13586,7 +14062,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): NotificationChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13596,7 +14080,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): TorznabCategoryChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13606,7 +14098,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): QualityProfileChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
@@ -13616,7 +14116,15 @@ type Subscription {
 		"""
 		Filter
 		"""
-		filter: SubscriptionFilterInput
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
 	): ReleaseBlocklistChangedEvent!
 }
 

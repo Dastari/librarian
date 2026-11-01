@@ -183,8 +183,7 @@ mod federation;
 mod mutation_result;
 mod naming;
 mod operations;
-#[cfg(all(test, not(feature = "schema-export-only")))]
-mod operations_lag_tests;
+mod policy_object;
 mod relations;
 mod relationship_contract;
 mod repository;
@@ -268,6 +267,29 @@ compile_error!("Enable at most one field-case-* feature at a time.");
 pub fn mutation_result(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as mutation_result::MutationResultInput);
     mutation_result::expand(parsed).into()
+}
+
+#[proc_macro_attribute]
+/// Enforce ORM scalar policies on a `SimpleObject` with generated relations.
+///
+/// Place this before the derives on an entity using `#[graphql(complex)]`.
+/// It installs the backend-specific ORM scalar guard and preserves existing
+/// object/field guards as additional restrictions. Generated `GraphQLRelations`
+/// resolvers remain unchanged. Private and unreadable scalar fields are omitted.
+pub fn graphql_policy_object(args: TokenStream, input: TokenStream) -> TokenStream {
+    if !args.is_empty() {
+        return syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "graphql_policy_object takes no arguments",
+        )
+        .to_compile_error()
+        .into();
+    }
+    let input = parse_macro_input!(input as syn::ItemStruct);
+    match policy_object::expand(input) {
+        Ok(tokens) => tokens.into(),
+        Err(error) => error.to_compile_error().into(),
+    }
 }
 
 #[proc_macro_attribute]
@@ -384,12 +406,12 @@ pub fn derive_graphql_entity(input: TokenStream) -> TokenStream {
 )]
 /// Derive managed-schema and typed repository APIs without any GraphQL type surface.
 ///
-/// Persisted conventional Integer timestamp fields may opt into ordinary typed
-/// writes with `#[graphql_orm(timestamp = "host")]`. This accepts `i64` or
-/// `Option<i64>` where the Rust or physical column name is `created_at` or
+/// Persisted conventional timestamp fields may opt into ordinary typed
+/// writes with `#[graphql_orm(timestamp = "host")]`. This accepts `i64`, `String`,
+/// or their optional forms where the Rust or physical column name is `created_at` or
 /// `updated_at`, disables automatic timestamp writes per field, and preserves
 /// column/default metadata. Normal field restrictions, policies and hooks apply.
-/// This mode is unavailable to GraphQL and schema-only derives.
+/// GraphQLEntity also supports this mode; schema-only derives do not.
 pub fn derive_repository_entity(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let result = (|| {

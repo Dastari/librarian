@@ -111,7 +111,7 @@ export class LiveRegistry {
     const holder: { stop: () => void; retry?: ReturnType<typeof setTimeout>; failed?: boolean; terminal?: boolean } = { stop: () => {} };
     this.sources.set(topic, holder);
     const interrupted = (retry = true) => {
-      if (epoch !== this.epoch || this.sources.get(topic) !== holder || holder.retry) return;
+      if (epoch !== this.epoch || this.sources.get(topic) !== holder || holder.retry || holder.terminal) return;
       // Completion/lag and errors both lose continuity. Resnapshot and recreate
       // the listener; this timer retries the stream, never polls domain reads.
       holder.failed = true; holder.terminal = !retry;

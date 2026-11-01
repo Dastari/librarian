@@ -27,16 +27,19 @@ describe("generated live dependencies", () => {
   });
 });
 
-it("treats explicit ORM broadcast lag as resnapshot plus reattachment", async () => {
+it.each(["SUBSCRIPTION_CONTINUITY_LOST", "SUBSCRIPTION_SOURCE_CLOSED"])("resnapshots and reattaches once when a stream ends with %s", async (code) => {
   const { CombinedGraphQLErrors } = await import("@apollo/client");
   const { GraphQLError } = await import("graphql");
   const { apolloLiveSource } = await import("../documents");
-  let interrupted = 0;
-  const error = new CombinedGraphQLErrors({ errors: [new GraphQLError("resnapshot", { extensions: { code: "LIVE_RESYNC_REQUIRED" } })] });
-  const client = { subscribe: () => ({ subscribe: (observer: { error: (error: unknown) => void }) => {
-    observer.error(error);
+  const interrupted: Array<boolean | undefined> = [];
+  const events: unknown[] = [];
+  const error = new CombinedGraphQLErrors({ errors: [new GraphQLError("continuity", { extensions: { code } })] });
+  // Apollo reports the error frame through `next`; `observer.error` never fires for it.
+  const client = { subscribe: () => ({ subscribe: (observer: { next: (result: { data?: unknown; error?: unknown }) => void }) => {
+    observer.next({ error });
     return { unsubscribe() {} };
   } }) };
-  apolloLiveSource(client as never, false)("Movie", () => {}, () => { interrupted++; });
-  expect(interrupted).toBe(1);
+  apolloLiveSource(client as never, false)("Movie", (event) => events.push(event), (retry) => { interrupted.push(retry); });
+  expect(interrupted).toEqual([undefined]);
+  expect(events).toEqual([]);
 });
