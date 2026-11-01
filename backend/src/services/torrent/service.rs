@@ -64,8 +64,8 @@ struct TorrentRuntime {
     completed: Arc<RwLock<std::collections::HashSet<String>>>,
     /// Info hashes currently undergoing completed-file post-processing. Shared
     /// with the completion handler and the reconciliation sweep so neither runs
-    /// twice for the same torrent, and so [`TorrentService::remove`] can refuse
-    /// to delete files out from under an in-flight import.
+    /// twice for the same torrent, and so [`TorrentService::ensure_files_deletable`]
+    /// can refuse to delete files out from under an in-flight import.
     processing: Arc<Mutex<std::collections::HashSet<String>>>,
     /// FIFO of torrents that were started paused because
     /// `torrent.max_concurrent` was already reached. The maintenance loop
@@ -570,37 +570,84 @@ impl TorrentService {
         Ok(())
     }
 
-    /// Remove a torrent (optionally delete files).
-    pub async fn remove(&self, id: usize, delete_files: bool) -> Result<()> {
-        let r = self
-            .runtime()
-            .await
-            .ok_or_else(|| anyhow::anyhow!("torrent service not started"))?;
-        let handle = r
-            .session
-            .get(TorrentIdOrHash::Id(id))
-            .context("Torrent not found")?;
-        let info_hash = get_info_hash_hex(&handle);
-        // Deleting the payload while post-processing is mid-import would race
-        // the hardlink/copy into the library and leave a half-imported release.
-        // Removing the torrent record only (delete_files = false) is safe.
-        if delete_files && r.processing.lock().contains(&info_hash) {
+    /// Refuse a delete that would remove the payload out from under an import.
+    ///
+    /// Called by the `Torrent` before-delete hook, which can still abort the
+    /// transaction. Deleting the payload while post-processing is mid-import
+    /// would race the hardlink/copy into the library and leave a half-imported
+    /// release. Removing the torrent without its files is always safe.
+    pub async fn ensure_files_deletable(&self, info_hash: &str) -> Result<()> {
+        let Some(r) = self.runtime().await else {
+            return Ok(());
+        };
+        if r.processing.lock().contains(info_hash) {
             anyhow::bail!(
                 "Cannot delete files for torrent {info_hash}: completed-file post-processing is still running. Retry once the import has finished, or remove without deleting files."
             );
         }
-        r.session
-            .delete(TorrentIdOrHash::Id(id), delete_files)
-            .await?;
-        r.download_queue.lock().retain(|hash| hash != &info_hash);
-        let auth_user = database::system_auth_user();
-        let cleanup = database::delete_torrent(&r.db, &r.schema, &auth_user, &info_hash).await;
-        let _ = r.event_tx.send(TorrentEvent::Removed {
-            id,
-            info_hash: info_hash.clone(),
+        Ok(())
+    }
+
+    /// Test seam: pretend completed-file post-processing is (or is no longer)
+    /// running for a hash, so integration tests can exercise the delete guard
+    /// without racing a real import.
+    #[doc(hidden)]
+    pub async fn set_post_processing_for_test(&self, info_hash: &str, active: bool) {
+        if let Some(r) = self.runtime().await {
+            let mut processing = r.processing.lock();
+            if active {
+                processing.insert(info_hash.to_string());
+            } else {
+                processing.remove(info_hash);
+            }
+        }
+    }
+
+    /// Stop a torrent in the session and clear the service's runtime state for
+    /// it, optionally deleting the downloaded payload. **No database writes**:
+    /// the persisted row is removed through the generated `deleteTorrent`
+    /// mutation, whose after-delete hook calls this once the transaction has
+    /// committed. A hash the session does not hold is not an error (the row may
+    /// never have been started, or the removal already ran).
+    pub async fn remove_runtime(&self, info_hash: &str, delete_files: bool) -> Result<()> {
+        let Some(r) = self.runtime().await else {
+            return Ok(());
+        };
+        let id = r.session.with_torrents(|iter| {
+            for (id, handle) in iter {
+                if get_info_hash_hex(handle) == info_hash {
+                    return Some(id);
+                }
+            }
+            None
         });
-        r.completed.write().remove(&info_hash);
-        cleanup.context("Torrent runtime removed but persisted cleanup failed")
+        // The before-delete hook already refused this combination, but an import
+        // can start between that check and this post-commit step. The row is
+        // gone by now, so keep the payload rather than race the import.
+        let delete_files = if delete_files && r.processing.lock().contains(info_hash) {
+            warn!(
+                info_hash = %info_hash,
+                "Completed-file post-processing started before the torrent was removed; keeping its files"
+            );
+            false
+        } else {
+            delete_files
+        };
+        if let Some(id) = id {
+            r.session
+                .delete(TorrentIdOrHash::Id(id), delete_files)
+                .await
+                .context("Failed to remove torrent from the session")?;
+        }
+        r.download_queue.lock().retain(|hash| hash != info_hash);
+        r.completed.write().remove(info_hash);
+        if let Some(id) = id {
+            let _ = r.event_tx.send(TorrentEvent::Removed {
+                id,
+                info_hash: info_hash.to_string(),
+            });
+        }
+        Ok(())
     }
 
     /// Pause a torrent by info hash (hex string).
@@ -641,26 +688,6 @@ impl TorrentService {
             })
             .context("Torrent not found")?;
         self.resume(id).await
-    }
-
-    /// Remove a torrent by info hash (hex string), optionally deleting files.
-    pub async fn remove_by_info_hash(&self, info_hash: &str, delete_files: bool) -> Result<()> {
-        let r = self
-            .runtime()
-            .await
-            .ok_or_else(|| anyhow::anyhow!("torrent service not started"))?;
-        let id = r
-            .session
-            .with_torrents(|iter| {
-                for (id, handle) in iter {
-                    if get_info_hash_hex(handle) == info_hash {
-                        return Some(id);
-                    }
-                }
-                None
-            })
-            .context("Torrent not found")?;
-        self.remove(id, delete_files).await
     }
 }
 
@@ -1072,8 +1099,6 @@ impl Service for TorrentService {
         let config_maint = config.clone();
         let queue_maint = download_queue.clone();
         let processing_maint = processing.clone();
-        let event_tx_maint = event_tx.clone();
-        let completed_maint = completed.clone();
         let maintenance_handle = tokio::spawn(async move {
             maintenance_loop(
                 session_maint,
@@ -1082,8 +1107,6 @@ impl Service for TorrentService {
                 config_maint,
                 queue_maint,
                 processing_maint,
-                completed_maint,
-                event_tx_maint,
                 token_maint,
             )
             .await;
@@ -1546,8 +1569,6 @@ async fn maintenance_loop(
     config: TorrentServiceConfig,
     download_queue: Arc<Mutex<VecDeque<String>>>,
     processing: Arc<Mutex<std::collections::HashSet<String>>>,
-    completed: Arc<RwLock<std::collections::HashSet<String>>>,
-    event_tx: broadcast::Sender<TorrentEvent>,
     cancel: CancellationToken,
 ) {
     let mut interval = tokio::time::interval(MAINTENANCE_INTERVAL);
@@ -1563,8 +1584,6 @@ async fn maintenance_loop(
                     &schema,
                     &config,
                     &processing,
-                    &completed,
-                    &event_tx,
                 )
                 .await
                 {
@@ -1633,15 +1652,14 @@ async fn start_queued_downloads(
 
 /// Apply [`decide_seeding_action`] to every torrent that has finished
 /// downloading. Entity-layer writes only: the `Torrent`/`TorrentFile` rows are
-/// deleted through the generated mutations, and the payload through librqbit.
+/// deleted through the generated mutations, whose lifecycle hook also stops the
+/// torrent and removes its payload.
 async fn enforce_seeding_policy(
     session: &Arc<Session>,
     db: &Database,
     schema: &LibrarianSchema,
     config: &TorrentServiceConfig,
     processing: &Arc<Mutex<std::collections::HashSet<String>>>,
-    completed: &Arc<RwLock<std::collections::HashSet<String>>>,
-    event_tx: &broadcast::Sender<TorrentEvent>,
 ) -> Result<()> {
     let rules = config.seeding_rules();
     if rules.seeds_indefinitely() {
@@ -1708,13 +1726,18 @@ async fn enforce_seeding_policy(
                 ),
             },
             SeedingAction::RemoveAndDeleteFiles => {
-                let id = handle.id();
                 // `delete_files = true`: the library copy is a hardlink into
                 // the media tree, so unlinking the download payload leaves the
-                // imported file intact.
-                if let Err(e) = session
-                    .delete(TorrentIdOrHash::Id(id), /* delete_files */ true)
-                    .await
+                // imported file intact. The generated delete's lifecycle hook
+                // stops the torrent and removes its payload once committed.
+                if let Err(e) = database::delete_torrent_with_files(
+                    db,
+                    schema,
+                    &auth_user,
+                    &torrent.info_hash,
+                    true,
+                )
+                .await
                 {
                     warn!(
                         info_hash = %torrent.info_hash,
@@ -1727,22 +1750,6 @@ async fn enforce_seeding_policy(
                     );
                     continue;
                 }
-                if let Err(e) =
-                    database::delete_torrent(db, schema, &auth_user, &torrent.info_hash).await
-                {
-                    warn!(
-                        info_hash = %torrent.info_hash,
-                        error = %e,
-                        "Removed imported torrent from the session but failed to delete its database row: info_hash={}, error={}",
-                        torrent.info_hash,
-                        e
-                    );
-                }
-                completed.write().remove(&torrent.info_hash);
-                let _ = event_tx.send(TorrentEvent::Removed {
-                    id,
-                    info_hash: torrent.info_hash.clone(),
-                });
                 info!(
                     info_hash = %torrent.info_hash,
                     torrent_name = %torrent.name,
@@ -2193,6 +2200,7 @@ mod admission_tests {
             downloaded_bytes: 100,
             uploaded_bytes: 0,
             uploaded_bytes_total: 0,
+            delete_files_on_remove: false,
             save_path: "/tmp".to_string(),
             download_path: None,
             source_url: None,

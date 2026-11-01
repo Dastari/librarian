@@ -376,6 +376,7 @@ fn torrent_exposes_the_seeding_and_season_pack_columns() {
                     "downloadedBytes": 0,
                     "uploadedBytes": 0,
                     "uploadedBytesTotal": 4_096,
+                    "deleteFilesOnRemove": false,
                     "savePath": "/tmp/downloads",
                     "excludedFiles": [],
                     "addedAt": "2026-01-01T00:00:00.000Z",

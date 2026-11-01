@@ -84,6 +84,7 @@ impl Fixture {
     fn torrent_input(&self, hash: &str) -> Value {
         json!({"userId":self.member.user_id,"infoHash":hash,"name":"Original torrent","state":"paused",
             "progress":0.0,"totalBytes":100,"downloadedBytes":0,"uploadedBytes":0,"uploadedBytesTotal":0,
+            "deleteFilesOnRemove": false,
             "savePath":"/fixture/downloads","excludedFiles":[],"addedAt":"2026-10-25T00:00:00Z"})
     }
     fn notification_input(&self, title: &str) -> Value {

@@ -200,6 +200,18 @@ pub struct Torrent {
     #[json_field]
     pub excluded_files: Vec<i32>,
 
+    /// Delete the downloaded payload from disk when this torrent is removed.
+    ///
+    /// Lifecycle hooks only see the mutation event, so this is how the option
+    /// reaches the `deleteTorrent` hook: the owner (or an admin) sets it with
+    /// `updateTorrent` and then calls `deleteTorrent`. The hook refuses the
+    /// delete while completed-file post-processing is still running for the
+    /// torrent, because deleting the payload would race the import.
+    #[graphql(name = "deleteFilesOnRemove")]
+    #[filterable(type = "boolean")]
+    #[graphql_orm(default = "0")]
+    pub delete_files_on_remove: bool,
+
     #[graphql(name = "addedAt")]
     #[filterable(type = "date")]
     #[sortable]
@@ -1031,33 +1043,6 @@ impl TorrentClientMutations {
         }
     }
 
-    /// Remove a torrent
-    #[graphql(name = "removeTorrent")]
-    async fn remove_torrent(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(name = "id")] id: i32,
-        #[graphql(name = "deleteFiles", default = false)] delete_files: bool,
-    ) -> Result<TorrentActionResult> {
-        let _user = ctx.librarian_auth_user()?;
-        let manager = ctx.data::<Arc<ServicesManager>>()?;
-        let service = manager
-            .get_torrent()
-            .await
-            .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
-        let info_hash = authorized_runtime_hash(ctx, &service, id).await?;
-        match service.remove_by_info_hash(&info_hash, delete_files).await {
-            Ok(()) => Ok(TorrentActionResult {
-                success: true,
-                error: None,
-            }),
-            Err(e) => Ok(TorrentActionResult {
-                success: false,
-                error: Some(e.to_string()),
-            }),
-        }
-    }
-
     #[graphql(name = "pauseTorrentByInfoHash")]
     async fn pause_torrent_by_info_hash(
         &self,
@@ -1097,32 +1082,6 @@ impl TorrentClientMutations {
             .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
         let info_hash = authorized_info_hash(ctx, &info_hash).await?;
         match service.resume_by_info_hash(&info_hash).await {
-            Ok(()) => Ok(TorrentActionResult {
-                success: true,
-                error: None,
-            }),
-            Err(e) => Ok(TorrentActionResult {
-                success: false,
-                error: Some(e.to_string()),
-            }),
-        }
-    }
-
-    #[graphql(name = "removeTorrentByInfoHash")]
-    async fn remove_torrent_by_info_hash(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(name = "infoHash")] info_hash: String,
-        #[graphql(name = "deleteFiles", default = false)] delete_files: bool,
-    ) -> Result<TorrentActionResult> {
-        let _user = ctx.librarian_auth_user()?;
-        let manager = ctx.data::<Arc<ServicesManager>>()?;
-        let service = manager
-            .get_torrent()
-            .await
-            .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
-        let info_hash = authorized_info_hash(ctx, &info_hash).await?;
-        match service.remove_by_info_hash(&info_hash, delete_files).await {
             Ok(()) => Ok(TorrentActionResult {
                 success: true,
                 error: None,

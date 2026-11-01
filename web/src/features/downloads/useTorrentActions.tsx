@@ -4,7 +4,7 @@ import { defineActions, type ActionDefinition, type ActionSet } from "glass-ux/a
 import { IconCopy, IconDownload, IconExternalLink, IconLink, IconPause, IconPlay, IconRefresh, IconTrash } from "glass-ux/icons";
 import { useMemo } from "react";
 
-import { PauseTorrentDocument, ProcessSourceDocument, RemoveTorrentDocument, ResumeTorrentDocument } from "@/graphql/generated/graphql";
+import { EntityTorrentDeleteDocument, EntityTorrentUpdateDocument, PauseTorrentDocument, ProcessSourceDocument, ResumeTorrentDocument } from "@/graphql/generated/graphql";
 import { torrentTarget } from "@/lib/entities/torrent";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 
@@ -30,7 +30,8 @@ interface TorrentActionHandlers {
 export function useTorrentActions({ onLink, onChanged }: TorrentActionHandlers, enabled: boolean): ActionSet<DownloadRow> {
   const [pause] = useMutation(PauseTorrentDocument);
   const [resume] = useMutation(ResumeTorrentDocument);
-  const [remove] = useMutation(RemoveTorrentDocument);
+  const [update] = useMutation(EntityTorrentUpdateDocument);
+  const [deleteTorrent] = useMutation(EntityTorrentDeleteDocument);
   const [process] = useMutation(ProcessSourceDocument);
 
   return useMemo(() => {
@@ -43,6 +44,24 @@ export function useTorrentActions({ onLink, onChanged }: TorrentActionHandlers, 
         }
       } finally { onChanged(); }
       if (failures.length) throw new Error(`${verb} succeeded for ${rows.length - failures.length} of ${rows.length} downloads. ${failures.length} failed. ${failures.join("; ")}`);
+    };
+    /**
+     * Removal is the generated `deleteTorrent`; its lifecycle hook stops the transfer and, when
+     * the stored `deleteFilesOnRemove` flag is set, deletes the files. The flag is therefore set
+     * (or cleared) first, and put back if the delete is refused so a later plain "Remove" can
+     * never delete files. The row's entity id is used, never the live client's numeric id, so a
+     * stored download that is not loaded in the client can still be removed.
+     */
+    const removeDownload = async (row: DownloadRow, deleteFiles: boolean) => {
+      const id = row.record.id;
+      const flag = async (value: boolean) => assertSuccess((await update({ variables: { id, input: { deleteFilesOnRemove: value } } })).data?.updateTorrent, "Remove failed");
+      if (deleteFiles || row.record.deleteFilesOnRemove) await flag(deleteFiles);
+      try {
+        assertSuccess((await deleteTorrent({ variables: { id } })).data?.deleteTorrent, "Remove failed");
+      } catch (error) {
+        if (deleteFiles) await flag(false).catch(() => {});
+        throw error;
+      }
     };
     const actions: ActionDefinition<DownloadRow>[] = [
       {
@@ -86,20 +105,18 @@ export function useTorrentActions({ onLink, onChanged }: TorrentActionHandlers, 
         },
         {
           id: "remove", label: (rows) => plural(rows, "Remove", "Remove {n} downloads"), icon: IconTrash, group: "danger", bulk: true,
-          disabledReason: (rows) => unavailable(rows),
           confirm: (rows) => ({ title: plural(rows, `Remove ${rows[0]!.record.name}?`, "Remove {n} downloads?"), body: "Stops the transfer and forgets the torrent. Downloaded files stay on disk, and files already imported into a library are never affected.", confirmLabel: "Remove", tone: "danger" }),
-          run: (rows) => each(rows, "Remove", async (row) => assertSuccess((await remove({ variables: { id: row.live!.id, deleteFiles: false } })).data?.removeTorrent, "Remove failed")),
+          run: (rows) => each(rows, "Remove", (row) => removeDownload(row, false)),
           successMessage: (rows) => plural(rows, "Removed", "Removed {n} downloads"),
         },
         {
           id: "remove-files", label: (rows) => plural(rows, "Remove and delete files", "Remove {n} and delete files"), icon: IconTrash, group: "danger", bulk: true,
-          disabledReason: (rows) => unavailable(rows),
           confirm: (rows) => ({ title: plural(rows, `Delete ${rows[0]!.record.name}?`, "Delete {n} downloads?"), body: "Stops the transfer and deletes the downloaded files from the download folder. Files already imported into a library are never affected. This cannot be undone.", confirmLabel: "Delete files", tone: "danger" }),
-          run: (rows) => each(rows, "Remove", async (row) => assertSuccess((await remove({ variables: { id: row.live!.id, deleteFiles: true } })).data?.removeTorrent, "Remove failed")),
+          run: (rows) => each(rows, "Remove", (row) => removeDownload(row, true)),
           successMessage: (rows) => plural(rows, "Removed and deleted", "Removed {n} and deleted their files"),
         },
       );
     }
     return defineActions("download", actions);
-  }, [enabled, onChanged, onLink, pause, process, remove, resume]);
+  }, [deleteTorrent, enabled, onChanged, onLink, pause, process, resume, update]);
 }
