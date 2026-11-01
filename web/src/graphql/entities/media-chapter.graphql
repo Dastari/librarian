@@ -31,48 +31,6 @@ query EntityMediaChapterGet($id: String!) {
   }
 }
 
-mutation EntityMediaChapterCreate($input: CreateMediaChapterInput!) {
-  createMediaChapter(input: $input) {
-    success
-    error
-    mediaChapter {
-      ...MediaChapterFields
-    }
-  }
-}
-
-mutation EntityMediaChapterUpdate($id: String!, $input: UpdateMediaChapterInput!) {
-  updateMediaChapter(id: $id, input: $input) {
-    success
-    error
-    mediaChapter {
-      ...MediaChapterFields
-    }
-  }
-}
-
-mutation EntityMediaChapterUpdateMany($where: MediaChapterWhereInput, $input: UpdateMediaChapterInput!) {
-  updateMediaChapters(where: $where, input: $input) {
-    success
-    error
-    affectedCount
-  }
-}
-
-mutation EntityMediaChapterDelete($id: String!) {
-  deleteMediaChapter(id: $id) {
-    success
-    error
-  }
-}
-
-mutation EntityMediaChapterDeleteMany($where: MediaChapterWhereInput) {
-  deleteMediaChapters(where: $where) {
-    success
-    error
-  }
-}
-
 subscription EntityMediaChapterChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
   mediaChapterChanged(filter: $filter, keys: $keys) {
     action

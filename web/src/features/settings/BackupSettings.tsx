@@ -3,11 +3,11 @@ import { useMutation } from "@apollo/client/react";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, IdentityCell, NumericCell, RelativeTime, TextCell } from "glass-ux/data-table";
-import { IconDatabase, IconDatabaseExport, IconRestore, IconShieldCheck } from "@tabler/icons-react";
+import { IconDatabase, IconDatabaseExport, IconShieldCheck } from "@tabler/icons-react";
 import { useMemo } from "react";
 
 import { Button } from "@/components/ui";
-import { BackupOverviewDocument, CreateFullBackupDocument, RestoreFullBackupDocument, VerifyBackupSnapshotDocument, type BackupOverviewQuery } from "@/graphql/generated/graphql";
+import { BackupOverviewDocument, CreateFullBackupDocument, VerifyBackupSnapshotDocument, type BackupOverviewQuery } from "@/graphql/generated/graphql";
 import { useSession } from "@/lib/auth/useSession";
 import { glyph } from "@/lib/entities/kinds";
 import { formatBytes, parseTimestamp } from "@/lib/format";
@@ -25,7 +25,6 @@ type Snapshot = BackupOverviewQuery["backupSnapshots"][number];
 
 const SnapshotGlyph = glyph(IconDatabase, "database");
 const VerifyIcon = glyph(IconShieldCheck, "shield-check");
-const RestoreIcon = glyph(IconRestore, "restore");
 const column = createDataTableColumns<Snapshot>();
 const columns = column.columns([
   column.accessor("snapshotId", { header: "Snapshot", width: 22, priority: 1, cardRole: "title", cell: ({ row }) => <IdentityCell icon={<SnapshotGlyph />} title={row.original.snapshotId} subtitle={`${row.original.kind} · v${row.original.appVersion}`} /> }),
@@ -35,7 +34,7 @@ const columns = column.columns([
   column.accessor("totalObjectBytes", { header: "Size", width: 7, priority: 2, align: "end", sortable: true, sortDescFirst: true, cell: ({ row }) => <TextCell muted>{formatBytes(row.original.totalObjectBytes)}</TextCell> }),
 ]);
 
-/** What this server can back up and restore, as one line of badges instead of status cards. */
+/** What this server can back up, as one line of badges instead of status cards. */
 function Capability({ label, available }: { label: string; available: boolean | undefined }) {
   return <Badge size="sm" marker="dot" tone={available ? "success" : "warning"}>{label} {available ? "available" : "unavailable"}</Badge>;
 }
@@ -48,7 +47,6 @@ export function BackupSettings() {
   const capabilities = overview?.backupCapabilities;
   const [createBackup, { loading: creating }] = useMutation(CreateFullBackupDocument);
   const [verify] = useMutation(VerifyBackupSnapshotDocument);
-  const [restore] = useMutation(RestoreFullBackupDocument);
 
   const create = async () => {
     try {
@@ -66,14 +64,7 @@ export function BackupSettings() {
       run: (targets) => runSettingsSelection(targets, "Verify", (target) => target.snapshotId, async (target) => assertSuccess((await verify({ variables: { snapshotId: target.snapshotId } })).data?.verifyBackupSnapshot, "Verification failed")),
       successMessage: (targets) => targets.length === 1 ? "Snapshot verified" : `${targets.length} snapshots verified`,
     },
-    {
-      id: "restore", bulk: true, label: "Restore…", icon: RestoreIcon, group: "danger",
-      visible: (targets) => targets.length === 1 && Boolean(capabilities?.restoreAvailable),
-      confirm: () => ({ title: "Restore this snapshot?", body: "The current catalogue is replaced with the snapshot's contents. Media files on disk are not touched. Restore only into an empty or freshly reinstalled server.", confirmLabel: "Restore", tone: "danger" }),
-      run: async (targets) => { assertSuccess((await restore({ variables: { snapshotId: targets[0]!.snapshotId } })).data?.restoreFullBackup, "Restore failed"); },
-      successMessage: () => "Restore complete. Reload to see the restored catalogue.",
-    },
-  ]), [capabilities?.restoreAvailable, restore, verify]);
+  ]), [verify]);
 
   return (
     <SettingsSection
@@ -85,10 +76,15 @@ export function BackupSettings() {
         <div className="flex flex-wrap items-center gap-2">
           <Capability label="Database backup" available={capabilities.fullDatabaseBackupAvailable} />
           <Capability label="Object backup" available={capabilities.objectBackupAvailable} />
-          <Capability label="Restore" available={capabilities.restoreAvailable} />
           {capabilities.reason ? <span className="text-label-sm text-muted">{capabilities.reason}</span> : null}
         </div>
       ) : null}
+      <p className="text-label-sm text-muted">
+        A running server cannot restore a snapshot into itself. To recover, stop the server, then run{" "}
+        <code>librarian backup restore --snapshot &lt;ID&gt; --database &lt;NEW_FILE&gt; --objects &lt;NEW_DIRECTORY&gt;</code>.
+        Both targets must be new; the command refuses existing files. Check the restored copy, then point the server at it.
+        Media files on disk are not part of a snapshot.
+      </p>
       <SettingsLoadError error={error} retry={() => refetch().catch(() => {})} hasRows={snapshots.length > 0} />
       <LoadedDataTable<Snapshot> complete={!loading && !error} height="auto" selectable queryKey={user?.id}
         id={`librarian.${user?.id ?? "session"}.settings.backups`}

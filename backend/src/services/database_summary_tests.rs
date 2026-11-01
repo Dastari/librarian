@@ -5,7 +5,7 @@ use graphql_orm::DbPool;
 use graphql_orm::graphql::errors::{OrmErrorCode, OrmPublicError};
 use graphql_orm::graphql::subscriptions::SubscriptionEvent;
 
-async fn database(hooks: bool) -> Database {
+pub(super) async fn database(hooks: bool) -> Database {
     let mut db = Database::new(DbPool::connect("sqlite::memory:").await.unwrap());
     bootstrap_schema(&db).await.unwrap();
     if hooks {
@@ -19,7 +19,7 @@ async fn database(hooks: bool) -> Database {
     }
 }
 
-async fn user(db: &Database) -> User {
+pub(super) async fn user(db: &Database) -> User {
     User::insert(
         db,
         CreateUserInput {
@@ -37,7 +37,7 @@ async fn user(db: &Database) -> User {
     .unwrap()
 }
 
-async fn library(db: &Database, user: &User) -> Library {
+pub(super) async fn library(db: &Database, user: &User) -> Library {
     Library::insert(
         db,
         CreateLibraryInput {
@@ -247,7 +247,7 @@ async fn episode(db: &Database, show: &Show, file_id: Option<&str>) -> Episode {
     .unwrap()
 }
 
-async fn movie(db: &Database, library: &Library) -> Movie {
+pub(super) async fn movie(db: &Database, library: &Library) -> Movie {
     Movie::insert(
         db,
         CreateMovieInput {
@@ -290,7 +290,7 @@ async fn movie(db: &Database, library: &Library) -> Movie {
     .unwrap()
 }
 
-async fn media_file(
+pub(super) async fn media_file(
     db: &Database,
     library: &Library,
     size: i64,
@@ -362,7 +362,7 @@ async fn movie_cast_credit(db: &Database, movie: &Movie, person: &Person) -> Mov
     .unwrap()
 }
 
-async fn library_scan_run(db: &Database, library: &Library) -> LibraryScanRun {
+pub(super) async fn library_scan_run(db: &Database, library: &Library) -> LibraryScanRun {
     LibraryScanRun::insert(
         db,
         CreateLibraryScanRunInput {
@@ -392,7 +392,7 @@ async fn library_scan_run(db: &Database, library: &Library) -> LibraryScanRun {
     .unwrap()
 }
 
-async fn library_scan_issue(
+pub(super) async fn library_scan_issue(
     db: &Database,
     library: &Library,
     run: &LibraryScanRun,
@@ -1224,7 +1224,7 @@ async fn stream_reparent_and_delete_invalidate_surviving_parents_without_metadat
     }
 }
 
-async fn session_token(db: &Database, owner: &User, revoked: bool) -> RefreshToken {
+pub(super) async fn session_token(db: &Database, owner: &User, revoked: bool) -> RefreshToken {
     RefreshToken::insert(
         db,
         CreateRefreshTokenInput {

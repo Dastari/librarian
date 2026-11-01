@@ -21,7 +21,8 @@ use serde::{Deserialize, Serialize};
     plural = "PlaybackProgresses",
     default_sort = "updated_at",
     index = "user_id",
-    keyset = "updated_at desc, id desc"
+    keyset = "updated_at desc, id desc",
+    query_shapes = "single,list"
 )]
 pub struct PlaybackProgress {
     #[graphql(name = "id")]

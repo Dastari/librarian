@@ -35,48 +35,6 @@ query EntityRefreshTokenGet($id: String!) {
   }
 }
 
-mutation EntityRefreshTokenCreate($input: CreateRefreshTokenInput!) {
-  createRefreshToken(input: $input) {
-    success
-    error
-    refreshToken {
-      ...RefreshTokenFields
-    }
-  }
-}
-
-mutation EntityRefreshTokenUpdate($id: String!, $input: UpdateRefreshTokenInput!) {
-  updateRefreshToken(id: $id, input: $input) {
-    success
-    error
-    refreshToken {
-      ...RefreshTokenFields
-    }
-  }
-}
-
-mutation EntityRefreshTokenUpdateMany($where: RefreshTokenWhereInput, $input: UpdateRefreshTokenInput!) {
-  updateRefreshTokens(where: $where, input: $input) {
-    success
-    error
-    affectedCount
-  }
-}
-
-mutation EntityRefreshTokenDelete($id: String!) {
-  deleteRefreshToken(id: $id) {
-    success
-    error
-  }
-}
-
-mutation EntityRefreshTokenDeleteMany($where: RefreshTokenWhereInput) {
-  deleteRefreshTokens(where: $where) {
-    success
-    error
-  }
-}
-
 subscription EntityRefreshTokenChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
   refreshTokenChanged(filter: $filter, keys: $keys) {
     action

@@ -2442,22 +2442,8 @@ impl LibraryScanService {
             .into_iter()
             .skip(Self::MAX_SCAN_RUN_HISTORY_PER_LIBRARY)
         {
-            let issues = LibraryScanIssue::query(database.pool().pool())
-                .filter(LibraryScanIssueWhereInput {
-                    scan_run_id: Some(StringFilter {
-                        eq: Some(run.id.clone()),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                })
-                .fetch_all()
-                .await
-                .context("Failed to read old scan issues for compaction")?;
-            for issue in issues {
-                self.delete_scan_issue(&issue.id)
-                    .await
-                    .context("Failed to delete compacted scan issue")?;
-            }
+            // Deleting the run removes its issues in the same transaction
+            // (the LibraryScanRun hook in `AppMutationHook`).
             self.delete_scan_run(&run.id)
                 .await
                 .context("Failed to delete compacted scan run")?;
@@ -2660,32 +2646,6 @@ impl LibraryScanService {
         Ok(())
     }
 
-    pub async fn resolve_scan_issue(&self, issue_id: &str, resolution: &str) -> Result<()> {
-        let resolution = resolution.trim();
-        if resolution.is_empty() {
-            anyhow::bail!("A resolution note is required");
-        }
-        let database = self.database().await?;
-        let issue = LibraryScanIssue::get(database.pool().pool(), &issue_id.to_string())
-            .await
-            .context("Failed to read scan issue")?
-            .context("Scan issue not found")?;
-        if issue.resolved_at.is_some() {
-            return Ok(());
-        }
-        self.update_scan_issue(
-            &issue.id,
-            UpdateLibraryScanIssueInput {
-                resolved_at: Some(Some(Utc::now().to_rfc3339())),
-                resolution: Some(Some(Self::bounded_issue_text(resolution, 1_000))),
-                ..Default::default()
-            },
-        )
-        .await
-        .context("Failed to resolve scan issue")?;
-        Ok(())
-    }
-
     pub async fn trash_duplicate_issue(&self, issue_id: &str) -> Result<DuplicateTrashResult> {
         let database = self.database().await?;
         let issue = LibraryScanIssue::get(database.pool().pool(), &issue_id.to_string())
@@ -2819,11 +2779,18 @@ impl LibraryScanService {
 
         let old_path = duplicate_path.to_string_lossy().to_string();
         let trash_path_string = trash_path.to_string_lossy().to_string();
-        self.resolve_scan_issue(
+        self.update_scan_issue(
             issue_id,
-            &format!("Moved duplicate to recoverable trash at '{trash_path_string}'."),
+            UpdateLibraryScanIssueInput {
+                resolved_at: Some(Some(Utc::now().to_rfc3339())),
+                resolution: Some(Some(format!(
+                    "Moved duplicate to recoverable trash at '{trash_path_string}'."
+                ))),
+                ..Default::default()
+            },
         )
-        .await?;
+        .await
+        .context("Failed to resolve scan issue")?;
         info!(
             user_id = %library.user_id,
             library_id = %library.id,
@@ -4045,22 +4012,9 @@ impl LibraryScanService {
         let database = self.database().await?;
         replace_media_analysis(database.pool(), &actor, target, analysis.clone()).await?;
 
-        // design.md Q23/Q24: ffprobe is authoritative for quality, so
-        // (re)compute `quality_status` against the media file's resolved
-        // `QualityProfile` right after analysis writes the verified
-        // resolution/codec/HDR/audio columns. Best-effort: a failure here
-        // (e.g. no profile seeded yet) must not fail the analysis job itself
-        // (Q49 — ffprobe failures/quality gaps are logged, not fatal).
-        if let Some(db_service) = self.manager.get_database().await {
-            let db = db_service.pool().clone();
-            if let Err(e) = profile::recompute_and_persist(&db, media_file_id).await {
-                warn!(
-                    media_file_id = %media_file_id,
-                    error = %e,
-                    "Failed to compute quality_status after analysis"
-                );
-            }
-        }
+        // design.md Q23/Q24: the MediaFile hook (`requalify_media_file`) recomputes
+        // `quality_status` against the resolved profile as this write commits, so the
+        // verified resolution/codec/HDR/audio columns are judged without a second path.
 
         info!(
             media_file_id = %media_file_id,

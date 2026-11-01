@@ -87,6 +87,28 @@ macro_rules! librarian_schema_roots {
         QualityProfile,
         ReleaseBlocklist,
     ],
+    // Entities that no client or internal GraphQL operation writes through the generated
+    // roots: they are written by services in Rust (analysis, scan runs, auth sessions) or
+    // have no feature yet. Hiding the roots removes writes that nothing exercises or reviews.
+    // Before adding an entity here, search every `execute_mutation` string, the web and the
+    // tests for `create<Entity>`, `update<Entity>` and `delete<Entity>`: removing a root
+    // breaks a string-built mutation at runtime, with no compile error.
+    // Kept although unlisted: CastSession (the Cast authorization tests write it through the
+    // generated create), AudioStream and Subtitle (the stream event-propagation and media playback
+    // tests create them through the generated root), Season (`upsertSeason`) and LibraryScanIssue (`updateLibraryScanIssue`).
+    generated_mutations: "denylist",
+    generated_mutation_denylist: [
+        VideoStream,
+        MediaChapter,
+        RefreshToken,
+        RssFeed,
+        RssFeedItem,
+        LibraryScanRun,
+        SourcePriorityRule,
+        TorznabCategory,
+        UsenetDownload,
+        UsenetServer,
+    ],
     extra_query_types: [FilesystemQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries],
     extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations],
     extra_subscription_types: [BackupSubscriptions, FilesystemSubscriptions, TorrentRuntimeSubscriptions, SessionSubscriptions, SourceCapabilitySubscriptions],
@@ -148,6 +170,8 @@ mod root_field_guard {
         (
             query_custom_ops: [$($custom:ident),* $(,)?],
             entities: [$($entity:ident),* $(,)?],
+            generated_mutations: $mutation_exposure:literal,
+            generated_mutation_denylist: [$($denied:ident),* $(,)?],
             extra_query_types: [$($extra_query:ident),* $(,)?],
             extra_mutation_types: [$($extra_mutation:ident),* $(,)?],
             extra_subscription_types: [$($extra_subscription:ident),* $(,)?] $(,)?

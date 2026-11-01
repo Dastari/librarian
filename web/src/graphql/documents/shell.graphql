@@ -1,5 +1,11 @@
+# Same states as the Downloads page's "downloading" preset, read from the stored torrents
+# (which the torrent service syncs every ~10 seconds) under the caller's own row policy.
 query ActiveDownloadCount {
-  activeDownloadCount
+  downloading: torrents(where: { state: { inList: ["downloading", "checking", "initializing", "queued"] } }, page: { limit: 1, offset: 0 }) {
+    pageInfo {
+      totalCount
+    }
+  }
 }
 
 query UnreadNotificationCount {

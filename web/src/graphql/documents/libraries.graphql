@@ -207,14 +207,6 @@ mutation RetryScanIssue($issueId: String!) {
   }
 }
 
-mutation ResolveScanIssue($issueId: String!, $resolution: String!) {
-  resolveScanIssue(issueId: $issueId, resolution: $resolution) {
-    success
-    queued
-    message
-  }
-}
-
 mutation TrashDuplicateScanIssue($issueId: String!) {
   trashDuplicateScanIssue(issueId: $issueId) {
     success

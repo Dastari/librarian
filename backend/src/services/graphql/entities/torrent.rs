@@ -780,23 +780,6 @@ impl TorrentCustomOperations {
         };
         Ok(visible_runtime_torrents(db, &user, vec![info]).await?.pop())
     }
-
-    /// Count of active (downloading/checking) torrents
-    #[graphql(name = "activeDownloadCount")]
-    async fn active_download_count(&self, ctx: &Context<'_>) -> Result<i32> {
-        let db = ctx.data::<Database>()?;
-        let user = current_torrent_user(db, ctx.librarian_auth_user()?).await?;
-        let manager = ctx.data::<Arc<ServicesManager>>()?;
-        let service: Arc<TorrentService> = manager
-            .get_torrent()
-            .await
-            .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
-        let list: Vec<ServiceTorrentInfo> = service
-            .list_active_downloads()
-            .await
-            .map_err(|e: anyhow::Error| async_graphql::Error::new(e.to_string()))?;
-        Ok(visible_runtime_torrents(db, &user, list).await?.len() as i32)
-    }
 }
 
 /// Details known only at grab time that the torrent service's

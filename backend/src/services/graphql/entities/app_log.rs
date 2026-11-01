@@ -20,7 +20,9 @@ use serde::{Deserialize, Serialize};
     index = "timestamp",
     index = "target",
     index = "level",
-    keyset = "timestamp desc, id desc"
+    keyset = "timestamp desc, id desc",
+    // The log viewer pages by keyset; there is no scan client.
+    query_shapes = "single,list,keyset"
 )]
 pub struct AppLog {
     #[graphql(name = "id")]

@@ -45,48 +45,6 @@ query EntityRssFeedItemGet($id: String!) {
   }
 }
 
-mutation EntityRssFeedItemCreate($input: CreateRssFeedItemInput!) {
-  createRssFeedItem(input: $input) {
-    success
-    error
-    rssFeedItem {
-      ...RssFeedItemFields
-    }
-  }
-}
-
-mutation EntityRssFeedItemUpdate($id: String!, $input: UpdateRssFeedItemInput!) {
-  updateRssFeedItem(id: $id, input: $input) {
-    success
-    error
-    rssFeedItem {
-      ...RssFeedItemFields
-    }
-  }
-}
-
-mutation EntityRssFeedItemUpdateMany($where: RssFeedItemWhereInput, $input: UpdateRssFeedItemInput!) {
-  updateRssFeedItems(where: $where, input: $input) {
-    success
-    error
-    affectedCount
-  }
-}
-
-mutation EntityRssFeedItemDelete($id: String!) {
-  deleteRssFeedItem(id: $id) {
-    success
-    error
-  }
-}
-
-mutation EntityRssFeedItemDeleteMany($where: RssFeedItemWhereInput) {
-  deleteRssFeedItems(where: $where) {
-    success
-    error
-  }
-}
-
 subscription EntityRssFeedItemChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
   rssFeedItemChanged(filter: $filter, keys: $keys) {
     action

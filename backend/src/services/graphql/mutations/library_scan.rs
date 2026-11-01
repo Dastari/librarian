@@ -408,43 +408,6 @@ impl LibraryScanMutations {
         }
     }
 
-    #[graphql(name = "resolveScanIssue")]
-    async fn resolve_scan_issue(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(name = "issueId")] issue_id: String,
-        resolution: String,
-    ) -> async_graphql::Result<ScanIssueActionResult> {
-        ctx.require_admin()?;
-        let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
-        let scan_service = services
-            .get_library_scan()
-            .await
-            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
-        match scan_service
-            .resolve_scan_issue(&issue_id, &resolution)
-            .await
-        {
-            Ok(()) => Ok(ScanIssueActionResult {
-                success: true,
-                queued: false,
-                message: "Scan issue marked resolved.".to_string(),
-            }),
-            Err(error) => {
-                tracing::warn!(
-                    scan_issue_id = %issue_id,
-                    error = %error,
-                    "Failed to resolve scan issue"
-                );
-                Ok(ScanIssueActionResult {
-                    success: false,
-                    queued: false,
-                    message: "The scan issue could not be resolved.".to_string(),
-                })
-            }
-        }
-    }
-
     #[graphql(name = "trashDuplicateScanIssue")]
     async fn trash_duplicate_scan_issue(
         &self,

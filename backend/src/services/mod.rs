@@ -52,6 +52,7 @@ pub mod sources;
 pub mod storage;
 pub mod torrent;
 pub mod transcode;
+pub mod write_rules;
 
 pub use rate_limiter::{RateLimitConfig, RateLimitedClient, RetryConfig, retry_async};
 

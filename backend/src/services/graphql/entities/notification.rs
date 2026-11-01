@@ -20,7 +20,8 @@ use serde::{Deserialize, Serialize};
     plural = "Notifications",
     default_sort = "created_at",
     index = "user_id",
-    keyset = "created_at desc, id desc"
+    keyset = "created_at desc, id desc",
+    query_shapes = "single,list"
 )]
 pub struct Notification {
     #[graphql(name = "id")]

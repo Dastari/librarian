@@ -33,48 +33,6 @@ query EntitySourcePriorityRuleGet($id: String!) {
   }
 }
 
-mutation EntitySourcePriorityRuleCreate($input: CreateSourcePriorityRuleInput!) {
-  createSourcePriorityRule(input: $input) {
-    success
-    error
-    sourcePriorityRule {
-      ...SourcePriorityRuleFields
-    }
-  }
-}
-
-mutation EntitySourcePriorityRuleUpdate($id: String!, $input: UpdateSourcePriorityRuleInput!) {
-  updateSourcePriorityRule(id: $id, input: $input) {
-    success
-    error
-    sourcePriorityRule {
-      ...SourcePriorityRuleFields
-    }
-  }
-}
-
-mutation EntitySourcePriorityRuleUpdateMany($where: SourcePriorityRuleWhereInput, $input: UpdateSourcePriorityRuleInput!) {
-  updateSourcePriorityRules(where: $where, input: $input) {
-    success
-    error
-    affectedCount
-  }
-}
-
-mutation EntitySourcePriorityRuleDelete($id: String!) {
-  deleteSourcePriorityRule(id: $id) {
-    success
-    error
-  }
-}
-
-mutation EntitySourcePriorityRuleDeleteMany($where: SourcePriorityRuleWhereInput) {
-  deleteSourcePriorityRules(where: $where) {
-    success
-    error
-  }
-}
-
 subscription EntitySourcePriorityRuleChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
   sourcePriorityRuleChanged(filter: $filter, keys: $keys) {
     action
