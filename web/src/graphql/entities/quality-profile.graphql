@@ -92,8 +92,8 @@ mutation EntityQualityProfileDeleteMany($where: QualityProfileWhereInput) {
   }
 }
 
-subscription EntityQualityProfileChanged($filter: SubscriptionFilterInput) {
-  qualityProfileChanged(filter: $filter) {
+subscription EntityQualityProfileChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  qualityProfileChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

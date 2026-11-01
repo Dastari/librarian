@@ -70,8 +70,8 @@ mutation EntityTorznabCategoryDeleteMany($where: TorznabCategoryWhereInput) {
   }
 }
 
-subscription EntityTorznabCategoryChanged($filter: SubscriptionFilterInput) {
-  torznabCategoryChanged(filter: $filter) {
+subscription EntityTorznabCategoryChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  torznabCategoryChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

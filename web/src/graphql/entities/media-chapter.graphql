@@ -73,8 +73,8 @@ mutation EntityMediaChapterDeleteMany($where: MediaChapterWhereInput) {
   }
 }
 
-subscription EntityMediaChapterChanged($filter: SubscriptionFilterInput) {
-  mediaChapterChanged(filter: $filter) {
+subscription EntityMediaChapterChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  mediaChapterChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

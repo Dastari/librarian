@@ -82,8 +82,8 @@ mutation EntityAudioStreamDeleteMany($where: AudioStreamWhereInput) {
   }
 }
 
-subscription EntityAudioStreamChanged($filter: SubscriptionFilterInput) {
-  audioStreamChanged(filter: $filter) {
+subscription EntityAudioStreamChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  audioStreamChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

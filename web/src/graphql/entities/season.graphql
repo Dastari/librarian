@@ -78,8 +78,8 @@ mutation EntitySeasonDeleteMany($where: SeasonWhereInput) {
   }
 }
 
-subscription EntitySeasonChanged($filter: SubscriptionFilterInput) {
-  seasonChanged(filter: $filter) {
+subscription EntitySeasonChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  seasonChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

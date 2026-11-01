@@ -97,8 +97,8 @@ mutation EntityMediaFileDeleteMany($where: MediaFileWhereInput) {
   }
 }
 
-subscription EntityMediaFileChanged($filter: SubscriptionFilterInput) {
-  mediaFileChanged(filter: $filter) {
+subscription EntityMediaFileChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  mediaFileChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

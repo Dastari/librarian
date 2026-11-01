@@ -73,8 +73,8 @@ mutation EntityAppSettingDeleteMany($where: AppSettingWhereInput) {
   }
 }
 
-subscription EntityAppSettingChanged($filter: SubscriptionFilterInput) {
-  appSettingChanged(filter: $filter) {
+subscription EntityAppSettingChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  appSettingChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

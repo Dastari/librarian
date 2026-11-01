@@ -11,7 +11,7 @@ import { useTableSelection } from "@/hooks/useTableSelection";
 import { EntityChip } from "@/components/entities/EntityChip";
 import { Button, Dialog } from "@/components/ui";
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
-import { EntityLibraryListDocument, EntityNotificationUpdateDocument, EntityNotificationUpdateManyDocument } from "@/graphql/generated/graphql";
+import { EntityLibraryListDocument, EntityNotificationUpdateDocument } from "@/graphql/generated/graphql";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { usePrintMode } from "@/hooks/usePrintMode";
 import { tableUrlFilters, useTableUrlState } from "@/hooks/useTableUrlState";
@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 
 import { ActivityDetail } from "./ActivityDetail";
 import { ACTIVITY_CATEGORIES, ACTIVITY_PRESETS, useActivity, type ActivityPreset, type ActivityRow } from "./useActivity";
+import { useMarkAllRead } from "./useMarkAllRead";
 import { useNotificationActions } from "./useNotificationActions";
 
 const PRESET_LABEL: Record<ActivityPreset, string> = { unread: "Unread", action: "Needs action", all: "Everything" };
@@ -104,17 +105,13 @@ export function ActivityPage() {
   const onChanged = useCallback(() => refetch(), [refetch]);
   const actions = useNotificationActions(onChanged, isAdmin);
   const [update] = useMutation(EntityNotificationUpdateDocument);
-  const [updateMany] = useMutation(EntityNotificationUpdateManyDocument);
+  const { markAllRead, loading: markingAllRead } = useMarkAllRead(onChanged);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = activity.list.rows.find((row) => row.id === selectedId) ?? null;
   const open = (row: ActivityRow) => {
     setSelectedId(row.id);
     if (!row.readAt) void update({ variables: { id: row.id, input: { readAt: new Date().toISOString() } } }).then(onChanged);
-  };
-  const markAllRead = async () => {
-    await updateMany({ variables: { where: { readAt: { isNull: true } }, input: { readAt: new Date().toISOString() } } });
-    onChanged();
   };
 
   return (
@@ -128,7 +125,7 @@ export function ActivityPage() {
           options={ACTIVITY_PRESETS.map((value) => ({ value, label: activity.counts[value] !== undefined ? `${PRESET_LABEL[value]} ${activity.counts[value]}` : PRESET_LABEL[value] }))}
         />
         <div className="ms-auto flex items-center gap-2">
-          <Button variant="secondary" isDisabled={!activity.counts.unread} onPress={() => void markAllRead()}><IconCheck /> Mark all read</Button>
+          <Button variant="secondary" isDisabled={!activity.counts.unread || markingAllRead} onPress={() => void markAllRead()}><IconCheck /> Mark all read</Button>
         </div>
       </div>
       <div data-print-flow className={cn("grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-6 overflow-hidden", selected && wide && "xl:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]")}>

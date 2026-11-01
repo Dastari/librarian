@@ -84,8 +84,8 @@ mutation EntityListEntryDeleteMany($where: ListEntryWhereInput) {
   }
 }
 
-subscription EntityListEntryChanged($filter: SubscriptionFilterInput) {
-  listEntryChanged(filter: $filter) {
+subscription EntityListEntryChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  listEntryChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

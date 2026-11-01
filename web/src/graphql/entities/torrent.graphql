@@ -101,8 +101,8 @@ mutation EntityTorrentDeleteMany($where: TorrentWhereInput) {
   }
 }
 
-subscription EntityTorrentChanged($filter: SubscriptionFilterInput) {
-  torrentChanged(filter: $filter) {
+subscription EntityTorrentChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  torrentChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

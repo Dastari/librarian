@@ -91,8 +91,8 @@ mutation EntityAlbumDeleteMany($where: AlbumWhereInput) {
   }
 }
 
-subscription EntityAlbumChanged($filter: SubscriptionFilterInput) {
-  albumChanged(filter: $filter) {
+subscription EntityAlbumChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  albumChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

@@ -73,8 +73,8 @@ mutation EntityScheduleSyncStateDeleteMany($where: ScheduleSyncStateWhereInput) 
   }
 }
 
-subscription EntityScheduleSyncStateChanged($filter: SubscriptionFilterInput) {
-  scheduleSyncStateChanged(filter: $filter) {
+subscription EntityScheduleSyncStateChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  scheduleSyncStateChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

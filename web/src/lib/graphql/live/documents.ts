@@ -48,6 +48,7 @@ const entityDocuments = {
   RssFeed: G.EntityRssFeedChangedDocument,
   ScheduleCache: G.EntityScheduleCacheChangedDocument,
   ScheduleSyncState: G.EntityScheduleSyncStateChangedDocument,
+  Season: G.EntitySeasonChangedDocument,
   Show: G.EntityShowChangedDocument,
   SourcePriorityRule: G.EntitySourcePriorityRuleChangedDocument,
   Source: G.EntitySourceChangedDocument,
@@ -107,31 +108,52 @@ const extraRoots: Record<string, readonly LiveTopic[]> = {
   filesystemRoots: ["Filesystem", "AppSetting"], browseDirectory: ["Filesystem", "AppSetting"],
   libraryPathAvailability: ["Filesystem", "AppSetting"],
 };
+// MovieCastCredit, Episode, Track, Chapter, VideoStream, AudioStream, Subtitle, MediaChapter and
+// LibraryScanIssue are not listed under their parents: each has `propagate_change = "up"` for
+// creates and updates, and `maintain_summaries_and_parent_events` writes the parent when a child
+// is deleted (propagation is suppressed for a deleted source).
 const directDependencies: Partial<Record<EntityTopic, readonly EntityTopic[]>> = {
-  // Retain direct children as well as parent streams until propagation is proven.
-  Movie: ["MediaFile", "MovieCastCredit"], Show: ["Episode", "MediaFile"],
-  Episode: ["Show", "MediaFile"], Album: ["Track", "MediaFile"],
+  Movie: ["MediaFile"], Show: ["MediaFile"],
+  Episode: ["Show", "MediaFile"], Album: ["MediaFile"],
   Artist: ["Album", "Track", "MediaFile"], Track: ["Album", "Artist", "MediaFile"],
-  Audiobook: ["Chapter", "MediaFile"], Chapter: ["Audiobook", "MediaFile"],
+  Audiobook: ["MediaFile"], Chapter: ["Audiobook", "MediaFile"],
   Collection: ["Movie", "MediaFile"],
-  MediaFile: ["VideoStream", "AudioStream", "Subtitle", "MediaChapter"],
   PlaybackProgress: ["MediaFile", "Movie", "Episode", "Track", "Chapter"],
-  LibraryScanRun: ["LibraryScanIssue"], LibraryScanIssue: ["LibraryScanRun"],
+  LibraryScanIssue: ["LibraryScanRun"],
 };
 
 export function operationKey(document: DocumentNode): string {
   return document.definitions.filter((definition) => definition.kind === Kind.OPERATION_DEFINITION).map((definition) => definition.name?.value ?? "anonymous").join(",");
 }
 
+const COMPUTED_COUNTS = /^(movieCount|showCount|albumCount|artistCount|audiobookCount|trackCount|totalSizeBytes|totalFiles)$/;
+const CONNECTION_FIELDS = new Set(["edges", "node", "pageInfo"]);
+
+/** True when a selection reads only the record's own persisted scalars (through connection
+ * wrappers), so events propagated up from its children cannot change the result. */
+function readsOwnScalars(selection: SelectionSetNode, fragments: ReadonlyMap<string, SelectionSetNode>, seen = new Set<string>()): boolean {
+  return selection.selections.every((field) => {
+    if (field.kind === Kind.INLINE_FRAGMENT) return readsOwnScalars(field.selectionSet, fragments, seen);
+    if (field.kind === Kind.FRAGMENT_SPREAD) {
+      const name = field.name.value;
+      const target = fragments.get(name);
+      return seen.has(name) || (target !== undefined && readsOwnScalars(target, fragments, new Set([...seen, name])));
+    }
+    if (COMPUTED_COUNTS.test(field.name.value)) return false;
+    return !field.selectionSet || (CONNECTION_FIELDS.has(field.name.value) && readsOwnScalars(field.selectionSet, fragments, seen));
+  });
+}
+
 /** Derive root/nested/fragment dependencies even when a view is currently empty.
  * Membership, sort/filter transitions and counts require broad entity topics;
- * only explicit single-ID roots can safely narrow their direct dependency. */
+ * only explicit single-ID roots can safely narrow their direct dependency. A dependency is
+ * `direct` when every read of the topic is of its own scalars only. */
 export function queryDependencies(document: DocumentNode, variables: Record<string, unknown> = {}): LiveDependency[] {
-  const topics = new Map<LiveTopic, readonly string[] | undefined>();
-  const add = (topic: LiveTopic, ids?: readonly string[]) => {
-    if (!topics.has(topic)) topics.set(topic, ids);
-    else if (!topics.get(topic) || !ids) topics.set(topic, undefined);
-    else topics.set(topic, [...new Set([...topics.get(topic)!, ...ids])]);
+  const topics = new Map<LiveTopic, { ids?: readonly string[]; direct: boolean }>();
+  const add = (topic: LiveTopic, ids?: readonly string[], direct = false) => {
+    const current = topics.get(topic);
+    if (!current) topics.set(topic, { ids, direct });
+    else topics.set(topic, { ids: current.ids && ids ? [...new Set([...current.ids, ...ids])] : undefined, direct: current.direct && direct });
   };
   const fragments = new Map(document.definitions.filter((definition) => definition.kind === Kind.FRAGMENT_DEFINITION).map((definition) => [definition.name.value, definition.selectionSet]));
   const walk = (selection: SelectionSetNode, root: boolean, seen = new Set<string>()) => {
@@ -141,15 +163,16 @@ export function queryDependencies(document: DocumentNode, variables: Record<stri
         if (!seen.has(name) && fragments.has(name)) walk(fragments.get(name)!, false, new Set([...seen, name]));
       } else if (field.kind === Kind.INLINE_FRAGMENT) walk(field.selectionSet, false, seen);
       else {
-        const topic = fieldTopics.get(field.name.value);
+        // A scalar that shares a root's name (`season` on Episode) is not that entity.
+        const topic = field.selectionSet ? fieldTopics.get(field.name.value) : undefined;
         if (topic) {
           const id = root ? field.arguments?.find((argument) => argument.name.value === "id")?.value : undefined;
           const value = id?.kind === Kind.VARIABLE ? variables[id.name.value] : id?.kind === Kind.STRING ? id.value : undefined;
-          add(topic, typeof value === "string" ? [value] : undefined);
+          add(topic, typeof value === "string" ? [value] : undefined, readsOwnScalars(field.selectionSet!, fragments));
           if (root) for (const dependency of directDependencies[topic] ?? []) add(dependency);
         }
         if (root) for (const dependency of extraRoots[field.name.value] ?? []) add(dependency);
-        if (/^(movieCount|showCount|albumCount|artistCount|audiobookCount|trackCount|totalSizeBytes|totalFiles)$/.test(field.name.value)) {
+        if (COMPUTED_COUNTS.test(field.name.value)) {
           for (const dependency of ["Movie", "Show", "Album", "Artist", "Audiobook", "Track", "MediaFile"] as const) add(dependency);
         }
         if (field.selectionSet) walk(field.selectionSet, false, seen);
@@ -157,7 +180,7 @@ export function queryDependencies(document: DocumentNode, variables: Record<stri
     }
   };
   for (const definition of document.definitions) if (definition.kind === Kind.OPERATION_DEFINITION) walk(definition.selectionSet, true);
-  return [...topics].map(([topic, ids]) => ({ topic, ids }));
+  return [...topics].map(([topic, { ids, direct }]) => ({ topic, ids, ...(direct ? { direct } : {}) }));
 }
 
 /** How a generated `Changed` stream says it ended without delivering everything. */
@@ -167,7 +190,7 @@ const adminTopics = new Set<LiveTopic>(["AppLog", "AppSetting", "User", "InviteT
 
 export function apolloLiveSource(client: ApolloClient, isAdmin: boolean): LiveSource {
   const states = new Map<string, string>();
-  return (topic, emit, interrupted) => {
+  return (topic, emit, interrupted, keys) => {
     // Apollo delivers every subscription failure through `next`, including transport ones.
     const failed = (error: unknown) => {
       states.clear();
@@ -208,7 +231,8 @@ export function apolloLiveSource(client: ApolloClient, isAdmin: boolean): LiveSo
       return () => subscription.unsubscribe();
     }
     const document = topicDocuments[topic];
-    const subscription = client.subscribe<Record<string, unknown>>({ query: document }).subscribe({
+    const variables = keys && topic in entityDocuments ? { keys: [...keys] } : undefined;
+    const subscription = client.subscribe<Record<string, unknown>>({ query: document, variables }).subscribe({
       next: ({ data, error }) => {
         if (error) { failed(error); return; }
         // Boolean false is a real capability update (including the initial
@@ -216,7 +240,8 @@ export function apolloLiveSource(client: ApolloClient, isAdmin: boolean): LiveSo
         for (const payload of Object.values(data ?? {})) {
           if (topic === "TorrentRemoved" && payload && typeof payload === "object" && "infoHash" in payload && typeof payload.infoHash === "string") states.delete(payload.infoHash);
           const id = payload && typeof payload === "object" && "id" in payload ? String(payload.id) : undefined;
-          const event: LiveEvent = { topic, id };
+          const propagated = Boolean(payload && typeof payload === "object" && "changeKind" in payload && payload.changeKind === "PROPAGATED");
+          const event: LiveEvent = { topic, id, ...(propagated ? { propagated } : {}) };
           emit(event);
         }
       }, error: failed, complete: () => interrupted(),

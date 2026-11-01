@@ -83,8 +83,8 @@ mutation EntityLibraryScanIssueDeleteMany($where: LibraryScanIssueWhereInput) {
   }
 }
 
-subscription EntityLibraryScanIssueChanged($filter: SubscriptionFilterInput) {
-  libraryScanIssueChanged(filter: $filter) {
+subscription EntityLibraryScanIssueChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  libraryScanIssueChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

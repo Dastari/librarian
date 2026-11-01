@@ -83,8 +83,8 @@ mutation EntityTrackDeleteMany($where: TrackWhereInput) {
   }
 }
 
-subscription EntityTrackChanged($filter: SubscriptionFilterInput) {
-  trackChanged(filter: $filter) {
+subscription EntityTrackChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  trackChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

@@ -73,8 +73,8 @@ mutation EntityMovieCastCreditDeleteMany($where: MovieCastCreditWhereInput) {
   }
 }
 
-subscription EntityMovieCastCreditChanged($filter: SubscriptionFilterInput) {
-  movieCastCreditChanged(filter: $filter) {
+subscription EntityMovieCastCreditChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  movieCastCreditChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id
