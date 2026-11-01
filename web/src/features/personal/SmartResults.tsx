@@ -1,9 +1,16 @@
+import { copyText } from "glass-ux/copy-button";
 import { useNavigate } from "@tanstack/react-router";
-import { useRef } from "react";
+import { useMemo, useRef } from "react";
+import { defineActions } from "glass-ux/actions";
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { useSelectableTableState } from "@/hooks/useTableSelection";
+import { useSession } from "@/lib/auth/useSession";
+import { usePlayer } from "@/features/player/usePlayer";
+import type { PlayItem } from "@/features/player/store";
 import { createDataTableColumns, DataTable, IdentityCell, TextCell } from "glass-ux/data-table";
 import { EmptyState, ErrorState, MediaRow, PosterCard, PosterGallery } from "@/components/ui";
 import { ENTITY_KINDS } from "@/lib/entities/kinds";
-import { IconBookmark } from "glass-ux/icons";
+import { IconBookmark, IconCopy, IconExternalLink, IconPlay, IconPlus } from "glass-ux/icons";
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
 import { useInfiniteConnection } from "@/features/libraries/browser/useInfiniteConnection";
 import {
@@ -14,12 +21,13 @@ import {
 
 import { moviePoster, showPoster, albumCover, audiobookCover } from "@/lib/artwork";
 
-type Row = { image?: string; square?: boolean; id: string; title: string; detail: string; href: string };
+type Row = { image?: string; square?: boolean; id: string; title: string; detail: string; href: string; playItem?: PlayItem };
+const getRowId = (row: Row) => row.id;
 const TrackGlyph = ENTITY_KINDS.track.icon;
 const column = createDataTableColumns<Row>();
 const trackColumns = column.columns([
-  column.accessor("title", { header: "Track", width: 26, priority: 1, cardRole: "title", cell: ({ row }) => <IdentityCell icon={<TrackGlyph />} title={row.original.title} subtitle={row.original.detail} /> }),
-  column.accessor("detail", { header: "Artist", width: 14, priority: 2, cell: ({ row }) => <TextCell muted>{row.original.detail}</TextCell> }),
+  column.accessor("title", { header: "Track", sortable: false, filter: { none: "Saved rules determine the complete result filter." }, width: 26, priority: 1, cardRole: "title", cell: ({ row }) => <IdentityCell icon={<TrackGlyph />} title={row.original.title} subtitle={row.original.detail} /> }),
+  column.accessor("detail", { header: "Artist", sortable: false, filter: { none: "Saved rules determine the complete result filter." }, width: 14, priority: 2, cell: ({ row }) => <TextCell muted>{row.original.detail}</TextCell> }),
 ]);
 
 /** Compile the small saved-rule vocabulary into generated, caller-authorized queries. */
@@ -42,6 +50,23 @@ export function smartRule(view: SavedViewFieldsFragment, ownedLibraryIds: string
 
 function Results({ rows, list, preview = false }: { preview?: boolean; rows: Row[]; list: { loading: boolean; fetching: boolean; error?: Error; refetch: () => Promise<unknown>; hasMore: boolean; loadMore: () => Promise<unknown>; queryKey: string; loadRevision: number; totalCount: number | undefined } }) {
   const navigate = useNavigate();
+  const player = usePlayer();
+  const { user } = useSession();
+  const table = useSelectableTableState({ scope: [user?.id, list.queryKey], rows, getRowId, ready: !list.loading && !list.fetching });
+  const actions = useMemo(() => {
+    const playable = (selected: readonly Row[]) => selected.some((row) => !row.playItem) ? "Some selected tracks have no file. Deselect them to play or queue the selection." : false;
+    const items = (selected: readonly Row[]) => {
+      if (playable(selected)) throw new Error("Select playable tracks");
+      const ids = new Set(selected.map((row) => row.id));
+      return rows.filter((row) => ids.has(row.id)).flatMap((row) => row.playItem ? [row.playItem] : []);
+    };
+    return defineActions<Row>("smart-track", [
+      { id: "open", label: "Open album", icon: IconExternalLink, group: "open", bulk: true, visible: (selected) => selected.length === 1, run: ([row], context) => { if (row) context.navigate(row.href); } },
+      { id: "play", label: (selected) => selected.length === 1 ? "Play" : "Play selected tracks", icon: IconPlay, group: "open", bulk: true, disabledReason: playable, run: (selected) => { const queue = items(selected); if (!queue.length) throw new Error("No playable tracks selected"); player.playAudio(queue); } },
+      { id: "enqueue", label: "Add to queue", icon: IconPlus, group: "organise", bulk: true, disabledReason: playable, run: (selected) => { const queue = items(selected); if (!queue.length) throw new Error("No playable tracks selected"); player.enqueue(queue); }, successMessage: () => "Added to queue" },
+      { id: "copy-titles", label: "Copy track titles", icon: IconCopy, group: "organise", bulk: true, run: async (selected) => { await copyText(selected.map((row) => row.title).join("\n")); }, successMessage: () => "Track titles copied" },
+    ]);
+  }, [rows, player]);
   if (preview) return <div className="flex min-w-0 flex-col gap-3">{list.error ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : null}{list.loading && rows.length === 0 ? <p role="status">Loading collection…</p> : null}<MediaRow ariaLabel="Smart collection">{rows.slice(0, 20).map((row) => <PosterCard key={row.id} title={row.title} meta={row.detail} image={row.image} aspect={row.square ? "square" : "poster"} width="row" onPress={() => void navigate({ href: row.href })} />)}</MediaRow></div>;
   const infinite = { hasMore: list.hasMore, loadMore: list.loadMore };
   // Titles are shown as posters, like the library browsers; tracks have no artwork of their own.
@@ -55,7 +80,8 @@ function Results({ rows, list, preview = false }: { preview?: boolean; rows: Row
   }
   return <div data-print-flow className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden">
     {list.error ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : null}
-    <DataTable<Row> id={`smart:${list.queryKey}`} label="Smart collection" height="fill" columns={trackColumns} rows={rows} getRowId={(row) => row.id} getRowLabel={(row) => row.title} noun={{ one: "track", other: "tracks" }} loading={list.loading} refetching={list.fetching && !list.loading} queryKey={list.queryKey}
+    <DataTable<Row> id={`smart:${user?.id ?? "session"}:${list.queryKey}`} label="Smart collection" height="fill" columns={trackColumns} rows={rows} getRowId={getRowId} state={table.state} onStateChange={table.onStateChange} getRowLabel={(row) => row.title} noun={{ one: "track", other: "tracks" }} loading={list.loading} refetching={list.fetching && !list.loading} queryKey={[user?.id, list.queryKey]}
+      actions={actions} selectable renderBulkActions={(selected) => <TableBulkActions set={actions} rows={selected} noun={{ one: "track", other: "tracks" }} />}
       rowCount={list.totalCount} onRowOpen={(row) => void navigate({ href: row.href })} rowOpen="click" emptyMessage="Nothing matches these rules yet"
       infinite={{ revision: list.loadRevision, hasMore: list.hasMore, onLoadMore: list.loadMore }} />
   </div>;
@@ -84,7 +110,7 @@ function AudiobookResults({ view, preview, libraryIds }: { view: SavedViewFields
 function TrackResults({ view, preview, libraryIds }: { view: SavedViewFieldsFragment; preview?: boolean; libraryIds: string[] }) {
   const rule = smartRule(view, libraryIds)!;
   const list = useInfiniteConnection(EntityTrackListDocument, { where: rule.where as TrackWhereInput, orderBy: rule.orderBy }, (data) => data.tracks);
-  return <Results preview={preview} list={list} rows={list.rows.map((row) => ({ id: row.id, title: row.title, detail: row.artistName ?? "Track", href: `/albums/${row.albumId}` }))} />;
+  return <Results preview={preview} list={list} rows={list.rows.map((row) => ({ id: row.id, title: row.title, detail: row.artistName ?? "Track", href: `/albums/${row.albumId}`, playItem: row.mediaFileId ? { mediaFileId: row.mediaFileId, title: row.title, subtitle: row.artistName ?? undefined, href: `/albums/${row.albumId}`, entity: { kind: "track" as const, id: row.id }, duration: row.durationSecs ?? undefined } : undefined }))} />;
 }
 export function SmartResults({ view, preview }: { view: SavedViewFieldsFragment; preview?: boolean }) {
   const libraries = useCompleteConnection(EntityLibraryListDocument, { where: { userId: { eq: view.userId } } }, (data) => data.libraries);

@@ -1,7 +1,8 @@
+import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
 import { useMutation } from "@apollo/client/react";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
-import { createDataTableColumns, DataTable, IdentityCell, NumericCell, RelativeTime, TextCell } from "glass-ux/data-table";
+import { createDataTableColumns, IdentityCell, NumericCell, RelativeTime, TextCell } from "glass-ux/data-table";
 import { IconDatabase, IconDatabaseExport, IconRestore, IconShieldCheck } from "@tabler/icons-react";
 import { useMemo } from "react";
 
@@ -13,6 +14,9 @@ import { formatBytes, parseTimestamp } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { toast } from "glass-ux/toast";
+
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { runSettingsSelection } from "./runSettingsSelection";
 
 import { SettingsLoadError } from "./SettingsLoadError";
 import { SettingsSection } from "./SettingsSection";
@@ -58,12 +62,12 @@ export function BackupSettings() {
 
   const actions = useMemo(() => defineActions<Snapshot>("backup-snapshot", [
     {
-      id: "verify", label: "Verify", icon: VerifyIcon, group: "manage", priority: 1, visible: (targets) => targets.length === 1,
-      run: async (targets) => { assertSuccess((await verify({ variables: { snapshotId: targets[0]!.snapshotId } })).data?.verifyBackupSnapshot, "Verification failed"); },
-      successMessage: () => "Snapshot verified",
+      id: "verify", label: (targets) => targets.length === 1 ? "Verify" : `Verify ${targets.length} snapshots`, icon: VerifyIcon, group: "manage", priority: 1, bulk: true,
+      run: (targets) => runSettingsSelection(targets, "Verify", (target) => target.snapshotId, async (target) => assertSuccess((await verify({ variables: { snapshotId: target.snapshotId } })).data?.verifyBackupSnapshot, "Verification failed")),
+      successMessage: (targets) => targets.length === 1 ? "Snapshot verified" : `${targets.length} snapshots verified`,
     },
     {
-      id: "restore", label: "Restore…", icon: RestoreIcon, group: "danger",
+      id: "restore", bulk: true, label: "Restore…", icon: RestoreIcon, group: "danger",
       visible: (targets) => targets.length === 1 && Boolean(capabilities?.restoreAvailable),
       confirm: () => ({ title: "Restore this snapshot?", body: "The current catalogue is replaced with the snapshot's contents. Media files on disk are not touched. Restore only into an empty or freshly reinstalled server.", confirmLabel: "Restore", tone: "danger" }),
       run: async (targets) => { assertSuccess((await restore({ variables: { snapshotId: targets[0]!.snapshotId } })).data?.restoreFullBackup, "Restore failed"); },
@@ -86,7 +90,7 @@ export function BackupSettings() {
         </div>
       ) : null}
       <SettingsLoadError error={error} retry={() => refetch().catch(() => {})} hasRows={snapshots.length > 0} />
-      <DataTable<Snapshot> height="auto"
+      <LoadedDataTable<Snapshot> complete={!loading && !error} height="auto" selectable queryKey={user?.id}
         id={`librarian.${user?.id ?? "session"}.settings.backups`}
         label="Snapshots"
         columns={columns}
@@ -94,7 +98,7 @@ export function BackupSettings() {
         getRowId={(snapshot) => snapshot.snapshotId}
         getRowLabel={(snapshot) => `Snapshot ${snapshot.snapshotId}`}
         loading={loading && snapshots.length === 0}
-        actions={actions}
+        actions={actions} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "snapshot", other: "snapshots" }} />}
         noun={{ one: "snapshot", other: "snapshots" }}
         emptyMessage="No snapshots yet."
       />

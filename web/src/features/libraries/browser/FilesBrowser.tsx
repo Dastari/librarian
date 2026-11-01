@@ -1,11 +1,14 @@
+import { copyText } from "glass-ux/copy-button";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, DataTable, IdentityCell, RelativeTime, TextCell, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
-import { IconExternalLink, IconRefresh } from "glass-ux/icons";
-import { toast } from "glass-ux/toast";
+import { IconCopy, IconExternalLink, IconRefresh } from "glass-ux/icons";
 import { IconFile, IconFileSearch, IconLinkOff, IconWand } from "@tabler/icons-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { useTableSelection } from "@/hooks/useTableSelection";
+import { runSelectionAction } from "@/lib/actions/runSelectionAction";
 import { EntityChip } from "@/components/entities/EntityChip";
 import { ErrorState, GlassSegmented } from "@/components/ui";
 import { ManualMatchDialog } from "@/features/libraries/ManualMatchDialog";
@@ -25,7 +28,7 @@ import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { ENTITY_KINDS, glyph } from "@/lib/entities/kinds";
 import { badgeTone, linkedItem } from "@/lib/entities/linked";
 import { formatBytes, formatRuntime, parseTimestamp } from "@/lib/format";
-import { errorMessage } from "@/lib/graphql/errors";
+
 import { qualityStatus } from "@/lib/status";
 
 import { BrowserToolbar, type AvailabilityFilter } from "./BrowserToolbar";
@@ -101,65 +104,67 @@ export function FilesBrowser({ libraryId }: { libraryId: string }) {
   const [organizeFile] = useMutation(OrganizeMediaFileDocument);
   const [unmatchFile] = useMutation(UnmatchMediaFileDocument);
 
-  const run = async (label: string, task: () => Promise<{ ok: boolean; message?: string | null }>) => {
-    try {
-      const result = await task();
-      if (result.ok) toast.success(result.message ?? `${label} done`);
-      else toast.warning(result.message ?? `${label} did not complete`);
-      void list.refetch();
-    } catch (error) {
-      toast.danger(errorMessage(error, `${label} failed`));
-    }
-  };
-
-  const actions = useMemo(() => defineActions<FileRow>("media-file", [
-    {
-      id: "open-item", label: "Open linked item", icon: IconExternalLink, group: "open", priority: 1,
-      visible: (rows) => rows.length === 1 && Boolean(linkedItem(rows[0]!)?.href),
-      run: (rows, context) => { const href = linkedItem(rows[0]!)?.href; if (href) context.navigate(href); },
-    },
-    ...(isAdmin ? [
+  const latestRefetch = useRef(list.refetch);
+  latestRefetch.current = list.refetch;
+  const actions = useMemo(() => {
+    const run = (rows: readonly FileRow[], label: string, task: (row: FileRow) => Promise<{ ok: boolean; message?: string | null }>) =>
+      runSelectionAction(rows, label, (row) => fileName(row.path), async (row) => {
+        const result = await task(row);
+        if (!result.ok) throw new Error(result.message || `${label} did not complete`);
+      }, () => { void latestRefetch.current(); });
+    return defineActions<FileRow>("media-file", [
       {
-        id: "automatch", label: "Match automatically", icon: MatchIcon, group: "organise" as const, priority: 1,
-        visible: (rows: readonly FileRow[]) => rows.length === 1 && linkedTo(rows[0]!) === null,
-        run: (rows: readonly FileRow[]) => run("Match", async () => {
-          const { data } = await matchFile({ variables: { input: { mediaFileId: rows[0]!.id, libraryId, autoMatch: true, allowProviderFallback: true } } });
-          const result = data?.matchMediaFile;
-          return { ok: Boolean(result?.success), message: result?.reason ?? (result?.matchedType ? `Linked to ${result.matchedType}` : null) };
-        }),
+        id: "open-item", bulk: true, label: "Open linked item", icon: IconExternalLink, group: "open", priority: 1,
+        visible: (rows) => rows.length === 1 && Boolean(linkedItem(rows[0]!)?.href),
+        run: (rows, context) => { const href = linkedItem(rows[0]!)?.href; if (href) context.navigate(href); },
       },
-      { id: "manual", label: "Match manually…", icon: ManualIcon, group: "organise" as const, priority: 2, visible: (rows: readonly FileRow[]) => rows.length === 1, run: (rows: readonly FileRow[]) => setMatching(rows[0]!) },
       {
-        id: "analyze", label: (rows: readonly FileRow[]) => (rows.length === 1 ? "Re-analyze" : `Re-analyze ${rows.length} files`), icon: IconRefresh, group: "manage" as const, priority: 2, bulk: true,
-        run: async (rows: readonly FileRow[]) => {
-          for (const row of rows) await run("Analysis", async () => {
-            const { data } = await analyzeFile({ variables: { mediaFileId: row.id, path: row.path } });
-            return { ok: Boolean(data?.analyzeMediaFile.success), message: data?.analyzeMediaFile.message ?? (data?.analyzeMediaFile.queued ? "Analysis queued" : null) };
-          });
+        id: "copy-paths", label: "Copy file paths", icon: IconCopy, group: "open", bulk: true,
+          run: (rows) => copyText(rows.map((row) => row.path).join("\n")), successMessage: () => "File paths copied",
+      },
+      ...(isAdmin ? [
+        {
+          id: "automatch", label: "Match automatically", icon: MatchIcon, group: "organise" as const, priority: 1, bulk: true,
+          visible: (rows: readonly FileRow[]) => rows.some((row) => linkedTo(row) === null),
+          disabledReason: (rows: readonly FileRow[]) => rows.some((row) => linkedTo(row) !== null) ? "Some selected files are already linked. Deselect them to match." : false,
+          run: (rows: readonly FileRow[]) => run(rows, "Match", async (row) => {
+            const { data } = await matchFile({ variables: { input: { mediaFileId: row.id, libraryId, autoMatch: true, allowProviderFallback: true } } });
+            return { ok: Boolean(data?.matchMediaFile.success), message: data?.matchMediaFile.reason };
+          }), successMessage: () => "Matching complete",
         },
-      },
-      {
-        id: "organize", label: "Organize", icon: OrganizeIcon, group: "manage" as const, priority: 3,
-        visible: (rows: readonly FileRow[]) => rows.length === 1 && linkedTo(rows[0]!) !== null,
-        run: (rows: readonly FileRow[]) => run("Organize", async () => {
-          const { data } = await organizeFile({ variables: { input: { mediaFileId: rows[0]!.id } } });
-          const result = data?.organizeMediaFile;
-          return { ok: Boolean(result?.success), message: result?.reason ?? (result?.newPath ? `Moved to ${result.newPath}` : null) };
-        }),
-      },
-      {
-        id: "unmatch", label: "Unlink", icon: UnlinkIcon, group: "danger" as const,
-        visible: (rows: readonly FileRow[]) => rows.length === 1 && linkedTo(rows[0]!) !== null,
-        confirm: () => ({ title: "Unlink this file?", body: "The file stays on disk and in the library's file list, but is no longer attached to its item.", confirmLabel: "Unlink", tone: "warning" as const }),
-        run: (rows: readonly FileRow[]) => run("Unlink", async () => {
-          const { data } = await unmatchFile({ variables: { mediaFileId: rows[0]!.id } });
-          return { ok: Boolean(data?.unmatchMediaFile.success), message: data?.unmatchMediaFile.reason };
-        }),
-      },
-    ] : []),
-  ]), [analyzeFile, isAdmin, libraryId, matchFile, organizeFile, unmatchFile]);
-  const state = useMemo<DataTableState>(() => ({ pagination: { pageIndex: 0, pageSize: 50 }, selection: {}, filters: [], sorting: table.sorting }), [table.sorting]);
-  const onStateChange = (next: DataTableState, change: DataTableStateChange) => { if (change === "sorting") table.setSorting(next.sorting); };
+        { id: "manual", bulk: true, label: "Match manually…", icon: ManualIcon, group: "organise" as const, priority: 2, visible: (rows: readonly FileRow[]) => rows.length === 1, run: (rows: readonly FileRow[]) => setMatching(rows[0]!) },
+        {
+          id: "analyze", label: (rows: readonly FileRow[]) => rows.length === 1 ? "Re-analyze" : `Re-analyze ${rows.length} files`, icon: IconRefresh, group: "manage" as const, priority: 2, bulk: true,
+          run: (rows: readonly FileRow[]) => run(rows, "Analysis", async (row) => {
+            const { data } = await analyzeFile({ variables: { mediaFileId: row.id, path: row.path } });
+            return { ok: Boolean(data?.analyzeMediaFile.success), message: data?.analyzeMediaFile.message };
+          }), successMessage: () => "Analysis requested",
+        },
+        {
+          id: "organize", label: "Organize", icon: OrganizeIcon, group: "manage" as const, priority: 3, bulk: true,
+          visible: (rows: readonly FileRow[]) => rows.some((row) => linkedTo(row) !== null),
+          disabledReason: (rows: readonly FileRow[]) => rows.some((row) => linkedTo(row) === null) ? "Some selected files are unmatched. Match them before organizing." : false,
+          run: (rows: readonly FileRow[]) => run(rows, "Organize", async (row) => {
+            const { data } = await organizeFile({ variables: { input: { mediaFileId: row.id } } });
+            return { ok: Boolean(data?.organizeMediaFile.success), message: data?.organizeMediaFile.reason };
+          }), successMessage: () => "Files organized",
+        },
+        {
+          id: "unmatch", label: "Unlink", icon: UnlinkIcon, group: "danger" as const, bulk: true,
+          visible: (rows: readonly FileRow[]) => rows.some((row) => linkedTo(row) !== null),
+          disabledReason: (rows: readonly FileRow[]) => rows.some((row) => linkedTo(row) === null) ? "Some selected files are not linked. Deselect them to unlink." : false,
+          confirm: (rows: readonly FileRow[]) => ({ title: rows.length === 1 ? "Unlink this file?" : `Unlink ${rows.length} files?`, body: "Files stay on disk and in the library's file list, but are no longer attached to their items.", confirmLabel: "Unlink", tone: "warning" as const }),
+          run: (rows: readonly FileRow[]) => run(rows, "Unlink", async (row) => {
+            const { data } = await unmatchFile({ variables: { mediaFileId: row.id } });
+            return { ok: Boolean(data?.unmatchMediaFile.success), message: data?.unmatchMediaFile.reason };
+          }), successMessage: () => "Files unlinked",
+        },
+      ] : []),
+    ]);
+  }, [analyzeFile, isAdmin, libraryId, matchFile, organizeFile, unmatchFile]);
+  const selection = useTableSelection({ scope: [user?.id, libraryId, where, table.sorting], rows: list.rows, ready: !list.fetching });
+  const state = useMemo<DataTableState>(() => ({ pagination: { pageIndex: 0, pageSize: 50 }, selection: selection.selection, filters: [], sorting: table.sorting }), [table.sorting, selection.selection]);
+  const onStateChange = (next: DataTableState, change: DataTableStateChange) => { if (change === "sorting") table.setSorting(next.sorting); else if (change === "selection") selection.onSelectionChange(next.selection); };
 
   const availabilityLabels: Record<AvailabilityFilter, string> = { all: "All files", available: "Below quality target", wanted: "Unmatched", missing: "Unmatched" };
 
@@ -200,7 +205,8 @@ export function FilesBrowser({ libraryId }: { libraryId: string }) {
           onStateChange={onStateChange}
           infinite={{ revision: list.loadRevision, hasMore: list.hasMore, onLoadMore: list.loadMore, loadingMore: list.loadingMore }}
           actions={actions}
-          selectable={isAdmin}
+          selectable
+          renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "file", other: "files" }} />}
           density="compact"
           noun={{ one: "file", other: "files" }}
           error={list.error && list.rows.length === 0 ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : undefined}

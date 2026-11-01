@@ -4,6 +4,7 @@ import { ApolloProvider } from "@apollo/client/react";
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Toaster, toast } from "glass-ux/toast";
+import { ActionProvider } from "glass-ux/actions";
 import { TooltipProvider } from "glass-ux/tooltip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -18,11 +19,11 @@ vi.mock("@/lib/auth/useSession", () => ({ useSession: () => ({ user: { id: "log-
 
 const log: AppLogFieldsFragment = { id: "entry-1", timestamp: "2026-10-23T12:00:00Z", level: "ERROR", target: "librarian::scanner", message: "Could not scan Movie.mkv", fields: '{"path":"/media/Movie.mkv"}', spanName: "scan", spanId: "span-1", createdAt: "2026-10-23T12:00:00Z" };
 
-function mount(options: { deleteSuccess?: boolean; more?: boolean; search?: Record<string, unknown> } = {}) {
+function mount(options: { deleteSuccess?: boolean; more?: boolean; two?: boolean; search?: Record<string, unknown> } = {}) {
   const queries = vi.fn();
   const deletes = vi.fn();
   let emitChange: (() => void) | undefined;
-  let rows = [log];
+  let rows = options.two ? [log, { ...log, id: "other-entry", message: "An unrelated log entry" }] : [log];
   let failQueries = false;
   let holdNextAppend = false;
   let deferredAppend: (() => void) | undefined;
@@ -36,7 +37,7 @@ function mount(options: { deleteSuccess?: boolean; more?: boolean; search?: Reco
       const timeout = setTimeout(() => {
         if (operation.operationName === "EntityAppLogDeleteMany") {
           deletes(operation.variables);
-          if (options.deleteSuccess !== false) rows = [];
+          if (options.deleteSuccess !== false) rows = operation.variables.where?.id?.inList ? rows.filter((row) => !operation.variables.where.id.inList.includes(row.id)) : [];
           observer.next({ data: { deleteAppLogs: { success: options.deleteSuccess !== false, error: options.deleteSuccess === false ? "Log store unavailable" : null } } });
         } else {
           queries(operation.variables);
@@ -61,7 +62,7 @@ function mount(options: { deleteSuccess?: boolean; more?: boolean; search?: Reco
   });
   const registry = new LiveRegistry(apolloLiveSource(client, true));
   registry.reset(true);
-  const tree = <ApolloProvider client={client}><LiveContext.Provider value={{ registry, epoch: "log-admin" }}><TooltipProvider><LogsSettings /><Toaster /></TooltipProvider></LiveContext.Provider></ApolloProvider>;
+  const tree = <ApolloProvider client={client}><LiveContext.Provider value={{ registry, epoch: "log-admin" }}><TooltipProvider><ActionProvider><LogsSettings /><Toaster /></ActionProvider></TooltipProvider></LiveContext.Provider></ApolloProvider>;
   const router = options.search ? createRouter({
     routeTree: createRootRoute({ component: () => tree }),
     history: createMemoryHistory({ initialEntries: [`/?${new URLSearchParams(Object.entries(options.search).map(([key, value]) => [key, typeof value === "string" ? value : JSON.stringify(value)]))}`] }),
@@ -104,6 +105,36 @@ beforeEach(() => {
 afterEach(() => { toast.dismiss(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("LogsSettings Glass table pilot", () => {
+  it("confirms selected-entry deletion and leaves unrelated logs intact", async () => {
+    const user = userEvent.setup();
+    const view = mount({ two: true });
+    await screen.findByText(log.message);
+    await user.click(screen.getByRole("checkbox", { name: `Select ${log.message}` }));
+    await user.click(screen.getByRole("button", { name: "Actions for 1 selected entry" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete entry" }));
+    const confirmation = await screen.findByRole("alertdialog");
+    expect(view.deletes).not.toHaveBeenCalled();
+    await user.click(within(confirmation).getByRole("button", { name: "Delete" }));
+    await vi.waitFor(() => expect(view.deletes).toHaveBeenCalledExactlyOnceWith({ where: { id: { inList: [log.id] } } }));
+    await vi.waitFor(() => expect(screen.queryByText(log.message)).not.toBeInTheDocument());
+    expect(screen.getByText("An unrelated log entry")).toBeInTheDocument();
+    await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  });
+
+  it("preserves selection on append and clears it when the server query changes", async () => {
+    const user = userEvent.setup();
+    const view = mount({ more: true });
+    await screen.findByText(log.message);
+    await user.click(screen.getByRole("checkbox", { name: `Select ${log.message}` }));
+    await vi.waitFor(() => expect(intersections.size).toBeGreaterThan(0));
+    revealEnd();
+    await screen.findByText("Older log entry");
+    expect(screen.getByRole("checkbox", { name: `Select ${log.message}` })).toBeChecked();
+    expect(view.queries).toHaveBeenCalledTimes(2);
+    await user.click(screen.getByRole("button", { name: "Time" }));
+    await vi.waitFor(() => expect(screen.getByRole("checkbox", { name: `Select ${log.message}` })).not.toBeChecked());
+  });
+
   it("hydrates a shared query and sends only allowlisted camelCase server inputs", async () => {
     const view = mount({ search: {
       q: "unrelated", tab: "details",

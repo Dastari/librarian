@@ -6,6 +6,8 @@ import { Segmented } from "glass-ux/segmented";
 import { parseAsStringEnum, useQueryState } from "nuqs";
 import { useCallback, useMemo, useState } from "react";
 
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { useTableSelection } from "@/hooks/useTableSelection";
 import { EntityChip } from "@/components/entities/EntityChip";
 import { Button, Dialog } from "@/components/ui";
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
@@ -92,11 +94,12 @@ export function ActivityPage() {
   const libraries = useCompleteConnection(EntityLibraryListDocument, { orderBy: [{ name: "ASC" }] }, (data) => data.libraries);
   const libraryOptions = useMemo(() => libraries.rows.map((library) => ({ id: library.id, name: library.name })), [libraries.rows]);
   const columns = useMemo(() => columnsFor(libraryOptions), [libraryOptions]);
-  const url = useTableUrlState({ namespace: "activity", columns, ...urlSchema, defaultSorting });
-  const state = useMemo<DataTableState>(() => ({ pagination: { pageIndex: 0, pageSize: 50 }, selection: {}, ...url.state }), [url.state]);
-  const onStateChange = (next: DataTableState, change: DataTableStateChange) => url.onStateChange(next, change);
-
-  const activity = useActivity(state, preset);
+  const url = useTableUrlState({ namespace: "activity", columns, ...urlSchema, filters: { ...urlSchema.filters, library: tableUrlFilters.options(libraryOptions.map((library) => library.id), ["in"]) }, defaultSorting });
+  const baseState = useMemo<DataTableState>(() => ({ pagination: { pageIndex: 0, pageSize: 50 }, selection: {}, ...url.state }), [url.state]);
+  const activity = useActivity(baseState, preset);
+  const selectedRows = useTableSelection({ scope: [user?.id, preset, url.state], rows: activity.list.rows, ready: !activity.list.loading && !activity.list.fetching });
+  const state = { ...baseState, selection: selectedRows.selection };
+  const onStateChange = (next: DataTableState, change: DataTableStateChange) => change === "selection" ? selectedRows.onSelectionChange(next.selection) : url.onStateChange(next, change);
   const refetch = activity.refetch;
   const onChanged = useCallback(() => refetch(), [refetch]);
   const actions = useNotificationActions(onChanged, isAdmin);
@@ -148,6 +151,7 @@ export function ActivityPage() {
             infinite={{ revision: activity.list.revision, hasMore: !printing && activity.list.hasMore, onLoadMore: activity.list.loadMore, loadingMore: activity.list.loadingMore, error: activity.list.moreError?.message }}
             search={search}
             actions={actions}
+            renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={noun} />}
             selectable
             live
             noun={noun}

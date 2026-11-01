@@ -1,8 +1,10 @@
+import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
+import { copyText } from "glass-ux/copy-button";
 import { useMutation } from "@apollo/client/react";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
-import { createDataTableColumns, DataTable, filters, IdentityCell, RelativeTime } from "glass-ux/data-table";
-import { IconExternalLink } from "glass-ux/icons";
+import { createDataTableColumns, filters, IdentityCell, RelativeTime } from "glass-ux/data-table";
+import { IconCopy, IconExternalLink } from "glass-ux/icons";
 import { IconBan, IconRotate } from "@tabler/icons-react";
 import { useMemo } from "react";
 
@@ -15,6 +17,9 @@ import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { entityPath, glyph, type EntityKindName } from "@/lib/entities/kinds";
 import { parseTimestamp } from "@/lib/format";
 import { assertSuccess } from "@/lib/graphql/errors";
+
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { runSettingsSelection } from "./runSettingsSelection";
 
 import { SettingsLoadError } from "./SettingsLoadError";
 import { SettingsSection } from "./SettingsSection";
@@ -68,17 +73,17 @@ export function BlockedReleases() {
   const [remove] = useMutation(EntityReleaseBlocklistDeleteDocument);
 
   const actions = useMemo(() => defineActions<Row>("blocked-release", [
+    { id: "copy-titles", label: (targets) => targets.length === 1 ? "Copy release title" : "Copy release titles", icon: IconCopy, group: "open", bulk: true,
+      run: (targets) => copyText(targets.map((target) => target.title).join("\n")), successMessage: () => "Release titles copied",
+    },
     {
-      id: "open-item", label: (targets) => `Open ${blockedFor(targets[0]!)?.noun ?? "item"}`, icon: IconExternalLink, group: "open", priority: 2,
+      id: "open-item", bulk: true, label: (targets) => `Open ${blockedFor(targets[0]!)?.noun ?? "item"}`, icon: IconExternalLink, group: "open", priority: 2,
       visible: (targets) => targets.length === 1 && Boolean(blockedFor(targets[0]!)),
       run: (targets, context) => { const item = blockedFor(targets[0]!); const href = item ? entityPath(item.kind, item.id) : undefined; if (href) context.navigate(href); },
     },
     ...(isAdmin ? [{
       id: "unblock", label: (targets: readonly Row[]) => (targets.length === 1 ? "Unblock" : `Unblock ${targets.length}`), icon: UnblockIcon, group: "manage" as const, priority: 1, bulk: true,
-      run: async (targets: readonly Row[]) => {
-        for (const row of targets) assertSuccess((await remove({ variables: { id: row.id } })).data?.deleteReleaseBlocklist, "Could not unblock");
-        void refetch();
-      },
+      run: (targets: readonly Row[]) => runSettingsSelection(targets, "Unblock", (row) => row.title, async (row) => assertSuccess((await remove({ variables: { id: row.id } })).data?.deleteReleaseBlocklist, "Could not unblock"), refetch),
       successMessage: (targets: readonly Row[]) => (targets.length === 1 ? "Release unblocked" : `Unblocked ${targets.length} releases`),
     }] : []),
   ]), [isAdmin, refetch, remove]);
@@ -86,7 +91,7 @@ export function BlockedReleases() {
   return (
     <SettingsSection title="Blocked releases" description="Releases that failed to import or stalled. They are skipped until you unblock them.">
       <SettingsLoadError error={list.error} retry={list.refetch} hasRows={rows.length > 0} />
-      <DataTable<Row> height="auto"
+      <LoadedDataTable<Row> complete={!list.loading && !list.error} height="auto" selectable queryKey={user?.id}
         id={`librarian.${user?.id ?? "session"}.settings.blocked-releases`}
         label="Blocked releases"
         columns={columns}
@@ -94,8 +99,8 @@ export function BlockedReleases() {
         getRowId={(row) => row.id}
         getRowLabel={(row) => row.title}
         loading={loading && rows.length === 0}
-        actions={actions}
-        selectable={isAdmin}
+        actions={actions} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "release", other: "releases" }} />}
+
         density="compact"
         noun={{ one: "release", other: "releases" }}
         emptyMessage="Nothing is blocked."

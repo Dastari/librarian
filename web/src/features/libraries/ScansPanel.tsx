@@ -1,13 +1,16 @@
+import { copyText } from "glass-ux/copy-button";
 import { defineActions, type ActionSet } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, DataTable, filters, IdentityCell, NumericCell, RelativeTime, TextCell, type DataTableSearch, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
-import { IconClose, IconFilter, IconHistory, IconRefresh } from "glass-ux/icons";
+import { IconClose, IconCopy, IconFilter, IconHistory, IconRefresh } from "glass-ux/icons";
 import { MeterCell } from "glass-ux/meter-cell";
 import { Metric } from "glass-ux/metric";
 import { Segmented } from "glass-ux/segmented";
 import { parseAsString, parseAsStringEnum, useQueryState } from "nuqs";
 import { useCallback, useMemo, useState } from "react";
 
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { useTableSelection } from "@/hooks/useTableSelection";
 import { EntityChip } from "@/components/entities/EntityChip";
 import { Button, Dialog } from "@/components/ui";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -138,11 +141,14 @@ export function ScansPanel({ libraryId }: { libraryId: string }) {
   const runCols = useMemo(() => runColumns(), []);
   const issueTable = useTableUrlState({ namespace: `scan-issues`, columns: issueCols, ...issueUrl });
   const runTable = useTableUrlState({ namespace: `scan-runs`, columns: runCols, ...runUrl });
-  const issueState = useMemo(() => tableState(issueTable.state), [issueTable.state]);
-  const runState = useMemo(() => tableState(runTable.state), [runTable.state]);
-
-  const issues = useScanIssues(libraryId, issueState, view, scanRunId);
-  const runs = useScanRuns(libraryId, runState, view);
+  const issueBaseState = useMemo(() => tableState(issueTable.state), [issueTable.state]);
+  const runBaseState = useMemo(() => tableState(runTable.state), [runTable.state]);
+  const issues = useScanIssues(libraryId, issueBaseState, view, scanRunId);
+  const runs = useScanRuns(libraryId, runBaseState, view);
+  const issueSelection = useTableSelection({ scope: [user?.id, libraryId, view, scanRunId, issueTable.state], rows: issues.list.rows, ready: !issues.list.loading && !issues.list.fetching });
+  const runSelection = useTableSelection({ scope: [user?.id, libraryId, view, runTable.state], rows: runs.list.rows, ready: !runs.list.loading && !runs.list.fetching });
+  const issueState = { ...issueBaseState, selection: issueSelection.selection };
+  const runState = { ...runBaseState, selection: runSelection.selection };
   const refetch = useCallback(() => {
     void issues.list.refetch().catch(() => {});
     void runs.list.refetch().catch(() => {});
@@ -151,9 +157,14 @@ export function ScansPanel({ libraryId }: { libraryId: string }) {
   const issueActions = useScanIssueActions(refetch, isAdmin);
   const runActions = useMemo<ActionSet<RunRow>>(() => defineActions("scan-run", [
     {
-      id: "show-issues", label: "Show issues from this scan", icon: IconFilter, group: "open", priority: 1,
+      id: "show-issues", bulk: true, label: "Show issues from this scan", icon: IconFilter, group: "open", priority: 1,
       visible: (rows) => rows.length === 1 && (rows[0]!.issues.pageInfo.totalCount ?? 0) > 0,
       run: (rows) => { void setScanRunId(rows[0]!.id); void setView("open"); },
+    },
+    {
+      id: "copy-summary", label: "Copy scan summaries", icon: IconCopy, group: "open", bulk: true,
+      run: async (rows) => copyText(rows.map((row) => `${formatDateTime(row.startedAt ?? row.createdAt)} · ${scanRunStatus(row.status).label} · ${row.discoveredCount} files · ${row.matchedCount} matched · ${row.unmatchedCount} unmatched${row.summary ? ` · ${row.summary}` : ""}`).join("\n")),
+      successMessage: () => "Scan summaries copied",
     },
   ]), [setScanRunId, setView]);
 
@@ -208,10 +219,12 @@ export function ScansPanel({ libraryId }: { libraryId: string }) {
               refetching={runs.list.fetching && !runs.list.loading}
               rowCount={runs.list.totalCount}
               state={runState}
-              onStateChange={(next: DataTableState, change: DataTableStateChange) => runTable.onStateChange(next, change)}
+              onStateChange={(next: DataTableState, change: DataTableStateChange) => change === "selection" ? runSelection.onSelectionChange(next.selection) : runTable.onStateChange(next, change)}
               infinite={{ revision: runs.list.revision, hasMore: !printing && runs.list.hasMore, onLoadMore: runs.list.loadMore, loadingMore: runs.list.loadingMore, error: runs.list.moreError?.message }}
               search={runSearch}
               actions={runActions}
+              selectable
+              renderBulkActions={(rows) => <TableBulkActions set={runActions} rows={rows} noun={{ one: "scan", other: "scans" }} />}
               live
               noun={{ one: "scan", other: "scans" }}
               onRowOpen={(row) => setSelectedId(row.id)}
@@ -236,11 +249,12 @@ export function ScansPanel({ libraryId }: { libraryId: string }) {
               refetching={issues.list.fetching && !issues.list.loading}
               rowCount={issues.list.totalCount}
               state={issueState}
-              onStateChange={(next: DataTableState, change: DataTableStateChange) => issueTable.onStateChange(next, change)}
+              onStateChange={(next: DataTableState, change: DataTableStateChange) => change === "selection" ? issueSelection.onSelectionChange(next.selection) : issueTable.onStateChange(next, change)}
               infinite={{ revision: issues.list.revision, hasMore: !printing && issues.list.hasMore, onLoadMore: issues.list.loadMore, loadingMore: issues.list.loadingMore, error: issues.list.moreError?.message }}
               search={issueSearch}
               actions={issueActions}
-              selectable={isAdmin}
+              selectable
+              renderBulkActions={(rows) => <TableBulkActions set={issueActions} rows={rows} noun={{ one: "issue", other: "issues" }} />}
               live
               noun={{ one: "issue", other: "issues" }}
               onRowOpen={(row) => setSelectedId(row.id)}

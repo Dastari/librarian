@@ -71,14 +71,23 @@ galleries use a Glass ScrollArea and keep their count footer outside it. Tables
 embedded in scrolling artwork/detail pages use `height="auto"`. Failed refreshes
 keep readable loaded rows and offer retry.
 
-`components/ui/DataTable.tsx` is now a compatibility adapter over public Glass
-DataTable. Its 21 feature consumers share that runtime; its old pager is removed.
+Server-backed views compose public Glass DataTable directly. Complete datasets
+use `components/ui/LoadedDataTable.tsx` for local filtering and progressive reveal.
 Main-page tables sit directly on the page canvas, without an enclosing glass
-surface or frame. The adapter defaults to `frame={false}`; do not add a Panel
-solely to surround a primary table.
+surface or frame; do not add a Panel solely to surround a primary table.
 Complete datasets filter before incrementally rendering batches. Server lists send
 filters to their query and supply both dataset identity and refresh/load revision.
 Reset selection on a changed dataset, preserve it on append and ordinary refresh.
+All populated tables expose selection and share one typed `ActionSet` between row,
+right-click and selection menus. Set `bulk: true` on single-target actions too when
+they belong in a one-row selection, retaining their `rows.length === 1` guard.
+Use `TableBulkActions` to keep the footer's actions reachable in narrow panes.
+Controlled server tables use `useTableSelection`; complete local tables use
+`LoadedDataTable` (or `useSelectableTableState` for a fully loaded reorderable list).
+Prune completed selections against the full filtered collection, before incremental
+rendering. Never reset them to a literal empty object on each render or persist them
+in the URL. Read-only tables offer meaningful copy/export actions; mutations retain
+permission checks, protected-row reasons, one confirmation and honest partial results.
 `LoadedDataTable` provides the complete-collection contract for media detail lists.
 Its poster `renderCard` mode is a host media gallery, separate from the
 Glass table's narrow row cards. `PosterCard` shows the artwork uncropped (2:3, or

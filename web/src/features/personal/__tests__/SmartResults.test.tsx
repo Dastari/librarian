@@ -8,6 +8,7 @@ import {
   type LibraryFieldsFragment, type TrackFieldsFragment,
 } from "@/graphql/generated/graphql";
 
+import { playerStore } from "@/features/player/store";
 import { SmartResults, smartRule } from "../SmartResults";
 import { connection, expectValidOperation, installTableGeometry, observeTableEnd, operationName, OWNER, personalHarness, personalSchema, respond, savedView, STAMP } from "./personalHarness";
 
@@ -211,6 +212,54 @@ describe("SmartResults retains its loaded window on library refresh", () => {
     expect(screen.getByText("First track")).toBeInTheDocument();
     expect(mediaRequests()).toHaveLength(2);
     expect(view.mutations()).toEqual([]);
+    view.registry.reset(false);
+  });
+});
+
+
+describe("smart-track selection actions", () => {
+  beforeEach(() => { installTableGeometry(); playerStore.stopAudio(); });
+  afterEach(() => { playerStore.stopAudio(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it("queues only the selected smart results in the displayed order", async () => {
+    const view = personalHarness();
+    await view.mount(<SmartResults view={savedView({ contentType: "TRACK", availability: "ANY" })} />);
+    await respond(await view.next(EntityLibraryListDocument), connection("libraries", [library("library-a")]));
+    await respond(await view.next(EntityTrackListDocument), connection("tracks", [track("one", "First track"), track("two", "Second track"), track("three", "Third track")]));
+    await screen.findByText("Third track");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Third track" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select First track" }));
+    await userEvent.click(screen.getByRole("button", { name: "Actions for 2 selected tracks" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Add to queue" }));
+    await waitFor(() => expect(playerStore.getSnapshot().queue.map((item) => item.entity.id)).toEqual(["one", "three"]));
+    expect(view.mutations()).toHaveLength(0);
+  });
+});
+
+
+describe("smart-track selection refresh boundaries", () => {
+  beforeEach(() => { installTableGeometry(); playerStore.stopAudio(); });
+  afterEach(() => { playerStore.stopAudio(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it("retains selection while refreshing and removes deleted targets before the next bulk action", async () => {
+    const view = personalHarness({ live: true });
+    await view.mount(<SmartResults view={savedView({ contentType: "TRACK", availability: "ANY" })} />);
+    await respond(await view.next(EntityLibraryListDocument), connection("libraries", [library("library-a")]));
+    const rows = [track("one", "First track"), track("two", "Second track")];
+    await respond(await view.next(EntityTrackListDocument), connection("tracks", rows));
+    await screen.findByText("Second track");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select First track" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Second track" }));
+    act(() => view.registry.invalidate({ topic: "Track" }));
+    const refresh = await view.next(EntityTrackListDocument, 1);
+    expect(screen.getByRole("checkbox", { name: "Select First track" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select Second track" })).toBeChecked();
+    await respond(refresh, connection("tracks", [rows[0]!]));
+    await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Select Second track" })).toBeNull());
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for 1 selected track" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Add to queue" }));
+    await waitFor(() => expect(playerStore.getSnapshot().queue.map((item) => item.entity.id)).toEqual(["one"]));
+    expect(view.mutations()).toHaveLength(0);
     view.registry.reset(false);
   });
 });

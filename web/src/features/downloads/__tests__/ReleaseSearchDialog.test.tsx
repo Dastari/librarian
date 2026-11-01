@@ -433,3 +433,23 @@ describe("ReleaseSearchDialog grabbing", () => {
     expect(screen.getByRole("button", { name: "Grab" })).toBeDisabled();
   });
 });
+
+describe("release selection actions", () => {
+  it("confirms a multi-release acquisition once and requests exactly the selected releases", async () => {
+    const added = vi.fn(() => ({ data: { addTorrent: { __typename: "AddTorrentResult", success: true, error: null, torrent: null } } }));
+    const addMock = (id: string) => ({
+      request: { query: AddTorrentDocument, variables: { input: { magnet: `magnet:?xt=urn:btih:${id}`, url: null, libraryId: "lib-1", movieId: null, showId: "show-1", episodeId: "ep-1", albumId: null, trackId: null, audiobookId: null, chapterId: null, season: null, sourceIndexerId: "src-1", sourceUrl: `https://tracker/details/${id}` } } }, result: added,
+    });
+    await mount([searchMock([release("one"), release("two"), release("unselected")]), addMock("one"), addMock("two")]);
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select Release one" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Release two" }));
+    await userEvent.click(screen.getByRole("button", { name: "Actions for 2 selected releases" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Grab 2 releases" }));
+    const confirmation = await screen.findByRole("alertdialog");
+    expect(confirmation).toHaveTextContent("Each selected release starts a separate download");
+    expect(added).not.toHaveBeenCalled();
+    await userEvent.click(within(confirmation).getByRole("button", { name: "Download" }));
+    await vi.waitFor(() => expect(added).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  });
+});

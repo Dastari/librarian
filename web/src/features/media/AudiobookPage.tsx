@@ -1,3 +1,4 @@
+import { copyText } from "glass-ux/copy-button";
 import { useApolloClient, useMutation } from "@apollo/client/react";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { toast } from "glass-ux/toast";
@@ -5,18 +6,19 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ActionBar, defineActions, type ActionSet } from "glass-ux/actions";
 import { Button } from "glass-ux/button";
 import { createDataTableColumns, filters, NumericCell, TextCell } from "glass-ux/data-table";
-import { IconBookmark, IconInfo, IconPlay } from "glass-ux/icons";
+import { IconBookmark, IconCopy, IconInfo, IconPlay, IconPlus } from "glass-ux/icons";
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 
 import { ConfirmDialog, EmptyState, ErrorState, KeyValueList, MetaLine, Panel, SkeletonHero, StatusChip } from "@/components/ui";
 import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
 import { AcquisitionDialog } from "@/features/acquisition/AcquisitionDialog";
 import { autoDownloadMeta } from "@/features/acquisition/mode";
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { usePlayer } from "@/features/player/usePlayer";
 import type { PlayItem } from "@/features/player/store";
-import { AudiobookDetailDocument, AudiobookChaptersPageDocument, EntityAudiobookDeleteDocument, EntityChapterUpdateDocument, type AudiobookDetailQuery } from "@/graphql/generated/graphql";
+import { AudiobookDetailDocument, AudiobookChaptersPageDocument, EntityAudiobookDeleteDocument, EntityChapterUpdateDocument, EntityChapterUpdateManyDocument, type AudiobookDetailQuery } from "@/graphql/generated/graphql";
 import { useContentStatuses } from "@/hooks/useContentStatuses";
 import { audiobookCover } from "@/lib/artwork";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
@@ -111,6 +113,7 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
   const { progressByFile } = progress;
   const [deleteBook, { loading: deleting }] = useMutation(EntityAudiobookDeleteDocument);
   const [updateChapter] = useMutation(EntityChapterUpdateDocument, { refetchQueries: () => activeContentStatusQueries(client) });
+  const [updateChapters] = useMutation(EntityChapterUpdateManyDocument, { refetchQueries: () => activeContentStatusQueries(client) });
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [searching, setSearching] = useState(false);
   const [acquisition, setAcquisition] = useState(false);
@@ -153,18 +156,51 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
     });
     player.playAudio(items, index);
   }, [progressUnavailable, pages.complete, queue, resumeIndex, progressByFile, player]);
+  const setSelectedWanted = useCallback(async (selected: readonly ChapterRow[], wanted: boolean) => {
+    if (!isAdmin) throw new Error("Administrator access required");
+    const missing = selected.filter((item) => !item.mediaFileId && item.wanted !== wanted);
+    if (!missing.length) throw new Error("No applicable missing chapters selected");
+    try {
+      const { data } = await updateChapters({ variables: { where: { id: { inList: missing.map((item) => item.id) }, audiobookId: { eq: audiobookId }, mediaFileId: { isNull: true } }, input: { wanted } } });
+      const result = assertSuccess(data?.updateChapters, "Could not update selected chapters");
+      if (result.affectedCount !== missing.length) throw new Error(`Updated ${result.affectedCount} of ${missing.length} selected chapters. Refresh and retry the remaining items.`);
+      for (const item of missing) pages.updateRow({ ...item, wanted });
+    } finally { await refetch(); }
+  }, [isAdmin, audiobookId, updateChapters, pages.updateRow, refetch]);
+  const selectedQueue = useCallback((selectedRows: readonly ChapterRow[]) => {
+    const selected = new Set(selectedRows.map((item) => item.id));
+    return queue.filter((item) => selected.has(item.entity.id)).map((item, index) => {
+      const saved = progressByFile.get(item.mediaFileId);
+      return { ...item, startPosition: index === 0 && saved && !saved.isWatched ? saved.currentPosition : 0 };
+    });
+  }, [queue, progressByFile]);
+  const selectedPlaybackUnavailable = (rows: readonly ChapterRow[]) => rows.some((item) => !item.mediaFileId) ? "Some selected chapters have no file. Deselect them to play this selection." : progressUnavailable;
   const actions = useMemo(() => defineActions<ChapterRow>("chapter", [
     { id: "play", label: ([chapter]) => {
         const saved = chapter?.mediaFileId ? progressByFile.get(chapter.mediaFileId) : undefined;
         return saved && !saved.isWatched && saved.currentPosition > 0 ? "Resume" : "Play";
-      }, icon: IconPlay, group: "open", primary: true,
-      visible: ([chapter]) => Boolean(chapter?.mediaFileId),
+      }, icon: IconPlay, group: "open", primary: true, bulk: true,
+      visible: (rows) => rows.length === 1 && Boolean(rows[0]?.mediaFileId),
       disabledReason: () => progressUnavailable,
       run: ([chapter]) => { if (chapter?.mediaFileId) playFrom(chapter); } },
-    { id: "wanted", label: ([chapter]) => chapter?.wanted ? "Wanted" : "Want", icon: IconBookmark, group: "manage", priority: 1,
-      visible: ([chapter]) => isAdmin && Boolean(chapter && !chapter.mediaFileId),
+    { id: "wanted", label: ([chapter]) => chapter?.wanted ? "Wanted" : "Want", icon: IconBookmark, group: "manage", priority: 1, bulk: true,
+      visible: (rows) => rows.length === 1 && isAdmin && Boolean(rows[0] && !rows[0].mediaFileId),
       run: ([chapter]) => chapter && toggleWanted(chapter) },
-  ]), [isAdmin, playFrom, progressByFile, progressUnavailable, toggleWanted]);
+    { id: "play-selected", label: "Play selected chapters", icon: IconPlay, group: "open", bulk: true,
+      visible: (rows) => rows.length > 1, disabledReason: selectedPlaybackUnavailable,
+      run: (rows) => { const items = selectedQueue(rows); if (!items.length || selectedPlaybackUnavailable(rows)) throw new Error("Selected chapters are not ready to play"); player.playAudio(items); } },
+    { id: "enqueue", label: "Add to queue", icon: IconPlus, group: "organise", bulk: true,
+      disabledReason: selectedPlaybackUnavailable,
+      run: (rows) => { const items = selectedQueue(rows).map((item) => ({ ...item, startPosition: 0 })); if (!items.length || selectedPlaybackUnavailable(rows)) throw new Error("Selected chapters are not ready to queue"); player.enqueue(items); }, successMessage: () => "Added to queue" },
+    { id: "want-selected", label: "Want selected missing chapters", icon: IconBookmark, group: "manage", bulk: true,
+      visible: (rows) => isAdmin && rows.length > 1 && rows.some((item) => !item.mediaFileId && !item.wanted),
+      run: (rows) => setSelectedWanted(rows, true), successMessage: () => "Selected missing chapters wanted" },
+    { id: "unwant-selected", label: "Unwant selected missing chapters", icon: IconBookmark, group: "manage", bulk: true,
+      visible: (rows) => isAdmin && rows.length > 1 && rows.some((item) => !item.mediaFileId && item.wanted),
+      run: (rows) => setSelectedWanted(rows, false), successMessage: () => "Selected missing chapters no longer wanted" },
+    { id: "copy-titles", label: "Copy chapter titles", icon: IconCopy, group: "organise", bulk: true,
+      run: async (rows) => { await copyText(rows.map((item) => item.title ?? `Chapter ${item.chapterNumber}`).join("\n")); }, successMessage: () => "Chapter titles copied" },
+  ]), [isAdmin, playFrom, toggleWanted, setSelectedWanted, selectedQueue, player, progressByFile, progressUnavailable]);
 
   if (error && !book) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!book) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Audiobook not found" description="This item may have been removed from the library." className="page-gutter my-8" />;
@@ -216,7 +252,8 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
         <LoadedDataTable
           id={`audiobook-chapters:${user?.id ?? "anonymous"}:${book.libraryId}:${book.id}`}
           label={`${book.title} chapters`} columns={chapterColumns} rows={chapters} getRowId={(chapter) => chapter.id} getRowLabel={(chapter) => chapter.title ?? `Chapter ${chapter.chapterNumber}`}
-          height="auto" density="compact" noun={{ one: "chapter", other: "chapters" }} selectable={false} actions={actions}
+          height="auto" density="compact" noun={{ one: "chapter", other: "chapters" }} selectable actions={actions}
+          renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "chapter", other: "chapters" }} />}
           complete={pages.complete} search={{ fields: ["title"], placeholder: "Search chapters" }} refetching={loading || pages.loading || progress.loading}
           status={pages.error ? <span role="status">Could not load all chapters. <Button size="sm" variant="ghost" onClick={pages.retry}>Retry chapters</Button></span>
             : progress.error ? <span role="status">Could not load playback progress. <Button size="sm" variant="ghost" onClick={() => void progress.refetch().catch(() => {})}>Retry progress</Button></span>

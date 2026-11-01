@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { createDataTableColumns, filters } from "glass-ux/data-table";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ActionProvider } from "glass-ux/actions";
+import { ActionProvider, defineActions } from "glass-ux/actions";
 import { TooltipProvider } from "glass-ux/tooltip";
 import type { ReactElement, ReactNode } from "react";
 
@@ -43,6 +43,23 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("complete media table", () => {
+  it("retains later-batch selection during updates and removes targets leaving an active filter", async () => {
+    const action = vi.fn();
+    const actions = defineActions<Row>("recording", [{ id: "act", label: "Act on selected", group: "manage", bulk: true, run: action }]);
+    const element = (items: Row[]) => <LoadedDataTable id="selected-recordings" label="Recordings" rows={items} columns={columns} search={search} getRowId={(row) => row.id} getRowLabel={(row) => row.title} height="auto" selectable actions={actions} />;
+    const view = mount(element(rows));
+    await waitFor(() => expect(callbacks.size).toBeGreaterThan(0));
+    act(() => callbacks.forEach((callback) => callback([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select Recording 101" }));
+    view.rerender(element(rows.map((row) => ({ ...row }))));
+    expect(screen.getByRole("checkbox", { name: "Select Recording 101" })).toBeChecked();
+    await userEvent.type(await searchBox(), "Recording 101");
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Select Recording 101" })).not.toBeChecked());
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Recording 101" }));
+    view.rerender(element(rows.map((row) => row.id === "101" ? { ...row, title: "Renamed outside filter" } : row)));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Actions for 1 selected/ })).toBeNull());
+    expect(action).not.toHaveBeenCalled();
+  });
   it("prints every already loaded record and restores the screen window", async () => {
     mount(table());
     expect(screen.queryByText("Recording 201")).toBeNull();
