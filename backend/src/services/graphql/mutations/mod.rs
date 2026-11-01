@@ -23,5 +23,50 @@ mod auth_session_tests;
 
 pub mod maintenance;
 #[cfg(test)]
+mod media_file_authorization_tests;
+#[cfg(test)]
 mod notification_tests;
 pub use maintenance::MaintenanceMutations;
+
+/// The media file, if the caller may reach it through the generated row policy. Hand-written
+/// mutations on a file run with system authority below this point, so each must call this first.
+pub(crate) async fn authorized_media_file(
+    ctx: &async_graphql::Context<'_>,
+    media_file_id: &str,
+) -> async_graphql::Result<crate::services::graphql::entities::MediaFile> {
+    use crate::services::graphql::entities::MediaFile;
+    use graphql_orm::graphql::orm::{Entity, EntityAccessKind, EntityAccessSurface};
+
+    let denied = || async_graphql::Error::new("Media file not found or access denied");
+    let db = ctx.data::<crate::db::Database>()?;
+    let policy_key = <MediaFile as Entity>::metadata().read_policy;
+    db.ensure_entity_access(
+        Some(ctx),
+        "MediaFile",
+        policy_key,
+        EntityAccessKind::Read,
+        EntityAccessSurface::GraphqlMutation,
+    )
+    .await?;
+    let file = MediaFile::get(db.pool(), &media_file_id.to_string())
+        .await
+        .map_err(|e| async_graphql::Error::new(e.to_string()))?
+        .ok_or_else(denied)?;
+    let policy = db
+        .row_policy()
+        .ok_or_else(|| async_graphql::Error::new("Media file access policy unavailable"))?;
+    if !policy
+        .can_read_row(
+            Some(ctx),
+            db,
+            "MediaFile",
+            policy_key,
+            EntityAccessSurface::GraphqlMutation,
+            &file,
+        )
+        .await?
+    {
+        return Err(denied());
+    }
+    Ok(file)
+}
