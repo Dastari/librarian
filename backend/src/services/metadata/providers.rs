@@ -61,6 +61,7 @@ fn check_mutation_payloads(data: &serde_json::Value) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn timestamp_touch_variables(id: &str) -> serde_json::Value {
     serde_json::json!({ "id": id, "input": {} })
 }
@@ -1012,69 +1013,6 @@ impl MetadataService {
             failed
         );
 
-        Ok(())
-    }
-
-    /// Apply a generated timestamp-only Movie update to emit subscription notifications after
-    /// non-GraphQL side effects (e.g., artwork cache writes).
-    async fn notify_movie_changed(&self, auth_user: &AuthUser, movie: &Movie) -> Result<()> {
-        self
-            .execute_mutation(
-                auth_user,
-                r#"mutation NotifyMovieChanged($id: String!, $input: UpdateMovieInput!) {
-                    UpdateMovie: updateMovie(id: $id, input: $input) { Success: success Error: error }
-                }"#,
-                timestamp_touch_variables(&movie.id),
-            )
-            .await?;
-        Ok(())
-    }
-
-    /// Apply a generated timestamp-only Show update to emit subscription notifications after
-    /// non-GraphQL side effects (e.g., artwork cache writes).
-    async fn notify_show_changed(&self, auth_user: &AuthUser, show: &Show) -> Result<()> {
-        self.execute_mutation(
-            auth_user,
-            r#"mutation NotifyShowChanged($id: String!, $input: UpdateShowInput!) {
-                    UpdateShow: updateShow(id: $id, input: $input) { Success: success Error: error }
-                }"#,
-            timestamp_touch_variables(&show.id),
-        )
-        .await?;
-        Ok(())
-    }
-
-    /// Apply a generated timestamp-only Album update to emit subscription notifications after
-    /// non-GraphQL side effects (e.g., artwork cache writes).
-    async fn notify_album_changed(&self, auth_user: &AuthUser, album: &Album) -> Result<()> {
-        self
-            .execute_mutation(
-                auth_user,
-                r#"mutation NotifyAlbumChanged($id: String!, $input: UpdateAlbumInput!) {
-                    UpdateAlbum: updateAlbum(id: $id, input: $input) { Success: success Error: error }
-                }"#,
-                timestamp_touch_variables(&album.id),
-            )
-            .await?;
-        Ok(())
-    }
-
-    /// Apply a generated timestamp-only Audiobook update to emit subscription notifications after
-    /// non-GraphQL side effects (e.g., artwork cache writes).
-    async fn notify_audiobook_changed(
-        &self,
-        auth_user: &AuthUser,
-        audiobook: &Audiobook,
-    ) -> Result<()> {
-        self
-            .execute_mutation(
-                auth_user,
-                r#"mutation NotifyAudiobookChanged($id: String!, $input: UpdateAudiobookInput!) {
-                    UpdateAudiobook: updateAudiobook(id: $id, input: $input) { Success: success Error: error }
-                }"#,
-                timestamp_touch_variables(&audiobook.id),
-            )
-            .await?;
         Ok(())
     }
 
@@ -2208,9 +2146,6 @@ impl MetadataService {
                 )
                 .await;
         }
-        if let Err(e) = self.notify_movie_changed(&auth_user, &movie).await {
-            warn!(movie_id = %movie.id, error = %e, "Failed to notify movie change after artwork cache");
-        }
 
         Ok(movie)
     }
@@ -2679,9 +2614,6 @@ impl MetadataService {
                 )
                 .await;
         }
-        if let Err(e) = self.notify_show_changed(&auth_user, &show).await {
-            warn!(show_id = %show.id, error = %e, "Failed to notify show change after artwork cache");
-        }
 
         Ok(show)
     }
@@ -2868,9 +2800,6 @@ impl MetadataService {
                     .await
             {
                 warn!(show_id = %show.id, error = %error, "Failed to backfill episode stills");
-            }
-            if let Err(error) = self.notify_show_changed(&auth_user, &show).await {
-                warn!(show_id = %show.id, error = %error, "Failed to notify show change after artwork backfill");
             }
         }
         if processed > 0 {
@@ -3283,9 +3212,6 @@ impl MetadataService {
                 .cache_album_artwork(&album.id, cover_url.as_deref())
                 .await;
         }
-        if let Err(e) = self.notify_album_changed(&auth_user, &album).await {
-            warn!(album_id = %album.id, error = %e, "Failed to notify album change after artwork cache");
-        }
 
         Ok(album)
     }
@@ -3492,9 +3418,6 @@ impl MetadataService {
                 .cache_audiobook_artwork(&audiobook.id, details.cover_url.as_deref())
                 .await;
         }
-        if let Err(e) = self.notify_audiobook_changed(&auth_user, &audiobook).await {
-            warn!(audiobook_id = %audiobook.id, error = %e, "Failed to notify audiobook change after artwork cache");
-        }
 
         Ok(audiobook)
     }
@@ -3622,9 +3545,6 @@ impl MetadataService {
                     details.backdrop_url.as_deref(),
                 )
                 .await;
-        }
-        if let Err(e) = self.notify_movie_changed(&auth_user, &movie).await {
-            warn!(movie_id = %movie.id, error = %e, "Failed to notify movie change after artwork refresh");
         }
 
         Ok(movie)
@@ -4159,9 +4079,6 @@ impl MetadataService {
                     details.backdrop_url.as_deref(),
                 )
                 .await;
-        }
-        if let Err(e) = self.notify_show_changed(&auth_user, &show).await {
-            warn!(show_id = %show.id, error = %e, "Failed to notify show change after artwork refresh");
         }
 
         Ok(show)

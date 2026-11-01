@@ -1,12 +1,12 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
-import { BackupChangedDocument, EnabledSourcesChangedDocument, EntityAppLogKeysetDocument, EntityNotificationKeysetDocument, EntityPlaybackProgressKeysetDocument, EntityTorrentChangedDocument, HasEnabledSourcesDocument, ResumeShelfDocument } from "@/graphql/generated/graphql";
+import { BackupChangedDocument, EnabledSourcesChangedDocument, EntityAppLogKeysetDocument, EntityNotificationListDocument, EntityPlaybackProgressListDocument, EntityTorrentChangedDocument, HasEnabledSourcesDocument, ResumeShelfDocument } from "@/graphql/generated/graphql";
 import { apolloLiveSource, queryDependencies, topicDocuments } from "../documents";
 const topics = (document: Parameters<typeof queryDependencies>[0]) => queryDependencies(document).map((dependency) => dependency.topic);
-it("maps generated keyset roots and the authoritative resume shelf", () => {
+it("maps the generated keyset and list roots and the authoritative resume shelf", () => {
   expect(topics(EntityAppLogKeysetDocument)).toContain("AppLog");
-  expect(topics(EntityNotificationKeysetDocument)).toContain("Notification");
-  expect(topics(EntityPlaybackProgressKeysetDocument)).toContain("PlaybackProgress");
+  expect(topics(EntityNotificationListDocument)).toContain("Notification");
+  expect(topics(EntityPlaybackProgressListDocument)).toContain("PlaybackProgress");
   expect(topics(ResumeShelfDocument)).toEqual(expect.arrayContaining(["PlaybackProgress", "MediaFile", "Episode", "Show", "Movie", "Track", "Album", "Chapter", "Audiobook", "Library"]));
   expect(topicDocuments.Torrent).toBe(EntityTorrentChangedDocument);
   expect(topicDocuments.Backup).toBe(BackupChangedDocument);

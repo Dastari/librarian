@@ -33,13 +33,6 @@ query EntityHomeShelfGet($id: String!) {
   }
 }
 
-query EntityHomeShelfKeyset($where: HomeShelfWhereInput, $page: KeysetPageInput!) {
-  homeShelvesKeyset(where: $where, page: $page) {
-    edges { cursor node { ...HomeShelfFields } }
-    pageInfo { hasNextPage hasPreviousPage startCursor endCursor totalCount }
-  }
-}
-
 mutation EntityHomeShelfCreate($input: CreateHomeShelfInput!) {
   createHomeShelf(input: $input) {
     success

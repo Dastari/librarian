@@ -3,7 +3,7 @@ import { parse } from "graphql";
 import { describe, expect, it } from "vitest";
 import {
   ActiveDownloadCountDocument, BackupOverviewDocument, ContentStatusesDocument, EntityMovieGetDocument,
-  EntityMovieListDocument, EntitySeasonListDocument, EntitySeasonChangedDocument, LibrariesOverviewDocument, MovieDetailDocument, ShowEpisodesDocument,
+  EntityMovieListDocument, EntitySeasonListDocument, EntitySeasonChangedDocument, LibrariesOverviewDocument, LiveTorrentsDocument, MovieDetailDocument, ShowEpisodesDocument,
 } from "@/graphql/generated/graphql";
 import { apolloLiveSource, queryDependencies, topicDocuments } from "../documents";
 
@@ -53,7 +53,9 @@ describe("generated live dependencies", () => {
   it("keeps computed status and runtime pause/resume dependencies", () => {
     expect(topics(ContentStatusesDocument)).not.toContain("AppSetting");
     expect(topics(ContentStatusesDocument)).toEqual(expect.arrayContaining(["Torrent", "PendingFileMatch", "MediaFile", "QualityProfile", "LibraryScanIssue", "PlaybackProgress"]));
-    expect(topics(ActiveDownloadCountDocument)).toEqual(expect.arrayContaining(["Torrent", "TorrentProgress", "TorrentAdded", "TorrentCompleted", "TorrentRemoved"]));
+    // The shell badge counts stored torrents, so it follows the generated Torrent stream.
+    expect(topics(ActiveDownloadCountDocument)).toContain("Torrent");
+    expect(topics(LiveTorrentsDocument)).toEqual(expect.arrayContaining(["Torrent", "TorrentProgress", "TorrentAdded", "TorrentCompleted", "TorrentRemoved"]));
   });
 });
 

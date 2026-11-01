@@ -461,39 +461,32 @@ async fn resume_requires_complete_sql_visibility_and_checks_consumed_field_acces
 }
 
 #[tokio::test]
-async fn generated_keysets_keep_owner_counts_and_timestamp_id_order_with_admin_only_logs() {
+async fn only_the_log_viewer_keeps_a_keyset_root_and_it_stays_admin_only_in_timestamp_id_order() {
     let f = Fixture::new().await;
-    let mut own = Vec::new();
-    for number in 0..3 {
-        own.push(f.create("Notification",json!({"userId":f.owner.user_id,"notificationType":"info","category":"test","title":format!("Own {number}"),"message":"fixture"})).await);
-        f.create("Notification",json!({"userId":f.other.user_id,"notificationType":"info","category":"test","title":format!("Foreign {number}"),"message":"fixture"})).await;
+    // Keyset and scan roots are generated only where a client uses them (`query_shapes`).
+    for root in [
+        "notificationsKeyset(page:{limit:1}){edges{node{id}}}",
+        "notificationsScan(page:{limit:1}){edges{node{id}}}",
+        "appLogsScan(page:{limit:1}){edges{node{id}}}",
+    ] {
+        let response = f
+            .query(&format!("{{{root}}}"), Some(&AuthUser::system_admin()))
+            .await;
+        assert!(
+            response
+                .errors
+                .iter()
+                .any(|e| e.message.contains("Unknown field")),
+            "{root}: {response:?}"
+        );
     }
-    let response=f.query("{notificationsKeyset(page:{limit:1,includeTotalCount:true}){edges{node{id userId}}pageInfo{totalCount hasNextPage endCursor}}}",Some(&f.owner)).await;
-    assert!(response.errors.is_empty(), "{response:?}");
-    let data = response.data.into_json().unwrap();
-    assert_eq!(data["notificationsKeyset"]["pageInfo"]["totalCount"], 3);
-    assert_eq!(
-        data["notificationsKeyset"]["edges"][0]["node"]["userId"],
-        f.owner.user_id
-    );
-    let cursor = data["notificationsKeyset"]["pageInfo"]["endCursor"]
-        .as_str()
-        .unwrap();
-    let continued=f.query(&format!("{{notificationsKeyset(page:{{limit:5,after:\"{cursor}\",includeTotalCount:true}}){{edges{{node{{id userId}}}}pageInfo{{totalCount hasNextPage}}}}}}"),Some(&f.owner)).await;
-    assert!(continued.errors.is_empty(), "{continued:?}");
-    let page = continued.data.into_json().unwrap();
-    assert_eq!(
-        page["notificationsKeyset"]["edges"]
-            .as_array()
-            .unwrap()
-            .len(),
-        2
-    );
-    assert_eq!(page["notificationsKeyset"]["pageInfo"]["totalCount"], 3);
-    assert_eq!(
-        page["notificationsKeyset"]["pageInfo"]["hasNextPage"],
-        false
-    );
+    let listed = f
+        .query(
+            "{notifications(page:{limit:1}){edges{node{id}}}}",
+            Some(&f.owner),
+        )
+        .await;
+    assert!(listed.errors.is_empty(), "the list root stays: {listed:?}");
     let mut logs = Vec::new();
     for number in 0..3 {
         logs.push(f.create("AppLog",json!({"timestamp":"2026-10-25T00:00:00Z","level":"INFO","target":"resume-keyset-fixture","message":format!("Log {number}")})).await);

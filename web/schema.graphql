@@ -332,11 +332,6 @@ type AppLog {
 	createdAt: String!
 }
 
-type AppLogAuthorizedScanPage {
-	nodes: [AppLog!]!
-	pageInfo: ScanPageInfo!
-}
-
 """
 Event for #struct_name changes (subscriptions)
 """
@@ -947,16 +942,6 @@ type AuthenticatedUser {
 	username: String!
 	role: String!
 	displayName: String
-}
-
-"""
-Forward scan request. Continuations represent underlying scan positions,
-never visible offsets. Exact totals are available only for complete policies.
-"""
-input AuthorizedScanInput {
-	after: String
-	limit: Int
-	includeTotalCount: Boolean! = false
 }
 
 """
@@ -1844,12 +1829,6 @@ enum ContentStatusType {
 	CHAPTER
 }
 
-input CopyFilesInput {
-	sources: [String!]!
-	destination: String!
-	overwrite: Boolean
-}
-
 input CreateAlbumInput {
 	artistId: String!
 	libraryId: String!
@@ -2115,29 +2094,6 @@ input CreateLibraryScanIssueInput {
 	resolution: String
 }
 
-input CreateLibraryScanRunInput {
-	userId: String!
-	libraryId: String!
-	status: String!
-	currentStage: String!
-	startedAt: String
-	finishedAt: String
-	discoveredCount: Int!
-	existingCount: Int!
-	matchedCount: Int!
-	unmatchedCount: Int!
-	providerBlockedCount: Int!
-	analysisQueuedCount: Int!
-	analysisSucceededCount: Int!
-	analysisFailedCount: Int!
-	organizationSucceededCount: Int!
-	organizationFailedCount: Int!
-	missingCount: Int!
-	reconciledCount: Int!
-	summary: String
-	errorCode: String
-}
-
 input CreateListEntryInput {
 	userId: String!
 	listId: String!
@@ -2147,14 +2103,6 @@ input CreateListEntryInput {
 	albumId: String
 	audiobookId: String
 	trackId: String
-}
-
-input CreateMediaChapterInput {
-	mediaFileId: String!
-	chapterIndex: Int!
-	startSecs: Float!
-	endSecs: Float!
-	title: String
 }
 
 input CreateMediaFileInput {
@@ -2362,19 +2310,6 @@ input CreateQualityProfileInput {
 	isDefault: Boolean!
 }
 
-input CreateRefreshTokenInput {
-	id: String!
-	userId: String!
-	sessionId: String!
-	sessionFamilyId: String!
-	scopes: JSON!
-	expiresAt: String!
-	lastUsedAt: String
-	revokedAt: String
-	replacedByTokenId: String
-	revocationReason: String
-}
-
 input CreateReleaseBlocklistInput {
 	infoHash: String
 	guid: String
@@ -2386,43 +2321,6 @@ input CreateReleaseBlocklistInput {
 	albumId: String
 	audiobookId: String
 	expiresAt: String
-}
-
-input CreateRssFeedInput {
-	userId: String!
-	libraryId: String
-	name: String!
-	url: String!
-	enabled: Boolean!
-	pollIntervalMinutes: Int!
-	postDownloadAction: String
-	lastPolledAt: String
-	lastSuccessfulAt: String
-	lastError: String
-	consecutiveFailures: Int
-}
-
-input CreateRssFeedItemInput {
-	feedId: String!
-	guid: String
-	linkHash: String!
-	titleHash: String!
-	title: String!
-	link: String!
-	pubDate: String
-	description: String
-	parsedShowName: String
-	parsedSeason: Int
-	parsedEpisode: Int
-	parsedResolution: String
-	parsedCodec: String
-	parsedSource: String
-	parsedAudio: String
-	parsedHdr: String
-	processed: Boolean!
-	torrentId: String
-	skippedReason: String
-	seenAt: String!
 }
 
 input CreateSavedViewInput {
@@ -2520,15 +2418,6 @@ input CreateSourceInput {
 	lastErrorAt: String
 }
 
-input CreateSourcePriorityRuleInput {
-	userId: String!
-	libraryType: String
-	libraryId: String
-	priorityOrder: JSON!
-	searchAllSources: Boolean!
-	enabled: Boolean!
-}
-
 input CreateSubtitleInput {
 	mediaFileId: String!
 	sourceType: String!
@@ -2593,13 +2482,6 @@ input CreateTorrentInput {
 	completedAt: String
 }
 
-input CreateTorznabCategoryInput {
-	id: String!
-	name: String!
-	parentId: String
-	description: String
-}
-
 input CreateTrackInput {
 	albumId: String!
 	libraryId: String!
@@ -2617,47 +2499,6 @@ input CreateTrackInput {
 	mediaFileId: String
 }
 
-input CreateUsenetDownloadInput {
-	userId: String!
-	nzbName: String!
-	nzbHash: String
-	nzbUrl: String
-	nzbData: String
-	state: String!
-	progress: String
-	sizeBytes: Int
-	downloadedBytes: Int
-	downloadSpeed: Int
-	etaSeconds: Int
-	errorMessage: String
-	retryCount: Int!
-	downloadPath: String
-	libraryId: String
-	episodeId: String
-	movieId: String
-	albumId: String
-	audiobookId: String
-	indexerId: String
-	postProcessStatus: String
-	completedAt: String
-}
-
-input CreateUsenetServerInput {
-	userId: String!
-	name: String!
-	host: String!
-	port: Int!
-	useSsl: Boolean!
-	username: String
-	connections: Int!
-	priority: Int!
-	retentionDays: Int
-	enabled: Boolean!
-	lastError: String
-	errorCount: Int!
-	lastSuccessAt: String
-}
-
 input CreateUserInput {
 	username: String!
 	email: String
@@ -2666,29 +2507,6 @@ input CreateUserInput {
 	avatarUrl: String
 	isActive: Boolean!
 	lastLoginAt: String
-}
-
-input CreateVideoStreamInput {
-	mediaFileId: String!
-	streamIndex: Int!
-	codec: String!
-	codecLongName: String
-	width: Int!
-	height: Int!
-	aspectRatio: String
-	frameRate: String
-	avgFrameRate: String
-	bitrate: Int
-	pixelFormat: String
-	colorSpace: String
-	colorTransfer: String
-	colorPrimaries: String
-	hdrType: String
-	bitDepth: Int
-	language: String
-	title: String
-	isDefault: Boolean!
-	metadata: String
 }
 
 input DateFilter {
@@ -2834,11 +2652,6 @@ type DeleteEpisodesResult {
 	deletedCount: Int!
 }
 
-input DeleteFilesInput {
-	paths: [String!]!
-	recursive: Boolean
-}
-
 """
 Result of bulk delete by Where filter
 """
@@ -2887,25 +2700,7 @@ type DeleteLibraryScanIssuesResult {
 """
 Result of bulk delete by Where filter
 """
-type DeleteLibraryScanRunsResult {
-	success: Boolean!
-	error: String
-	deletedCount: Int!
-}
-
-"""
-Result of bulk delete by Where filter
-"""
 type DeleteListEntriesResult {
-	success: Boolean!
-	error: String
-	deletedCount: Int!
-}
-
-"""
-Result of bulk delete by Where filter
-"""
-type DeleteMediaChaptersResult {
 	success: Boolean!
 	error: String
 	deletedCount: Int!
@@ -3022,34 +2817,7 @@ type DeleteQualityProfilesResult {
 """
 Result of bulk delete by Where filter
 """
-type DeleteRefreshTokensResult {
-	success: Boolean!
-	error: String
-	deletedCount: Int!
-}
-
-"""
-Result of bulk delete by Where filter
-"""
 type DeleteReleaseBlocklistsResult {
-	success: Boolean!
-	error: String
-	deletedCount: Int!
-}
-
-"""
-Result of bulk delete by Where filter
-"""
-type DeleteRssFeedItemsResult {
-	success: Boolean!
-	error: String
-	deletedCount: Int!
-}
-
-"""
-Result of bulk delete by Where filter
-"""
-type DeleteRssFeedsResult {
 	success: Boolean!
 	error: String
 	deletedCount: Int!
@@ -3103,15 +2871,6 @@ type DeleteShowsResult {
 """
 Result of bulk delete by Where filter
 """
-type DeleteSourcePriorityRulesResult {
-	success: Boolean!
-	error: String
-	deletedCount: Int!
-}
-
-"""
-Result of bulk delete by Where filter
-"""
 type DeleteSourcesResult {
 	success: Boolean!
 	error: String
@@ -3148,15 +2907,6 @@ type DeleteTorrentsResult {
 """
 Result of bulk delete by Where filter
 """
-type DeleteTorznabCategoriesResult {
-	success: Boolean!
-	error: String
-	deletedCount: Int!
-}
-
-"""
-Result of bulk delete by Where filter
-"""
 type DeleteTracksResult {
 	success: Boolean!
 	error: String
@@ -3166,34 +2916,7 @@ type DeleteTracksResult {
 """
 Result of bulk delete by Where filter
 """
-type DeleteUsenetDownloadsResult {
-	success: Boolean!
-	error: String
-	deletedCount: Int!
-}
-
-"""
-Result of bulk delete by Where filter
-"""
-type DeleteUsenetServersResult {
-	success: Boolean!
-	error: String
-	deletedCount: Int!
-}
-
-"""
-Result of bulk delete by Where filter
-"""
 type DeleteUsersResult {
-	success: Boolean!
-	error: String
-	deletedCount: Int!
-}
-
-"""
-Result of bulk delete by Where filter
-"""
-type DeleteVideoStreamsResult {
 	success: Boolean!
 	error: String
 	deletedCount: Int!
@@ -3399,11 +3122,6 @@ type HomeShelf {
 	library: Library
 }
 
-type HomeShelfAuthorizedScanPage {
-	nodes: [HomeShelf!]!
-	pageInfo: ScanPageInfo!
-}
-
 """
 Event for #struct_name changes (subscriptions)
 """
@@ -3443,17 +3161,6 @@ type HomeShelfEdge {
 	A cursor for pagination
 	"""
 	cursor: String!
-}
-
-"""
-Scalar-only runtime keyset order. Each list entry must select
-exactly one field; NULL values sort last in either direction.
-"""
-input HomeShelfKeysetOrderByInput {
-	position: OrderDirection
-	createdAt: OrderDirection
-	updatedAt: OrderDirection
-	id: OrderDirection
 }
 
 input HomeShelfOrderByInput {
@@ -3843,11 +3550,6 @@ type LibraryPreference {
 	library: Library
 }
 
-type LibraryPreferenceAuthorizedScanPage {
-	nodes: [LibraryPreference!]!
-	pageInfo: ScanPageInfo!
-}
-
 """
 Event for #struct_name changes (subscriptions)
 """
@@ -3887,17 +3589,6 @@ type LibraryPreferenceEdge {
 	A cursor for pagination
 	"""
 	cursor: String!
-}
-
-"""
-Scalar-only runtime keyset order. Each list entry must select
-exactly one field; NULL values sort last in either direction.
-"""
-input LibraryPreferenceKeysetOrderByInput {
-	position: OrderDirection
-	createdAt: OrderDirection
-	updatedAt: OrderDirection
-	id: OrderDirection
 }
 
 input LibraryPreferenceOrderByInput {
@@ -4159,15 +3850,6 @@ input LibraryScanRunOrderByInput {
 	updatedAt: OrderDirection
 }
 
-"""
-Result type for #struct_name mutations
-"""
-type LibraryScanRunResult {
-	success: Boolean!
-	error: String
-	libraryScanRun: LibraryScanRun
-}
-
 input LibraryScanRunWhereInput {
 	id: StringFilter
 	userId: StringFilter
@@ -4261,11 +3943,6 @@ type ListEntry {
 	track: Track
 }
 
-type ListEntryAuthorizedScanPage {
-	nodes: [ListEntry!]!
-	pageInfo: ScanPageInfo!
-}
-
 """
 Event for #struct_name changes (subscriptions)
 """
@@ -4305,17 +3982,6 @@ type ListEntryEdge {
 	A cursor for pagination
 	"""
 	cursor: String!
-}
-
-"""
-Scalar-only runtime keyset order. Each list entry must select
-exactly one field; NULL values sort last in either direction.
-"""
-input ListEntryKeysetOrderByInput {
-	position: OrderDirection
-	createdAt: OrderDirection
-	updatedAt: OrderDirection
-	id: OrderDirection
 }
 
 input ListEntryOrderByInput {
@@ -4546,15 +4212,6 @@ type MediaChapterEdge {
 input MediaChapterOrderByInput {
 	chapterIndex: OrderDirection
 	createdAt: OrderDirection
-}
-
-"""
-Result type for #struct_name mutations
-"""
-type MediaChapterResult {
-	success: Boolean!
-	error: String
-	mediaChapter: MediaChapter
 }
 
 input MediaChapterWhereInput {
@@ -4900,12 +4557,6 @@ input MetadataCacheWhereInput {
 	Logical NOT of condition
 	"""
 	not: MetadataCacheWhereInput
-}
-
-input MoveFilesInput {
-	sources: [String!]!
-	destination: String!
-	overwrite: Boolean
 }
 
 type Movie {
@@ -5267,17 +4918,12 @@ type Mutation {
 	refreshToken: AuthPayload!
 	logout: LogoutPayload!
 	createDirectory(input: CreateDirectoryInput!): FileOperationPayload!
-	deleteFiles(input: DeleteFilesInput!): FileOperationPayload!
-	copyFiles(input: CopyFilesInput!): FileOperationPayload!
-	moveFiles(input: MoveFilesInput!): FileOperationPayload!
-	renameFile(input: RenameFileInput!): FileOperationPayload!
 	configureNetworkPath(input: ConfigureNetworkPathInput!): NetworkPathConfigPayload!
 	reconnectLibraryPath(path: String!): NetworkPathConfigPayload!
 	testTmdbConnection(input: TestTmdbConnectionInput!): TestTmdbConnectionResult!
 	scanLibrary(id: String!): ScanLibraryResult!
 	analyzeMediaFile(mediaFileId: String!, path: String!): AnalyzeMediaFileResult!
 	retryScanIssue(issueId: String!): ScanIssueActionResult!
-	resolveScanIssue(issueId: String!, resolution: String!): ScanIssueActionResult!
 	trashDuplicateScanIssue(issueId: String!): TrashDuplicateResult!
 	matchMediaFile(input: MatchMediaFileInput!): MatchMediaFileResult!
 	organizeMediaFile(input: OrganizeMediaFileInput!): OrganizeMediaFileResult!
@@ -5358,12 +5004,6 @@ type Mutation {
 	createFullBackup: CreateFullBackupResult!
 	verifyBackupSnapshot(snapshotId: String!): VerifyBackupSnapshotResult!
 	"""
-	Restore is unavailable on a live service. Disaster recovery must construct an
-	offline restore service with an empty staging database and object root, verify
-	both records and managed bytes, and publish them only after successful completion.
-	"""
-	restoreFullBackup(snapshotId: String!): RestoreFullBackupResult!
-	"""
 	Run one auto-download pass (candidate discovery + search + grab) right
 	now, optionally scoped to a single library. Admin-only.
 	"""
@@ -5379,11 +5019,6 @@ type Mutation {
 	and persist `quality_status`.
 	"""
 	evaluateMediaFileQuality(mediaFileId: String!): QualityEvaluationResult!
-	"""
-	Re-evaluate every media file in a library against its resolved
-	profile. Use after (re)assigning a `qualityProfileId`.
-	"""
-	recomputeLibraryQualityStatus(libraryId: String!): RecomputeQualityResult!
 	"""
 	Q38: approve a pending quality-upgrade notification. Replaces the
 	existing library file with the candidate that triggered the
@@ -5459,64 +5094,6 @@ type Mutation {
 		"""
 		where: LibraryWhereInput
 	): DeleteLibrariesResult!
-	"""
-	Create a new #struct_name_str
-	Create one LibraryScanRun records
-	"""
-	createLibraryScanRun(
-		"""
-		Input
-		"""
-		input: CreateLibraryScanRunInput!
-	): LibraryScanRunResult!
-	"""
-	Update an existing #struct_name_str
-	Update one LibraryScanRun records
-	"""
-	updateLibraryScanRun(
-		"""
-		Id
-		"""
-		id: String!,
-		"""
-		Input
-		"""
-		input: UpdateLibraryScanRunInput!
-	): LibraryScanRunResult!
-	"""
-	Delete a #struct_name_str
-	Delete one LibraryScanRun records
-	"""
-	deleteLibraryScanRun(
-		"""
-		Id
-		"""
-		id: String!
-	): LibraryScanRunResult!
-	"""
-	Update multiple #plural_name matching the given Where filter
-	Update matching LibraryScanRun records
-	"""
-	updateLibraryScanRuns(
-		"""
-		Where
-		"""
-		where: LibraryScanRunWhereInput,
-		"""
-		Input
-		"""
-		input: UpdateLibraryScanRunInput!
-	): UpdateLibraryScanRunsResult!
-	"""
-	Delete multiple #plural_name matching the given Where filter
-	Delete matching LibraryScanRun records
-	"""
-	deleteLibraryScanRuns(
-		"""
-		Where
-		"""
-		where: LibraryScanRunWhereInput
-	): DeleteLibraryScanRunsResult!
 	"""
 	Create a new #struct_name_str
 	Create one LibraryScanIssue records
@@ -6474,122 +6051,6 @@ type Mutation {
 	): DeleteTorrentFilesResult!
 	"""
 	Create a new #struct_name_str
-	Create one RssFeed records
-	"""
-	createRssFeed(
-		"""
-		Input
-		"""
-		input: CreateRssFeedInput!
-	): RssFeedResult!
-	"""
-	Update an existing #struct_name_str
-	Update one RssFeed records
-	"""
-	updateRssFeed(
-		"""
-		Id
-		"""
-		id: String!,
-		"""
-		Input
-		"""
-		input: UpdateRssFeedInput!
-	): RssFeedResult!
-	"""
-	Delete a #struct_name_str
-	Delete one RssFeed records
-	"""
-	deleteRssFeed(
-		"""
-		Id
-		"""
-		id: String!
-	): RssFeedResult!
-	"""
-	Update multiple #plural_name matching the given Where filter
-	Update matching RssFeed records
-	"""
-	updateRssFeeds(
-		"""
-		Where
-		"""
-		where: RssFeedWhereInput,
-		"""
-		Input
-		"""
-		input: UpdateRssFeedInput!
-	): UpdateRssFeedsResult!
-	"""
-	Delete multiple #plural_name matching the given Where filter
-	Delete matching RssFeed records
-	"""
-	deleteRssFeeds(
-		"""
-		Where
-		"""
-		where: RssFeedWhereInput
-	): DeleteRssFeedsResult!
-	"""
-	Create a new #struct_name_str
-	Create one RssFeedItem records
-	"""
-	createRssFeedItem(
-		"""
-		Input
-		"""
-		input: CreateRssFeedItemInput!
-	): RssFeedItemResult!
-	"""
-	Update an existing #struct_name_str
-	Update one RssFeedItem records
-	"""
-	updateRssFeedItem(
-		"""
-		Id
-		"""
-		id: String!,
-		"""
-		Input
-		"""
-		input: UpdateRssFeedItemInput!
-	): RssFeedItemResult!
-	"""
-	Delete a #struct_name_str
-	Delete one RssFeedItem records
-	"""
-	deleteRssFeedItem(
-		"""
-		Id
-		"""
-		id: String!
-	): RssFeedItemResult!
-	"""
-	Update multiple #plural_name matching the given Where filter
-	Update matching RssFeedItem records
-	"""
-	updateRssFeedItems(
-		"""
-		Where
-		"""
-		where: RssFeedItemWhereInput,
-		"""
-		Input
-		"""
-		input: UpdateRssFeedItemInput!
-	): UpdateRssFeedItemsResult!
-	"""
-	Delete multiple #plural_name matching the given Where filter
-	Delete matching RssFeedItem records
-	"""
-	deleteRssFeedItems(
-		"""
-		Where
-		"""
-		where: RssFeedItemWhereInput
-	): DeleteRssFeedItemsResult!
-	"""
-	Create a new #struct_name_str
 	Create one PendingFileMatch records
 	"""
 	createPendingFileMatch(
@@ -6822,64 +6283,6 @@ type Mutation {
 	): DeleteInviteTokensResult!
 	"""
 	Create a new #struct_name_str
-	Create one RefreshToken records
-	"""
-	createRefreshToken(
-		"""
-		Input
-		"""
-		input: CreateRefreshTokenInput!
-	): RefreshTokenResult!
-	"""
-	Update an existing #struct_name_str
-	Update one RefreshToken records
-	"""
-	updateRefreshToken(
-		"""
-		Id
-		"""
-		id: String!,
-		"""
-		Input
-		"""
-		input: UpdateRefreshTokenInput!
-	): RefreshTokenResult!
-	"""
-	Delete a #struct_name_str
-	Delete one RefreshToken records
-	"""
-	deleteRefreshToken(
-		"""
-		Id
-		"""
-		id: String!
-	): RefreshTokenResult!
-	"""
-	Update multiple #plural_name matching the given Where filter
-	Update matching RefreshToken records
-	"""
-	updateRefreshTokens(
-		"""
-		Where
-		"""
-		where: RefreshTokenWhereInput,
-		"""
-		Input
-		"""
-		input: UpdateRefreshTokenInput!
-	): UpdateRefreshTokensResult!
-	"""
-	Delete multiple #plural_name matching the given Where filter
-	Delete matching RefreshToken records
-	"""
-	deleteRefreshTokens(
-		"""
-		Where
-		"""
-		where: RefreshTokenWhereInput
-	): DeleteRefreshTokensResult!
-	"""
-	Create a new #struct_name_str
 	Create one AppSetting records
 	"""
 	createAppSetting(
@@ -6996,64 +6399,6 @@ type Mutation {
 	): DeleteAppLogsResult!
 	"""
 	Create a new #struct_name_str
-	Create one VideoStream records
-	"""
-	createVideoStream(
-		"""
-		Input
-		"""
-		input: CreateVideoStreamInput!
-	): VideoStreamResult!
-	"""
-	Update an existing #struct_name_str
-	Update one VideoStream records
-	"""
-	updateVideoStream(
-		"""
-		Id
-		"""
-		id: String!,
-		"""
-		Input
-		"""
-		input: UpdateVideoStreamInput!
-	): VideoStreamResult!
-	"""
-	Delete a #struct_name_str
-	Delete one VideoStream records
-	"""
-	deleteVideoStream(
-		"""
-		Id
-		"""
-		id: String!
-	): VideoStreamResult!
-	"""
-	Update multiple #plural_name matching the given Where filter
-	Update matching VideoStream records
-	"""
-	updateVideoStreams(
-		"""
-		Where
-		"""
-		where: VideoStreamWhereInput,
-		"""
-		Input
-		"""
-		input: UpdateVideoStreamInput!
-	): UpdateVideoStreamsResult!
-	"""
-	Delete multiple #plural_name matching the given Where filter
-	Delete matching VideoStream records
-	"""
-	deleteVideoStreams(
-		"""
-		Where
-		"""
-		where: VideoStreamWhereInput
-	): DeleteVideoStreamsResult!
-	"""
-	Create a new #struct_name_str
 	Create one AudioStream records
 	"""
 	createAudioStream(
@@ -7168,64 +6513,6 @@ type Mutation {
 		"""
 		where: SubtitleWhereInput
 	): DeleteSubtitlesResult!
-	"""
-	Create a new #struct_name_str
-	Create one MediaChapter records
-	"""
-	createMediaChapter(
-		"""
-		Input
-		"""
-		input: CreateMediaChapterInput!
-	): MediaChapterResult!
-	"""
-	Update an existing #struct_name_str
-	Update one MediaChapter records
-	"""
-	updateMediaChapter(
-		"""
-		Id
-		"""
-		id: String!,
-		"""
-		Input
-		"""
-		input: UpdateMediaChapterInput!
-	): MediaChapterResult!
-	"""
-	Delete a #struct_name_str
-	Delete one MediaChapter records
-	"""
-	deleteMediaChapter(
-		"""
-		Id
-		"""
-		id: String!
-	): MediaChapterResult!
-	"""
-	Update multiple #plural_name matching the given Where filter
-	Update matching MediaChapter records
-	"""
-	updateMediaChapters(
-		"""
-		Where
-		"""
-		where: MediaChapterWhereInput,
-		"""
-		Input
-		"""
-		input: UpdateMediaChapterInput!
-	): UpdateMediaChaptersResult!
-	"""
-	Delete multiple #plural_name matching the given Where filter
-	Delete matching MediaChapter records
-	"""
-	deleteMediaChapters(
-		"""
-		Where
-		"""
-		where: MediaChapterWhereInput
-	): DeleteMediaChaptersResult!
 	"""
 	Create a new #struct_name_str
 	Create one PlaybackSession records
@@ -7808,122 +7095,6 @@ type Mutation {
 	): DeleteCastSettingsResult!
 	"""
 	Create a new #struct_name_str
-	Create one UsenetServer records
-	"""
-	createUsenetServer(
-		"""
-		Input
-		"""
-		input: CreateUsenetServerInput!
-	): UsenetServerResult!
-	"""
-	Update an existing #struct_name_str
-	Update one UsenetServer records
-	"""
-	updateUsenetServer(
-		"""
-		Id
-		"""
-		id: String!,
-		"""
-		Input
-		"""
-		input: UpdateUsenetServerInput!
-	): UsenetServerResult!
-	"""
-	Delete a #struct_name_str
-	Delete one UsenetServer records
-	"""
-	deleteUsenetServer(
-		"""
-		Id
-		"""
-		id: String!
-	): UsenetServerResult!
-	"""
-	Update multiple #plural_name matching the given Where filter
-	Update matching UsenetServer records
-	"""
-	updateUsenetServers(
-		"""
-		Where
-		"""
-		where: UsenetServerWhereInput,
-		"""
-		Input
-		"""
-		input: UpdateUsenetServerInput!
-	): UpdateUsenetServersResult!
-	"""
-	Delete multiple #plural_name matching the given Where filter
-	Delete matching UsenetServer records
-	"""
-	deleteUsenetServers(
-		"""
-		Where
-		"""
-		where: UsenetServerWhereInput
-	): DeleteUsenetServersResult!
-	"""
-	Create a new #struct_name_str
-	Create one UsenetDownload records
-	"""
-	createUsenetDownload(
-		"""
-		Input
-		"""
-		input: CreateUsenetDownloadInput!
-	): UsenetDownloadResult!
-	"""
-	Update an existing #struct_name_str
-	Update one UsenetDownload records
-	"""
-	updateUsenetDownload(
-		"""
-		Id
-		"""
-		id: String!,
-		"""
-		Input
-		"""
-		input: UpdateUsenetDownloadInput!
-	): UsenetDownloadResult!
-	"""
-	Delete a #struct_name_str
-	Delete one UsenetDownload records
-	"""
-	deleteUsenetDownload(
-		"""
-		Id
-		"""
-		id: String!
-	): UsenetDownloadResult!
-	"""
-	Update multiple #plural_name matching the given Where filter
-	Update matching UsenetDownload records
-	"""
-	updateUsenetDownloads(
-		"""
-		Where
-		"""
-		where: UsenetDownloadWhereInput,
-		"""
-		Input
-		"""
-		input: UpdateUsenetDownloadInput!
-	): UpdateUsenetDownloadsResult!
-	"""
-	Delete multiple #plural_name matching the given Where filter
-	Delete matching UsenetDownload records
-	"""
-	deleteUsenetDownloads(
-		"""
-		Where
-		"""
-		where: UsenetDownloadWhereInput
-	): DeleteUsenetDownloadsResult!
-	"""
-	Create a new #struct_name_str
 	Create one ScheduleCache records
 	"""
 	createScheduleCache(
@@ -8156,64 +7327,6 @@ type Mutation {
 	): DeleteMetadataCachesResult!
 	"""
 	Create a new #struct_name_str
-	Create one SourcePriorityRule records
-	"""
-	createSourcePriorityRule(
-		"""
-		Input
-		"""
-		input: CreateSourcePriorityRuleInput!
-	): SourcePriorityRuleResult!
-	"""
-	Update an existing #struct_name_str
-	Update one SourcePriorityRule records
-	"""
-	updateSourcePriorityRule(
-		"""
-		Id
-		"""
-		id: String!,
-		"""
-		Input
-		"""
-		input: UpdateSourcePriorityRuleInput!
-	): SourcePriorityRuleResult!
-	"""
-	Delete a #struct_name_str
-	Delete one SourcePriorityRule records
-	"""
-	deleteSourcePriorityRule(
-		"""
-		Id
-		"""
-		id: String!
-	): SourcePriorityRuleResult!
-	"""
-	Update multiple #plural_name matching the given Where filter
-	Update matching SourcePriorityRule records
-	"""
-	updateSourcePriorityRules(
-		"""
-		Where
-		"""
-		where: SourcePriorityRuleWhereInput,
-		"""
-		Input
-		"""
-		input: UpdateSourcePriorityRuleInput!
-	): UpdateSourcePriorityRulesResult!
-	"""
-	Delete multiple #plural_name matching the given Where filter
-	Delete matching SourcePriorityRule records
-	"""
-	deleteSourcePriorityRules(
-		"""
-		Where
-		"""
-		where: SourcePriorityRuleWhereInput
-	): DeleteSourcePriorityRulesResult!
-	"""
-	Create a new #struct_name_str
 	Create one Notification records
 	"""
 	createNotification(
@@ -8270,64 +7383,6 @@ type Mutation {
 		"""
 		where: NotificationWhereInput
 	): DeleteNotificationsResult!
-	"""
-	Create a new #struct_name_str
-	Create one TorznabCategory records
-	"""
-	createTorznabCategory(
-		"""
-		Input
-		"""
-		input: CreateTorznabCategoryInput!
-	): TorznabCategoryResult!
-	"""
-	Update an existing #struct_name_str
-	Update one TorznabCategory records
-	"""
-	updateTorznabCategory(
-		"""
-		Id
-		"""
-		id: String!,
-		"""
-		Input
-		"""
-		input: UpdateTorznabCategoryInput!
-	): TorznabCategoryResult!
-	"""
-	Delete a #struct_name_str
-	Delete one TorznabCategory records
-	"""
-	deleteTorznabCategory(
-		"""
-		Id
-		"""
-		id: String!
-	): TorznabCategoryResult!
-	"""
-	Update multiple #plural_name matching the given Where filter
-	Update matching TorznabCategory records
-	"""
-	updateTorznabCategories(
-		"""
-		Where
-		"""
-		where: TorznabCategoryWhereInput,
-		"""
-		Input
-		"""
-		input: UpdateTorznabCategoryInput!
-	): UpdateTorznabCategoriesResult!
-	"""
-	Delete multiple #plural_name matching the given Where filter
-	Delete matching TorznabCategory records
-	"""
-	deleteTorznabCategories(
-		"""
-		Where
-		"""
-		where: TorznabCategoryWhereInput
-	): DeleteTorznabCategoriesResult!
 	"""
 	Create a new #struct_name_str
 	Create one QualityProfile records
@@ -8617,11 +7672,6 @@ type Notification {
 	pendingMatch: PendingFileMatch
 }
 
-type NotificationAuthorizedScanPage {
-	nodes: [Notification!]!
-	pageInfo: ScanPageInfo!
-}
-
 """
 Event for #struct_name changes (subscriptions)
 """
@@ -8661,19 +7711,6 @@ type NotificationEdge {
 	A cursor for pagination
 	"""
 	cursor: String!
-}
-
-"""
-Scalar-only runtime keyset order. Each list entry must select
-exactly one field; NULL values sort last in either direction.
-"""
-input NotificationKeysetOrderByInput {
-	id: OrderDirection
-	notificationType: OrderDirection
-	category: OrderDirection
-	title: OrderDirection
-	createdAt: OrderDirection
-	updatedAt: OrderDirection
 }
 
 input NotificationOrderByInput {
@@ -9199,11 +8236,6 @@ type PlaybackProgress {
 	mediaFile: MediaFile
 }
 
-type PlaybackProgressAuthorizedScanPage {
-	nodes: [PlaybackProgress!]!
-	pageInfo: ScanPageInfo!
-}
-
 """
 Event for #struct_name changes (subscriptions)
 """
@@ -9243,16 +8275,6 @@ type PlaybackProgressEdge {
 	A cursor for pagination
 	"""
 	cursor: String!
-}
-
-"""
-Scalar-only runtime keyset order. Each list entry must select
-exactly one field; NULL values sort last in either direction.
-"""
-input PlaybackProgressKeysetOrderByInput {
-	id: OrderDirection
-	createdAt: OrderDirection
-	updatedAt: OrderDirection
 }
 
 input PlaybackProgressOrderByInput {
@@ -9664,10 +8686,6 @@ type Query {
 	Get a single live torrent by numeric id
 	"""
 	liveTorrent(id: Int!): LiveTorrent
-	"""
-	Count of active (downloading/checking) torrents
-	"""
-	activeDownloadCount: Int!
 	"""
 	Search for movies on TMDB
 	"""
@@ -10503,10 +9521,6 @@ type Query {
 		page: KeysetPageInput!
 	): AppLogConnection!
 	"""
-	Bounded forward authorization scan; continuation does not promise another visible row.
-	"""
-	appLogsScan(where: AppLogWhereInput, page: AuthorizedScanInput!): AppLogAuthorizedScanPage!
-	"""
 	Get a single #struct_name_str by ID
 	Read one AppLog records
 	"""
@@ -10675,27 +9689,6 @@ type Query {
 		page: PageInput
 	): PlaybackProgressConnection!
 	"""
-	Page through PlaybackProgress records
-	"""
-	playbackProgressesKeyset(
-		"""
-		Where
-		"""
-		where: PlaybackProgressWhereInput,
-		"""
-		Order by
-		"""
-		orderBy: [PlaybackProgressKeysetOrderByInput!],
-		"""
-		Page
-		"""
-		page: KeysetPageInput!
-	): PlaybackProgressConnection!
-	"""
-	Bounded forward authorization scan; continuation does not promise another visible row.
-	"""
-	playbackProgressesScan(where: PlaybackProgressWhereInput, page: AuthorizedScanInput!): PlaybackProgressAuthorizedScanPage!
-	"""
 	Get a single #struct_name_str by ID
 	Read one PlaybackProgress records
 	"""
@@ -10751,27 +9744,6 @@ type Query {
 		"""
 		page: PageInput
 	): ListEntryConnection!
-	"""
-	Page through ListEntry records
-	"""
-	listEntriesKeyset(
-		"""
-		Where
-		"""
-		where: ListEntryWhereInput,
-		"""
-		Order by
-		"""
-		orderBy: [ListEntryKeysetOrderByInput!],
-		"""
-		Page
-		"""
-		page: KeysetPageInput!
-	): ListEntryConnection!
-	"""
-	Bounded forward authorization scan; continuation does not promise another visible row.
-	"""
-	listEntriesScan(where: ListEntryWhereInput, page: AuthorizedScanInput!): ListEntryAuthorizedScanPage!
 	"""
 	Get a single #struct_name_str by ID
 	Read one ListEntry records
@@ -10829,27 +9801,6 @@ type Query {
 		page: PageInput
 	): HomeShelfConnection!
 	"""
-	Page through HomeShelf records
-	"""
-	homeShelvesKeyset(
-		"""
-		Where
-		"""
-		where: HomeShelfWhereInput,
-		"""
-		Order by
-		"""
-		orderBy: [HomeShelfKeysetOrderByInput!],
-		"""
-		Page
-		"""
-		page: KeysetPageInput!
-	): HomeShelfConnection!
-	"""
-	Bounded forward authorization scan; continuation does not promise another visible row.
-	"""
-	homeShelvesScan(where: HomeShelfWhereInput, page: AuthorizedScanInput!): HomeShelfAuthorizedScanPage!
-	"""
 	Get a single #struct_name_str by ID
 	Read one HomeShelf records
 	"""
@@ -10877,27 +9828,6 @@ type Query {
 		"""
 		page: PageInput
 	): LibraryPreferenceConnection!
-	"""
-	Page through LibraryPreference records
-	"""
-	libraryPreferencesKeyset(
-		"""
-		Where
-		"""
-		where: LibraryPreferenceWhereInput,
-		"""
-		Order by
-		"""
-		orderBy: [LibraryPreferenceKeysetOrderByInput!],
-		"""
-		Page
-		"""
-		page: KeysetPageInput!
-	): LibraryPreferenceConnection!
-	"""
-	Bounded forward authorization scan; continuation does not promise another visible row.
-	"""
-	libraryPreferencesScan(where: LibraryPreferenceWhereInput, page: AuthorizedScanInput!): LibraryPreferenceAuthorizedScanPage!
 	"""
 	Get a single #struct_name_str by ID
 	Read one LibraryPreference records
@@ -11207,27 +10137,6 @@ type Query {
 		page: PageInput
 	): NotificationConnection!
 	"""
-	Page through Notification records
-	"""
-	notificationsKeyset(
-		"""
-		Where
-		"""
-		where: NotificationWhereInput,
-		"""
-		Order by
-		"""
-		orderBy: [NotificationKeysetOrderByInput!],
-		"""
-		Page
-		"""
-		page: KeysetPageInput!
-	): NotificationConnection!
-	"""
-	Bounded forward authorization scan; continuation does not promise another visible row.
-	"""
-	notificationsScan(where: NotificationWhereInput, page: AuthorizedScanInput!): NotificationAuthorizedScanPage!
-	"""
 	Get a single #struct_name_str by ID
 	Read one Notification records
 	"""
@@ -11321,14 +10230,6 @@ type Query {
 		"""
 		id: String!
 	): ReleaseBlocklist
-}
-
-type RecomputeQualityResult {
-	success: Boolean!
-	evaluated: Int!
-	optimal: Int!
-	suboptimal: Int!
-	error: String
 }
 
 """
@@ -11425,15 +10326,6 @@ type RefreshTokenEdge {
 input RefreshTokenOrderByInput {
 	expiresAt: OrderDirection
 	createdAt: OrderDirection
-}
-
-"""
-Result type for #struct_name mutations
-"""
-type RefreshTokenResult {
-	success: Boolean!
-	error: String
-	refreshToken: RefreshToken
 }
 
 input RefreshTokenWhereInput {
@@ -11628,17 +10520,6 @@ type RematchSourceResult {
 	error: String
 }
 
-input RenameFileInput {
-	path: String!
-	newName: String!
-}
-
-type RestoreFullBackupResult {
-	success: Boolean!
-	snapshotId: String!
-	error: String
-}
-
 type ResumeShelf {
 	items: [PlaybackProgress!]!
 	"""
@@ -11799,15 +10680,6 @@ input RssFeedItemOrderByInput {
 	seenAt: OrderDirection
 }
 
-"""
-Result type for #struct_name mutations
-"""
-type RssFeedItemResult {
-	success: Boolean!
-	error: String
-	rssFeedItem: RssFeedItem
-}
-
 input RssFeedItemWhereInput {
 	id: StringFilter
 	feedId: StringFilter
@@ -11846,15 +10718,6 @@ input RssFeedOrderByInput {
 	lastPolledAt: OrderDirection
 	createdAt: OrderDirection
 	updatedAt: OrderDirection
-}
-
-"""
-Result type for #struct_name mutations
-"""
-type RssFeedResult {
-	success: Boolean!
-	error: String
-	rssFeed: RssFeed
 }
 
 input RssFeedWhereInput {
@@ -11999,28 +10862,6 @@ type ScanLibraryResult {
 	status: String!
 	message: String
 	scanRunId: String
-}
-
-type ScanPageInfo {
-	status: ScanStatus!
-	"""
-	Resume scanning even if this page returned zero visible rows.
-	"""
-	continuation: String
-	"""
-	Absent unless explicitly requested with fully database-visible policy.
-	"""
-	totalCount: Int
-}
-
-"""
-Why a scan stopped. Only Exhausted establishes that no further candidate
-exists. The other states make no claim that another authorized row exists.
-"""
-enum ScanStatus {
-	EXHAUSTED
-	PAGE_FULL
-	BUDGET_EXHAUSTED
 }
 
 """
@@ -12915,15 +11756,6 @@ type SourcePriorityRuleEdge {
 input SourcePriorityRuleOrderByInput {
 	createdAt: OrderDirection
 	updatedAt: OrderDirection
-}
-
-"""
-Result type for #struct_name mutations
-"""
-type SourcePriorityRuleResult {
-	success: Boolean!
-	error: String
-	sourcePriorityRule: SourcePriorityRule
 }
 
 input SourcePriorityRuleWhereInput {
@@ -14672,15 +13504,6 @@ input TorznabCategoryOrderByInput {
 	name: OrderDirection
 }
 
-"""
-Result type for #struct_name mutations
-"""
-type TorznabCategoryResult {
-	success: Boolean!
-	error: String
-	torznabCategory: TorznabCategory
-}
-
 input TorznabCategoryWhereInput {
 	id: StringFilter
 	name: StringFilter
@@ -15284,38 +14107,6 @@ type UpdateLibraryScanIssuesResult {
 	affectedCount: Int!
 }
 
-input UpdateLibraryScanRunInput {
-	userId: String
-	libraryId: String
-	status: String
-	currentStage: String
-	startedAt: String
-	finishedAt: String
-	discoveredCount: Int
-	existingCount: Int
-	matchedCount: Int
-	unmatchedCount: Int
-	providerBlockedCount: Int
-	analysisQueuedCount: Int
-	analysisSucceededCount: Int
-	analysisFailedCount: Int
-	organizationSucceededCount: Int
-	organizationFailedCount: Int
-	missingCount: Int
-	reconciledCount: Int
-	summary: String
-	errorCode: String
-}
-
-"""
-Result of bulk update by Where filter
-"""
-type UpdateLibraryScanRunsResult {
-	success: Boolean!
-	error: String
-	affectedCount: Int!
-}
-
 """
 Result of bulk update by Where filter
 """
@@ -15334,23 +14125,6 @@ input UpdateListEntryInput {
 	albumId: String
 	audiobookId: String
 	trackId: String
-}
-
-input UpdateMediaChapterInput {
-	mediaFileId: String
-	chapterIndex: Int
-	startSecs: Float
-	endSecs: Float
-	title: String
-}
-
-"""
-Result of bulk update by Where filter
-"""
-type UpdateMediaChaptersResult {
-	success: Boolean!
-	error: String
-	affectedCount: Int!
 }
 
 input UpdateMediaFileInput {
@@ -15666,27 +14440,6 @@ type UpdateQualityProfilesResult {
 	affectedCount: Int!
 }
 
-input UpdateRefreshTokenInput {
-	userId: String
-	sessionId: String
-	sessionFamilyId: String
-	scopes: JSON
-	expiresAt: String
-	lastUsedAt: String
-	revokedAt: String
-	replacedByTokenId: String
-	revocationReason: String
-}
-
-"""
-Result of bulk update by Where filter
-"""
-type UpdateRefreshTokensResult {
-	success: Boolean!
-	error: String
-	affectedCount: Int!
-}
-
 input UpdateReleaseBlocklistInput {
 	infoHash: String
 	guid: String
@@ -15704,61 +14457,6 @@ input UpdateReleaseBlocklistInput {
 Result of bulk update by Where filter
 """
 type UpdateReleaseBlocklistsResult {
-	success: Boolean!
-	error: String
-	affectedCount: Int!
-}
-
-input UpdateRssFeedInput {
-	userId: String
-	libraryId: String
-	name: String
-	url: String
-	enabled: Boolean
-	pollIntervalMinutes: Int
-	postDownloadAction: String
-	lastPolledAt: String
-	lastSuccessfulAt: String
-	lastError: String
-	consecutiveFailures: Int
-}
-
-input UpdateRssFeedItemInput {
-	feedId: String
-	guid: String
-	linkHash: String
-	titleHash: String
-	title: String
-	link: String
-	pubDate: String
-	description: String
-	parsedShowName: String
-	parsedSeason: Int
-	parsedEpisode: Int
-	parsedResolution: String
-	parsedCodec: String
-	parsedSource: String
-	parsedAudio: String
-	parsedHdr: String
-	processed: Boolean
-	torrentId: String
-	skippedReason: String
-	seenAt: String
-}
-
-"""
-Result of bulk update by Where filter
-"""
-type UpdateRssFeedItemsResult {
-	success: Boolean!
-	error: String
-	affectedCount: Int!
-}
-
-"""
-Result of bulk update by Where filter
-"""
-type UpdateRssFeedsResult {
 	success: Boolean!
 	error: String
 	affectedCount: Int!
@@ -15914,24 +14612,6 @@ input UpdateSourcePrioritiesInput {
 	sourceIds: [String!]!
 }
 
-input UpdateSourcePriorityRuleInput {
-	userId: String
-	libraryType: String
-	libraryId: String
-	priorityOrder: JSON
-	searchAllSources: Boolean
-	enabled: Boolean
-}
-
-"""
-Result of bulk update by Where filter
-"""
-type UpdateSourcePriorityRulesResult {
-	success: Boolean!
-	error: String
-	affectedCount: Int!
-}
-
 """
 Result of bulk update by Where filter
 """
@@ -16032,21 +14712,6 @@ type UpdateTorrentsResult {
 	affectedCount: Int!
 }
 
-"""
-Result of bulk update by Where filter
-"""
-type UpdateTorznabCategoriesResult {
-	success: Boolean!
-	error: String
-	affectedCount: Int!
-}
-
-input UpdateTorznabCategoryInput {
-	name: String
-	parentId: String
-	description: String
-}
-
 input UpdateTrackInput {
 	albumId: String
 	libraryId: String
@@ -16073,65 +14738,6 @@ type UpdateTracksResult {
 	affectedCount: Int!
 }
 
-input UpdateUsenetDownloadInput {
-	userId: String
-	nzbName: String
-	nzbHash: String
-	nzbUrl: String
-	nzbData: String
-	state: String
-	progress: String
-	sizeBytes: Int
-	downloadedBytes: Int
-	downloadSpeed: Int
-	etaSeconds: Int
-	errorMessage: String
-	retryCount: Int
-	downloadPath: String
-	libraryId: String
-	episodeId: String
-	movieId: String
-	albumId: String
-	audiobookId: String
-	indexerId: String
-	postProcessStatus: String
-	completedAt: String
-}
-
-"""
-Result of bulk update by Where filter
-"""
-type UpdateUsenetDownloadsResult {
-	success: Boolean!
-	error: String
-	affectedCount: Int!
-}
-
-input UpdateUsenetServerInput {
-	userId: String
-	name: String
-	host: String
-	port: Int
-	useSsl: Boolean
-	username: String
-	connections: Int
-	priority: Int
-	retentionDays: Int
-	enabled: Boolean
-	lastError: String
-	errorCount: Int
-	lastSuccessAt: String
-}
-
-"""
-Result of bulk update by Where filter
-"""
-type UpdateUsenetServersResult {
-	success: Boolean!
-	error: String
-	affectedCount: Int!
-}
-
 input UpdateUserInput {
 	username: String
 	email: String
@@ -16146,38 +14752,6 @@ input UpdateUserInput {
 Result of bulk update by Where filter
 """
 type UpdateUsersResult {
-	success: Boolean!
-	error: String
-	affectedCount: Int!
-}
-
-input UpdateVideoStreamInput {
-	mediaFileId: String
-	streamIndex: Int
-	codec: String
-	codecLongName: String
-	width: Int
-	height: Int
-	aspectRatio: String
-	frameRate: String
-	avgFrameRate: String
-	bitrate: Int
-	pixelFormat: String
-	colorSpace: String
-	colorTransfer: String
-	colorPrimaries: String
-	hdrType: String
-	bitDepth: Int
-	language: String
-	title: String
-	isDefault: Boolean
-	metadata: String
-}
-
-"""
-Result of bulk update by Where filter
-"""
-type UpdateVideoStreamsResult {
 	success: Boolean!
 	error: String
 	affectedCount: Int!
@@ -16359,15 +14933,6 @@ input UsenetDownloadOrderByInput {
 	updatedAt: OrderDirection
 }
 
-"""
-Result type for #struct_name mutations
-"""
-type UsenetDownloadResult {
-	success: Boolean!
-	error: String
-	usenetDownload: UsenetDownload
-}
-
 input UsenetDownloadWhereInput {
 	id: StringFilter
 	userId: StringFilter
@@ -16519,15 +15084,6 @@ input UsenetServerOrderByInput {
 	priority: OrderDirection
 	createdAt: OrderDirection
 	updatedAt: OrderDirection
-}
-
-"""
-Result type for #struct_name mutations
-"""
-type UsenetServerResult {
-	success: Boolean!
-	error: String
-	usenetServer: UsenetServer
 }
 
 input UsenetServerWhereInput {
@@ -16766,15 +15322,6 @@ type VideoStreamEdge {
 input VideoStreamOrderByInput {
 	streamIndex: OrderDirection
 	createdAt: OrderDirection
-}
-
-"""
-Result type for #struct_name mutations
-"""
-type VideoStreamResult {
-	success: Boolean!
-	error: String
-	videoStream: VideoStream
 }
 
 input VideoStreamWhereInput {

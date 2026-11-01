@@ -40,48 +40,6 @@ query EntityUsenetServerGet($id: String!) {
   }
 }
 
-mutation EntityUsenetServerCreate($input: CreateUsenetServerInput!) {
-  createUsenetServer(input: $input) {
-    success
-    error
-    usenetServer {
-      ...UsenetServerFields
-    }
-  }
-}
-
-mutation EntityUsenetServerUpdate($id: String!, $input: UpdateUsenetServerInput!) {
-  updateUsenetServer(id: $id, input: $input) {
-    success
-    error
-    usenetServer {
-      ...UsenetServerFields
-    }
-  }
-}
-
-mutation EntityUsenetServerUpdateMany($where: UsenetServerWhereInput, $input: UpdateUsenetServerInput!) {
-  updateUsenetServers(where: $where, input: $input) {
-    success
-    error
-    affectedCount
-  }
-}
-
-mutation EntityUsenetServerDelete($id: String!) {
-  deleteUsenetServer(id: $id) {
-    success
-    error
-  }
-}
-
-mutation EntityUsenetServerDeleteMany($where: UsenetServerWhereInput) {
-  deleteUsenetServers(where: $where) {
-    success
-    error
-  }
-}
-
 subscription EntityUsenetServerChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
   usenetServerChanged(filter: $filter, keys: $keys) {
     action

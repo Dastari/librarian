@@ -146,6 +146,7 @@ pub struct PersonalListCustomOperations;
     plural = "ListEntries",
     default_sort = "position",
     keyset = "position asc, id asc",
+    query_shapes = "single,list",
     index = "user_id",
     index = "list_id,position,id",
     unique_index = "list_id,movie_id",
@@ -321,6 +322,7 @@ pub struct SavedViewCustomOperations;
     plural = "HomeShelves",
     default_sort = "position",
     keyset = "position asc, id asc",
+    query_shapes = "single,list",
     unique_index = "user_id,shelf_key",
     read_policy = "member.read",
     write_policy = "member.write"
@@ -396,6 +398,7 @@ pub struct HomeShelfCustomOperations;
     plural = "LibraryPreferences",
     default_sort = "position",
     keyset = "position asc, id asc",
+    query_shapes = "single,list",
     unique_index = "user_id,library_id",
     read_policy = "member.read",
     write_policy = "member.write"

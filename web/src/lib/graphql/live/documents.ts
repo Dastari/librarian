@@ -101,7 +101,7 @@ const extraRoots: Record<string, readonly LiveTopic[]> = {
   // subscriptions: those expose a different, admin-only authorization surface.
   hasEnabledSources: ["EnabledSources"],
   resumeShelf: ["PlaybackProgress", "PlaybackSession", "MediaFile", "Movie", "Show", "Episode", "Album", "Artist", "Track", "Audiobook", "Chapter", "Library"],
-  liveTorrents: runtimeTopics, liveTorrent: runtimeTopics, activeDownloadCount: runtimeTopics,
+  liveTorrents: runtimeTopics, liveTorrent: runtimeTopics,
   movieCollectionDetails: ["Collection", "Movie", "MediaFile"],
   backupCapabilities: ["Backup"], backupSnapshots: ["Backup"],
   availableSourceDefinitions: ["Source"], sourceSettingDefinitions: ["Source"],

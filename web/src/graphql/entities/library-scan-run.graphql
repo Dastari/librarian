@@ -47,48 +47,6 @@ query EntityLibraryScanRunGet($id: String!) {
   }
 }
 
-mutation EntityLibraryScanRunCreate($input: CreateLibraryScanRunInput!) {
-  createLibraryScanRun(input: $input) {
-    success
-    error
-    libraryScanRun {
-      ...LibraryScanRunFields
-    }
-  }
-}
-
-mutation EntityLibraryScanRunUpdate($id: String!, $input: UpdateLibraryScanRunInput!) {
-  updateLibraryScanRun(id: $id, input: $input) {
-    success
-    error
-    libraryScanRun {
-      ...LibraryScanRunFields
-    }
-  }
-}
-
-mutation EntityLibraryScanRunUpdateMany($where: LibraryScanRunWhereInput, $input: UpdateLibraryScanRunInput!) {
-  updateLibraryScanRuns(where: $where, input: $input) {
-    success
-    error
-    affectedCount
-  }
-}
-
-mutation EntityLibraryScanRunDelete($id: String!) {
-  deleteLibraryScanRun(id: $id) {
-    success
-    error
-  }
-}
-
-mutation EntityLibraryScanRunDeleteMany($where: LibraryScanRunWhereInput) {
-  deleteLibraryScanRuns(where: $where) {
-    success
-    error
-  }
-}
-
 subscription EntityLibraryScanRunChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
   libraryScanRunChanged(filter: $filter, keys: $keys) {
     action

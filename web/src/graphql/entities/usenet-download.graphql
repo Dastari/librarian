@@ -49,48 +49,6 @@ query EntityUsenetDownloadGet($id: String!) {
   }
 }
 
-mutation EntityUsenetDownloadCreate($input: CreateUsenetDownloadInput!) {
-  createUsenetDownload(input: $input) {
-    success
-    error
-    usenetDownload {
-      ...UsenetDownloadFields
-    }
-  }
-}
-
-mutation EntityUsenetDownloadUpdate($id: String!, $input: UpdateUsenetDownloadInput!) {
-  updateUsenetDownload(id: $id, input: $input) {
-    success
-    error
-    usenetDownload {
-      ...UsenetDownloadFields
-    }
-  }
-}
-
-mutation EntityUsenetDownloadUpdateMany($where: UsenetDownloadWhereInput, $input: UpdateUsenetDownloadInput!) {
-  updateUsenetDownloads(where: $where, input: $input) {
-    success
-    error
-    affectedCount
-  }
-}
-
-mutation EntityUsenetDownloadDelete($id: String!) {
-  deleteUsenetDownload(id: $id) {
-    success
-    error
-  }
-}
-
-mutation EntityUsenetDownloadDeleteMany($where: UsenetDownloadWhereInput) {
-  deleteUsenetDownloads(where: $where) {
-    success
-    error
-  }
-}
-
 subscription EntityUsenetDownloadChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
   usenetDownloadChanged(filter: $filter, keys: $keys) {
     action

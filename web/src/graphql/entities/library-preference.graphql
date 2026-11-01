@@ -31,13 +31,6 @@ query EntityLibraryPreferenceGet($id: String!) {
   }
 }
 
-query EntityLibraryPreferenceKeyset($where: LibraryPreferenceWhereInput, $page: KeysetPageInput!) {
-  libraryPreferencesKeyset(where: $where, page: $page) {
-    edges { cursor node { ...LibraryPreferenceFields } }
-    pageInfo { hasNextPage hasPreviousPage startCursor endCursor totalCount }
-  }
-}
-
 mutation EntityLibraryPreferenceCreate($input: CreateLibraryPreferenceInput!) {
   createLibraryPreference(input: $input) {
     success

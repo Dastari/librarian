@@ -28,48 +28,6 @@ query EntityTorznabCategoryGet($id: String!) {
   }
 }
 
-mutation EntityTorznabCategoryCreate($input: CreateTorznabCategoryInput!) {
-  createTorznabCategory(input: $input) {
-    success
-    error
-    torznabCategory {
-      ...TorznabCategoryFields
-    }
-  }
-}
-
-mutation EntityTorznabCategoryUpdate($id: String!, $input: UpdateTorznabCategoryInput!) {
-  updateTorznabCategory(id: $id, input: $input) {
-    success
-    error
-    torznabCategory {
-      ...TorznabCategoryFields
-    }
-  }
-}
-
-mutation EntityTorznabCategoryUpdateMany($where: TorznabCategoryWhereInput, $input: UpdateTorznabCategoryInput!) {
-  updateTorznabCategories(where: $where, input: $input) {
-    success
-    error
-    affectedCount
-  }
-}
-
-mutation EntityTorznabCategoryDelete($id: String!) {
-  deleteTorznabCategory(id: $id) {
-    success
-    error
-  }
-}
-
-mutation EntityTorznabCategoryDeleteMany($where: TorznabCategoryWhereInput) {
-  deleteTorznabCategories(where: $where) {
-    success
-    error
-  }
-}
-
 subscription EntityTorznabCategoryChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
   torznabCategoryChanged(filter: $filter, keys: $keys) {
     action

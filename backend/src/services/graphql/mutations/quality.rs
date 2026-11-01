@@ -1,8 +1,8 @@
 //! Quality profile custom mutations (`docs/tier1-features-plan.md` §2):
 //! - `evaluateMediaFileQuality`: resolve the effective profile for a media
 //!   file and (re)compute/persist its `quality_status`.
-//! - `recomputeLibraryQualityStatus`: bulk re-evaluate every media file in a
-//!   library, e.g. after changing which profile is assigned.
+//!   Bulk and automatic re-evaluation (profile edits, assignment changes,
+//!   analysis) is done by the `AppMutationHook`, see `quality::recompute`.
 //! - `approveQualityUpgrade`: Q38 — the user-facing "approve" action for a
 //!   quality-upgrade notification (see
 //!   `LibraryScanService::maybe_notify_quality_upgrade`, wired from Q44's
@@ -58,17 +58,6 @@ pub struct QualityEvaluationResultGql {
 }
 
 #[derive(Debug, Clone, SimpleObject)]
-#[graphql(name = "RecomputeQualityResult")]
-#[graphql(rename_fields = "camelCase")]
-pub struct RecomputeQualityResultGql {
-    pub success: bool,
-    pub evaluated: i32,
-    pub optimal: i32,
-    pub suboptimal: i32,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, SimpleObject)]
 #[graphql(name = "ApproveQualityUpgradeResult")]
 #[graphql(rename_fields = "camelCase")]
 pub struct ApproveQualityUpgradeResultGql {
@@ -119,78 +108,6 @@ impl QualityMutations {
                 error: Some(e.to_string()),
             }),
         }
-    }
-
-    /// Re-evaluate every media file in a library against its resolved
-    /// profile. Use after (re)assigning a `qualityProfileId`.
-    #[graphql(name = "recomputeLibraryQualityStatus")]
-    async fn recompute_library_quality_status(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(name = "libraryId")] library_id: String,
-    ) -> Result<RecomputeQualityResultGql> {
-        ctx.require_admin()?;
-        let manager = ctx.data_unchecked::<Arc<ServicesManager>>();
-
-        let Some(db_service) = manager.get_database().await else {
-            return Ok(RecomputeQualityResultGql {
-                success: false,
-                evaluated: 0,
-                optimal: 0,
-                suboptimal: 0,
-                error: Some("database service not available".to_string()),
-            });
-        };
-        let db = db_service.pool().clone();
-
-        let files = match MediaFile::query(db.pool())
-            .filter(MediaFileWhereInput {
-                library_id: Some(string_eq(&library_id)),
-                ..Default::default()
-            })
-            .fetch_all()
-            .await
-        {
-            Ok(files) => files,
-            Err(e) => {
-                return Ok(RecomputeQualityResultGql {
-                    success: false,
-                    evaluated: 0,
-                    optimal: 0,
-                    suboptimal: 0,
-                    error: Some(e.to_string()),
-                });
-            }
-        };
-
-        let mut optimal = 0;
-        let mut suboptimal = 0;
-        for media_file in &files {
-            match evaluate_and_persist(manager, &media_file.id).await {
-                Ok(evaluation) => {
-                    if evaluation.is_optimal() {
-                        optimal += 1;
-                    } else {
-                        suboptimal += 1;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        media_file_id = %media_file.id,
-                        error = %e,
-                        "recomputeLibraryQualityStatus: failed to evaluate media file"
-                    );
-                }
-            }
-        }
-
-        Ok(RecomputeQualityResultGql {
-            success: true,
-            evaluated: files.len() as i32,
-            optimal,
-            suboptimal,
-            error: None,
-        })
     }
 
     /// Q38: approve a pending quality-upgrade notification. Replaces the

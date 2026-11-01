@@ -31,17 +31,9 @@ pub struct VerifyBackupSnapshotResultGql {
     pub error: Option<String>,
 }
 
-#[derive(Clone, Debug, SimpleObject)]
-#[graphql(name = "RestoreFullBackupResult")]
-pub struct RestoreFullBackupResultGql {
-    #[graphql(name = "success")]
-    pub success: bool,
-    #[graphql(name = "snapshotId")]
-    pub snapshot_id: String,
-    #[graphql(name = "error")]
-    pub error: Option<String>,
-}
-
+/// Restore is deliberately not a mutation. A live server cannot restore into itself:
+/// recovery needs an offline, empty staging database and object root, so it is the
+/// `librarian backup restore` command (see `run_backup_restore` in `lib.rs`).
 #[Object(name = "BackupMutation")]
 impl BackupMutations {
     #[graphql(name = "createFullBackup", guard = "RoleGuard::new(\"Admin\")")]
@@ -75,30 +67,6 @@ impl BackupMutations {
                 error: None,
             }),
             Err(err) => Ok(VerifyBackupSnapshotResultGql {
-                success: false,
-                snapshot_id,
-                error: Some(err.to_string()),
-            }),
-        }
-    }
-
-    /// Restore is unavailable on a live service. Disaster recovery must construct an
-    /// offline restore service with an empty staging database and object root, verify
-    /// both records and managed bytes, and publish them only after successful completion.
-    #[graphql(name = "restoreFullBackup", guard = "RoleGuard::new(\"Admin\")")]
-    async fn restore_full_backup(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(name = "snapshotId")] snapshot_id: String,
-    ) -> Result<RestoreFullBackupResultGql> {
-        let backup = backup_service(ctx).await?;
-        match backup.restore_full_backup(&snapshot_id).await {
-            Ok(()) => Ok(RestoreFullBackupResultGql {
-                success: true,
-                snapshot_id,
-                error: None,
-            }),
-            Err(err) => Ok(RestoreFullBackupResultGql {
                 success: false,
                 snapshot_id,
                 error: Some(err.to_string()),
