@@ -229,6 +229,7 @@ async fn async_main() -> anyhow::Result<()> {
             discovery_interval_secs: config.cast_discovery_interval_secs,
             discovery_timeout_ms: config.cast_discovery_timeout_ms,
             discovery_retention_days: config.cast_discovery_retention_days,
+            use_persisted_settings: true,
             grant_secret: auth_config.jwt_secret.as_bytes().to_vec(),
         })
         .add_service(SourcesServiceConfig::from_env()?)

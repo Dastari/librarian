@@ -122,6 +122,10 @@ pub struct CastServiceConfig {
     pub discovery_interval_secs: u64,
     pub discovery_timeout_ms: u64,
     pub discovery_retention_days: u64,
+    /// Let the saved Cast settings (auto-discovery and interval) override
+    /// `auto_discovery` and `discovery_interval_secs` when the service starts.
+    /// The fields above are then the defaults for a database with no saved row.
+    pub use_persisted_settings: bool,
     pub grant_secret: Vec<u8>,
 }
 
@@ -134,6 +138,7 @@ impl std::fmt::Debug for CastServiceConfig {
             .field("discovery_interval_secs", &self.discovery_interval_secs)
             .field("discovery_timeout_ms", &self.discovery_timeout_ms)
             .field("discovery_retention_days", &self.discovery_retention_days)
+            .field("use_persisted_settings", &self.use_persisted_settings)
             .field("grant_secret", &"[REDACTED]")
             .finish()
     }
@@ -147,6 +152,8 @@ impl Default for CastServiceConfig {
             discovery_interval_secs: 30,
             discovery_timeout_ms: 1500,
             discovery_retention_days: 30,
+            // The default is hermetic: tests choose their own discovery settings.
+            use_persisted_settings: false,
             grant_secret: b"test-only-cast-grant-secret".to_vec(),
         }
     }
@@ -191,6 +198,8 @@ pub struct CastService {
     managed_sessions: RwLock<HashMap<String, ManagedCastSession>>,
     #[cfg(test)]
     test_control_transport: RwLock<Option<Arc<TestControlTransport>>>,
+    #[cfg(test)]
+    runtime_settings_applied: std::sync::atomic::AtomicUsize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -231,6 +240,8 @@ impl CastService {
             managed_sessions: RwLock::new(HashMap::new()),
             #[cfg(test)]
             test_control_transport: RwLock::new(None),
+            #[cfg(test)]
+            runtime_settings_applied: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -261,31 +272,125 @@ impl CastService {
 
     /// Call under session_operations before LOAD, so old controls/monitors can
     /// never operate on replacement playback, including receiver-global volume.
+    #[cfg(test)]
     pub(crate) fn release_receiver(
         &self,
         device_id: &str,
         address: &str,
         port: u16,
     ) -> Vec<CastGrantClaims> {
+        self.take_receiver_sessions(device_id, address, port)
+            .into_iter()
+            .map(|session| session.claims)
+            .collect()
+    }
+
+    fn take_receiver_sessions(
+        &self,
+        device_id: &str,
+        address: &str,
+        port: u16,
+    ) -> Vec<ManagedCastSession> {
         let endpoint = Self::validate_target(address, i32::from(port)).ok();
         let mut sessions = self.managed_sessions.write();
         let mut retired = Vec::new();
-        sessions.retain(|_, session| {
-            let same_receiver = session.claims.receiver_device_id == device_id
-                || endpoint.is_some_and(|endpoint| {
-                    Self::validate_target(
-                        &session.claims.receiver_address,
-                        i32::from(session.claims.receiver_port),
-                    )
-                    .ok()
-                        == Some(endpoint)
-                });
-            if same_receiver {
-                retired.push(session.claims.clone());
-            }
-            !same_receiver
-        });
+        let ids = sessions
+            .iter()
+            .filter(|(_, session)| {
+                session.claims.receiver_device_id == device_id
+                    || endpoint.is_some_and(|endpoint| {
+                        Self::validate_target(
+                            &session.claims.receiver_address,
+                            i32::from(session.claims.receiver_port),
+                        )
+                        .ok()
+                            == Some(endpoint)
+                    })
+            })
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        for id in ids {
+            retired.extend(sessions.remove(&id));
+        }
         retired
+    }
+
+    /// Replacement playback on a receiver: forget the managed sessions and stop
+    /// their monitors, which would otherwise race the replacement to the
+    /// session rows. The rows themselves are ended by the `CastSession` create
+    /// hook (`end_other_active_cast_sessions`), the single owner of that outcome.
+    /// Call under `lock_session_operations`, which the monitors also take.
+    pub(crate) async fn retire_receiver_sessions(
+        &self,
+        device_id: &str,
+        address: &str,
+        port: u16,
+    ) -> usize {
+        let released = self.take_receiver_sessions(device_id, address, port);
+        let mut monitors = self.session_monitors.lock().await;
+        for session in &released {
+            if let Some(monitor) = monitors.remove(&session.claims.session_id) {
+                monitor.abort();
+            }
+        }
+        released.len()
+    }
+
+    /// A deleted device must not keep playing: stop every managed session on
+    /// it, then forget them. The rows are ended by the `CastDevice` delete hook
+    /// in the deleting transaction; this is the hardware half, run after commit.
+    pub(crate) async fn stop_device_sessions(&self, device_id: &str) -> Result<usize> {
+        let mut endpoints = self
+            .managed_sessions
+            .read()
+            .values()
+            .filter(|session| session.claims.receiver_device_id == device_id)
+            .map(|session| {
+                (
+                    session.claims.receiver_address.clone(),
+                    session.claims.receiver_port,
+                )
+            })
+            .collect::<Vec<_>>();
+        endpoints.sort();
+        endpoints.dedup();
+        let mut stopped = 0;
+        let mut first_error = None;
+        for (address, port) in endpoints {
+            let operation = self.lock_session_operations(&address, port).await?;
+            // Taken under the guard so a concurrent control or monitor tick
+            // either finished before this or finds the session gone.
+            let released = self.take_receiver_sessions(device_id, &address, port);
+            {
+                let mut monitors = self.session_monitors.lock().await;
+                for session in &released {
+                    if let Some(monitor) = monitors.remove(&session.claims.session_id) {
+                        monitor.abort();
+                    }
+                }
+            }
+            for session in released {
+                match self
+                    .stop(
+                        &operation,
+                        &session.claims.receiver_address,
+                        session.claims.receiver_port,
+                        &session.transport_id,
+                        session.media_session_id,
+                    )
+                    .await
+                {
+                    Ok(()) => stopped += 1,
+                    Err(error) => {
+                        first_error.get_or_insert(error);
+                    }
+                }
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(stopped),
+        }
     }
 
     pub(crate) fn manage_session(
@@ -552,6 +657,9 @@ impl CastService {
         if !(5..=86_400).contains(&discovery_interval_secs) {
             anyhow::bail!("Cast discovery interval must be between 5 and 86400 seconds");
         }
+        #[cfg(test)]
+        self.runtime_settings_applied
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         {
             let mut settings = self.runtime_settings.write().await;
             settings.auto_discovery = auto_discovery;
@@ -564,6 +672,48 @@ impl CastService {
             self.start_discovery_loop().await;
         }
         Ok(())
+    }
+
+    /// The auto-discovery switch and interval currently in force.
+    pub async fn discovery_settings(&self) -> (bool, u64) {
+        let settings = *self.runtime_settings.read().await;
+        (settings.auto_discovery, settings.discovery_interval_secs)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn runtime_settings_applied(&self) -> usize {
+        self.runtime_settings_applied
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn discovery_loop_running(&self) -> bool {
+        self.discovery_task
+            .read()
+            .await
+            .as_ref()
+            .is_some_and(|task| !task.is_finished())
+    }
+
+    /// Persisted settings take precedence over the environment defaults the
+    /// service was built with; see `CastSetting` in the Settings screen.
+    async fn load_persisted_settings(&self) {
+        let Some(manager) = self.manager.upgrade() else {
+            return;
+        };
+        let Some((auto_discovery, interval)) =
+            crate::graphql::entities::cast::persisted_discovery_settings(&manager).await
+        else {
+            return;
+        };
+        let mut settings = self.runtime_settings.write().await;
+        settings.auto_discovery = auto_discovery;
+        settings.discovery_interval_secs = interval;
+        info!(
+            auto_discovery,
+            discovery_interval_secs = interval,
+            "Applied persisted Cast discovery settings"
+        );
     }
 
     async fn start_discovery_loop(&self) {
@@ -1406,6 +1556,9 @@ impl Service for CastService {
     }
 
     async fn start(&self) -> Result<()> {
+        if self.config.use_persisted_settings {
+            self.load_persisted_settings().await;
+        }
         let settings = *self.runtime_settings.read().await;
         if !(5..=86_400).contains(&settings.discovery_interval_secs) {
             anyhow::bail!("Cast discovery interval must be between 5 and 86400 seconds");

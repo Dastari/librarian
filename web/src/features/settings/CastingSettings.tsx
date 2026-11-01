@@ -14,14 +14,14 @@ import { z } from "zod";
 
 import { Button, Dialog, FieldGroup, Panel } from "@/components/ui";
 import {
-  AddCastDeviceDocument,
   DiscoverCastDevicesDocument,
+  EntityCastDeviceCreateDocument,
+  EntityCastDeviceDeleteDocument,
   EntityCastDeviceListDocument,
   EntityCastDeviceUpdateDocument,
   EntityCastSettingCreateDocument,
   EntityCastSettingListDocument,
   EntityCastSettingUpdateDocument,
-  RemoveCastDeviceDocument,
   type CastDeviceFieldsFragment,
 } from "@/graphql/generated/graphql";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
@@ -73,8 +73,8 @@ export function CastingSettings() {
   const setting = settings.data?.castSettings.edges[0]?.node;
 
   const [discover, { loading: discovering }] = useMutation(DiscoverCastDevicesDocument);
-  const [addDevice] = useMutation(AddCastDeviceDocument);
-  const [removeDevice] = useMutation(RemoveCastDeviceDocument);
+  const [addDevice] = useMutation(EntityCastDeviceCreateDocument);
+  const [removeDevice] = useMutation(EntityCastDeviceDeleteDocument);
   const { user } = useSession();
   const [updateDevice] = useMutation(EntityCastDeviceUpdateDocument);
   const [createSetting] = useMutation(EntityCastSettingCreateDocument);
@@ -119,7 +119,8 @@ export function CastingSettings() {
     validators: { onDynamic: deviceSchema },
     onSubmit: async ({ value }) => {
       const values = deviceSchema.parse(value);
-      assertSuccess((await addDevice({ variables: { input: { address: values.address, port: values.port, name: values.name || null } } })).data?.addCastDevice, "Could not add device");
+      // A blank name is defaulted from the address by the server's write transform.
+      assertSuccess((await addDevice({ variables: { input: { name: values.name, address: values.address, port: values.port, deviceType: "CHROMECAST", isFavorite: false, isManual: true, enabled: true, discoveryOrigin: "MANUAL", playbackSupported: true, firstSeenAt: new Date().toISOString() } } })).data?.createCastDevice, "Could not add device");
       toast.success("Device added");
       setAddingOpen(false);
       void devices.refetch();
@@ -153,7 +154,7 @@ export function CastingSettings() {
     {
       id: "remove", label: (targets: readonly Device[]) => targets.length === 1 ? "Remove" : `Remove ${targets.length} devices`, icon: IconTrash, group: "danger" as const, bulk: true,
       confirm: (targets: readonly Device[]) => ({ title: targets.length === 1 ? `Remove ${targets[0]!.name}?` : `Remove ${targets.length} devices?`, body: targets.every((target) => target.isManual) ? "They are forgotten until you add them again." : "Discovery may find these devices again on the network.", confirmLabel: "Remove", tone: "danger" as const }),
-      run: (targets: readonly Device[]) => runSettingsSelection(targets, "Remove", (target) => target.name, async (target) => assertSuccess((await removeDevice({ variables: { id: target.id } })).data?.removeCastDevice, "Could not remove"), refreshDevices),
+      run: (targets: readonly Device[]) => runSettingsSelection(targets, "Remove", (target) => target.name, async (target) => assertSuccess((await removeDevice({ variables: { id: target.id } })).data?.deleteCastDevice, "Could not remove"), refreshDevices),
       successMessage: (targets: readonly Device[]) => targets.length === 1 ? "Device removed" : `${targets.length} devices removed`,
     },
     ...([true, false] as const).map((enabled) => ({

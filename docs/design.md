@@ -1272,3 +1272,28 @@ Repeated identical unresolved organization conflicts reuse their existing
 notification and preserve its read state. Frontend subscriptions coalesce row
 change events and keep existing content visible during background refreshes.
 Acknowledged unresolved issues remain reviewable in Notifications → Scan Issues.
+
+### Q77: How are Cast devices and Cast settings written, and how do saved settings reach the running service?
+**Answer:** Only through the generated `createCastDevice`/`updateCastDevice(s)`/`deleteCastDevice` and
+`createCastSetting`/`updateCastSetting(s)` mutations; there is no hand-written twin, and the Settings screen
+adds and removes devices with those (`addCastDevice`, `removeCastDevice`, `updateCastSettings(input)` and a
+second `updateCastDevice` were deleted). Content rules live in the write input transform
+(`services/cast/write_rules.rs`, applied by `AppWriteInputTransform`), so every write path obeys them:
+target must be a literal LAN IP with a valid port, device type one of `CHROMECAST`, `CHROMECAST_AUDIO`,
+`DLNA_RENDERER` or `UNKNOWN` (a discovered receiver whose model was not recognised), a blank device name
+defaults to `Cast Device (<address>)`, discovery interval 5–86400 seconds, volume 0–1, preferred quality
+`original`/`2160p`/`1080p`/`720p`/`480p`. A device update is checked against the LAN rules only when it sets the
+address or port, so toggling a favourite never fails on a legacy row. Refusals are returned to the caller; they
+are never left to a hook, because deferred post-commit failures are only logged.
+Side effects are lifecycle hooks: saving a `CastSetting` whose auto-discovery switch or interval changed applies
+them to the running `CastService` after commit; deleting a `CastDevice` ends its session rows in the deleting
+transaction and, after commit, stops the receiver. A replaced or removed session ends `IDLE` with its position
+kept (the `CastSession` create hook is the single owner of replacement); only a receiver that stops responding or
+loses authority ends `DISCONNECTED` with an error.
+**Settings versus environment:** the saved `CastSetting` row is what the Settings screen shows, so it wins at
+startup. `CAST_AUTO_DISCOVERY` and `CAST_DISCOVERY_INTERVAL_SECONDS` only choose what that row starts as: they seed a
+new row, and override an existing row that still holds the untouched seed values. A row an admin has saved is never
+overwritten by the environment. Discovery timeout and retention stay environment-only.
+**Guard:** `services::graphql::schema::tests::no_root_field_is_defined_by_more_than_one_chunk` fails when a root
+field is defined by more than one chunk of the merged root (async-graphql silently keeps only one, which is how a
+hand-written `updateCastDevice` went unnoticed). It reads the same chunk list that `schema_roots!` is given.
