@@ -16,26 +16,6 @@ mutation DiscoverCastDevices {
   }
 }
 
-mutation AddCastDevice($input: LegacyAddCastDeviceInput!) {
-  addCastDevice(input: $input) {
-    success
-    error
-    device {
-      id
-      name
-      address
-      port
-    }
-  }
-}
-
-mutation RemoveCastDevice($id: String!) {
-  removeCastDevice(id: $id) {
-    success
-    error
-  }
-}
-
 mutation CastMedia($input: CastMediaInput!) {
   castMedia(input: $input) {
     success

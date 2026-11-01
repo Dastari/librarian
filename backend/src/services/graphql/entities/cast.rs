@@ -8,10 +8,10 @@ use serde::Deserialize;
 use super::super::auth::{AuthExt, AuthUser, Role};
 use super::super::session_authority::SessionAuthority;
 use crate::graphql::entities::{
-    CastDevice, CastSession, CreateCastSessionInput, CreatePlaybackProgressInput, Library,
-    MediaFile, PlaybackProgress, PlaybackProgressOrderByInput, PlaybackProgressWhereInput,
-    RefreshToken, RefreshTokenWhereInput, UpdateCastSessionInput, UpdatePlaybackProgressInput,
-    User,
+    CastDevice, CastSession, CastSetting, CastSettingOrderByInput, CreateCastSessionInput,
+    CreatePlaybackProgressInput, Library, MediaFile, PlaybackProgress,
+    PlaybackProgressOrderByInput, PlaybackProgressWhereInput, RefreshToken, RefreshTokenWhereInput,
+    UpdateCastSessionInput, UpdatePlaybackProgressInput, User,
 };
 use crate::services::ServicesManager;
 use crate::services::cast::{CastDeviceType, CastGrantClaims, CastPlaybackMode};
@@ -63,29 +63,6 @@ pub struct CastSessionOperationResult {
 }
 
 #[derive(Clone, Debug, async_graphql::SimpleObject)]
-pub struct CastDeviceOperationResult {
-    pub success: bool,
-    pub device: Option<LegacyCastDevice>,
-    pub error: Option<String>,
-}
-
-#[derive(Clone, Debug, async_graphql::SimpleObject)]
-pub struct LegacyCastSettings {
-    pub auto_discovery_enabled: bool,
-    pub discovery_interval_seconds: i32,
-    pub default_volume: f64,
-    pub transcode_incompatible: bool,
-    pub preferred_quality: Option<String>,
-}
-
-#[derive(Clone, Debug, async_graphql::SimpleObject)]
-pub struct CastSettingsOperationResult {
-    pub success: bool,
-    pub settings: Option<LegacyCastSettings>,
-    pub error: Option<String>,
-}
-
-#[derive(Clone, Debug, async_graphql::SimpleObject)]
 pub struct CastActionResult {
     pub success: bool,
     pub error: Option<String>,
@@ -98,36 +75,6 @@ pub struct CastMediaInput {
     pub media_file_id: String,
     pub episode_id: Option<String>,
     pub start_position: Option<f64>,
-}
-
-#[derive(InputObject, Clone, Debug)]
-#[graphql(name = "LegacyAddCastDeviceInput")]
-pub struct AddCastDeviceInput {
-    pub address: String,
-    pub port: Option<i32>,
-    pub name: Option<String>,
-}
-
-#[derive(InputObject, Clone, Debug)]
-#[graphql(name = "LegacyUpdateCastDeviceInput")]
-pub struct UpdateCastDeviceInput {
-    pub name: Option<String>,
-    pub address: Option<String>,
-    pub port: Option<i32>,
-    pub model: Option<String>,
-    pub device_type: Option<String>,
-    pub is_favorite: Option<bool>,
-    pub is_manual: Option<bool>,
-}
-
-#[derive(InputObject, Clone, Debug)]
-#[graphql(name = "LegacyUpdateCastSettingsInput")]
-pub struct UpdateCastSettingsInput {
-    pub auto_discovery_enabled: Option<bool>,
-    pub discovery_interval_seconds: Option<i32>,
-    pub default_volume: Option<f64>,
-    pub transcode_incompatible: Option<bool>,
-    pub preferred_quality: Option<String>,
 }
 
 #[derive(Default)]
@@ -346,11 +293,10 @@ impl CastMutations {
         );
         let expires_at = chrono::DateTime::from_timestamp(expires_at_unix, 0)
             .ok_or_else(|| async_graphql::Error::new("Invalid Cast grant expiration"))?;
-        for previous in
-            cast.release_receiver(&device.id, &receiver_address.to_string(), receiver_port)
-        {
-            retire_cast_monitor(manager, &previous).await;
-        }
+        // Replace the previous playback on this receiver. Its rows are ended by
+        // the CastSession create hook, the one owner of that outcome.
+        cast.retire_receiver_sessions(&device.id, &receiver_address.to_string(), receiver_port)
+            .await;
         let session = create_cast_session(
             manager,
             CreateCastSessionArgs {
@@ -593,199 +539,6 @@ impl CastMutations {
     ) -> Result<CastSessionOperationResult> {
         update_cast_session_state(ctx, &session_id, SessionCommand::SetMuted(muted)).await
     }
-
-    #[graphql(name = "addCastDevice")]
-    async fn add_cast_device(
-        &self,
-        ctx: &Context<'_>,
-        input: AddCastDeviceInput,
-    ) -> Result<CastDeviceOperationResult> {
-        let auth_user = ctx.require_admin()?.clone();
-        let manager = ctx.data::<Arc<ServicesManager>>()?;
-        crate::services::cast::CastService::validate_target(
-            &input.address,
-            input.port.unwrap_or(8009),
-        )
-        .map_err(|error| async_graphql::Error::new(error.to_string()))?;
-        let name = input
-            .name
-            .clone()
-            .unwrap_or_else(|| format!("Cast Device ({})", input.address));
-        let node = create_cast_device(
-            manager,
-            &auth_user,
-            serde_json::json!({
-                "name": name,
-                "address": input.address,
-                "port": input.port.unwrap_or(8009),
-                "model": null,
-                "deviceType": "CHROMECAST",
-                "isFavorite": false,
-                "isManual": true,
-                "enabled": true,
-                "discoveryOrigin": "MANUAL",
-                "playbackSupported": true,
-                "firstSeenAt": chrono::Utc::now().to_rfc3339(),
-                "lastSeenAt": null,
-            }),
-        )
-        .await?;
-
-        Ok(CastDeviceOperationResult {
-            success: true,
-            device: Some(map_device(node)),
-            error: None,
-        })
-    }
-
-    #[graphql(name = "updateCastDevice")]
-    async fn update_cast_device(
-        &self,
-        ctx: &Context<'_>,
-        id: String,
-        input: UpdateCastDeviceInput,
-    ) -> Result<CastDeviceOperationResult> {
-        let auth_user = ctx.require_admin()?.clone();
-        let manager = ctx.data::<Arc<ServicesManager>>()?;
-        let Some(existing) = query_device_by_id(manager, &auth_user, &id).await? else {
-            return Ok(CastDeviceOperationResult {
-                success: false,
-                device: None,
-                error: Some("Cast device not found".to_string()),
-            });
-        };
-        let address = input
-            .address
-            .clone()
-            .unwrap_or_else(|| existing.address.clone());
-        let port = input.port.unwrap_or(existing.port);
-        crate::services::cast::CastService::validate_target(&address, port)
-            .map_err(|error| async_graphql::Error::new(error.to_string()))?;
-        let device_type = input
-            .device_type
-            .clone()
-            .unwrap_or_else(|| existing.device_type.clone());
-        if parse_device_type(&device_type) == CastDeviceType::Unknown {
-            return Err(async_graphql::Error::new(
-                "Unsupported Cast device type; expected CHROMECAST, CHROMECAST_AUDIO, or DLNA_RENDERER",
-            ));
-        }
-
-        let node = update_cast_device(
-            manager,
-            &auth_user,
-            &id,
-            serde_json::json!({
-                "name": input.name.unwrap_or(existing.name),
-                "address": address,
-                "port": port,
-                "model": input.model.or(existing.model),
-                "deviceType": device_type,
-                "isFavorite": input.is_favorite.unwrap_or(existing.is_favorite),
-                "isManual": input.is_manual.unwrap_or(existing.is_manual),
-            }),
-        )
-        .await?;
-
-        Ok(CastDeviceOperationResult {
-            success: true,
-            device: Some(map_device(node)),
-            error: None,
-        })
-    }
-
-    #[graphql(name = "removeCastDevice")]
-    async fn remove_cast_device(&self, ctx: &Context<'_>, id: String) -> Result<CastActionResult> {
-        let auth_user = ctx.require_admin()?.clone();
-        let manager = ctx.data::<Arc<ServicesManager>>()?;
-        delete_cast_device(manager, &auth_user, &id).await?;
-        Ok(CastActionResult {
-            success: true,
-            error: None,
-        })
-    }
-
-    #[graphql(name = "updateCastSettings")]
-    async fn update_cast_settings(
-        &self,
-        ctx: &Context<'_>,
-        input: UpdateCastSettingsInput,
-    ) -> Result<CastSettingsOperationResult> {
-        let auth_user = ctx.require_admin()?.clone();
-        let manager = ctx.data::<Arc<ServicesManager>>()?;
-        if let Some(interval) = input.discovery_interval_seconds
-            && !(5..=86_400).contains(&interval)
-        {
-            return Err(async_graphql::Error::new(
-                "Discovery interval must be between 5 and 86400 seconds",
-            ));
-        }
-        if let Some(volume) = input.default_volume {
-            crate::services::cast::CastService::validate_volume(volume)
-                .map_err(|error| async_graphql::Error::new(error.to_string()))?;
-        }
-        if let Some(quality) = input.preferred_quality.as_deref()
-            && !matches!(
-                quality.trim().to_ascii_lowercase().as_str(),
-                "original" | "2160p" | "1080p" | "720p" | "480p"
-            )
-        {
-            return Err(async_graphql::Error::new(
-                "Preferred quality must be original, 2160p, 1080p, 720p, or 480p",
-            ));
-        }
-
-        let existing = query_latest_cast_setting(manager, &auth_user).await?;
-        let node = match existing {
-            Some(setting) => {
-                update_cast_setting(
-                    manager,
-                    &auth_user,
-                    &setting.id,
-                    serde_json::json!({
-                        "autoDiscoveryEnabled": input.auto_discovery_enabled.unwrap_or(setting.auto_discovery_enabled),
-                        "discoveryIntervalSeconds": input.discovery_interval_seconds.unwrap_or(setting.discovery_interval_seconds),
-                        "defaultVolume": input.default_volume.unwrap_or(setting.default_volume),
-                        "transcodeIncompatible": input.transcode_incompatible.unwrap_or(setting.transcode_incompatible),
-                        "preferredQuality": input.preferred_quality.or(setting.preferred_quality),
-                    }),
-                )
-                .await?
-            }
-            None => {
-                create_cast_setting(
-                    manager,
-                    &auth_user,
-                    serde_json::json!({
-                        "autoDiscoveryEnabled": input.auto_discovery_enabled.unwrap_or(true),
-                        "discoveryIntervalSeconds": input.discovery_interval_seconds.unwrap_or(30),
-                        "defaultVolume": input.default_volume.unwrap_or(1.0),
-                        "transcodeIncompatible": input.transcode_incompatible.unwrap_or(false),
-                        "preferredQuality": input.preferred_quality,
-                    }),
-                )
-                .await?
-            }
-        };
-        let cast = manager
-            .get_cast()
-            .await
-            .ok_or_else(|| async_graphql::Error::new("Cast service not available"))?;
-        cast.apply_runtime_settings(
-            node.auto_discovery_enabled,
-            u64::try_from(node.discovery_interval_seconds).map_err(|_| {
-                async_graphql::Error::new("Discovery interval must be a positive number")
-            })?,
-        )
-        .await
-        .map_err(|error| async_graphql::Error::new(error.to_string()))?;
-
-        Ok(CastSettingsOperationResult {
-            success: true,
-            settings: Some(map_settings(node)),
-            error: None,
-        })
-    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -850,12 +603,6 @@ struct SessionNode {
 
 #[derive(Clone, Debug, Deserialize)]
 struct SettingNode {
-    #[serde(rename = "Id")]
-    id: String,
-    #[serde(rename = "AutoDiscoveryEnabled")]
-    auto_discovery_enabled: bool,
-    #[serde(rename = "DiscoveryIntervalSeconds")]
-    discovery_interval_seconds: i32,
     #[serde(rename = "DefaultVolume")]
     default_volume: f64,
     #[serde(rename = "TranscodeIncompatible")]
@@ -1562,10 +1309,10 @@ fn checkpoint_values(
     ))
 }
 
-async fn retire_cast_monitor(manager: &Arc<ServicesManager>, claims: &CastGrantClaims) {
-    retire_cast_monitor_with_binding(manager, claims, None).await;
-}
-
+/// A monitored session whose receiver stopped responding or whose authority was
+/// revoked ends DISCONNECTED with an explanatory error. This is a failure
+/// outcome, distinct from replacement or device removal, which end IDLE through
+/// the lifecycle hooks in `services::database`.
 async fn retire_cast_monitor_with_binding(
     manager: &Arc<ServicesManager>,
     claims: &CastGrantClaims,
@@ -1731,24 +1478,62 @@ async fn monitor_cast_session(
     }
 }
 
-fn map_settings(node: SettingNode) -> LegacyCastSettings {
-    LegacyCastSettings {
-        auto_discovery_enabled: node.auto_discovery_enabled,
-        discovery_interval_seconds: node.discovery_interval_seconds,
-        default_volume: node.default_volume,
-        transcode_incompatible: node.transcode_incompatible,
-        preferred_quality: node.preferred_quality,
-    }
-}
-
 pub(crate) async fn persist_discovered_device(
     manager: &Arc<ServicesManager>,
     auth_user: &AuthUser,
     device: &crate::services::cast::DiscoveredCastDevice,
 ) -> Result<()> {
+    // The write transform refuses targets outside the LAN ranges; skip them here
+    // rather than failing and logging on every discovery interval.
+    if let Err(error) =
+        crate::services::cast::CastService::validate_target(&device.address, device.port)
+    {
+        tracing::debug!(
+            cast_address = %device.address,
+            cast_port = device.port,
+            error = %error,
+            "Not persisting a discovered Cast target outside the allowed LAN ranges"
+        );
+        return Ok(());
+    }
     upsert_discovered_device(manager, auth_user, device)
         .await
         .map(drop)
+}
+
+/// The persisted auto-discovery switch and interval, if an admin (or the seed)
+/// has stored valid ones. Read at startup so saved settings survive a restart.
+pub(crate) async fn persisted_discovery_settings(
+    manager: &Arc<ServicesManager>,
+) -> Option<(bool, u64)> {
+    let database = manager.get_database().await?;
+    let latest = CastSetting::query(database.pool().pool())
+        .order_by(CastSettingOrderByInput {
+            updated_at: Some(OrderDirection::Desc),
+            ..Default::default()
+        })
+        .limit(1)
+        .fetch_all()
+        .await
+        .inspect_err(|error| {
+            tracing::warn!(error = %error, "Could not read persisted Cast settings");
+        })
+        .ok()?
+        .into_iter()
+        .next()?;
+    match u64::try_from(latest.discovery_interval_seconds)
+        .ok()
+        .filter(|interval| (5..=86_400).contains(interval))
+    {
+        Some(interval) => Some((latest.auto_discovery_enabled, interval)),
+        None => {
+            tracing::warn!(
+                discovery_interval_seconds = latest.discovery_interval_seconds,
+                "Ignoring persisted Cast discovery interval outside 5-86400 seconds"
+            );
+            None
+        }
+    }
 }
 
 pub(crate) async fn prune_stale_discovered_devices(
@@ -1945,9 +1730,6 @@ async fn query_latest_cast_setting(
             CastSettings: castSettings(page: $page, orderBy: $orderBy) {
                 Edges: edges {
                     Node: node {
-                        Id: id
-                        AutoDiscoveryEnabled: autoDiscoveryEnabled
-                        DiscoveryIntervalSeconds: discoveryIntervalSeconds
                         DefaultVolume: defaultVolume
                         TranscodeIncompatible: transcodeIncompatible
                         PreferredQuality: preferredQuality
@@ -2353,107 +2135,6 @@ fn session_node_from_entity(session: CastSession) -> SessionNode {
         is_muted: session.is_muted,
         started_at: session.started_at,
     }
-}
-
-async fn create_cast_setting(
-    manager: &Arc<ServicesManager>,
-    auth_user: &AuthUser,
-    input: serde_json::Value,
-) -> Result<SettingNode> {
-    let data = execute_graphql(
-        manager,
-        auth_user,
-        r#"
-        mutation CreateCastSettingMutation($input: CreateCastSettingInput!) {
-            CreateCastSetting: createCastSetting(input: $input) {
-                Success: success
-                Error: error
-                CastSetting: castSetting {
-                    Id: id
-                    AutoDiscoveryEnabled: autoDiscoveryEnabled
-                    DiscoveryIntervalSeconds: discoveryIntervalSeconds
-                    DefaultVolume: defaultVolume
-                    TranscodeIncompatible: transcodeIncompatible
-                    PreferredQuality: preferredQuality
-                }
-            }
-        }
-        "#,
-        serde_json::json!({ "input": input }),
-    )
-    .await?;
-
-    let success = data
-        .get("CreateCastSetting")
-        .and_then(|v| v.get("Success"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    if !success {
-        let error = data
-            .get("CreateCastSetting")
-            .and_then(|v| v.get("Error"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("Failed to create cast settings");
-        return Err(async_graphql::Error::new(error.to_string()));
-    }
-
-    let node = data
-        .get("CreateCastSetting")
-        .and_then(|v| v.get("CastSetting"))
-        .cloned()
-        .ok_or_else(|| async_graphql::Error::new("Missing CastSetting payload"))?;
-    serde_json::from_value(node).map_err(|e| async_graphql::Error::new(e.to_string()))
-}
-
-async fn update_cast_setting(
-    manager: &Arc<ServicesManager>,
-    auth_user: &AuthUser,
-    id: &str,
-    input: serde_json::Value,
-) -> Result<SettingNode> {
-    let data = execute_graphql(
-        manager,
-        auth_user,
-        r#"
-        mutation UpdateCastSettingMutation($id: String!, $input: UpdateCastSettingInput!) {
-            UpdateCastSetting: updateCastSetting(id: $id, input: $input) {
-                Success: success
-                Error: error
-                CastSetting: castSetting {
-                    Id: id
-                    AutoDiscoveryEnabled: autoDiscoveryEnabled
-                    DiscoveryIntervalSeconds: discoveryIntervalSeconds
-                    DefaultVolume: defaultVolume
-                    TranscodeIncompatible: transcodeIncompatible
-                    PreferredQuality: preferredQuality
-                }
-            }
-        }
-        "#,
-        serde_json::json!({ "id": id, "input": input }),
-    )
-    .await?;
-
-    let success = data
-        .get("UpdateCastSetting")
-        .and_then(|v| v.get("Success"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    if !success {
-        let error = data
-            .get("UpdateCastSetting")
-            .and_then(|v| v.get("Error"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("Failed to update cast settings");
-        return Err(async_graphql::Error::new(error.to_string()));
-    }
-
-    let node = data
-        .get("UpdateCastSetting")
-        .and_then(|v| v.get("CastSetting"))
-        .cloned()
-        .ok_or_else(|| async_graphql::Error::new("Missing CastSetting payload"))?;
-    serde_json::from_value(node).map_err(|e| async_graphql::Error::new(e.to_string()))
 }
 
 async fn execute_graphql(

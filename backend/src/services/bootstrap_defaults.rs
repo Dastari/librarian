@@ -912,22 +912,66 @@ async fn seed_app_settings(db: &Database) -> Result<()> {
     Ok(())
 }
 
-async fn seed_cast_settings(db: &Database) -> Result<()> {
-    if !CastSetting::query(db.pool()).fetch_all().await?.is_empty() {
-        return Ok(());
-    }
+/// Cast auto-discovery from the environment, when set and valid. The saved
+/// settings row is what the running service uses (see `CastService::start`),
+/// so the environment only chooses what that row starts as.
+fn cast_environment_defaults() -> (Option<bool>, Option<i32>) {
+    let auto_discovery = std::env::var("CAST_AUTO_DISCOVERY").ok().map(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "true" | "1" | "yes" | "on"
+        )
+    });
+    let interval = std::env::var("CAST_DISCOVERY_INTERVAL_SECONDS")
+        .ok()
+        .and_then(|value| value.trim().parse::<i32>().ok())
+        .filter(|seconds| (5..=86_400).contains(seconds));
+    (auto_discovery, interval)
+}
 
-    CastSetting::insert(
-        db,
-        CreateCastSettingInput {
-            auto_discovery_enabled: true,
-            discovery_interval_seconds: 30,
-            default_volume: 1.0,
-            transcode_incompatible: true,
-            preferred_quality: Some("1080p".to_string()),
-        },
-    )
-    .await?;
+async fn seed_cast_settings(db: &Database) -> Result<()> {
+    const SEED_INTERVAL: i32 = 30;
+    let (environment_auto, environment_interval) = cast_environment_defaults();
+    let existing = CastSetting::query(db.pool()).fetch_all().await?;
+
+    let Some(row) = existing.first() else {
+        CastSetting::insert(
+            db,
+            CreateCastSettingInput {
+                auto_discovery_enabled: environment_auto.unwrap_or(true),
+                discovery_interval_seconds: environment_interval.unwrap_or(SEED_INTERVAL),
+                default_volume: 1.0,
+                transcode_incompatible: true,
+                preferred_quality: Some("1080p".to_string()),
+            },
+        )
+        .await?;
+        return Ok(());
+    };
+
+    // A row that still carries the static seed was never chosen by an admin, so
+    // the deployment's environment may override it; an edited row is left alone.
+    let untouched = existing.len() == 1
+        && row.auto_discovery_enabled
+        && row.discovery_interval_seconds == SEED_INTERVAL
+        && row.default_volume == 1.0
+        && row.transcode_incompatible
+        && row.preferred_quality.as_deref() == Some("1080p");
+    let auto = environment_auto.filter(|auto| *auto != row.auto_discovery_enabled);
+    let interval =
+        environment_interval.filter(|seconds| *seconds != row.discovery_interval_seconds);
+    if untouched && (auto.is_some() || interval.is_some()) {
+        CastSetting::update_by_id(
+            db,
+            &row.id,
+            UpdateCastSettingInput {
+                auto_discovery_enabled: auto,
+                discovery_interval_seconds: interval,
+                ..Default::default()
+            },
+        )
+        .await?;
+    }
 
     Ok(())
 }
