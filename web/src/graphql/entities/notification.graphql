@@ -90,8 +90,8 @@ mutation EntityNotificationDeleteMany($where: NotificationWhereInput) {
   }
 }
 
-subscription EntityNotificationChanged($filter: SubscriptionFilterInput) {
-  notificationChanged(filter: $filter) {
+subscription EntityNotificationChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  notificationChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

@@ -78,8 +78,8 @@ mutation EntityCollectionDeleteMany($where: CollectionWhereInput) {
   }
 }
 
-subscription EntityCollectionChanged($filter: SubscriptionFilterInput) {
-  collectionChanged(filter: $filter) {
+subscription EntityCollectionChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  collectionChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

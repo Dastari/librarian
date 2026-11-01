@@ -7,7 +7,7 @@
  *   query    <single>(id): <Entity>
  *   mutation create<Entity>(input) / update<Entity>(id, input) / delete<Entity>(id)
  *   mutation update<Plural>(where, input) / delete<Plural>(where)
- *   subscription <single>Changed(filter)
+ *   subscription <single>Changed(filter, key, keys)
  *
  * For each entity this writes `src/graphql/entities/<entity>.graphql` containing a
  * `<Entity>Fields` fragment with every scalar field plus the standard operations.
@@ -271,12 +271,11 @@ for (const entity of entities) {
     const eventType = unwrap(changedField.type);
     const eventFields = isObjectType(eventType) ? eventType.getFields() : {};
     const filterInput = inputTypeName(changedField, "filter");
-    lines.push(
-      filterInput
-        ? `subscription Entity${name}Changed($filter: ${filterInput}) {`
-        : `subscription Entity${name}Changed {`,
-    );
-    lines.push(filterInput ? `  ${changedField.name}(filter: $filter) {` : `  ${changedField.name} {`);
+    const keysInput = inputTypeName(changedField, "keys");
+    const variables = [filterInput && `$filter: ${filterInput}`, keysInput && `$keys: ${keysInput}`].filter(Boolean);
+    const args = [filterInput && "filter: $filter", keysInput && "keys: $keys"].filter(Boolean);
+    lines.push(`subscription Entity${name}Changed${variables.length ? `(${variables.join(", ")})` : ""} {`);
+    lines.push(`  ${changedField.name}${args.length ? `(${args.join(", ")})` : ""} {`);
     for (const key of ["action", "changeKind", "id", "sourceEntity", "sourceId", "path"]) {
       if (eventFields[key]) lines.push(`    ${key}`);
     }

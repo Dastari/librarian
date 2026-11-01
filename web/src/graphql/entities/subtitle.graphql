@@ -83,8 +83,8 @@ mutation EntitySubtitleDeleteMany($where: SubtitleWhereInput) {
   }
 }
 
-subscription EntitySubtitleChanged($filter: SubscriptionFilterInput) {
-  subtitleChanged(filter: $filter) {
+subscription EntitySubtitleChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  subtitleChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

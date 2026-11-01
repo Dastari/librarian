@@ -86,8 +86,8 @@ mutation EntitySourceDeleteMany($where: SourceWhereInput) {
   }
 }
 
-subscription EntitySourceChanged($filter: SubscriptionFilterInput) {
-  sourceChanged(filter: $filter) {
+subscription EntitySourceChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  sourceChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

@@ -75,8 +75,8 @@ mutation EntityMetadataCacheDeleteMany($where: MetadataCacheWhereInput) {
   }
 }
 
-subscription EntityMetadataCacheChanged($filter: SubscriptionFilterInput) {
-  metadataCacheChanged(filter: $filter) {
+subscription EntityMetadataCacheChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  metadataCacheChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

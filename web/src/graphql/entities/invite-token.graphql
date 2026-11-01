@@ -78,8 +78,8 @@ mutation EntityInviteTokenDeleteMany($where: InviteTokenWhereInput) {
   }
 }
 
-subscription EntityInviteTokenChanged($filter: SubscriptionFilterInput) {
-  inviteTokenChanged(filter: $filter) {
+subscription EntityInviteTokenChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  inviteTokenChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id
