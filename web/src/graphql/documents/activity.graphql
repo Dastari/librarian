@@ -12,6 +12,13 @@ mutation ApproveQualityUpgrade($notificationId: String!) {
   }
 }
 
+mutation MarkAllNotificationsRead {
+  markAllNotificationsRead {
+    notificationCount
+    scanIssueCount
+  }
+}
+
 query UnresolvedScanIssues($limit: Int!, $offset: Int!) {
   libraryScanIssues(where: { resolvedAt: { isNull: true } }, orderBy: [{ createdAt: DESC }], page: { limit: $limit, offset: $offset }) {
     edges {

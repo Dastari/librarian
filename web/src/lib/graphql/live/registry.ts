@@ -2,8 +2,9 @@ import type { LiveTopic } from "./documents";
 
 /** Active-view scheduling only. Events invalidate authorized snapshots; they are
  * never treated as authority to insert a row into a filtered/sorted connection. */
-export interface LiveEvent { topic: LiveTopic; id?: string }
-export interface LiveDependency { topic: LiveTopic; ids?: readonly string[] }
+export interface LiveEvent { topic: LiveTopic; id?: string; propagated?: boolean }
+/** `ids` narrows the dependency to those records; `direct` ignores events propagated up from child records. */
+export interface LiveDependency { topic: LiveTopic; ids?: readonly string[]; direct?: boolean }
 export interface LiveRegistration {
   key: string;
   /** Apollo watches share cache writes; local snapshots require every owner callback. */
@@ -11,7 +12,9 @@ export interface LiveRegistration {
   dependencies: readonly LiveDependency[];
   refresh: () => unknown | Promise<unknown>;
 }
-export type LiveSource = (topic: LiveTopic, event: (event: LiveEvent) => void, interrupted: (retry?: boolean) => void) => () => void;
+/** `keys` is set only when every consumer of the topic names its records, so the stream can be keyed. */
+export type LiveSource = (topic: LiveTopic, event: (event: LiveEvent) => void, interrupted: (retry?: boolean) => void, keys?: readonly string[]) => () => void;
+interface Source { stop: () => void; retry?: ReturnType<typeof setTimeout>; failed?: boolean; terminal?: boolean; retiring?: boolean; keys?: readonly string[] }
 interface Entry {
   consumers: Map<symbol, LiveRegistration>;
   dirty: boolean;
@@ -26,10 +29,19 @@ export function stableKey(value: unknown): string {
     ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item) ?? "null";
 }
 
+/** Generated `Changed` subscriptions reject longer `keys` lists. */
+export const MAX_SUBSCRIPTION_KEYS = 500;
+const RESUBSCRIBE_JITTER_MS = 1000;
+const KEY_SWAP_DEBOUNCE_MS = 200;
+const KEY_SWAP_OVERLAP_MS = 2000;
+const sameKeys = (a?: readonly string[], b?: readonly string[]) => a === b || (a !== undefined && b !== undefined && a.length === b.length && a.every((key, index) => key === b[index]));
+
 export class LiveRegistry {
   private entries = new Map<string, Entry>();
-  private sources = new Map<LiveTopic, { stop: () => void; retry?: ReturnType<typeof setTimeout>; failed?: boolean; terminal?: boolean }>();
+  private sources = new Map<LiveTopic, Source>();
+  private retiring = new Set<Source>();
   private timer?: ReturnType<typeof setTimeout>;
+  private swapTimer?: ReturnType<typeof setTimeout>;
   private sourceAttempts = new Map<LiveTopic, number>();
   private registrationSequence = 0;
   private epoch = 0;
@@ -46,8 +58,11 @@ export class LiveRegistry {
     this.connected = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
-    for (const source of this.sources.values()) { source.stop(); if (source.retry) clearTimeout(source.retry); }
+    if (this.swapTimer) clearTimeout(this.swapTimer);
+    this.swapTimer = undefined;
+    for (const source of [...this.sources.values(), ...this.retiring]) { source.stop(); if (source.retry) clearTimeout(source.retry); }
     this.sources.clear();
+    this.retiring.clear();
     this.sourceAttempts.clear();
     this.entries.clear();
     this.running = 0;
@@ -76,7 +91,7 @@ export class LiveRegistry {
     if (!this.enabled) return;
     for (const entry of this.entries.values()) {
       const matches = !event || [...entry.consumers.values()].some((consumer) => consumer.dependencies.some((dependency) =>
-        dependency.topic === event.topic && (!dependency.ids || !event.id || dependency.ids.includes(event.id))));
+        dependency.topic === event.topic && !(dependency.direct && event.propagated) && (!dependency.ids || !event.id || dependency.ids.includes(event.id))));
       if (!matches) continue;
       if (!entry.dirty || entry.failures > this.options.maxRetries) entry.due = Math.max(Date.now() + this.options.coalesceMs, entry.lastStarted + this.options.minGapMs);
       entry.dirty = true;
@@ -98,39 +113,77 @@ export class LiveRegistry {
     this.connected = connected;
   }
 
-  private reconcileSources(): void {
-    const topics = new Set(this.enabled ? [...this.entries.values()].flatMap((entry) => [...entry.consumers.values()].flatMap((consumer) => consumer.dependencies.map((dependency) => dependency.topic))) : []);
-    for (const [topic, source] of this.sources) if (!topics.has(topic)) {
-      source.stop(); if (source.retry) clearTimeout(source.retry); this.sources.delete(topic); this.sourceAttempts.delete(topic);
+  /** Per topic: the ids to key the stream on, or undefined when any consumer needs the whole topic. */
+  private wanted(): Map<LiveTopic, readonly string[] | undefined> {
+    const wanted = new Map<LiveTopic, Set<string> | undefined>();
+    if (this.enabled) for (const entry of this.entries.values()) for (const consumer of entry.consumers.values()) for (const dependency of consumer.dependencies) {
+      const ids = wanted.has(dependency.topic) ? wanted.get(dependency.topic) : new Set<string>();
+      if (!ids) continue;
+      if (dependency.ids) { for (const id of dependency.ids) ids.add(id); wanted.set(dependency.topic, ids); } else wanted.set(dependency.topic, undefined);
     }
-    for (const topic of topics) if (!this.sources.has(topic)) this.startSource(topic);
+    return new Map([...wanted].map(([topic, ids]) => [topic, ids && ids.size <= MAX_SUBSCRIPTION_KEYS ? [...ids].sort() : undefined]));
   }
 
-  private startSource(topic: LiveTopic): void {
+  private reconcileSources(): void {
+    const wanted = this.wanted();
+    for (const [topic, source] of this.sources) if (!wanted.has(topic)) {
+      source.stop(); if (source.retry) clearTimeout(source.retry); this.sources.delete(topic); this.sourceAttempts.delete(topic);
+    }
+    let changed = false;
+    for (const [topic, keys] of wanted) {
+      const source = this.sources.get(topic);
+      if (!source) this.startSource(topic, keys);
+      else if (!sameKeys(source.keys, keys)) changed = true;
+    }
+    if (changed && !this.swapTimer) this.swapTimer = setTimeout(() => { this.swapTimer = undefined; this.swapKeys(); }, KEY_SWAP_DEBOUNCE_MS);
+  }
+
+  /** The graphql-ws arguments of a live subscription cannot change, so open the new one before
+   * closing the old. The old stream keeps delivering until the new one is surely admitted, and
+   * records added to the set are re-read because nothing is replayed to the new subscription. */
+  private swapKeys(): void {
+    for (const [topic, keys] of this.wanted()) {
+      const old = this.sources.get(topic);
+      if (!old || sameKeys(old.keys, keys)) continue;
+      if (old.retry) clearTimeout(old.retry);
+      const added = keys === undefined ? [] : keys.filter((key) => !old.keys?.includes(key));
+      this.sources.delete(topic);
+      this.startSource(topic, keys);
+      old.retiring = true;
+      this.retiring.add(old);
+      old.retry = setTimeout(() => { this.retiring.delete(old); old.stop(); }, KEY_SWAP_OVERLAP_MS);
+      for (const id of added) this.invalidate({ topic, id });
+    }
+  }
+
+  private startSource(topic: LiveTopic, keys?: readonly string[]): void {
     const epoch = this.epoch;
-    const holder: { stop: () => void; retry?: ReturnType<typeof setTimeout>; failed?: boolean; terminal?: boolean } = { stop: () => {} };
+    const holder: Source = { stop: () => {}, keys };
     this.sources.set(topic, holder);
     const interrupted = (retry = true) => {
       if (epoch !== this.epoch || this.sources.get(topic) !== holder || holder.retry || holder.terminal) return;
-      // Completion/lag and errors both lose continuity. Resnapshot and recreate
-      // the listener; this timer retries the stream, never polls domain reads.
+      // Completion/lag and errors both lose continuity. Subscribe again first and
+      // re-read afterwards, so a write between the two is delivered or fetched.
       holder.failed = true; holder.terminal = !retry;
       const attempt = (this.sourceAttempts.get(topic) ?? 0) + 1;
       this.sourceAttempts.set(topic, attempt);
-      if (attempt === 1) this.invalidate({ topic });
-      if (!retry || attempt > this.options.maxRetries) return;
+      if (!retry) { if (attempt === 1) this.invalidate({ topic }); return; }
+      if (attempt > this.options.maxRetries) return;
+      const backoff = attempt === 1 ? 0 : Math.min(30_000, 1500 * 2 ** (attempt - 1));
       holder.retry = setTimeout(() => {
         if (this.sources.get(topic) !== holder) return;
         holder.stop(); this.sources.delete(topic); this.reconcileSources();
-      }, Math.min(30_000, 1500 * 2 ** (attempt - 1)));
+        this.invalidate({ topic });
+      }, backoff + Math.random() * RESUBSCRIBE_JITTER_MS);
     };
     holder.stop = this.source(topic, (event) => {
-      if (epoch === this.epoch && this.sources.get(topic) === holder) {
+      if (epoch !== this.epoch) return;
+      if (this.sources.get(topic) === holder) {
         holder.failed = false;
         this.sourceAttempts.delete(topic);
         this.invalidate(event);
-      }
-    }, interrupted);
+      } else if (holder.retiring) this.invalidate(event);
+    }, interrupted, keys);
   }
 
   private schedule(): void {

@@ -76,8 +76,8 @@ mutation EntityUserDeleteMany($where: UserWhereInput) {
   }
 }
 
-subscription EntityUserChanged($filter: SubscriptionFilterInput) {
-  userChanged(filter: $filter) {
+subscription EntityUserChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  userChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

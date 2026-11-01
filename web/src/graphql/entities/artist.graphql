@@ -80,8 +80,8 @@ mutation EntityArtistDeleteMany($where: ArtistWhereInput) {
   }
 }
 
-subscription EntityArtistChanged($filter: SubscriptionFilterInput) {
-  artistChanged(filter: $filter) {
+subscription EntityArtistChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  artistChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

@@ -78,8 +78,8 @@ mutation EntityChapterDeleteMany($where: ChapterWhereInput) {
   }
 }
 
-subscription EntityChapterChanged($filter: SubscriptionFilterInput) {
-  chapterChanged(filter: $filter) {
+subscription EntityChapterChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  chapterChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

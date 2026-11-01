@@ -80,8 +80,8 @@ mutation EntityRssFeedDeleteMany($where: RssFeedWhereInput) {
   }
 }
 
-subscription EntityRssFeedChanged($filter: SubscriptionFilterInput) {
-  rssFeedChanged(filter: $filter) {
+subscription EntityRssFeedChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  rssFeedChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

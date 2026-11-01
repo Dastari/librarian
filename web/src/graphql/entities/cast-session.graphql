@@ -89,8 +89,8 @@ mutation EntityCastSessionDeleteMany($where: CastSessionWhereInput) {
   }
 }
 
-subscription EntityCastSessionChanged($filter: SubscriptionFilterInput) {
-  castSessionChanged(filter: $filter) {
+subscription EntityCastSessionChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  castSessionChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

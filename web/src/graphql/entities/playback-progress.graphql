@@ -83,8 +83,8 @@ mutation EntityPlaybackProgressDeleteMany($where: PlaybackProgressWhereInput) {
   }
 }
 
-subscription EntityPlaybackProgressChanged($filter: SubscriptionFilterInput) {
-  playbackProgressChanged(filter: $filter) {
+subscription EntityPlaybackProgressChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  playbackProgressChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

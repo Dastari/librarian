@@ -78,8 +78,8 @@ mutation EntitySavedViewDeleteMany($where: SavedViewWhereInput) {
   }
 }
 
-subscription EntitySavedViewChanged($filter: SubscriptionFilterInput) {
-  savedViewChanged(filter: $filter) {
+subscription EntitySavedViewChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  savedViewChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

@@ -82,8 +82,8 @@ mutation EntityAppLogDeleteMany($where: AppLogWhereInput) {
   }
 }
 
-subscription EntityAppLogChanged($filter: SubscriptionFilterInput) {
-  appLogChanged(filter: $filter) {
+subscription EntityAppLogChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  appLogChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id
