@@ -1,10 +1,686 @@
-# Glass UX release upgrades
+# Migration
 
-Read the [0.9.10 migration guide](https://github.com/Dastari/glass-ux/blob/v0.9.10/docs/migration.md)
-and [changelog](https://github.com/Dastari/glass-ux/blob/v0.9.10/CHANGELOG.md)
-before upgrading the pinned package. The same versioned files are available offline
-at `web/node_modules/glass-ux/docs/migration.md` and `web/node_modules/glass-ux/CHANGELOG.md`.
+Upgrade steps between releases. Each section lists the changes that need code edits first,
+then behaviour changes to review. The [changelog](../CHANGELOG.md) lists everything else.
 
-This page preserves the shared UI rules' relative guide link; it is a host pointer,
-not a copied or modified upstream migration guide. For adopting the package into
-this project, follow [Librarian's migration plan](../glass-ux-migration-plan.md).
+## 0.13.0 → 0.13.1
+
+No code changes are required. Behaviour to review:
+
+- A docked Sidebar's landmark (`nav`, or `aside` with `as="aside"`) is now its outer element.
+  Role and name queries find the same landmark; a test that walks from the landmark to the
+  pane's DOM parent will see one more level.
+- With nested sidebars that share a shortcut, one sidebar now toggles rather than all of them.
+
+## 0.12.1 → 0.13.0
+
+No code changes are required; AppShell, SectionDrawer and Sheet keep their props and exports.
+Behaviour to review:
+
+- SectionDrawer groups have `role="group"` and keep collapsed rows in the page (hidden), so
+  tests that counted rendered rows may count hidden ones. Items and group titles gain wrapper
+  elements; class names on existing elements are unchanged, and the header subtitle is a
+  `div` instead of a `p`. In a host without a CSS reset, group titles take the page font.
+- ⌘B / Ctrl B does not toggle the drawer while typing in rich text, and "/" follows
+  `configureShortcuts`.
+- Brand icons keep their names but have new artwork; check screens that pair them with logos.
+
+## 0.12.0 → 0.12.1
+
+No code changes are required. The new `glass-ux/on-screen-keyboard` entry adds components
+and messages; applications that override messages can add the `onScreenKeyboard` namespace.
+
+## 0.11.7 → 0.12.0
+
+Message overrides (`configureMessages`, `MessagesProvider`, language packs) are the only
+code that may need edits.
+
+- Removed messages, replaced by whole sentences that take the object: `splitPane.hide` and
+  `splitPane.show` (use `hidePane` and `showPane`), `jsonTree.collapse` and `jsonTree.expand`
+  (use `collapseNode` and `expandNode`), `referenceInput.matches` (use `noMatchesFor`).
+  `noFor` now ends with the noun in parentheses in packs; the English text is unchanged.
+- Application text is passed to messages as written, not lower-cased: `actions.moreOptions`,
+  `referenceInput.noFor`, `toolActivity.copy`, `metric.minimumAverageMaximum` (`range`) and
+  `dataTable.dateCondition`. The English defaults lower-case it themselves, so English output is
+  the same; an override that expected lower case must lower-case it. New messages: `toolActivity.rowLabel`,
+  `results.diffSummary`, `dataTable.groupSummary`, `map.mapLoadFailedAt`, `topology.clusterSummary`,
+  the `byteUnits` namespace and the `durationField` word lists.
+- `DataTableNoun`, `MapNoun` and a table result's `noun` accept a form per plural category
+  (`one`, `few`, `many`, ...) besides `other`; `{ one, other }` keeps working. Counts choose
+  the form with the locale's plural rules, so `formatCount` now follows them in every language.
+- More text is passed on as written: `addressField.enterThe` and `checkThe` receive the
+  country's field name ("Postcode"); `asks.chooseEntities`, `chooseOneEntity`, `search`,
+  `find` and `enter` the application's noun or label; `dataTable.summaryPreset` the date
+  preset ("Last 24 hours"); and the all-day event name uses the new `scheduler.allDayOn`
+  sentence. English
+  output is the same; a pack or override that expected lower case lower-cases it itself. New
+  messages: `kanban` (`moveCard`, `moveToColumn`, `moveUp`, `moveDown`, `movedTo`,
+  `moveNotSaved`), `dataTable.resultsFound`, `lightbox.shown`, `scheduler.allDayOn`.
+- `KanbanMove.input` can be `"menu"` (the new Move menu) as well as `"pointer"` and
+  `"keyboard"`; a `switch` over it needs a case. Kanban cards are list items with a named
+  `group` inside (not `role="button"` on the item): tests that found a card with
+  `getByRole("button")` use `getByRole("group")`.
+- Byte sizes use the language's unit symbols ("1,5 Go" in French; English is unchanged), and
+  `parseBytes` reads them and the locale's own digits. `formatDuration` writes non-English
+  locales with `Intl.DurationFormat` where the runtime has it, and `parseDuration` takes a
+  `locale` and reads that language's unit words; English output and input are unchanged.
+
+## 0.11.6 → 0.11.7
+
+No code changes are required. `AvatarSize` gains `"2xl"`; code that switches over every size
+needs a case for it. TopologyCanvas now draws a dot grid behind the map; pass `grid={false}`
+to keep the previous plain backdrop.
+
+Stepper: `aria-current="step"` and the current highlight now follow `value`, not a step's
+`status: "current"`. If you set `status: "current"` on a step other than `value`, set `value`
+to that step instead. A step with an explicit `status` at `value` keeps its marker (a check
+for `complete`) and gains the highlight.
+
+## 0.11.5 → 0.11.6
+
+No code changes are required.
+
+## 0.11.4 → 0.11.5
+
+No code changes are required. In narrow containers vertical tabs now show the horizontal tab
+strip with a More menu instead of chips or a picker; replace `layout="chips"` or
+`layout="select"` with `layout="tabs"`, and update tests or styles that targeted
+`.fa-vtabs-picker` or `[data-layout="chips"]`. A section past the strip's width is reached
+through More.
+
+## 0.11.3 → 0.11.4
+
+No code changes are required.
+
+## 0.11.2 → 0.11.3
+
+No code changes are required. A scrolling or `overflow: hidden` wrapper of your own that
+holds controls at its edge can add `fa-focus-room`, or `var(--focus-reach)` to its padding,
+so their focus rings are not cut off; remove any padding added to work around the settings
+dialog's pane. The settings dialog's pane, the Kanban board and the JSON tree keep their
+content where it was but extend 4px further under their scrollbars.
+
+## 0.11.1 → 0.11.2
+
+No code changes are required. Workarounds for these fixes can go: stopping pointer events
+around menus in `renderEvent`, width limits around `actions`, and `useDraggable` in place of
+`Draggable` for `liftKeys`. Sticky timeline rows now scroll away in narrow or crowded
+timelines.
+
+## 0.11.0 → 0.11.1
+
+No code changes are required. Pass `confirmOnCancel` to `EntitySettingsDialog` where Cancel
+should ask before discarding unsaved changes.
+
+## 0.10.1 → 0.11.0
+
+No code changes are required.
+
+- `onSlotSelect` gets a second argument (`{ element }`) and `editable` may return a string. A
+  callback typed with the old signatures still compiles.
+- The Scheduler header puts `actions` before the view switch; without `actions` it is unchanged.
+
+## 0.10.0 → 0.10.1
+
+No code changes are required.
+
+- `Markdown` in containers 34rem and wider uses 26px lines, so long answers and documents
+  are taller. Update visual snapshots of wide Markdown.
+
+## 0.9.14 → 0.10.0
+
+No code changes are required.
+
+- The root element now carries `data-style="glass"` (or `"flat"`). With Flat, it also
+  reports `data-glass="solid"`, `data-background="plain"` and `data-motion="reduced"`
+  whatever the stored choices are.
+- The `DataTable` footer is a space step taller, so the selection bar can inset its
+  buttons. Selecting rows still leaves the footer in place.
+
+## 0.9.13 → 0.9.14
+
+No code changes are required.
+
+- A `DataTable` column header's accessible name is its label alone. Tests that matched the
+  longer name ("Reorder Person column …") should match the label.
+
+## 0.9.12 → 0.9.13
+
+No code changes are required.
+
+- A required `Combobox` or `ComboboxField` no longer shows its Clear button. Pass
+  `clearable` to keep it, or `clearable={false}` to hide it on an optional one. CSS that hid
+  the button (`.fa-combobox button[aria-label="Clear"]`) can go.
+- Radios, radio cards and labelled checkboxes inside a `Field` each have their own id. Tests
+  that found options by a shared id should find them by role and name.
+
+## 0.9.11 → 0.9.12
+
+No code changes are required.
+
+- Built-in wording now comes from `glass-ux/i18n`. English text is unchanged except
+  relative times and long durations, which `Intl` formats in the component's locale
+  ("3 min ago" may read "3 minutes ago"); update text snapshots that assert them. To show
+  another language, register its pack: `registerMessagePack(de)` from `glass-ux/i18n/de`.
+- Library CSS uses logical properties (`margin-inline-start` rather than `margin-left`).
+  Application CSS that overrides a library rule with the physical property now adds to it
+  instead of replacing it; override the logical property.
+- Server components can import the library: modules that need the client say so. Apps that
+  wrapped library imports in their own `"use client"` files can keep them.
+- Development warnings test `process.env.NODE_ENV !== "production"`. Vite, webpack, Next.js
+  and esbuild define it; a custom bundler must too.
+- Charts: `Threshold.tone` is optional. Passing `bands` (even `[]`) replaces the shading a
+  status threshold implied before.
+- `print.css` and `forced-colors.css` are unlayered so they win over component styles. An
+  application with its own shell grid adds print rules for it (see docs/ui-rules.md R4.10).
+- DataTable stores column order with the existing per-person column state; earlier stored
+  preferences are read as before.
+
+- Light mode is less washed out: the canvas is a step deeper (`--canvas` lightness 0.94,
+  was 0.972), the colour fields are stronger, panel glass is a little clearer (fill 0.5)
+  with a firmer edge and shadow, and `--fg-muted`, `--fg-subtle` and `--line` are darker.
+  Visual snapshots of light-mode screens need updating. Dark mode is unchanged.
+- The lighter chart tier (`--chart-l-a`, light mode) is 0.62 instead of 0.63, so every
+  data colour keeps 3:1 on the clearer panel glass.
+- `.canvas-silk` is now the artwork layer for every background with artwork, not only
+  Silk. Keep it mounted once behind the shell; it hides itself for backgrounds without
+  artwork and for Solid. CSS that set its `background` or `mask` should set
+  `--canvas-overlay-colour`, `--canvas-overlay-fill` or `--canvas-overlay-mask` instead.
+- `BACKGROUNDS` is now a mutable `BackgroundStyle[]` (like `PALETTES`) and
+  `BackgroundStyle` accepts application ids from `defineBackground`. A `switch` over
+  `BackgroundStyle` needs a `default` branch.
+- The appearance controls now offer six more palettes and ten more backgrounds; an
+  application with its own controls built from `PALETTES` and `BACKGROUNDS` gets them
+  automatically. Lock or filter them with `configureAppearance` if a product should not.
+
+## 0.9.10 → 0.9.11
+
+No code changes are required.
+
+- AI result files and composer attachments now show their kind (PDF, spreadsheet, archive,
+  audio and so on) instead of the plain page, and JSON, YAML and XML show the data icon
+  rather than the code icon. A test or snapshot that looked for `data-icon="code"` or
+  `data-icon="file"` on those rows needs the new icon name.
+- An application mapping file names or MIME types to icons can use `FileIcon` from
+  `glass-ux/file-icon` (or `fileKind` for the kind alone), and colour kinds from its own CSS
+  with `[data-file-kind]`.
+- An `<img>` in an `AspectRatio` with its own loading and error handling can move to `Image`
+  from `glass-ux/image`; give it the same `ratio`, and its `alt`.
+
+## 0.9.9 → 0.9.10
+
+No code changes are required.
+
+- Charts keep breaking a line at missing samples. To join gaps with a dashed bridge instead,
+  pass `gaps="bridge"` to `LineChart` or `AreaChart`; data that dropped nulls to avoid holes
+  can keep them now.
+- A `ConversationLog` keeps a reader at the end while an answer streams again; nothing to
+  change. A test that waits for a completed answer and checks the log is at its end should
+  pass consistently.
+- A rule that hid a `Tree`'s group counts (`.fa-tree-count { display: none }`) can become
+  `groupCounts={false}`.
+- A `Tree` is unchanged unless you opt in. For an explorer, pass `selectableGroups` (branches
+  select on click and open from the chevron), mark unloaded branches `hasChildren: true` and
+  fetch them in `onLoadChildren`, and page long branches with `hasMore` and `onLoadMore`. A
+  wrapper that turned group clicks into selections, or kept placeholder children to force a
+  chevron, can go.
+- Window actions are unchanged unless you wrap them. To stop a narrow window's actions pushing
+  its controls out of the frame, wrap each action in `Window.Action` with a `label` (and an
+  `icon` and `onSelect`, or `menu` content for a menu or a Segmented choice). Actions are
+  `secondary` by default and fold into More; mark the one that must stay `priority="primary"`.
+- A split view built in the application (a tree beside a table, a list above details) can
+  move to `SplitPane` from `glass-ux/split-pane`. Its size is remembered per window kind
+  inside a window body; pass `storageKey` elsewhere, or `storageKey={null}` to forget it.
+- A stylesheet that clipped a range `Slider`'s track to stop it widening a scroll area
+  (`overflow-x: clip` on `.fa-slider-track`) can go: the slider clips its own range, and
+  that override also cut off the value bubble over a thumb at either end.
+
+## 0.9.8 → 0.9.9
+
+No code changes are required.
+
+- Panels in `AppShell`'s routed view are now frosted like the drawer and inspector. Review
+  screenshots of routed pages; with live rendering their frost drops out for the length of a
+  route cross-fade.
+- In a `ConversationLog` of 20 or more turns, scroll to a turn with
+  `useConversationLog().scrollToTurn(index)` instead of `scrollIntoView` on its element.
+- Under a `TooltipProvider` a `Tooltip` renders only its trigger, marked `data-fa-tooltip`,
+  and one host per provider shows the bubble. Tests that inspected Base UI's per-trigger
+  tooltip internals should hover or focus the trigger and check the visible bubble.
+- A surface can choose its own level: `glass="reduced"` or `glass="solid"` on `Surface` and
+  `Panel`, or `data-glass` on any element. It never goes more transparent than the page.
+
+### Baked glass rendering (optional)
+
+Baked rendering gives panels and chrome on the page canvas a copy of the canvas blurred once,
+instead of a live blur every frame. It looks the same at rest and removes most compositor work
+while anything animates (docs/performance.md, "Baked frost"). To use it:
+
+1. Select it where you configure appearance, at module scope:
+
+   ```ts
+   configureAppearance({ defaults: { palette: "graphite" }, glassRendering: "baked" });
+   ```
+
+   With server rendering, call it before `appearanceBootScript()`, so the first frame
+   carries `data-glass-rendering="baked"` on `<html>`.
+2. Keep `AppearanceProvider` mounted; it bakes the canvas. Without the provider, call
+   `applyAppearance` (or run the boot script) after `configureAppearance`, and call
+   `installBakedFrost()` once at startup.
+3. Draw the page canvas with `canvas-ambient` or `canvas-background` (and `canvas-silk` for
+   Silk). Images in your own canvas must be same-origin or served with CORS; otherwise the
+   materials keep the live blur.
+4. If your Content Security Policy restricts images, allow `blob:` in `img-src`: the baked
+   canvas is a `blob:` image.
+5. Panels and chrome must sit on the canvas (the layout contract). A layer that rests over
+   other content — a sticky header over a list, a panel overlapping another — would show the
+   canvas through it; give it `glass-overlay` or `glass-float`, which always blur live.
+
+Scrolling, sliding panes, dragged and floating windows, overlays and mode islands keep the
+live blur automatically. Browsers without `background-clip: border-area`, and iOS and iPadOS,
+keep it everywhere. Text on a baked panel may draw with subpixel antialiasing on Windows and
+Linux, so pixel snapshots taken there can change.
+
+## 0.9.7 → 0.9.8
+
+No code changes are required.
+
+- A local aspect-ratio box (padding-top hacks or your own `aspect-ratio` wrapper) can move
+  to `AspectRatio` from `glass-ux/aspect-ratio`.
+- Overrides for a full-screen window's background (`background-clip`, hiding `::before`),
+  for the narrow scope icon's width, and `data-mode="dark"` on controls inside `glass-float`
+  can go.
+- Content on `glass-float` that set its own light text colour can rely on the float's
+  `--fg` and `--fg-muted`.
+- A click handler on `.fa-chart-hit` that read `aria-valuenow` can move to `LineChart`
+  `onActivate`, and a drawn selection to `selected`.
+
+## 0.9.6 → 0.9.7
+
+No code changes are required.
+
+- Managed windows show a Full screen control beside Pop out. Turn it off for a kind with
+  `fullscreen: false` on its `WindowKindDefinition`. Content that drew its own Full screen
+  button in `Window.Actions` can drop it and read `useWindow().fullscreen` instead.
+- Tests that list a window's controls should expect `data-control="fullscreen"` after
+  `popout` where the browser supports full screen (jsdom does not, so unit tests see no
+  change).
+- A pop-out route whose manager has no storage no longer needs its own handshake: the
+  library asks the workspace for its state. Remove any shim that rebroadcast state for it.
+- Your own Base UI portals inside a window should pass `container={popupContainer()}` so
+  they open inside a window in full screen.
+
+## 0.9.5 → 0.9.6
+
+No code changes are required. Stand-in glyphs for sites (for example `IconMapPin` for an
+office, `IconPackage` for a warehouse, `IconTag` for a shop) can move to `IconOffice`,
+`IconWarehouse`, `IconStore`, `IconSchool`, `IconHospital` and `IconFactory`, and
+organisation relationships to `IconPartner` and `IconSupplier`.
+
+## 0.9.4 → 0.9.5
+
+No code changes are required.
+
+- To draw a window's scope with the application's own identity component, return `chip` and
+  `icon` from `WindowScopes.describe` alongside `label`. A scope without them keeps the
+  library's pill and `avatar`.
+
+## 0.9.3 → 0.9.4
+
+No code changes are required.
+
+- A paged `DataTable` is unchanged. To load more as the reader scrolls, pass `infinite` and
+  append each batch to `rows` (docs/data-filters.md, "Load more as the reader scrolls").
+- With graphql-orm and Apollo Client, `connectionPagination()` from
+  `glass-ux/adapters/graphql-orm` replaces a hand-written `fetchMore` `updateQuery` or field
+  policy that concatenates `Edges`.
+
+## 0.9.2 → 0.9.3
+
+No code changes are required.
+
+- A single-series `LineChart` or `AreaChart`, and a multi-series one with only one series
+  visible, now shows the floating chart tooltip (`.fa-chart-tip`, portalled to the body)
+  while hovered or under the keyboard cursor. Tests that expected no tooltip for one series,
+  or that read the hovered value only from the head readout, should expect the tooltip; the
+  head readout still updates. Tests that counted `.fa-chart-tip` elements on a page should
+  allow for it.
+- `PieChart`, `DonutChart` and `Sunburst` show the same tooltip in the full tier. Tests that
+  took a screenshot or checked what covers the legend while a slice is hovered should
+  account for it.
+
+## 0.9.1 → 0.9.2
+
+No code changes are required.
+
+- A disabled menu row's reason is now its tooltip, not a line under the row. Tests that
+  looked for the reason text (or `.fa-menu-reason`) inside the open menu should hover or
+  arrow to the row and expect a `tooltip`, or check the row's accessible description.
+- `reasonShown`, `reasonId` and `reasonRuns` are deprecated and do nothing for menus;
+  remove them. They are planned for removal in 0.10.
+- A chart's full-tier head has a second icon button, "Copy as CSV", after "View as table".
+  Tests that selected the head's only button should select it by name.
+
+## 0.9.0 → 0.9.1
+
+No code changes are required.
+
+- Browser tests that open a dialog from the keyboard and expect focus on the header close
+  button should expect the first control instead (in a `SettingsDialog`, the current
+  section's tab). Pass `initialFocus` to keep another target.
+- A test that pressed Escape twice, once for a tooltip and once for its dialog, needs one
+  press now.
+
+## 0.8.3 → 0.9.0
+
+0.9.0 removes the gallery and the deep import paths from the package, makes the formatting
+locale configurable and renames the selection props on four components. None of these has an
+alias, so update imports, locale setup and props before upgrading.
+
+### Required changes
+
+**The gallery is no longer in the package.** Remove imports of `glass-ux/gallery`,
+`glass-ux/gallery/*` and `glass-ux/gallery/styles.css`. Link to the
+[documentation site](https://dastari.github.io/glass-ux/) instead, or serve the
+`glass-ux-docs.tar.gz` asset from the same release where the catalogue must be available
+offline. Keep your own component examples in your application.
+
+**Deep imports no longer resolve.** Import from the package's named entries; the
+[API index](api/README.md) lists each component's entry. Anything only reachable through an
+internal path is no longer public: copy it into your application, or ask for it to become an
+entry.
+
+| 0.8 | 0.9 |
+| --- | --- |
+| `glass-ux/ui/<family>/<file>` (e.g. `glass-ux/ui/button/button`) | `glass-ux/<family>` (e.g. `glass-ux/button`) |
+| `glass-ux/lib/appearance/<file>` | `glass-ux/appearance` |
+| `glass-ux/lib/actions/actions` | `glass-ux/actions` |
+| `glass-ux/lib/fit-form` | `glass-ux/fit-form` |
+| `glass-ux/lib/use-media-query` | `glass-ux/dialog` (`useMediaQuery`, `usePhoneLayout`, `PHONE_QUERY`) |
+| `glass-ux/ui/data-table/cells/relative-time` | `glass-ux/data-table` |
+| `glass-ux/ui/country-select/countries` | `glass-ux/country-select` |
+| `glass-ux/shell/context-switcher/index` | `glass-ux/shell/context-switcher` |
+| `glass-ux/shell/<file>`, `glass-ux/windows/<file>`, `glass-ux/ai/<file>` | `glass-ux/shell`, `glass-ux/windows`, `glass-ux/ai` or the named `glass-ux/ai/<part>` entry |
+| `glass-ux/icons/generated/icons` | `glass-ux/icons` |
+
+**Set the formatting locale.** Glass UX used to format everything as en-AU. It now follows
+`<html lang>`, falling back to en-US. To keep Australian formats, set `<html lang="en-AU">`
+or call `configureLocale("en-AU")` from `glass-ux/locale` beside `configureAppearance`.
+
+- For SSR, call `configureLocale` with the same tag on the server and the client.
+- To format one region differently, wrap it in `<LocaleProvider locale="…">`, or pass a
+  component's `locale` prop.
+- Schema helpers cannot see a provider: pass a field's explicit `locale` to its schema too.
+- A custom chart `format` callback now receives the locale as its second argument.
+- `parseMoney` and `parseBytes` read the locale's decimal mark, so in a locale such as de-DE
+  `1.234,5` means 1234.5.
+
+**Selection props.** Replace `onSelect` with `onSelectedIdChange` on `Tree`,
+`TopologyCanvas`, `GeoMap` and `SessionNav`. The callback receives the id first; the object
+`onSelect` received is `details.item`.
+
+| Component | 0.8 | 0.9 |
+| --- | --- | --- |
+| `Tree` | `onSelect={(node) => setSelected(node.id)}` | `onSelectedIdChange={setSelected}` (node: `details.item`) |
+| `TopologyCanvas` | `onSelect={setSelected}` | `onSelectedIdChange={(id) => setSelected(id)}` |
+| `GeoMap` | `onSelect={(point) => select(point?.id ?? null)}` | `onSelectedIdChange={(id) => select(id)}` (point: `details.item`) |
+| `SessionNav` | `activeId={id}` and `onSelect={(session) => open(session)}` | `selectedId={id}` and `onSelectedIdChange={(id, { item }) => open(item!)}` |
+
+- A fixed `selectedId` with no handler stays fixed. Use `defaultSelectedId` to let the
+  component keep the selection, and `selectedId={null}` to clear it.
+- `onSelectedIdChange` does not fire when the selected item is pressed again. Handle the press
+  separately if you relied on `onSelect` for that, for example to close a drawer.
+
+### Review
+
+- If your repository vendors the archive, commit only the `.tgz` and delete any unpacked copy.
+- Source maps are no longer shipped. Debuggers show the compiled ES modules, which follow the
+  source closely.
+- `docs/api/typedoc.json` is gone. Read `docs/api/*.md` or the type declarations.
+- Firefox ESR 140 now shows the theme colours. No code changes are needed.
+- A `MapSilhouette` outside a map now fills its container, which needs a definite height.
+  Remove any wrapper you added to clip or position it.
+
+## 0.8.2 → 0.8.3
+
+No code changes are required.
+
+- Tests that find the date input of an AI date-time ask by the name "Date" should use the
+  part's new name, "<label> Date" (for example "Date and time Date"), or the group name.
+- Replace a native `<input type="time">` beside a `DateField` with `DateTimeField` or
+  `TimeField` to get typed entry, the list of times and time zone handling.
+
+## 0.8.1 → 0.8.2
+
+No code changes are required.
+
+- In Solid, controls, wells, soft tints and skeletons now have opaque fills. In Frosted,
+  controls and wells are close to opaque. Review screenshots taken in those materials.
+- Markdown with `wrapTableCells` shows every table row instead of a 14-row scroll box.
+
+## 0.8.0 → 0.8.1
+
+No code changes are required.
+
+- The drag preview now renders in the top layer. Remove any z-index you set to raise it over
+  dialogs.
+- During a pointer drag a transparent shield covers the page and shows the cursor. Hover
+  styles under the pointer pause until the drop.
+
+## 0.7 → 0.8
+
+0.8.0 renames the organisation switcher to a generic context switcher and removes the
+names deprecated in 0.7. Neither has an alias, so update imports, props and CSS before
+upgrading. Coming from 0.7.0 or 0.7.1, also read the 0.7.x sections below.
+
+### Required changes
+
+**`OrgSwitcher` is `ContextSwitcher`.** It switches any context: organisations, projects,
+workspaces. Import it from `glass-ux/shell` or the new `glass-ux/shell/context-switcher`
+entry. `glass-ux/shell/org-switcher` is gone.
+
+```diff
+- import { OrgSwitcher, useRecentOrganisations } from "glass-ux/shell";
++ import { ContextSwitcher, useRecentContexts } from "glass-ux/shell";
+
+- <OrgSwitcher organisations={orgs} searchPlaceholder="Find a customer" … />
++ <ContextSwitcher items={orgs} labels={{ placeholder: "Find a customer" }} … />
+```
+
+| 0.7                                            | 0.8                                                 |
+| ---------------------------------------------- | --------------------------------------------------- |
+| `OrgSwitcher`, `OrgSwitcherProps`              | `ContextSwitcher`, `ContextSwitcherProps`           |
+| `OrgSwitcherPanel`, `OrgSwitcherPanelProps`    | `ContextSwitcherPanel`, `ContextSwitcherPanelProps` |
+| `OrgSwitcherRemote`                            | `ContextSwitcherRemote`                             |
+| `OrgAvatar`, `OrgAvatarProps`, `OrgAvatarSize` | `ContextAvatar`, `ContextAvatarProps`, `ContextAvatarSize` |
+| `describeOrgScope`                             | `describeContext`                                   |
+| `SwitcherOrganisation`                         | `ContextItem`                                       |
+| `OrgTree`, `OrgTint`                           | `ContextTree`, `ContextTint`                        |
+| `buildOrgTree`                                 | `buildContextTree`                                  |
+| `orgCode`, `orgInitials`, `orgTint`            | `contextCode`, `contextInitials`, `contextTint`     |
+| `useRecentOrganisations`                       | `useRecentContexts`                                 |
+| `glass-ux/shell/org-switcher`                  | `glass-ux/shell/context-switcher`                   |
+
+Props and fields:
+
+- `organisations` is `items` on `ContextSwitcher` and `ContextSwitcherPanel`.
+- `searchPlaceholder` is gone; pass `labels={{ placeholder: "…" }}`.
+- `OrgAvatar`'s `org` prop is `ContextAvatar`'s `item`.
+- `ContextTree.ordered` entries are `{ item, depth }` (were `{ org, depth }`).
+- A `SwitcherRow` carries `item` (was `org`), and its `kind` is `"item"` (was
+  `"organisation"`). The list rows' `data-kind` attribute follows.
+- `describeContext` returns `item` (was `org`).
+- `SwitcherLabels.organisations` is `group`, and `SwitcherLabels` gains keys for every
+  word the switcher shows or announces. Partial `labels` props still merge over the
+  defaults. Code that builds a whole `SwitcherLabels` (for `switcherGroups`) should start
+  from `switcherLabels(noun)` or `DEFAULT_SWITCHER_LABELS`.
+
+CSS: `.fa-org-switcher*` classes are `.fa-context-switcher*`, and `.fa-org-avatar*` are
+`.fa-context-avatar*`. Update stylesheets and test selectors that name them.
+
+Unchanged: with no `labels`, the switcher still speaks of organisations, so its accessible
+names ("Organisation: Northstar Studio", "Search organisations") and the default words stay
+the same. `useRecentContexts` reads the same storage format under your key, so saved recents
+survive.
+
+**Deprecated names from 0.7 are removed.**
+
+| Removed                                        | Use                                                                       |
+| ---------------------------------------------- | ------------------------------------------------------------------------- |
+| `toWhere` on DataTable filter and search specs | `toCondition`                                                             |
+| `WhereInput` from `glass-ux/data-table`        | `FilterCondition`                                                         |
+| `EndpointStatus` (badge, data-table)           | `StatusKind`                                                              |
+| DesktopSession `endpoint` prop                 | `target`                                                                  |
+| `POPUP_OFFSET`, `POPUP_COLLISION_PADDING`      | Popups read `--popup-offset` and `--popup-collision`; override the tokens |
+
+```diff
+- filters.text({ field: "Hostname", toWhere: (value) => … })
++ filters.text({ field: "Hostname", toCondition: (value) => … })
+- import type { WhereInput } from "glass-ux/data-table";
++ import type { FilterCondition } from "glass-ux/data-table";
+- import type { EndpointStatus } from "glass-ux/badge";
++ import type { StatusKind } from "glass-ux/badge";
+- <DesktopSession endpoint={device} … />
++ <DesktopSession target={device} … />
+```
+
+- `CustomFilterSpec` is an interface again and requires `toCondition`, so an interface may
+  extend it. `CustomFilterConditionSpec`, the 0.7 union of the two names, is removed: use
+  `CustomFilterSpec`, or `CustomFilterOptions` for the `filters.custom` argument.
+- `DesktopSession`'s `target` is now required.
+- `POPUP_OFFSET` and `POPUP_COLLISION_PADDING` have no replacement export. Positioning code
+  of your own should read the `--popup-offset` and `--popup-collision` tokens, which follow
+  UI scale and density.
+- The GraphQL adapter keeps its own `toWhere()` function and `WhereInput` type.
+
+### Other changes
+
+No code changes are required. Drag and drop is a new entry, `glass-ux/drag-drop`. The
+redrawn company and manufacturer icons keep their names; review screenshots that include
+them.
+
+- Scroll regions whose content fits no longer swallow the mouse wheel, so the page or pane
+  around them scrolls. Remove workarounds that forwarded wheel events past a DataTable,
+  Panel body, ScrollArea or window body. A region that overflows still stops the wheel at its
+  ends, as before.
+
+## 0.7.1 → 0.7.2
+
+No code changes are required. Meters stay neutral while healthy unless you pass
+`tone="data"`.
+
+## 0.7.0 → 0.7.1
+
+No code changes are required.
+
+- Remove any workaround that pinned the docked Inspector's or drawer's width; AppShell sizes
+  both panes again.
+- Import `resolveActions` from `glass-ux/actions` instead of
+  `glass-ux/lib/actions/actions`.
+- A window body that is still loading is now announced as a `status` named "Loading
+  window". Tests that find it by role should query `getByRole("status", { name: "Loading
+  window" })`.
+
+## 0.6 → 0.7
+
+### Required changes
+
+**The GraphQL filter adapter has its own entry.** The `where`/`evaluate` translation for
+GraphQL ORM servers moved out of the core library. Core DataTable filters and search no
+longer refer to any server shape.
+
+```diff
+- import { toWhere, searchWhere } from "glass-ux/lib/graphql-orm/where";
+- import { evaluateWhere } from "glass-ux/lib/graphql-orm/evaluate";
++ import { toWhere, searchWhere, evaluateWhere } from "glass-ux/adapters/graphql-orm";
+```
+
+Every export keeps its name: `toWhere`, `searchWhere`, `columnWhere`, `columnEntries`,
+`toFilterInput`, `decimalText`, `rfc3339`, `evaluateWhere`, `WhereInput`, `WhereOptions`
+and `EvaluateOptions`. In-memory matching (`filterRows`, `matchesFilter`, `searchRows`)
+stays in `glass-ux/data-table`.
+
+**`CustomFilterSpec` is a type, not an interface.** A custom filter now requires exactly one
+of `toCondition` or the deprecated `toWhere`. Object literals and `satisfies` checks are
+unchanged. An interface that extends it must become an intersection:
+
+```diff
+- interface TagFilter extends CustomFilterSpec<string[]> {
+-   suggestions: string[];
+- }
++ type TagFilter = CustomFilterSpec<string[]> & {
++   suggestions: string[];
++ };
+```
+
+**Removed deep-import helpers.** These were reachable only through the wildcard paths and were
+unused by the library:
+
+| Removed                                        | Replacement                                                                                 |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `readMotionScale` from `glass-ux/ui/map/theme` | `motionScale()` from `glass-ux/appearance`                                                  |
+| `fitRect` from `glass-ux/windows/geometry`     | `clamp` from the same module on each of `x`, `y`, `w`, `h`                                  |
+| `stackOrder` from `glass-ux/windows/geometry`  | `windows.filter((w) => !w.poppedOut && w.layout !== "tiled").toSorted((a, b) => a.z - b.z)` |
+
+### Deprecated names
+
+The old names still work in 0.7 and will be removed in 0.8.
+
+| Deprecated                                     | Use                                                                       |
+| ---------------------------------------------- | ------------------------------------------------------------------------- |
+| `toWhere` on DataTable filter and search specs | `toCondition`                                                             |
+| `WhereInput` from `glass-ux/data-table`        | `FilterCondition`                                                         |
+| `EndpointStatus` (badge, data-table)           | `StatusKind`                                                              |
+| `DesktopSession` `endpoint` prop               | `target`                                                                  |
+| `POPUP_OFFSET`, `POPUP_COLLISION_PADDING`      | Popups read `--popup-offset` and `--popup-collision`; override the tokens |
+
+The GraphQL adapter keeps its own `toWhere()` function and `WhereInput` type; those names
+describe that server's `Where` input and are not deprecated.
+
+### Behaviour to review
+
+- **Command palette group order.** The default order is now
+  `DEFAULT_PALETTE_GROUP_ORDER` (`["Recent", "*", "Actions", "Navigation"]`). It no longer
+  places "Endpoints" and "Organisations" last. To keep the previous order, pass
+  `groupOrder={[...DEFAULT_PALETTE_GROUP_ORDER, "Endpoints", "Organisations"]}` to
+  `PaletteProvider`.
+- **Tree default icons** are `IconFolder` (branches) and `IconFile` (leaves). Supply
+  `icon` per node to restore device or organisation icons.
+- **Popup gaps.** Every anchored popup uses `--popup-offset` (6px at the default scale), so
+  popovers and preview cards sit 2px closer to their trigger; arrowed tooltips sit 12px
+  away and context menus 3px. Gaps now follow UI scale and density.
+- **Unavailable controls stay focusable.** Map, topology and calendar controls that cannot
+  act are `aria-disabled` with a reason instead of `disabled`; at the minimum or maximum
+  month the calendar's previous/next buttons remain in the tab order.
+- **Button announcements.** A Button that tracks pending, success and failure renders a
+  visually hidden polite live region beside itself. Pass `statusAnnouncement={false}` when
+  the host already announces the outcome. Host selectors such as `:last-child` around such
+  buttons may need adjusting.
+- **Clearable inputs clear on Escape.** Any `Input` with `clearable` now clears on Escape,
+  as `SearchField` already did.
+- **`null` as a controlled value.** `Segmented` (`value`), `TagInput` (`value`),
+  `MultiSelect` (`value`) and `Tree` (`expanded`) treat `null` like `undefined`
+  (uncontrolled). `SwatchPicker` keeps `value={null}` as a controlled “nothing chosen”.
+- **Opaque materials in Solid.** In Solid, reduced transparency and browsers without
+  `backdrop-filter`, `glass-card` and `glass-float` are opaque. An overlay rendered inside a
+  panel or chrome layer uses an opaque fill instead of a second blur.
+- **DataTable cards** show the subtitle under the title and flow fields on wrapping lines by
+  column priority. Below 36rem the toolbar stays on one row and search folds to an icon.
+- **Motion.** Popups, dialogs, toasts and indicators use spring easing; under Still or the
+  operating system's reduced-motion setting they remain instant, as before.
+- **SwatchPicker folds instead of wrapping.** By default (`collapse="auto"`) the swatches
+  stay on one line, and when they do not fit the box they are given the picker becomes one
+  menu button showing the chosen swatch. It used to wrap onto more lines. Pass
+  `collapse="none"` to keep every swatch and wrap, for example in a phone sheet. The picker
+  also follows `SegmentedCollapseContext`, so a host that forces `"menu"` (the TopBar's module
+  slot on a phone) folds a picker placed there; its own `collapse` prop wins. Tests that
+  find swatches by name in a narrow box should open the menu (`Palette: Ocean`) and pick the
+  `menuitemradio` instead.
+
+### Package contents
+
+- `dist/gallery/api.generated.json` and `demo-coverage.generated.json` are no longer
+  published; no package export pointed at them.
+- Declaration maps (`*.d.ts.map`) are no longer published. Go-to-definition opens the
+  declaration file.
+- Generated icons are tree-shakeable: importing one icon no longer bundles all of them.

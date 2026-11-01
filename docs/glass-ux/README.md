@@ -1,9 +1,9 @@
 # Glass UX reference installation
 
-Reviewed on 2026-10-29 against **0.11.7**. Release API metadata is retained in
-`tmp/glass-ux-0.11.7/`; archive checksums were verified before installation.
+Reviewed on 2026-11-01 against **0.13.1**. Release API metadata is retained in
+`tmp/glass-ux-0.13.1/`; archive checksums were verified before installation.
 
-- [Release and assets](https://github.com/Dastari/glass-ux/releases/tag/v0.11.7)
+- [Release and assets](https://github.com/Dastari/glass-ux/releases/tag/v0.13.1)
 - [Documentation site](https://dastari.github.io/glass-ux/)
 - [Migration plan](../glass-ux-migration-plan.md)
 - [Complete library catalogue](component-catalogue.md)
@@ -51,7 +51,7 @@ and update this provenance record. Installed docs take precedence if versions di
 
 ## Downloaded offline documentation
 
-The current download is in the ignored `tmp/glass-ux-0.11.7/` directory:
+The current download is in the ignored `tmp/glass-ux-0.13.1/` directory:
 
 - `glass-ux-0.11.7.tgz`: the published runtime package.
 - `glass-ux-docs.tar.gz`: the entire built documentation site.
