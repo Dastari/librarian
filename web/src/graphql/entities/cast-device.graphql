@@ -83,8 +83,8 @@ mutation EntityCastDeviceDeleteMany($where: CastDeviceWhereInput) {
   }
 }
 
-subscription EntityCastDeviceChanged($filter: SubscriptionFilterInput) {
-  castDeviceChanged(filter: $filter) {
+subscription EntityCastDeviceChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  castDeviceChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

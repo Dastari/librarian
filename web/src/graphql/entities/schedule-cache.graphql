@@ -86,8 +86,8 @@ mutation EntityScheduleCacheDeleteMany($where: ScheduleCacheWhereInput) {
   }
 }
 
-subscription EntityScheduleCacheChanged($filter: SubscriptionFilterInput) {
-  scheduleCacheChanged(filter: $filter) {
+subscription EntityScheduleCacheChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  scheduleCacheChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

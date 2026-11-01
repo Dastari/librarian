@@ -82,8 +82,8 @@ mutation EntityHomeShelfDeleteMany($where: HomeShelfWhereInput) {
   }
 }
 
-subscription EntityHomeShelfChanged($filter: SubscriptionFilterInput) {
-  homeShelfChanged(filter: $filter) {
+subscription EntityHomeShelfChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  homeShelfChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

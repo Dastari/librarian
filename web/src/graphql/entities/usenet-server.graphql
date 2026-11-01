@@ -82,8 +82,8 @@ mutation EntityUsenetServerDeleteMany($where: UsenetServerWhereInput) {
   }
 }
 
-subscription EntityUsenetServerChanged($filter: SubscriptionFilterInput) {
-  usenetServerChanged(filter: $filter) {
+subscription EntityUsenetServerChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  usenetServerChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

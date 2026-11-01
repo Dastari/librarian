@@ -80,8 +80,8 @@ mutation EntityLibraryPreferenceDeleteMany($where: LibraryPreferenceWhereInput) 
   }
 }
 
-subscription EntityLibraryPreferenceChanged($filter: SubscriptionFilterInput) {
-  libraryPreferenceChanged(filter: $filter) {
+subscription EntityLibraryPreferenceChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  libraryPreferenceChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

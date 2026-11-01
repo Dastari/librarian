@@ -15,6 +15,7 @@ function fixture() {
   registry.reset(true);
   return { registry, source, events, interrupted, stopped };
 }
+afterEach(() => vi.restoreAllMocks());
 const deferred = () => {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => { resolve = done; });
@@ -117,6 +118,7 @@ describe("active live registry", () => {
   });
 
   it("resnapshots once on reconnect and subscription completion/lag", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
     const { registry, interrupted } = fixture();
     const refresh = vi.fn();
     registry.register({ key: "snapshot", dependencies: [{ topic: "Track" }], refresh });
@@ -166,6 +168,105 @@ describe("active live registry", () => {
     events.get("Movie")!({ topic: "Movie" });
     await vi.advanceTimersByTimeAsync(120_000);
     expect(failing).toHaveBeenCalledTimes(5);
+    registry.reset(false);
+  });
+  it("subscribes again before it re-reads after a stream loses continuity", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const order: string[] = [];
+    const { registry, source, interrupted } = fixture();
+    registry.register({ key: "view", dependencies: [{ topic: "Track" }], refresh: () => { order.push("refresh"); } });
+    vi.mocked(source).mockClear();
+    vi.mocked(source).mockImplementation((topic, _emit, interrupt) => { order.push("subscribe"); interrupted.set(topic, interrupt); return () => {}; });
+    interrupted.get("Track")!();
+    await vi.advanceTimersByTimeAsync(499);
+    expect(order).toEqual([]);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(order).toEqual(["subscribe"]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(order).toEqual(["subscribe", "refresh"]);
+    registry.reset(false);
+  });
+
+  it("spreads resubscribes below one second so clients do not resync together", async () => {
+    const random = vi.spyOn(Math, "random");
+    const resubscribedAfter = async (value: number) => {
+      random.mockReturnValue(value);
+      const { registry, source, interrupted } = fixture();
+      registry.register({ key: "view", dependencies: [{ topic: "Track" }], refresh: vi.fn() });
+      interrupted.get("Track")!();
+      const started = Date.now();
+      let elapsed = 0;
+      while (vi.mocked(source).mock.calls.length < 2 && elapsed < 1500) { await vi.advanceTimersByTimeAsync(1); elapsed++; }
+      registry.reset(false);
+      return Date.now() - started;
+    };
+    expect(await resubscribedAfter(0)).toBeLessThanOrEqual(1);
+    const late = await resubscribedAfter(0.999);
+    expect(late).toBeGreaterThan(900);
+    expect(late).toBeLessThan(1000);
+  });
+
+  it("keys a stream only when every consumer names its records", async () => {
+    const { registry, source } = fixture();
+    registry.register({ key: "b", dependencies: [{ topic: "Movie", ids: ["b", "a"] }], refresh: vi.fn() });
+    registry.register({ key: "a", dependencies: [{ topic: "Movie", ids: ["a", "c"] }], refresh: vi.fn() });
+    registry.register({ key: "all", dependencies: [{ topic: "Show" }], refresh: vi.fn() });
+    await vi.advanceTimersByTimeAsync(250);
+    expect(vi.mocked(source).mock.calls.map(([topic, , , keys]) => [topic, keys])).toEqual([["Movie", ["a", "b"]], ["Show", undefined], ["Movie", ["a", "b", "c"]]]);
+    registry.reset(false);
+  });
+
+  it("falls back to an unkeyed stream above 500 keys", () => {
+    const { registry, source } = fixture();
+    const ids = (count: number) => Array.from({ length: count }, (_, index) => `id-${index}`);
+    registry.register({ key: "few", dependencies: [{ topic: "Movie", ids: ids(500) }], refresh: vi.fn() });
+    registry.register({ key: "many", dependencies: [{ topic: "Show", ids: ids(501) }], refresh: vi.fn() });
+    const keys = new Map(vi.mocked(source).mock.calls.map(([topic, , , value]) => [topic, value]));
+    expect(keys.get("Movie")).toHaveLength(500);
+    expect(keys.get("Show")).toBeUndefined();
+    registry.reset(false);
+  });
+
+  it("swaps a stream to a changed key set without a gap and re-reads the added records", async () => {
+    const { registry, source, events, stopped } = fixture();
+    const first = vi.fn(); const second = vi.fn();
+    registry.register({ key: "first", dependencies: [{ topic: "Movie", ids: ["a"] }], refresh: first });
+    const initial = events.get("Movie")!;
+    registry.register({ key: "second", dependencies: [{ topic: "Movie", ids: ["b"] }], refresh: second });
+    expect(source).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(source).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(source).mock.calls[1]![3]).toEqual(["a", "b"]);
+    expect(stopped).not.toHaveBeenCalled();
+    initial({ topic: "Movie", id: "a" });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(stopped).toHaveBeenCalledTimes(1);
+    registry.reset(false);
+  });
+
+  it("closes the previous stream when the registry is reset during a swap", async () => {
+    const { registry, stopped } = fixture();
+    registry.register({ key: "first", dependencies: [{ topic: "Movie", ids: ["a"] }], refresh: vi.fn() });
+    registry.register({ key: "second", dependencies: [{ topic: "Movie", ids: ["b"] }], refresh: vi.fn() });
+    await vi.advanceTimersByTimeAsync(250);
+    registry.reset(false);
+    expect(stopped).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores propagated events for direct-only readers", async () => {
+    const { registry, events } = fixture();
+    const direct = vi.fn(); const whole = vi.fn();
+    registry.register({ key: "direct", dependencies: [{ topic: "Library", direct: true }], refresh: direct });
+    registry.register({ key: "whole", dependencies: [{ topic: "Library" }], refresh: whole });
+    events.get("Library")!({ topic: "Library", id: "l", propagated: true });
+    await vi.advanceTimersByTimeAsync(150);
+    expect(direct).not.toHaveBeenCalled(); expect(whole).toHaveBeenCalledOnce();
+    events.get("Library")!({ topic: "Library", id: "l" });
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(direct).toHaveBeenCalledOnce();
     registry.reset(false);
   });
 });

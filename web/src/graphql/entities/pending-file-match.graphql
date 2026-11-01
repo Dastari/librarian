@@ -92,8 +92,8 @@ mutation EntityPendingFileMatchDeleteMany($where: PendingFileMatchWhereInput) {
   }
 }
 
-subscription EntityPendingFileMatchChanged($filter: SubscriptionFilterInput) {
-  pendingFileMatchChanged(filter: $filter) {
+subscription EntityPendingFileMatchChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  pendingFileMatchChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

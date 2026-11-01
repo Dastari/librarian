@@ -93,8 +93,8 @@ mutation EntityAudiobookDeleteMany($where: AudiobookWhereInput) {
   }
 }
 
-subscription EntityAudiobookChanged($filter: SubscriptionFilterInput) {
-  audiobookChanged(filter: $filter) {
+subscription EntityAudiobookChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  audiobookChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

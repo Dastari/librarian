@@ -89,8 +89,8 @@ mutation EntityLibraryScanRunDeleteMany($where: LibraryScanRunWhereInput) {
   }
 }
 
-subscription EntityLibraryScanRunChanged($filter: SubscriptionFilterInput) {
-  libraryScanRunChanged(filter: $filter) {
+subscription EntityLibraryScanRunChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  libraryScanRunChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

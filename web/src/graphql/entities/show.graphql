@@ -89,8 +89,8 @@ mutation EntityShowDeleteMany($where: ShowWhereInput) {
   }
 }
 
-subscription EntityShowChanged($filter: SubscriptionFilterInput) {
-  showChanged(filter: $filter) {
+subscription EntityShowChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  showChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

@@ -100,8 +100,8 @@ mutation EntityMovieDeleteMany($where: MovieWhereInput) {
   }
 }
 
-subscription EntityMovieChanged($filter: SubscriptionFilterInput) {
-  movieChanged(filter: $filter) {
+subscription EntityMovieChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  movieChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id
