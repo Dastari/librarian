@@ -154,7 +154,7 @@ follows a fine pointer and a glint on the rim nearest it.
   turns every material into a white surface with a hairline border, removes blur, canvas
   artwork and shadows, sets text near black with dark accent text, and lets the shell, panels
   and scroll containers grow so every page prints. It leaves out the rail, top bar, tab bar,
-  section drawer, inspector, window dock, toasts, tooltips and scroll-edge hairlines; mark
+  section drawer, sidebar, inspector, window dock, toasts, tooltips and scroll-edge hairlines; mark
   chrome that must print with `data-print="keep"` and anything else to leave out with
   `data-print="hide"`. Charts print in colour with their legends; charts, cards, tiles,
   setting rows and table rows avoid page breaks; a DataTable prints every loaded row (rows
@@ -412,7 +412,9 @@ follows a fine pointer and a glint on the rim nearest it.
 - **R20.3** Return focus to the control that opened an overlay, and to a sensible neighbour
   when the focused element is removed.
 - **R20.4** Touch targets are at least `--target-min`; small controls extend their hit area
-  without growing.
+  without growing. Every pointer gets at least `--target-aa` (24 CSS px, WCAG 2.5.8): a control
+  drawn smaller, such as a chip's remove button, extends its hit area to that without changing
+  its look or layout.
 - **R20.5** Every icon-only control and status icon names itself, including its state.
 - **R20.6** A scrolling region that is not otherwise focusable is keyboard scrollable.
 - **R20.7** Icon-only buttons always have a tooltip; solid fills always use their paired
