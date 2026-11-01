@@ -2595,6 +2595,7 @@ input CreateTorrentInput {
 	minimumSeedTimeMinutes: Int
 	season: Int
 	excludedFiles: JSON!
+	deleteFilesOnRemove: Boolean!
 	addedAt: String!
 	completedAt: String
 }
@@ -5308,13 +5309,8 @@ type Mutation {
 	Resume a paused torrent
 	"""
 	resumeTorrent(id: Int!): TorrentActionResult!
-	"""
-	Remove a torrent
-	"""
-	removeTorrent(id: Int!, deleteFiles: Boolean! = false): TorrentActionResult!
 	pauseTorrentByInfoHash(infoHash: String!): TorrentActionResult!
 	resumeTorrentByInfoHash(infoHash: String!): TorrentActionResult!
-	removeTorrentByInfoHash(infoHash: String!, deleteFiles: Boolean! = false): TorrentActionResult!
 	"""
 	Process pending file matches for a source.
 	"""
@@ -14338,6 +14334,16 @@ type Torrent {
 	"""
 	season: Int
 	excludedFiles: [Int!]!
+	"""
+	Delete the downloaded payload from disk when this torrent is removed.
+	
+	Lifecycle hooks only see the mutation event, so this is how the option
+	reaches the `deleteTorrent` hook: the owner (or an admin) sets it with
+	`updateTorrent` and then calls `deleteTorrent`. The hook refuses the
+	delete while completed-file post-processing is still running for the
+	torrent, because deleting the payload would race the import.
+	"""
+	deleteFilesOnRemove: Boolean!
 	addedAt: String!
 	createdAt: String!
 	updatedAt: String!
@@ -14600,6 +14606,7 @@ input TorrentWhereInput {
 	albumId: StringFilter
 	audiobookId: StringFilter
 	season: IntFilter
+	deleteFilesOnRemove: BoolFilter
 	addedAt: DateFilter
 	createdAt: DateFilter
 	updatedAt: DateFilter
@@ -16033,6 +16040,7 @@ input UpdateTorrentInput {
 	minimumSeedTimeMinutes: Int
 	season: Int
 	excludedFiles: JSON
+	deleteFilesOnRemove: Boolean
 	addedAt: String
 	completedAt: String
 }

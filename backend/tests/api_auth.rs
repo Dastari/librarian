@@ -584,6 +584,7 @@ fn member_and_admin_authorization_matches_the_shipped_matrix() {
                 "userId": member_id, "libraryId": member_library_id, "infoHash": forged_hash,
                 "name": "Member manufactured", "state": "paused", "progress": 0.0, "totalBytes": 100,
                 "downloadedBytes": 0, "uploadedBytes": 0, "uploadedBytesTotal": 0,
+                "deleteFilesOnRemove": false,
                 "savePath": app.path("downloads"), "excludedFiles": [], "addedAt": "2026-10-25T00:00:00Z"
             }}),
         ).await;

@@ -50,6 +50,7 @@ fn torrent_input(user: &AuthUser, hash: &str) -> CreateTorrentInput {
         downloaded_bytes: 10,
         uploaded_bytes: 0,
         uploaded_bytes_total: 0,
+        delete_files_on_remove: false,
         save_path: "/test/downloads".into(),
         download_path: None,
         source_url: None,

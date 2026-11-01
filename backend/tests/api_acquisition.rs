@@ -151,6 +151,7 @@ fn retry_sweep_blocklists_dead_grabs_and_leaves_healthy_ones_alone() {
             "downloadedBytes": 0,
             "uploadedBytes": 0,
             "uploadedBytesTotal": 0,
+            "deleteFilesOnRemove": false,
             "savePath": "/tmp/downloads",
             "excludedFiles": [],
         });
@@ -313,6 +314,7 @@ fn retry_sweep_ignores_torrents_outside_the_retry_window() {
                     "downloadedBytes": 0,
                     "uploadedBytes": 0,
                     "uploadedBytesTotal": 0,
+                    "deleteFilesOnRemove": false,
                     "savePath": "/tmp/downloads",
                     "excludedFiles": [],
                     "addedAt": hours_ago(30 * 24),

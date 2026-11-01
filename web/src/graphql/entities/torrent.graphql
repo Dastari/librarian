@@ -32,6 +32,7 @@ fragment TorrentFields on Torrent {
   minimumSeedTimeMinutes
   season
   excludedFiles
+  deleteFilesOnRemove
   addedAt
   createdAt
   updatedAt

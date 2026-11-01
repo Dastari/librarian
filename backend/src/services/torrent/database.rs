@@ -598,6 +598,7 @@ pub async fn create_torrent(
                 "downloadedBytes": downloaded_bytes,
                 "uploadedBytes": uploaded_bytes,
                 "uploadedBytesTotal": uploaded_bytes,
+                "deleteFilesOnRemove": false,
                 "savePath": save_path,
                 "excludedFiles": [],
                 "addedAt": ts,
@@ -810,6 +811,36 @@ pub async fn delete_torrent(
     )
     .await?;
     ensure_mutation_success(&data, "DeleteTorrent")
+}
+
+/// Delete a torrent record by info_hash, optionally deleting its payload.
+///
+/// The delete runs through the generated mutation, so its lifecycle hook stops
+/// the torrent in the session after commit. `delete_files` is stored on the row
+/// first (`deleteFilesOnRemove`), because the hook only sees the mutation event.
+pub async fn delete_torrent_with_files(
+    pool: &Database,
+    schema: &LibrarianSchema,
+    auth_user: &AuthUser,
+    info_hash: &str,
+    delete_files: bool,
+) -> Result<(), anyhow::Error> {
+    if delete_files && let Some(torrent_id) = get_torrent_id_by_info_hash(pool, info_hash).await? {
+        let data = execute_mutation(
+            schema,
+            auth_user,
+            r#"mutation UpdateTorrent($id: String!, $input: UpdateTorrentInput!) {
+                UpdateTorrent: updateTorrent(id: $id, input: $input) { Success: success Error: error }
+            }"#,
+            serde_json::json!({
+                "id": torrent_id,
+                "input": { "deleteFilesOnRemove": true }
+            }),
+        )
+        .await?;
+        ensure_mutation_success(&data, "UpdateTorrent")?;
+    }
+    delete_torrent(pool, schema, auth_user, info_hash).await
 }
 
 /// Get torrent id and excluded file indices by info_hash (for syncing files).
@@ -1802,7 +1833,7 @@ mod ownership_tests {
         let public_create = execute_mutation(&schema, &actor,
             "mutation($input: CreateTorrentInput!) { createTorrent(input: $input) { success error } }",
             serde_json::json!({"input": {"userId": owner.id, "infoHash":hash, "libraryId":lib.id, "name":"member grab", "state":"paused", "progress":0.0,
-                "totalBytes":1,"downloadedBytes":0,"uploadedBytes":0,"uploadedBytesTotal":0,"savePath":"/fixture/downloads","excludedFiles":[],"addedAt":now_iso_string()}}),
+                "totalBytes":1,"downloadedBytes":0,"uploadedBytes":0,"uploadedBytesTotal":0,"deleteFilesOnRemove": false,"savePath":"/fixture/downloads","excludedFiles":[],"addedAt":now_iso_string()}}),
         ).await;
         assert!(public_create.is_err());
         assert!(
@@ -2021,5 +2052,235 @@ mod ownership_tests {
         assert_eq!(notifications.len(), 1);
         assert_eq!(notifications[0].user_id, admin.id);
         assert_ne!(notifications[0].user_id, member.id);
+    }
+    fn member(user: &User) -> AuthUser {
+        AuthUser {
+            user_id: user.id.clone(),
+            email: None,
+            role: Some("member".to_string()),
+        }
+    }
+
+    async fn torrent_ids(db: &Database) -> Vec<String> {
+        let mut hashes: Vec<String> = Torrent::query(db.pool())
+            .fetch_all()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|torrent| torrent.info_hash)
+            .collect();
+        hashes.sort();
+        hashes
+    }
+
+    #[tokio::test]
+    async fn generated_delete_removes_the_row_and_its_file_rows() {
+        let db = database().await;
+        let owner = user(&db).await;
+        let schema = schema(&db);
+        let actor = member(&owner);
+        let hash = "1".repeat(40);
+        create(&schema, &actor, &hash, None).await.unwrap();
+        let row = find_torrent_by_info_hash(&db, &hash)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!row.delete_files_on_remove, "files are kept unless asked");
+        upsert_torrent_files(
+            &schema,
+            &system_auth_user(),
+            &db,
+            &row.id,
+            &[file_row(0, 10), file_row(1, 20)],
+        )
+        .await
+        .unwrap();
+        assert_eq!(files_of_torrent(&db, &row.id).await, 2);
+
+        delete_torrent(&db, &schema, &actor, &hash).await.unwrap();
+
+        assert!(torrent_ids(&db).await.is_empty());
+        assert_eq!(files_of_torrent(&db, &row.id).await, 0);
+    }
+
+    fn file_row(file_index: i32, file_size: i64) -> TorrentFileRow {
+        TorrentFileRow {
+            file_index,
+            file_path: format!("/fixture/downloads/file-{file_index}.mkv"),
+            relative_path: format!("file-{file_index}.mkv"),
+            file_size,
+            downloaded_bytes: 0,
+            progress: 0.0,
+            is_excluded: false,
+        }
+    }
+
+    async fn files_of_torrent(db: &Database, torrent_id: &str) -> usize {
+        TorrentFile::query(db.pool())
+            .filter(TorrentFileWhereInput {
+                torrent_id: Some(string_eq(torrent_id)),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await
+            .unwrap()
+            .len()
+    }
+
+    #[tokio::test]
+    async fn a_member_deletes_only_their_own_torrents() {
+        let db = database().await;
+        let alice = user(&db).await;
+        let bob = user(&db).await;
+        let schema = schema(&db);
+        let (alice_hash, bob_hash) = ("a".repeat(40), "b".repeat(40));
+        create(&schema, &member(&alice), &alice_hash, None)
+            .await
+            .unwrap();
+        create(&schema, &member(&bob), &bob_hash, None)
+            .await
+            .unwrap();
+
+        // The generated policy hides a foreign row exactly as the old
+        // `authorized_runtime_hash` check did: not found or access denied.
+        assert!(
+            delete_torrent(&db, &schema, &member(&alice), &bob_hash)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            torrent_ids(&db).await,
+            vec![alice_hash.clone(), bob_hash.clone()]
+        );
+
+        delete_torrent(&db, &schema, &member(&alice), &alice_hash)
+            .await
+            .unwrap();
+        assert_eq!(torrent_ids(&db).await, vec![bob_hash]);
+    }
+
+    async fn bulk_delete(
+        schema: &LibrarianSchema,
+        actor: &AuthUser,
+        filter: &str,
+    ) -> anyhow::Result<()> {
+        let data = execute_mutation(
+            schema,
+            actor,
+            &format!(
+                "mutation {{ DeleteTorrents: deleteTorrents(where: {filter}) {{ Success: success Error: error }} }}"
+            ),
+            serde_json::json!({}),
+        )
+        .await?;
+        ensure_mutation_success(&data, "DeleteTorrents")
+    }
+
+    #[tokio::test]
+    async fn bulk_delete_never_reaches_another_members_torrents() {
+        let db = database().await;
+        let alice = user(&db).await;
+        let bob = user(&db).await;
+        let schema = schema(&db);
+        for hash in ["c", "d"] {
+            create(&schema, &member(&alice), &hash.repeat(40), None)
+                .await
+                .unwrap();
+        }
+        create(&schema, &member(&bob), &"e".repeat(40), None)
+            .await
+            .unwrap();
+        let everything = vec!["c".repeat(40), "d".repeat(40), "e".repeat(40)];
+
+        // A filter that also matches Bob's row is refused as a whole: the generated
+        // policy is all-or-nothing, so none of Alice's rows go either.
+        assert!(
+            bulk_delete(
+                &schema,
+                &member(&alice),
+                "{ state: { eq: \"initializing\" } }"
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(torrent_ids(&db).await, everything);
+
+        // Scoped to her own rows the same call deletes exactly those.
+        let own = format!("{{ userId: {{ eq: \"{}\" }} }}", alice.id);
+        bulk_delete(&schema, &member(&alice), &own).await.unwrap();
+        assert_eq!(torrent_ids(&db).await, vec!["e".repeat(40)]);
+    }
+
+    #[tokio::test]
+    async fn only_the_owner_or_an_admin_can_set_delete_files_on_remove() {
+        let db = database().await;
+        let alice = user(&db).await;
+        let bob = user(&db).await;
+        let schema = schema(&db);
+        let (alice_hash, bob_hash) = ("f".repeat(40), "0".repeat(40));
+        create(&schema, &member(&alice), &alice_hash, None)
+            .await
+            .unwrap();
+        create(&schema, &member(&bob), &bob_hash, None)
+            .await
+            .unwrap();
+
+        delete_torrent_flag(&db, &schema, &member(&alice), &alice_hash)
+            .await
+            .unwrap();
+        assert!(
+            find_torrent_by_info_hash(&db, &alice_hash)
+                .await
+                .unwrap()
+                .unwrap()
+                .delete_files_on_remove
+        );
+        assert!(
+            delete_torrent_flag(&db, &schema, &member(&alice), &bob_hash)
+                .await
+                .is_err()
+        );
+        assert!(
+            !find_torrent_by_info_hash(&db, &bob_hash)
+                .await
+                .unwrap()
+                .unwrap()
+                .delete_files_on_remove
+        );
+    }
+
+    async fn delete_torrent_flag(
+        db: &Database,
+        schema: &LibrarianSchema,
+        actor: &AuthUser,
+        hash: &str,
+    ) -> anyhow::Result<()> {
+        let id = get_torrent_id_by_info_hash(db, hash).await?.unwrap();
+        let data = execute_mutation(
+            schema,
+            actor,
+            "mutation($id: String!) { UpdateTorrent: updateTorrent(id: $id, input: { deleteFilesOnRemove: true }) { Success: success Error: error } }",
+            serde_json::json!({ "id": id }),
+        )
+        .await?;
+        ensure_mutation_success(&data, "UpdateTorrent")
+    }
+
+    #[tokio::test]
+    async fn delete_with_files_stores_the_flag_then_deletes_through_the_generated_mutation() {
+        let db = database().await;
+        let owner = user(&db).await;
+        let schema = schema(&db);
+        let hash = "9".repeat(40);
+        create(&schema, &member(&owner), &hash, None).await.unwrap();
+
+        delete_torrent_with_files(&db, &schema, &system_auth_user(), &hash, true)
+            .await
+            .unwrap();
+        assert!(torrent_ids(&db).await.is_empty());
+        // A hash with no row is already removed, not an error.
+        delete_torrent_with_files(&db, &schema, &system_auth_user(), &hash, true)
+            .await
+            .unwrap();
     }
 }

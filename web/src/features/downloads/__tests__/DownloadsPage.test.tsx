@@ -5,15 +5,16 @@ import { TooltipProvider } from "glass-ux/tooltip";
 import { NuqsTestingAdapter } from "nuqs/adapters/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { PauseTorrentDocument, ResumeTorrentDocument, RemoveTorrentDocument, ProcessSourceDocument } from "@/graphql/generated/graphql";
+import { EntityTorrentDeleteDocument, EntityTorrentUpdateDocument, PauseTorrentDocument, ResumeTorrentDocument, ProcessSourceDocument } from "@/graphql/generated/graphql";
 import type { DownloadRow } from "../useDownloads";
 import { DownloadsPage } from "../DownloadsPage";
 
-const fixture = vi.hoisted(() => ({ wide: true, admin: true, rows: [] as DownloadRow[], pause: vi.fn(), resume: vi.fn(), remove: vi.fn(), process: vi.fn(), refetch: vi.fn() }));
+const fixture = vi.hoisted(() => ({ wide: true, admin: true, rows: [] as DownloadRow[], pause: vi.fn(), resume: vi.fn(), remove: vi.fn(), update: vi.fn(), process: vi.fn(), refetch: vi.fn() }));
 vi.mock("@apollo/client/react", () => ({ useMutation: (doc: unknown) => {
   if (doc === PauseTorrentDocument) return [fixture.pause];
   if (doc === ResumeTorrentDocument) return [fixture.resume];
-  if (doc === RemoveTorrentDocument) return [fixture.remove];
+  if (doc === EntityTorrentDeleteDocument) return [fixture.remove];
+  if (doc === EntityTorrentUpdateDocument) return [fixture.update];
   if (doc === ProcessSourceDocument) return [fixture.process];
   throw new Error("Unexpected mutation");
 } }));
@@ -42,7 +43,8 @@ beforeEach(() => {
   fixture.rows = [downloadFixture("1"), downloadFixture("2")];
   fixture.pause.mockResolvedValue({ data: { pauseTorrent: { success: true } } });
   fixture.resume.mockResolvedValue({ data: { resumeTorrent: { success: true } } });
-  fixture.remove.mockResolvedValue({ data: { removeTorrent: { success: true } } });
+  fixture.remove.mockResolvedValue({ data: { deleteTorrent: { success: true } } });
+  fixture.update.mockResolvedValue({ data: { updateTorrent: { success: true } } });
   fixture.process.mockResolvedValue({ data: { processSource: { success: true } } });
   vi.spyOn(HTMLElement.prototype,"getBoundingClientRect").mockReturnValue({ width:1400,height:800,x:0,y:0,top:0,left:0,right:1400,bottom:800,toJSON:()=>({}) });
   vi.spyOn(HTMLElement.prototype,"offsetWidth","get").mockReturnValue(1400);
@@ -75,8 +77,10 @@ describe("download selection and panes", () => {
     expect(fixture.remove).not.toHaveBeenCalled();
     await userEvent.click(confirmation.getByRole("button",{name:"Remove"}));
     await waitFor(()=>expect(fixture.remove).toHaveBeenCalledTimes(2));
-    expect(fixture.remove).toHaveBeenCalledWith({variables:{id:1,deleteFiles:false}});
-    expect(fixture.remove).toHaveBeenCalledWith({variables:{id:2,deleteFiles:false}});
+    // Entity ids, not the live client's numeric ids; the file flag is not touched.
+    expect(fixture.remove).toHaveBeenCalledWith({variables:{id:"1"}});
+    expect(fixture.remove).toHaveBeenCalledWith({variables:{id:"2"}});
+    expect(fixture.update).not.toHaveBeenCalled();
     await waitFor(()=>expect(screen.queryByRole("alertdialog")).toBeNull());
   });
   it("selects all loaded downloads from the header and clears the selection", async () => {

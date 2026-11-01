@@ -18,7 +18,7 @@ use graphql_orm::graphql::orm::{
     WriteInputTransform,
 };
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
-use tracing::{info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::db::{Database, connect_with_retry};
 use crate::graphql::AuthUser;
@@ -2859,6 +2859,87 @@ impl AppMutationHook {
         Ok(())
     }
 
+    /// Refuse to delete a torrent's files while completed-file post-processing is still
+    /// importing them. Runs before the delete so the error reaches the client and the
+    /// transaction rolls back with the row, the files and the live torrent all intact.
+    async fn guard_torrent_file_deletion(
+        &self,
+        ctx: Option<&async_graphql::Context<'_>>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        let torrent = Self::before::<Torrent>(event, "Torrent")?;
+        if !torrent.delete_files_on_remove {
+            return Ok(());
+        }
+        let Some(service) = self.torrent_service(ctx).await else {
+            return Ok(());
+        };
+        service
+            .ensure_files_deletable(&torrent.info_hash)
+            .await
+            .map_err(|error| {
+                // Resolver failures without a public code are sanitized to "internal error".
+                crate::services::graphql::error::public_error(
+                    crate::services::graphql::error::CONFLICT_CODE,
+                    error.to_string(),
+                )
+            })
+    }
+
+    /// Stop the torrent in the session after the delete has committed.
+    ///
+    /// The work is irreversible (it can kill a live download and delete its payload), so
+    /// it must not run before commit. `commit_and_emit` awaits deferred actions inline and
+    /// only logs their failures, so the deferred action just hands the work to its own task
+    /// and that task reports its own failures.
+    fn defer_torrent_runtime_removal(
+        &self,
+        ctx: Option<&async_graphql::Context<'_>>,
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        let torrent = Self::before::<Torrent>(event, "Torrent")?;
+        let info_hash = torrent.info_hash.clone();
+        let name = torrent.name.clone();
+        let delete_files = torrent.delete_files_on_remove;
+        let Some(services) = self.services_from_ctx(ctx) else {
+            // Offline callers (repair, tests on a bare database) have no torrent session.
+            debug!(
+                info_hash = %info_hash,
+                torrent_name = %name,
+                "No services manager after torrent deletion; torrent session left untouched"
+            );
+            return Ok(());
+        };
+        hook_ctx.defer(move |_db| async move {
+            tokio::spawn(async move {
+                let Some(service) = services.get_torrent().await else {
+                    return;
+                };
+                if let Err(error) = service.remove_runtime(&info_hash, delete_files).await {
+                    error!(
+                        info_hash = %info_hash,
+                        torrent_name = %name,
+                        delete_files,
+                        error = %error,
+                        "Torrent '{}' ({}) was deleted but could not be removed from the torrent session; it keeps running without a database record until the session is cleaned up",
+                        name,
+                        info_hash
+                    );
+                }
+            });
+            Ok::<(), anyhow::Error>(())
+        });
+        Ok(())
+    }
+
+    async fn torrent_service(
+        &self,
+        ctx: Option<&async_graphql::Context<'_>>,
+    ) -> Option<Arc<crate::services::torrent::TorrentService>> {
+        self.services_from_ctx(ctx)?.get_torrent().await
+    }
+
     async fn cleanup_torrent_files(
         hook_ctx: &mut MutationContext<'_>,
         event: &MutationEvent,
@@ -2943,7 +3024,13 @@ impl MutationHook for AppMutationHook {
                     Self::detach_cast_device_sessions(hook_ctx, event).await?;
                 }
                 (MutationPhase::Before, ChangeAction::Deleted, "Torrent") => {
+                    // Everything that should fail visibly to the client belongs here: a
+                    // Before hook can abort the transaction, a deferred action cannot.
+                    self.guard_torrent_file_deletion(ctx, event).await?;
                     Self::cleanup_torrent_files(hook_ctx, event).await?;
+                }
+                (MutationPhase::After, ChangeAction::Deleted, "Torrent") => {
+                    self.defer_torrent_runtime_removal(ctx, hook_ctx, event)?;
                 }
                 _ => {}
             }
@@ -3476,6 +3563,7 @@ mod lifecycle_tests {
                 downloaded_bytes: 0,
                 uploaded_bytes: 0,
                 uploaded_bytes_total: 0,
+                delete_files_on_remove: false,
                 save_path: "/tmp".to_string(),
                 download_path: None,
                 source_url: None,
