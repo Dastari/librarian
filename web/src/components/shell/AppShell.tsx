@@ -1,3 +1,4 @@
+import { SidebarInset, SidebarProvider } from "glass-ux/sidebar";
 import { Outlet, useRouter, useRouterState } from "@tanstack/react-router";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
@@ -55,10 +56,10 @@ export function AppShell() {
   }, []);
 
   return (
-    <div className="app-shell canvas-ambient flex h-svh w-full overflow-hidden text-foreground">
+    <SidebarProvider storageKey="librarian.sidebar" defaultOpen={false} className="app-shell canvas-ambient h-svh w-full overflow-hidden text-foreground">
       <ShellCommands />
       <NavRail />
-      <div className="app-shell-body relative flex min-w-0 flex-1 flex-col">
+      <SidebarInset render={<div />} className="app-shell-body relative flex min-w-0 flex-1 flex-col">
         <ConnectionBanner />
         <div id="main-scroll" className={cn("app-shell-scroll scrollbar-thin relative flex min-h-0 flex-1 flex-col overflow-x-hidden", fixedHeight ? "overflow-y-hidden" : "overflow-y-auto", hero && "[scrollbar-gutter:stable]")}>
           <div className={cn("app-shell-top sticky top-0 z-20 shrink-0", hero && "-mb-[calc(var(--topbar-height)+var(--safe-top))]")}>
@@ -69,9 +70,9 @@ export function AppShell() {
           </main>
         </div>
         <div className="contents" data-print="hide"><PlayerDock /></div>
-      </div>
+      </SidebarInset>
       <BottomTabs />
       <div className="contents" data-print="hide"><UpdatePrompt /></div>
-    </div>
+    </SidebarProvider>
   );
 }

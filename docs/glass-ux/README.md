@@ -28,7 +28,7 @@ agents) and `.claude/skills/` (Claude Code), installed with the release CLI's
 - `glass-ux-assistant`
 - `glass-ux-author`
 
-The project skills were refreshed using the 0.11.7 release CLI and are available
+The project skills were refreshed using the 0.13.1 release CLI and are available
 to skill discovery on the next turn. The refresh command, run from the repository
 root, is:
 
@@ -53,7 +53,7 @@ and update this provenance record. Installed docs take precedence if versions di
 
 The current download is in the ignored `tmp/glass-ux-0.13.1/` directory:
 
-- `glass-ux-0.11.7.tgz`: the published runtime package.
+- `glass-ux-0.13.1.tgz`: the published runtime package.
 - `glass-ux-docs.tar.gz`: the entire built documentation site.
 - `site/`: extracted documentation site, including demos and API reference.
 - `SHA256SUMS`: publisher-provided checksums; both archives passed verification.
@@ -62,11 +62,11 @@ These are local reference files, not application assets or vendored source. The
 application should never precache or ship the docs site. To reproduce the download:
 
 ```sh
-mkdir -p tmp/glass-ux-0.11.7/site
-cd tmp/glass-ux-0.11.7
-curl -fLO https://github.com/Dastari/glass-ux/releases/download/v0.11.7/glass-ux-0.11.7.tgz
-curl -fLO https://github.com/Dastari/glass-ux/releases/download/v0.11.7/glass-ux-docs.tar.gz
-curl -fLO https://github.com/Dastari/glass-ux/releases/download/v0.11.7/SHA256SUMS
+mkdir -p tmp/glass-ux-0.13.1/site
+cd tmp/glass-ux-0.13.1
+curl -fLO https://github.com/Dastari/glass-ux/releases/download/v0.13.1/glass-ux-0.13.1.tgz
+curl -fLO https://github.com/Dastari/glass-ux/releases/download/v0.13.1/glass-ux-docs.tar.gz
+curl -fLO https://github.com/Dastari/glass-ux/releases/download/v0.13.1/SHA256SUMS
 sha256sum -c SHA256SUMS
 tar -xzf glass-ux-docs.tar.gz -C site
 ```
@@ -75,8 +75,8 @@ The initial 0.9.10 source checkout at `/tmp/librarian-glass-ux` is historical
 implementation-review material, not a current-release reference. Use installed release docs and declarations when writing
 consumer calls, rather than depending on that temporary checkout.
 
-The local table focus-capture patch remains necessary in 0.11.7 and is rebased
-in `web/patches/glass-ux@0.11.7.patch`, registered by pnpm and covered by tests.
+The local table focus-capture patch remains necessary in 0.13.1 and is rebased
+in `web/patches/glass-ux@0.13.1.patch`, registered by pnpm and covered by tests.
 It also adds a continuation-only `infinite.revision` to preserve scroll/focus during
 equal-count live refreshes; [patch notes](../../web/patches/README.md) describe the contract.
 See [the upgrade audit](upgrade-audit-2026-10-29.md) for route coverage and outstanding gaps.
