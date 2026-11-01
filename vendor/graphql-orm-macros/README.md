@@ -3,12 +3,157 @@ title: "graphql-orm-macros"
 kind: reference
 status: active
 owner: graphql-orm-macros-maintainers
-last_reviewed: 2026-10-19
+last_reviewed: 2026-10-31
 review_by: 2027-02-01
 supersedes: []
 ---
 
 # `graphql-orm-macros`
+
+Version 0.89.0 is the companion of graphql-orm 0.89.0 (runtime collection search); macro generation
+is unchanged.
+
+Version 0.87.0 generates the fixed `RecordVersion` field for managed record versions and emits
+`record_version` semantic metadata for managed and CAS-only versions.
+
+Version 0.86.0 generates the `NodeId` field and its resolvable `@key(fields: "NodeId")` entity
+resolver for `#[graphql_entity(node_id)]`.
+
+Version 0.85.0 generates an optional `Keys` argument on every `<Entity>Changed` subscription.
+
+Version 0.84.0 generates managed record versions: `#[graphql_orm(version = "managed")]` is advanced
+by every generated write, and generated update and delete accept `ExpectedVersion`.
+
+Version 0.82.0 also pairs with the runtime's shareable aggregate result objects.
+The aggregate fix does not change macro generation. See the
+[aggregate migration](../../MIGRATION.md#0810-to-0820-shareable-aggregate-result-objects).
+
+Version 0.82.0 adds opt-in `int64` static filters with native `i64` operands,
+`Signed64` wire coercion and exact typed metadata. Existing `number` filters
+remain 32-bit. See the [signed64 migration](../../MIGRATION.md#0810-to-0820-exact-static-signed64-filters).
+
+Version 0.82.0 allows generated upward Changed hooks to cross Rust crate
+boundaries for public entities. Repository-only hooks remain private; current
+subscriber operation authority is checked independently at every source/hop,
+including after serialization. Transaction/provenance semantics are retained. See the
+[cross-crate migration](../../MIGRATION.md#0810-to-0820-generated-cross-crate-upward-changed-hooks).
+
+Version 0.81.1 is the companion of the runtime's post-commit record release; the macros
+themselves are unchanged.
+
+Version 0.81.0 remains paired with the runtime actor-stamp contract.
+
+Version 0.80.0 emits canonical typed filter contracts for the actual static
+filter implementations, including `notIn`, similarity, date structures and
+spatial predicates. Runtime metadata likewise describes its actual operator
+surface. Upgrade runtime and macros together with operation catalog 0.6.0;
+see the [wire-3 migration](../../MIGRATION.md#0780-to-0800-canonical-typed-filter-contracts).
+No resolver policy, GraphQL filter SDL or database format changes.
+
+Version 0.79.0 pairs with the feature-minimal runtime. Generated references
+still use `graphql_orm::async_graphql`; independent consumers must select the
+needed GraphQL capabilities explicitly. See the
+[feature contract](../../docs/reference/graphql-features.md).
+
+Version 0.78.0 is the companion of runtime mutation payload relation pages; the macros
+themselves are unchanged.
+
+Version 0.77.0 is the companion of the runtime's date-time backups; the macros themselves are
+unchanged.
+
+Version 0.76.0 delimits reserved-word and irregular column and table names in generated
+DML. See the [migration guide](../../MIGRATION.md#0750-to-0760-delimited-reserved-word-identifiers).
+
+Version 0.75.0 is the companion of the runtime's automatic timestamps; the macros themselves
+are unchanged.
+
+Version 0.74.0 bounds generated index names to PostgreSQL's 63-byte identifier
+limit and refuses PostgreSQL plans that would truncate a declared name. See the
+[migration guide](../../MIGRATION.md#0730-to-0740-bounded-postgresql-identifiers).
+
+Version 0.73.0 is the companion of the runtime's atomic link changes in writes; the macros
+themselves are unchanged.
+
+Version 0.71.0 is the companion of the runtime's composite-key backups; the macros themselves
+are unchanged.
+
+Version 0.70.1 is the companion of the runtime's foreign-key replacement order fix; the macros
+themselves are unchanged.
+
+Version 0.70.0 is the companion of the runtime's uniform refusal of hidden and
+missing link targets; the macros themselves are unchanged. See the
+[migration guide](../../MIGRATION.md#0690-to-0700-uniform-refusal-of-hidden-and-missing-link-targets).
+
+Version 0.69.0 adds many-to-many runtime relations: ORM-owned link tables,
+batched join reads and authorized link writes. See the
+[migration guide](../../MIGRATION.md#0680-to-0690-many-to-many-runtime-relations).
+
+Version 0.68.0 adds validated, fingerprinted runtime collection label fields and
+publishes them in the semantic catalogue. Rust struct literals of
+`RuntimeCollection` need the new member; see the
+[migration guide](../../MIGRATION.md#0670-to-0680-runtime-collection-label-fields).
+
+Version 0.67.0 adds opt-in runtime relation filters (correlated `EXISTS` with
+the target grant inside) and to-one relation selections in runtime mutation
+payloads. See the
+[migration guide](../../MIGRATION.md#0660-to-0670-runtime-relation-filters-and-payload-relations).
+
+Version 0.66.0 lets runtime deletes opt in to authorized, ORM-performed
+`Cascade`/`SetNull` dependent changes. See the
+[migration guide](../../MIGRATION.md#0650-to-0660-opt-in-runtime-cascade-and-set-null-deletes).
+
+Version 0.65.0 adds `#[graphql_policy_object]` before the derives for the
+`GraphQLEntity + SimpleObject #[graphql(complex)] + GraphQLRelations` pattern.
+It installs backend-specific ORM scalar policy guards, preserves existing
+guards and generated relations, and omits unreadable/private scalar fields.
+See the [migration guide](../../MIGRATION.md#0641-to-0650-scalar-policies-with-generated-relations).
+
+Version 0.64.1 classifies SQLite foreign-key `RESTRICT` refusals as constraint
+violations, matching PostgreSQL. See the
+[migration guide](../../MIGRATION.md#0640-to-0641-sqlite-restrict-refusal-classification).
+
+Version 0.62.0 adds optional typed runtime `orderBy` to generated keyset queries.
+The scalar-only input, complete primary-key suffix, order-bound cursor and current
+field authorization are described in the
+[migration guide](../../MIGRATION.md#0610-to-0620-runtime-keyset-ordering).
+
+Generated Changed delivery prepares the selected snapshot before yielding a
+stream item. Late scalar refusals and policy errors, including nullable fields,
+discard the entire event and private diagnostics without an error frame. A
+later authorized event starts with clean response errors.
+
+Version 0.64.0 generates complete composite-key and read-only projection change
+subscriptions independently of mutation exposure. See the
+[migration guide](../../MIGRATION.md#0630-to-0640-composite-and-read-only-changed).
+
+Version 0.63.0 resolves generated upward propagation using complete relation
+from/to tuples and revalidates the current mapping at release. See the
+[migration guide](../../MIGRATION.md#0620-to-0630-propagation-relation-tuples).
+
+Version 0.61.0 adds an optional typed `key` argument to generated single-primary-key
+change subscriptions, preserving current authorization and action filtering. See the
+[migration guide](../../MIGRATION.md#0600-to-0610-subscription-primary-key-selection).
+
+Version 0.60.0 adds explicit generated query-shape selection for controlled
+coexistence with recorded legacy roots. Defaults are unchanged; see the
+[migration guide](../../MIGRATION.md#0590-to-0600-generated-query-shape-selection).
+
+Version 0.58.0 extends explicit host-owned timestamps to public entities and String
+values without replacing source timestamps with the mutation clock. See the
+[migration guide](../../MIGRATION.md#0570-to-0580-public-host-owned-timestamps).
+
+GraphQL-private configured ordering fields remain unavailable even when
+`read = true` or `order = true` is explicitly set. Repository field policy and
+permitted repository pagination retain their independent behavior.
+
+Configured keyset cursors require current read authority for every order field
+and complete primary-key suffix, even for cursor-only selections. Checks run
+before queries and again against returned rows. Private, skipped or transformed
+GraphQL order fields fail closed; repository field policy remains independent.
+
+Version 0.59.0 supports static keyset reads with a complete composite-primary-key
+tiebreaker tuple. Schema ownership and write posture are unchanged. See the
+[migration guide](../../MIGRATION.md#0580-to-0590-composite-primary-key-keysets).
 
 Version 0.57.0 adds the SQL Server-only `#[graphql_orm(mssql_money)]` field
 annotation and identifier-safe exact read projections for native `MONEY`.
@@ -92,13 +237,13 @@ macro/runtime versions aligned:
 
 ```toml
 [dependencies]
-graphql-orm = { git = "https://github.com/Dastari/graphql-orm.git", rev = "<reviewed-full-40-character-commit-sha>", version = "0.50.2", default-features = false, features = ["sqlite"] }
+graphql-orm = { git = "https://github.com/Dastari/graphql-orm.git", rev = "<reviewed-full-40-character-commit-sha>", version = "0.80.0", default-features = false, features = ["sqlite"] }
 ```
 
 Direct use is supported for tooling that needs the macro package:
 
 ```toml
-graphql-orm-macros = { git = "https://github.com/Dastari/graphql-orm.git", rev = "<reviewed-full-40-character-commit-sha>", version = "0.50.2", default-features = false, features = ["sqlite"] }
+graphql-orm-macros = { git = "https://github.com/Dastari/graphql-orm.git", rev = "<reviewed-full-40-character-commit-sha>", version = "0.80.0", default-features = false, features = ["sqlite"] }
 ```
 
 The direct dependency still requires a compatible `graphql-orm` runtime in the
@@ -299,12 +444,3 @@ With `auth-agql`, retain a coherent full accepted principal and wrap sensitive
 entity policies with immediate current-authority checks. See the
 [current-authority bridge](../../docs/reference/graphql-orm/agql-auth-bridge.md)
 and [upgrade guide](../../MIGRATION.md#0460-to-0470-current-authority-and-coherent-accepted-requests).
-
-
-## Local tooling-only schema export
-
-This vendored copy adds an optional `schema-export-only` feature for the
-Librarian export example. It keeps generated declarations/metadata and stubs
-operation/relation runtime bodies; it is disabled by default and cannot qualify
-the normal backend. See [PATCH.md](PATCH.md) for scope, artifact guards, build
-instructions and pending parity/runtime qualification gates.

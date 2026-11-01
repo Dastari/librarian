@@ -160,16 +160,20 @@ export function queryDependencies(document: DocumentNode, variables: Record<stri
   return [...topics].map(([topic, ids]) => ({ topic, ids }));
 }
 
+/** How a generated `Changed` stream says it ended without delivering everything. */
+const CONTINUITY_ERRORS = new Set(["SUBSCRIPTION_CONTINUITY_LOST", "SUBSCRIPTION_SOURCE_CLOSED"]);
+
 const adminTopics = new Set<LiveTopic>(["AppLog", "AppSetting", "User", "InviteToken", "RefreshToken", "Source", "UsenetServer", "MetadataCache", "ScheduleSyncState", "Backup", "Filesystem"]);
 
 export function apolloLiveSource(client: ApolloClient, isAdmin: boolean): LiveSource {
   const states = new Map<string, string>();
   return (topic, emit, interrupted) => {
+    // Apollo delivers every subscription failure through `next`, including transport ones.
     const failed = (error: unknown) => {
       states.clear();
-      if (errorCodes(error as never).includes("LIVE_RESYNC_REQUIRED")) {
-        // A healthy socket can still have missed a bounded ORM broadcast.
-        // Resnapshot the affected topic and reattach through registry backoff.
+      if (errorCodes(error as never).some((code) => CONTINUITY_ERRORS.has(code))) {
+        // A healthy socket can still have missed a bounded ORM broadcast. The stream
+        // ends here: resnapshot the affected topic and reattach through registry backoff.
         interrupted();
         return;
       }
@@ -180,7 +184,8 @@ export function apolloLiveSource(client: ApolloClient, isAdmin: boolean): LiveSo
     if (adminTopics.has(topic) && !isAdmin) return () => {};
     if (topic === "TorrentProgress") {
       const subscription = client.subscribe({ query: G.TorrentProgressDocument }).subscribe({
-        next: ({ data }) => {
+        next: ({ data, error }) => {
+          if (error) { failed(error); return; }
           const update = data?.torrentProgress;
           if (!update) return;
           const id = client.cache.identify({ __typename: "LiveTorrent", infoHash: update.infoHash });
@@ -204,7 +209,8 @@ export function apolloLiveSource(client: ApolloClient, isAdmin: boolean): LiveSo
     }
     const document = topicDocuments[topic];
     const subscription = client.subscribe<Record<string, unknown>>({ query: document }).subscribe({
-      next: ({ data }) => {
+      next: ({ data, error }) => {
+        if (error) { failed(error); return; }
         // Boolean false is a real capability update (including the initial
         // snapshot), so it must invalidate the query just like true.
         for (const payload of Object.values(data ?? {})) {

@@ -1,7 +1,8 @@
 use super::*;
 use crate::backend::{
-    BackendKind, backend_current_epoch_expr, backend_helper_import_tokens, backend_marker_tokens,
-    backend_quote_identifier_path, backend_row_type_tokens, resolve_backend,
+    BackendKind, backend_current_epoch_expr, backend_dialect_tokens, backend_helper_import_tokens,
+    backend_marker_tokens, backend_quote_identifier_path, backend_render_identifier_path,
+    backend_row_type_tokens, resolve_backend,
 };
 use crate::naming::{graphql_field_name, selected_field_case_rule};
 use crate::relationship_contract::GeneratedRelationshipArgumentContract;
@@ -27,6 +28,7 @@ pub(crate) struct EntityMetadata {
     /// Explicit AI execution policy by generated mutation category.
     pub(crate) ai_mutations: std::collections::BTreeMap<String, String>,
     pub(crate) keyset: Option<String>,
+    pub(crate) query_shapes: Option<Vec<String>>,
     pub(crate) backup_enabled: Option<bool>,
     pub(crate) backup_export_order: Option<i32>,
     pub(crate) backup_restore_order: Option<i32>,
@@ -46,6 +48,8 @@ pub(crate) struct EntityMetadata {
     pub(crate) compose_complex_object: bool,
     /// Declared Apollo Federation v2 entity keys, in declaration order.
     pub(crate) federation_keys: Vec<FederationKeyMetadata>,
+    /// `node_id`: generate the global `NodeId` field and its resolvable `@key`.
+    pub(crate) node_id: Option<proc_macro2::Span>,
 }
 
 /// One declared `@key` for a resolvable Federation entity.
@@ -269,6 +273,26 @@ pub(crate) fn parse_entity_metadata(attrs: &[syn::Attribute]) -> syn::Result<Ent
                         }
                         Ok(())
                     })?;
+                } else if meta.path.is_ident("query_shapes") {
+                    if attribute_name == "repository_entity" {
+                        return Err(meta.error("query_shapes requires a GraphQL entity"));
+                    }
+                    if metadata.query_shapes.is_some() {
+                        return Err(meta.error("query_shapes may only be declared once"));
+                    }
+                    let lit: syn::LitStr = meta.value()?.parse()?;
+                    let mut shapes = Vec::new();
+                    for shape in lit.value().split(',').map(str::trim) {
+                        if !matches!(shape, "single" | "list" | "keyset" | "scan" | "search" | "aggregate") {
+                            return Err(syn::Error::new(lit.span(), "query_shapes accepts single, list, keyset, scan, search, aggregate"));
+                        }
+                        if shapes.iter().any(|existing| existing == shape) {
+                            return Err(syn::Error::new(lit.span(), "query_shapes must not repeat a shape"));
+                        }
+                        shapes.push(shape.to_owned());
+                    }
+                    shapes.sort();
+                    metadata.query_shapes = Some(shapes);
                 } else if meta.path.is_ident("keyset") {
                     let value = meta.value()?;
                     let lit: syn::LitStr = value.parse()?;
@@ -319,6 +343,17 @@ pub(crate) fn parse_entity_metadata(attrs: &[syn::Attribute]) -> syn::Result<Ent
                         ));
                     }
                     metadata.upsert = Some(cols);
+                } else if meta.path.is_ident("node_id") {
+                    if attribute_name == "repository_entity" {
+                        return Err(syn::Error::new(
+                            meta.path.span(),
+                            "node_id requires a GraphQL entity; repository-only entities have no GraphQL object to identify",
+                        ));
+                    }
+                    if metadata.node_id.is_some() {
+                        return Err(syn::Error::new(meta.path.span(), "duplicate node_id"));
+                    }
+                    metadata.node_id = Some(meta.path.span());
                 } else if meta.path.is_ident("federation_key") {
                     if attribute_name == "repository_entity" {
                         return Err(syn::Error::new(
@@ -692,6 +727,9 @@ pub(crate) fn parse_entity_metadata(attrs: &[syn::Attribute]) -> syn::Result<Ent
                     let value = meta.value()?;
                     let lit: syn::LitStr = value.parse()?;
                     metadata.graphql_rename_fields = Some(lit.value());
+                } else if meta.input.peek(syn::Token![=]) {
+                    // async-graphql owns foreign object options such as guards.
+                    let _: syn::Expr = meta.value()?.parse()?;
                 }
                 Ok(())
             })?;
@@ -732,6 +770,37 @@ pub(crate) fn parse_entity_metadata(attrs: &[syn::Attribute]) -> syn::Result<Ent
     }
 
     Ok(metadata)
+}
+
+/// PostgreSQL's identifier limit in bytes. Longer names are truncated by the
+/// server, so generated names that would exceed it are shortened here.
+const MAX_GENERATED_IDENTIFIER_BYTES: usize = 63;
+
+/// Fixed GraphQL name under which a managed record version is also served;
+/// mirrors `graphql_orm::graphql::orm::RECORD_VERSION_FIELD`.
+const RECORD_VERSION_FIELD: &str = "RecordVersion";
+
+/// Bounds a generated physical identifier to 63 bytes.
+///
+/// Names that already fit are returned unchanged. Longer names keep a 46-byte
+/// prefix (on a character boundary) followed by `_` and the 16-digit FNV-1a
+/// hash of the complete name, matching the runtime's generated index,
+/// foreign-key and check-constraint names. The result is deterministic, so
+/// metadata, DDL and introspection agree on every backend.
+fn bounded_generated_identifier(full: String) -> String {
+    if full.len() <= MAX_GENERATED_IDENTIFIER_BYTES {
+        return full;
+    }
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in full.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    let mut prefix_len = MAX_GENERATED_IDENTIFIER_BYTES - 17;
+    while !full.is_char_boundary(prefix_len) {
+        prefix_len -= 1;
+    }
+    format!("{}_{hash:016x}", &full[..prefix_len])
 }
 
 fn validate_graphql_order_name(value: &str, span: proc_macro2::Span) -> syn::Result<()> {
@@ -1194,14 +1263,14 @@ pub(crate) fn has_graphql_complex(attrs: &[syn::Attribute]) -> bool {
             return false;
         }
 
-        let mut is_complex = false;
-        let _ = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("complex") {
-                is_complex = true;
-            }
-            Ok(())
-        });
-        is_complex
+        attr.parse_args_with(
+            syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+        )
+        .is_ok_and(|options| {
+            options
+                .iter()
+                .any(|option| option.path().is_ident("complex"))
+        })
     })
 }
 
@@ -1224,6 +1293,8 @@ pub(crate) struct FieldMetadata {
     pub(crate) unique: bool,
     pub(crate) is_primary_key: bool,
     pub(crate) is_version: bool,
+    /// `#[graphql_orm(version = "managed")]`: every generated write advances it.
+    pub(crate) managed_version: bool,
     pub(crate) minimum: Option<String>,
     pub(crate) maximum: Option<String>,
     pub(crate) exclusive_minimum: Option<String>,
@@ -1408,6 +1479,7 @@ impl Default for FieldMetadata {
             unique: false,
             is_primary_key: false,
             is_version: false,
+            managed_version: false,
             minimum: None,
             maximum: None,
             exclusive_minimum: None,
@@ -1876,6 +1948,20 @@ pub(crate) fn parse_field_metadata(field: &Field) -> syn::Result<FieldMetadata> 
                         } else if nested.path.is_ident("non_exportable") {
                             meta.non_exportable = true;
                         } else if nested.path.is_ident("version") {
+                            if nested.input.peek(syn::Token![=]) {
+                                let value = nested.value()?;
+                                let lit: syn::LitStr = value.parse()?;
+                                match lit.value().as_str() {
+                                    "managed" => meta.managed_version = true,
+                                    "cas" => {}
+                                    _ => {
+                                        return Err(syn::Error::new(
+                                            lit.span(),
+                                            "version accepts \"managed\" or \"cas\"; bare `version` is \"cas\"",
+                                        ));
+                                    }
+                                }
+                            }
                             meta.is_version = true;
                             meta.skip_input = true;
                             meta.write = false;
@@ -2498,7 +2584,7 @@ impl FieldMetadata {
 
 fn validate_host_timestamp(
     field: &Field,
-    repository: bool,
+    writable_derive: bool,
     inferred_primary_key: bool,
 ) -> syn::Result<()> {
     let meta = parse_field_metadata(field)?;
@@ -2506,8 +2592,10 @@ fn validate_host_timestamp(
         return Ok(());
     }
     let invalid = |message| syn::Error::new_spanned(field, message);
-    if !repository {
-        return Err(invalid("timestamp = \"host\" requires RepositoryEntity"));
+    if !writable_derive {
+        return Err(invalid(
+            "timestamp = \"host\" requires GraphQLEntity or RepositoryEntity",
+        ));
     }
     let rust_name = field
         .ident
@@ -2523,13 +2611,13 @@ fn validate_host_timestamp(
         ));
     }
     let ty = option_inner_type(&field.ty).unwrap_or(&field.ty);
-    if !type_path_last_ident(ty).is_some_and(|ident| ident == "i64")
+    if !type_path_last_ident(ty).is_some_and(|ident| ident == "i64" || ident == "String")
         || meta.is_date_field
         || meta.is_boolean_field
         || meta.is_json_field
     {
         return Err(invalid(
-            "host timestamp requires an ordinary i64 or Option<i64> Integer field",
+            "host timestamp requires an ordinary i64 or String field (optionals allowed)",
         ));
     }
     if meta.is_relation
@@ -2857,7 +2945,7 @@ pub(crate) fn federation_key_witness_tokens(
     struct_name: &syn::Ident,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let metadata = parse_entity_metadata(attrs)?;
-    if metadata.federation_keys.is_empty() {
+    if metadata.federation_keys.is_empty() && metadata.node_id.is_none() {
         return Ok(quote! {});
     }
     let witness = syn::Ident::new(
@@ -2972,14 +3060,17 @@ fn generate_entity_impl(
         }
     }
     let schema_only = schema_only_override || entity_meta.schema_only;
-    validate_host_timestamp_fields(
-        fields,
-        has_repository_entity_attribute(&input.attrs) && !schema_only,
-    )?;
+    validate_host_timestamp_fields(fields, !schema_only)?;
     if schema_only && !entity_meta.projections.is_empty() {
         return Err(syn::Error::new_spanned(
             input,
             "typed projections require GraphQLEntity; schema-only entities do not generate read APIs",
+        ));
+    }
+    if let (true, Some(span)) = (schema_only, entity_meta.node_id) {
+        return Err(syn::Error::new(
+            span,
+            "node_id requires GraphQLEntity and GraphQLOperations; a schema-only entity has no GraphQL object to resolve",
         ));
     }
     if schema_only && !entity_meta.federation_keys.is_empty() {
@@ -3126,10 +3217,9 @@ fn generate_entity_impl(
             }
             db_columns.push(field_meta.db_column.unwrap_or_else(|| requested.clone()));
         }
-        let name = index
-            .name
-            .clone()
-            .unwrap_or_else(|| format!("idx_{}_{}", raw_table_name, db_columns.join("_")));
+        let name = index.name.clone().unwrap_or_else(|| {
+            bounded_generated_identifier(format!("idx_{}_{}", raw_table_name, db_columns.join("_")))
+        });
         let columns = db_columns
             .iter()
             .map(|column| syn::LitStr::new(column, struct_name.span()))
@@ -3280,9 +3370,13 @@ fn generate_entity_impl(
     let mut order_by_graphql_names = std::collections::BTreeSet::new();
     let mut order_by_rust_names = std::collections::BTreeSet::new();
     let mut object_field_methods = Vec::new();
+    // GraphQL name of the managed record version field, also served as
+    // `RecordVersion`; none for CAS-only versions and unversioned entities.
+    let mut managed_version_api_name: Option<String> = None;
     let mut repository_field_policy_defs = Vec::new();
     let mut subscription_field_policy_arms = Vec::new();
     let mut semantic_field_defs = Vec::new();
+    let mut semantic_record_version = quote! { None };
     let mut aggregate_field_variants = Vec::new();
     let mut aggregate_field_match_arms = Vec::new();
     let parsed_fields = collect_parsed_fields(fields.iter())?;
@@ -3337,6 +3431,28 @@ fn generate_entity_impl(
         subscription_field_policy_arms.push(quote! {
             #subscription_api_name => Some((#subscription_api_name, #subscription_allowed, #subscription_read_policy)),
         });
+        if subscription_api_name == RECORD_VERSION_FIELD
+            && parsed_fields
+                .iter()
+                .any(|parsed| parsed.meta.managed_version)
+        {
+            return Err(syn::Error::new(
+                field.span(),
+                "this entity has a managed record version, which is also served as the generated `RecordVersion` field; rename this field",
+            ));
+        }
+        if field_meta.managed_version
+            && field_meta.read
+            && !field_meta.is_private
+            && !field_meta.input_only
+            && !field_meta.graphql_skip
+            && !has_repository_entity_attribute(&input.attrs)
+        {
+            managed_version_api_name = Some(subscription_api_name.clone());
+            subscription_field_policy_arms.push(quote! {
+                #RECORD_VERSION_FIELD => Some((#subscription_api_name, #subscription_allowed, #subscription_read_policy)),
+            });
+        }
 
         // Skip relation fields for column list
         if field_meta.is_relation || field_meta.skip_db {
@@ -3439,6 +3555,7 @@ fn generate_entity_impl(
                             type_ref: #relationship_type,
                             selectable: true,
                             filter_operators: vec![],
+                            filter_input: None,
                             sortable: false,
                             groupable: false,
                             aggregate_operators: vec![],
@@ -3609,6 +3726,7 @@ fn generate_entity_impl(
                     }
                     let target_type = syn::Ident::new(&target_type, field.span());
                     let relation_alias = "__graphql_orm_order_relation";
+                    let dialect = backend_dialect_tokens(backend);
                     let predicates = source_columns
                         .iter()
                         .zip(target_columns.iter())
@@ -3626,9 +3744,10 @@ fn generate_entity_impl(
                             let source_physical =
                                 source.meta.db_column.as_deref().unwrap_or(source_column);
                             format!(
-                                "{relation_alias}.{} = {table_name}.{}",
-                                backend_quote_identifier_path(backend, target_column),
-                                backend_quote_identifier_path(backend, source_physical),
+                                "{relation_alias}.{} = {}.{}",
+                                backend_render_identifier_path(backend, target_column),
+                                backend_render_identifier_path(backend, raw_table_name),
+                                backend_render_identifier_path(backend, source_physical),
                             )
                         })
                         .collect::<Vec<_>>()
@@ -3640,7 +3759,9 @@ fn generate_entity_impl(
                         if let Some(dir) = &self.#order_field_name {
                             parts.push(format!(
                                 #expression_format,
-                                <#target_type as ::graphql_orm::graphql::orm::DatabaseEntity>::TABLE_NAME,
+                                #dialect.render_identifier_path(
+                                    <#target_type as ::graphql_orm::graphql::orm::DatabaseEntity>::TABLE_NAME,
+                                ),
                                 dir.to_sql(),
                             ));
                         }
@@ -3715,54 +3836,33 @@ fn generate_entity_impl(
             );
             let is_float = matches!(type_name.as_str(), "f32" | "f64");
             let is_decimal = type_name == "Decimal";
-            let is_string = type_name == "String";
-            let filter_operators = if field_meta.filter && field_meta.filterable.is_some() {
-                if field_meta.is_date_field {
-                    quote! { vec![
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::Equal,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::NotEqual,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::LessThan,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::LessThanOrEqual,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::GreaterThan,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::GreaterThanOrEqual,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::Between,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::IsNull,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::InPast,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::InFuture,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::IsToday,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::RecentDays,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::WithinDays,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::GteRelative,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::LteRelative,
-                    ] }
-                } else if is_string {
-                    quote! { vec![
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::Equal,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::NotEqual,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::In,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::Contains,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::StartsWith,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::EndsWith,
-                    ] }
-                } else if is_numeric {
-                    quote! { vec![
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::Equal,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::NotEqual,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::In,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::LessThan,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::LessThanOrEqual,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::GreaterThan,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::GreaterThanOrEqual,
-                    ] }
-                } else {
-                    quote! { vec![
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::Equal,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::NotEqual,
-                        ::graphql_orm::graphql::orm::GraphqlSemanticFilterOperator::In,
-                    ] }
+            let filter_input = if field_meta.filter {
+                match field_meta.filterable.as_deref() {
+                    Some(kind) => {
+                        let helper = match kind {
+                            "string" => "StringFilter",
+                            "uuid" => "UuidFilter",
+                            "number" => "IntFilter",
+                            "int64" => "Int64Filter",
+                            "decimal" => "DecimalFilter",
+                            "boolean" | "bool" => "BoolFilter",
+                            "bytes" => "BytesFilter",
+                            "date" => "DateFilter",
+                            "spatial" => "SpatialFilter",
+                            _ => {
+                                return Err(syn::Error::new_spanned(
+                                    field,
+                                    "unsupported canonical filter type",
+                                ));
+                            }
+                        };
+                        let helper = syn::Ident::new(helper, field.span());
+                        quote! { Some(::graphql_orm::graphql::filters::#helper::graphql_semantic_filter_input()) }
+                    }
+                    None => quote! { None },
                 }
             } else {
-                quote! { vec![] }
+                quote! { None }
             };
             let groupable = !field_meta.is_json_field
                 && field_meta.spatial.is_none()
@@ -3799,6 +3899,19 @@ fn generate_entity_impl(
             };
             let has_field_policy = field_meta.read_policy.is_some();
             let sortable = field_meta.sortable && field_meta.order;
+            if field_meta.is_version {
+                let mode = if field_meta.managed_version {
+                    quote! { ::graphql_orm::graphql::orm::GraphqlRecordVersionMode::Managed }
+                } else {
+                    quote! { ::graphql_orm::graphql::orm::GraphqlRecordVersionMode::Cas }
+                };
+                semantic_record_version = quote! {
+                    Some(::graphql_orm::graphql::orm::GraphqlRecordVersionMetadata {
+                        field: ::std::string::ToString::to_string(#graphql_name),
+                        mode: #mode,
+                    })
+                };
+            }
             semantic_field_defs.push(quote! {
                 ::graphql_orm::graphql::orm::GraphqlSemanticFieldMetadata {
                     field_name: ::std::string::ToString::to_string(#graphql_name),
@@ -3807,7 +3920,12 @@ fn generate_entity_impl(
                         &<#field_type as ::graphql_orm::async_graphql::OutputType>::qualified_type_name(),
                     ).expect("macro-generated public GraphQL field type must be valid"),
                     selectable: true,
-                    filter_operators: #filter_operators,
+                    filter_operators: {
+                        let input: Option<::graphql_orm::graphql::orm::GraphqlSemanticFilterInputMetadata> = #filter_input;
+                        input.iter().flat_map(|input| input.operators.iter().map(|op| op.operator))
+                            .collect::<::std::collections::BTreeSet<_>>().into_iter().collect()
+                    },
+                    filter_input: #filter_input,
                     sortable: #sortable,
                     groupable: #groupable,
                     aggregate_operators: #aggregate_operators,
@@ -3925,7 +4043,8 @@ fn generate_entity_impl(
             .db_column
             .clone()
             .unwrap_or_else(|| rust_name.clone());
-        let db_col_sql = backend_quote_identifier_path(backend, &db_col);
+        let db_col_sql = backend_render_identifier_path(backend, &db_col);
+        let db_col_identity = backend_quote_identifier_path(backend, &db_col);
         let constraint_type = option_inner_type(field_type).unwrap_or(field_type);
         let constraint_type_name = quote! { #constraint_type }.to_string().replace(' ', "");
         let numeric_constraint_type = matches!(
@@ -4156,7 +4275,7 @@ fn generate_entity_impl(
                 .db_column
                 .clone()
                 .unwrap_or_else(|| other_rust_field.clone());
-            let other_column = backend_quote_identifier_path(backend, &other_column);
+            let other_column = backend_render_identifier_path(backend, &other_column);
             push_constraint(
                 constraint_name,
                 format!("{db_col_sql} {operator} {other_column}"),
@@ -4197,7 +4316,10 @@ fn generate_entity_impl(
             let geometry_type = spatial_geometry_type_tokens(&spatial.geometry_type, field.span())?;
             let srid = spatial.srid;
             if spatial.index && backend == BackendKind::Postgres {
-                let index_name = format!("idx_{}_{}_spatial", raw_table_name, db_col);
+                let index_name = bounded_generated_identifier(format!(
+                    "idx_{}_{}_spatial",
+                    raw_table_name, db_col
+                ));
                 let col = syn::LitStr::new(&db_col, field.span());
                 index_defs.push(quote! {
                     ::graphql_orm::graphql::orm::IndexDef::spatial_gist(#index_name, &[#col])
@@ -4400,7 +4522,7 @@ fn generate_entity_impl(
         });
 
         if field_meta.is_primary_key {
-            primary_key_cols.push(db_col_sql.clone());
+            primary_key_cols.push(db_col_identity.clone());
         }
 
         // Generate WhereInput field for filterable fields
@@ -4434,7 +4556,7 @@ fn generate_entity_impl(
                 filter_to_entity_match.push(entity_match_gen);
                 filter_is_empty_checks.push(is_empty_check);
                 filter_contains_spatial_checks.push(contains_spatial_check);
-                if filter_type == "date" {
+                if filter_type == "date" || filter_type == "int64" {
                     filter_validation_checks.push(quote! {
                         if let Some(filter) = &self.#filter_field_name {
                             filter.validate()?;
@@ -4533,6 +4655,24 @@ fn generate_entity_impl(
                     #return_expr
                 }
             });
+            if managed_version_api_name.as_deref() == Some(graphql_name.as_str()) {
+                let record_version_description = format!(
+                    "Managed record version of this {struct_name}: the value of `{graphql_name}`, advanced by every generated write."
+                );
+                object_field_methods.push(quote! {
+                    #[doc = #record_version_description]
+                    #[graphql(name = "RecordVersion")]
+                    async fn __gom_record_version(
+                        &self,
+                        ctx: &::graphql_orm::async_graphql::Context<'_>,
+                    ) -> ::graphql_orm::async_graphql::Result<#return_type> {
+                        let db = ctx.data_unchecked::<::graphql_orm::db::Database<#backend_marker>>();
+                        #subscribe_check
+                        #policy_check
+                        #return_expr
+                    }
+                });
+            }
         }
 
         // Generate FromSqlRow field assignment
@@ -4609,7 +4749,10 @@ fn generate_entity_impl(
     let search_tokenizer = search_config.tokenizer;
     let search_min_token_len = search_config.min_token_len;
     let search_fallback_enabled = search_config.fallback_enabled;
-    let search_index_name = format!("idx_gom_search_{}_vector", raw_table_name.replace('.', "_"));
+    let search_index_name = bounded_generated_identifier(format!(
+        "idx_gom_search_{}_vector",
+        raw_table_name.replace('.', "_")
+    ));
     let search_pk = parsed_fields
         .iter()
         .find(|parsed| {
@@ -4745,6 +4888,7 @@ fn generate_entity_impl(
             PartialEq,
         )]
         #aggregate_graphql_attribute
+        #[allow(clippy::enum_variant_names)]
         pub enum #aggregate_field_name {
             #(#aggregate_field_variants),*
         }
@@ -4803,6 +4947,37 @@ fn generate_entity_impl(
         })
         .collect();
 
+    if let (true, Some(span)) = (legacy_graphql_complex, entity_meta.node_id) {
+        return Err(syn::Error::new(
+            span,
+            "node_id requires the generated GraphQL object; it cannot add the NodeId field to a `#[graphql(complex)]` SimpleObject entity",
+        ));
+    }
+    if !schema_only
+        && !legacy_graphql_complex
+        && let Ok(primary_key_fields) = crate::operations::collect_primary_key_fields(
+            struct_name,
+            fields,
+            graphql_rename_fields,
+            serde_rename_all,
+        )
+        && let Ok(Some(parts)) = crate::federation::resolve_node_id_parts(
+            struct_name,
+            &entity_meta,
+            &primary_key_fields,
+            backend,
+        )
+    {
+        object_field_methods.push(crate::federation::node_id_field_tokens(
+            &struct_name_str,
+            &parts,
+        ));
+    }
+
+    let managed_version_field_tokens = match &managed_version_api_name {
+        Some(name) if !schema_only && !legacy_graphql_complex => quote! { Some(#name) },
+        _ => quote! { None },
+    };
     let object_impl = if schema_only || legacy_graphql_complex {
         quote! {}
     } else {
@@ -4905,6 +5080,8 @@ fn generate_entity_impl(
                             description: ::std::string::ToString::to_string(#entity_description),
                             default_classification: #entity_classification_tokens,
                             fields: vec![#(#semantic_field_defs),*].into_boxed_slice(),
+                            label_fields: ::std::vec::Vec::new(),
+                            record_version: None,
                         }
                     }))
                 }
@@ -5383,6 +5560,10 @@ fn generate_entity_impl(
                 #struct_name_str
             }
 
+            fn managed_version_field() -> Option<&'static str> {
+                #managed_version_field_tokens
+            }
+
             fn metadata() -> &'static ::graphql_orm::graphql::orm::EntityMetadata {
                 static METADATA: ::std::sync::OnceLock<::graphql_orm::graphql::orm::EntityMetadata> =
                     ::std::sync::OnceLock::new();
@@ -5410,6 +5591,8 @@ fn generate_entity_impl(
                         description: ::std::string::ToString::to_string(#entity_description),
                         default_classification: #entity_classification_tokens,
                         fields: vec![#(#semantic_field_defs),*].into_boxed_slice(),
+                        label_fields: ::std::vec::Vec::new(),
+                        record_version: #semantic_record_version,
                     }
                 }))
             }
@@ -5579,7 +5762,7 @@ fn generate_projection_definitions(
                     .db_column
                     .clone()
                     .unwrap_or_else(|| ident.to_string());
-                let quoted = backend_quote_identifier_path(backend, &db_column);
+                let quoted = backend_render_identifier_path(backend, &db_column);
                 if selected.meta.mssql_money {
                     format!("CAST({quoted} AS DECIMAL(19,4)) AS {quoted}")
                 } else {
@@ -6298,6 +6481,105 @@ fn generate_filter_field(
                     if let Some(ref f) = self.#filter_field_name {
                         if !::graphql_orm::graphql::orm::spatial::int_filter_matches(#value_expr, f) {
                             return Ok(Some(false));
+                        }
+                    }
+                }
+            } else {
+                quote! {}
+            };
+            Ok((input, sql, entity_match, is_empty_check, no_spatial_check))
+        }
+        "int64" => {
+            let inner = option_inner_type(field_type).unwrap_or(field_type);
+            if !type_path_last_ident(inner).is_some_and(|name| name == "i64") {
+                return Err(syn::Error::new_spanned(
+                    field_type,
+                    "int64 filter requires i64 or Option<i64>",
+                ));
+            }
+            let input = quote! {
+                #[graphql(name = #graphql_name)]
+                pub #filter_field_name: Option<::graphql_orm::graphql::filters::Int64Filter>,
+            };
+            let sql = quote! {
+                if let Some(ref f) = self.#filter_field_name {
+                    if let Some(v) = f.eq {
+                        let placeholder = #struct_name::__gom_placeholder(values.len() + 1);
+                        conditions.push(format!("{} = {}", #db_col, placeholder));
+                        values.push(::graphql_orm::graphql::orm::SqlValue::Int(v));
+                    }
+                    if let Some(v) = f.ne {
+                        let placeholder = #struct_name::__gom_placeholder(values.len() + 1);
+                        conditions.push(format!("{} != {}", #db_col, placeholder));
+                        values.push(::graphql_orm::graphql::orm::SqlValue::Int(v));
+                    }
+                    if let Some(v) = f.lt {
+                        let placeholder = #struct_name::__gom_placeholder(values.len() + 1);
+                        conditions.push(format!("{} < {}", #db_col, placeholder));
+                        values.push(::graphql_orm::graphql::orm::SqlValue::Int(v));
+                    }
+                    if let Some(v) = f.lte {
+                        let placeholder = #struct_name::__gom_placeholder(values.len() + 1);
+                        conditions.push(format!("{} <= {}", #db_col, placeholder));
+                        values.push(::graphql_orm::graphql::orm::SqlValue::Int(v));
+                    }
+                    if let Some(v) = f.gt {
+                        let placeholder = #struct_name::__gom_placeholder(values.len() + 1);
+                        conditions.push(format!("{} > {}", #db_col, placeholder));
+                        values.push(::graphql_orm::graphql::orm::SqlValue::Int(v));
+                    }
+                    if let Some(v) = f.gte {
+                        let placeholder = #struct_name::__gom_placeholder(values.len() + 1);
+                        conditions.push(format!("{} >= {}", #db_col, placeholder));
+                        values.push(::graphql_orm::graphql::orm::SqlValue::Int(v));
+                    }
+                    if let Some(ref list) = f.in_list {
+                        if !list.is_empty() {
+                            let base_index = values.len() + 1;
+                            let placeholders: Vec<String> = (0..list.len())
+                                .map(|offset| #struct_name::__gom_placeholder(base_index + offset))
+                                .collect();
+                            conditions.push(format!("{} IN ({})", #db_col, placeholders.join(", ")));
+                            for v in list {
+                                values.push(::graphql_orm::graphql::orm::SqlValue::Int(*v));
+                            }
+                        }
+                    }
+                    if let Some(ref list) = f.not_in {
+                        if !list.is_empty() {
+                            let base_index = values.len() + 1;
+                            let placeholders: Vec<String> = (0..list.len())
+                                .map(|offset| #struct_name::__gom_placeholder(base_index + offset))
+                                .collect();
+                            conditions.push(format!("{} NOT IN ({})", #db_col, placeholders.join(", ")));
+                            for v in list {
+                                values.push(::graphql_orm::graphql::orm::SqlValue::Int(*v));
+                            }
+                        }
+                    }
+                    // IsNull / IsNotNull
+                    if let Some(is_null) = f.is_null {
+                        if is_null {
+                            conditions.push(format!("{} IS NULL", #db_col));
+                        } else {
+                            conditions.push(format!("{} IS NOT NULL", #db_col));
+                        }
+                    }
+                }
+            };
+            let value_expr = if is_option_type(field_type) {
+                quote! { entity.#field_name }
+            } else {
+                quote! { Some(entity.#field_name) }
+            };
+            let entity_match = if backend == BackendKind::Sqlite {
+                quote! {
+                    if let Some(ref f) = self.#filter_field_name {
+                        f.validate()?;
+                        match ::graphql_orm::graphql::orm::spatial::int64_filter_matches(#value_expr, f) {
+                            Some(true) => {},
+                            Some(false) => return Ok(Some(false)),
+                            None => _gom_unknown = true,
                         }
                     }
                 }
@@ -7165,7 +7447,7 @@ mod host_timestamp_tests {
     fn invalid_declarations_fail_before_emission() {
         let invalid: Vec<Field> = vec![
             parse_quote!(#[graphql_orm(timestamp = "host")] unrelated: i64),
-            parse_quote!(#[graphql_orm(timestamp = "host")] created_at: String),
+            parse_quote!(#[graphql_orm(timestamp = "host")] created_at: bool),
             parse_quote!(#[graphql_orm(timestamp = "host")] created_at: Option<Option<i64>>),
             parse_quote!(#[graphql_orm(timestamp = "host")] #[date_field] created_at: i64),
             parse_quote!(#[graphql_orm(timestamp = "host")] #[skip_db] created_at: i64),
@@ -7179,6 +7461,8 @@ mod host_timestamp_tests {
         }
         let valid: Field = parse_quote!(#[graphql_orm(timestamp = "host", db_column = "updated_at", default = false, auto_generated = false)] modified: Option<i64>);
         assert!(validate_host_timestamp(&valid, true, false).is_ok());
+        let text: Field = parse_quote!(#[graphql_orm(timestamp = "host", db_column = "updated_at")] observed: Option<String>);
+        assert!(validate_host_timestamp(&text, true, false).is_ok());
         assert!(validate_host_timestamp(&valid, false, false).is_err());
         let restricted: Field =
             parse_quote!(#[graphql_orm(timestamp = "host", write = false)] created_at: i64);
@@ -7238,5 +7522,41 @@ mod mssql_money_attribute_tests {
                 .to_string()
                 .contains("requires rust_decimal::Decimal")
         );
+    }
+}
+
+#[cfg(test)]
+mod generated_identifier_tests {
+    use super::bounded_generated_identifier;
+
+    #[test]
+    fn names_within_the_limit_are_unchanged() {
+        let exact = format!("idx_{}", "a".repeat(59));
+        assert_eq!(exact.len(), 63);
+        assert_eq!(bounded_generated_identifier(exact.clone()), exact);
+        assert_eq!(
+            bounded_generated_identifier("idx_users_email".to_owned()),
+            "idx_users_email"
+        );
+    }
+
+    #[test]
+    fn long_names_are_deterministically_bounded() {
+        let full = "idx_graphql_orm_ai_provider_webhook_receipts_provider_kind_provider_profile_id_provider_response_id_state".to_owned();
+        let bounded = bounded_generated_identifier(full.clone());
+        assert_eq!(bounded.len(), 63);
+        assert!(bounded.starts_with("idx_graphql_orm_ai_provider_webhook_receipts_p_"));
+        assert_eq!(bounded, bounded_generated_identifier(full.clone()));
+        let other = bounded_generated_identifier(format!("{full}_x"));
+        assert_ne!(bounded, other);
+        assert_eq!(&bounded[..46], &other[..46]);
+    }
+
+    #[test]
+    fn bounding_respects_character_boundaries() {
+        let full = format!("idx_{}é{}", "a".repeat(41), "b".repeat(40));
+        let bounded = bounded_generated_identifier(full);
+        assert!(bounded.len() <= 63);
+        assert!(bounded.is_char_boundary(bounded.len() - 17));
     }
 }

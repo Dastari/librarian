@@ -5,7 +5,7 @@ import type { LiveTopic } from "../documents";
 
 function fixture() {
   const events = new Map<LiveTopic, (event: LiveEvent) => void>();
-  const interrupted = new Map<LiveTopic, () => void>();
+  const interrupted = new Map<LiveTopic, (retry?: boolean) => void>();
   const stopped = vi.fn();
   const source: LiveSource = vi.fn((topic, emit, interrupt) => {
     events.set(topic, emit); interrupted.set(topic, interrupt);
@@ -102,6 +102,18 @@ describe("active live registry", () => {
     await vi.advanceTimersByTimeAsync(150);
     expect(one).not.toHaveBeenCalled(); expect(two).toHaveBeenCalledOnce(); expect(empty).toHaveBeenCalledOnce();
     registry.reset(false);
+  });
+
+  it("does not reattach a refused stream when its completion follows the error", async () => {
+    const { registry, interrupted, source } = fixture();
+    registry.register({ key: "snapshot", dependencies: [{ topic: "Track" }], refresh: vi.fn() });
+    registry.transport(true);
+    await vi.advanceTimersByTimeAsync(150);
+    const opened = vi.mocked(source).mock.calls.length;
+    interrupted.get("Track")!(false);
+    interrupted.get("Track")!();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(vi.mocked(source).mock.calls.length).toBe(opened);
   });
 
   it("resnapshots once on reconnect and subscription completion/lag", async () => {

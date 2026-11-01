@@ -1,7 +1,7 @@
 use super::*;
 use crate::backend::{
-    BackendKind, backend_marker_tokens, backend_pool_type_tokens, backend_quote_identifier_path,
-    resolve_backend,
+    BackendKind, backend_dialect_tokens, backend_marker_tokens, backend_pool_type_tokens,
+    backend_render_identifier_path, resolve_backend,
 };
 use crate::entity::{
     FieldMetadata, decimal_definition_tokens, is_bool_type, is_byte_vec_type, is_option_type,
@@ -15,6 +15,36 @@ use crate::naming::{
 };
 use std::collections::HashMap;
 use syn::spanned::Spanned;
+
+fn runtime_keyset_value(ty: &syn::Type) -> Option<proc_macro2::TokenStream> {
+    let (inner, optional) = option_inner_type(ty)
+        .map(|inner| (inner, true))
+        .unwrap_or((ty, false));
+    let type_name = quote! { #inner }.to_string().replace(' ', "");
+    let value = if is_string_type(inner) {
+        quote! { ::graphql_orm::graphql::pagination::KeysetValue::String(value.clone()) }
+    } else if is_byte_vec_type(inner) {
+        quote! { ::graphql_orm::graphql::pagination::KeysetValue::Bytes(value.clone()) }
+    } else if is_uuid_type(inner) {
+        quote! { ::graphql_orm::graphql::pagination::KeysetValue::Uuid(value.to_string()) }
+    } else if is_bool_type(inner) {
+        quote! { ::graphql_orm::graphql::pagination::KeysetValue::Bool(*value) }
+    } else if matches!(type_name.as_str(), "f32" | "f64") {
+        quote! { ::graphql_orm::graphql::pagination::KeysetValue::Float(*value as f64) }
+    } else if matches!(
+        type_name.as_str(),
+        "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32"
+    ) {
+        quote! { ::graphql_orm::graphql::pagination::KeysetValue::Int(*value as i64) }
+    } else {
+        return None;
+    };
+    Some(if optional {
+        quote! { match value.as_ref() { Some(value) => #value, None => ::graphql_orm::graphql::pagination::KeysetValue::Null } }
+    } else {
+        value
+    })
+}
 
 fn semantic_argument_description(value: &str) -> String {
     let mut output = String::new();
@@ -692,8 +722,8 @@ fn classify_propagation_value_type(ty: &syn::Type) -> Option<(PropagationValueKi
 
 struct PropagatedRelation {
     graphql_name: String,
-    source_field: syn::Ident,
-    source_ty: syn::Type,
+    source_fields: Vec<(syn::Ident, syn::Type, FieldMetadata)>,
+    target_fields: Vec<String>,
     target_type: syn::Ident,
 }
 
@@ -712,12 +742,12 @@ struct ResolvedUpsertConfig {
 }
 
 #[derive(Clone)]
-struct PrimaryKeyField {
-    field_name: syn::Ident,
-    field_type: syn::Type,
-    meta: FieldMetadata,
-    rust_name: String,
-    graphql_name: String,
+pub(crate) struct PrimaryKeyField {
+    pub(crate) field_name: syn::Ident,
+    pub(crate) field_type: syn::Type,
+    pub(crate) meta: FieldMetadata,
+    pub(crate) rust_name: String,
+    pub(crate) graphql_name: String,
 }
 
 fn create_input_visibility(meta: &FieldMetadata, rust_name: &str, auto_generated_pk: bool) -> bool {
@@ -727,7 +757,7 @@ fn create_input_visibility(meta: &FieldMetadata, rust_name: &str, auto_generated
     include_in_create && (!meta.skip_input || meta.input_only)
 }
 
-fn collect_primary_key_fields(
+pub(crate) fn collect_primary_key_fields(
     struct_name: &syn::Ident,
     fields: &syn::punctuated::Punctuated<Field, syn::token::Comma>,
     graphql_rename_fields: Option<&str>,
@@ -1231,6 +1261,9 @@ fn generated_resolver_schema_signature(
         entity_meta.search.is_some(),
         selected_field_case_rule(),
     );
+    if let Some(shapes) = &entity_meta.query_shapes {
+        signature.push_str(&format!("query_shapes={shapes:?}\n"));
+    }
     for field in field_signatures {
         signature.push_str(&field);
         signature.push('\n');
@@ -1241,10 +1274,75 @@ fn generated_resolver_schema_signature(
 pub(crate) fn generate_graphql_operations(
     input: &DeriveInput,
 ) -> syn::Result<proc_macro2::TokenStream> {
+    let output = generate_graphql_operations_unfiltered(input)?;
+    let metadata = parse_entity_metadata(&input.attrs)?;
+    let Some(shapes) = metadata.query_shapes else {
+        return Ok(output);
+    };
+    // Object's skipped methods retain ordinary Rust signatures. Removing a
+    // disabled method also removes its GraphQL-only parameter attributes.
+    let queries_name = format!("{}Queries", input.ident);
+    let mut generated: syn::File = syn::parse2(output)?;
+    for item in &mut generated.items {
+        let syn::Item::Impl(implementation) = item else {
+            continue;
+        };
+        let syn::Type::Path(target) = implementation.self_ty.as_ref() else {
+            continue;
+        };
+        if !target
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == queries_name)
+        {
+            continue;
+        }
+        implementation.items.retain(|item| {
+            let syn::ImplItem::Fn(method) = item else {
+                return true;
+            };
+            let shape = match method.sig.ident.to_string().as_str() {
+                "get_by_id" => "single",
+                "list" => "list",
+                "keyset" => "keyset",
+                "authorized_scan" => "scan",
+                "search" => "search",
+                "aggregate" => "aggregate",
+                _ => return true,
+            };
+            shapes.iter().any(|selected| selected == shape)
+        });
+    }
+    Ok(quote! { #generated })
+}
+
+fn generate_graphql_operations_unfiltered(
+    input: &DeriveInput,
+) -> syn::Result<proc_macro2::TokenStream> {
     let struct_name = &input.ident;
     let struct_name_str = struct_name.to_string();
     let entity_meta = parse_entity_metadata(&input.attrs)?;
     let operation_authorizations = parse_operation_authorizations(&input.attrs)?;
+    let query_shape_enabled = |shape: &str| {
+        entity_meta
+            .query_shapes
+            .as_ref()
+            .is_none_or(|shapes| shapes.iter().any(|selected| selected == shape))
+    };
+    let query_shape_skip = |shape: &str| {
+        if query_shape_enabled(shape) {
+            quote! {}
+        } else {
+            quote! { skip, }
+        }
+    };
+    let single_query_skip = query_shape_skip("single");
+    let list_query_skip = query_shape_skip("list");
+    let keyset_query_skip = query_shape_skip("keyset");
+    let scan_query_skip = query_shape_skip("scan");
+    let search_query_skip = query_shape_skip("search");
+    let aggregate_query_skip = query_shape_skip("aggregate");
     let resolver_auth_mode =
         resolver_auth_mode_tokens(entity_meta.auth.as_deref(), struct_name.span())?;
     let authenticated_directive = match entity_meta.auth.as_deref() {
@@ -1354,14 +1452,15 @@ pub(crate) fn generate_graphql_operations(
             ));
         }
     };
-    crate::entity::validate_host_timestamp_fields(
-        fields,
-        crate::entity::has_repository_entity_attribute(&input.attrs),
-    )?;
+    crate::entity::validate_host_timestamp_fields(fields, !entity_meta.schema_only)?;
 
     let graphql_rename_fields = entity_meta.graphql_rename_fields.as_deref();
     let serde_rename_all = entity_meta.serde_rename_all.as_deref();
     let table_name = entity_meta.table_name.as_deref().unwrap_or("unknown");
+    // Generated DML names the table with the backend's rendered identifier;
+    // `table_name` itself stays the raw identity used by hooks and descriptors.
+    let sql_table_name = backend_render_identifier_path(backend, table_name);
+    let sql_dialect = backend_dialect_tokens(backend);
     let plural_name = entity_meta
         .plural_name
         .clone()
@@ -1494,6 +1593,11 @@ pub(crate) fn generate_graphql_operations(
         .first()
         .expect("primary key collection includes fallback id");
     let pk_field = first_primary_key.field_name.clone();
+    let pk_column = first_primary_key
+        .meta
+        .db_column
+        .as_deref()
+        .unwrap_or(&first_primary_key.rust_name);
     let pk_type_ty: syn::Type = first_primary_key.field_type.clone();
     let pk_type = quote! { #pk_type_ty };
     let auto_generated_pk = first_primary_key
@@ -1527,6 +1631,120 @@ pub(crate) fn generate_graphql_operations(
         let column = meta.db_column.clone().unwrap_or(rust_name);
         (ident, field.ty.clone(), column)
     });
+    let managed_version_field = version_fields
+        .first()
+        .filter(|(_, meta)| meta.managed_version)
+        .and_then(|_| version_field.clone());
+    let expected_version_arg_name =
+        apply_graphql_case("expected_version", selected_argument_case());
+    let (expected_version_param, expected_version_binding) = if managed_version_field.is_some() {
+        (
+            quote! {
+                #[graphql(
+                    name = #expected_version_arg_name,
+                    desc = "Apply only if the record's current managed version equals this value; otherwise fail with CONFLICT and write nothing"
+                )]
+                expected_version: Option<i64>,
+            },
+            quote! { expected_version },
+        )
+    } else {
+        (quote! {}, quote! { None })
+    };
+    let managed_version_column_option = match &managed_version_field {
+        Some((_, _, column)) => quote! { Some(#column) },
+        None => quote! { None },
+    };
+    // Managed versions advance on every generated write. CAS-only versions (bare
+    // `version`) keep their historical behaviour: only compare-and-swap advances them.
+    let managed_version_helper_methods = if let Some((version_ident, _, version_column)) =
+        &managed_version_field
+    {
+        quote! {
+            #[doc(hidden)]
+            pub(crate) fn __gom_managed_version_assignment() -> Option<String> {
+                use ::graphql_orm::graphql::orm::{OrmBackend, SqlDialect};
+                let dialect = <#backend_marker as OrmBackend>::DIALECT;
+                let column = dialect.quote_identifier_path(#version_column);
+                Some(format!("{column} = {column} + 1"))
+            }
+
+            #[doc(hidden)]
+            pub(crate) fn __gom_managed_version_guard() -> String {
+                use ::graphql_orm::graphql::orm::{OrmBackend, SqlDialect};
+                let dialect = <#backend_marker as OrmBackend>::DIALECT;
+                format!(" AND {} < {}", dialect.quote_identifier_path(#version_column), i64::MAX)
+            }
+
+            #[doc(hidden)]
+            pub(crate) fn __gom_managed_version_of(entity: &Self) -> Option<i64> {
+                Some(entity.#version_ident)
+            }
+
+            #[doc(hidden)]
+            pub(crate) fn __gom_managed_version_expectation(expected: Option<i64>) -> String {
+                use ::graphql_orm::graphql::orm::{OrmBackend, SqlDialect};
+                let dialect = <#backend_marker as OrmBackend>::DIALECT;
+                // An i64 literal cannot carry SQL; it keeps the bind order unchanged.
+                expected
+                    .map(|expected| format!(" AND {} = {expected}", dialect.quote_identifier_path(#version_column)))
+                    .unwrap_or_default()
+            }
+
+            #[doc(hidden)]
+            pub(crate) fn __gom_require_managed_version_headroom(entity: &Self) -> ::graphql_orm::Result<()> {
+                if entity.#version_ident >= i64::MAX {
+                    return Err(::graphql_orm::sqlx::Error::Protocol("managed version cannot advance past i64::MAX".to_string()));
+                }
+                Ok(())
+            }
+
+            /// An upsert's update branch is guarded by `version < i64::MAX`, which
+            /// SQLite and PostgreSQL treat as "update nothing" rather than an error.
+            /// Require the committed row to have advanced exactly once.
+            #[doc(hidden)]
+            pub(crate) fn __gom_require_managed_version_advanced(before: Option<&Self>, after: &Self) -> ::graphql_orm::Result<()> {
+                if let Some(before) = before
+                    && before.#version_ident.checked_add(1) != Some(after.#version_ident)
+                {
+                    return Err(::graphql_orm::sqlx::Error::Protocol("managed version did not advance".to_string()));
+                }
+                Ok(())
+            }
+        }
+    } else {
+        quote! {
+            #[doc(hidden)]
+            pub(crate) fn __gom_managed_version_assignment() -> Option<String> {
+                None
+            }
+
+            #[doc(hidden)]
+            pub(crate) fn __gom_managed_version_guard() -> String {
+                String::new()
+            }
+
+            #[doc(hidden)]
+            pub(crate) fn __gom_managed_version_of(_entity: &Self) -> Option<i64> {
+                None
+            }
+
+            #[doc(hidden)]
+            pub(crate) fn __gom_managed_version_expectation(_expected: Option<i64>) -> String {
+                String::new()
+            }
+
+            #[doc(hidden)]
+            pub(crate) fn __gom_require_managed_version_headroom(_entity: &Self) -> ::graphql_orm::Result<()> {
+                Ok(())
+            }
+
+            #[doc(hidden)]
+            pub(crate) fn __gom_require_managed_version_advanced(_before: Option<&Self>, _after: &Self) -> ::graphql_orm::Result<()> {
+                Ok(())
+            }
+        }
+    };
     if let Some((_, ty, _)) = &version_field {
         if !matches!(ty, syn::Type::Path(path) if path.path.segments.last().is_some_and(|segment| segment.ident == "i64"))
         {
@@ -1537,12 +1755,6 @@ pub(crate) fn generate_graphql_operations(
         }
     }
     let keyset_parts = if let Some(config) = entity_meta.keyset.as_deref() {
-        if has_composite_primary_key {
-            return Err(syn::Error::new_spanned(
-                struct_name,
-                "keyset pagination currently requires a single-column primary key",
-            ));
-        }
         let mut parts = Vec::new();
         for raw in config.split(',') {
             let tokens = raw.split_whitespace().collect::<Vec<_>>();
@@ -1600,15 +1812,31 @@ pub(crate) fn generate_graphql_operations(
                 nulls_first,
             ));
         }
-        if parts.is_empty()
-            || parts
-                .last()
-                .is_none_or(|(field, _, _, _, _)| field != &pk_field)
-        {
+        let complete_key_suffix = parts.len() >= primary_key_fields.len()
+            && parts[parts.len().saturating_sub(primary_key_fields.len())..]
+                .iter()
+                .zip(&primary_key_fields)
+                .all(|((field, _, _, _, _), key)| field == &key.field_name);
+        if !complete_key_suffix {
             return Err(syn::Error::new_spanned(
                 struct_name,
-                "keyset order must end with the primary key as a unique tiebreaker",
+                if has_composite_primary_key {
+                    "keyset order must end with every primary-key field in declaration order as a unique tiebreaker"
+                } else {
+                    "keyset order must end with the primary key as a unique tiebreaker"
+                },
             ));
+        }
+        if has_composite_primary_key {
+            let mut ordered_fields = std::collections::BTreeSet::new();
+            for (field, _, _, _, _) in &parts {
+                if !ordered_fields.insert(field.to_string()) {
+                    return Err(syn::Error::new_spanned(
+                        field,
+                        "composite keyset order must not repeat a field",
+                    ));
+                }
+            }
         }
         Some(parts)
     } else {
@@ -1675,41 +1903,51 @@ pub(crate) fn generate_graphql_operations(
         let rust_name = field_name.to_string();
         let graphql_name =
             graphql_field_name(&meta, &rust_name, graphql_rename_fields, serde_rename_all);
-        let source_column = meta
-            .relation_from
-            .clone()
-            .unwrap_or_else(|| pk_field.to_string());
-        let source_field = fields
-            .iter()
-            .find(|candidate| {
-                candidate
-                    .ident
-                    .as_ref()
-                    .is_some_and(|ident| ident == source_column.as_str())
-            })
-            .and_then(|candidate| {
-                candidate
-                    .ident
+        let source_names = meta.relation_from_fields.clone().unwrap_or_else(|| {
+            vec![
+                meta.relation_from
                     .clone()
-                    .map(|ident| (ident, candidate.ty.clone()))
-            })
-            .ok_or_else(|| {
-                syn::Error::new_spanned(
-                    field,
-                    format!(
-                        "Relation '{}' references unknown propagation source field '{}'",
-                        rust_name, source_column
-                    ),
-                )
-            })?;
+                    .unwrap_or_else(|| pk_field.to_string()),
+            ]
+        });
+        let target_fields = meta
+            .relation_to_fields
+            .clone()
+            .unwrap_or_else(|| vec![meta.relation_to.clone().unwrap_or_else(|| "id".to_string())]);
+        if source_names.is_empty() || source_names.len() != target_fields.len() {
+            return Err(syn::Error::new_spanned(
+                field,
+                "propagate_change requires equal nonempty from/to tuples",
+            ));
+        }
+        let mut source_fields = Vec::new();
+        for source in source_names {
+            let candidate = fields.iter().find(|candidate| candidate.ident.as_ref().is_some_and(|ident| ident == source.as_str()))
+                .ok_or_else(|| syn::Error::new_spanned(field, format!("Relation '{rust_name}' references unknown propagation source field '{source}'")))?;
+            let metadata = parse_field_metadata(candidate)?;
+            if metadata.is_relation
+                || metadata.skip_db
+                || classify_propagation_value_type(&candidate.ty).is_none()
+            {
+                return Err(syn::Error::new_spanned(
+                    candidate,
+                    "propagate_change source fields must be persisted scalar fields",
+                ));
+            }
+            source_fields.push((
+                candidate.ident.clone().expect("named field"),
+                candidate.ty.clone(),
+                metadata,
+            ));
+        }
         let target_type = syn::Ident::new(
             meta.relation_target.as_deref().unwrap_or("Unknown"),
             field.span(),
         );
         propagated_relations.push(PropagatedRelation {
             graphql_name,
-            source_field: source_field.0,
-            source_ty: source_field.1,
+            source_fields,
+            target_fields,
             target_type,
         });
     }
@@ -1776,6 +2014,9 @@ pub(crate) fn generate_graphql_operations(
     let id_arg_name = apply_graphql_case("id", argument_case);
     let input_arg_name = apply_graphql_case("input", argument_case);
     let filter_arg_name = apply_graphql_case("filter", argument_case);
+    let key_arg_name = apply_graphql_case("key", argument_case);
+    let key_arg_description =
+        "Receive changes only for this exact primary key. Omit to watch every authorized row.";
     let where_arg_description = semantic_argument_description(&where_arg_name);
     let search_arg_description = semantic_argument_description(&search_arg_name);
     let order_by_arg_description = semantic_argument_description(&order_by_arg_name);
@@ -1818,18 +2059,26 @@ pub(crate) fn generate_graphql_operations(
         syn::Ident::new(&format!("Delete{}Result", plural_name), struct_name.span());
     let upsert_result_type_str = format!("Upsert{}Result", struct_name);
     let delete_many_result_type_str = format!("Delete{}Result", plural_name);
+    let subscription_key_arg_name = apply_graphql_case("key", argument_case);
+    let subscription_keys_arg_name = apply_graphql_case("keys", argument_case);
+    let subscription_keys_arg_description = format!(
+        "Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with {subscription_key_arg_name}"
+    );
     let key_type = syn::Ident::new(&format!("{}Key", struct_name), struct_name.span());
+    let key_input_name = format!("{}KeyInput", struct_name);
     let key_type_definition = if has_composite_primary_key {
         let fields = primary_key_fields
             .iter()
             .map(|field| {
                 let field_name = &field.field_name;
                 let field_type = &field.field_type;
-                quote! { pub #field_name: #field_type, }
+                let graphql_name = &field.graphql_name;
+                quote! { #[graphql(name = #graphql_name)] pub #field_name: #field_type, }
             })
             .collect::<Vec<_>>();
         quote! {
-            #[derive(Clone, Debug, PartialEq)]
+            #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ::graphql_orm::async_graphql::SimpleObject, ::graphql_orm::async_graphql::InputObject)]
+            #[graphql(input_name = #key_input_name)]
             pub struct #key_type {
                 #(#fields)*
             }
@@ -2006,7 +2255,20 @@ pub(crate) fn generate_graphql_operations(
             bind_values
         }
     };
-    let subscription_pk_bind = pk_bind_value_for_entity.clone();
+    let subscription_key_binds = primary_key_fields
+        .iter()
+        .map(|field| {
+            let name = &field.field_name;
+            push_create_input_sql_value_tokens(
+                backend,
+                struct_name,
+                quote! { entity.#name.clone() },
+                &field.field_type,
+                &field.meta,
+                quote! { ::graphql_orm::sqlx::Error },
+            )
+        })
+        .collect::<Vec<_>>();
     let subscription_key_visibility =
         if crate::entity::has_repository_entity_attribute(&input.attrs) {
             quote! {}
@@ -2015,9 +2277,54 @@ pub(crate) fn generate_graphql_operations(
         };
     let subscription_key_method = quote! {
         #[doc(hidden)]
-        #subscription_key_visibility fn __gom_subscription_key_values(entity: &Self) -> Vec<::graphql_orm::graphql::orm::SqlValue> {
-            vec![#subscription_pk_bind]
+        fn __gom_authorize_changed_operation(ctx: &::graphql_orm::async_graphql::Context<'_>)
+            -> ::graphql_orm::async_graphql::Result<()> {
+            let _auth_subject = ::graphql_orm::graphql::auth::enforce_resolver_auth(ctx, #resolver_auth_mode)?;
+            #subscription_scope_enforcement
+            ::graphql_orm::graphql::assurance::enforce_operation_assurance(
+                ctx, ::graphql_orm::graphql::orm::GraphqlOperationKind::Subscription, #subscription_name,
+            )
         }
+        #[doc(hidden)]
+        #subscription_key_visibility fn __gom_subscription_key_values(entity: &Self) -> Vec<::graphql_orm::graphql::orm::SqlValue> {
+            let mut bind_values = Vec::new();
+            #(#subscription_key_binds)*
+            bind_values
+        }
+    };
+    let subscription_identity_type = if has_composite_primary_key {
+        quote! { String }
+    } else {
+        quote! { #pk_type }
+    };
+    let subscription_extra_key_field = if has_composite_primary_key {
+        quote! { pub key: #key_type, }
+    } else {
+        quote! {}
+    };
+    let subscription_key_initializer = if has_composite_primary_key {
+        quote! { key: id.clone(), }
+    } else {
+        quote! {}
+    };
+    let propagated_event_id = if has_composite_primary_key {
+        quote! { ::graphql_orm::graphql::orm::composite_key_id(&Self::__gom_key_values(&id)) }
+    } else {
+        quote! { id.clone() }
+    };
+    let subscription_event_key = if has_composite_primary_key {
+        quote! { event.key }
+    } else {
+        quote! { event.id }
+    };
+    let propagation_entity_key = if has_composite_primary_key {
+        let components = primary_key_fields.iter().map(|field| {
+            let name = &field.field_name;
+            quote! { #name: entity.#name.clone() }
+        });
+        quote! { #key_type { #(#components),* } }
+    } else {
+        quote! { entity.#pk_field.clone() }
     };
     // Repository-only observers keep their existing redacted event contract;
     // these entities have no generated GraphQL subscription channel.
@@ -2053,13 +2360,21 @@ pub(crate) fn generate_graphql_operations(
             }
         }
     };
+    // These are generated host-to-host hooks, like SubscriptionEvent::new.
+    // Public entity expansions may cross Rust crates. Keep repository-only
+    // entity hooks private; visibility grants no subscriber release authority.
     let propagated_subscription_emitter = quote! {
         #[doc(hidden)]
+        #subscription_key_visibility fn __gom_propagation_key(entity: &Self) -> #key_type {
+            #propagation_entity_key
+        }
+
+        #[doc(hidden)]
         #[allow(clippy::too_many_arguments, unused_variables)]
-        pub(crate) fn __gom_queue_propagated_changed_event(
+        #subscription_key_visibility fn __gom_queue_propagated_changed_event(
             hook_ctx: &mut ::graphql_orm::graphql::orm::MutationContext<'_, #backend_marker>,
             action: ::graphql_orm::graphql::orm::ChangeAction,
-            id: #pk_type,
+            id: #key_type,
             parent_entity: Option<&Self>,
             source_entity: &str,
             source_id: &str,
@@ -2069,7 +2384,8 @@ pub(crate) fn generate_graphql_operations(
             let event = #changed_event {
                 action,
                 change_kind: ::graphql_orm::graphql::orm::ChangeKind::Propagated,
-                id,
+                id: #propagated_event_id,
+                #subscription_key_initializer
                 source_entity: Some(source_entity.to_string()),
                 source_id: Some(source_id.to_string()),
                 path,
@@ -2079,87 +2395,66 @@ pub(crate) fn generate_graphql_operations(
             #propagated_witness_emission
         }
     };
-    let propagation_blocks: Vec<proc_macro2::TokenStream> = propagated_relations
-        .iter()
+    // Direct and propagated events must share exactly the same typed target
+    // identity and origin encoding, so a cycle cannot re-emit its source.
+    let propagation_visited_seed = quote! {
+        let origin_target_id = ::graphql_orm::graphql::orm::composite_key_id(
+            &Self::__gom_subscription_key_values(entity),
+        );
+        let origin_dedupe_key = ::graphql_orm::serde_json::to_string(&(
+            #entity_name_lit, origin_target_id, #entity_name_lit, &source_id,
+        )).map_err(|error| ::graphql_orm::sqlx::Error::Protocol(error.to_string()))?;
+        let mut visited = ::std::collections::HashSet::from([origin_dedupe_key]);
+    };
+    let propagation_blocks: Vec<proc_macro2::TokenStream> = propagated_relations.iter()
         .map(|relation| -> syn::Result<proc_macro2::TokenStream> {
             let relation_name = &relation.graphql_name;
-            let source_field = &relation.source_field;
-            let source_field_name = source_field.to_string();
             let target_type = &relation.target_type;
-            let (kind, is_option) = classify_propagation_value_type(&relation.source_ty).ok_or_else(
-                || {
-                    syn::Error::new_spanned(
-                        &relation.source_ty,
-                        format!(
-                            "Unsupported propagate_change source field type for relation '{}': expected String/uuid/int/float/bool (optionals allowed)",
-                            relation_name
-                        ),
-                    )
-                },
-            )?;
-
-            let source_binding = if is_option {
-                quote! {
-                    let Some(parent_id) = entity.#source_field.as_ref() else {
-                        return Ok(());
-                    };
-                }
-            } else {
-                quote! {
-                    let parent_id = &entity.#source_field;
-                }
-            };
-
-            let parent_key_string = match kind {
-                PropagationValueKind::String => quote! { parent_id.clone() },
-                _ => quote! { parent_id.to_string() },
-            };
-
-            let fetch_parent = quote! {
-                let parent_entity = <#target_type>::__gom_fetch_by_id_on(hook_ctx, parent_id).await?;
-            };
-
+            let target_fields = &relation.target_fields;
+            let mut value_tokens = Vec::new();
+            let mut optional_checks = Vec::new();
+            let mut source_names = Vec::new();
+            for (field, ty, metadata) in &relation.source_fields {
+                source_names.push(field.to_string());
+                if is_option_type(ty) { optional_checks.push(quote! { entity.#field.is_some() }); }
+                let mut metadata = metadata.clone();
+                metadata.transform_write = None;
+                value_tokens.push(push_create_input_sql_value_tokens(backend, struct_name,
+                    quote! { entity.#field.clone() }, ty, &metadata, quote! { ::graphql_orm::sqlx::Error }));
+            }
             Ok(quote! {
-                {
+                if true #(&& #optional_checks)* {
                     if visited.len() >= ::graphql_orm::graphql::subscriptions::MAX_SUBSCRIPTION_PROPAGATION_EVENTS { return Ok(()); }
-                    #source_binding
-                    let parent_id_string = #parent_key_string;
-                    let mut next_path = path.clone();
-                    next_path.push(#relation_name.to_string());
-                    let mut next_provenance = provenance.to_vec();
-                    next_provenance.push(::graphql_orm::graphql::subscriptions::SubscriptionEventSource::<#backend_marker>::new::<Self>(
-                        Self::__gom_subscription_key_values(entity), #relation_name, #source_field_name,
-                    ));
-                    let dedupe_key = format!(
-                        "{}:{}:{}:{}",
-                        <#target_type as ::graphql_orm::graphql::orm::Entity>::entity_name(),
-                        parent_id_string,
-                        source_entity,
-                        source_id
-                    );
-                    if visited.insert(dedupe_key) {
-                        #fetch_parent
-                        <#target_type>::__gom_queue_propagated_changed_event(
-                            hook_ctx, action, parent_id.clone(), parent_entity.as_ref(), source_entity,
-                            source_id, next_path.clone(), next_provenance.clone(),
-                        );
-                        if let Some(parent_entity) = parent_entity.as_ref() {
-                            <#target_type>::__gom_propagate_changed_event(
-                                hook_ctx,
-                                action,
-                                parent_entity,
-                                source_entity,
-                                source_id,
-                                next_path,
-                                visited,
-                                &next_provenance,
-                            ).await?;
+                    let mut bind_values = Vec::new();
+                    #(#value_tokens)*
+                    let parent_entities = ::graphql_orm::graphql::subscriptions::propagation_targets::<#target_type, #backend_marker>(
+                        hook_ctx, &[#(#target_fields),*], &bind_values,
+                        ::graphql_orm::graphql::subscriptions::MAX_SUBSCRIPTION_PROPAGATION_EVENTS - visited.len(),
+                    ).await?;
+                    for parent_entity in parent_entities {
+                        let parent_id = <#target_type>::__gom_propagation_key(&parent_entity);
+                        let parent_keys = <#target_type>::__gom_subscription_key_values(&parent_entity);
+                        let parent_id_string = ::graphql_orm::graphql::orm::composite_key_id(&parent_keys);
+                        let mut next_path = path.clone();
+                        next_path.push(#relation_name.to_string());
+                        let mut next_provenance = provenance.to_vec();
+                        next_provenance.push(::graphql_orm::graphql::subscriptions::SubscriptionEventSource::<#backend_marker>::new_relation::<Self, #target_type>(
+                            Self::__gom_subscription_key_values(entity), #relation_name, vec![#((#source_names, #target_fields)),*], Self::__gom_authorize_changed_operation,
+                        ));
+                        let dedupe_key = ::graphql_orm::serde_json::to_string(&(
+                            <#target_type as ::graphql_orm::graphql::orm::Entity>::entity_name(),
+                            parent_id_string, source_entity, source_id,
+                        )).map_err(|error| ::graphql_orm::sqlx::Error::Protocol(error.to_string()))?;
+                        if visited.insert(dedupe_key) {
+                            <#target_type>::__gom_queue_propagated_changed_event(hook_ctx, action, parent_id,
+                                Some(&parent_entity), source_entity, source_id, next_path.clone(), next_provenance.clone());
+                            <#target_type>::__gom_propagate_changed_event(hook_ctx, action, &parent_entity,
+                                source_entity, source_id, next_path, visited, &next_provenance).await?;
                         }
                     }
                 }
             })
-        })
-        .collect::<syn::Result<Vec<_>>>()?;
+        }).collect::<syn::Result<Vec<_>>>()?;
 
     // Generate input fields (excluding primary key for create, all optional for update)
     let mut create_input_fields: Vec<proc_macro2::TokenStream> = Vec::new();
@@ -2230,6 +2525,7 @@ pub(crate) fn generate_graphql_operations(
         let graphql_name =
             graphql_field_name(&meta, &rust_name, graphql_rename_fields, serde_rename_all);
         let db_col = meta.db_column.clone().unwrap_or_else(|| rust_name.clone());
+        let db_col_sql = backend_render_identifier_path(backend, &db_col);
         let is_json_like_field = meta.is_json_field || meta.spatial.is_some();
 
         // Track string-filterable fields for fuzzy search
@@ -2814,7 +3110,7 @@ pub(crate) fn generate_graphql_operations(
                     update_field_checks_graphql.push(quote! {
                         if let Some(ref val) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = {}", #db_col, #spatial_value_expr));
+                            set_clauses.push(format!("{} = {}", #db_col_sql, #spatial_value_expr));
                             match val {
                                 Some(value) => values.push(
                                     #struct_name::__gom_spatial_sql_value::<::graphql_orm::async_graphql::Error>(
@@ -2829,7 +3125,7 @@ pub(crate) fn generate_graphql_operations(
                     update_field_checks_repo.push(quote! {
                         if let Some(ref val) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = {}", #db_col, #spatial_value_expr));
+                            set_clauses.push(format!("{} = {}", #db_col_sql, #spatial_value_expr));
                             match val {
                                 Some(value) => values.push(
                                     #struct_name::__gom_spatial_sql_value::<::graphql_orm::sqlx::Error>(
@@ -2845,7 +3141,7 @@ pub(crate) fn generate_graphql_operations(
                     update_field_checks_graphql.push(quote! {
                         if let Some(ref val) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = {}", #db_col, #spatial_value_expr));
+                            set_clauses.push(format!("{} = {}", #db_col_sql, #spatial_value_expr));
                             values.push(
                                 #struct_name::__gom_spatial_sql_value::<::graphql_orm::async_graphql::Error>(
                                     val,
@@ -2857,7 +3153,7 @@ pub(crate) fn generate_graphql_operations(
                     update_field_checks_repo.push(quote! {
                         if let Some(ref val) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = {}", #db_col, #spatial_value_expr));
+                            set_clauses.push(format!("{} = {}", #db_col_sql, #spatial_value_expr));
                             values.push(
                                 #struct_name::__gom_spatial_sql_value::<::graphql_orm::sqlx::Error>(
                                     val,
@@ -2873,7 +3169,7 @@ pub(crate) fn generate_graphql_operations(
                     let update_tokens = quote! {
                         if let Some(ref val) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = ?", #db_col));
+                            set_clauses.push(format!("{} = ?", #db_col_sql));
                             match val {
                                 Some(b) => values.push(#struct_name::__gom_bool_sql_value(*b)),
                                 None => values.push(::graphql_orm::graphql::orm::SqlValue::BoolNull),
@@ -2887,7 +3183,7 @@ pub(crate) fn generate_graphql_operations(
                     let update_tokens = quote! {
                         if let Some(ref val) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = ?", #db_col));
+                            set_clauses.push(format!("{} = ?", #db_col_sql));
                             values.push(#struct_name::__gom_bool_sql_value(*val));
                         }
                     };
@@ -2901,7 +3197,7 @@ pub(crate) fn generate_graphql_operations(
                     update_field_checks_graphql.push(quote! {
                         if let Some(ref val) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = ?", #db_col));
+                            set_clauses.push(format!("{} = ?", #db_col_sql));
                             match val {
                                 Some(value) => values.push(::graphql_orm::graphql::orm::json_sql_value::<_, ::graphql_orm::async_graphql::Error>(value)?),
                                 None => values.push(::graphql_orm::graphql::orm::SqlValue::JsonNull),
@@ -2911,7 +3207,7 @@ pub(crate) fn generate_graphql_operations(
                     update_field_checks_repo.push(quote! {
                         if let Some(ref val) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = ?", #db_col));
+                            set_clauses.push(format!("{} = ?", #db_col_sql));
                             match val {
                                 Some(value) => values.push(::graphql_orm::graphql::orm::json_sql_value::<_, ::graphql_orm::sqlx::Error>(value)?),
                                 None => values.push(::graphql_orm::graphql::orm::SqlValue::JsonNull),
@@ -2922,14 +3218,14 @@ pub(crate) fn generate_graphql_operations(
                     update_field_checks_graphql.push(quote! {
                         if let Some(ref val) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = ?", #db_col));
+                            set_clauses.push(format!("{} = ?", #db_col_sql));
                             values.push(::graphql_orm::graphql::orm::json_sql_value::<_, ::graphql_orm::async_graphql::Error>(val)?);
                         }
                     });
                     update_field_checks_repo.push(quote! {
                         if let Some(ref val) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = ?", #db_col));
+                            set_clauses.push(format!("{} = ?", #db_col_sql));
                             values.push(::graphql_orm::graphql::orm::json_sql_value::<_, ::graphql_orm::sqlx::Error>(val)?);
                         }
                     });
@@ -2939,7 +3235,7 @@ pub(crate) fn generate_graphql_operations(
                     let update_tokens = quote! {
                         if let Some(ref val) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = ?", #db_col));
+                            set_clauses.push(format!("{} = ?", #db_col_sql));
                             match val {
                                 Some(v) => values.push(::graphql_orm::graphql::orm::SqlValue::Uuid(*v)),
                                 None => values.push(::graphql_orm::graphql::orm::SqlValue::UuidNull),
@@ -2952,7 +3248,7 @@ pub(crate) fn generate_graphql_operations(
                     let update_tokens = quote! {
                         if let Some(ref val) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = ?", #db_col));
+                            set_clauses.push(format!("{} = ?", #db_col_sql));
                             values.push(::graphql_orm::graphql::orm::SqlValue::Uuid(*val));
                         }
                     };
@@ -2965,7 +3261,7 @@ pub(crate) fn generate_graphql_operations(
                     quote! {
                         if let Some(ref value) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = ?", #db_col));
+                            set_clauses.push(format!("{} = ?", #db_col_sql));
                             match value {
                                 Some(value) => values.push(
                                     ::graphql_orm::graphql::orm::decimal_sql_value::<::graphql_orm::async_graphql::Error>(*value, #definition)?
@@ -2978,7 +3274,7 @@ pub(crate) fn generate_graphql_operations(
                     quote! {
                         if let Some(value) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = ?", #db_col));
+                            set_clauses.push(format!("{} = ?", #db_col_sql));
                             values.push(
                                 ::graphql_orm::graphql::orm::decimal_sql_value::<::graphql_orm::async_graphql::Error>(value, #definition)?
                             );
@@ -2989,7 +3285,7 @@ pub(crate) fn generate_graphql_operations(
                     quote! {
                         if let Some(ref value) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = ?", #db_col));
+                            set_clauses.push(format!("{} = ?", #db_col_sql));
                             match value {
                                 Some(value) => values.push(
                                     ::graphql_orm::graphql::orm::decimal_sql_value::<::graphql_orm::sqlx::Error>(*value, #definition)?
@@ -3002,7 +3298,7 @@ pub(crate) fn generate_graphql_operations(
                     quote! {
                         if let Some(value) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = ?", #db_col));
+                            set_clauses.push(format!("{} = ?", #db_col_sql));
                             values.push(
                                 ::graphql_orm::graphql::orm::decimal_sql_value::<::graphql_orm::sqlx::Error>(value, #definition)?
                             );
@@ -3032,7 +3328,7 @@ pub(crate) fn generate_graphql_operations(
                 let update_tokens = quote! {
                     if let Some(ref val) = input.#field_name {
                         changed_fields.push(#db_col);
-                        set_clauses.push(format!("{} = ?", #db_col));
+                        set_clauses.push(format!("{} = ?", #db_col_sql));
                         match val {
                             Some(v) => values.push(::graphql_orm::graphql::orm::SqlValue::Int((*v) as i64)),
                             None => values.push(::graphql_orm::graphql::orm::SqlValue::IntNull),
@@ -3049,7 +3345,7 @@ pub(crate) fn generate_graphql_operations(
                 let update_tokens = quote! {
                     if let Some(ref val) = input.#field_name {
                         changed_fields.push(#db_col);
-                        set_clauses.push(format!("{} = ?", #db_col));
+                        set_clauses.push(format!("{} = ?", #db_col_sql));
                         match val {
                             Some(v) => values.push(::graphql_orm::graphql::orm::SqlValue::Float((*v).into())),
                             None => values.push(::graphql_orm::graphql::orm::SqlValue::FloatNull),
@@ -3064,7 +3360,7 @@ pub(crate) fn generate_graphql_operations(
                 let update_tokens = quote! {
                     if let Some(ref val) = input.#field_name {
                         changed_fields.push(#db_col);
-                        set_clauses.push(format!("{} = ?", #db_col));
+                        set_clauses.push(format!("{} = ?", #db_col_sql));
                         match val {
                             Some(v) => values.push(::graphql_orm::graphql::orm::SqlValue::Bytes(v.clone())),
                             None => values.push(::graphql_orm::graphql::orm::SqlValue::BytesNull),
@@ -3081,7 +3377,7 @@ pub(crate) fn generate_graphql_operations(
                     let update_tokens = quote! {
                         if let Some(ref val) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = ?", #db_col));
+                            set_clauses.push(format!("{} = ?", #db_col_sql));
                             match val {
                                 Some(v) => {
                                     let __transformed = #value_expr;
@@ -3097,7 +3393,7 @@ pub(crate) fn generate_graphql_operations(
                     let update_tokens = quote! {
                         if let Some(ref val) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = ?", #db_col));
+                            set_clauses.push(format!("{} = ?", #db_col_sql));
                             match val {
                                 Some(v) => values.push(::graphql_orm::graphql::orm::SqlValue::String(#value_expr)),
                                 None => values.push(::graphql_orm::graphql::orm::SqlValue::StringNull),
@@ -3116,7 +3412,7 @@ pub(crate) fn generate_graphql_operations(
                 let update_tokens = quote! {
                     if let Some(ref val) = input.#field_name {
                         changed_fields.push(#db_col);
-                        set_clauses.push(format!("{} = ?", #db_col));
+                        set_clauses.push(format!("{} = ?", #db_col_sql));
                         values.push(::graphql_orm::graphql::orm::SqlValue::Int((*val) as i64));
                     }
                 };
@@ -3128,7 +3424,7 @@ pub(crate) fn generate_graphql_operations(
                 let update_tokens = quote! {
                     if let Some(ref val) = input.#field_name {
                         changed_fields.push(#db_col);
-                        set_clauses.push(format!("{} = ?", #db_col));
+                        set_clauses.push(format!("{} = ?", #db_col_sql));
                         values.push(::graphql_orm::graphql::orm::SqlValue::Float((*val).into()));
                     }
                 };
@@ -3138,7 +3434,7 @@ pub(crate) fn generate_graphql_operations(
                 let update_tokens = quote! {
                     if let Some(ref val) = input.#field_name {
                         changed_fields.push(#db_col);
-                        set_clauses.push(format!("{} = ?", #db_col));
+                        set_clauses.push(format!("{} = ?", #db_col_sql));
                         values.push(::graphql_orm::graphql::orm::SqlValue::Bytes(val.clone()));
                     }
                 };
@@ -3152,7 +3448,7 @@ pub(crate) fn generate_graphql_operations(
                     let update_tokens = quote! {
                         if let Some(ref val) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = ?", #db_col));
+                            set_clauses.push(format!("{} = ?", #db_col_sql));
                             let __transformed = #value_expr;
                             values.push(::graphql_orm::graphql::orm::SqlValue::String(__transformed));
                         }
@@ -3163,7 +3459,7 @@ pub(crate) fn generate_graphql_operations(
                     let update_tokens = quote! {
                         if let Some(ref val) = input.#field_name {
                             changed_fields.push(#db_col);
-                            set_clauses.push(format!("{} = ?", #db_col));
+                            set_clauses.push(format!("{} = ?", #db_col_sql));
                             values.push(::graphql_orm::graphql::orm::SqlValue::String(#value_expr));
                         }
                     };
@@ -3194,7 +3490,7 @@ pub(crate) fn generate_graphql_operations(
 
     // Build INSERT SQL template
     let insert_sql = if auto_generated_pk {
-        let mut columns = vec!["id".to_string()];
+        let mut columns = vec![pk_column.to_string()];
         columns.extend(insert_default_columns.iter().cloned());
         columns.extend(insert_columns.iter().cloned());
         let mut placeholders = vec!["?".to_string()];
@@ -3202,8 +3498,12 @@ pub(crate) fn generate_graphql_operations(
         placeholders.extend(insert_value_exprs.iter().cloned());
         format!(
             "INSERT INTO {} ({}) VALUES ({})",
-            table_name,
-            columns.join(", "),
+            sql_table_name,
+            columns
+                .iter()
+                .map(|column| backend_render_identifier_path(backend, column))
+                .collect::<Vec<_>>()
+                .join(", "),
             placeholders.join(", ")
         )
     } else {
@@ -3213,13 +3513,17 @@ pub(crate) fn generate_graphql_operations(
         placeholders.extend(insert_value_exprs.iter().cloned());
         format!(
             "INSERT INTO {} ({}) VALUES ({})",
-            table_name,
-            columns.join(", "),
+            sql_table_name,
+            columns
+                .iter()
+                .map(|column| backend_render_identifier_path(backend, column))
+                .collect::<Vec<_>>()
+                .join(", "),
             placeholders.join(", ")
         )
     };
     let create_mutation_fields = if auto_generated_pk {
-        let mut fields = vec!["id".to_string()];
+        let mut fields = vec![pk_column.to_string()];
         fields.extend(insert_columns.iter().cloned());
         fields
     } else {
@@ -3257,11 +3561,16 @@ pub(crate) fn generate_graphql_operations(
         .collect();
     let upsert_update_column_literals: Vec<syn::LitStr> = upsert_update_columns
         .iter()
-        .map(|field| syn::LitStr::new(field, struct_name.span()))
+        .map(|field| {
+            syn::LitStr::new(
+                &backend_render_identifier_path(backend, field),
+                struct_name.span(),
+            )
+        })
         .collect();
     let (upsert_insert_columns, upsert_insert_values): (Vec<String>, Vec<String>) =
         if auto_generated_pk {
-            let mut columns = vec!["id".to_string()];
+            let mut columns = vec![pk_column.to_string()];
             columns.extend(insert_default_columns.iter().cloned());
             columns.extend(insert_columns.iter().cloned());
             let mut values = vec!["?".to_string()];
@@ -3277,7 +3586,12 @@ pub(crate) fn generate_graphql_operations(
         };
     let upsert_insert_column_literals: Vec<syn::LitStr> = upsert_insert_columns
         .iter()
-        .map(|field| syn::LitStr::new(field, struct_name.span()))
+        .map(|field| {
+            syn::LitStr::new(
+                &backend_render_identifier_path(backend, field),
+                struct_name.span(),
+            )
+        })
         .collect();
     let upsert_insert_value_literals: Vec<syn::LitStr> = upsert_insert_values
         .iter()
@@ -3480,18 +3794,6 @@ pub(crate) fn generate_graphql_operations(
                 }
             }
 
-            #[derive(Default)]
-            pub struct #subscriptions_struct;
-
-            #[::graphql_orm::async_graphql::Subscription]
-            impl #subscriptions_struct {
-                #[graphql(visible = false)]
-                async fn __gom_composite_key_subscriptions_unavailable(
-                    &self,
-                ) -> ::graphql_orm::futures::stream::Empty<bool> {
-                    ::graphql_orm::futures::stream::empty()
-                }
-            }
         }
     } else {
         quote! {}
@@ -3605,13 +3907,14 @@ pub(crate) fn generate_graphql_operations(
     };
     let upsert_sql_expression = if upsert_config.is_some() {
         quote! {
-            ::graphql_orm::graphql::orm::build_upsert_sql(
+            ::graphql_orm::graphql::orm::build_upsert_sql_with_managed_version(
                 #table_name,
                 &[#(#upsert_insert_column_literals),*],
                 &[#(#upsert_insert_value_literals),*],
                 &[#(#upsert_conflict_column_literals),*],
                 &[#(#upsert_update_column_literals),*],
                 #has_updated_at_column,
+                #managed_version_column_option,
             )
         }
     } else {
@@ -3636,7 +3939,7 @@ pub(crate) fn generate_graphql_operations(
                     &format!(
                         "SELECT {} FROM {}{} WHERE {}{}",
                         <Self as ::graphql_orm::graphql::orm::DatabaseEntity>::column_names().join(", "),
-                        #table_name,
+                        #sql_table_name,
                         #upsert_read_lock_hint,
                         where_clause,
                         #write_read_lock_suffix
@@ -3719,9 +4022,13 @@ pub(crate) fn generate_graphql_operations(
                     },
                 ).await.map_err(|e| Self::__gom_runtime_error(format!("{e:?}")))?;
 
+                if let Some(current_entity) = current_entity.as_ref() {
+                    Self::__gom_require_managed_version_headroom(current_entity)?;
+                }
                 hook_ctx.execute(&sql, &bind_values).await?;
                 let entity = Self::__gom_fetch_by_upsert_on(hook_ctx, &lookup_input).await?
                     .ok_or(::graphql_orm::sqlx::Error::RowNotFound)?;
+                Self::__gom_require_managed_version_advanced(current_entity.as_ref(), &entity)?;
                 let after_state = Some(Self::__gom_capture_entity_state(&entity)?);
 
                 hook_ctx.run_mutation_hook(
@@ -3851,6 +4158,10 @@ pub(crate) fn generate_graphql_operations(
                     },
                 ).await?;
 
+                if let Some(current_entity) = current_entity.as_ref() {
+                    #struct_name::__gom_require_managed_version_headroom(current_entity)
+                        .map_err(::graphql_orm::graphql::errors::graphql_error_from_sqlx)?;
+                }
                 hook_ctx.execute(&sql, &bind_values)
                     .await
                     .map_err(::graphql_orm::graphql::errors::graphql_error_from_sqlx)?;
@@ -3858,6 +4169,8 @@ pub(crate) fn generate_graphql_operations(
                     .await
                     .map_err(::graphql_orm::graphql::errors::graphql_error_from_sqlx)?
                     .ok_or_else(|| ::graphql_orm::async_graphql::Error::new("Entity not found after upsert"))?;
+                #struct_name::__gom_require_managed_version_advanced(current_entity.as_ref(), &entity)
+                    .map_err(::graphql_orm::graphql::errors::graphql_error_from_sqlx)?;
                 let after_state = Some(
                     #struct_name::__gom_capture_entity_state(&entity)
                         .map_err(::graphql_orm::graphql::errors::graphql_error_from_sqlx)?
@@ -4263,12 +4576,106 @@ pub(crate) fn generate_graphql_operations(
 
     let scan_connection_type = quote::format_ident!("{}AuthorizedScanPage", struct_name);
     let scan_query_name = apply_graphql_case(&format!("{}Scan", plural_name), resolver_case);
+    let keyset_order_input = quote::format_ident!("{}KeysetOrderByInput", struct_name);
+    let runtime_keyset_available = primary_key_fields.iter().all(|field| {
+        field.meta.read
+            && !field.meta.is_private
+            && !field.meta.input_only
+            && !field.meta.graphql_skip
+            && field.meta.transform_read.is_none()
+            && field.meta.transform_write.is_none()
+            && runtime_keyset_value(&field.field_type).is_some()
+    });
     let keyset_generated = if let Some(parts) = &keyset_parts {
+        let mut runtime_fields = Vec::new();
+        let mut runtime_metadata = Vec::new();
+        let mut runtime_values = Vec::new();
+        let mut runtime_orders = Vec::new();
+        let mut primary_columns = Vec::new();
+        for field in fields {
+            let meta = parse_field_metadata(field)?;
+            let ident = field.ident.as_ref().expect("named field");
+            let is_primary_key = primary_key_fields
+                .iter()
+                .any(|key| &key.field_name == ident);
+            if meta.is_relation
+                || meta.skip_db
+                || meta.is_private
+                || !meta.read
+                || meta.input_only
+                || meta.graphql_skip
+                || meta.transform_read.is_some()
+                || meta.transform_write.is_some()
+                || !(is_primary_key || (meta.sortable && meta.order))
+            {
+                continue;
+            }
+            let Some(value_tokens) = runtime_keyset_value(&field.ty) else {
+                continue;
+            };
+            let rust_name = ident.to_string();
+            let graphql_name =
+                graphql_field_name(&meta, &rust_name, graphql_rename_fields, serde_rename_all);
+            let column = backend_render_identifier_path(
+                backend,
+                meta.db_column.as_deref().unwrap_or(&rust_name),
+            );
+            let policy = match meta.read_policy.as_deref() {
+                Some(policy) => quote! { Some(#policy) },
+                None => quote! { None },
+            };
+            runtime_fields.push(quote! {
+                #[graphql(name = #graphql_name)]
+                pub #ident: Option<::graphql_orm::graphql::orm::OrderDirection>,
+            });
+            runtime_metadata.push(quote! { ::graphql_orm::graphql::orm::KeysetField {
+                column: #column, api_name: #graphql_name, read_policy: #policy,
+            } });
+            runtime_values
+                .push(quote! { #column => { let value = &self.#ident; Some(#value_tokens) } });
+            runtime_orders.push(quote! {
+                if let Some(direction) = item.#ident {
+                    selected += 1;
+                    columns.push(match direction {
+                        ::graphql_orm::graphql::orm::OrderDirection::Asc => ::graphql_orm::graphql::orm::KeysetOrderColumn::asc(#column),
+                        ::graphql_orm::graphql::orm::OrderDirection::Desc => ::graphql_orm::graphql::orm::KeysetOrderColumn::desc(#column),
+                    });
+                }
+            });
+            if is_primary_key {
+                primary_columns.push(column);
+            }
+        }
         let mut order_tokens = Vec::new();
         let mut cursor_tokens = Vec::new();
+        let mut cursor_field_metadata = Vec::new();
         let mut fingerprint_parts = Vec::new();
         for (field, ty, column, ascending, nulls_first) in parts {
-            let quoted_column = backend_quote_identifier_path(backend, column);
+            let quoted_column = backend_render_identifier_path(backend, column);
+            let source = fields
+                .iter()
+                .find(|candidate| candidate.ident.as_ref() == Some(field))
+                .expect("keyset field was resolved during parsing");
+            let meta = parse_field_metadata(source)?;
+            let api_name = graphql_field_name(
+                &meta,
+                &field.to_string(),
+                graphql_rename_fields,
+                serde_rename_all,
+            );
+            let graphql_readable = meta.read
+                && !meta.is_private
+                && !meta.input_only
+                && !meta.graphql_skip
+                && meta.transform_read.is_none()
+                && meta.transform_write.is_none();
+            let policy = match meta.read_policy.as_deref() {
+                Some(policy) => quote! { Some(#policy) },
+                None => quote! { None },
+            };
+            cursor_field_metadata.push(quote! { ::graphql_orm::graphql::orm::KeysetCursorField {
+                column: #quoted_column, api_name: #api_name, read_policy: #policy, graphql_readable: #graphql_readable,
+            } });
             let direction = if *ascending {
                 quote! { ::graphql_orm::graphql::orm::KeysetOrderColumn::asc(#quoted_column) }
             } else {
@@ -4327,6 +4734,76 @@ pub(crate) fn generate_graphql_operations(
             });
         }
         let fingerprint = format!("v1:{}", fingerprint_parts.join(","));
+        let runtime_order_definitions = if runtime_keyset_available {
+            quote! {
+                    /// Scalar-only runtime keyset order. Each list entry must select
+                    /// exactly one field; NULL values sort last in either direction.
+                    #[derive(::graphql_orm::async_graphql::InputObject, Default, Clone, Debug)]
+                    pub struct #keyset_order_input { #(#runtime_fields)* }
+                    impl #keyset_order_input {
+                        fn __gom_columns(items: Vec<Self>) -> ::graphql_orm::async_graphql::Result<Vec<::graphql_orm::graphql::orm::KeysetOrderColumn>> {
+                            let mut columns = Vec::new();
+                            for item in items {
+                                let mut selected = 0;
+                                #(#runtime_orders)*
+                                if selected != 1 {
+                                    return Err(::graphql_orm::graphql::errors::OrmPublicError::new(
+                                        ::graphql_orm::graphql::errors::OrmErrorCode::InvalidInput
+                                    ).into_graphql_error());
+                                }
+                            }
+                            Ok(columns)
+                        }
+                    }
+
+            }
+        } else {
+            quote! {}
+        };
+        let runtime_order_trait_items = if runtime_keyset_available {
+            quote! {
+                        const KEYSET_FIELDS: &'static [::graphql_orm::graphql::orm::KeysetField] = &[#(#runtime_metadata),*];
+                        const KEYSET_PRIMARY_COLUMNS: &'static [&'static str] = &[#(#primary_columns),*];
+                        fn keyset_value_for_column(&self, column: &str) -> Option<::graphql_orm::graphql::pagination::KeysetValue> {
+                            match column { #(#runtime_values),*, _ => None }
+                        }
+
+            }
+        } else {
+            quote! {}
+        };
+        let runtime_order_repository_methods = if runtime_keyset_available {
+            quote! {
+                    /// Fetch a bounded page with optional scalar ordering and a complete primary-key suffix.
+                    pub async fn keyset_page_ordered(
+                        db: &::graphql_orm::db::Database<#backend_marker>,
+                        filter: #where_input,
+                        order_by: Option<Vec<#keyset_order_input>>,
+                        page: ::graphql_orm::graphql::pagination::KeysetPageInput,
+                    ) -> ::graphql_orm::async_graphql::Result<::graphql_orm::graphql::pagination::Connection<Self>> {
+                        let order = order_by.map(#keyset_order_input::__gom_columns).transpose()?;
+                        ::graphql_orm::graphql::orm::EntityQuery::<Self, #backend_marker>::new()
+                            .filter_with_entity_matching(&filter)
+                            .fetch_authorized_keyset_ordered(db, None, None, page, order).await
+                    }
+
+                    /// Fetch a forward or backward page with optional scalar ordering.
+                    pub async fn keyset_connection_page_ordered(
+                        db: &::graphql_orm::db::Database<#backend_marker>,
+                        filter: #where_input,
+                        order_by: Option<Vec<#keyset_order_input>>,
+                        page: ::graphql_orm::graphql::pagination::KeysetConnectionInput,
+                    ) -> ::graphql_orm::async_graphql::Result<::graphql_orm::graphql::pagination::Connection<Self>> {
+                        let order = order_by.map(#keyset_order_input::__gom_columns).transpose()?;
+                        ::graphql_orm::graphql::orm::EntityQuery::<Self, #backend_marker>::new()
+                            .filter_with_entity_matching(&filter)
+                            .fetch_authorized_keyset_connection_with_order(db, None, None, page, order).await
+                    }
+
+            }
+        } else {
+            quote! {}
+        };
         let definitions = quote! {
                 #[derive(::graphql_orm::async_graphql::SimpleObject, Clone, Debug)]
                 #[graphql(rename_fields = #field_case_rule)]
@@ -4335,7 +4812,11 @@ pub(crate) fn generate_graphql_operations(
                     pub page_info: ::graphql_orm::graphql::orm::ScanPageInfo,
                 }
 
+                #runtime_order_definitions
+
                 impl ::graphql_orm::graphql::orm::AuthorizedKeysetEntity for #struct_name {
+                    #runtime_order_trait_items
+                    const KEYSET_CURSOR_FIELDS: &'static [::graphql_orm::graphql::orm::KeysetCursorField] = &[#(#cursor_field_metadata),*];
                     const KEYSET_ORDER: &'static [::graphql_orm::graphql::orm::KeysetOrderColumn] = &[#(#order_tokens),*];
                     const KEYSET_FINGERPRINT: &'static str = #fingerprint;
                     fn keyset_values(&self) -> Vec<::graphql_orm::graphql::pagination::KeysetValue> {
@@ -4358,6 +4839,8 @@ pub(crate) fn generate_graphql_operations(
                         .filter_with_entity_matching(&filter)
                         .fetch_authorized_scan(db, None, None, page).await
                 }
+
+                #runtime_order_repository_methods
 
                 /// Fetch a bounded, stable keyset page using the entity's configured order.
                 pub async fn keyset_page(
@@ -4569,14 +5052,54 @@ pub(crate) fn generate_graphql_operations(
     };
     let (keyset_repository_methods, keyset_trait_impl, authorized_keyset_definitions) =
         keyset_generated;
+    let runtime_keyset_argument = if runtime_keyset_available {
+        quote! {
+            #[graphql(name = #order_by_arg_name, desc = #order_by_arg_description)] order_by: Option<Vec<#keyset_order_input>>,
+        }
+    } else {
+        quote! {}
+    };
+    let runtime_keyset_prepare = if runtime_keyset_available {
+        quote! {
+            let order = order_by.map(#keyset_order_input::__gom_columns).transpose()?;
+        }
+    } else {
+        quote! {}
+    };
+    let runtime_keyset_fetch = if runtime_keyset_available {
+        quote! {
+            .fetch_authorized_keyset_ordered(db, Some(ctx), auth, page, order).await?
+        }
+    } else {
+        quote! {
+            .fetch_authorized_keyset(db, Some(ctx), auth, page).await?
+        }
+    };
+    // Filtering reveals field information even when the response selects only
+    // unrelated fields. Authorize original recursive predicate intent before
+    // any list/count/scan SQL, using the same public identities as field reads.
+    let filter_read_authorization = quote! {
+        if let Some(filter) = where_input.as_ref() {
+            for field_name in ::graphql_orm::graphql::orm::DatabaseFilter::referenced_fields(filter) {
+                let field = <#struct_name as ::graphql_orm::graphql::orm::Entity>::repository_field_policies()
+                    .iter()
+                    .find(|field| field.api_name == field_name)
+                    .ok_or_else(|| ::graphql_orm::graphql::errors::OrmPublicError::forbidden().into_graphql_error())?;
+                db.ensure_readable_field(
+                    ctx, #entity_name_lit, field.api_name, field.read_policy, None,
+                ).await?;
+            }
+        }
+    };
     let keyset_graphql_method = if keyset_parts.is_some() {
         quote! {
             #[doc = #keyset_operation_description]
-            #[graphql(name = #keyset_query_name, #keyset_list_requires_scopes #authenticated_directive)]
+            #[graphql(#keyset_query_skip name = #keyset_query_name, #keyset_list_requires_scopes #authenticated_directive)]
             async fn keyset(
                 &self,
                 ctx: &::graphql_orm::async_graphql::Context<'_>,
                 #[graphql(name = #where_arg_name, desc = #where_arg_description)] where_input: Option<#where_input>,
+                #runtime_keyset_argument
                 #[graphql(name = #page_arg_name, desc = #page_arg_description)] page: ::graphql_orm::graphql::pagination::KeysetPageInput,
             ) -> ::graphql_orm::async_graphql::Result<#connection_type> {
                 let _auth_subject = ::graphql_orm::graphql::auth::enforce_resolver_auth(ctx, #resolver_auth_mode)?;
@@ -4587,15 +5110,17 @@ pub(crate) fn generate_graphql_operations(
                 )?;
                 let db = ctx.data_unchecked::<::graphql_orm::db::Database<#backend_marker>>();
                 let auth = ctx.data_opt::<::graphql_orm::graphql::orm::DbAuthContext>();
+                #filter_read_authorization
                 let filter = where_input.unwrap_or_default();
+                #runtime_keyset_prepare
                 let connection = ::graphql_orm::graphql::orm::EntityQuery::<#struct_name, #backend_marker>::new()
                     .filter_with_entity_matching(&filter)
-                    .fetch_authorized_keyset(db, Some(ctx), auth, page).await?;
+                    #runtime_keyset_fetch;
                 Ok(#connection_type::from_generic(connection))
             }
 
             /// Bounded forward authorization scan; continuation does not promise another visible row.
-            #[graphql(name = #scan_query_name, #keyset_list_requires_scopes #authenticated_directive)]
+            #[graphql(#scan_query_skip name = #scan_query_name, #keyset_list_requires_scopes #authenticated_directive)]
             async fn authorized_scan(
                 &self,
                 ctx: &::graphql_orm::async_graphql::Context<'_>,
@@ -4609,6 +5134,7 @@ pub(crate) fn generate_graphql_operations(
                 )?;
                 let db = ctx.data_unchecked::<::graphql_orm::db::Database<#backend_marker>>();
                 let auth = ctx.data_opt::<::graphql_orm::graphql::orm::DbAuthContext>();
+                #filter_read_authorization
                 let result = ::graphql_orm::graphql::orm::EntityQuery::<#struct_name, #backend_marker>::new()
                     .filter_with_entity_matching(&where_input.unwrap_or_default())
                     .fetch_authorized_scan(db, Some(ctx), auth, page).await?;
@@ -4657,7 +5183,7 @@ pub(crate) fn generate_graphql_operations(
     let search_query_method = if has_search {
         quote! {
             #[doc = #search_operation_description]
-            #[graphql(name = #search_query_name, #search_requires_scopes #authenticated_directive)]
+            #[graphql(#search_query_skip name = #search_query_name, #search_requires_scopes #authenticated_directive)]
             async fn search(
                 &self,
                 ctx: &::graphql_orm::async_graphql::Context<'_>,
@@ -4960,7 +5486,9 @@ pub(crate) fn generate_graphql_operations(
                     &self,
                     ctx: &::graphql_orm::async_graphql::Context<'_>,
                     #[graphql(name = #filter_arg_name, desc = #filter_arg_description)] _filter: Option<::graphql_orm::graphql::orm::SubscriptionFilterInput>,
-                ) -> ::graphql_orm::async_graphql::Result<impl ::graphql_orm::futures::Stream<Item = ::graphql_orm::async_graphql::Result<#changed_event>>> {
+                    #[graphql(name = #subscription_key_arg_name, desc = "Exact complete primary key to observe")] key: Option<#key_type>,
+                #[graphql(name = #subscription_keys_arg_name, desc = #subscription_keys_arg_description)] keys: Option<Vec<#key_type>>,
+                ) -> ::graphql_orm::async_graphql::Result<impl ::graphql_orm::futures::Stream<Item = ::graphql_orm::async_graphql::Result<::graphql_orm::graphql::subscriptions::ChangedPayload<#changed_event>>>> {
                     use ::graphql_orm::futures::StreamExt;
                     let _auth_subject = ::graphql_orm::graphql::auth::enforce_resolver_auth(ctx, #resolver_auth_mode)?;
                     #subscription_scope_enforcement
@@ -4984,60 +5512,83 @@ pub(crate) fn generate_graphql_operations(
                         return Err(::graphql_orm::graphql::errors::OrmPublicError::new(::graphql_orm::graphql::errors::OrmErrorCode::InvalidInput).into_graphql_error());
                     }
                     ::graphql_orm::graphql::subscriptions::validate_subscription_selection::<#struct_name, #backend_marker>(ctx, #entity_result_field_name)?;
+                    let keys = ::graphql_orm::graphql::subscriptions::admit_subscription_keys(
+                        db,
+                        key.is_some(),
+                        keys.map(|keys| keys.iter().map(#struct_name::__gom_key_values).collect()),
+                    )?;
                     let actions = _filter.and_then(|filter| filter.actions);
                     let rx = db.ensure_event_sender::<::graphql_orm::graphql::subscriptions::SubscriptionEvent<#changed_event, #backend_marker>>().subscribe();
                     let db = db.clone();
-                    Ok(::graphql_orm::tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(move |result| {
+                    Ok(::graphql_orm::graphql::subscriptions::continuity_events(rx).filter_map(move |result| {
                         let db = db.clone();
                         let actions = actions.clone();
+                        let key = key.clone();
+                        let keys = keys.clone();
                         async move {
                             let witness = match result {
                                 Ok(witness) => witness,
-                                Err(_) => return Some(Err(::graphql_orm::async_graphql::ErrorExtensions::extend_with(
-                                    ::graphql_orm::async_graphql::Error::new("Subscription events were missed; refresh the authorized snapshot"),
-                                    |_, extensions| extensions.set("code", "LIVE_RESYNC_REQUIRED"),
-                                ))),
+                                // Lost continuity or a closed event source: one error, then the stream ends.
+                                Err(error) => return Some(Err(error)),
                             };
-                            let event = witness.event.as_ref();
-                            if ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&witness.keys)
-                                != ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&#struct_name::__gom_key_values(&event.id)) { return None; }
-                            if actions.as_ref().is_some_and(|actions| !actions.contains(&event.action)) { return None; }
-                            let authorized: ::graphql_orm::async_graphql::Result<#struct_name> = async {
-                                let _auth_subject = ::graphql_orm::graphql::auth::enforce_resolver_auth(ctx, #resolver_auth_mode)?;
-                                #subscription_scope_enforcement
-                                ::graphql_orm::graphql::assurance::enforce_resolver_assurance(ctx, ::graphql_orm::graphql::orm::GraphqlOperationKind::Subscription)?;
-                                witness.authorize_provenance(&db, ctx, event.source_entity.as_deref(), event.source_id.as_deref(), &event.path, event.change_kind == ::graphql_orm::graphql::orm::ChangeKind::Propagated).await?;
-                                if witness.trusted_delete
-                                    && event.entity.as_ref().is_some_and(|entity|
-                                        ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&#struct_name::__gom_subscription_key_values(entity))
-                                        != ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&witness.keys)
-                                    ) { return Err(::graphql_orm::graphql::errors::OrmPublicError::forbidden().into_graphql_error()); }
-                                let preimage = if witness.trusted_delete && event.action == ::graphql_orm::graphql::orm::ChangeAction::Deleted { event.entity.as_ref() } else { None };
-                                let row = ::graphql_orm::graphql::subscriptions::authorize_subscription_row::<#struct_name, #backend_marker>(&db, ctx, &witness.keys, preimage).await?
-                                    .ok_or_else(|| ::graphql_orm::graphql::errors::OrmPublicError::forbidden().into_graphql_error())?;
-                                ::graphql_orm::graphql::subscriptions::authorize_subscription_fields(&db, ctx, &row, #entity_result_field_name).await?;
-                                // Query and field-policy awaits must not outlive current authority.
-                                db.ensure_entity_access(Some(ctx), #entity_name_lit,
-                                    <#struct_name as ::graphql_orm::graphql::orm::Entity>::metadata().read_policy,
-                                    ::graphql_orm::graphql::orm::EntityAccessKind::Read,
-                                    ::graphql_orm::graphql::orm::EntityAccessSurface::GraphqlSubscription).await?;
-                                let _auth_subject = ::graphql_orm::graphql::auth::enforce_resolver_auth(ctx, #resolver_auth_mode)?;
-                                #subscription_scope_enforcement
-                                ::graphql_orm::graphql::assurance::enforce_resolver_assurance(ctx, ::graphql_orm::graphql::orm::GraphqlOperationKind::Subscription)?;
-                                Ok(row)
+                            let delivered: Option<::graphql_orm::graphql::subscriptions::ChangedPayload<#changed_event>> = async move {
+                                let event = witness.event.as_ref();
+                                if key.as_ref().is_some_and(|key| ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&#struct_name::__gom_key_values(key)) != ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&witness.keys)) { return None; }
+                                if keys.as_ref().is_some_and(|keys| !keys.contains(&::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&witness.keys))) { return None; }
+                                if ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&witness.keys)
+                                    != ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&#struct_name::__gom_key_values(&event.id)) { return None; }
+                                if actions.as_ref().is_some_and(|actions| !actions.contains(&event.action)) { return None; }
+                                let authorize_current = || async {
+                                    let _auth_subject = ::graphql_orm::graphql::auth::enforce_resolver_auth(ctx, #resolver_auth_mode)?;
+                                    #subscription_scope_enforcement
+                                    ::graphql_orm::graphql::assurance::enforce_resolver_assurance(ctx, ::graphql_orm::graphql::orm::GraphqlOperationKind::Subscription)?;
+                                    witness.authorize_provenance(&db, ctx, event.source_entity.as_deref(), event.source_id.as_deref(), &event.path, event.change_kind == ::graphql_orm::graphql::orm::ChangeKind::Propagated).await?;
+                                    if witness.trusted_delete
+                                        && event.entity.as_ref().is_some_and(|entity|
+                                            ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&#struct_name::__gom_subscription_key_values(entity))
+                                            != ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&witness.keys)
+                                        ) { return Err(::graphql_orm::graphql::errors::OrmPublicError::forbidden().into_graphql_error()); }
+                                    let preimage = if witness.trusted_delete && event.action == ::graphql_orm::graphql::orm::ChangeAction::Deleted { event.entity.as_ref() } else { None };
+                                    let row = ::graphql_orm::graphql::subscriptions::authorize_subscription_row::<#struct_name, #backend_marker>(&db, ctx, &witness.keys, preimage).await?
+                                        .ok_or_else(|| ::graphql_orm::graphql::errors::OrmPublicError::forbidden().into_graphql_error())?;
+                                    if key.is_some() || keys.is_some() {
+                                        ::graphql_orm::graphql::subscriptions::authorize_subscription_keys::<#struct_name, #backend_marker>(&db, ctx, &row).await?;
+                                    }
+                                    ::graphql_orm::graphql::subscriptions::authorize_subscription_fields(&db, ctx, &row, #entity_result_field_name).await?;
+                                    // Query and field-policy awaits must not outlive current authority.
+                                    db.ensure_entity_access(Some(ctx), #entity_name_lit,
+                                        <#struct_name as ::graphql_orm::graphql::orm::Entity>::metadata().read_policy,
+                                        ::graphql_orm::graphql::orm::EntityAccessKind::Read,
+                                        ::graphql_orm::graphql::orm::EntityAccessSurface::GraphqlSubscription).await?;
+                                    let _auth_subject = ::graphql_orm::graphql::auth::enforce_resolver_auth(ctx, #resolver_auth_mode)?;
+                                    #subscription_scope_enforcement
+                                    ::graphql_orm::graphql::assurance::enforce_resolver_assurance(ctx, ::graphql_orm::graphql::orm::GraphqlOperationKind::Subscription)?;
+                                    witness.authorize_provenance(&db, ctx, event.source_entity.as_deref(), event.source_id.as_deref(), &event.path, event.change_kind == ::graphql_orm::graphql::orm::ChangeKind::Propagated).await?;
+                                    #struct_name::__gom_authorize_changed_operation(ctx)?;
+                                    Ok::<#struct_name, ::graphql_orm::async_graphql::Error>(row)
+                                };
+                                match authorize_current().await {
+                                    Ok(row) => {
+                                        let prepared = ::graphql_orm::graphql::subscriptions::ChangedPayload::prepare(#changed_event {
+                                            action: event.action,
+                                            change_kind: event.change_kind,
+                                            id: event.id.clone(),
+                                            source_entity: event.source_entity.clone(),
+                                            source_id: event.source_id.clone(),
+                                            path: event.path.clone(),
+                                            entity: Some(row),
+                                        }, ctx).await?;
+                                        // Successful serialization can itself await or revoke authority.
+                                        // Recheck the complete current release contract before yielding.
+                                        match authorize_current().await {
+                                            Ok(_) => Some(prepared),
+                                            Err(error) => { let _ = ::graphql_orm::graphql::loaders::relation_authorization_error(error); None }
+                                        }
+                                    },
+                                    Err(error) => { let _ = ::graphql_orm::graphql::loaders::relation_authorization_error(error); None }
+                                }
                             }.await;
-                            match authorized {
-                                Ok(row) => Some(Ok(#changed_event {
-                                    action: event.action,
-                                    change_kind: event.change_kind,
-                                    id: event.id.clone(),
-                                    source_entity: event.source_entity.clone(),
-                                    source_id: event.source_id.clone(),
-                                    path: event.path.clone(),
-                                    entity: Some(row),
-                                })),
-                                Err(error) => { let _ = ::graphql_orm::graphql::loaders::relation_authorization_error(error); None }
-                            }
+                            delivered.map(Ok)
                         }
                     }))
                 }
@@ -5054,7 +5605,7 @@ pub(crate) fn generate_graphql_operations(
 
                 #[doc(hidden)]
                 #[allow(clippy::too_many_arguments)]
-                pub(crate) fn __gom_propagate_changed_event<'a>(
+                #subscription_key_visibility fn __gom_propagate_changed_event<'a>(
                     hook_ctx: &'a mut ::graphql_orm::graphql::orm::MutationContext<'_, #backend_marker>,
                     action: ::graphql_orm::graphql::orm::ChangeAction,
                     entity: &'a Self,
@@ -5087,9 +5638,7 @@ pub(crate) fn generate_graphql_operations(
                     };
                     hook_ctx.queue_event(event.clone());
                     #queue_subscription_witness
-                    let mut visited = ::std::collections::HashSet::from([format!(
-                        "{}:{}:{}:{}", #entity_name_lit, source_id, #entity_name_lit, source_id
-                    )]);
+                    #propagation_visited_seed
                     Self::__gom_propagate_changed_event(
                         hook_ctx, action, entity, #entity_name_lit, &source_id, Vec::new(), &mut visited, &[],
                     ).await
@@ -5157,9 +5706,9 @@ pub(crate) fn generate_graphql_operations(
                     let sql = Self::__gom_rebind_sql(&format!(
                         "SELECT {} FROM {}{} WHERE {} = ?{}",
                         Self::column_names().join(", "),
-                        #table_name,
+                        #sql_table_name,
                         #upsert_read_lock_hint,
-                        Self::PRIMARY_KEY,
+                        #sql_dialect.render_identifier_path(Self::PRIMARY_KEY),
                         #write_read_lock_suffix,
                     ), 1);
                     let rows = hook_ctx.fetch_rows(&sql, &[#pk_bind_value_ref]).await?;
@@ -5243,13 +5792,6 @@ pub(crate) fn generate_graphql_operations(
             #[derive(Clone, Debug, Default)]
             pub struct #update_input { #(#update_input_fields)* }
 
-            #[derive(Clone, Debug)]
-            pub struct #changed_event {
-                pub action: ::graphql_orm::graphql::orm::ChangeAction,
-                pub key: #key_type,
-                pub entity: Option<#struct_name>,
-            }
-
             impl #struct_name {
                 #[doc(hidden)]
                 fn __gom_runtime_error(message: impl Into<String>) -> ::graphql_orm::sqlx::Error {
@@ -5332,11 +5874,19 @@ pub(crate) fn generate_graphql_operations(
                 ) -> ::graphql_orm::Result<()> {
                     if let Some(entity) = entity {
                         #search_write_maintenance
-                        hook_ctx.queue_event(#changed_event {
-                            action,
-                            key: Self::__gom_entity_key(entity),
+                        let id = Self::__gom_entity_key(entity);
+                        let source_id = ::graphql_orm::graphql::orm::composite_key_id(&Self::__gom_key_values(&id));
+                        let event = #changed_event {
+                            action, change_kind: ::graphql_orm::graphql::orm::ChangeKind::Direct,
+                            id: source_id.clone(), key: id,
+                            source_entity: None, source_id: None, path: Vec::new(),
                             entity: Some(entity.clone()),
-                        });
+                        };
+                        hook_ctx.queue_event(event.clone());
+                        #queue_subscription_witness
+                        #propagation_visited_seed
+                        Self::__gom_propagate_changed_event(hook_ctx, action, entity, #entity_name_lit,
+                            &source_id, Vec::new(), &mut visited, &[]).await?;
                     }
                     Ok(())
                 }
@@ -5513,9 +6063,13 @@ pub(crate) fn generate_graphql_operations(
                             Self::__gom_current_epoch_expr(),
                         ));
                     }
+                    if let Some(assignment) = Self::__gom_managed_version_assignment() {
+                        set_clauses.push(assignment);
+                    }
                     if set_clauses.is_empty() {
                         return Err(Self::__gom_runtime_error("No fields to update"));
                     }
+                    Self::__gom_require_managed_version_headroom(&current_entity)?;
                     let before_state = Self::__gom_capture_entity_state(&current_entity)?;
                     let changes = ::graphql_orm::graphql::orm::mutation_changes(&changed_fields, &values);
                     hook_ctx.run_mutation_hook(None, &::graphql_orm::graphql::orm::MutationEvent {
@@ -5528,10 +6082,11 @@ pub(crate) fn generate_graphql_operations(
                     }).await.map_err(|error| Self::__gom_runtime_error(format!("{error:?}")))?;
                     let key_start = values.len() + 1;
                     let sql = Self::__gom_rebind_sql(&format!(
-                        "UPDATE {} SET {} WHERE {}",
+                        "UPDATE {} SET {} WHERE {}{}",
                         dialect.quote_identifier_path(#table_name),
                         set_clauses.join(", "),
                         Self::__gom_key_where_clause_at(key_start),
+                        Self::__gom_managed_version_guard(),
                     ), 1);
                     values.extend(Self::__gom_key_values(key));
                     let result = hook_ctx.execute(&sql, &values,).await?;
@@ -5750,6 +6305,9 @@ pub(crate) fn generate_graphql_operations(
                             Self::__gom_current_epoch_expr(),
                         ));
                     }
+                    if let Some(assignment) = Self::__gom_managed_version_assignment() {
+                        set_clauses.push(assignment);
+                    }
                     if set_clauses.is_empty() {
                         return Err(Self::__gom_runtime_error("No fields to update"));
                     }
@@ -5758,6 +6316,7 @@ pub(crate) fn generate_graphql_operations(
                     let expected_clause = delete_sql.split_once(" WHERE ")
                         .map(|(_, clause)| clause)
                         .ok_or_else(|| Self::__gom_runtime_error("conditional predicate rendered empty SQL"))?;
+                    Self::__gom_require_managed_version_headroom(&current_entity)?;
                     let before_state = Self::__gom_capture_entity_state(&current_entity)?;
                     let changes = ::graphql_orm::graphql::orm::mutation_changes(&changed_fields, &values);
                     hook_ctx.run_mutation_hook(None, &::graphql_orm::graphql::orm::MutationEvent {
@@ -5772,10 +6331,11 @@ pub(crate) fn generate_graphql_operations(
                     let expected_start = key_start + <Self as ::graphql_orm::graphql::orm::DatabaseEntity>::PRIMARY_KEYS.len();
                     let expected_clause = Self::__gom_rebind_sql(expected_clause, expected_start);
                     let sql = Self::__gom_rebind_sql(&format!(
-                        "UPDATE {} SET {} WHERE {} AND ({expected_clause})",
+                        "UPDATE {} SET {} WHERE {}{} AND ({expected_clause})",
                         dialect.quote_identifier_path(#table_name),
                         set_clauses.join(", "),
                         Self::__gom_key_where_clause_at(key_start),
+                        Self::__gom_managed_version_guard(),
                     ), 1);
                     values.extend(Self::__gom_key_values(key));
                     values.extend(expected_values);
@@ -6170,7 +6730,11 @@ pub(crate) fn generate_graphql_operations(
     };
 
     let argument_descriptor = |graphql_name: &str, rust_type: proc_macro2::TokenStream| {
-        let description = semantic_argument_description(graphql_name);
+        let description = if graphql_name == key_arg_name {
+            key_arg_description.to_owned()
+        } else {
+            semantic_argument_description(graphql_name)
+        };
         quote! {
             ::graphql_orm::graphql::orm::GraphqlOperationArgumentDescriptor::generated_with_description(
                 #graphql_name,
@@ -6199,7 +6763,7 @@ pub(crate) fn generate_graphql_operations(
     let aggregate_query_method = if entity_meta.aggregate {
         quote! {
             #[doc = #aggregate_operation_description]
-            #[graphql(name = #aggregate_query_name, #aggregate_requires_scopes #authenticated_directive)]
+            #[graphql(#aggregate_query_skip name = #aggregate_query_name, #aggregate_requires_scopes #authenticated_directive)]
             async fn aggregate(
                 &self,
                 ctx: &::graphql_orm::async_graphql::Context<'_>,
@@ -6380,17 +6944,25 @@ pub(crate) fn generate_graphql_operations(
         ));
     }
     if keyset_parts.is_some() {
+        let mut arguments = vec![argument_descriptor(
+            &where_arg_name,
+            quote! { Option<#where_input> },
+        )];
+        if runtime_keyset_available {
+            arguments.push(argument_descriptor(
+                &order_by_arg_name,
+                quote! { Option<Vec<#keyset_order_input>> },
+            ));
+        }
+        arguments.push(argument_descriptor(
+            &page_arg_name,
+            quote! { ::graphql_orm::graphql::pagination::KeysetPageInput },
+        ));
         operation_descriptors.push(descriptor(
             quote! { ::graphql_orm::graphql::orm::GraphqlOperationKind::Query },
             quote! { ::graphql_orm::graphql::orm::GeneratedGraphqlOperationCategory::KeysetList },
             &keyset_query_name,
-            vec![
-                argument_descriptor(&where_arg_name, quote! { Option<#where_input> }),
-                argument_descriptor(
-                    &page_arg_name,
-                    quote! { ::graphql_orm::graphql::pagination::KeysetPageInput },
-                ),
-            ],
+            arguments,
             quote! { #connection_type },
             &keyset_list_operation_authorization,
         ));
@@ -6453,10 +7025,16 @@ pub(crate) fn generate_graphql_operations(
             quote! { ::graphql_orm::graphql::orm::GraphqlOperationKind::Subscription },
             quote! { ::graphql_orm::graphql::orm::GeneratedGraphqlOperationCategory::Subscription },
             &subscription_name,
-            vec![argument_descriptor(
-                &filter_arg_name,
-                quote! { Option<::graphql_orm::graphql::orm::SubscriptionFilterInput> },
-            )],
+            vec![
+                argument_descriptor(
+                    &filter_arg_name,
+                    quote! { Option<::graphql_orm::graphql::orm::SubscriptionFilterInput> },
+                ),
+                argument_descriptor(
+                    &apply_graphql_case("key", argument_case),
+                    quote! { Option<#key_type> },
+                ),
+            ],
             quote! { #changed_event },
             &subscription_operation_authorization,
         )
@@ -6522,6 +7100,8 @@ pub(crate) fn generate_graphql_operations(
             &delete_many_operation_authorization,
         ));
         operation_descriptors.push(subscription_descriptor());
+    } else {
+        operation_descriptors.push(subscription_descriptor());
     }
 
     // Federation entity keys are resolved here because the generated
@@ -6579,6 +7159,83 @@ pub(crate) fn generate_graphql_operations(
         &federation_keys,
         &federation_scope_enforcements,
     );
+    let node_id_entity_resolver = match crate::federation::resolve_node_id_parts(
+        struct_name,
+        &entity_meta,
+        &primary_key_fields,
+        backend,
+    )? {
+        Some(parts) => {
+            let mut arguments = Vec::new();
+            for (index, (field, part)) in primary_key_fields.iter().zip(&parts).enumerate() {
+                let ident = crate::federation::node_id_part_ident(index);
+                let mut names = vec![field.graphql_name.clone()];
+                for (rust_name, argument_name) in &single_read_argument_names {
+                    if rust_name == &field.rust_name && !names.contains(argument_name) {
+                        names.push(argument_name.clone());
+                    }
+                }
+                for name in names {
+                    arguments.push(ScopeTemplateArgumentSpec::scalar(
+                        name,
+                        ident.clone(),
+                        part.rust_type.clone(),
+                    ));
+                }
+            }
+            let scope_enforcement = scope_enforcement_tokens(
+                "single_read",
+                operation_authorizations.get("single_read"),
+                &arguments,
+            )?;
+            crate::federation::node_id_entity_resolver_tokens(
+                struct_name,
+                &entity_name_lit,
+                &backend_marker,
+                &resolver_auth_mode,
+                &relation_preload_single,
+                &parts,
+                &scope_enforcement,
+            )
+        }
+        None => quote! {},
+    };
+    if let Some(shapes) = &entity_meta.query_shapes {
+        for shape in shapes {
+            let available = match shape.as_str() {
+                "keyset" | "scan" => keyset_parts.is_some(),
+                "search" => has_search,
+                "aggregate" => entity_meta.aggregate,
+                _ => true,
+            };
+            if !available {
+                return Err(syn::Error::new_spanned(
+                    struct_name,
+                    format!("query_shapes selects unavailable {shape} capability"),
+                ));
+            }
+        }
+    }
+    let disabled_query_fields = [
+        ("single", single_query_name.as_str()),
+        ("list", list_query_name.as_str()),
+        ("keyset", keyset_query_name.as_str()),
+        ("scan", scan_query_name.as_str()),
+        ("search", search_query_name.as_str()),
+        ("aggregate", aggregate_query_name.as_str()),
+    ]
+    .into_iter()
+    .filter(|(shape, _)| !query_shape_enabled(shape))
+    .map(|(_, name)| name)
+    .collect::<Vec<_>>();
+    let query_shape_metadata_filter = if disabled_query_fields.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            operations.retain(|operation| !(operation.kind() == ::graphql_orm::graphql::orm::GraphqlOperationKind::Query
+                && [#(#disabled_query_fields),*].contains(&operation.field_name())));
+        }
+    };
     let operation_metadata_impl = quote! {
         impl ::graphql_orm::graphql::orm::GraphqlOperationMetadata for #struct_name {
             fn generated_graphql_operations(
@@ -6590,6 +7247,7 @@ pub(crate) fn generate_graphql_operations(
                     let mut operations = vec![
                         #(#operation_descriptors),*
                     ];
+                    #query_shape_metadata_filter
                     operations.sort_by(|left, right| {
                         (
                             left.kind(),
@@ -6607,6 +7265,191 @@ pub(crate) fn generate_graphql_operations(
         }
     };
 
+    let subscription_release_key_field = if has_composite_primary_key {
+        quote! { key: event.key.clone(), }
+    } else {
+        quote! {}
+    };
+    let generated_subscription_surface = quote! {
+        /// Generated subscriptions for #struct_name
+        #[derive(Default)]
+        pub struct #subscriptions_struct;
+
+        #[::graphql_orm::async_graphql::Subscription]
+        impl #subscriptions_struct {
+            /// Subscribe to #struct_name_str changes
+            #[doc = #subscription_operation_description]
+            #[graphql(name = #subscription_name, #subscription_requires_scopes #authenticated_directive)]
+            async fn on_changed(
+                &self,
+                ctx: &::graphql_orm::async_graphql::Context<'_>,
+                #[graphql(name = #filter_arg_name, desc = #filter_arg_description)] _filter: Option<::graphql_orm::graphql::orm::SubscriptionFilterInput>,
+                #[graphql(name = #subscription_key_arg_name, desc = "Exact complete primary key to observe")] key: Option<#key_type>,
+                #[graphql(name = #subscription_keys_arg_name, desc = #subscription_keys_arg_description)] keys: Option<Vec<#key_type>>,
+            ) -> ::graphql_orm::async_graphql::Result<impl ::graphql_orm::futures::Stream<Item = ::graphql_orm::async_graphql::Result<::graphql_orm::graphql::subscriptions::ChangedPayload<#changed_event>>>> {
+                use ::graphql_orm::futures::StreamExt;
+                let _auth_subject = ::graphql_orm::graphql::auth::enforce_resolver_auth(ctx, #resolver_auth_mode)?;
+                #subscription_scope_enforcement
+                ::graphql_orm::graphql::assurance::enforce_resolver_assurance(
+                    ctx,
+                    ::graphql_orm::graphql::orm::GraphqlOperationKind::Subscription,
+                )?;
+                let db = ctx.data::<::graphql_orm::db::Database<#backend_marker>>().map_err(|_| {
+                    ::graphql_orm::async_graphql::Error::new(
+                        "graphql-orm Database runtime not registered; build the schema with schema_builder(database) or add Database to schema data",
+                    )
+                })?;
+                db.ensure_entity_access(
+                    Some(ctx),
+                    #entity_name_lit,
+                    <#struct_name as ::graphql_orm::graphql::orm::Entity>::metadata().read_policy,
+                    ::graphql_orm::graphql::orm::EntityAccessKind::Read,
+                    ::graphql_orm::graphql::orm::EntityAccessSurface::GraphqlSubscription,
+                ).await?;
+
+                    if _filter.as_ref().is_some_and(|filter| filter.dummy.is_some()) {
+                        return Err(::graphql_orm::graphql::errors::OrmPublicError::new(::graphql_orm::graphql::errors::OrmErrorCode::InvalidInput).into_graphql_error());
+                    }
+                    ::graphql_orm::graphql::subscriptions::validate_subscription_selection::<#struct_name, #backend_marker>(ctx, #entity_result_field_name)?;
+                    let keys = ::graphql_orm::graphql::subscriptions::admit_subscription_keys(
+                        db,
+                        key.is_some(),
+                        keys.map(|keys| keys.iter().map(#struct_name::__gom_key_values).collect()),
+                    )?;
+                let actions = _filter.and_then(|filter| filter.actions);
+                    let rx = db.ensure_event_sender::<::graphql_orm::graphql::subscriptions::SubscriptionEvent<#changed_event, #backend_marker>>().subscribe();
+                    let db = db.clone();
+                    Ok(::graphql_orm::graphql::subscriptions::continuity_events(rx).filter_map(move |result| {
+                        let db = db.clone();
+                        let actions = actions.clone();
+                        let key = key.clone();
+                        let keys = keys.clone();
+                        async move {
+                            let witness = match result {
+                                Ok(witness) => witness,
+                                // Lost continuity or a closed event source: one error, then the stream ends.
+                                Err(error) => return Some(Err(error)),
+                            };
+                            let delivered: Option<::graphql_orm::graphql::subscriptions::ChangedPayload<#changed_event>> = async move {
+                                let event = witness.event.as_ref();
+                                if key.as_ref().is_some_and(|key| ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&#struct_name::__gom_key_values(key)) != ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&witness.keys)) { return None; }
+                                if keys.as_ref().is_some_and(|keys| !keys.contains(&::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&witness.keys))) { return None; }
+                                if ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&witness.keys)
+                                    != ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&#struct_name::__gom_key_values(&#subscription_event_key)) { return None; }
+                                if actions.as_ref().is_some_and(|actions| !actions.contains(&event.action)) { return None; }
+                                let authorize_current = || async {
+                                    let _auth_subject = ::graphql_orm::graphql::auth::enforce_resolver_auth(ctx, #resolver_auth_mode)?;
+                                    #subscription_scope_enforcement
+                                    ::graphql_orm::graphql::assurance::enforce_resolver_assurance(ctx, ::graphql_orm::graphql::orm::GraphqlOperationKind::Subscription)?;
+                                    witness.authorize_provenance(&db, ctx, event.source_entity.as_deref(), event.source_id.as_deref(), &event.path, event.change_kind == ::graphql_orm::graphql::orm::ChangeKind::Propagated).await?;
+                                    if witness.trusted_delete
+                                        && event.entity.as_ref().is_some_and(|entity|
+                                            ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&#struct_name::__gom_subscription_key_values(entity))
+                                            != ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&witness.keys)
+                                        ) { return Err(::graphql_orm::graphql::errors::OrmPublicError::forbidden().into_graphql_error()); }
+                                    let preimage = if witness.trusted_delete && event.action == ::graphql_orm::graphql::orm::ChangeAction::Deleted { event.entity.as_ref() } else { None };
+                                    let row = ::graphql_orm::graphql::subscriptions::authorize_subscription_row::<#struct_name, #backend_marker>(&db, ctx, &witness.keys, preimage).await?
+                                        .ok_or_else(|| ::graphql_orm::graphql::errors::OrmPublicError::forbidden().into_graphql_error())?;
+                                    if key.is_some() || keys.is_some() {
+                                        ::graphql_orm::graphql::subscriptions::authorize_subscription_keys::<#struct_name, #backend_marker>(&db, ctx, &row).await?;
+                                    }
+                                    ::graphql_orm::graphql::subscriptions::authorize_subscription_fields(&db, ctx, &row, #entity_result_field_name).await?;
+                                    // Query and field-policy awaits must not outlive current authority.
+                                    db.ensure_entity_access(Some(ctx), #entity_name_lit,
+                                        <#struct_name as ::graphql_orm::graphql::orm::Entity>::metadata().read_policy,
+                                        ::graphql_orm::graphql::orm::EntityAccessKind::Read,
+                                        ::graphql_orm::graphql::orm::EntityAccessSurface::GraphqlSubscription).await?;
+                                    let _auth_subject = ::graphql_orm::graphql::auth::enforce_resolver_auth(ctx, #resolver_auth_mode)?;
+                                    #subscription_scope_enforcement
+                                    ::graphql_orm::graphql::assurance::enforce_resolver_assurance(ctx, ::graphql_orm::graphql::orm::GraphqlOperationKind::Subscription)?;
+                                    witness.authorize_provenance(&db, ctx, event.source_entity.as_deref(), event.source_id.as_deref(), &event.path, event.change_kind == ::graphql_orm::graphql::orm::ChangeKind::Propagated).await?;
+                                    #struct_name::__gom_authorize_changed_operation(ctx)?;
+                                    Ok::<#struct_name, ::graphql_orm::async_graphql::Error>(row)
+                                };
+                                match authorize_current().await {
+                                    Ok(row) => {
+                                        let prepared = ::graphql_orm::graphql::subscriptions::ChangedPayload::prepare(#changed_event {
+                                            action: event.action,
+                                            change_kind: event.change_kind,
+                                            id: event.id.clone(),
+                                            #subscription_release_key_field
+                                            source_entity: event.source_entity.clone(),
+                                            source_id: event.source_id.clone(),
+                                            path: event.path.clone(),
+                                            entity: Some(row),
+                                        }, ctx).await?;
+                                        // Successful serialization can itself await or revoke authority.
+                                        // Recheck the complete current release contract before yielding.
+                                        match authorize_current().await {
+                                            Ok(_) => Some(prepared),
+                                            Err(error) => { let _ = ::graphql_orm::graphql::loaders::relation_authorization_error(error); None }
+                                        }
+                                    },
+                                    Err(error) => { let _ = ::graphql_orm::graphql::loaders::relation_authorization_error(error); None }
+                                }
+                            }.await;
+                            delivered.map(Ok)
+                        }
+                    }))
+            }
+        }
+
+    };
+    let generated_propagation_driver = quote! {
+            #[doc(hidden)]
+            #[allow(clippy::too_many_arguments)]
+            #subscription_key_visibility fn __gom_propagate_changed_event<'a>(
+                hook_ctx: &'a mut ::graphql_orm::graphql::orm::MutationContext<'_, #backend_marker>,
+                action: ::graphql_orm::graphql::orm::ChangeAction,
+                entity: &'a Self,
+                source_entity: &'a str,
+                source_id: &'a str,
+                path: Vec<String>,
+                visited: &'a mut ::std::collections::HashSet<String>,
+                provenance: &'a [::graphql_orm::graphql::subscriptions::SubscriptionEventSource<#backend_marker>],
+            ) -> ::graphql_orm::futures::future::BoxFuture<'a, ::graphql_orm::Result<()>> {
+                Box::pin(async move {
+                    if provenance.len() >= ::graphql_orm::graphql::subscriptions::MAX_SUBSCRIPTION_PROVENANCE_HOPS
+                            || visited.len() >= ::graphql_orm::graphql::subscriptions::MAX_SUBSCRIPTION_PROPAGATION_EVENTS { return Ok(()); }
+                    #(#propagation_blocks)*
+                    Ok(())
+                })
+            }
+
+    };
+    let readonly_composite_changed = if (has_composite_primary_key
+        || schema_policy_read_only
+        || !backend_writable)
+        && !entity_meta.append_only
+    {
+        quote! {
+            #[derive(Debug, Clone, ::graphql_orm::async_graphql::SimpleObject, serde::Serialize, serde::Deserialize)]
+            #[graphql(name = #changed_event_str, rename_fields = #field_case_rule)]
+            pub struct #changed_event {
+                pub action: ::graphql_orm::graphql::orm::ChangeAction,
+                #[graphql(name = #change_kind_field_name)]
+                pub change_kind: ::graphql_orm::graphql::orm::ChangeKind,
+                pub id: #subscription_identity_type,
+                #subscription_extra_key_field
+                #[graphql(name = #source_entity_field_name)]
+                pub source_entity: Option<String>,
+                #[graphql(name = #source_id_field_name)]
+                pub source_id: Option<String>,
+                pub path: Vec<String>,
+                #[graphql(name = #entity_result_field_name)]
+                pub entity: Option<#struct_name>,
+            }
+            #generated_subscription_surface
+            impl #struct_name {
+                #subscription_key_method
+                #propagated_subscription_emitter
+                #generated_propagation_driver
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     if !backend_writable
         || schema_policy_read_only
         || has_composite_primary_key
@@ -6614,6 +7457,10 @@ pub(crate) fn generate_graphql_operations(
     {
         return Ok(quote! {
             #operation_metadata_impl
+
+            impl #struct_name {
+                #managed_version_helper_methods
+            }
 
             // ============================================================================
             // Connection/Edge Types (for pagination)
@@ -6671,7 +7518,7 @@ pub(crate) fn generate_graphql_operations(
                 #aggregate_query_method
 
                 #[doc = #list_operation_description]
-                #[graphql(name = #list_query_name, #list_requires_scopes #authenticated_directive)]
+                #[graphql(#list_query_skip name = #list_query_name, #list_requires_scopes #authenticated_directive)]
                 async fn list(
                     &self,
                     ctx: &::graphql_orm::async_graphql::Context<'_>,
@@ -6700,6 +7547,7 @@ pub(crate) fn generate_graphql_operations(
                         ::graphql_orm::graphql::orm::EntityAccessSurface::GraphqlQuery,
                     ).await?;
 
+                    #filter_read_authorization
                     let mut query = EntityQuery::<#struct_name, #backend_marker>::new();
 
                     if let Some(ref filter) = where_input {
@@ -6775,7 +7623,7 @@ pub(crate) fn generate_graphql_operations(
                 #keyset_graphql_method
 
                 #[doc = #single_operation_description]
-                #[graphql(name = #single_query_name, #single_read_requires_scopes #authenticated_directive)]
+                #[graphql(#single_query_skip name = #single_query_name, #single_read_requires_scopes #authenticated_directive)]
                 async fn get_by_id(
                     &self,
                     ctx: &::graphql_orm::async_graphql::Context<'_>,
@@ -6827,6 +7675,7 @@ pub(crate) fn generate_graphql_operations(
                 }
 
                 #federation_entity_resolvers
+                #node_id_entity_resolver
             }
 
             impl #struct_name {
@@ -6851,6 +7700,7 @@ pub(crate) fn generate_graphql_operations(
             #retention_surface
             #composite_mutation_surface
             #composite_write_stubs
+            #readonly_composite_changed
         });
     }
 
@@ -7046,7 +7896,7 @@ pub(crate) fn generate_graphql_operations(
 
             /// Get a list of #plural_name with optional filtering, sorting, and pagination
             #[doc = #list_operation_description]
-            #[graphql(name = #list_query_name, #list_requires_scopes #authenticated_directive)]
+            #[graphql(#list_query_skip name = #list_query_name, #list_requires_scopes #authenticated_directive)]
             async fn list(
                 &self,
                 ctx: &::graphql_orm::async_graphql::Context<'_>,
@@ -7074,6 +7924,7 @@ pub(crate) fn generate_graphql_operations(
                     ::graphql_orm::graphql::orm::EntityAccessSurface::GraphqlQuery,
                 ).await?;
 
+                #filter_read_authorization
                 let mut query = EntityQuery::<#struct_name, #backend_marker>::new();
 
                 if let Some(ref filter) = where_input {
@@ -7150,7 +8001,7 @@ pub(crate) fn generate_graphql_operations(
 
             /// Get a single #struct_name_str by ID
             #[doc = #single_operation_description]
-            #[graphql(name = #single_query_name, #single_read_requires_scopes #authenticated_directive)]
+            #[graphql(#single_query_skip name = #single_query_name, #single_read_requires_scopes #authenticated_directive)]
             async fn get_by_id(
                 &self,
                 ctx: &::graphql_orm::async_graphql::Context<'_>,
@@ -7201,6 +8052,7 @@ pub(crate) fn generate_graphql_operations(
             }
 
             #federation_entity_resolvers
+                #node_id_entity_resolver
         }
 
         // ============================================================================
@@ -7326,8 +8178,10 @@ pub(crate) fn generate_graphql_operations(
                 ctx: &::graphql_orm::async_graphql::Context<'_>,
                 #[graphql(name = #id_arg_name, desc = #id_arg_description)] id: #pk_type,
                 #[graphql(name = #input_arg_name, desc = #input_arg_description)] input: #graphql_update_input,
+                #expected_version_param
             ) -> ::graphql_orm::async_graphql::Result<#result_type> {
                 use ::graphql_orm::graphql::orm::{DatabaseEntity, EntityQuery, FromSqlRow, SqlValue};
+                let __gom_expected_version: Option<i64> = #expected_version_binding;
 
                 let _auth_subject = ::graphql_orm::graphql::auth::enforce_resolver_auth(ctx, #resolver_auth_mode)?;
                 #update_scope_enforcement
@@ -7355,7 +8209,7 @@ pub(crate) fn generate_graphql_operations(
                 ).await.map_err(::graphql_orm::graphql::errors::graphql_error_from_sqlx)?;
                 let current_entity = EntityQuery::<#struct_name, #backend_marker>::new()
                     .where_clause(
-                        &format!("{} = {}", #struct_name::PRIMARY_KEY, #struct_name::__gom_placeholder(1)),
+                        &format!("{} = {}", #sql_dialect.render_identifier_path(#struct_name::PRIMARY_KEY), #struct_name::__gom_placeholder(1)),
                         #pk_bind_value
                     )
                     .fetch_one_for_write_in_transaction(&mut hook_ctx)
@@ -7373,6 +8227,13 @@ pub(crate) fn generate_graphql_operations(
                     ::graphql_orm::graphql::orm::EntityAccessSurface::GraphqlMutation,
                     &current_entity as &(dyn ::std::any::Any + Send + Sync),
                 ).await?;
+                if __gom_expected_version.is_some()
+                    && #struct_name::__gom_managed_version_of(&current_entity) != __gom_expected_version
+                {
+                    return Err(::graphql_orm::graphql::errors::OrmPublicError::new(
+                        ::graphql_orm::graphql::errors::OrmErrorCode::Conflict,
+                    ).into_graphql_error());
+                }
                 {
                     let mut write_ctx = ::graphql_orm::graphql::orm::WriteInputContext::graphql_in_transaction(
                         ctx,
@@ -7398,10 +8259,15 @@ pub(crate) fn generate_graphql_operations(
                 if #has_updated_at_column {
                     set_clauses.push(format!("updated_at = {}", #struct_name::__gom_current_epoch_expr()));
                 }
+                if let Some(assignment) = #struct_name::__gom_managed_version_assignment() {
+                    set_clauses.push(assignment);
+                }
 
                 if set_clauses.is_empty() {
                     return Ok(#result_type::err("No fields to update"));
                 }
+                #struct_name::__gom_require_managed_version_headroom(&current_entity)
+                    .map_err(::graphql_orm::graphql::errors::graphql_error_from_sqlx)?;
                 let before_state = #struct_name::__gom_capture_entity_state(&current_entity)
                     .map_err(::graphql_orm::graphql::errors::graphql_error_from_sqlx)?;
                 let mutation_changes = ::graphql_orm::graphql::orm::mutation_changes(&changed_fields, &values);
@@ -7421,10 +8287,15 @@ pub(crate) fn generate_graphql_operations(
                 ).await?;
 
                 let sql = #struct_name::__gom_rebind_sql(&format!(
-                    "UPDATE {} SET {} WHERE {} = ?",
-                    #table_name,
+                    "UPDATE {} SET {} WHERE {} = ?{}",
+                    #sql_table_name,
                     set_clauses.join(", "),
-                    #struct_name::PRIMARY_KEY
+                    #sql_dialect.render_identifier_path(#struct_name::PRIMARY_KEY),
+                    format!(
+                        "{}{}",
+                        #struct_name::__gom_managed_version_guard(),
+                        #struct_name::__gom_managed_version_expectation(__gom_expected_version),
+                    ),
                 ), 1);
 
                 // Add the ID to the values for the WHERE clause
@@ -7486,8 +8357,10 @@ pub(crate) fn generate_graphql_operations(
                 &self,
                 ctx: &::graphql_orm::async_graphql::Context<'_>,
                 #[graphql(name = #id_arg_name, desc = #id_arg_description)] id: #pk_type,
+                #expected_version_param
             ) -> ::graphql_orm::async_graphql::Result<#result_type> {
                 use ::graphql_orm::graphql::orm::{DatabaseEntity, EntityQuery, SqlValue};
+                let __gom_expected_version: Option<i64> = #expected_version_binding;
 
                 let _auth_subject = ::graphql_orm::graphql::auth::enforce_resolver_auth(ctx, #resolver_auth_mode)?;
                 #delete_scope_enforcement
@@ -7517,7 +8390,7 @@ pub(crate) fn generate_graphql_operations(
                 // Fetch entity before deletion for notification purposes
                 let entity = EntityQuery::<#struct_name, #backend_marker>::new()
                     .where_clause(
-                        &format!("{} = {}", #struct_name::PRIMARY_KEY, #struct_name::__gom_placeholder(1)),
+                        &format!("{} = {}", #sql_dialect.render_identifier_path(#struct_name::PRIMARY_KEY), #struct_name::__gom_placeholder(1)),
                         #pk_bind_value
                     )
                     .fetch_one_for_write_in_transaction(&mut hook_ctx)
@@ -7535,6 +8408,13 @@ pub(crate) fn generate_graphql_operations(
                     ::graphql_orm::graphql::orm::EntityAccessSurface::GraphqlMutation,
                     &entity as &(dyn ::std::any::Any + Send + Sync),
                 ).await?;
+                if __gom_expected_version.is_some()
+                    && #struct_name::__gom_managed_version_of(&entity) != __gom_expected_version
+                {
+                    return Err(::graphql_orm::graphql::errors::OrmPublicError::new(
+                        ::graphql_orm::graphql::errors::OrmErrorCode::Conflict,
+                    ).into_graphql_error());
+                }
                 let before_state = #struct_name::__gom_capture_entity_state(&entity)
                     .map_err(::graphql_orm::graphql::errors::graphql_error_from_sqlx)?;
                 hook_ctx.run_mutation_hook(
@@ -7553,7 +8433,12 @@ pub(crate) fn generate_graphql_operations(
                 ).await?;
 
                 let sql = #struct_name::__gom_rebind_sql(
-                    &format!("DELETE FROM {} WHERE {} = ?", #table_name, #struct_name::PRIMARY_KEY),
+                    &format!(
+                        "DELETE FROM {} WHERE {} = ?{}",
+                        #sql_table_name,
+                        #sql_dialect.render_identifier_path(#struct_name::PRIMARY_KEY),
+                        #struct_name::__gom_managed_version_expectation(__gom_expected_version),
+                    ),
                     1
                 );
                 let values = [#pk_bind_value];
@@ -7681,102 +8566,7 @@ pub(crate) fn generate_graphql_operations(
         // Subscription Struct
         // ============================================================================
 
-        /// Generated subscriptions for #struct_name
-        #[derive(Default)]
-        pub struct #subscriptions_struct;
-
-        #[::graphql_orm::async_graphql::Subscription]
-        impl #subscriptions_struct {
-            /// Subscribe to #struct_name_str changes
-            #[doc = #subscription_operation_description]
-            #[graphql(name = #subscription_name, #subscription_requires_scopes #authenticated_directive)]
-            async fn on_changed(
-                &self,
-                ctx: &::graphql_orm::async_graphql::Context<'_>,
-                #[graphql(name = #filter_arg_name, desc = #filter_arg_description)] _filter: Option<::graphql_orm::graphql::orm::SubscriptionFilterInput>,
-            ) -> ::graphql_orm::async_graphql::Result<impl ::graphql_orm::futures::Stream<Item = ::graphql_orm::async_graphql::Result<#changed_event>>> {
-                use ::graphql_orm::futures::StreamExt;
-                let _auth_subject = ::graphql_orm::graphql::auth::enforce_resolver_auth(ctx, #resolver_auth_mode)?;
-                #subscription_scope_enforcement
-                ::graphql_orm::graphql::assurance::enforce_resolver_assurance(
-                    ctx,
-                    ::graphql_orm::graphql::orm::GraphqlOperationKind::Subscription,
-                )?;
-                let db = ctx.data::<::graphql_orm::db::Database<#backend_marker>>().map_err(|_| {
-                    ::graphql_orm::async_graphql::Error::new(
-                        "graphql-orm Database runtime not registered; build the schema with schema_builder(database) or add Database to schema data",
-                    )
-                })?;
-                db.ensure_entity_access(
-                    Some(ctx),
-                    #entity_name_lit,
-                    <#struct_name as ::graphql_orm::graphql::orm::Entity>::metadata().read_policy,
-                    ::graphql_orm::graphql::orm::EntityAccessKind::Read,
-                    ::graphql_orm::graphql::orm::EntityAccessSurface::GraphqlSubscription,
-                ).await?;
-
-                    if _filter.as_ref().is_some_and(|filter| filter.dummy.is_some()) {
-                        return Err(::graphql_orm::graphql::errors::OrmPublicError::new(::graphql_orm::graphql::errors::OrmErrorCode::InvalidInput).into_graphql_error());
-                    }
-                    ::graphql_orm::graphql::subscriptions::validate_subscription_selection::<#struct_name, #backend_marker>(ctx, #entity_result_field_name)?;
-                let actions = _filter.and_then(|filter| filter.actions);
-                    let rx = db.ensure_event_sender::<::graphql_orm::graphql::subscriptions::SubscriptionEvent<#changed_event, #backend_marker>>().subscribe();
-                    let db = db.clone();
-                    Ok(::graphql_orm::tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(move |result| {
-                        let db = db.clone();
-                        let actions = actions.clone();
-                        async move {
-                            let witness = match result {
-                                Ok(witness) => witness,
-                                Err(_) => return Some(Err(::graphql_orm::async_graphql::ErrorExtensions::extend_with(
-                                    ::graphql_orm::async_graphql::Error::new("Subscription events were missed; refresh the authorized snapshot"),
-                                    |_, extensions| extensions.set("code", "LIVE_RESYNC_REQUIRED"),
-                                ))),
-                            };
-                            let event = witness.event.as_ref();
-                            if ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&witness.keys)
-                                != ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&#struct_name::__gom_key_values(&event.id)) { return None; }
-                            if actions.as_ref().is_some_and(|actions| !actions.contains(&event.action)) { return None; }
-                            let authorized: ::graphql_orm::async_graphql::Result<#struct_name> = async {
-                                let _auth_subject = ::graphql_orm::graphql::auth::enforce_resolver_auth(ctx, #resolver_auth_mode)?;
-                                #subscription_scope_enforcement
-                                ::graphql_orm::graphql::assurance::enforce_resolver_assurance(ctx, ::graphql_orm::graphql::orm::GraphqlOperationKind::Subscription)?;
-                                witness.authorize_provenance(&db, ctx, event.source_entity.as_deref(), event.source_id.as_deref(), &event.path, event.change_kind == ::graphql_orm::graphql::orm::ChangeKind::Propagated).await?;
-                                if witness.trusted_delete
-                                    && event.entity.as_ref().is_some_and(|entity|
-                                        ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&#struct_name::__gom_subscription_key_values(entity))
-                                        != ::graphql_orm::graphql::loaders::RelationKey::from_sql_values(&witness.keys)
-                                    ) { return Err(::graphql_orm::graphql::errors::OrmPublicError::forbidden().into_graphql_error()); }
-                                let preimage = if witness.trusted_delete && event.action == ::graphql_orm::graphql::orm::ChangeAction::Deleted { event.entity.as_ref() } else { None };
-                                let row = ::graphql_orm::graphql::subscriptions::authorize_subscription_row::<#struct_name, #backend_marker>(&db, ctx, &witness.keys, preimage).await?
-                                    .ok_or_else(|| ::graphql_orm::graphql::errors::OrmPublicError::forbidden().into_graphql_error())?;
-                                ::graphql_orm::graphql::subscriptions::authorize_subscription_fields(&db, ctx, &row, #entity_result_field_name).await?;
-                                // Query and field-policy awaits must not outlive current authority.
-                                db.ensure_entity_access(Some(ctx), #entity_name_lit,
-                                    <#struct_name as ::graphql_orm::graphql::orm::Entity>::metadata().read_policy,
-                                    ::graphql_orm::graphql::orm::EntityAccessKind::Read,
-                                    ::graphql_orm::graphql::orm::EntityAccessSurface::GraphqlSubscription).await?;
-                                let _auth_subject = ::graphql_orm::graphql::auth::enforce_resolver_auth(ctx, #resolver_auth_mode)?;
-                                #subscription_scope_enforcement
-                                ::graphql_orm::graphql::assurance::enforce_resolver_assurance(ctx, ::graphql_orm::graphql::orm::GraphqlOperationKind::Subscription)?;
-                                Ok(row)
-                            }.await;
-                            match authorized {
-                                Ok(row) => Some(Ok(#changed_event {
-                                    action: event.action,
-                                    change_kind: event.change_kind,
-                                    id: event.id.clone(),
-                                    source_entity: event.source_entity.clone(),
-                                    source_id: event.source_id.clone(),
-                                    path: event.path.clone(),
-                                    entity: Some(row),
-                                })),
-                                Err(error) => { let _ = ::graphql_orm::graphql::loaders::relation_authorization_error(error); None }
-                            }
-                        }
-                    }))
-            }
-        }
+        #generated_subscription_surface
 
         // ============================================================================
         // Repository Trait Implementation
@@ -7817,25 +8607,7 @@ pub(crate) fn generate_graphql_operations(
             #subscription_key_method
             #propagated_subscription_emitter
 
-            #[doc(hidden)]
-            #[allow(clippy::too_many_arguments)]
-            pub(crate) fn __gom_propagate_changed_event<'a>(
-                hook_ctx: &'a mut ::graphql_orm::graphql::orm::MutationContext<'_, #backend_marker>,
-                action: ::graphql_orm::graphql::orm::ChangeAction,
-                entity: &'a Self,
-                source_entity: &'a str,
-                source_id: &'a str,
-                path: Vec<String>,
-                visited: &'a mut ::std::collections::HashSet<String>,
-                provenance: &'a [::graphql_orm::graphql::subscriptions::SubscriptionEventSource<#backend_marker>],
-            ) -> ::graphql_orm::futures::future::BoxFuture<'a, ::graphql_orm::Result<()>> {
-                Box::pin(async move {
-                    if provenance.len() >= ::graphql_orm::graphql::subscriptions::MAX_SUBSCRIPTION_PROVENANCE_HOPS
-                            || visited.len() >= ::graphql_orm::graphql::subscriptions::MAX_SUBSCRIPTION_PROPAGATION_EVENTS { return Ok(()); }
-                    #(#propagation_blocks)*
-                    Ok(())
-                })
-            }
+            #generated_propagation_driver
 
             #[doc(hidden)]
             async fn __gom_queue_changed_event(
@@ -7857,13 +8629,7 @@ pub(crate) fn generate_graphql_operations(
                     };
                     hook_ctx.queue_event(event.clone());
                     #queue_subscription_witness
-                    let mut visited = ::std::collections::HashSet::from([format!(
-                        "{}:{}:{}:{}",
-                        #entity_name_lit,
-                        source_id,
-                        #entity_name_lit,
-                        source_id
-                    )]);
+                    #propagation_visited_seed
                     Self::__gom_propagate_changed_event(
                         hook_ctx,
                         action,
@@ -7897,9 +8663,9 @@ pub(crate) fn generate_graphql_operations(
                     &format!(
                         "SELECT {} FROM {}{} WHERE {} = ?{}",
                         <Self as ::graphql_orm::graphql::orm::DatabaseEntity>::column_names().join(", "),
-                        #table_name,
+                        #sql_table_name,
                         #upsert_read_lock_hint,
-                        Self::PRIMARY_KEY,
+                        #sql_dialect.render_identifier_path(Self::PRIMARY_KEY),
                         #write_read_lock_suffix,
                     ),
                     1,
@@ -8036,11 +8802,15 @@ pub(crate) fn generate_graphql_operations(
                 if #has_updated_at_column {
                     set_clauses.push(format!("updated_at = {}", Self::__gom_current_epoch_expr()));
                 }
+                if let Some(assignment) = Self::__gom_managed_version_assignment() {
+                    set_clauses.push(assignment);
+                }
 
                 if set_clauses.is_empty() {
                     return Err(Self::__gom_runtime_error("No fields to update"));
                 }
 
+                Self::__gom_require_managed_version_headroom(&current_entity)?;
                 let before_state = Self::__gom_capture_entity_state(&current_entity)?;
                 let mutation_changes = ::graphql_orm::graphql::orm::mutation_changes(&changed_fields, &values);
                 hook_ctx.run_mutation_hook(
@@ -8061,7 +8831,7 @@ pub(crate) fn generate_graphql_operations(
                 .map_err(|e| Self::__gom_runtime_error(format!("{e:?}")))?;
 
                 let sql = Self::__gom_rebind_sql(
-                    &format!("UPDATE {} SET {} WHERE {} = ?", #table_name, set_clauses.join(", "), Self::PRIMARY_KEY),
+                    &format!("UPDATE {} SET {} WHERE {} = ?{}", #sql_table_name, set_clauses.join(", "), #sql_dialect.render_identifier_path(Self::PRIMARY_KEY), Self::__gom_managed_version_guard()),
                     1,
                 );
                 values.push(#pk_bind_value_ref);
@@ -8161,12 +8931,18 @@ pub(crate) fn generate_graphql_operations(
                 if #has_updated_at_column {
                     set_clauses.push(format!("updated_at = {}", Self::__gom_current_epoch_expr()));
                 }
+                if let Some(assignment) = Self::__gom_managed_version_assignment() {
+                    set_clauses.push(assignment);
+                }
 
                 if set_clauses.is_empty() {
                     return Err(Self::__gom_runtime_error("No fields to update"));
                 }
 
                 let mutation_changes = ::graphql_orm::graphql::orm::mutation_changes(&changed_fields, &values);
+                for entity in &matched_entities {
+                    Self::__gom_require_managed_version_headroom(entity)?;
+                }
                 for entity in &matched_entities {
                     hook_ctx.run_mutation_hook(
                         None,
@@ -8187,10 +8963,11 @@ pub(crate) fn generate_graphql_operations(
                 }
 
                 let sql = Self::__gom_rebind_sql(&format!(
-                    "UPDATE {} SET {} WHERE {} = ?",
-                    #table_name,
+                    "UPDATE {} SET {} WHERE {} = ?{}",
+                    #sql_table_name,
                     set_clauses.join(", "),
-                    Self::PRIMARY_KEY,
+                    #sql_dialect.render_identifier_path(Self::PRIMARY_KEY),
+                    Self::__gom_managed_version_guard(),
                 ), 1);
                 let mut affected = 0_i64;
                 for entity in &matched_entities {
@@ -8272,7 +9049,7 @@ pub(crate) fn generate_graphql_operations(
                 .map_err(|e| Self::__gom_runtime_error(format!("{e:?}")))?;
 
                 let sql = Self::__gom_rebind_sql(
-                    &format!("DELETE FROM {} WHERE {} = ?", #table_name, Self::PRIMARY_KEY),
+                    &format!("DELETE FROM {} WHERE {} = ?", #sql_table_name, #sql_dialect.render_identifier_path(Self::PRIMARY_KEY)),
                     1,
                 );
                 let values = [#pk_bind_value_ref];
@@ -8358,7 +9135,7 @@ pub(crate) fn generate_graphql_operations(
                 }
 
                 let sql = Self::__gom_rebind_sql(
-                    &format!("DELETE FROM {} WHERE {} = ?", #table_name, Self::PRIMARY_KEY),
+                    &format!("DELETE FROM {} WHERE {} = ?", #sql_table_name, #sql_dialect.render_identifier_path(Self::PRIMARY_KEY)),
                     1,
                 );
                 let mut deleted = 0_i64;
@@ -8439,7 +9216,7 @@ pub(crate) fn generate_graphql_operations(
                     ::graphql_orm::graphql::orm::execute_with_binds::<#backend_marker>(&sql, &bind_values, pool).await?;
                     EntityQuery::<Self, #backend_marker>::new()
                         .where_clause(
-                            &format!("{} = {}", <Self as DatabaseEntity>::PRIMARY_KEY, Self::__gom_placeholder(1)),
+                            &format!("{} = {}", #sql_dialect.render_identifier_path(<Self as DatabaseEntity>::PRIMARY_KEY), Self::__gom_placeholder(1)),
                             #created_pk_value,
                         )
                         .fetch_one(pool)
@@ -8537,7 +9314,7 @@ pub(crate) fn generate_graphql_operations(
                 ).await?;
                 let current_entity = EntityQuery::<Self, #backend_marker>::new()
                     .where_clause(
-                        &format!("{} = {}", Self::PRIMARY_KEY, Self::__gom_placeholder(1)),
+                        &format!("{} = {}", #sql_dialect.render_identifier_path(Self::PRIMARY_KEY), Self::__gom_placeholder(1)),
                         #pk_bind_value_ref
                     )
                     .fetch_one_for_write_in_transaction(&mut hook_ctx)
@@ -8577,11 +9354,15 @@ pub(crate) fn generate_graphql_operations(
                 if #has_updated_at_column {
                     set_clauses.push(format!("updated_at = {}", Self::__gom_current_epoch_expr()));
                 }
+                if let Some(assignment) = Self::__gom_managed_version_assignment() {
+                    set_clauses.push(assignment);
+                }
 
                 if set_clauses.is_empty() {
                     return Err(Self::__gom_runtime_error("No fields to update"));
                 }
 
+                Self::__gom_require_managed_version_headroom(&current_entity)?;
                 let before_state = Self::__gom_capture_entity_state(&current_entity)?;
                 let mutation_changes = ::graphql_orm::graphql::orm::mutation_changes(&changed_fields, &values);
                 hook_ctx.run_mutation_hook(
@@ -8602,7 +9383,7 @@ pub(crate) fn generate_graphql_operations(
                 .map_err(|e| Self::__gom_runtime_error(format!("{e:?}")))?;
 
                 let sql = Self::__gom_rebind_sql(
-                    &format!("UPDATE {} SET {} WHERE {} = ?", #table_name, set_clauses.join(", "), Self::PRIMARY_KEY),
+                    &format!("UPDATE {} SET {} WHERE {} = ?{}", #sql_table_name, set_clauses.join(", "), #sql_dialect.render_identifier_path(Self::PRIMARY_KEY), Self::__gom_managed_version_guard()),
                     1,
                 );
                 values.push(#pk_bind_value_ref);
@@ -8747,12 +9528,18 @@ pub(crate) fn generate_graphql_operations(
                 if #has_updated_at_column {
                     set_clauses.push(format!("updated_at = {}", Self::__gom_current_epoch_expr()));
                 }
+                if let Some(assignment) = Self::__gom_managed_version_assignment() {
+                    set_clauses.push(assignment);
+                }
 
                 if set_clauses.is_empty() {
                     return Err(Self::__gom_runtime_error("No fields to update"));
                 }
 
                 let mutation_changes = ::graphql_orm::graphql::orm::mutation_changes(&changed_fields, &values);
+                for entity in &matched_entities {
+                    Self::__gom_require_managed_version_headroom(entity)?;
+                }
                 for entity in &matched_entities {
                     hook_ctx.run_mutation_hook(
                         graphql_ctx,
@@ -8773,10 +9560,11 @@ pub(crate) fn generate_graphql_operations(
                 }
 
                 let sql = Self::__gom_rebind_sql(&format!(
-                    "UPDATE {} SET {} WHERE {} = ?",
-                    #table_name,
+                    "UPDATE {} SET {} WHERE {} = ?{}",
+                    #sql_table_name,
                     set_clauses.join(", "),
-                    Self::PRIMARY_KEY,
+                    #sql_dialect.render_identifier_path(Self::PRIMARY_KEY),
+                    Self::__gom_managed_version_guard(),
                 ), 1);
                 let mut affected = 0_i64;
                 for entity in &matched_entities {
@@ -8841,7 +9629,7 @@ pub(crate) fn generate_graphql_operations(
                 ).await?;
                 let entity = EntityQuery::<Self, #backend_marker>::new()
                     .where_clause(
-                        &format!("{} = {}", Self::PRIMARY_KEY, Self::__gom_placeholder(1)),
+                        &format!("{} = {}", #sql_dialect.render_identifier_path(Self::PRIMARY_KEY), Self::__gom_placeholder(1)),
                         #pk_bind_value_ref
                     )
                     .fetch_one_for_write_in_transaction(&mut hook_ctx)
@@ -8876,7 +9664,7 @@ pub(crate) fn generate_graphql_operations(
                 .map_err(|e| Self::__gom_runtime_error(format!("{e:?}")))?;
 
                 let sql = Self::__gom_rebind_sql(
-                    &format!("DELETE FROM {} WHERE {} = ?", #table_name, Self::PRIMARY_KEY),
+                    &format!("DELETE FROM {} WHERE {} = ?", #sql_table_name, #sql_dialect.render_identifier_path(Self::PRIMARY_KEY)),
                     1,
                 );
                 let values = [#pk_bind_value_ref];
@@ -8993,7 +9781,7 @@ pub(crate) fn generate_graphql_operations(
 
                 if !existing_entities.is_empty() {
                     let sql = Self::__gom_rebind_sql(
-                        &format!("DELETE FROM {} WHERE {} = ?", #table_name, Self::PRIMARY_KEY),
+                        &format!("DELETE FROM {} WHERE {} = ?", #sql_table_name, #sql_dialect.render_identifier_path(Self::PRIMARY_KEY)),
                         1,
                     );
                     for entity in &existing_entities {
@@ -9119,7 +9907,7 @@ pub(crate) fn generate_graphql_operations(
                 }
 
                 let sql = Self::__gom_rebind_sql(
-                    &format!("DELETE FROM {} WHERE {} = ?", #table_name, Self::PRIMARY_KEY),
+                    &format!("DELETE FROM {} WHERE {} = ?", #sql_table_name, #sql_dialect.render_identifier_path(Self::PRIMARY_KEY)),
                     1,
                 );
                 let mut deleted = 0_i64;
@@ -9276,6 +10064,10 @@ pub(crate) fn generate_graphql_operations(
         #cas_trait_impl
         #keyset_trait_impl
 
+        impl #struct_name {
+            #managed_version_helper_methods
+        }
+
         impl ::graphql_orm::graphql::orm::MutationContextUpdateById<#backend_marker> for #struct_name {
             type Id = #pk_type_ty;
             type UpdateInput = #update_input;
@@ -9335,4 +10127,91 @@ pub(crate) fn generate_graphql_operations(
             }
         }
     })
+}
+
+#[cfg(test)]
+mod composite_keyset_tests {
+    use super::generate_graphql_operations;
+
+    fn entity(order: &str) -> syn::DeriveInput {
+        let order = syn::LitStr::new(order, proc_macro2::Span::call_site());
+        syn::parse_quote! {
+            #[graphql_entity(table = "composite_keyset_fixture", keyset = #order)]
+            struct CompositeKeysetFixture {
+                #[primary_key]
+                #[graphql_orm(auto_generated = false)]
+                partition_key: String,
+                #[primary_key]
+                #[graphql_orm(auto_generated = false)]
+                item_no: i64,
+                rank: i64,
+            }
+        }
+    }
+
+    #[test]
+    fn complete_tuple_is_required_as_the_unique_order_suffix() {
+        assert!(
+            generate_graphql_operations(&entity("rank desc, partition_key asc, item_no asc"))
+                .is_ok()
+        );
+        for order in [
+            "rank desc, partition_key asc",
+            "rank desc, item_no asc",
+            "rank desc, item_no asc, partition_key asc",
+        ] {
+            let error = generate_graphql_operations(&entity(order)).unwrap_err();
+            assert!(
+                error.to_string().contains("every primary-key field"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn duplicate_composite_order_fields_are_rejected() {
+        let error = generate_graphql_operations(&entity(
+            "partition_key asc, rank desc, partition_key asc, item_no asc",
+        ))
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("must not repeat a field"),
+            "{error}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod query_shape_tests {
+    use super::generate_graphql_operations;
+
+    fn entity(shapes: &str) -> syn::DeriveInput {
+        let shapes = syn::LitStr::new(shapes, proc_macro2::Span::call_site());
+        syn::parse_quote! {
+            #[graphql_entity(table = "query_shape_fixture", query_shapes = #shapes)]
+            struct QueryShapeFixture {
+                #[primary_key]
+                id: String,
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_or_unavailable_query_selections_fail_closed() {
+        assert!(generate_graphql_operations(&entity("list")).is_ok());
+        for shapes in [
+            "",
+            "unknown",
+            "single,single",
+            "keyset",
+            "scan",
+            "search",
+            "aggregate",
+        ] {
+            assert!(
+                generate_graphql_operations(&entity(shapes)).is_err(),
+                "{shapes}"
+            );
+        }
+    }
 }

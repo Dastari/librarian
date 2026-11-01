@@ -48,26 +48,32 @@ export function LiveDataProvider({ children }: { children: ReactNode }) {
       await router.invalidate();
       registry.invalidate();
     };
+    // Apollo delivers subscription failures through `next`, then completes the stream.
+    let endedByError = false;
+    const failed = (error: unknown) => {
+      if (!active) return;
+      endedByError = true;
+      // Read/session recovery only. Commands are never replayed here.
+      const recover = async () => {
+        if (isUnauthorizedError(error as never)) await session.refresh();
+        await reconcile();
+        if (active && session.getSnapshot().status === "authenticated" && !isForbiddenError(error as never)) schedule();
+      };
+      void recover().catch(() => { schedule(); });
+    };
     const start = () => {
       if (!active) return;
+      endedByError = false;
       subscription = client.subscribe({ query: SessionChangedDocument }).subscribe({
-        next: ({ data }) => {
+        next: ({ data, error }) => {
+          if (error) { failed(error); return; }
           const payload = data?.sessionChanged;
           if (!payload || !["ready", "changed", "resync"].includes(payload.kind.toLowerCase())) return;
           failures = 0;
           void reconcile().catch(() => {});
         }, // ready also closes the read/listener race.
-        error: (error: unknown) => {
-          if (!active) return;
-          // Read/session recovery only. Commands are never replayed here.
-          const recover = async () => {
-            if (isUnauthorizedError(error as never)) await session.refresh();
-            await reconcile();
-            if (active && session.getSnapshot().status === "authenticated" && !isForbiddenError(error as never)) schedule();
-          };
-          void recover().catch(() => { schedule(); });
-        },
-        complete: () => { if (active) { void reconcile().catch(() => {}); schedule(); } },
+        error: failed,
+        complete: () => { if (active && !endedByError) { void reconcile().catch(() => {}); schedule(); } },
       });
     };
     start();

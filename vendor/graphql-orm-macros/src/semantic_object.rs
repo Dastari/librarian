@@ -373,6 +373,7 @@ pub(crate) fn expand(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStrea
                 type_ref: #type_ref,
                 selectable: true,
                 filter_operators: Vec::new(),
+                filter_input: None,
                 sortable: false,
                 groupable: false,
                 aggregate_operators: Vec::new(),
@@ -397,6 +398,8 @@ pub(crate) fn expand(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStrea
                     description: #description.to_owned(),
                     default_classification: #classification_tokens,
                     fields: vec![#(#field_tokens),*].into_boxed_slice(),
+                    label_fields: ::std::vec::Vec::new(),
+                    record_version: None,
                 })
             }
         }

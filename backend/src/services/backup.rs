@@ -1010,7 +1010,7 @@ fn json_to_orm_backup_value(
         BackupValueKind::Decimal => {
             OrmBackupValue::Decimal(serde_json::from_value(value).map_err(|_| type_err("decimal"))?)
         }
-        BackupValueKind::String => OrmBackupValue::String(
+        BackupValueKind::String | BackupValueKind::DateTime => OrmBackupValue::String(
             value
                 .as_str()
                 .ok_or_else(|| type_err("string"))?
@@ -1032,6 +1032,11 @@ fn json_to_orm_backup_value(
                     operation: format!("invalid base64 in backup row: {error}"),
                 })?;
             OrmBackupValue::Bytes(bytes)
+        }
+        other => {
+            return Err(BackupError::UnsupportedOperation {
+                operation: format!("unsupported backup value kind {other:?}"),
+            });
         }
     })
 }

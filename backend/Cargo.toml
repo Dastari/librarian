@@ -52,7 +52,7 @@ anyhow = "1.0.104"
 async-trait = "0.1.92"
 
 # Auth
-agql-auth = { git = "https://github.com/Dastari/agql-auth", rev = "86fabec09eea1eec0f675bc150e90e3809734567", version = "0.22.1" }
+agql-auth = { git = "https://github.com/Dastari/agql-auth.git", tag = "v0.24.0", version = "0.24.0" }
 
 # HTTP client
 reqwest = { version = "0.13.4", features = ["json", "rustls", "cookies", "gzip", "deflate", "query", "stream"], default-features = false }
@@ -62,10 +62,10 @@ walkdir = "2.5.0"
 
 # GraphQL ORM
 # Optional direct edge unifies this host proc-macro feature with the git patch below.
-graphql-orm-macros = { path = "../vendor/graphql-orm-macros", version = "=0.57.0", default-features = false, optional = true }
-graphql-orm = { git = "https://github.com/Dastari/graphql-orm.git", rev = "a90b5bd41f952b02416f23999c729b9ceffcbb8d", version = "0.57.0", default-features = false }
-graphql-orm-storage = { git = "https://github.com/Dastari/graphql-orm.git", rev = "a90b5bd41f952b02416f23999c729b9ceffcbb8d", version = "0.7.5", default-features = false, features = ["local"] }
-graphql-orm-backup = { git = "https://github.com/Dastari/graphql-orm.git", rev = "a90b5bd41f952b02416f23999c729b9ceffcbb8d", version = "0.10.0", default-features = false, features = ["local"] }
+graphql-orm-macros = { path = "../vendor/graphql-orm-macros", version = "=0.89.0", default-features = false, optional = true }
+graphql-orm = { git = "https://github.com/Dastari/graphql-orm.git", tag = "workspace-2026.11.01.1", version = "0.89.0", default-features = false }
+graphql-orm-storage = { git = "https://github.com/Dastari/graphql-orm.git", tag = "workspace-2026.11.01.1", version = "0.8.0", default-features = false, features = ["local"] }
+graphql-orm-backup = { git = "https://github.com/Dastari/graphql-orm.git", tag = "workspace-2026.11.01.1", version = "0.12.0", default-features = false, features = ["local"] }
 
 # Utilities
 regex = "1.13.1"
@@ -155,7 +155,7 @@ tokio-tungstenite = "0.29.0"
 async-graphql = { path = "../vendor/async-graphql" }
 
 [patch."https://github.com/Dastari/graphql-orm.git"]
-# Pinned 0.57 runtime; narrow macro fix surfaces broadcast lag as a resync error.
+# Tooling only: the schema-export-only feature; see vendor/graphql-orm-macros/PATCH.md.
 graphql-orm-macros = { path = "../vendor/graphql-orm-macros" }
 
 [profile.release]
