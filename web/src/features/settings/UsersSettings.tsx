@@ -1,9 +1,11 @@
+import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
+import { copyText } from "glass-ux/copy-button";
 import { useMutation } from "@apollo/client/react";
 import { toast } from "glass-ux/toast";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
-import { createDataTableColumns, DataTable, IdentityCell, RelativeTime, TextCell } from "glass-ux/data-table";
+import { createDataTableColumns, IdentityCell, RelativeTime, TextCell } from "glass-ux/data-table";
 import { IconCopy, IconPlus, IconTrash } from "glass-ux/icons";
 import { MeterCell } from "glass-ux/meter-cell";
 import { IconShieldCheck, IconUserOff } from "@tabler/icons-react";
@@ -27,6 +29,9 @@ import { useSession } from "@/lib/auth/useSession";
 import { ENTITY_KINDS, glyph } from "@/lib/entities/kinds";
 import { parseTimestamp } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
+
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { runSettingsSelection } from "./runSettingsSelection";
 
 import { SettingsLoadError } from "./SettingsLoadError";
 import { SettingsSection } from "./SettingsSection";
@@ -67,7 +72,7 @@ export function UsersSettings() {
 
   const inviteLink = (token: InviteTokenFieldsFragment) => `${window.location.origin}/register?invite=${encodeURIComponent(token.id)}`;
   const copy = async (token: InviteTokenFieldsFragment) => {
-    await navigator.clipboard.writeText(inviteLink(token));
+    await copyText(inviteLink(token));
     toast.success("Invite link copied");
   };
 
@@ -98,35 +103,55 @@ export function UsersSettings() {
 
   const refreshUsers = users.refetch;
   const userActions = useMemo(() => defineActions<UserFieldsFragment>("user", [
+    { id: "copy-usernames", label: (rows) => rows.length === 1 ? "Copy username" : "Copy usernames", icon: IconCopy, group: "open", bulk: true,
+      run: (rows) => copyText(rows.map((row) => row.username).join("\n")), successMessage: () => "Usernames copied",
+    },
     {
-      id: "role", label: (rows) => (rows[0]!.role === "admin" ? "Make member" : "Make admin"), icon: RoleIcon, group: "manage", priority: 1,
+      id: "role", bulk: true, label: (rows) => (rows[0]!.role === "admin" ? "Make member" : "Make admin"), icon: RoleIcon, group: "manage", priority: 1,
       visible: (rows) => rows.length === 1 && rows[0]!.id !== me?.id,
       run: async (rows) => { const user = rows[0]!; assertSuccess((await updateUser({ variables: { id: user.id, input: { role: user.role === "admin" ? "member" : "admin" } } })).data?.updateUser, "Could not update"); void refreshUsers(); },
       successMessage: (rows) => (rows[0]!.role === "admin" ? "Now a member" : "Now an admin"),
     },
+    ...(["member", "admin"] as const).map((role) => ({
+      id: `make-${role}-selected`, label: role === "admin" ? "Make admins" : "Make members", icon: RoleIcon, group: "manage" as const, bulk: true,
+      visible: (rows: readonly UserFieldsFragment[]) => rows.length > 1 && rows.some((row) => row.role !== role),
+      disabledReason: (rows: readonly UserFieldsFragment[]) => rows.some((row) => row.id === me?.id) ? "Deselect your own account before changing roles." : false,
+      confirm: (rows: readonly UserFieldsFragment[]) => ({ title: `Make ${rows.filter((row) => row.role !== role).length} users ${role === "admin" ? "admins" : "members"}?`, body: role === "admin" ? "Admins can manage libraries, sources, settings and other users." : "Their administrator access is removed and existing sessions are signed out.", confirmLabel: role === "admin" ? "Make admins" : "Make members", tone: "warning" as const }),
+      run: (rows: readonly UserFieldsFragment[]) => runSettingsSelection(rows.filter((row) => row.role !== role), "Change role", (row) => row.displayName ?? row.username, async (row) => assertSuccess((await updateUser({ variables: { id: row.id, input: { role } } })).data?.updateUser, "Could not update role"), refreshUsers),
+      successMessage: () => "User roles updated",
+    })),
     {
-      id: "active", label: (rows) => (rows[0]!.isActive ? "Disable sign-in" : "Enable sign-in"), icon: SignInIcon, group: "manage", priority: 2,
+      id: "active", bulk: true, label: (rows) => (rows[0]!.isActive ? "Disable sign-in" : "Enable sign-in"), icon: SignInIcon, group: "manage", priority: 2,
       visible: (rows) => rows.length === 1 && rows[0]!.id !== me?.id,
       confirm: (rows) => (rows[0]!.isActive ? { title: `Disable ${rows[0]!.displayName ?? rows[0]!.username}?`, body: "They are signed out and cannot sign in until enabled again. Their history is kept.", confirmLabel: "Disable", tone: "warning" } : null),
       run: async (rows) => { const user = rows[0]!; assertSuccess((await updateUser({ variables: { id: user.id, input: { isActive: !user.isActive } } })).data?.updateUser, "Could not update"); void refreshUsers(); },
     },
+    ...([true, false] as const).map((active) => ({
+      id: active ? "enable-selected" : "disable-selected", label: active ? "Enable sign-in" : "Disable sign-in", icon: SignInIcon, group: "manage" as const, bulk: true,
+      visible: (rows: readonly UserFieldsFragment[]) => rows.length > 1 && rows.some((row) => row.isActive !== active),
+      disabledReason: (rows: readonly UserFieldsFragment[]) => rows.some((row) => row.id === me?.id) ? "Deselect your own account before changing sign-in access." : false,
+      confirm: (rows: readonly UserFieldsFragment[]) => active ? null : ({ title: `Disable sign-in for ${rows.filter((row) => row.isActive).length} users?`, body: "They are signed out and cannot sign in until enabled again. Their history is kept.", confirmLabel: "Disable", tone: "warning" as const }),
+      run: (rows: readonly UserFieldsFragment[]) => runSettingsSelection(rows.filter((row) => row.isActive !== active), active ? "Enable sign-in" : "Disable sign-in", (row) => row.displayName ?? row.username, async (row) => assertSuccess((await updateUser({ variables: { id: row.id, input: { isActive: active } } })).data?.updateUser, "Could not update"), refreshUsers),
+      successMessage: () => active ? "Sign-in enabled" : "Sign-in disabled",
+    })),
     {
-      id: "delete", label: "Delete user", icon: IconTrash, group: "danger",
-      visible: (rows) => rows.length === 1 && rows[0]!.id !== me?.id,
-      confirm: (rows) => ({ title: `Delete ${rows[0]!.displayName ?? rows[0]!.username}?`, body: "Their playback history is removed. Libraries and media are kept.", confirmLabel: "Delete user", tone: "danger" }),
-      run: async (rows) => { assertSuccess((await deleteUser({ variables: { id: rows[0]!.id } })).data?.deleteUser, "Could not delete"); void refreshUsers(); },
-      successMessage: () => "User deleted",
+      id: "delete", label: (rows) => rows.length === 1 ? "Delete user" : `Delete ${rows.length} users`, icon: IconTrash, group: "danger", bulk: true,
+      visible: (rows) => rows.length > 1 || rows[0]!.id !== me?.id,
+      disabledReason: (rows) => rows.some((row) => row.id === me?.id) ? "Deselect your own account before deleting users." : false,
+      confirm: (rows) => ({ title: rows.length === 1 ? `Delete ${rows[0]!.displayName ?? rows[0]!.username}?` : `Delete ${rows.length} users?`, body: "Their playback history is removed. Libraries and media are kept.", confirmLabel: rows.length === 1 ? "Delete user" : "Delete users", tone: "danger" }),
+      run: (rows) => runSettingsSelection(rows, "Delete", (row) => row.displayName ?? row.username, async (row) => assertSuccess((await deleteUser({ variables: { id: row.id } })).data?.deleteUser, "Could not delete"), refreshUsers),
+      successMessage: (rows) => rows.length === 1 ? "User deleted" : `${rows.length} users deleted`,
     },
   ]), [deleteUser, me?.id, refreshUsers, updateUser]);
 
   const refreshInvites = invites.refetch;
   const inviteActions = useMemo(() => defineActions<InviteTokenFieldsFragment>("invite", [
-    { id: "copy", label: "Copy link", icon: IconCopy, group: "open", priority: 1, visible: (rows) => rows.length === 1, run: (rows) => copy(rows[0]!) },
+    { id: "copy", label: (rows) => rows.length === 1 ? "Copy link" : "Copy invite links", icon: IconCopy, group: "open", priority: 1, bulk: true, run: (rows) => copyText(rows.map(inviteLink).join("\n")), successMessage: (rows) => rows.length === 1 ? "Invite link copied" : "Invite links copied" },
     {
-      id: "revoke", label: "Revoke", icon: IconTrash, group: "danger",
-      confirm: () => ({ title: "Revoke this invite?", body: "The link stops working immediately. Accounts already created with it are kept.", confirmLabel: "Revoke", tone: "danger" }),
-      run: async (rows) => { for (const token of rows) await deleteInvite({ variables: { id: token.id } }); void refreshInvites(); },
-      successMessage: () => "Invite revoked",
+      id: "revoke", label: (rows) => rows.length === 1 ? "Revoke" : `Revoke ${rows.length} invites`, icon: IconTrash, group: "danger", bulk: true,
+      confirm: (rows) => ({ title: rows.length === 1 ? "Revoke this invite?" : `Revoke ${rows.length} invites?`, body: "The links stop working immediately. Accounts already created with them are kept.", confirmLabel: "Revoke", tone: "danger" }),
+      run: (rows) => runSettingsSelection(rows, "Revoke", (row) => row.id, async (row) => assertSuccess((await deleteInvite({ variables: { id: row.id } })).data?.deleteInviteToken, "Could not revoke invite"), refreshInvites),
+      successMessage: (rows) => rows.length === 1 ? "Invite revoked" : `${rows.length} invites revoked`,
     },
   ]), [deleteInvite, refreshInvites]);
 
@@ -134,11 +159,11 @@ export function UsersSettings() {
     <div className="flex flex-col gap-8">
       <SettingsSection title="Users" actions={<Button size="sm" variant="primary" onPress={() => setInviting(true)}><IconPlus /> Invite</Button>}>
         <SettingsLoadError error={users.error} retry={users.refetch} hasRows={userRows.length > 0} />
-        <DataTable<UserFieldsFragment> height="auto" id={`librarian.${me?.id ?? "session"}.settings.users`} label="Users" columns={userColumns} rows={userRows} getRowId={(user) => user.id} getRowLabel={(user) => user.displayName ?? user.username} loading={users.loading && userRows.length === 0} actions={userActions} noun={{ one: "user", other: "users" }} emptyMessage="No users" />
+        <LoadedDataTable<UserFieldsFragment> complete={!users.loading && !users.error} height="auto" selectable queryKey={me?.id} id={`librarian.${me?.id ?? "session"}.settings.users`} label="Users" columns={userColumns} rows={userRows} getRowId={(user) => user.id} getRowLabel={(user) => user.displayName ?? user.username} loading={users.loading && userRows.length === 0} actions={userActions} renderBulkActions={(rows) => <TableBulkActions set={userActions} rows={rows} noun={{ one: "user", other: "users" }} />} noun={{ one: "user", other: "users" }} emptyMessage="No users" />
       </SettingsSection>
       <SettingsSection title="Open invites" description="Share a link; it stops working after the last use or when it expires.">
         <SettingsLoadError error={invites.error} retry={invites.refetch} hasRows={inviteRows.length > 0} />
-        <DataTable<InviteTokenFieldsFragment> height="auto" id={`librarian.${me?.id ?? "session"}.settings.invites`} label="Open invites" columns={inviteColumns} rows={inviteRows} getRowId={(token) => token.id} getRowLabel={(token) => `Invite ${token.id}`} loading={invites.loading && inviteRows.length === 0} actions={inviteActions} density="compact" noun={{ one: "invite", other: "invites" }} emptyMessage="No open invites" />
+        <LoadedDataTable<InviteTokenFieldsFragment> complete={!invites.loading && !invites.error} height="auto" selectable queryKey={me?.id} id={`librarian.${me?.id ?? "session"}.settings.invites`} label="Open invites" columns={inviteColumns} rows={inviteRows} getRowId={(token) => token.id} getRowLabel={(token) => `Invite ${token.id}`} loading={invites.loading && inviteRows.length === 0} actions={inviteActions} renderBulkActions={(rows) => <TableBulkActions set={inviteActions} rows={rows} noun={{ one: "invite", other: "invites" }} />} density="compact" noun={{ one: "invite", other: "invites" }} emptyMessage="No open invites" />
       </SettingsSection>
 
       <Dialog isOpen={inviting} onOpenChange={setInviting} title="Invite someone" size="sm" footer={<><Button variant="ghost" onPress={() => setInviting(false)}>Cancel</Button><Button variant="primary" onPress={() => void submitInvite()} isPending={creatingInvite} isDisabled={libraries.loading || Boolean(libraries.error)}>Create and copy link</Button></>}>

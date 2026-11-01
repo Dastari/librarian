@@ -1,11 +1,13 @@
+import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
+import { copyText } from "glass-ux/copy-button";
 import { useMutation } from "@apollo/client/react";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { toast } from "glass-ux/toast";
 import { Form, FormActions, formBehaviour, useAppForm } from "glass-ux/form";
-import { defineActions } from "glass-ux/actions";
+import { defineActions, type ActionDefinition } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
-import { createDataTableColumns, DataTable, IdentityCell, RelativeTime, TextCell } from "glass-ux/data-table";
-import { IconPlus, IconStar, IconTrash } from "glass-ux/icons";
+import { createDataTableColumns, IdentityCell, RelativeTime, TextCell } from "glass-ux/data-table";
+import { IconCopy, IconPlus, IconStar, IconTrash } from "glass-ux/icons";
 import { IconCast, IconPower, IconRadar } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
@@ -27,6 +29,9 @@ import { glyph } from "@/lib/entities/kinds";
 import { parseTimestamp } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 
+
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { runSettingsSelection } from "./runSettingsSelection";
 
 import { SettingsLoadError } from "./SettingsLoadError";
 import { SettingsSection } from "./SettingsSection";
@@ -132,28 +137,45 @@ export function CastingSettings() {
   };
 
   const refreshDevices = devices.refetch;
-  const actions = useMemo(() => defineActions<Device>("cast-device", isAdmin ? [
+  const actions = useMemo(() => defineActions<Device>("cast-device", [
+    { id: "copy-address", label: (targets) => targets.length === 1 ? "Copy receiver address" : "Copy receiver addresses", icon: IconCopy, group: "open", bulk: true,
+      run: (targets) => copyText(targets.map((device) => `${device.name}: ${device.address}:${device.port}`).join("\n")), successMessage: () => "Receiver addresses copied",
+    },
+    ...(isAdmin ? ([
     {
-      id: "favorite", label: (targets) => (targets[0]!.isFavorite ? "Remove favourite" : "Make favourite"), icon: IconStar, group: "organise", priority: 2, visible: (targets) => targets.length === 1,
+      id: "favorite", bulk: true, label: (targets) => (targets[0]!.isFavorite ? "Remove favourite" : "Make favourite"), icon: IconStar, group: "organise", priority: 2, visible: (targets) => targets.length === 1,
       run: async (targets) => { const device = targets[0]!; assertSuccess((await updateDevice({ variables: { id: device.id, input: { isFavorite: !device.isFavorite } } })).data?.updateCastDevice, "Could not update"); void refreshDevices(); },
     },
     {
-      id: "toggle", label: (targets) => (targets[0]!.enabled === false ? "Enable" : "Disable"), icon: PowerIcon, group: "manage", priority: 1, visible: (targets) => targets.length === 1,
+      id: "toggle", bulk: true, label: (targets) => (targets[0]!.enabled === false ? "Enable" : "Disable"), icon: PowerIcon, group: "manage", priority: 1, visible: (targets) => targets.length === 1,
       run: async (targets) => { const device = targets[0]!; assertSuccess((await updateDevice({ variables: { id: device.id, input: { enabled: device.enabled === false } } })).data?.updateCastDevice, "Could not update"); void refreshDevices(); },
     },
     {
-      id: "remove", label: "Remove", icon: IconTrash, group: "danger", visible: (targets) => targets.length === 1,
-      confirm: (targets) => ({ title: `Remove ${targets[0]!.name}?`, body: targets[0]!.isManual ? "It is forgotten until you add it again." : "Discovery may find it again on the network.", confirmLabel: "Remove", tone: "danger" }),
-      run: async (targets) => { assertSuccess((await removeDevice({ variables: { id: targets[0]!.id } })).data?.removeCastDevice, "Could not remove"); void refreshDevices(); },
-      successMessage: () => "Device removed",
+      id: "remove", label: (targets: readonly Device[]) => targets.length === 1 ? "Remove" : `Remove ${targets.length} devices`, icon: IconTrash, group: "danger" as const, bulk: true,
+      confirm: (targets: readonly Device[]) => ({ title: targets.length === 1 ? `Remove ${targets[0]!.name}?` : `Remove ${targets.length} devices?`, body: targets.every((target) => target.isManual) ? "They are forgotten until you add them again." : "Discovery may find these devices again on the network.", confirmLabel: "Remove", tone: "danger" as const }),
+      run: (targets: readonly Device[]) => runSettingsSelection(targets, "Remove", (target) => target.name, async (target) => assertSuccess((await removeDevice({ variables: { id: target.id } })).data?.removeCastDevice, "Could not remove"), refreshDevices),
+      successMessage: (targets: readonly Device[]) => targets.length === 1 ? "Device removed" : `${targets.length} devices removed`,
     },
-  ] : []), [isAdmin, refreshDevices, removeDevice, updateDevice]);
+    ...([true, false] as const).map((enabled) => ({
+      id: enabled ? "enable-selected" : "disable-selected", label: enabled ? "Enable devices" : "Disable devices", icon: PowerIcon, group: "manage" as const, bulk: true,
+      visible: (targets: readonly Device[]) => targets.length > 1 && targets.some((target) => (target.enabled !== false) !== enabled),
+      run: (targets: readonly Device[]) => runSettingsSelection(targets.filter((target) => (target.enabled !== false) !== enabled), enabled ? "Enable" : "Disable", (target) => target.name, async (target) => assertSuccess((await updateDevice({ variables: { id: target.id, input: { enabled } } })).data?.updateCastDevice, "Could not update"), refreshDevices),
+      successMessage: () => enabled ? "Devices enabled" : "Devices disabled",
+    })),
+    ...([true, false] as const).map((isFavorite) => ({
+      id: isFavorite ? "favourite-selected" : "unfavourite-selected", label: isFavorite ? "Make favourites" : "Remove favourites", icon: IconStar, group: "organise" as const, bulk: true,
+      visible: (targets: readonly Device[]) => targets.length > 1 && targets.some((target) => Boolean(target.isFavorite) !== isFavorite),
+      run: (targets: readonly Device[]) => runSettingsSelection(targets.filter((target) => Boolean(target.isFavorite) !== isFavorite), "Update favourites", (target) => target.name, async (target) => assertSuccess((await updateDevice({ variables: { id: target.id, input: { isFavorite } } })).data?.updateCastDevice, "Could not update"), refreshDevices),
+      successMessage: () => "Favourites updated",
+    })),
+  ] satisfies ActionDefinition<Device>[]) : []),
+  ]), [isAdmin, refreshDevices, removeDevice, updateDevice]);
 
   return (
     <div className="flex flex-col gap-6">
       <SettingsSection title="Cast devices" description="Chromecast and Google TV receivers on your network. DLNA renderers are listed for information only." actions={<><Button size="sm" variant="ghost" onPress={() => void runDiscovery()} isPending={discovering}><IconRadar size={16} /> Discover</Button>{isAdmin ? <Button size="sm" variant="primary" onPress={() => { deviceForm.reset(deviceDefaults); setAddingOpen(true); }}><IconPlus /> Add manually</Button> : null}</>}>
         <SettingsLoadError error={devices.error} retry={devices.refetch} hasRows={rows.length > 0} />
-        <DataTable<Device> height="auto" id={`librarian.${user?.id ?? "session"}.settings.cast-devices`} label="Cast devices" columns={columns} rows={rows} getRowId={(device) => device.id} getRowLabel={(device) => device.name} loading={devices.loading && rows.length === 0} actions={actions} noun={{ one: "device", other: "devices" }} emptyMessage="No devices found. Run discovery on the same network as your receivers, or add one by address." />
+        <LoadedDataTable<Device> complete={!devices.loading && !devices.error} height="auto" selectable queryKey={user?.id} id={`librarian.${user?.id ?? "session"}.settings.cast-devices`} label="Cast devices" columns={columns} rows={rows} getRowId={(device) => device.id} getRowLabel={(device) => device.name} loading={devices.loading && rows.length === 0} actions={actions} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "device", other: "devices" }} />} noun={{ one: "device", other: "devices" }} emptyMessage="No devices found. Run discovery on the same network as your receivers, or add one by address." />
       </SettingsSection>
 
       {isAdmin ? (

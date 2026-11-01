@@ -261,6 +261,17 @@ describe("QualitySettings row actions", () => {
     expect(clear.called).toHaveBeenCalled();
   });
 
+  it("does not claim or set a new default when clearing the previous default is refused", async () => {
+    const set = updateMock("qp-1", { isDefault: true });
+    await mount([profile(), profile({ id: "qp-2", name: "Old default", isDefault: true })], [
+      { request: { query: EntityQualityProfileUpdateDocument, variables: { id: "qp-2", input: { isDefault: false } } }, result: { data: { updateQualityProfile: { __typename: "UpdateQualityProfileResult", success: false, error: "Default is locked", qualityProfile: null } } } }, set.mock,
+    ]);
+    await userEvent.click(within((await screen.findByText("Standard")).closest<HTMLElement>('[role="row"]')!).getByRole("button", { name: /Row actions|Actions|More/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Make default" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Default is locked");
+    expect(set.called).not.toHaveBeenCalled();
+  });
+
   it("leaves an audio default alone when a video profile becomes the default", async () => {
     const audio = updateMock("qp-3", { isDefault: false });
     const set = updateMock("qp-1", { isDefault: true });
@@ -279,11 +290,26 @@ describe("QualitySettings row actions", () => {
     expect(await screen.findByText("Delete Standard?")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
     await vi.waitFor(() => expect(deleted).toHaveBeenCalled());
+    await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   });
 
-  it("hides both actions on the default profile", async () => {
+  it("keeps default profiles readable and editable while protecting their deletion", async () => {
     await mount([profile({ isDefault: true })]);
     const row = (await screen.findByText("Standard")).closest<HTMLElement>('[role="row"]')!;
-    expect(within(row).queryByRole("button", { name: /Row actions|Actions|More/ })).toBeNull();
+    await userEvent.click(within(row).getByRole("button", { name: /Row actions|Actions|More/ }));
+    expect(await screen.findByRole("menuitem", { name: "Copy profile name" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Delete" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Make default" })).toBeNull();
+    await userEvent.keyboard("{Escape}");
+  });
+
+  it("blocks bulk deletion when the selection contains a default profile", async () => {
+    await mount([profile(), profile({ id: "qp-default", name: "Current default", isDefault: true })]);
+    await screen.findByText("Standard");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Standard" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Current default" }));
+    await userEvent.click(screen.getByRole("button", { name: "Actions for 2 selected profiles" }));
+    expect(await screen.findByRole("menuitem", { name: "Delete 2 profiles" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("menuitem", { name: "Copy profile names" })).toBeInTheDocument();
   });
 });

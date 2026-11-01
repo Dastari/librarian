@@ -1,8 +1,9 @@
+import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
 import { useMutation } from "@apollo/client/react";
 import { toast } from "glass-ux/toast";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
-import { createDataTableColumns, DataTable, IdentityCell, NumericCell, RelativeTime, TextCell } from "glass-ux/data-table";
+import { createDataTableColumns, IdentityCell, NumericCell, RelativeTime, TextCell } from "glass-ux/data-table";
 import { IconArrowDown, IconArrowUp, IconEdit, IconPlus, IconTrash } from "glass-ux/icons";
 import { IconPlugConnected, IconPower } from "@tabler/icons-react";
 import { useState } from "react";
@@ -15,6 +16,9 @@ import { parseTimestamp } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 
 import { SourceDialog } from "./SourceDialog";
+
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { runSettingsSelection } from "./runSettingsSelection";
 
 import { SettingsLoadError } from "./SettingsLoadError";
 import { SettingsSection } from "./SettingsSection";
@@ -89,16 +93,28 @@ export function SourcesSettings() {
   };
 
   const actions = defineActions<Source>("source", [
-    { id: "edit", label: "Edit", icon: IconEdit, group: "open", priority: 2, visible: (rows) => rows.length === 1, run: (rows) => setEditing(rows[0]!) },
-    { id: "test", label: "Test connection", icon: TestIcon, group: "manage", priority: 1, visible: (rows) => rows.length === 1, run: (rows) => test(rows[0]!) },
-    { id: "toggle", label: (rows) => (rows[0]!.enabled ? "Disable" : "Enable"), icon: PowerIcon, group: "manage", priority: 2, visible: (rows) => rows.length === 1, run: (rows) => toggle(rows[0]!) },
-    { id: "up", label: "Move up", icon: IconArrowUp, group: "organise", visible: (rows) => rows.length === 1 && sources[0]?.id !== rows[0]!.id, run: (rows) => move(rows[0]!, -1) },
-    { id: "down", label: "Move down", icon: IconArrowDown, group: "organise", visible: (rows) => rows.length === 1 && sources.at(-1)?.id !== rows[0]!.id, run: (rows) => move(rows[0]!, 1) },
+    { id: "edit", bulk: true, label: "Edit", icon: IconEdit, group: "open", priority: 2, visible: (rows) => rows.length === 1, run: (rows) => setEditing(rows[0]!) },
+    { id: "test", label: (rows) => rows.length === 1 ? "Test connection" : `Test ${rows.length} connections`, icon: TestIcon, group: "manage", priority: 1, bulk: true,
+      run: async (rows) => {
+        if (rows.length === 1) { await test(rows[0]!); return; }
+        await runSettingsSelection(rows, "Test", (row) => row.name, async (row) => { const result = (await testSource({ variables: { id: row.id } })).data?.testSource; if (!result?.success) throw new Error(result?.error ?? "Connection test failed"); }, refetch);
+        toast.success(`Tested ${rows.length} source connections`);
+      },
+    },
+    { id: "toggle", bulk: true, label: (rows) => (rows[0]!.enabled ? "Disable" : "Enable"), icon: PowerIcon, group: "manage", priority: 2, visible: (rows) => rows.length === 1, run: (rows) => toggle(rows[0]!) },
+    ...([true, false] as const).map((enabled) => ({
+      id: enabled ? "enable-selected" : "disable-selected", label: enabled ? "Enable sources" : "Disable sources", icon: PowerIcon, group: "manage" as const, bulk: true,
+      visible: (rows: readonly Source[]) => rows.length > 1 && rows.some((row) => row.enabled !== enabled),
+      run: (rows: readonly Source[]) => runSettingsSelection(rows.filter((row) => row.enabled !== enabled), enabled ? "Enable" : "Disable", (row) => row.name, async (row) => assertSuccess((await updateSource({ variables: { id: row.id, input: { enabled } } })).data?.updateSource, "Could not update"), refetch),
+      successMessage: () => enabled ? "Sources enabled" : "Sources disabled",
+    })),
+    { id: "up", bulk: true, label: "Move up", icon: IconArrowUp, group: "organise", visible: (rows) => rows.length === 1 && sources[0]?.id !== rows[0]!.id, run: (rows) => move(rows[0]!, -1) },
+    { id: "down", bulk: true, label: "Move down", icon: IconArrowDown, group: "organise", visible: (rows) => rows.length === 1 && sources.at(-1)?.id !== rows[0]!.id, run: (rows) => move(rows[0]!, 1) },
     {
-      id: "delete", label: "Remove", icon: IconTrash, group: "danger", visible: (rows) => rows.length === 1,
-      confirm: (rows) => ({ title: `Remove ${rows[0]!.name}?`, body: "Stored credentials are deleted. Downloads already started keep running.", confirmLabel: "Remove", tone: "danger" }),
-      run: async (rows) => { assertSuccess((await deleteSource({ variables: { id: rows[0]!.id } })).data?.deleteSource, "Could not remove"); void refetch(); },
-      successMessage: () => "Source removed",
+      id: "delete", label: (rows) => rows.length === 1 ? "Remove" : `Remove ${rows.length} sources`, icon: IconTrash, group: "danger", bulk: true,
+      confirm: (rows) => ({ title: rows.length === 1 ? `Remove ${rows[0]!.name}?` : `Remove ${rows.length} sources?`, body: "Stored credentials are deleted. Downloads already started keep running.", confirmLabel: "Remove", tone: "danger" }),
+      run: (rows) => runSettingsSelection(rows, "Remove", (row) => row.name, async (row) => assertSuccess((await deleteSource({ variables: { id: row.id } })).data?.deleteSource, "Could not remove"), refetch),
+      successMessage: (rows) => rows.length === 1 ? "Source removed" : `${rows.length} sources removed`,
     },
   ]);
 
@@ -110,7 +126,7 @@ export function SourcesSettings() {
         actions={<Button variant="primary" size="sm" onPress={() => setEditing("new")}><IconPlus /> Add source</Button>}
       >
         <SettingsLoadError error={list.error} retry={list.refetch} hasRows={sources.length > 0} />
-        <DataTable<Source> height="auto"
+        <LoadedDataTable<Source> complete={!list.loading && !list.error} height="auto" selectable queryKey={user?.id}
           id={`librarian.${user?.id ?? "session"}.settings.sources`}
           label="Sources"
           columns={columns}
@@ -118,7 +134,7 @@ export function SourcesSettings() {
           getRowId={(source) => source.id}
           getRowLabel={(source) => source.name}
           loading={loading && sources.length === 0}
-          actions={actions}
+          actions={actions} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "source", other: "sources" }} />}
           onRowOpen={(source) => setEditing(source)}
           rowOpen="click"
           reorder={{

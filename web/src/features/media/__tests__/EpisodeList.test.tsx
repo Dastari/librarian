@@ -247,7 +247,9 @@ describe("EpisodeList Glass DataTable integration", () => {
     const missing = rowFor(1, 2);
     expect(within(missing).getByRole("button", { name: "Want" })).toBeVisible();
     expect(within(missing).getByRole("button", { name: "Find" })).toBeVisible();
-    expect(within(missing).getByRole("button", { name: "Ignore" })).toBeVisible();
+    await userEvent.click(within(missing).getByRole("button", { name: /Actions for/ }));
+    expect(await screen.findByRole("menuitem", { name: "Ignore" })).toBeVisible();
+    await userEvent.keyboard("{Escape}");
     expect(rowFor(2, 1)).toHaveTextContent("No file");
   });
 
@@ -408,5 +410,30 @@ describe("EpisodeList row view", () => {
     const tile = screen.getByRole("button", { name: /^S01E01 · Later/ });
     expect(tile).toHaveAttribute("aria-disabled", "true");
     expect(tile).not.toHaveAttribute("aria-haspopup");
+  });
+});
+
+
+describe("episode selection context", () => {
+  it("wants only selected missing episodes while leaving downloaded and unselected rows untouched", async () => {
+    const { called, mock } = bulkMock({ id: { inList: ["ep-1-2", "ep-1-3"] }, showId: { eq: "show-1" }, mediaFileId: { isNull: true } }, { wanted: true, ignored: false }, 2);
+    const changed = vi.fn();
+    await mount([episode(1, 1, { mediaFileId: "file-1" }), episode(1, 2), episode(1, 3), episode(1, 4)], [mock], changed);
+    const grid = within(screen.getByRole("grid", { name: "Season 1 episodes" }));
+    for (const n of [1, 2, 3]) await userEvent.click(grid.getByRole("checkbox", { name: new RegExp(`^Select S01E0${n}`) }));
+    await userEvent.click(screen.getByRole("button", { name: "Actions for 3 selected episodes" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Want selected missing episodes" }));
+    await vi.waitFor(() => expect(called).toHaveBeenCalledOnce());
+    expect(changed).toHaveBeenCalledOnce();
+  });
+
+  it("allows member selection for read-only context without acquisition actions", async () => {
+    isAdmin = false;
+    await mount([episode(1, 1), episode(1, 2)]);
+    const grid = within(screen.getByRole("grid", { name: "Season 1 episodes" }));
+    await userEvent.click(grid.getByRole("checkbox", { name: "Select all loaded rows" }));
+    await userEvent.click(screen.getByRole("button", { name: "Actions for 2 selected episodes" }));
+    await screen.findByRole("menuitem", { name: "Copy episode titles" });
+    expect(screen.queryByRole("menuitem", { name: /Want selected|Ignore selected/ })).toBeNull();
   });
 });

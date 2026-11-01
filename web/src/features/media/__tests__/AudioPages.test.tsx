@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   AlbumDetailDocument, AlbumTracksPageDocument, AudiobookChaptersPageDocument, AudiobookDetailDocument,
-  EntityChapterUpdateDocument, EntityTrackUpdateDocument, PlaybackProgressForFilesDocument,
+  EntityChapterUpdateDocument, EntityTrackUpdateDocument, EntityTrackUpdateManyDocument, PlaybackProgressForFilesDocument,
   type AlbumDetailQuery, type AudiobookDetailQuery, type PlaybackProgressFieldsFragment,
 } from "@/graphql/generated/graphql";
 import { renderWithProviders } from "@/test";
@@ -311,5 +311,65 @@ describe("audio detail tables", { timeout: 30000 }, () => {
     await waitFor(() => expect(resume).not.toHaveAttribute("aria-disabled", "true"));
     await userEvent.click(resume);
     expect(playAudio.mock.lastCall![0][0]).toMatchObject({ startPosition: 17 });
+  });
+});
+
+
+describe("selected audio detail actions", { timeout: 30000 }, () => {
+  it("plays only selected tracks in album order and queues the same selection", async () => {
+    await mount("album", [albumMock([track(1), track(2), track(3)])]);
+    await findRow("album", "Track 3");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Track 3" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Track 1" }));
+    await userEvent.click(screen.getByRole("button", { name: "Actions for 2 selected tracks" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Play selected tracks" }));
+    await waitFor(() => expect(playAudio).toHaveBeenCalled());
+    expect(playAudio.mock.lastCall![0].map((item: { entity: { id: string } }) => item.entity.id)).toEqual(["track-1", "track-3"]);
+    await userEvent.click(screen.getByRole("button", { name: "Actions for 2 selected tracks" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Add to queue" }));
+    await waitFor(() => expect(enqueue).toHaveBeenCalled());
+    expect(enqueue.mock.lastCall![0].map((item: { entity: { id: string } }) => item.entity.id)).toEqual(["track-1", "track-3"]);
+  });
+
+  it("updates only selected missing tracks and disables playback of mixed availability", async () => {
+    const rows = [track(1), track(2, { mediaFileId: null }), track(3, { mediaFileId: null }), track(4, { mediaFileId: null })];
+    const updated = vi.fn(() => ({ data: { updateTracks: { success: true, error: null, affectedCount: 2 } } }));
+    await mount("album", [albumMock(rows), {
+      request: { query: EntityTrackUpdateManyDocument, variables: { where: { id: { inList: ["track-2", "track-3"] }, albumId: { eq: "album" }, mediaFileId: { isNull: true } }, input: { wanted: true } } }, result: updated,
+    }, albumMock(rows.map((row) => ["track-2", "track-3"].includes(row.id) ? { ...row, wanted: true } : row))]);
+    await findRow("album", "Track 4");
+    for (const n of [1, 2, 3]) await userEvent.click(screen.getByRole("checkbox", { name: `Select Track ${n}` }));
+    await userEvent.click(screen.getByRole("button", { name: "Actions for 3 selected tracks" }));
+    expect(await screen.findByRole("menuitem", { name: "Play selected tracks" })).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(screen.getByRole("menuitem", { name: "Want selected missing tracks" }));
+    await waitFor(() => expect(updated).toHaveBeenCalledOnce());
+    expect(playAudio).not.toHaveBeenCalled();
+  });
+
+  it("keeps selected chapter order and resumes only its first unfinished chapter", async () => {
+    await mount("book", [bookMock([chapter(1), chapter(2), chapter(3)]), progressMock([saved(2, 45), saved(3, 300, true)])]);
+    await findRow("book", "Part 3");
+    await waitFor(() => expect(within(row("book", "Part 2")).getByRole("button", { name: "Resume" })).not.toHaveAttribute("aria-disabled", "true"));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Part 3" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Part 2" }));
+    await userEvent.click(screen.getByRole("button", { name: "Actions for 2 selected chapters" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Play selected chapters" }));
+    await waitFor(() => expect(playAudio).toHaveBeenCalled());
+    expect(playAudio.mock.lastCall![0]).toEqual([
+      expect.objectContaining({ mediaFileId: "chapter-file-2", startPosition: 45, audiobookId: "book" }),
+      expect.objectContaining({ mediaFileId: "chapter-file-3", startPosition: 0, audiobookId: "book" }),
+    ]);
+  });
+
+  it("keeps acquisition bulk actions unavailable to members", async () => {
+    admin = false;
+    await mount("album", [albumMock([track(1, { mediaFileId: null }), track(2, { mediaFileId: null })])]);
+    await findRow("album", "Track 2");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Track 1" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Track 2" }));
+    await userEvent.click(screen.getByRole("button", { name: "Actions for 2 selected tracks" }));
+    await screen.findByRole("menuitem", { name: "Copy track titles" });
+    expect(screen.queryByRole("menuitem", { name: /Want selected/ })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Play selected tracks" })).toHaveAttribute("aria-disabled", "true");
   });
 });

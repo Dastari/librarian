@@ -1,14 +1,19 @@
+import { copyText } from "glass-ux/copy-button";
 import { useMutation } from "@apollo/client/react";
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, DataTable, IdentityCell } from "glass-ux/data-table";
-import { IconArrowDown, IconArrowUp, IconBookmark, IconExternalLink, IconPlay, IconTrash } from "glass-ux/icons";
+import { IconArrowDown, IconArrowUp, IconBookmark, IconCopy, IconExternalLink, IconPlay, IconPlus, IconTrash } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
 import { Form, FormActions, FormStack, formBehaviour, useAppForm } from "glass-ux/form";
 import { z } from "zod";
 import { Artwork, Button, ConfirmDialog, Dialog, EmptyState, ErrorState, PageHeader } from "@/components/ui";
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { useSession } from "@/lib/auth/useSession";
+import { useSelectableTableState } from "@/hooks/useTableSelection";
+import type { PlayItem } from "@/features/player/store";
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
 import { usePlayer } from "@/features/player/usePlayer";
 import { EntityListEntryDeleteDocument, EntityListEntryUpdateDocument, EntityPersonalListDeleteDocument, EntityPersonalListGetDocument, EntityPersonalListUpdateDocument, EntitySavedViewGetDocument, PersonalEntriesDocument, type PersonalEntryFragment } from "@/graphql/generated/graphql";
@@ -20,6 +25,7 @@ import { entryPresentation } from "./types";
 import { useHomeShelves } from "./usePersonalLibrary";
 
 type Entry = PersonalEntryFragment;
+const getEntryId = (entry: Entry) => entry.id;
 const entryKind = (entry: Entry) => (entry.movie ? "Movie" : entry.show ? "Show" : entry.album ? "Album" : entry.audiobook ? "Audiobook" : entry.track ? "Track" : "Unavailable");
 const column = createDataTableColumns<Entry>();
 const columns = column.columns([
@@ -36,11 +42,13 @@ const columns = column.columns([
 export function PersonalListPage({ listId }: { listId: string }) {
   const navigate = useNavigate();
   const player = usePlayer();
+  const { user } = useSession();
   const list = useLiveQuery(EntityPersonalListGetDocument, { variables: { id: listId } });
   const candidate = list.data?.personalList;
   const current = candidate?.id === listId ? candidate : null;
   const saved = useLiveQuery(EntitySavedViewGetDocument, { variables: { id: current?.savedViewId ?? "" }, skip: !current?.savedViewId });
   const entries = useCompleteConnection(PersonalEntriesDocument, { listId }, (data) => data.listEntries, { skip: current?.kind === "SMART" });
+  const table = useSelectableTableState({ scope: [user?.id, listId], rows: entries.rows, columns, getRowId: getEntryId, ready: entries.complete && !entries.fetching });
   const ready = useRef({ listId, complete: false });
   if (ready.current.listId !== listId) ready.current = { listId, complete: false };
   if (entries.complete) ready.current.complete = true;
@@ -71,18 +79,42 @@ export function PersonalListPage({ listId }: { listId: string }) {
     if (index < 0 || target === index) return;
     await reorder(entry, target - index);
   };
+  const selectedAudio = (selected: readonly Entry[]): PlayItem[] => {
+    const ids = new Set(selected.map((entry) => entry.id));
+    return entries.rows.filter((entry) => ids.has(entry.id)).flatMap((entry) => entry.track?.mediaFileId ? [{ mediaFileId: entry.track.mediaFileId, title: entry.track.title, subtitle: entry.track.artistName ?? undefined, artwork: entryPresentation(entry)?.image, href: `/albums/${entry.track.albumId}`, entity: { kind: "track" as const, id: entry.track.id }, duration: entry.track.durationSecs ?? undefined }] : []);
+  };
+  const audioUnavailable = (rows: readonly Entry[]) => rows.some((entry) => !entry.track?.mediaFileId) ? "Select only tracks with files to play or queue them." : false;
   const actions = defineActions<Entry>("list-entry", [
-    { id: "open", label: (rows) => `Open ${entryKind(rows[0]!).toLowerCase()}`, icon: IconExternalLink, group: "open", priority: 2, visible: (rows) => rows.length === 1 && Boolean(entryPresentation(rows[0]!)?.href), run: (rows, context) => { const href = entryPresentation(rows[0]!)?.href; if (href) context.navigate(href); } },
+    { id: "open", label: (rows) => `Open ${entryKind(rows[0]!).toLowerCase()}`, icon: IconExternalLink, group: "open", priority: 2, bulk: true, visible: (rows) => rows.length === 1 && Boolean(entryPresentation(rows[0]!)?.href), run: (rows, context) => { const href = entryPresentation(rows[0]!)?.href; if (href) context.navigate(href); } },
     {
-      id: "play", label: "Play", icon: IconPlay, group: "open", priority: 1, visible: (rows) => rows.length === 1 && Boolean(rows[0]!.track?.mediaFileId),
+      id: "play", label: "Play", icon: IconPlay, group: "open", priority: 1, bulk: true, visible: (rows) => rows.length === 1 && Boolean(rows[0]!.track?.mediaFileId),
       run: (rows) => { const track = rows[0]!.track!; player.playAudio([{ mediaFileId: track.mediaFileId!, title: track.title, subtitle: track.artistName ?? undefined, artwork: entryPresentation(rows[0]!)?.image, href: `/albums/${track.albumId}`, entity: { kind: "track", id: track.id }, duration: track.durationSecs ?? undefined }]); },
     },
-    { id: "up", label: "Move up", icon: IconArrowUp, group: "organise", visible: (rows) => rows.length === 1 && entries.rows[0]?.id !== rows[0]!.id, disabledReason: () => (pending ? "Saving list" : !entries.complete ? "Load the complete list to reorder" : false), run: (rows) => run(() => reorder(rows[0]!, -1)) },
-    { id: "down", label: "Move down", icon: IconArrowDown, group: "organise", visible: (rows) => rows.length === 1 && entries.rows.at(-1)?.id !== rows[0]!.id, disabledReason: () => (pending ? "Saving list" : !entries.complete ? "Load the complete list to reorder" : false), run: (rows) => run(() => reorder(rows[0]!, 1)) },
+    { id: "play-selected", label: "Play selected tracks", icon: IconPlay, group: "open", bulk: true,
+      visible: (rows) => rows.length > 1, disabledReason: audioUnavailable,
+      run: (rows) => { if (audioUnavailable(rows)) throw new Error("Select playable tracks"); const items = selectedAudio(rows); if (!items.length) throw new Error("No playable tracks selected"); player.playAudio(items); } },
+    { id: "enqueue", label: "Add to queue", icon: IconPlus, group: "organise", bulk: true,
+      disabledReason: audioUnavailable,
+      run: (rows) => { if (audioUnavailable(rows)) throw new Error("Select playable tracks"); const items = selectedAudio(rows); if (!items.length) throw new Error("No playable tracks selected"); player.enqueue(items); }, successMessage: () => "Added to queue" },
+    { id: "copy-titles", label: "Copy item titles", icon: IconCopy, group: "organise", bulk: true,
+      run: async (rows) => { await copyText(rows.map((entry) => entryPresentation(entry)?.title ?? "Unavailable item").join("\n")); }, successMessage: () => "Item titles copied" },
+    { id: "up", label: "Move up", icon: IconArrowUp, group: "organise", bulk: true, visible: (rows) => rows.length === 1 && entries.rows[0]?.id !== rows[0]!.id, disabledReason: () => (pending ? "Saving list" : !entries.complete ? "Load the complete list to reorder" : false), run: (rows) => run(() => reorder(rows[0]!, -1)) },
+    { id: "down", label: "Move down", icon: IconArrowDown, group: "organise", bulk: true, visible: (rows) => rows.length === 1 && entries.rows.at(-1)?.id !== rows[0]!.id, disabledReason: () => (pending ? "Saving list" : !entries.complete ? "Load the complete list to reorder" : false), run: (rows) => run(() => reorder(rows[0]!, 1)) },
     {
       id: "remove", label: (rows) => (rows.length === 1 ? "Remove from list" : `Remove ${rows.length} from list`), icon: IconTrash, group: "danger", bulk: true,
       disabledReason: () => (pending ? "Saving list" : false),
-      run: async (rows) => { for (const entry of rows) { const { data } = await remove({ variables: { id: entry.id } }); assertSuccess(data?.deleteListEntry, "Could not remove item"); } await entries.refetch(); },
+      confirm: (rows) => rows.length > 1 ? { title: `Remove ${rows.length} items from this list?`, body: "Media and files remain in the library.", confirmLabel: "Remove items", tone: "danger" } : null,
+      run: async (rows) => {
+        setPending(true);
+        const failures: string[] = [];
+        try {
+          for (const entry of rows) {
+            try { const { data } = await remove({ variables: { id: entry.id } }); assertSuccess(data?.deleteListEntry, "Could not remove item"); }
+            catch (error) { failures.push(`${entryPresentation(entry)?.title ?? entry.id}: ${errorMessage(error)}`); }
+          }
+        } finally { try { await entries.refetch(); } finally { setPending(false); } }
+        if (failures.length) throw new Error(`Removed ${rows.length - failures.length} of ${rows.length} items. ${failures.join("; ")}`);
+      },
       successMessage: (rows) => (rows.length === 1 ? "Removed from the list" : `Removed ${rows.length} items`),
     },
   ]);
@@ -101,9 +133,10 @@ export function PersonalListPage({ listId }: { listId: string }) {
     {home.error ? <ErrorState error={home.error} onRetry={() => void home.refetch()} /> : null}
     {current.kind === "SMART" ? saved.data?.savedView ? <SmartResults view={saved.data.savedView} /> : saved.error ? <ErrorState error={saved.error} onRetry={() => void saved.refetch()} /> : <p role="status">Loading rules…</p> : <>
       {entries.error ? <ErrorState error={entries.error} onRetry={() => void entries.refetch()} /> : null}
-      <DataTable<Entry> id={`personal:${listId}`} label={current.name} height="fill" columns={columns} rows={entries.rows} getRowId={(entry) => entry.id} getRowLabel={(entry) => entryPresentation(entry)?.title ?? "Unavailable item"}
+      <DataTable<Entry> id={`personal:${user?.id ?? "session"}:${listId}`} queryKey={[user?.id, listId]} label={current.name} height="fill" columns={columns} rows={table.rows} getRowId={getEntryId} state={table.state} onStateChange={table.onStateChange} getRowLabel={(entry) => entryPresentation(entry)?.title ?? "Unavailable item"}
         loading={entries.loading} refetching={entries.fetching && !entries.loading}
-        actions={actions} selectable onRowOpen={(entry) => { const href = entryPresentation(entry)?.href; if (href) void navigate({ href }); }} rowOpen="click"
+        actions={actions} selectable renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "item", other: "items" }} />} onRowOpen={(entry) => { const href = entryPresentation(entry)?.href; if (href) void navigate({ href }); }} rowOpen="click"
+        infinite={{ hasMore: false, onLoadMore: () => undefined }}
         reorder={{ disabled: pending ? "Saving list" : !entries.complete ? "Load the complete list to reorder" : false, onReorder: (change) => run(() => reorderTo(change.row, change.to)) }}
         noun={{ one: "item", other: "items" }} emptyMessage="Nothing saved yet. Use Save on a title, or the track menu, to add items to this list." />
     </>}

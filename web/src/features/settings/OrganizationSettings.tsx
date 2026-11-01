@@ -1,10 +1,12 @@
+import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
+import { copyText } from "glass-ux/copy-button";
 import { useMutation } from "@apollo/client/react";
 import { toast } from "glass-ux/toast";
 import { Form, FormActions, formBehaviour, useAppForm } from "glass-ux/form";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
-import { createDataTableColumns, DataTable, filters, IdentityCell } from "glass-ux/data-table";
-import { IconEdit, IconPlus, IconStar, IconTrash } from "glass-ux/icons";
+import { createDataTableColumns, filters, IdentityCell } from "glass-ux/data-table";
+import { IconCopy, IconEdit, IconPlus, IconStar, IconTrash } from "glass-ux/icons";
 import { IconFolders } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
@@ -17,6 +19,9 @@ import { glyph } from "@/lib/entities/kinds";
 import { LIBRARY_TYPE_OPTIONS, libraryType } from "@/lib/library-types";
 
 import { asBool, useAppSettings } from "./useAppSettings";
+
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { runSettingsSelection } from "./runSettingsSelection";
 
 import { SettingsLoadError } from "./SettingsLoadError";
 import { SettingsSection } from "./SettingsSection";
@@ -93,24 +98,29 @@ export function OrganizationSettings() {
 
   const refreshPatterns = patterns.refetch;
   const actions = useMemo(() => defineActions<Pattern>("naming-pattern", [
-    { id: "edit", label: "Edit", icon: IconEdit, group: "open", priority: 1, visible: (targets) => targets.length === 1 && !targets[0]!.isSystem, run: (targets) => setEditing(targets[0]!) },
+    { id: "copy-patterns", label: (targets) => targets.length === 1 ? "Copy naming pattern" : "Copy naming patterns", icon: IconCopy, group: "open", bulk: true,
+      run: (targets) => copyText(targets.map((target) => target.pattern).join("\n")), successMessage: () => "Naming patterns copied",
+    },
+    { id: "edit", bulk: true, label: "Edit", icon: IconEdit, group: "open", priority: 1, visible: (targets) => targets.length === 1 && !targets[0]!.isSystem, run: (targets) => setEditing(targets[0]!) },
     {
-      id: "default", label: "Make default for its type", icon: IconStar, group: "manage", priority: 2,
+      id: "default", bulk: true, label: "Make default for its type", icon: IconStar, group: "manage", priority: 2,
       visible: (targets) => targets.length === 1 && !targets[0]!.isDefault,
       run: async (targets) => {
         const row = targets[0]!;
-        for (const other of rows.filter((item) => item.libraryType === row.libraryType && item.isDefault)) await update({ variables: { id: other.id, input: { isDefault: false } } });
-        await update({ variables: { id: row.id, input: { isDefault: true } } });
-        void refreshPatterns();
+        try {
+          for (const other of rows.filter((item) => item.libraryType === row.libraryType && item.isDefault)) assertSuccess((await update({ variables: { id: other.id, input: { isDefault: false } } })).data?.updateNamingPattern, "Could not clear the old default");
+          assertSuccess((await update({ variables: { id: row.id, input: { isDefault: true } } })).data?.updateNamingPattern, "Could not set the default");
+        } finally { void refreshPatterns(); }
       },
       successMessage: (targets) => `${targets[0]!.name} is now the default`,
     },
     {
-      id: "delete", label: "Delete", icon: IconTrash, group: "danger",
-      visible: (targets) => targets.length === 1 && !targets[0]!.isSystem,
-      confirm: (targets) => ({ title: `Delete ${targets[0]!.name}?`, body: "Files already organized with it stay where they are.", confirmLabel: "Delete", tone: "danger" }),
-      run: async (targets) => { assertSuccess((await remove({ variables: { id: targets[0]!.id } })).data?.deleteNamingPattern, "Could not delete"); void refreshPatterns(); },
-      successMessage: () => "Pattern deleted",
+      id: "delete", label: (targets) => targets.length === 1 ? "Delete" : `Delete ${targets.length} patterns`, icon: IconTrash, group: "danger", bulk: true,
+      visible: (targets) => targets.length > 1 || !targets[0]!.isSystem,
+      disabledReason: (targets) => targets.some((target) => target.isSystem) ? "Deselect system patterns before deleting patterns." : false,
+      confirm: (targets) => ({ title: targets.length === 1 ? `Delete ${targets[0]!.name}?` : `Delete ${targets.length} patterns?`, body: "Files already organized with them stay where they are.", confirmLabel: "Delete", tone: "danger" }),
+      run: (targets) => runSettingsSelection(targets, "Delete", (target) => target.name, async (target) => assertSuccess((await remove({ variables: { id: target.id } })).data?.deleteNamingPattern, "Could not delete"), refreshPatterns),
+      successMessage: (targets) => targets.length === 1 ? "Pattern deleted" : `${targets.length} patterns deleted`,
     },
   ]), [refreshPatterns, remove, rows, update]);
 
@@ -132,7 +142,7 @@ export function OrganizationSettings() {
 
       <SettingsSection title="Naming patterns" description="Tokens such as {title}, {year}, {season:00}, {episode:00}, {quality} are replaced when files are organized." actions={<Button variant="primary" size="sm" onPress={() => setEditing("new")}><IconPlus /> New pattern</Button>}>
         <SettingsLoadError error={patterns.error} retry={patterns.refetch} hasRows={rows.length > 0} />
-        <DataTable<Pattern> height="auto" id={`librarian.${user?.id ?? "session"}.settings.naming-patterns`} label="Naming patterns" columns={columns} rows={rows} getRowId={(row) => row.id} getRowLabel={(row) => row.name} loading={patterns.loading && rows.length === 0} actions={actions} onRowOpen={(row) => (row.isSystem ? undefined : setEditing(row))} rowOpen="click" noun={{ one: "pattern", other: "patterns" }} density="compact" emptyMessage="No naming patterns" />
+        <LoadedDataTable<Pattern> complete={!patterns.loading && !patterns.error} height="auto" selectable queryKey={user?.id} id={`librarian.${user?.id ?? "session"}.settings.naming-patterns`} label="Naming patterns" columns={columns} rows={rows} getRowId={(row) => row.id} getRowLabel={(row) => row.name} loading={patterns.loading && rows.length === 0} actions={actions} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "pattern", other: "patterns" }} />} onRowOpen={(row) => (row.isSystem ? undefined : setEditing(row))} rowOpen="click" noun={{ one: "pattern", other: "patterns" }} density="compact" emptyMessage="No naming patterns" />
       </SettingsSection>
 
       <Dialog isOpen={editing !== null} onOpenChange={(open) => !open && setEditing(null)} title={editing === "new" || !editing ? "New naming pattern" : `Edit ${editing.name}`} size="md">

@@ -1,10 +1,12 @@
+import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
+import { copyText } from "glass-ux/copy-button";
 import { useMutation } from "@apollo/client/react";
 import { toast } from "glass-ux/toast";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
-import { createDataTableColumns, DataTable, filters, IdentityCell, TextCell } from "glass-ux/data-table";
-import { IconEdit, IconPlus, IconStar, IconTrash } from "glass-ux/icons";
+import { createDataTableColumns, filters, IdentityCell, TextCell } from "glass-ux/data-table";
+import { IconCopy, IconEdit, IconPlus, IconStar, IconTrash } from "glass-ux/icons";
 import { IconTags } from "@tabler/icons-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
@@ -24,6 +26,9 @@ import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { LANGUAGES, languageName } from "@/lib/languages";
 
 import { FormOrderedChips } from "./OrderedChips";
+
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { runSettingsSelection } from "./runSettingsSelection";
 
 import { SettingsLoadError } from "./SettingsLoadError";
 import { SettingsSection } from "./SettingsSection";
@@ -144,24 +149,25 @@ export function QualitySettings() {
   const makeDefault = async (profile: QualityProfileFieldsFragment) => {
     try {
       for (const other of profiles.filter((item) => item.isDefault && item.mediaKind === profile.mediaKind && item.id !== profile.id)) {
-        await update({ variables: { id: other.id, input: { isDefault: false } } });
+        assertSuccess((await update({ variables: { id: other.id, input: { isDefault: false } } })).data?.updateQualityProfile, "Could not clear the old default");
       }
       assertSuccess((await update({ variables: { id: profile.id, input: { isDefault: true } } })).data?.updateQualityProfile, "Could not update");
-      void refetch();
-    } catch (error) {
-      toast.danger(errorMessage(error));
-    }
+    } finally { void refetch(); }
   };
 
   const actions = useMemo(() => defineActions<Profile>("quality-profile", [
-    { id: "edit", label: "Edit", icon: IconEdit, group: "open", priority: 1, visible: (targets) => targets.length === 1, run: (targets) => setEditing(targets[0]!) },
-    { id: "default", label: "Make default", icon: IconStar, group: "manage", priority: 2, visible: (targets) => targets.length === 1 && !targets[0]!.isDefault, run: (targets) => makeDefault(targets[0]!) },
+    { id: "copy-names", label: (targets) => targets.length === 1 ? "Copy profile name" : "Copy profile names", icon: IconCopy, group: "open", bulk: true,
+      run: (targets) => copyText(targets.map((target) => target.name).join("\n")), successMessage: () => "Profile names copied",
+    },
+    { id: "edit", bulk: true, label: "Edit", icon: IconEdit, group: "open", priority: 1, visible: (targets) => targets.length === 1, run: (targets) => setEditing(targets[0]!) },
+    { id: "default", bulk: true, label: "Make default", icon: IconStar, group: "manage", priority: 2, visible: (targets) => targets.length === 1 && !targets[0]!.isDefault, run: (targets) => makeDefault(targets[0]!) },
     {
-      id: "delete", label: "Delete", icon: IconTrash, group: "danger",
-      visible: (targets) => targets.length === 1 && !targets[0]!.isDefault,
-      confirm: (targets) => ({ title: `Delete ${targets[0]!.name}?`, body: "Libraries using this profile fall back to the default.", confirmLabel: "Delete", tone: "danger" }),
-      run: async (targets) => { assertSuccess((await remove({ variables: { id: targets[0]!.id } })).data?.deleteQualityProfile, "Could not delete"); void refetch(); },
-      successMessage: () => "Profile deleted",
+      id: "delete", label: (targets) => targets.length === 1 ? "Delete" : `Delete ${targets.length} profiles`, icon: IconTrash, group: "danger", bulk: true,
+      visible: (targets) => targets.length > 1 || !targets[0]!.isDefault,
+      disabledReason: (targets) => targets.some((target) => target.isDefault) ? "Deselect the default profile before deleting profiles." : false,
+      confirm: (targets) => ({ title: targets.length === 1 ? `Delete ${targets[0]!.name}?` : `Delete ${targets.length} profiles?`, body: "Libraries using these profiles fall back to the default.", confirmLabel: "Delete", tone: "danger" }),
+      run: (targets) => runSettingsSelection(targets, "Delete", (target) => target.name, async (target) => assertSuccess((await remove({ variables: { id: target.id } })).data?.deleteQualityProfile, "Could not delete"), refetch),
+      successMessage: (targets) => targets.length === 1 ? "Profile deleted" : `${targets.length} profiles deleted`,
     },
   ]), [makeDefault, refetch, remove]);
 
@@ -172,7 +178,7 @@ export function QualitySettings() {
     <div className="flex flex-col gap-6">
       <SettingsSection title="Quality profiles" description="Decide which releases are acceptable and when a better file should replace an existing one." actions={<Button variant="primary" size="sm" onPress={() => setEditing("new")}><IconPlus /> New profile</Button>}>
         <SettingsLoadError error={list.error} retry={list.refetch} hasRows={profiles.length > 0} />
-        <DataTable<Profile> height="auto" id={`librarian.${user?.id ?? "session"}.settings.quality-profiles`} label="Quality profiles" columns={columns} rows={profiles} getRowId={(profile) => profile.id} getRowLabel={(profile) => profile.name} loading={loading && profiles.length === 0} actions={actions} onRowOpen={(profile) => setEditing(profile)} rowOpen="click" noun={{ one: "profile", other: "profiles" }} emptyMessage="No profiles yet" />
+        <LoadedDataTable<Profile> complete={!list.loading && !list.error} height="auto" selectable queryKey={user?.id} id={`librarian.${user?.id ?? "session"}.settings.quality-profiles`} label="Quality profiles" columns={columns} rows={profiles} getRowId={(profile) => profile.id} getRowLabel={(profile) => profile.name} loading={loading && profiles.length === 0} actions={actions} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "profile", other: "profiles" }} />} onRowOpen={(profile) => setEditing(profile)} rowOpen="click" noun={{ one: "profile", other: "profiles" }} emptyMessage="No profiles yet" />
       </SettingsSection>
 
       <Dialog isOpen={editing !== null} onOpenChange={(open) => !open && setEditing(null)} title={editing === "new" || !editing ? "New quality profile" : `Edit ${editing.name}`} size="xl" footer={<><Button variant="ghost" onPress={() => setEditing(null)}>Cancel</Button><Button variant="primary" onPress={() => void submit()} isPending={creating || updating}>Save</Button></>}>

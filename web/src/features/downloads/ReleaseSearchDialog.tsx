@@ -1,3 +1,8 @@
+import { Dialog as GlassDialog } from "glass-ux/dialog";
+import { useDialogReturnFocus } from "@/components/ui/Dialog";
+import { defineActions } from "glass-ux/actions";
+import { copyText } from "glass-ux/copy-button";
+import { IconCopy } from "glass-ux/icons";
 import { useMutation } from "@apollo/client/react";
 import { useSourceSearch } from "./useSourceSearch";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
@@ -11,7 +16,11 @@ import { createDataTableColumns, DataTable, IdentityCell, NumericCell, TextCell 
 import { LevelGauge, type GaugeLevel } from "glass-ux/level-gauge";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 
-import { Button, Dialog, EmptyState, ErrorState, GlassSegmented, Spinner } from "@/components/ui";
+import { useSelectableTableState } from "@/hooks/useTableSelection";
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { runSelectionAction } from "@/lib/actions/runSelectionAction";
+import { useSession } from "@/lib/auth/useSession";
+import { Button, EmptyState, ErrorState, GlassSegmented, Spinner } from "@/components/ui";
 import { ENTITY_KINDS } from "@/lib/entities/kinds";
 import { AddTorrentDocument, HasEnabledSourcesDocument, type SearchSourcesQuery } from "@/graphql/generated/graphql";
 import { formatBytes, formatRelative } from "@/lib/format";
@@ -26,7 +35,7 @@ const ReleaseActionsContext = createContext<{ busy: string | null; grab: (releas
 function GrabReleaseCell({ release }: { release: Release }) {
   const actions = useContext(ReleaseActionsContext)!;
   return (
-    <Button size="sm" variant="primary" isPending={actions.busy === releaseId(release)} onPress={() => void actions.grab(release)} isDisabled={!release.magnetUri && !release.link}>
+    <Button size="sm" variant="primary" isPending={actions.busy === releaseId(release)} onPress={() => void actions.grab(release)} isDisabled={Boolean(actions.busy && actions.busy !== releaseId(release)) || (!release.magnetUri && !release.link)}>
       <IconDownload size={14} /> Grab
     </Button>
   );
@@ -120,6 +129,8 @@ interface ReleaseSearchDialogProps {
 
 /** Search configured sources for releases and send one to the download client. */
 export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery, year, imdbId, season, episode, libraryId, artist, album, author, target }: ReleaseSearchDialogProps) {
+  const { user } = useSession();
+  const finalFocus = useDialogReturnFocus(isOpen);
   const [query, setQuery] = useState(initialQuery);
   const { search, result, loadMore, retrySource, retryContinuation, revision, hasMore, queryKey } = useSourceSearch();
   const [addTorrent] = useMutation(AddTorrentDocument);
@@ -185,14 +196,13 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
       }),
     [allReleases, resolution, codec, packs, language, hdrOnly, freeleechOnly, seededOnly],
   );
+  const selection = useSelectableTableState({ scope: [isOpen, user?.id, queryKey, libraryId, target, resolution, codec, packs, language, hdrOnly, freeleechOnly, seededOnly], rows: releases, columns, getRowId: releaseId, ready: !result.loading });
   const failures = result.data?.searchSources.sources.filter((source) => source.error) ?? [];
   const retryableSource = failures.find((source) => source.pageInfo.retryCursor);
   const paginationError = result.moreError ?? (!hasMore && retryableSource ? new Error(retryableSource.error ?? "Source page failed") : undefined);
   const retryPage = () => retryableSource && !result.moreError ? retrySource(retryableSource.sourceId) : retryContinuation();
 
-  const grab = async (release: Release) => {
-    setBusy(releaseId(release));
-    try {
+  const download = async (release: Release) => {
       const { data } = await addTorrent({
         variables: {
           input: {
@@ -213,21 +223,43 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
         },
       });
       assertSuccess(data?.addTorrent, "Could not start the download");
-      toast.success(`Downloading ${data?.addTorrent.torrent?.name ?? release.title}`);
-      onOpenChange(false);
-    } catch (error) {
-      toast.danger(errorMessage(error));
-    } finally {
-      setBusy(null);
-    }
+    return data?.addTorrent.torrent?.name ?? release.title;
   };
+  const grab = async (release: Release) => {
+    setBusy(releaseId(release));
+    try {
+      const name = await download(release);
+      toast.success(`Downloading ${name}`);
+      onOpenChange(false);
+    } catch (error) { toast.danger(errorMessage(error)); }
+    finally { setBusy(null); }
+  };
+  const actions = defineActions<Release>("release", [
+    {
+      id: "grab", label: (selected) => selected.length === 1 ? "Grab release" : `Grab ${selected.length} releases`, icon: ReleaseGlyph, group: "manage", priority: 1, bulk: true,
+      disabledReason: (selected) => busy ? "A download is already being requested." : selected.some((release) => !release.magnetUri && !release.link) ? "Some selected releases have no download link. Deselect them to continue." : false,
+      confirm: (selected) => selected.length > 1 ? { title: `Download ${selected.length} releases?`, body: "Each selected release starts a separate download.", confirmLabel: "Download", tone: "warning" } : null,
+      run: async (selected) => {
+        setBusy("selection");
+        try { await runSelectionAction(selected, "Grab", (release) => release.title, download); onOpenChange(false); }
+        finally { setBusy(null); }
+      }, successMessage: (selected) => `Requested ${selected.length} ${selected.length === 1 ? "download" : "downloads"}`,
+    },
+    { id: "copy-titles", label: "Copy release titles", icon: IconCopy, group: "open", bulk: true, run: (selected) => copyText(selected.map((release) => release.title).join("\n")), successMessage: () => "Release titles copied" },
+    { id: "copy-links", label: "Copy download links", icon: IconCopy, group: "open", bulk: true,
+      disabledReason: (selected) => selected.some((release) => !release.magnetUri && !release.link) ? "Some selected releases have no download link." : false,
+      run: (selected) => copyText(selected.map((release) => release.magnetUri ?? release.link).join("\n")), successMessage: () => "Download links copied" },
+  ]);
 
   return (
     <ReleaseActionsContext value={{ busy, grab }}>
-    <Dialog isOpen={isOpen} onOpenChange={onOpenChange} title="Find a release" size="wide">
-      <div className="flex flex-col gap-4">
+    <GlassDialog.Root open={isOpen} onOpenChange={onOpenChange}>
+    <GlassDialog.Popup size="full" finalFocus={finalFocus} className="min-h-0 overflow-hidden">
+      <GlassDialog.Header title="Find a release" />
+      <GlassDialog.Body className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col gap-4">
         <form
-          className="flex min-w-0 gap-2"
+          className="flex min-w-0 shrink-0 gap-2"
           onSubmit={(event) => {
             event.preventDefault();
             void search({ variables: { input: { ...variables.input, query } } });
@@ -239,7 +271,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
           </Button>
         </form>
         {allReleases.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
             <GlassSegmented<Resolution> ariaLabel="Resolution" size="sm" value={resolution} onChange={setResolution} items={[{ key: "any", label: "Any" }, { key: "2160p", label: "2160p" }, { key: "1080p", label: "1080p" }, { key: "720p", label: "720p" }, { key: "sd", label: "SD" }]} />
             <GlassSegmented<Codec> ariaLabel="Codec" size="sm" value={codec} onChange={setCodec} items={[{ key: "any", label: "Any codec" }, { key: "hevc", label: "HEVC" }, { key: "h264", label: "H.264" }, { key: "av1", label: "AV1" }]} />
             <GlassSegmented<Packs> ariaLabel="Season packs" size="sm" value={packs} onChange={setPacks} items={[{ key: "any", label: "All" }, { key: "packs", label: "Season packs" }, { key: "episodes", label: "Single" }]} />
@@ -268,27 +300,34 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
           <ErrorState error={result.error} onRetry={() => void search({ variables })} />
         ) : (
           <>
-            {failures.length ? <p className="text-label-sm text-warning">{failures.map((source) => `${source.sourceName}: ${source.error}`).join(" · ")}</p> : null}
-            {result.data ? <p className="text-label-sm text-muted">Source results may be partial. Filters apply to returned releases.</p> : null}
+            {failures.length ? <p className="shrink-0 text-label-sm text-warning">{failures.map((source) => `${source.sourceName}: ${source.error}`).join(" · ")}</p> : null}
+            {result.data ? <p className="shrink-0 text-label-sm text-muted">Source results may be partial. Filters apply to returned releases.</p> : null}
             <DataTable<Release>
               id="librarian.release-search"
               label="Releases"
               columns={columns}
-              rows={releases}
-              queryKey={queryKey}
+              rows={selection.rows}
+              queryKey={[user?.id, queryKey, libraryId, target, resolution, codec, packs, language, hdrOnly, freeleechOnly, seededOnly]}
+              actions={actions}
+              state={selection.state}
+              onStateChange={selection.onStateChange}
+              selectable
+              renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "release", other: "releases" }} />}
               infinite={{ revision, hasMore, onLoadMore: loadMore, loadingMore: result.loadingMore, error: paginationError?.message }}
               onRetry={() => void retryPage()}
               getRowId={releaseId}
               getRowLabel={(release) => release.title}
               density="compact"
               noun={{ one: "release", other: "releases" }}
-              emptyMessage={<span className="flex flex-col items-center gap-1"><span>{allReleases.length ? "Nothing matches these filters" : "No releases found"}</span><span className="text-label-sm text-muted">{allReleases.length ? "Loosen a filter to see more." : "Try a shorter title or search without the year."}</span></span>}
+              emptyMessage={<span className="flex flex-col items-center gap-1"><span>{allReleases.length ? "Nothing matches these filters" : "No releases found"}</span><span className="shrink-0 text-label-sm text-muted">{allReleases.length ? "Loosen a filter to see more." : "Try a shorter title or search without the year."}</span></span>}
             />
-            {result.data ? <p className="text-label-sm text-muted">{allReleases.length} returned releases from {result.data.searchSources.sources.length} sources · latest response {result.data.searchSources.totalElapsedMs} ms</p> : null}
+            {result.data ? <p className="shrink-0 text-label-sm text-muted">{allReleases.length} returned releases from {result.data.searchSources.sources.length} sources · latest response {result.data.searchSources.totalElapsedMs} ms</p> : null}
           </>
         )}
       </div>
-    </Dialog>
+      </GlassDialog.Body>
+    </GlassDialog.Popup>
+    </GlassDialog.Root>
     </ReleaseActionsContext>
   );
 }

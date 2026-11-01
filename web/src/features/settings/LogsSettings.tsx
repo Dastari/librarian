@@ -1,9 +1,11 @@
+import { copyText } from "glass-ux/copy-button";
 import { useMutation } from "@apollo/client/react";
 import { AlertDialog } from "glass-ux/alert-dialog";
+import { defineActions } from "glass-ux/actions";
 import { Badge, type BadgeTone } from "glass-ux/badge";
 import { createDataTableColumns, DataTable, filters, RelativeTime, TextCell, type DataTableSearch, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
 import { Dialog } from "glass-ux/dialog";
-import { IconFileText, IconPause, IconPlay, IconRefresh, IconTrash } from "glass-ux/icons";
+import { IconCopy, IconFileText, IconPause, IconPlay, IconRefresh, IconTrash } from "glass-ux/icons";
 import { useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui";
@@ -15,6 +17,8 @@ import { changeLogTableState, initialLogTableState, LOG_LEVELS, logTableVariable
 import { usePref } from "@/lib/prefs";
 import { tableUrlFilters, useTableUrlState } from "@/hooks/useTableUrlState";
 import { usePrintMode } from "@/hooks/usePrintMode";
+import { useTableSelection } from "@/hooks/useTableSelection";
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
 
 const LEVEL_TONE: Record<string, BadgeTone> = { ERROR: "danger", WARN: "warning", INFO: "info", DEBUG: "neutral", TRACE: "neutral" };
 const column = createDataTableColumns<AppLogFieldsFragment>();
@@ -49,18 +53,37 @@ export function LogsSettings() {
   const printing = usePrintMode();
   const initial = useMemo(() => initialLogTableState(pageSize), [pageSize]);
   const url = useTableUrlState({ namespace: "settings.logs", ...logUrlSchema, defaultSorting: initial.sorting });
-  const state = useMemo(() => ({ ...initial, ...url.state }), [initial, url.state]);
+  const baseState = useMemo(() => ({ ...initial, ...url.state }), [initial, url.state]);
   const [live, setLive] = useState(true);
   const [entry, setEntry] = useState<AppLogFieldsFragment | null>(null);
   const focusReturn = useRef<HTMLElement | null>(null);
-  const variables = useMemo(() => logTableVariables(state), [state]);
-  const defaultOrder = state.sorting.length === 0 || (state.sorting.length === 1 && state.sorting[0]?.id === "timestamp" && state.sorting[0]?.desc === true);
+  const variables = useMemo(() => logTableVariables(baseState), [baseState]);
+  const defaultOrder = baseState.sorting.length === 0 || (baseState.sorting.length === 1 && baseState.sorting[0]?.id === "timestamp" && baseState.sorting[0]?.desc === true);
   const cursor = useSettingsConnection(EntityAppLogKeysetDocument, { where: variables.where }, (data) => data.appLogsKeyset, { infinite: true, keyset: true, batchSize: variables.page?.limit ?? 100, live, skip: !defaultOrder });
   const offset = useSettingsConnection(EntityAppLogListDocument, { where: variables.where, orderBy: variables.orderBy }, (data) => data.appLogs, { infinite: true, batchSize: variables.page?.limit ?? 100, live, skip: Boolean(defaultOrder) });
   const list = defaultOrder ? cursor : offset;
+  const selection = useTableSelection({ scope: [user?.id, variables.where, variables.orderBy], rows: list.rows, ready: !list.fetching && !list.loading });
+  const state = useMemo(() => ({ ...baseState, selection: selection.selection }), [baseState, selection.selection]);
   const [clear, { loading: clearing }] = useMutation(EntityAppLogDeleteManyDocument);
 
+  const actions = useMemo(() => defineActions<AppLogFieldsFragment>("log-entry", [
+    { id: "details", bulk: true, label: "View entry", icon: IconFileText, group: "open", visible: (rows) => rows.length === 1,
+      run: (rows) => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setEntry(rows[0]!); },
+    },
+    { id: "copy", label: (rows) => rows.length === 1 ? "Copy log entry" : "Copy selected log entries", icon: IconCopy, group: "open", bulk: true,
+      run: (rows) => copyText(rows.map((row) => `${row.timestamp} ${row.level} ${row.target}: ${row.message}${row.fields ? `\n${row.fields}` : ""}`).join("\n\n")), successMessage: () => "Log entries copied",
+    },
+    { id: "delete", label: (rows) => rows.length === 1 ? "Delete entry" : `Delete ${rows.length} entries`, icon: IconTrash, group: "danger", bulk: true,
+      confirm: (rows) => ({ title: `Delete ${rows.length === 1 ? "this log entry" : `${rows.length} log entries`}?`, body: "Only the selected entries are removed. Other log entries are kept. This cannot be undone.", confirmLabel: "Delete", tone: "danger" }),
+      run: async (rows) => {
+        try { assertSuccess((await clear({ variables: { where: { id: { inList: rows.map((row) => row.id) } } } })).data?.deleteAppLogs, "Couldn't delete selected logs"); setEntry((current) => current && rows.some((row) => row.id === current.id) ? null : current); }
+        finally { void list.refetch().catch(() => {}); }
+      }, successMessage: () => "Selected log entries deleted",
+    },
+  ]), [clear, list.refetch]);
+
   const onStateChange = (next: DataTableState, change: DataTableStateChange) => {
+    if (change === "selection") { selection.onSelectionChange(next.selection); return; }
     const changed = changeLogTableState(next, change);
     url.onStateChange(changed, change);
   };
@@ -85,7 +108,10 @@ export function LogsSettings() {
           onStateChange={onStateChange}
           infinite={{ revision: list.revision, hasMore: !printing && list.hasMore, onLoadMore: list.loadMore, loadingMore: list.loadingMore, error: list.moreError?.message }}
           search={search}
-          selectable={false}
+          selectable
+          export
+          actions={actions}
+          renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={noun} />}
           live={live}
           noun={noun}
           onRowOpen={(log) => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setEntry(log); }}

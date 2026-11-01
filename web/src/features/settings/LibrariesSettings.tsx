@@ -1,9 +1,10 @@
+import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
 import { useMutation } from "@apollo/client/react";
 import { toast } from "glass-ux/toast";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
-import { createDataTableColumns, DataTable, IdentityCell, RelativeTime, TextCell } from "glass-ux/data-table";
+import { createDataTableColumns, IdentityCell, RelativeTime, TextCell } from "glass-ux/data-table";
 import { IconExternalLink, IconPlus, IconRefresh, IconSettings } from "glass-ux/icons";
 import { useNavigate } from "@tanstack/react-router";
 import { IconFolder } from "@tabler/icons-react";
@@ -19,6 +20,9 @@ import { useSession } from "@/lib/auth/useSession";
 import { parseTimestamp, pluralize } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { LIBRARY_TYPE_OPTIONS, libraryType } from "@/lib/library-types";
+
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { runSettingsSelection } from "./runSettingsSelection";
 
 import { SettingsLoadError } from "./SettingsLoadError";
 import { SettingsSection } from "./SettingsSection";
@@ -74,19 +78,16 @@ export function LibrariesSettings() {
   });
 
   const actions = defineActions<LibraryOverview>("library", [
-    { id: "open", label: "Open library", icon: IconExternalLink, group: "open", priority: 1, visible: (rows) => rows.length === 1, run: (rows, context) => context.navigate(`/libraries/${rows[0]!.id}`) },
-    { id: "settings", label: "Library settings", icon: IconSettings, group: "open", priority: 2, visible: (rows) => rows.length === 1, run: (rows, context) => context.navigate(`/libraries/${rows[0]!.id}/settings`) },
+    { id: "open", bulk: true, label: "Open library", icon: IconExternalLink, group: "open", priority: 1, visible: (rows) => rows.length === 1, run: (rows, context) => context.navigate(`/libraries/${rows[0]!.id}`) },
+    { id: "settings", bulk: true, label: "Library settings", icon: IconSettings, group: "open", priority: 2, visible: (rows) => rows.length === 1, run: (rows, context) => context.navigate(`/libraries/${rows[0]!.id}/settings`) },
     {
       id: "scan", label: (rows) => (rows.length === 1 ? "Scan now" : `Scan ${rows.length} libraries`), icon: IconRefresh, group: "manage", priority: 1, bulk: true,
       disabledReason: (rows) => (rows.every((row) => row.scanning) ? "Already scanning" : false),
-      run: async (rows) => {
-        for (const row of rows.filter((item) => !item.scanning)) {
+      run: (rows) => runSettingsSelection(rows.filter((item) => !item.scanning), "Scan", (row) => row.name, async (row) => {
           const result = (await scan({ variables: { id: row.id } })).data?.scanLibrary;
           if (!result?.success) throw new Error(result?.message ?? `${row.name}: the scan could not start`);
-        }
-        void refetch();
-      },
-      successMessage: (rows) => (rows.length === 1 ? "Scan started" : `Started ${rows.length} scans`),
+      }, refetch),
+      successMessage: (rows) => (rows.filter((row) => !row.scanning).length === 1 ? "Scan started" : `Started ${rows.filter((row) => !row.scanning).length} scans`),
     },
   ]);
 
@@ -94,7 +95,7 @@ export function LibrariesSettings() {
     <div className="flex flex-col gap-6">
       <SettingsSection title="Libraries" actions={<Button variant="primary" size="sm" onPress={() => setCreating(true)}><IconPlus /> Add library</Button>}>
         <SettingsLoadError error={list.error} retry={list.refetch} hasRows={libraries.length > 0} />
-        <DataTable<LibraryOverview> height="auto"
+        <LoadedDataTable<LibraryOverview> complete={!list.loading && !list.error} height="auto" selectable queryKey={user?.id}
           id={`librarian.${user?.id ?? "session"}.settings.libraries`}
           label="Libraries"
           columns={columns}
@@ -102,8 +103,7 @@ export function LibrariesSettings() {
           getRowId={(row) => row.id}
           getRowLabel={(row) => row.name}
           loading={loading && libraries.length === 0}
-          actions={actions}
-          selectable
+          actions={actions} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "library", other: "libraries" }} />}
           onRowOpen={(row) => void navigate({ to: "/libraries/$libraryId/settings", params: { libraryId: row.id } })}
           rowOpen="click"
           noun={{ one: "library", other: "libraries" }}

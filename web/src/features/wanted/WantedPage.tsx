@@ -1,8 +1,9 @@
 import { useMutation } from "@apollo/client/react";
+import { copyText } from "glass-ux/copy-button";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
-import { createDataTableColumns, DataTable, filters, IdentityCell, NumericCell, type DataTableSearch } from "glass-ux/data-table";
-import { IconExternalLink, IconRefresh, IconSearch } from "glass-ux/icons";
+import { createDataTableColumns, filters, IdentityCell, NumericCell, type DataTableSearch } from "glass-ux/data-table";
+import { IconCopy, IconExternalLink, IconRefresh, IconSearch } from "glass-ux/icons";
 import { Segmented } from "glass-ux/segmented";
 import { toast } from "glass-ux/toast";
 import { useNavigate } from "@tanstack/react-router";
@@ -10,6 +11,9 @@ import { IconBookmark, IconBookmarkOff, IconDownload, IconEyeOff, IconTargetArro
 import { parseAsStringEnum, useQueryState } from "nuqs";
 import { useMemo, useState } from "react";
 
+import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { runSelectionAction } from "@/lib/actions/runSelectionAction";
 import { Artwork, Button, ErrorState } from "@/components/ui";
 import { ReleaseSearchDialog, type ReleaseTarget } from "@/features/downloads/ReleaseSearchDialog";
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
@@ -90,19 +94,12 @@ export function WantedPage() {
   const [searchMissing, { loading: triggering }] = useMutation(SearchMissingDocument);
   const libraries = useCompleteConnection(EntityLibraryListDocument, { orderBy: [{ name: "ASC" }] }, (data) => data.libraries, { skip: !isAdmin });
 
-  const apply = async (group: WantedGroup, input: { wanted?: boolean; ignored?: boolean }, message: string) => {
-    const ids = group.items.map((item) => item.id);
-    const where = { id: { inList: ids } };
-    try {
-      if (group.kind === "episode") assertSuccess((await updateEpisodes({ variables: { where, input } })).data?.updateEpisodes, "Could not update");
-      else if (group.kind === "movie") assertSuccess((await updateMovies({ variables: { where, input } })).data?.updateMovies, "Could not update");
-      else if (group.kind === "track") assertSuccess((await updateTracks({ variables: { where, input } })).data?.updateTracks, "Could not update");
-      else assertSuccess((await updateChapters({ variables: { where, input } })).data?.updateChapters, "Could not update");
-      toast.success(`${group.title}: ${message}`);
-      list.refetch();
-    } catch (error) {
-      toast.danger(errorMessage(error));
-    }
+  const apply = async (group: WantedGroup, input: { wanted?: boolean; ignored?: boolean }) => {
+    const where = { id: { inList: group.items.map((item) => item.id) } };
+    if (group.kind === "episode") assertSuccess((await updateEpisodes({ variables: { where, input } })).data?.updateEpisodes, "Could not update");
+    else if (group.kind === "movie") assertSuccess((await updateMovies({ variables: { where, input } })).data?.updateMovies, "Could not update");
+    else if (group.kind === "track") assertSuccess((await updateTracks({ variables: { where, input } })).data?.updateTracks, "Could not update");
+    else assertSuccess((await updateChapters({ variables: { where, input } })).data?.updateChapters, "Could not update");
   };
 
   /** `searchMissing` needs a scope, so "search everything" is one call per library. */
@@ -140,29 +137,23 @@ export function WantedPage() {
           : group.kind === "track"
             ? { albumId: group.parentId }
             : { audiobookId: group.parentId };
-    try {
-      const { data } = await searchMissing({ variables: { input: scope } });
-      const result = data?.searchMissing;
-      if (result?.success) toast.success(`${group.title}: searched ${result.searched}, grabbed ${result.queued}`);
-      else toast.warning(result?.error ?? "The search did not run");
-      list.refetch();
-    } catch (error) {
-      toast.danger(errorMessage(error));
-    }
+    const { data } = await searchMissing({ variables: { input: scope } });
+    assertSuccess(data?.searchMissing, "The search did not run");
   };
 
   const { user } = useSession();
   const columns = useMemo(() => columnsFor(list.statuses), [list.statuses]);
   const actions = useMemo(() => {
-    const each = async (groups: readonly WantedGroup[], input: { wanted?: boolean; ignored?: boolean }, message: string) => { for (const group of groups) await apply(group, input, message); };
+    const each = (groups: readonly WantedGroup[], input: { wanted?: boolean; ignored?: boolean }) => runSelectionAction(groups, "Update", (group) => group.title, (group) => apply(group, input), list.refetch);
     return defineActions<WantedGroup>("wanted", [
-      { id: "open", label: (groups) => `Open ${KIND_META[groups[0]!.kind].page}`, icon: IconExternalLink, group: "open", priority: 3, visible: (groups) => groups.length === 1, run: (groups, context) => { const href = pagePath(groups[0]!); if (href) context.navigate(href); } },
+      { id: "open", bulk: true, label: (groups) => `Open ${KIND_META[groups[0]!.kind].page}`, icon: IconExternalLink, group: "open", priority: 3, visible: (groups) => groups.length === 1, run: (groups, context) => { const href = pagePath(groups[0]!); if (href) context.navigate(href); } },
+      { id: "copy-titles", label: "Copy titles", icon: IconCopy, group: "open", bulk: true, run: (groups) => copyText(groups.map((group) => group.title).join("\n")), successMessage: () => "Titles copied" },
       ...(isAdmin ? [
-        { id: "hunt", label: (groups: readonly WantedGroup[]) => (groups.length === 1 ? "Search now" : `Search ${groups.length} titles now`), icon: HuntIcon, group: "manage" as const, priority: 1, bulk: true, run: async (groups: readonly WantedGroup[]) => { for (const group of groups) await searchGroup(group); } },
-        { id: "browse", label: "Browse releases…", icon: IconSearch, group: "manage" as const, priority: 2, visible: (groups: readonly WantedGroup[]) => groups.length === 1, run: (groups: readonly WantedGroup[]) => setSearching(groups[0]!) },
-        { id: "want", label: "Mark wanted", icon: WantIcon, group: "organise" as const, priority: 2, bulk: true, visible: (groups: readonly WantedGroup[]) => groups.some((group) => group.items.some((item) => !item.wanted)), run: (groups: readonly WantedGroup[]) => each(groups, { wanted: true, ignored: false }, "marked wanted") },
-        { id: "unwant", label: "Unwant", icon: UnwantIcon, group: "organise" as const, bulk: true, visible: (groups: readonly WantedGroup[]) => groups.some((group) => group.items.some((item) => item.wanted)), run: (groups: readonly WantedGroup[]) => each(groups, { wanted: false }, "no longer wanted") },
-        { id: "ignore", label: "Ignore", icon: IgnoreIcon, group: "danger" as const, bulk: true, run: (groups: readonly WantedGroup[]) => each(groups, { ignored: true, wanted: false }, "ignored") },
+        { id: "hunt", label: (groups: readonly WantedGroup[]) => (groups.length === 1 ? "Search now" : `Search ${groups.length} titles now`), icon: HuntIcon, group: "manage" as const, priority: 1, bulk: true, run: (groups: readonly WantedGroup[]) => runSelectionAction(groups, "Search", (group) => group.title, searchGroup, list.refetch), successMessage: () => "Search complete" },
+        { id: "browse", bulk: true, label: "Browse releases…", icon: IconSearch, group: "manage" as const, priority: 2, visible: (groups: readonly WantedGroup[]) => groups.length === 1, run: (groups: readonly WantedGroup[]) => setSearching(groups[0]!) },
+        { id: "want", label: "Mark wanted", icon: WantIcon, group: "organise" as const, priority: 2, bulk: true, visible: (groups: readonly WantedGroup[]) => groups.some((group) => group.items.some((item) => !item.wanted)), run: (groups: readonly WantedGroup[]) => each(groups, { wanted: true, ignored: false }), successMessage: () => "Marked wanted" },
+        { id: "unwant", label: "Unwant", icon: UnwantIcon, group: "organise" as const, bulk: true, visible: (groups: readonly WantedGroup[]) => groups.some((group) => group.items.some((item) => item.wanted)), run: (groups: readonly WantedGroup[]) => each(groups, { wanted: false }), successMessage: () => "No longer wanted" },
+        { id: "ignore", label: "Ignore", icon: IgnoreIcon, group: "danger" as const, bulk: true, run: (groups: readonly WantedGroup[]) => each(groups, { ignored: true, wanted: false }), successMessage: () => "Ignored" },
       ] : []),
     ]);
   }, [apply, isAdmin, searchGroup]);
@@ -182,7 +173,7 @@ export function WantedPage() {
       {isAdmin && libraries.error ? <ErrorState compact error={libraries.error} onRetry={() => void libraries.refetch()} /> : null}
       {list.error && list.groups.length > 0 ? <ErrorState compact error={list.error} onRetry={list.refetch} /> : null}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <DataTable<WantedGroup>
+        <LoadedDataTable<WantedGroup>
           id={`librarian.${user?.id ?? "session"}.wanted.${tab}`}
           label="Wanted"
           queryKey={list.queryKey}
@@ -191,11 +182,13 @@ export function WantedPage() {
           rows={list.groups}
           getRowId={(group) => group.key}
           getRowLabel={(group) => group.title}
+          complete={!list.loading && !list.error}
           loading={list.loading}
           refetching={list.refreshing}
           search={search}
           actions={actions}
-          selectable={isAdmin}
+          selectable
+          renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "title", other: "titles" }} />}
           noun={{ one: "title", other: "titles" }}
           onRowOpen={(group) => { const href = pagePath(group); if (href) void navigate({ to: href }); }}
           rowOpen="click"

@@ -3,6 +3,8 @@ import { useMemo, useRef, useState } from "react";
 
 import { useTableUrlState } from "@/hooks/useTableUrlState";
 import { usePrintMode } from "@/hooks/usePrintMode";
+import { useTableSelection } from "@/hooks/useTableSelection";
+import { TableBulkActions } from "./TableBulkActions";
 
 type LoadedDataTableProps<T extends object> = Omit<DataTableProps<T>, "state" | "onStateChange" | "infinite" | "rowCount"> & {
   /** Filtering is enabled only after the collection has been loaded completely. */
@@ -39,26 +41,30 @@ export function LoadedDataTable<T extends object>({ rows, columns, search, compl
       typeof column.id === "string" ? [column.id] : "accessorKey" in column && typeof column.accessorKey === "string" ? [column.accessorKey] : []),
     search: ready && Boolean(search),
   });
-  const state = useMemo(() => ({ ...current.state, ...url.state }), [current.state, url.state]);
   const datasetKey = JSON.stringify([props.id, url.state]);
+  const queryState = useMemo(() => ({ ...current.state, ...url.state }), [current.state, url.state]);
+  const filtered = useMemo(() => localPage(rows, availableColumns, {
+    ...queryState, pagination: { pageIndex: 0, pageSize: rows.length || 1 },
+  }, ready ? search : undefined), [rows, availableColumns, queryState, ready, search]);
+  const { selection, onSelectionChange } = useTableSelection({ scope: [datasetKey, props.queryKey], rows: filtered.rows, getRowId: props.getRowId, ready: complete });
+  const state = useMemo(() => ({ ...current.state, ...url.state, selection }), [current.state, url.state, selection]);
   const dataset = useRef({ key: datasetKey, revision: current.revision });
   if (dataset.current.key !== datasetKey) dataset.current = { key: datasetKey, revision: dataset.current.revision + 1 };
   const limit = current.windowRevision === dataset.current.revision ? current.limit : batchSize;
-  const page = useMemo(() => localPage(rows, availableColumns, {
-    ...state,
-    pagination: { pageIndex: 0, pageSize: printing ? rows.length || 1 : limit },
-  }, ready ? search : undefined), [rows, availableColumns, state, limit, ready, search, printing]);
+  const page = useMemo(() => ({ rows: printing ? filtered.rows : filtered.rows.slice(0, limit), count: filtered.count }), [filtered, printing, limit]);
   const onStateChange = (state: DataTableState, change: DataTableStateChange) => {
+    if (change === "selection") { onSelectionChange(state.selection); return; }
     url.onStateChange(state, change);
     setView({
       id: props.id,
       windowRevision: dataset.current.revision,
       state: { ...state, pagination: { pageIndex: 0, pageSize: batchSize } },
-      limit: change === "selection" ? current.limit : batchSize,
-      revision: current.revision + Number(change !== "selection"),
+      limit: batchSize,
+      revision: current.revision + 1,
     });
   };
   return <DataTable {...props} columns={availableColumns} rows={page.rows}
+    renderBulkActions={props.renderBulkActions ?? (props.actions ? (selected) => <TableBulkActions set={props.actions!} rows={selected} noun={{ one: props.noun?.one ?? "item", other: props.noun?.other ?? "items" }} /> : undefined)}
     state={state} onStateChange={onStateChange} search={ready ? search : undefined}
     queryKey={[props.id, props.queryKey, current.revision, dataset.current.revision]} rowCount={page.count} infinite={{ hasMore: !printing && page.rows.length < page.count,
       onLoadMore: () => setView({ ...current, state, windowRevision: dataset.current.revision, limit: limit + batchSize }),

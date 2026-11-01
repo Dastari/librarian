@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { EntityHomeShelfListDocument, EntityListEntryUpdateDocument, EntityPersonalListGetDocument, PersonalEntriesDocument } from "@/graphql/generated/graphql";
+import { EntityHomeShelfListDocument, EntityListEntryDeleteDocument, EntityListEntryUpdateDocument, EntityPersonalListGetDocument, PersonalEntriesDocument } from "@/graphql/generated/graphql";
 
 import { PersonalListPage } from "../PersonalListPage";
 import { connection, expectValidOperation, installTableGeometry, OWNER, personalEntry, personalHarness, personalList, respond, STAMP } from "./personalHarness";
@@ -76,5 +76,30 @@ describe("PersonalListPage reorder and row menu focus", () => {
     await userEvent.click(view.trigger);
     await waitFor(() => expect(screen.getByRole("menuitem", { name: "Move up" })).not.toHaveAttribute("aria-disabled", "true"));
     expect(view.mutations()).toHaveLength(1);
+  });
+});
+
+
+describe("personal list bulk selection", () => {
+  it("confirms selected removal once, attempts every selected item and reports partial failure", async () => {
+    const view = await mountList();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select First film" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Second film" }));
+    await userEvent.click(screen.getByRole("button", { name: "Actions for 2 selected items" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Remove 2 from list" }));
+    const confirm = within(await screen.findByRole("alertdialog"));
+    expect(view.mutations()).toHaveLength(0);
+    expect(confirm.getByText("Media and files remain in the library.")).toBeInTheDocument();
+    await userEvent.click(confirm.getByRole("button", { name: "Remove items" }));
+    const first = await view.next(EntityListEntryDeleteDocument);
+    expect(first.operation.variables).toEqual({ id: "entry-0" });
+    await respond(first, { deleteListEntry: { success: false, error: "Entry is locked" } });
+    const second = await view.next(EntityListEntryDeleteDocument, 1);
+    expect(second.operation.variables).toEqual({ id: "entry-1" });
+    await respond(second, { deleteListEntry: { success: true, error: null } });
+    await respond(await view.next(PersonalEntriesDocument, 1), connection("listEntries", [view.rows[0]!, view.rows[2]!]));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Removed 1 of 2 items");
+    expect(view.mutations()).toHaveLength(2);
+    expect(screen.getByText("Third film")).toBeInTheDocument();
   });
 });

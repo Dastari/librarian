@@ -1,8 +1,9 @@
+import { copyText } from "glass-ux/copy-button";
 import { useApolloClient, useMutation } from "@apollo/client/react";
 import { ActionBar, ActionMenu, defineActions, type ActionSet } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, filters, NumericCell, TextCell, TwoLineCell } from "glass-ux/data-table";
-import { IconBookmark, IconCheck, IconDownload, IconEye, IconEyeOff, IconPlay } from "glass-ux/icons";
+import { IconBookmark, IconCheck, IconCopy, IconDownload, IconEye, IconEyeOff, IconPlay } from "glass-ux/icons";
 import { MeterCell } from "glass-ux/meter-cell";
 import { Progress } from "glass-ux/progress";
 import { Surface } from "glass-ux/surface";
@@ -12,6 +13,7 @@ import { createContext, useContext, useCallback, useMemo, useState, type ReactNo
 import { Artwork } from "@/components/ui/Artwork";
 import { MediaRow } from "@/components/ui/MediaRow";
 import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { EntityEpisodeUpdateDocument, EntityEpisodeUpdateManyDocument, type ContentStatus, type PlaybackProgressFieldsFragment, type UpdateEpisodeInput } from "@/graphql/generated/graphql";
 import { episodeThumb } from "@/lib/artwork";
@@ -167,34 +169,68 @@ export function EpisodeList({ episodes, statuses, progressByFile, loading, compl
     onChanged?.();
   }, [isAdmin, updateEpisodes, showId, onChanged]);
 
+  const updateSelected = useCallback(async (selected: readonly EpisodeRow[], input: UpdateEpisodeInput) => {
+    if (!isAdmin) throw new Error("Administrator access required");
+    // The action explicitly manages missing episodes; downloaded episodes stay untouched.
+    const rows = selected.filter((episode) => !episode.mediaFileId);
+    if (!rows.length) throw new Error("No missing episodes selected");
+    try {
+      const { data } = await updateEpisodes({ variables: { where: { id: { inList: rows.map((row) => row.id) }, showId: { eq: showId }, mediaFileId: { isNull: true } }, input } });
+      const result = assertSuccess(data?.updateEpisodes, "Could not update selected episodes");
+      if (result.affectedCount !== rows.length) throw new Error(`Updated ${result.affectedCount} of ${rows.length} selected episodes. Refresh and retry the remaining items.`);
+    } finally { onChanged?.(); }
+  }, [isAdmin, updateEpisodes, showId, onChanged]);
+
   const actions = useMemo(() => defineActions<EpisodeRow>("episode", [
     {
-      id: "play", label: "Play", icon: IconPlay, group: "open", primary: true,
-      visible: ([episode]) => Boolean(episode?.mediaFileId),
+      id: "play", label: "Play", icon: IconPlay, group: "open", primary: true, bulk: true,
+      visible: (rows) => rows.length === 1 && Boolean(rows[0]?.mediaFileId),
       disabledReason: () => playbackUnavailable,
       run: ([episode]) => { if (episode?.mediaFileId) onPlay(episode); },
     },
     {
-      id: "wanted", label: ([episode]) => episode?.wanted ? "Wanted" : "Want", icon: IconBookmark, group: "manage", priority: 1,
-      visible: ([episode]) => isAdmin && Boolean(episode && !episode.mediaFileId && !episode.ignored),
+      id: "wanted", label: ([episode]) => episode?.wanted ? "Wanted" : "Want", icon: IconBookmark, group: "manage", priority: 1, bulk: true,
+      visible: (rows) => rows.length === 1 && isAdmin && Boolean(rows[0] && !rows[0].mediaFileId && !rows[0].ignored),
       run: ([episode]) => episode && update(episode, { wanted: !episode.wanted }),
     },
     {
-      id: "find", label: "Find", icon: IconDownload, group: "open", priority: 2,
-      visible: ([episode]) => isAdmin && Boolean(episode && !episode.mediaFileId && !episode.ignored),
+      id: "find", label: "Find", icon: IconDownload, group: "open", priority: 2, bulk: true,
+      visible: (rows) => rows.length === 1 && isAdmin && Boolean(rows[0] && !rows[0].mediaFileId && !rows[0].ignored),
       run: ([episode]) => { if (isAdmin && episode) setSearching(episode); },
     },
     {
-      id: "ignore", label: "Ignore", icon: IconEyeOff, group: "manage", priority: 3,
-      visible: ([episode]) => isAdmin && Boolean(episode && !episode.mediaFileId && !episode.ignored),
+      id: "ignore", label: "Ignore", icon: IconEyeOff, group: "manage", priority: 3, bulk: true,
+      visible: (rows) => rows.length === 1 && isAdmin && Boolean(rows[0] && !rows[0].mediaFileId && !rows[0].ignored),
       run: ([episode]) => episode && update(episode, { ignored: true, wanted: false }),
     },
     {
-      id: "unignore", label: "Unignore", icon: IconEye, group: "manage", priority: 1,
-      visible: ([episode]) => isAdmin && Boolean(episode && !episode.mediaFileId && episode.ignored),
+      id: "unignore", label: "Unignore", icon: IconEye, group: "manage", priority: 1, bulk: true,
+      visible: (rows) => rows.length === 1 && isAdmin && Boolean(rows[0] && !rows[0].mediaFileId && rows[0].ignored),
       run: ([episode]) => episode && update(episode, { ignored: false }),
     },
-  ]), [isAdmin, onPlay, update, playbackUnavailable]);
+    {
+      id: "want-selected", label: "Want selected missing episodes", icon: IconBookmark, group: "manage", bulk: true,
+      visible: (rows) => isAdmin && rows.length > 1 && rows.some((episode) => !episode.mediaFileId && (!episode.wanted || episode.ignored)),
+      run: (rows) => updateSelected(rows, { wanted: true, ignored: false }), successMessage: () => "Selected missing episodes wanted",
+    },
+    {
+      id: "unwant-selected", label: "Unwant selected missing episodes", icon: IconBookmark, group: "manage", bulk: true,
+      visible: (rows) => isAdmin && rows.length > 1 && rows.some((episode) => !episode.mediaFileId && episode.wanted),
+      run: (rows) => updateSelected(rows, { wanted: false }), successMessage: () => "Selected missing episodes no longer wanted",
+    },
+    {
+      id: "ignore-selected", label: "Ignore selected missing episodes", icon: IconEyeOff, group: "manage", bulk: true,
+      visible: (rows) => isAdmin && rows.length > 1 && rows.some((episode) => !episode.mediaFileId && !episode.ignored),
+      run: (rows) => updateSelected(rows, { ignored: true, wanted: false }), successMessage: () => "Selected missing episodes ignored",
+    },
+    {
+      id: "unignore-selected", label: "Unignore selected missing episodes", icon: IconEye, group: "manage", bulk: true,
+      visible: (rows) => isAdmin && rows.length > 1 && rows.some((episode) => !episode.mediaFileId && episode.ignored),
+      run: (rows) => updateSelected(rows, { ignored: false }), successMessage: () => "Selected missing episodes no longer ignored",
+    },
+    { id: "copy-titles", label: "Copy episode titles", icon: IconCopy, group: "organise", bulk: true,
+      run: async (rows) => { await copyText(rows.map(episodeLabel).join("\n")); }, successMessage: () => "Episode titles copied" },
+  ]), [isAdmin, onPlay, update, updateSelected, playbackUnavailable]);
 
   const columns = isAdmin ? adminColumns : memberColumns;
   const presentation = useMemo(() => ({ actions, statuses, progressByFile, playbackUnavailable }), [actions, statuses, progressByFile, playbackUnavailable]);
@@ -214,7 +250,7 @@ export function EpisodeList({ episodes, statuses, progressByFile, loading, compl
   }
 
   if (loading || episodes.length === 0) {
-    return <EpisodePresentationContext.Provider value={presentation}><LoadedDataTable id={`${tableScope}:empty`} label={`${showName} episodes`} rows={[]} columns={columns} getRowId={episodeId} loading={loading} status={status} height="auto" selectable={false} complete={complete} search={{ fields: ["title", { field: "episodeCode", value: episodeCode }], placeholder: "Search episodes" }} noun={episodeNoun} emptyMessage="No episodes in this season" defaultHiddenColumns={["overview"]} /></EpisodePresentationContext.Provider>;
+    return <EpisodePresentationContext.Provider value={presentation}><LoadedDataTable id={`${tableScope}:empty`} label={`${showName} episodes`} rows={[]} columns={columns} getRowId={episodeId} loading={loading} status={status} height="auto" selectable actions={actions} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={episodeNoun} />} complete={complete} search={{ fields: ["title", { field: "episodeCode", value: episodeCode }], placeholder: "Search episodes" }} noun={episodeNoun} emptyMessage="No episodes in this season" defaultHiddenColumns={["overview"]} /></EpisodePresentationContext.Provider>;
   }
 
   return (
@@ -232,10 +268,11 @@ export function EpisodeList({ episodes, statuses, progressByFile, loading, compl
             getRowLabel={episodeLabel}
             height="auto"
             status={status}
-            selectable={false}
+            selectable
             complete={complete} search={{ fields: ["title", { field: "episodeCode", value: episodeCode }], placeholder: "Search episodes" }}
             noun={episodeNoun}
             actions={actions}
+            renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={episodeNoun} />}
             defaultHiddenColumns={["overview"]}
           />
         </section>
