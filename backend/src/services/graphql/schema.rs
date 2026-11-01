@@ -27,7 +27,11 @@ use crate::services::graphql::subscriptions::{
 use crate::services::manager::ServicesManager;
 use crate::services::metadata::providers::{MetadataServiceConfig, create_metadata_service};
 
-schema_roots! {
+/// The one declaration of the schema's root chunks. It is fed to `schema_roots!`
+/// and, under `cfg(test)`, to the guard below, so the two cannot drift apart.
+macro_rules! librarian_schema_roots {
+    ($callback:ident) => {
+        $callback! {
     query_custom_ops: [User, Torrent, Movie, Show, Album, Audiobook, ScheduleCache],
     entities: [
         Library,
@@ -86,6 +90,163 @@ schema_roots! {
     extra_query_types: [FilesystemQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries],
     extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations],
     extra_subscription_types: [BackupSubscriptions, FilesystemSubscriptions, TorrentRuntimeSubscriptions, SessionSubscriptions, SourceCapabilitySubscriptions],
+        }
+    };
+}
+
+librarian_schema_roots!(schema_roots);
+
+/// Guard against a hand-written root field sharing a name with another root
+/// chunk. async-graphql's `MergedObject` silently keeps only one definition of a
+/// duplicated field, so a hand-written `updateCastDevice` beside the generated
+/// one compiled, passed review and never ran. See `root_field_guard`.
+#[cfg(test)]
+mod root_field_guard {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use async_graphql::registry::{MetaType, Registry};
+    use async_graphql::{OutputType, SubscriptionType};
+    use graphql_orm::graphql::orm::GraphqlOperationKind;
+
+    use super::*;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    pub(super) enum Root {
+        Query,
+        Mutation,
+        Subscription,
+    }
+
+    pub(super) type Chunk = (&'static str, Root, BTreeSet<String>);
+
+    fn object_fields(registry: &Registry, type_name: &str) -> BTreeSet<String> {
+        match registry.types.get(type_name.trim_end_matches('!')) {
+            Some(MetaType::Object { fields, .. }) => fields.keys().cloned().collect(),
+            _ => panic!("{type_name} did not register as an object"),
+        }
+    }
+
+    pub(super) fn query_chunk<T: OutputType>(label: &'static str) -> Chunk {
+        let mut registry = Registry::default();
+        let name = T::create_type_info(&mut registry);
+        (label, Root::Query, object_fields(&registry, &name))
+    }
+
+    pub(super) fn mutation_chunk<T: OutputType>(label: &'static str) -> Chunk {
+        let mut registry = Registry::default();
+        let name = T::create_type_info(&mut registry);
+        (label, Root::Mutation, object_fields(&registry, &name))
+    }
+
+    pub(super) fn subscription_chunk<T: SubscriptionType>(label: &'static str) -> Chunk {
+        let mut registry = Registry::default();
+        let name = T::create_type_info(&mut registry);
+        (label, Root::Subscription, object_fields(&registry, &name))
+    }
+
+    macro_rules! declared_chunks {
+        (
+            query_custom_ops: [$($custom:ident),* $(,)?],
+            entities: [$($entity:ident),* $(,)?],
+            extra_query_types: [$($extra_query:ident),* $(,)?],
+            extra_mutation_types: [$($extra_mutation:ident),* $(,)?],
+            extra_subscription_types: [$($extra_subscription:ident),* $(,)?] $(,)?
+        ) => {
+            /// Every hand-written root chunk declared to `schema_roots!`.
+            pub(super) fn hand_written_chunks() -> Vec<Chunk> {
+                vec![
+                    $(query_chunk::<$extra_query>(stringify!($extra_query)),)*
+                    $(mutation_chunk::<$extra_mutation>(stringify!($extra_mutation)),)*
+                    $(subscription_chunk::<$extra_subscription>(stringify!($extra_subscription)),)*
+                ]
+            }
+
+            /// Entities that declare a `<Entity>CustomOperations` query chunk.
+            pub(super) fn declared_custom_operation_entities() -> Vec<&'static str> {
+                vec![$(stringify!($custom)),*]
+            }
+        };
+    }
+
+    librarian_schema_roots!(declared_chunks);
+
+    /// `<Entity>CustomOperations` chunks. They cannot be derived from the
+    /// `query_custom_ops` list because `macro_rules!` cannot join identifiers,
+    /// so the list is explicit and `custom_operation_chunks_cover_the_declaration`
+    /// fails when it falls out of step with the declaration.
+    pub(super) fn custom_operation_chunks() -> Vec<(&'static str, Chunk)> {
+        vec![
+            (
+                "User",
+                query_chunk::<UserCustomOperations>("UserCustomOperations"),
+            ),
+            (
+                "Torrent",
+                query_chunk::<TorrentCustomOperations>("TorrentCustomOperations"),
+            ),
+            (
+                "Movie",
+                query_chunk::<MovieCustomOperations>("MovieCustomOperations"),
+            ),
+            (
+                "Show",
+                query_chunk::<ShowCustomOperations>("ShowCustomOperations"),
+            ),
+            (
+                "Album",
+                query_chunk::<AlbumCustomOperations>("AlbumCustomOperations"),
+            ),
+            (
+                "Audiobook",
+                query_chunk::<AudiobookCustomOperations>("AudiobookCustomOperations"),
+            ),
+            (
+                "ScheduleCache",
+                query_chunk::<ScheduleCacheCustomOperations>("ScheduleCacheCustomOperations"),
+            ),
+        ]
+    }
+
+    pub(super) fn generated_chunk() -> Vec<(Root, String)> {
+        graphql_orm_operation_catalog()
+            .operations()
+            .iter()
+            .filter(|operation| operation.is_exposed())
+            .map(|operation| {
+                let root = match operation.kind() {
+                    GraphqlOperationKind::Query => Root::Query,
+                    GraphqlOperationKind::Mutation => Root::Mutation,
+                    GraphqlOperationKind::Subscription => Root::Subscription,
+                    other => panic!("unclassified generated operation kind {other:?}"),
+                };
+                (root, operation.field_name().to_string())
+            })
+            .collect()
+    }
+
+    /// Root fields defined by more than one chunk, with every defining chunk.
+    pub(super) fn duplicated_root_fields(
+        generated: &[(Root, String)],
+        hand_written: &[Chunk],
+    ) -> BTreeMap<(Root, String), Vec<&'static str>> {
+        let mut owners: BTreeMap<(Root, String), Vec<&'static str>> = BTreeMap::new();
+        for (root, field) in generated {
+            owners
+                .entry((*root, field.clone()))
+                .or_default()
+                .push("generated entity CRUD");
+        }
+        for (label, root, fields) in hand_written {
+            for field in fields {
+                owners
+                    .entry((*root, field.clone()))
+                    .or_default()
+                    .push(label);
+            }
+        }
+        owners.retain(|_, defined_by| defined_by.len() > 1);
+        owners
+    }
 }
 
 /// The GraphQL schema type
@@ -278,6 +439,128 @@ mod tests {
         assert!(sdl.contains("playbackSupported: Boolean"));
         assert!(sdl.contains("discoveryOrigin: String"));
         assert!(sdl.contains("login(input: LoginInput!): AuthPayload!"));
+    }
+
+    fn all_hand_written_chunks() -> Vec<root_field_guard::Chunk> {
+        let mut chunks = root_field_guard::hand_written_chunks();
+        chunks.extend(
+            root_field_guard::custom_operation_chunks()
+                .into_iter()
+                .map(|(_, chunk)| chunk),
+        );
+        chunks
+    }
+
+    /// The bug class that hid a hand-written `updateCastDevice` behind the
+    /// generated one: no root field may be defined by two chunks of the merged
+    /// root, because only one definition runs.
+    #[test]
+    fn no_root_field_is_defined_by_more_than_one_chunk() {
+        let duplicated = root_field_guard::duplicated_root_fields(
+            &root_field_guard::generated_chunk(),
+            &all_hand_written_chunks(),
+        );
+        let report = duplicated
+            .iter()
+            .map(|((root, field), defined_by)| format!("{root:?}.{field}: {defined_by:?}"))
+            .collect::<Vec<_>>();
+        assert!(
+            duplicated.is_empty(),
+            "a root field is defined more than once, so only one definition is reachable; \
+             delete the hand-written twin and put validation in the write input transform and \
+             side effects in a lifecycle hook:\n{}",
+            report.join("\n")
+        );
+    }
+
+    #[test]
+    fn custom_operation_chunks_cover_the_declaration() {
+        let mut declared = root_field_guard::declared_custom_operation_entities();
+        let mut listed = root_field_guard::custom_operation_chunks()
+            .into_iter()
+            .map(|(entity, _)| entity)
+            .collect::<Vec<_>>();
+        declared.sort_unstable();
+        listed.sort_unstable();
+        assert_eq!(
+            listed, declared,
+            "`query_custom_ops` in schema_roots! and root_field_guard::custom_operation_chunks \
+             must name the same entities"
+        );
+    }
+
+    /// The guard must not pass vacuously because a chunk registered no fields.
+    #[test]
+    fn root_field_guard_sees_both_sides_of_the_merge() {
+        use root_field_guard::Root;
+
+        let hand_written = all_hand_written_chunks();
+        let hand_written_fields = |root: Root| {
+            hand_written
+                .iter()
+                .filter(|(_, chunk_root, _)| *chunk_root == root)
+                .flat_map(|(_, _, fields)| fields.iter().map(String::as_str))
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let mutations = hand_written_fields(Root::Mutation);
+        for field in ["castMedia", "discoverCastDevices", "castStop"] {
+            assert!(mutations.contains(field), "missing hand-written {field}");
+        }
+        let generated = root_field_guard::generated_chunk();
+        for (root, field) in [
+            (Root::Mutation, "createCastDevice"),
+            (Root::Mutation, "updateCastSetting"),
+            (Root::Query, "castDevices"),
+        ] {
+            assert!(
+                generated.contains(&(root, field.to_string())),
+                "missing generated {field}"
+            );
+        }
+        assert!(
+            hand_written
+                .iter()
+                .any(|(label, root, fields)| *label == "UserCustomOperations"
+                    && *root == Root::Query
+                    && !fields.is_empty())
+        );
+    }
+
+    #[test]
+    fn root_field_guard_flags_a_hand_written_twin() {
+        use root_field_guard::Root;
+
+        let generated = vec![
+            (Root::Mutation, "updateCastDevice".to_string()),
+            (Root::Mutation, "createCastDevice".to_string()),
+        ];
+        let hand_written = vec![
+            (
+                "CastMutations",
+                Root::Mutation,
+                ["updateCastDevice", "castMedia"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+            ),
+            (
+                "OtherMutations",
+                Root::Mutation,
+                ["castMedia"].into_iter().map(String::from).collect(),
+            ),
+        ];
+        let duplicated = root_field_guard::duplicated_root_fields(&generated, &hand_written);
+        assert_eq!(
+            duplicated.keys().cloned().collect::<Vec<_>>(),
+            vec![
+                (Root::Mutation, "castMedia".to_string()),
+                (Root::Mutation, "updateCastDevice".to_string())
+            ]
+        );
+        assert_eq!(
+            duplicated[&(Root::Mutation, "updateCastDevice".to_string())],
+            vec!["generated entity CRUD", "CastMutations"]
+        );
     }
 
     #[tokio::test]

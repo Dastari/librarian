@@ -86,8 +86,8 @@ mutation EntityPlaybackSessionDeleteMany($where: PlaybackSessionWhereInput) {
   }
 }
 
-subscription EntityPlaybackSessionChanged($filter: SubscriptionFilterInput) {
-  playbackSessionChanged(filter: $filter) {
+subscription EntityPlaybackSessionChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  playbackSessionChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

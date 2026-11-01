@@ -813,11 +813,41 @@ pub async fn delete_torrent(
     ensure_mutation_success(&data, "DeleteTorrent")
 }
 
+/// Make the stored `deleteFilesOnRemove` match `delete_files`.
+async fn store_delete_files_flag(
+    pool: &Database,
+    schema: &LibrarianSchema,
+    auth_user: &AuthUser,
+    info_hash: &str,
+    delete_files: bool,
+) -> Result<(), anyhow::Error> {
+    let Some(torrent) = find_torrent_by_info_hash(pool, info_hash).await? else {
+        return Ok(());
+    };
+    if torrent.delete_files_on_remove == delete_files {
+        return Ok(());
+    }
+    let data = execute_mutation(
+        schema,
+        auth_user,
+        r#"mutation UpdateTorrent($id: String!, $input: UpdateTorrentInput!) {
+            UpdateTorrent: updateTorrent(id: $id, input: $input) { Success: success Error: error }
+        }"#,
+        serde_json::json!({
+            "id": torrent.id,
+            "input": { "deleteFilesOnRemove": delete_files }
+        }),
+    )
+    .await?;
+    ensure_mutation_success(&data, "UpdateTorrent")
+}
+
 /// Delete a torrent record by info_hash, optionally deleting its payload.
 ///
 /// The delete runs through the generated mutation, so its lifecycle hook stops
 /// the torrent in the session after commit. `delete_files` is stored on the row
 /// first (`deleteFilesOnRemove`), because the hook only sees the mutation event.
+/// A leftover `true` is cleared too, or a keep-the-files removal would delete them.
 pub async fn delete_torrent_with_files(
     pool: &Database,
     schema: &LibrarianSchema,
@@ -825,21 +855,7 @@ pub async fn delete_torrent_with_files(
     info_hash: &str,
     delete_files: bool,
 ) -> Result<(), anyhow::Error> {
-    if delete_files && let Some(torrent_id) = get_torrent_id_by_info_hash(pool, info_hash).await? {
-        let data = execute_mutation(
-            schema,
-            auth_user,
-            r#"mutation UpdateTorrent($id: String!, $input: UpdateTorrentInput!) {
-                UpdateTorrent: updateTorrent(id: $id, input: $input) { Success: success Error: error }
-            }"#,
-            serde_json::json!({
-                "id": torrent_id,
-                "input": { "deleteFilesOnRemove": true }
-            }),
-        )
-        .await?;
-        ensure_mutation_success(&data, "UpdateTorrent")?;
-    }
+    store_delete_files_flag(pool, schema, auth_user, info_hash, delete_files).await?;
     delete_torrent(pool, schema, auth_user, info_hash).await
 }
 
@@ -2264,6 +2280,27 @@ mod ownership_tests {
         )
         .await?;
         ensure_mutation_success(&data, "UpdateTorrent")
+    }
+
+    #[tokio::test]
+    async fn keeping_the_files_clears_a_flag_left_by_an_interrupted_removal() {
+        let db = database().await;
+        let owner = user(&db).await;
+        let schema = schema(&db);
+        let hash = "8".repeat(40);
+        create(&schema, &member(&owner), &hash, None).await.unwrap();
+        let stored = async |value| {
+            store_delete_files_flag(&db, &schema, &system_auth_user(), &hash, value)
+                .await
+                .unwrap();
+            find_torrent_by_info_hash(&db, &hash)
+                .await
+                .unwrap()
+                .unwrap()
+                .delete_files_on_remove
+        };
+        assert!(stored(true).await);
+        assert!(!stored(false).await);
     }
 
     #[tokio::test]

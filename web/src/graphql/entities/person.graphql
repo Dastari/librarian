@@ -72,8 +72,8 @@ mutation EntityPersonDeleteMany($where: PersonWhereInput) {
   }
 }
 
-subscription EntityPersonChanged($filter: SubscriptionFilterInput) {
-  personChanged(filter: $filter) {
+subscription EntityPersonChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  personChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

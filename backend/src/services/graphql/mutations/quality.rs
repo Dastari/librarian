@@ -22,6 +22,7 @@ use std::sync::Arc;
 use async_graphql::{Context, Object, Result, SimpleObject};
 use graphql_orm::graphql::filters::StringFilter;
 
+use super::authorized_media_file;
 use crate::db::Database;
 use crate::graphql::entities::{
     Album, Audiobook, Chapter, Episode, Library, MediaFile, MediaFileWhereInput, Movie,
@@ -101,38 +102,7 @@ impl QualityMutations {
         #[graphql(name = "mediaFileId")] media_file_id: String,
     ) -> Result<QualityEvaluationResultGql> {
         ctx.require_member()?;
-        let db = ctx.data::<crate::db::Database>()?;
-        let policy_key = <MediaFile as graphql_orm::graphql::orm::Entity>::metadata().read_policy;
-        db.ensure_entity_access(
-            Some(ctx),
-            "MediaFile",
-            policy_key,
-            graphql_orm::graphql::orm::EntityAccessKind::Read,
-            graphql_orm::graphql::orm::EntityAccessSurface::GraphqlMutation,
-        )
-        .await?;
-        let file = MediaFile::get(db.pool(), &media_file_id)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?
-            .ok_or_else(|| async_graphql::Error::new("Media file not found or access denied"))?;
-        let policy = db
-            .row_policy()
-            .ok_or_else(|| async_graphql::Error::new("Media file access policy unavailable"))?;
-        if !policy
-            .can_read_row(
-                Some(ctx),
-                db,
-                "MediaFile",
-                policy_key,
-                graphql_orm::graphql::orm::EntityAccessSurface::GraphqlMutation,
-                &file,
-            )
-            .await?
-        {
-            return Err(async_graphql::Error::new(
-                "Media file not found or access denied",
-            ));
-        }
+        authorized_media_file(ctx, &media_file_id).await?;
         let manager = ctx.data_unchecked::<Arc<ServicesManager>>();
 
         match evaluate_and_persist(manager, &media_file_id).await {

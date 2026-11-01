@@ -76,8 +76,8 @@ mutation EntityNamingPatternDeleteMany($where: NamingPatternWhereInput) {
   }
 }
 
-subscription EntityNamingPatternChanged($filter: SubscriptionFilterInput) {
-  namingPatternChanged(filter: $filter) {
+subscription EntityNamingPatternChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  namingPatternChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

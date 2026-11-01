@@ -273,7 +273,7 @@ async fn rotation_preserves_cast_but_logout_revokes_the_real_session_family() {
     );
     assert!(f.checkpoint("PLAYING", 1900.0, false).await.is_err());
     assert_eq!(f.progress().await[0].current_position, 1800.0);
-    retire_cast_monitor(&f.services, &f.claims).await;
+    retire_cast_monitor_with_binding(&f.services, &f.claims, None).await;
     assert_eq!(
         CastSession::get(f.db.pool(), &f.claims.session_id)
             .await
@@ -851,4 +851,574 @@ async fn rejected_transport_seek_leaves_both_session_and_canonical_checkpoint_un
         .unwrap();
     assert_eq!(session.current_position, 100.0);
     f.services.stop_all().await.unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// Generated CRUD is the only write surface for Cast rows. These run through the
+// real generated schema (`GraphqlService::schema`), not a hand-assembled root.
+// ---------------------------------------------------------------------------
+
+mod generated_writes {
+    use super::*;
+    use crate::services::cast::DiscoveredCastDevice;
+    use crate::services::manager::Service;
+    use std::sync::Mutex;
+
+    struct Real {
+        _temp: tempfile::TempDir,
+        services: Arc<ServicesManager>,
+        schema: crate::services::graphql::schema::LibrarianSchema,
+    }
+
+    impl Real {
+        async fn new() -> Self {
+            let temp = tempfile::tempdir().unwrap();
+            let services = ServicesManager::builder()
+                .add_service(DatabaseServiceConfig {
+                    database_url: format!("sqlite://{}", temp.path().join("cast.db").display()),
+                    connect_timeout: std::time::Duration::from_secs(5),
+                })
+                .add_service(AuthConfig::for_tests())
+                .add_service(GraphqlServiceConfig { server_port: 0 })
+                .add_service(CastServiceConfig {
+                    auto_discovery: false,
+                    ..Default::default()
+                })
+                .start()
+                .await
+                .unwrap();
+            let schema = services
+                .get_graphql()
+                .await
+                .unwrap()
+                .schema()
+                .await
+                .unwrap();
+            Self {
+                _temp: temp,
+                services,
+                schema,
+            }
+        }
+
+        async fn run(&self, query: &str, variables: Value) -> async_graphql::Response {
+            self.schema
+                .execute(
+                    Request::new(query)
+                        .variables(Variables::from_json(variables))
+                        .data(AuthSubject::from_parts(
+                            "system",
+                            vec!["admin".into()],
+                            vec![],
+                            None,
+                        ))
+                        .data(AuthUser::system_admin()),
+                )
+                .await
+        }
+
+        /// The mutation's payload, or the error that refused it.
+        async fn mutate(
+            &self,
+            field: &str,
+            selection: &str,
+            variables: Value,
+        ) -> Result<Value, String> {
+            let (decl, args) = match field {
+                f if f.starts_with("create") => (
+                    format!("$input: {}Input!", capitalize(f)),
+                    "input: $input".to_string(),
+                ),
+                f => (
+                    format!("$id: String!, $input: {}Input!", capitalize(f)),
+                    "id: $id, input: $input".to_string(),
+                ),
+            };
+            let response = self
+                .run(
+                    &format!(
+                        "mutation({decl}) {{ {field}({args}) {{ success error {selection} }} }}"
+                    ),
+                    variables,
+                )
+                .await;
+            if let Some(error) = response.errors.first() {
+                return Err(error.message.clone());
+            }
+            let data = response.data.into_json().unwrap();
+            let payload = data[field].clone();
+            if payload["success"] == true {
+                Ok(payload)
+            } else {
+                Err(payload["error"].as_str().unwrap_or("no error").to_string())
+            }
+        }
+
+        async fn devices(&self) -> Vec<Value> {
+            let response = self
+                .run(
+                    "{ castDevices { edges { node { id name address port deviceType isFavorite lastSeenAt } } } }",
+                    json!({}),
+                )
+                .await;
+            assert!(response.errors.is_empty(), "{response:?}");
+            response.data.into_json().unwrap()["castDevices"]["edges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|edge| edge["node"].clone())
+                .collect()
+        }
+
+        async fn setting(&self) -> Value {
+            let response = self
+                .run(
+                    "{ castSettings { edges { node { id autoDiscoveryEnabled discoveryIntervalSeconds defaultVolume transcodeIncompatible preferredQuality } } } }",
+                    json!({}),
+                )
+                .await;
+            assert!(response.errors.is_empty(), "{response:?}");
+            response.data.into_json().unwrap()["castSettings"]["edges"][0]["node"].clone()
+        }
+    }
+
+    fn capitalize(field: &str) -> String {
+        format!("{}{}", field[..1].to_ascii_uppercase(), &field[1..])
+    }
+
+    fn device(address: &str) -> Value {
+        json!({
+            "name": "Den", "address": address, "port": 8009, "deviceType": "CHROMECAST",
+            "isFavorite": false, "isManual": true, "enabled": true, "playbackSupported": true
+        })
+    }
+
+    const DEVICE: &str = "castDevice { id name address port deviceType }";
+    const SETTING: &str =
+        "castSetting { id discoveryIntervalSeconds defaultVolume preferredQuality }";
+
+    fn with(mut base: Value, key: &str, value: Value) -> Value {
+        base[key] = value;
+        base
+    }
+
+    #[tokio::test]
+    async fn create_refuses_bad_targets_ports_and_types_and_defaults_the_name() {
+        let r = Real::new().await;
+        for (what, input) in [
+            ("public address", device("8.8.8.8")),
+            ("loopback", device("127.0.0.1")),
+            ("hostname", device("receiver.local")),
+            ("port zero", with(device("192.168.1.60"), "port", json!(0))),
+            (
+                "port too large",
+                with(device("192.168.1.60"), "port", json!(70000)),
+            ),
+            (
+                "device type",
+                with(device("192.168.1.60"), "deviceType", json!("TOASTER")),
+            ),
+        ] {
+            let outcome = r
+                .mutate("createCastDevice", DEVICE, json!({ "input": input }))
+                .await;
+            assert!(outcome.is_err(), "{what} was accepted: {outcome:?}");
+        }
+        assert!(r.devices().await.is_empty(), "a refused create left a row");
+
+        let created = r
+            .mutate(
+                "createCastDevice",
+                DEVICE,
+                json!({ "input": with(with(device(" 192.168.1.60 "), "name", json!("  ")), "deviceType", json!("chromecast_audio")) }),
+            )
+            .await
+            .unwrap();
+        let created = &created["castDevice"];
+        assert_eq!(created["name"], "Cast Device (192.168.1.60)");
+        assert_eq!(created["address"], "192.168.1.60");
+        assert_eq!(created["deviceType"], "CHROMECAST_AUDIO");
+        r.services.stop_all().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn update_refuses_bad_targets_and_types_but_allows_unrelated_edits() {
+        let r = Real::new().await;
+        let id = r
+            .mutate(
+                "createCastDevice",
+                DEVICE,
+                json!({ "input": device("192.168.1.60") }),
+            )
+            .await
+            .unwrap()["castDevice"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        for (what, input) in [
+            ("public address", json!({ "address": "8.8.8.8" })),
+            ("port zero", json!({ "port": 0 })),
+            ("device type", json!({ "deviceType": "TOASTER" })),
+            ("blank name", json!({ "name": " " })),
+        ] {
+            let outcome = r
+                .mutate(
+                    "updateCastDevice",
+                    DEVICE,
+                    json!({ "id": id, "input": input }),
+                )
+                .await;
+            assert!(outcome.is_err(), "{what} was accepted: {outcome:?}");
+        }
+        let unchanged = &r.devices().await[0];
+        assert_eq!(unchanged["address"], "192.168.1.60");
+        assert_eq!(unchanged["deviceType"], "CHROMECAST");
+        assert_eq!(unchanged["name"], "Den");
+
+        r.mutate(
+            "updateCastDevice",
+            DEVICE,
+            json!({ "id": id, "input": { "isFavorite": true, "address": "10.0.0.7" } }),
+        )
+        .await
+        .unwrap();
+        let updated = &r.devices().await[0];
+        assert_eq!(updated["address"], "10.0.0.7");
+        assert_eq!(updated["isFavorite"], true);
+        r.services.stop_all().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn settings_refuse_bad_interval_volume_and_quality_on_create_and_update() {
+        let r = Real::new().await;
+        let seeded = r.setting().await;
+        let id = seeded["id"].as_str().unwrap().to_string();
+        for (what, input) in [
+            (
+                "interval below range",
+                json!({ "discoveryIntervalSeconds": 4 }),
+            ),
+            (
+                "interval above range",
+                json!({ "discoveryIntervalSeconds": 86401 }),
+            ),
+            ("volume above range", json!({ "defaultVolume": 1.5 })),
+            ("negative volume", json!({ "defaultVolume": -0.1 })),
+            ("quality", json!({ "preferredQuality": "4k" })),
+            ("blank quality", json!({ "preferredQuality": "" })),
+        ] {
+            let outcome = r
+                .mutate(
+                    "updateCastSetting",
+                    SETTING,
+                    json!({ "id": id, "input": input.clone() }),
+                )
+                .await;
+            assert!(outcome.is_err(), "update accepted {what}: {outcome:?}");
+            let mut create = json!({
+                "autoDiscoveryEnabled": false, "discoveryIntervalSeconds": 60,
+                "defaultVolume": 0.5, "transcodeIncompatible": false
+            });
+            for (key, value) in input.as_object().unwrap() {
+                create[key] = value.clone();
+            }
+            let outcome = r
+                .mutate("createCastSetting", SETTING, json!({ "input": create }))
+                .await;
+            assert!(outcome.is_err(), "create accepted {what}: {outcome:?}");
+        }
+        assert_eq!(r.setting().await, seeded, "a refused write changed the row");
+
+        let saved = r
+            .mutate(
+                "updateCastSetting",
+                SETTING,
+                json!({ "id": id, "input": { "preferredQuality": " 720P ", "defaultVolume": 0.0 } }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(saved["castSetting"]["preferredQuality"], "720p");
+        assert_eq!(saved["castSetting"]["defaultVolume"], 0.0);
+        r.services.stop_all().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn saving_settings_applies_them_to_the_running_service_only_when_discovery_changes() {
+        let r = Real::new().await;
+        let cast = r.services.get_cast().await.unwrap();
+        let id = r.setting().await["id"].as_str().unwrap().to_string();
+        let applied = cast.runtime_settings_applied();
+
+        r.mutate(
+            "updateCastSetting",
+            SETTING,
+            json!({ "id": id, "input": { "autoDiscoveryEnabled": false, "discoveryIntervalSeconds": 120 } }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(cast.runtime_settings_applied(), applied + 1);
+        assert_eq!(cast.discovery_settings().await, (false, 120));
+        assert!(!cast.discovery_loop_running().await);
+
+        // Unrelated fields must not restart discovery, which scans on its first tick.
+        r.mutate(
+            "updateCastSetting",
+            SETTING,
+            json!({ "id": id, "input": { "defaultVolume": 0.4, "preferredQuality": "480p" } }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(cast.runtime_settings_applied(), applied + 1);
+
+        // A refused write must not reach the runtime.
+        assert!(
+            r.mutate(
+                "updateCastSetting",
+                SETTING,
+                json!({ "id": id, "input": { "discoveryIntervalSeconds": 1 } }),
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(cast.runtime_settings_applied(), applied + 1);
+        assert_eq!(cast.discovery_settings().await, (false, 120));
+        r.services.stop_all().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_restarted_service_reads_the_saved_settings_instead_of_its_defaults() {
+        let r = Real::new().await;
+        let id = r.setting().await["id"].as_str().unwrap().to_string();
+        r.mutate(
+            "updateCastSetting",
+            SETTING,
+            json!({ "id": id, "input": { "autoDiscoveryEnabled": false, "discoveryIntervalSeconds": 777 } }),
+        )
+        .await
+        .unwrap();
+
+        let restarted = |use_persisted_settings| {
+            CastService::new(
+                Arc::downgrade(&r.services),
+                CastServiceConfig {
+                    auto_discovery: false,
+                    discovery_interval_secs: 45,
+                    use_persisted_settings,
+                    ..Default::default()
+                },
+            )
+        };
+        let reads_saved = restarted(true);
+        reads_saved.start().await.unwrap();
+        assert_eq!(reads_saved.discovery_settings().await, (false, 777));
+        let ignores_saved = restarted(false);
+        ignores_saved.start().await.unwrap();
+        assert_eq!(ignores_saved.discovery_settings().await, (false, 45));
+        r.services.stop_all().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn internal_discovery_upserts_still_work_and_skip_targets_outside_the_lan() {
+        let r = Real::new().await;
+        let found = |address: &str, name: &str, device_type| DiscoveredCastDevice {
+            name: name.into(),
+            address: address.into(),
+            port: 8009,
+            model: None,
+            device_type,
+            last_seen_at: chrono::Utc::now().to_rfc3339(),
+        };
+        let actor = AuthUser::system_admin();
+        // No model recognised: persisted as UNKNOWN, which the rules must allow.
+        persist_discovered_device(
+            &r.services,
+            &actor,
+            &found("192.168.1.70", "Hall", CastDeviceType::Unknown),
+        )
+        .await
+        .unwrap();
+        persist_discovered_device(
+            &r.services,
+            &actor,
+            &found(
+                "192.168.1.70",
+                "Hall speaker",
+                CastDeviceType::ChromecastAudio,
+            ),
+        )
+        .await
+        .unwrap();
+        persist_discovered_device(
+            &r.services,
+            &actor,
+            &found("8.8.8.8", "Elsewhere", CastDeviceType::Chromecast),
+        )
+        .await
+        .unwrap();
+        let devices = r.devices().await;
+        assert_eq!(devices.len(), 1, "{devices:?}");
+        assert_eq!(devices[0]["name"], "Hall speaker");
+        assert_eq!(devices[0]["deviceType"], "CHROMECAST_AUDIO");
+        assert_eq!(devices[0]["isFavorite"], false);
+        r.services.stop_all().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn deleting_a_device_stops_its_receiver_and_ends_its_session_once() {
+        let f = Fixture::new().await;
+        let cast = f.services.get_cast().await.unwrap();
+        let actions = Arc::new(Mutex::new(Vec::<String>::new()));
+        let recorded = Arc::clone(&actions);
+        cast.set_test_control_transport(Arc::new(move |address, port, action| {
+            recorded
+                .lock()
+                .unwrap()
+                .push(format!("{action}@{address}:{port}"));
+            Ok(())
+        }));
+        assert!(cast.managed_session(&f.claims.session_id).is_some());
+
+        let response = f
+            .schema
+            .execute(
+                Request::new(format!(
+                    "mutation {{ deleteCastDevice(id: \"{}\") {{ success error }} }}",
+                    f.claims.receiver_device_id
+                ))
+                .data(AuthSubject::from_parts(
+                    "system",
+                    vec!["admin".into()],
+                    vec![],
+                    None,
+                ))
+                .data(AuthUser::system_admin()),
+            )
+            .await;
+        assert!(response.errors.is_empty(), "{response:?}");
+        assert_eq!(
+            *actions.lock().unwrap(),
+            vec!["stop@192.168.1.50:8009".to_string()],
+            "the receiver must be stopped exactly once"
+        );
+        assert!(cast.managed_session(&f.claims.session_id).is_none());
+        let session = CastSession::get(f.db.pool(), &f.claims.session_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(session.player_state, "IDLE");
+        assert!(session.ended_at.is_some());
+        assert!(session.device_id.is_none());
+        f.services.stop_all().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_failing_receiver_does_not_fail_the_delete() {
+        let f = Fixture::new().await;
+        f.services
+            .get_cast()
+            .await
+            .unwrap()
+            .set_test_control_transport(Arc::new(|_, _, _| anyhow::bail!("receiver unreachable")));
+        let response = f
+            .schema
+            .execute(
+                Request::new(format!(
+                    "mutation {{ deleteCastDevice(id: \"{}\") {{ success error }} }}",
+                    f.claims.receiver_device_id
+                ))
+                .data(AuthSubject::from_parts(
+                    "system",
+                    vec!["admin".into()],
+                    vec![],
+                    None,
+                ))
+                .data(AuthUser::system_admin()),
+            )
+            .await;
+        assert!(response.errors.is_empty(), "{response:?}");
+        assert!(
+            CastDevice::get(f.db.pool(), &f.claims.receiver_device_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        f.services.stop_all().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn replacing_a_session_ends_the_old_one_with_the_single_idle_outcome() {
+        let f = Fixture::new().await;
+        let cast = f.services.get_cast().await.unwrap();
+        f.checkpoint("PLAYING", 12.0, false).await.unwrap();
+
+        // The monitor of the session being replaced must be stopped, not left to
+        // race the replacement to the row.
+        let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        struct OnDrop(Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for OnDrop {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let guard = OnDrop(Arc::clone(&stopped));
+        cast.install_session_monitor(f.claims.session_id.clone(), async move {
+            let _guard = guard;
+            std::future::pending::<()>().await;
+        })
+        .await;
+        let operation = cast
+            .lock_session_operations(&f.claims.receiver_address, f.claims.receiver_port)
+            .await
+            .unwrap();
+        let released = cast
+            .retire_receiver_sessions(
+                &f.claims.receiver_device_id,
+                &f.claims.receiver_address,
+                f.claims.receiver_port,
+            )
+            .await;
+        drop(operation);
+        assert_eq!(released, 1);
+        assert!(cast.managed_session(&f.claims.session_id).is_none());
+        for _ in 0..50 {
+            if stopped.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            stopped.load(Ordering::SeqCst),
+            "the old monitor kept running"
+        );
+
+        let replacement = create(
+            &f.schema,
+            "CastSession",
+            json!({
+                "userId":f.claims.user_id, "mediaFileId":f.claims.media_file_id,
+                "deviceId":f.claims.receiver_device_id, "streamUrl":"/api/media/x/stream",
+                "playerState":"STARTING","currentPosition":0.0,"volume":0.5,"isMuted":false,
+                "startedAt":chrono::Utc::now().to_rfc3339()
+            }),
+        )
+        .await;
+        let old = CastSession::get(f.db.pool(), &f.claims.session_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(old.player_state, "IDLE");
+        assert!(old.ended_at.is_some());
+        assert_eq!(old.last_position, Some(12.0));
+        assert!(
+            old.last_error.is_none(),
+            "replacement is not a failure: {:?}",
+            old.last_error
+        );
+        let new = CastSession::get(f.db.pool(), &replacement)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(new.ended_at.is_none());
+        f.services.stop_all().await.unwrap();
+    }
 }

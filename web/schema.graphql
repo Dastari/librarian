@@ -1176,12 +1176,6 @@ type CastDeviceEdge {
 	cursor: String!
 }
 
-type CastDeviceOperationResult {
-	success: Boolean!
-	device: LegacyCastDevice
-	error: String
-}
-
 input CastDeviceOrderByInput {
 	name: OrderDirection
 	lastSeenAt: OrderDirection
@@ -3662,12 +3656,6 @@ input KeysetPageInput {
 	includeTotalCount: Boolean! = false
 }
 
-input LegacyAddCastDeviceInput {
-	address: String!
-	port: Int
-	name: String
-}
-
 type LegacyCastDevice {
 	id: String!
 	name: String!
@@ -5363,36 +5351,6 @@ type Mutation {
 	castSeek(sessionId: String!, position: Float!): CastSessionOperationResult!
 	castSetVolume(sessionId: String!, volume: Float!): CastSessionOperationResult!
 	castSetMuted(sessionId: String!, muted: Boolean!): CastSessionOperationResult!
-	addCastDevice(input: LegacyAddCastDeviceInput!): CastDeviceOperationResult!
-	"""
-	Update an existing #struct_name_str
-	Update one CastDevice records
-	"""
-	updateCastDevice(
-		"""
-		Id
-		"""
-		id: String!,
-		"""
-		Input
-		"""
-		input: UpdateCastDeviceInput!
-	): CastDeviceResult!
-	removeCastDevice(id: String!): CastActionResult!
-	"""
-	Update multiple #plural_name matching the given Where filter
-	Update matching CastSetting records
-	"""
-	updateCastSettings(
-		"""
-		Where
-		"""
-		where: CastSettingWhereInput,
-		"""
-		Input
-		"""
-		input: UpdateCastSettingInput!
-	): UpdateCastSettingsResult!
 	createFullBackup: CreateFullBackupResult!
 	verifyBackupSnapshot(snapshotId: String!): VerifyBackupSnapshotResult!
 	"""
@@ -7681,6 +7639,20 @@ type Mutation {
 		input: CreateCastDeviceInput!
 	): CastDeviceResult!
 	"""
+	Update an existing #struct_name_str
+	Update one CastDevice records
+	"""
+	updateCastDevice(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdateCastDeviceInput!
+	): CastDeviceResult!
+	"""
 	Delete a #struct_name_str
 	Delete one CastDevice records
 	"""
@@ -7806,6 +7778,20 @@ type Mutation {
 		"""
 		id: String!
 	): CastSettingResult!
+	"""
+	Update multiple #plural_name matching the given Where filter
+	Update matching CastSetting records
+	"""
+	updateCastSettings(
+		"""
+		Where
+		"""
+		where: CastSettingWhereInput,
+		"""
+		Input
+		"""
+		input: UpdateCastSettingInput!
+	): UpdateCastSettingsResult!
 	"""
 	Delete multiple #plural_name matching the given Where filter
 	Delete matching CastSetting records

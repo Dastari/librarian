@@ -77,8 +77,8 @@ mutation EntityRefreshTokenDeleteMany($where: RefreshTokenWhereInput) {
   }
 }
 
-subscription EntityRefreshTokenChanged($filter: SubscriptionFilterInput) {
-  refreshTokenChanged(filter: $filter) {
+subscription EntityRefreshTokenChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  refreshTokenChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

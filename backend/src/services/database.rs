@@ -801,6 +801,46 @@ impl AppWriteInputTransform {
         Ok(())
     }
 
+    /// Cast content rules live here, not in a hand-written twin of the generated
+    /// mutation, so every write path is held to them. See `cast::write_rules`.
+    fn prepare_cast_create(
+        entity_name: &str,
+        input: &mut (dyn std::any::Any + Send + Sync),
+    ) -> async_graphql::Result<()> {
+        use crate::services::cast::write_rules;
+        match entity_name {
+            "CastDevice" => input
+                .downcast_mut::<CreateCastDeviceInput>()
+                .map_or(Ok(()), write_rules::prepare_device_create),
+            "CastSetting" => input
+                .downcast_mut::<CreateCastSettingInput>()
+                .map_or(Ok(()), write_rules::prepare_setting_create),
+            _ => Ok(()),
+        }
+    }
+
+    fn prepare_cast_update(
+        entity_name: &str,
+        existing_row: Option<&(dyn std::any::Any + Send + Sync)>,
+        input: &mut (dyn std::any::Any + Send + Sync),
+    ) -> async_graphql::Result<()> {
+        use crate::services::cast::write_rules;
+        match entity_name {
+            "CastDevice" => input
+                .downcast_mut::<UpdateCastDeviceInput>()
+                .map_or(Ok(()), |input| {
+                    write_rules::prepare_device_update(
+                        existing_row.and_then(|row| row.downcast_ref::<CastDevice>()),
+                        input,
+                    )
+                }),
+            "CastSetting" => input
+                .downcast_mut::<UpdateCastSettingInput>()
+                .map_or(Ok(()), write_rules::prepare_setting_update),
+            _ => Ok(()),
+        }
+    }
+
     async fn encrypt_source_credentials(
         &self,
         ctx: Option<&async_graphql::Context<'_>>,
@@ -888,6 +928,7 @@ impl WriteInputTransform for AppWriteInputTransform {
             Self::assign_create_owner(ctx, entity_name, input);
             Self::validate_upsert_link_workaround(ctx, db, entity_name, input, true).await?;
             Self::reject_member_artwork_source_write(ctx, entity_name, input)?;
+            Self::prepare_cast_create(entity_name, input)?;
             if entity_name == "Source"
                 && let Some(input) = input.downcast_mut::<CreateSourceInput>()
             {
@@ -917,6 +958,7 @@ impl WriteInputTransform for AppWriteInputTransform {
             Self::reject_owner_update(ctx, entity_name, input)?;
             Self::validate_upsert_link_workaround(ctx, db, entity_name, input, false).await?;
             Self::reject_member_artwork_source_write(ctx, entity_name, input)?;
+            Self::prepare_cast_update(entity_name, existing_row, input)?;
             if entity_name == "Source"
                 && let Some(input) = input.downcast_mut::<UpdateSourceInput>()
                 && let Some(credentials) = input.credentials.take()
@@ -2772,6 +2814,18 @@ impl AppMutationHook {
         Ok(())
     }
 
+    /// The one outcome for a Cast session that is replaced or whose device is
+    /// removed: IDLE, ended now, the resume position kept. (A receiver that
+    /// stops responding ends DISCONNECTED instead; see `retire_cast_monitor_with_binding`.)
+    fn retired_cast_session(session: &CastSession, now: &str) -> UpdateCastSessionInput {
+        UpdateCastSessionInput {
+            player_state: Some("IDLE".to_string()),
+            ended_at: Some(Some(now.to_string())),
+            last_position: Some(Some(session.current_position)),
+            ..UpdateCastSessionInput::default()
+        }
+    }
+
     async fn end_other_active_cast_sessions(
         hook_ctx: &mut MutationContext<'_>,
         event: &MutationEvent,
@@ -2801,12 +2855,7 @@ impl AppMutationHook {
             hook_ctx
                 .update_by_id::<CastSession>(
                     &old_session.id,
-                    UpdateCastSessionInput {
-                        player_state: Some("IDLE".to_string()),
-                        ended_at: Some(Some(now.clone())),
-                        last_position: Some(Some(old_session.current_position)),
-                        ..UpdateCastSessionInput::default()
-                    },
+                    Self::retired_cast_session(&old_session, &now),
                 )
                 .await
                 .map_err(Self::db_error)?;
@@ -2830,32 +2879,94 @@ impl AppMutationHook {
             .await
             .map_err(Self::db_error)?;
         for session in sessions {
+            let mut update = if session.ended_at.is_none() {
+                Self::retired_cast_session(&session, &now)
+            } else {
+                UpdateCastSessionInput::default()
+            };
+            update.device_id = Some(None);
             hook_ctx
-                .update_by_id::<CastSession>(
-                    &session.id,
-                    UpdateCastSessionInput {
-                        device_id: Some(None),
-                        player_state: if session.ended_at.is_none() {
-                            Some("IDLE".to_string())
-                        } else {
-                            None
-                        },
-                        ended_at: if session.ended_at.is_none() {
-                            Some(Some(now.clone()))
-                        } else {
-                            None
-                        },
-                        last_position: if session.ended_at.is_none() {
-                            Some(Some(session.current_position))
-                        } else {
-                            None
-                        },
-                        ..UpdateCastSessionInput::default()
-                    },
-                )
+                .update_by_id::<CastSession>(&session.id, update)
                 .await
                 .map_err(Self::db_error)?;
         }
+        Ok(())
+    }
+
+    /// Stop playback on the receiver of a deleted device, after the delete
+    /// commits. Hardware failures are only logged here; the rows are already
+    /// ended by `detach_cast_device_sessions` in the deleting transaction.
+    fn defer_cast_receiver_stop(
+        &self,
+        ctx: Option<&async_graphql::Context<'_>>,
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) {
+        let Some(services) = self.services_from_ctx(ctx) else {
+            warn!(
+                cast_device_id = %event.id,
+                "Services manager unavailable after Cast device deletion; receiver stop skipped"
+            );
+            return;
+        };
+        let device_id = event.id.clone();
+        hook_ctx.defer(move |_db| async move {
+            let Some(cast) = services.get_cast().await else {
+                return Ok::<(), anyhow::Error>(());
+            };
+            match cast.stop_device_sessions(&device_id).await {
+                Ok(0) => {}
+                Ok(stopped) => info!(
+                    cast_device_id = %device_id,
+                    stopped,
+                    "Stopped Cast playback on a deleted device"
+                ),
+                Err(error) => warn!(
+                    cast_device_id = %device_id,
+                    error = %error,
+                    "Could not stop Cast playback on a deleted device"
+                ),
+            }
+            Ok(())
+        });
+    }
+
+    /// Apply the saved auto-discovery switch and interval to the running
+    /// service after commit. Only those two fields matter: applying restarts the
+    /// discovery loop, whose first tick scans immediately, so an unrelated edit
+    /// (volume, quality) must not trigger it. The runtime never writes this
+    /// entity, so there is no feedback loop.
+    fn defer_cast_runtime_settings(
+        &self,
+        ctx: Option<&async_graphql::Context<'_>>,
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        let after = Self::after::<CastSetting>(event, "CastSetting")?;
+        if let Some(before) = event.before::<CastSetting>()?
+            && before.auto_discovery_enabled == after.auto_discovery_enabled
+            && before.discovery_interval_seconds == after.discovery_interval_seconds
+        {
+            return Ok(());
+        }
+        let Ok(interval) = u64::try_from(after.discovery_interval_seconds) else {
+            return Ok(());
+        };
+        let auto_discovery = after.auto_discovery_enabled;
+        let Some(services) = self.services_from_ctx(ctx) else {
+            debug!(
+                "Services manager unavailable after Cast settings change; runtime apply skipped"
+            );
+            return Ok(());
+        };
+        hook_ctx.defer(move |_db| async move {
+            // Absent while the database seeds defaults at startup; the service
+            // reads the persisted row itself when it starts.
+            let Some(cast) = services.get_cast().await else {
+                return Ok::<(), anyhow::Error>(());
+            };
+            cast.apply_runtime_settings(auto_discovery, interval).await
+        });
         Ok(())
     }
 
@@ -3022,6 +3133,16 @@ impl MutationHook for AppMutationHook {
                 }
                 (MutationPhase::Before, ChangeAction::Deleted, "CastDevice") => {
                     Self::detach_cast_device_sessions(hook_ctx, event).await?;
+                }
+                (MutationPhase::After, ChangeAction::Deleted, "CastDevice") => {
+                    self.defer_cast_receiver_stop(ctx, hook_ctx, event);
+                }
+                (
+                    MutationPhase::After,
+                    ChangeAction::Created | ChangeAction::Updated,
+                    "CastSetting",
+                ) => {
+                    self.defer_cast_runtime_settings(ctx, hook_ctx, event)?;
                 }
                 (MutationPhase::Before, ChangeAction::Deleted, "Torrent") => {
                     // Everything that should fail visibly to the client belongs here: a

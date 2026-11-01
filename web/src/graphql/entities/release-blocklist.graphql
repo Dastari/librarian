@@ -78,8 +78,8 @@ mutation EntityReleaseBlocklistDeleteMany($where: ReleaseBlocklistWhereInput) {
   }
 }
 
-subscription EntityReleaseBlocklistChanged($filter: SubscriptionFilterInput) {
-  releaseBlocklistChanged(filter: $filter) {
+subscription EntityReleaseBlocklistChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  releaseBlocklistChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

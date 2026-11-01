@@ -1,7 +1,9 @@
 use async_graphql::{Context, Enum, InputObject, Object, SimpleObject};
 use serde::Deserialize;
 
+use super::authorized_media_file;
 use crate::services::graphql::auth::AuthExt;
+use crate::services::graphql::policy::AppFieldPolicy;
 use crate::services::library_scan::{MatchMethod, MatchRequest, MatchWantedPolicy};
 use crate::services::ollama::OllamaParsedHint;
 
@@ -485,6 +487,26 @@ impl LibraryScanMutations {
         #[graphql(name = "input")] input: MatchMediaFileInput,
     ) -> async_graphql::Result<MatchMediaFileResult> {
         let auth_user = ctx.require_member()?.clone();
+        authorized_media_file(ctx, &input.media_file_id).await?;
+        // The targets come from the caller too: a member's file can only link to their own titles.
+        if !auth_user.is_admin() {
+            let db = ctx.data::<crate::db::Database>()?;
+            for (field, value) in [
+                ("libraryId", &input.library_id),
+                ("episodeId", &input.episode_id),
+                ("movieId", &input.movie_id),
+                ("trackId", &input.track_id),
+                ("chapterId", &input.chapter_id),
+            ] {
+                if let Some(value) = value
+                    && !AppFieldPolicy::owns_link(db, &auth_user.user_id, field, value).await?
+                {
+                    return Err(async_graphql::Error::new(
+                        "Match target not found or access denied",
+                    ));
+                }
+            }
+        }
         let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
         let scan_service = services
             .get_library_scan()
@@ -560,6 +582,7 @@ impl LibraryScanMutations {
         #[graphql(name = "input")] input: OrganizeMediaFileInput,
     ) -> async_graphql::Result<OrganizeMediaFileResult> {
         ctx.require_member()?;
+        authorized_media_file(ctx, &input.media_file_id).await?;
         let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
         let scan_service = services
             .get_library_scan()
@@ -589,6 +612,7 @@ impl LibraryScanMutations {
         #[graphql(name = "mediaFileId")] media_file_id: String,
     ) -> async_graphql::Result<UnmatchMediaFileResult> {
         ctx.require_member()?;
+        authorized_media_file(ctx, &media_file_id).await?;
         let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
         let scan_service = services
             .get_library_scan()

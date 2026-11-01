@@ -27,7 +27,7 @@ vi.mock("@apollo/client/react", async (original) => {
     useMutation: (document: unknown) => [
       document === docs.EntityCastSettingCreateDocument ? state.create
         : document === docs.EntityCastSettingUpdateDocument ? state.update
-          : document === docs.AddCastDeviceDocument ? state.add
+          : document === docs.EntityCastDeviceCreateDocument ? state.add
             : document === docs.DiscoverCastDevicesDocument ? state.discover : state.other,
       { loading: false },
     ],
@@ -63,7 +63,7 @@ beforeEach(() => {
   state.devicesRefetch.mockReset().mockResolvedValue(undefined);
   state.create.mockReset().mockResolvedValue({ data: { createCastSetting: { success: true, error: null } } });
   state.update.mockReset().mockResolvedValue({ data: { updateCastSetting: { success: true, error: null } } });
-  state.add.mockReset().mockResolvedValue({ data: { addCastDevice: { success: true, error: null } } });
+  state.add.mockReset().mockResolvedValue({ data: { createCastDevice: { success: true, error: null } } });
   state.discover.mockReset().mockResolvedValue({ data: { discoverCastDevices: [{ id: "found-1" }] } });
 });
 
@@ -174,7 +174,7 @@ describe("CastingSettings bound forms", () => {
     expect(state.add).not.toHaveBeenCalled();
     await edit("IP address or hostname", " receiver.local ");
     await userEvent.click(dialog.getByRole("button", { name: "Add" }));
-    await waitFor(() => expect(state.add).toHaveBeenCalledWith({ variables: { input: { address: "receiver.local", port: 8009, name: null } } }));
+    await waitFor(() => expect(state.add).toHaveBeenCalledWith({ variables: { input: expect.objectContaining({ name: "", address: "receiver.local", port: 8009, deviceType: "CHROMECAST", isManual: true, isFavorite: false, enabled: true, discoveryOrigin: "MANUAL", playbackSupported: true }) } }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add cast device" })).not.toBeInTheDocument());
     expect(state.devicesRefetch).toHaveBeenCalled();
   });
@@ -191,7 +191,7 @@ describe("CastingSettings bound forms", () => {
   });
 
   it("retains a failed device draft, and clears it on cancel and reopen", async () => {
-    state.add.mockResolvedValueOnce({ data: { addCastDevice: { success: false, error: "Device unreachable" } } });
+    state.add.mockResolvedValueOnce({ data: { createCastDevice: { success: false, error: "Device unreachable" } } });
     await mount();
     const dialog = await openDevice();
     await edit("IP address or hostname", "receiver.local");

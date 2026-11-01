@@ -85,8 +85,8 @@ mutation EntityEpisodeDeleteMany($where: EpisodeWhereInput) {
   }
 }
 
-subscription EntityEpisodeChanged($filter: SubscriptionFilterInput) {
-  episodeChanged(filter: $filter) {
+subscription EntityEpisodeChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  episodeChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id

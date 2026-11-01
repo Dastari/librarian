@@ -88,8 +88,8 @@ mutation EntityVideoStreamDeleteMany($where: VideoStreamWhereInput) {
   }
 }
 
-subscription EntityVideoStreamChanged($filter: SubscriptionFilterInput) {
-  videoStreamChanged(filter: $filter) {
+subscription EntityVideoStreamChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
+  videoStreamChanged(filter: $filter, keys: $keys) {
     action
     changeKind
     id
