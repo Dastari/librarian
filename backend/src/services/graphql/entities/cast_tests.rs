@@ -983,7 +983,7 @@ mod generated_writes {
     }
 
     fn capitalize(field: &str) -> String {
-        format!("{}{}", &field[..1].to_ascii_uppercase(), &field[1..])
+        format!("{}{}", field[..1].to_ascii_uppercase(), &field[1..])
     }
 
     fn device(address: &str) -> Value {
