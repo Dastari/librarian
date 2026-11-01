@@ -2249,8 +2249,12 @@ mod admission_tests {
             movie: None,
             show: None,
             episode: None,
+            track: None,
+            chapter: None,
             album: None,
             audiobook: None,
+            source_feed: None,
+            pending_matches: vec![],
         }
     }
 

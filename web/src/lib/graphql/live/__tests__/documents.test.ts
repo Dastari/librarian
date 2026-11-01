@@ -32,9 +32,23 @@ describe("generated live dependencies", () => {
     expect(root("mediaFile")).not.toEqual(expect.arrayContaining(["Subtitle"]));
     expect(root("mediaFile")).not.toEqual(expect.arrayContaining(["MediaChapter"]));
     expect(root("libraryScanRun")).not.toContain("LibraryScanIssue");
-    expect(root("movie")).toContain("MediaFile");
-    expect(root("episode")).toEqual(expect.arrayContaining(["Show", "MediaFile"]));
     expect(root("libraryScanIssue")).toContain("LibraryScanRun");
+  });
+  it("does not watch MediaFile for titles it reaches by propagation, creates, updates and deletes alike", () => {
+    const root = (field: string) => topics(parse(`query($id: String!) { ${field}(id: $id) { id } }`));
+    for (const field of ["movie", "show", "episode", "album", "artist", "track", "audiobook", "chapter", "collection"]) {
+      expect(root(field), field).toContain(`${field.charAt(0).toUpperCase()}${field.slice(1)}`);
+      expect(root(field), field).not.toContain("MediaFile");
+    }
+    expect(root("artist")).not.toEqual(expect.arrayContaining(["Album"]));
+    expect(root("artist")).not.toEqual(expect.arrayContaining(["Track"]));
+    expect(root("collection")).not.toContain("Movie");
+    // Parents never propagate down, so a child's page still watches the parent data it reads.
+    expect(root("episode")).toContain("Show");
+    expect(root("track")).toEqual(expect.arrayContaining(["Album", "Artist"]));
+    expect(root("chapter")).toContain("Audiobook");
+    // Reading a file's fields still watches the file.
+    expect(topics(parse("query($id: String!) { movie(id: $id) { id mediaFile { id size } } }"))).toContain("MediaFile");
   });
   it("watches seasons so provider metadata refreshes reach the show page", () => {
     expect(topicDocuments.Season).toBe(EntitySeasonChangedDocument);
@@ -47,7 +61,10 @@ describe("generated live dependencies", () => {
     const movie = queryDependencies(MovieDetailDocument, { id: "one" });
     expect(movie).toContainEqual({ topic: "Library", ids: undefined, direct: true });
     expect(movie).toContainEqual({ topic: "Movie", ids: ["one"] });
-    expect(movie.find((dependency) => dependency.topic === "MediaFile")?.direct).toBeUndefined();
+    // The page reads the file's own scalars, so only the file's own events matter to that
+    // dependency. A file's change that is not its own reaches the page through the Movie
+    // dependency (non-direct, so propagated events refetch), no longer through a blind edge.
+    expect(movie).toContainEqual({ topic: "MediaFile", ids: undefined, direct: true });
     expect(queryDependencies(LibrariesOverviewDocument).find((dependency) => dependency.topic === "Library")?.direct).toBeUndefined();
   });
   it("keeps computed status and runtime pause/resume dependencies", () => {

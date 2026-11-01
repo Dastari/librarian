@@ -47,6 +47,34 @@ impl Default for DatabaseServiceConfig {
     }
 }
 
+/// Slots in each per-entity `Changed` event channel (the ORM default is 256).
+///
+/// A subscriber that falls more than this many events behind gets
+/// `SUBSCRIPTION_CONTINUITY_LOST` and must refetch, and propagated events share the parent's
+/// channel, so one burst makes every subscriber of that entity lag together.
+///
+/// Sizing, from the live library (16,434 media files, 89 episodes in 6 shows, at most 31
+/// episodes in a show, 192 files in a torrent, 39 subtitles on a file): a single commit that
+/// deletes or rematches one title writes a few hundred rows and, with the parent writes and
+/// propagated events they trigger, about a thousand events on the busiest channel. 16,384
+/// slots is more than ten times that, so a title delete or a rematched page never lags a
+/// subscriber that is merely busy for a moment. A whole-library delete emits well over 100,000 events on the
+/// library and media-file channels; no sensible capacity holds that, and clients already
+/// resynchronize on `SUBSCRIPTION_CONTINUITY_LOST`.
+///
+/// Memory is one pre-allocated slot per event, a 64-byte event plus ring
+/// bookkeeping (see `event_channel_slot_size_bounds_memory`), so about 1.5 MB per entity channel that exists,
+/// plus the shared payload of the events still held in the ring. Channels are created on first
+/// use, so only entity types actually written or watched pay: roughly 40 MB if the web app
+/// watches all of the ~25 entity types it does today.
+pub(crate) const EVENT_CHANNEL_CAPACITY: usize = 16_384;
+
+/// Set the event channel capacity. Capacity applies to channels created afterwards, so call
+/// this before the first subscription or write.
+pub(crate) fn apply_event_channel_capacity(pool: &Database) {
+    pool.set_event_channel_capacity(EVENT_CHANNEL_CAPACITY);
+}
+
 /// Service that owns the database pool and provides start/stop/health.
 /// Register this first so that services depending on `"database"` can start after it.
 pub struct DatabaseService {
@@ -71,6 +99,11 @@ impl DatabaseService {
             .await
             .context("Database service: connect_with_retry failed")?;
         Self::install_hooks(&mut pool, services);
+        // Before any subscription or write creates an event channel. Unit tests build
+        // hundreds of in-memory databases through this constructor; they keep the ORM default
+        // so the test process does not pre-allocate every channel for each of them.
+        #[cfg(not(test))]
+        apply_event_channel_capacity(&pool);
         Ok(Self { pool })
     }
 
@@ -1480,6 +1513,16 @@ impl AppMutationHook {
                 .await
                 .map_err(Self::db_error)?;
             }
+            // The credit's physical foreign key cascades without hooks or events. Deleting
+            // the credits here gives each one a delete event, which invalidates its movie.
+            "Person" => {
+                tx.delete_where::<MovieCastCredit>(MovieCastCreditWhereInput {
+                    person_id: Some(Self::string_eq(&event.id)),
+                    ..Default::default()
+                })
+                .await
+                .map_err(Self::db_error)?;
+            }
             "LibraryScanRun" => {
                 tx.delete_where::<LibraryScanIssue>(LibraryScanIssueWhereInput {
                     scan_run_id: Some(Self::string_eq(&event.id)),
@@ -1611,6 +1654,224 @@ impl AppMutationHook {
         Ok(())
     }
 
+    /// Clear ids that point at a row about to be deleted, for the relations no physical foreign
+    /// key covers (`emit_fk = false`). Each relation's `on_delete` states what happens here.
+    /// Rows keep their history; they lose only the dead id, through the entity layer so each
+    /// cleared row emits its own update event.
+    async fn detach_deleted_references(
+        tx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        macro_rules! clear {
+            ($ty:ty, $filter:ident, $update:ident, $field:ident) => {
+                tx.update_where::<$ty>(
+                    $filter {
+                        $field: Some(Self::string_eq(&event.id)),
+                        ..Default::default()
+                    },
+                    $update {
+                        $field: Some(None),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(Self::db_error)?;
+            };
+        }
+        match event.entity_name {
+            "Movie" => {
+                clear!(Torrent, TorrentWhereInput, UpdateTorrentInput, movie_id);
+                clear!(
+                    UsenetDownload,
+                    UsenetDownloadWhereInput,
+                    UpdateUsenetDownloadInput,
+                    movie_id
+                );
+                clear!(
+                    PlaybackSession,
+                    PlaybackSessionWhereInput,
+                    UpdatePlaybackSessionInput,
+                    movie_id
+                );
+                clear!(
+                    ReleaseBlocklist,
+                    ReleaseBlocklistWhereInput,
+                    UpdateReleaseBlocklistInput,
+                    movie_id
+                );
+            }
+            "Show" => {
+                clear!(Torrent, TorrentWhereInput, UpdateTorrentInput, show_id);
+                clear!(
+                    PlaybackSession,
+                    PlaybackSessionWhereInput,
+                    UpdatePlaybackSessionInput,
+                    tv_show_id
+                );
+                clear!(
+                    ReleaseBlocklist,
+                    ReleaseBlocklistWhereInput,
+                    UpdateReleaseBlocklistInput,
+                    show_id
+                );
+            }
+            "Episode" => {
+                clear!(Torrent, TorrentWhereInput, UpdateTorrentInput, episode_id);
+                clear!(
+                    UsenetDownload,
+                    UsenetDownloadWhereInput,
+                    UpdateUsenetDownloadInput,
+                    episode_id
+                );
+                clear!(
+                    PlaybackSession,
+                    PlaybackSessionWhereInput,
+                    UpdatePlaybackSessionInput,
+                    episode_id
+                );
+                clear!(
+                    CastSession,
+                    CastSessionWhereInput,
+                    UpdateCastSessionInput,
+                    episode_id
+                );
+            }
+            "Album" => {
+                clear!(Torrent, TorrentWhereInput, UpdateTorrentInput, album_id);
+                clear!(
+                    UsenetDownload,
+                    UsenetDownloadWhereInput,
+                    UpdateUsenetDownloadInput,
+                    album_id
+                );
+                clear!(
+                    PlaybackSession,
+                    PlaybackSessionWhereInput,
+                    UpdatePlaybackSessionInput,
+                    album_id
+                );
+                clear!(
+                    ReleaseBlocklist,
+                    ReleaseBlocklistWhereInput,
+                    UpdateReleaseBlocklistInput,
+                    album_id
+                );
+            }
+            "Audiobook" => {
+                clear!(Torrent, TorrentWhereInput, UpdateTorrentInput, audiobook_id);
+                clear!(
+                    UsenetDownload,
+                    UsenetDownloadWhereInput,
+                    UpdateUsenetDownloadInput,
+                    audiobook_id
+                );
+                clear!(
+                    PlaybackSession,
+                    PlaybackSessionWhereInput,
+                    UpdatePlaybackSessionInput,
+                    audiobook_id
+                );
+                clear!(
+                    ReleaseBlocklist,
+                    ReleaseBlocklistWhereInput,
+                    UpdateReleaseBlocklistInput,
+                    audiobook_id
+                );
+            }
+            "Track" => {
+                clear!(Torrent, TorrentWhereInput, UpdateTorrentInput, track_id);
+                clear!(
+                    PlaybackSession,
+                    PlaybackSessionWhereInput,
+                    UpdatePlaybackSessionInput,
+                    track_id
+                );
+            }
+            "Chapter" => {
+                clear!(Torrent, TorrentWhereInput, UpdateTorrentInput, chapter_id);
+            }
+            "Torrent" => {
+                clear!(
+                    Notification,
+                    NotificationWhereInput,
+                    UpdateNotificationInput,
+                    torrent_id
+                );
+                clear!(
+                    RssFeedItem,
+                    RssFeedItemWhereInput,
+                    UpdateRssFeedItemInput,
+                    torrent_id
+                );
+            }
+            "RssFeed" => {
+                clear!(
+                    Torrent,
+                    TorrentWhereInput,
+                    UpdateTorrentInput,
+                    source_feed_id
+                );
+            }
+            "PendingFileMatch" => {
+                clear!(
+                    Notification,
+                    NotificationWhereInput,
+                    UpdateNotificationInput,
+                    pending_match_id
+                );
+            }
+            // Albums cannot lose their artist (`Album.artist_id` is required), so an artist
+            // that still has albums is not deleted. Credits on other artists' tracks are
+            // only a nullable credit and are cleared.
+            "Artist" => {
+                let albums = tx
+                    .query::<Album>()
+                    .filter(AlbumWhereInput {
+                        artist_id: Some(Self::string_eq(&event.id)),
+                        ..Default::default()
+                    })
+                    .limit(1)
+                    .fetch_all()
+                    .await
+                    .map_err(Self::db_error)?;
+                if !albums.is_empty() {
+                    return Err(async_graphql::Error::new(
+                        "This artist still has albums. Delete or move them first.",
+                    )
+                    .extend_with(|_, extensions| extensions.set("code", "CONFLICT")));
+                }
+                clear!(Track, TrackWhereInput, UpdateTrackInput, artist_id);
+            }
+            "QualityProfile" => {
+                clear!(
+                    Library,
+                    LibraryWhereInput,
+                    UpdateLibraryInput,
+                    quality_profile_id
+                );
+                clear!(Movie, MovieWhereInput, UpdateMovieInput, quality_profile_id);
+                clear!(Show, ShowWhereInput, UpdateShowInput, quality_profile_id);
+                clear!(Album, AlbumWhereInput, UpdateAlbumInput, quality_profile_id);
+                clear!(
+                    Audiobook,
+                    AudiobookWhereInput,
+                    UpdateAudiobookInput,
+                    quality_profile_id
+                );
+            }
+            "TorznabCategory" => {
+                clear!(
+                    TorznabCategory,
+                    TorznabCategoryWhereInput,
+                    UpdateTorznabCategoryInput,
+                    parent_id
+                );
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     async fn cleanup_media_file_dependents(
         tx: &mut MutationContext<'_>,
         id: &str,
@@ -1643,6 +1904,31 @@ impl AppMutationHook {
             media_file_id: Some(Self::string_eq(id)),
             ..Default::default()
         })
+        .await
+        .map_err(Self::db_error)?;
+        // Notifications and torrent file rows keep their history and lose only the dead id.
+        tx.update_where::<Notification>(
+            NotificationWhereInput {
+                media_file_id: Some(Self::string_eq(id)),
+                ..Default::default()
+            },
+            UpdateNotificationInput {
+                media_file_id: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(Self::db_error)?;
+        tx.update_where::<TorrentFile>(
+            TorrentFileWhereInput {
+                media_file_id: Some(Self::string_eq(id)),
+                ..Default::default()
+            },
+            UpdateTorrentFileInput {
+                media_file_id: Some(None),
+                ..Default::default()
+            },
+        )
         .await
         .map_err(Self::db_error)?;
         // Retain scan history while its Library/ScanRun exists, with a nullable file link.
@@ -1812,24 +2098,13 @@ impl AppMutationHook {
                 }
             }};
         }
-        // Nested-only relations have no automatic upward propagation. Their
-        // metadata/status changes also invalidate the same surviving parent.
-        macro_rules! nested_edge {
-            ($child:ty, $field:ident, $parent:literal) => {{
-                for row in [event.before::<$child>()?, event.after::<$child>()?]
-                    .into_iter()
-                    .flatten()
-                {
-                    if let Some(id) = &row.$field {
-                        parents.insert(ParentInvalidation($parent, id.clone()));
-                    }
-                }
-            }};
-        }
         match event.entity_name {
             "Track" => {
                 edge!(Track, album_id, "Album");
                 edge!(Track, library_id, "Library");
+                // Creates and updates reach the credited artist through `Track.artist`
+                // propagation; only a delete or a re-credit needs a direct write.
+                optional_edge!(Track, artist_id, "Artist");
                 let before = event.before::<Track>()?;
                 let after = event.after::<Track>()?;
                 let artist_summary_changed = before
@@ -1837,11 +2112,8 @@ impl AppMutationHook {
                     != after.map(|row| (&row.artist_id, &row.library_id, row.duration_secs));
                 for row in [before, after].into_iter().flatten() {
                     summaries.insert(ParentInvalidation("Album", row.album_id.clone()));
-                    if let Some(id) = &row.artist_id {
-                        parents.insert(ParentInvalidation("Artist", id.clone()));
-                        if artist_summary_changed {
-                            summaries.insert(ParentInvalidation("Artist", id.clone()));
-                        }
+                    if artist_summary_changed && let Some(id) = &row.artist_id {
+                        summaries.insert(ParentInvalidation("Artist", id.clone()));
                     }
                 }
             }
@@ -1859,12 +2131,20 @@ impl AppMutationHook {
             "Show" => edge!(Show, library_id, "Library"),
             "Movie" => {
                 edge!(Movie, library_id, "Library");
-                let memberships = [event.before::<Movie>()?, event.after::<Movie>()?]
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|row| row.collection_id.map(|key| (row.library_id.clone(), key)))
-                    .collect::<BTreeSet<_>>();
-                for (library_id, key) in memberships {
+                // Creates, updates and the new membership reach the collection through
+                // `Movie.collection` propagation. A delete or a move leaves the old
+                // collection without a surviving source, so it is written directly.
+                let before = event.before::<Movie>()?;
+                let after = event.after::<Movie>()?;
+                let left = before
+                    .filter(|old| {
+                        after.is_none_or(|new| {
+                            (&new.library_id, new.collection_id)
+                                != (&old.library_id, old.collection_id)
+                        })
+                    })
+                    .and_then(|old| old.collection_id.map(|key| (old.library_id.clone(), key)));
+                if let Some((library_id, key)) = left {
                     for collection in transaction_rows::<Collection, _>(
                         tx,
                         CollectionWhereInput {
@@ -1897,22 +2177,29 @@ impl AppMutationHook {
                 }
             }
             "Collection" => edge!(Collection, library_id, "Library"),
-            "RssFeed" => nested_edge!(RssFeed, library_id, "Library"),
+            // Torrent, RssFeed, PendingFileMatch and MediaFile reach their titles and
+            // libraries through `propagate_change = "up"` on create and update, so the
+            // 10-second torrent sync writes no parent rows. Propagation reads the
+            // post-update row only: a delete or a move still writes the surviving
+            // (old and new) parents here.
+            "RssFeed" => optional_edge!(RssFeed, library_id, "Library"),
             "Torrent" => {
-                nested_edge!(Torrent, library_id, "Library");
-                nested_edge!(Torrent, movie_id, "Movie");
-                nested_edge!(Torrent, episode_id, "Episode");
-                nested_edge!(Torrent, track_id, "Track");
-                nested_edge!(Torrent, chapter_id, "Chapter");
-                nested_edge!(Torrent, show_id, "Show");
-                nested_edge!(Torrent, album_id, "Album");
-                nested_edge!(Torrent, audiobook_id, "Audiobook");
+                optional_edge!(Torrent, library_id, "Library");
+                optional_edge!(Torrent, movie_id, "Movie");
+                optional_edge!(Torrent, episode_id, "Episode");
+                optional_edge!(Torrent, track_id, "Track");
+                optional_edge!(Torrent, chapter_id, "Chapter");
+                optional_edge!(Torrent, show_id, "Show");
+                optional_edge!(Torrent, album_id, "Album");
+                optional_edge!(Torrent, audiobook_id, "Audiobook");
             }
             "PendingFileMatch" => {
-                nested_edge!(PendingFileMatch, movie_id, "Movie");
-                nested_edge!(PendingFileMatch, episode_id, "Episode");
-                nested_edge!(PendingFileMatch, track_id, "Track");
-                nested_edge!(PendingFileMatch, chapter_id, "Chapter");
+                optional_edge!(PendingFileMatch, movie_id, "Movie");
+                optional_edge!(PendingFileMatch, episode_id, "Episode");
+                optional_edge!(PendingFileMatch, track_id, "Track");
+                optional_edge!(PendingFileMatch, chapter_id, "Chapter");
+                // Kept by hand: the source is a (info hash, owner) pair behind a
+                // `source_condition`, which propagation ignores.
                 let sources = [
                     event.before::<PendingFileMatch>()?,
                     event.after::<PendingFileMatch>()?,
@@ -1952,12 +2239,13 @@ impl AppMutationHook {
             }
             "Album" => {
                 edge!(Album, library_id, "Library");
+                // Creates and updates reach the artist through `Album.artist` propagation.
+                edge!(Album, artist_id, "Artist");
                 let before = event.before::<Album>()?;
                 let after = event.after::<Album>()?;
                 let artist_summary_changed = before.map(|row| (&row.artist_id, &row.library_id))
                     != after.map(|row| (&row.artist_id, &row.library_id));
                 for row in [before, after].into_iter().flatten() {
-                    parents.insert(ParentInvalidation("Artist", row.artist_id.clone()));
                     if artist_summary_changed {
                         summaries.insert(ParentInvalidation("Artist", row.artist_id.clone()));
                     }
@@ -1971,38 +2259,13 @@ impl AppMutationHook {
             "LibraryScanRun" => edge!(LibraryScanRun, library_id, "Library"),
             "MediaFile" => {
                 optional_edge!(MediaFile, library_id, "Library");
-                // Link changes already write the old/new targets through the inverse
-                // hooks. Only unchanged target IDs need a timestamp write for changes to
-                // file analysis/quality/size; avoid redundant target writes on rematches.
-                if event.action == ChangeAction::Updated {
-                    let before = Self::before::<MediaFile>(event, "MediaFile")?;
-                    if let Some(file) = tx
-                        .find_by_id::<MediaFile>(&event.id)
-                        .await
-                        .map_err(Self::db_error)?
-                    {
-                        for (kind, old, current) in [
-                            ("Movie", before.movie_id.as_ref(), file.movie_id.as_ref()),
-                            (
-                                "Episode",
-                                before.episode_id.as_ref(),
-                                file.episode_id.as_ref(),
-                            ),
-                            ("Track", before.track_id.as_ref(), file.track_id.as_ref()),
-                            (
-                                "Chapter",
-                                before.chapter_id.as_ref(),
-                                file.chapter_id.as_ref(),
-                            ),
-                        ] {
-                            if old == current
-                                && let Some(id) = current
-                            {
-                                parents.insert(ParentInvalidation(kind, id.clone()));
-                            }
-                        }
-                    }
-                }
+                // File analysis, quality and size changes reach the linked title through
+                // `MediaFile.movie/episode/track/chapter` propagation. A delete or a
+                // re-link has no surviving source for the title it left, so write it.
+                optional_edge!(MediaFile, movie_id, "Movie");
+                optional_edge!(MediaFile, episode_id, "Episode");
+                optional_edge!(MediaFile, track_id, "Track");
+                optional_edge!(MediaFile, chapter_id, "Chapter");
                 // Child-side links are canonical, including historical one-sided rows.
                 for track in transaction_rows::<Track, _>(
                     tx,
@@ -3082,7 +3345,8 @@ impl MutationHook for AppMutationHook {
                 (
                     MutationPhase::Before,
                     ChangeAction::Deleted,
-                    "Show" | "Album" | "Audiobook" | "Movie" | "RssFeed" | "LibraryScanRun",
+                    "Show" | "Album" | "Audiobook" | "Movie" | "RssFeed" | "LibraryScanRun"
+                    | "Person",
                 ) => {
                     Self::cleanup_parent_children(hook_ctx, event).await?;
                 }
@@ -3161,6 +3425,27 @@ impl MutationHook for AppMutationHook {
                 && matches!(event.entity_name, "Movie" | "Episode" | "Track" | "Chapter")
             {
                 Self::detach_deleted_title(hook_ctx, event).await?;
+            }
+            if event.phase == MutationPhase::Before
+                && event.action == ChangeAction::Deleted
+                && matches!(
+                    event.entity_name,
+                    "Movie"
+                        | "Show"
+                        | "Episode"
+                        | "Album"
+                        | "Audiobook"
+                        | "Track"
+                        | "Chapter"
+                        | "Torrent"
+                        | "RssFeed"
+                        | "PendingFileMatch"
+                        | "Artist"
+                        | "QualityProfile"
+                        | "TorznabCategory"
+                )
+            {
+                Self::detach_deleted_references(hook_ctx, event).await?;
             }
             if event.phase == MutationPhase::Before
                 && event.action == ChangeAction::Deleted
@@ -3751,3 +4036,7 @@ mod summary_tests;
 #[cfg(test)]
 #[path = "database_parent_summary_tests.rs"]
 mod parent_summary_tests;
+
+#[cfg(test)]
+#[path = "entity_relations_tests.rs"]
+mod entity_relations_tests;

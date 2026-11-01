@@ -5,7 +5,7 @@ use graphql_orm::DbPool;
 use graphql_orm::graphql::errors::{OrmErrorCode, OrmPublicError};
 use graphql_orm::graphql::subscriptions::SubscriptionEvent;
 
-async fn database(hooks: bool) -> Database {
+pub(super) async fn database(hooks: bool) -> Database {
     let mut db = Database::new(DbPool::connect("sqlite::memory:").await.unwrap());
     bootstrap_schema(&db).await.unwrap();
     if hooks {
@@ -19,7 +19,7 @@ async fn database(hooks: bool) -> Database {
     }
 }
 
-async fn user(db: &Database) -> User {
+pub(super) async fn user(db: &Database) -> User {
     User::insert(
         db,
         CreateUserInput {
@@ -37,7 +37,7 @@ async fn user(db: &Database) -> User {
     .unwrap()
 }
 
-async fn library(db: &Database, user: &User) -> Library {
+pub(super) async fn library(db: &Database, user: &User) -> Library {
     Library::insert(
         db,
         CreateLibraryInput {
@@ -61,7 +61,7 @@ async fn library(db: &Database, user: &User) -> Library {
     .unwrap()
 }
 
-async fn artist(db: &Database, library: &Library) -> Artist {
+pub(super) async fn artist(db: &Database, library: &Library) -> Artist {
     Artist::insert(
         db,
         CreateArtistInput {
@@ -82,7 +82,7 @@ async fn artist(db: &Database, library: &Library) -> Artist {
     .unwrap()
 }
 
-async fn album(db: &Database, library: &Library, artist: &Artist) -> Album {
+pub(super) async fn album(db: &Database, library: &Library, artist: &Artist) -> Album {
     Album::insert(
         db,
         CreateAlbumInput {
@@ -114,7 +114,7 @@ async fn album(db: &Database, library: &Library, artist: &Artist) -> Album {
     .unwrap()
 }
 
-async fn audiobook(db: &Database, library: &Library) -> Audiobook {
+pub(super) async fn audiobook(db: &Database, library: &Library) -> Audiobook {
     Audiobook::insert(
         db,
         CreateAudiobookInput {
@@ -148,7 +148,7 @@ async fn audiobook(db: &Database, library: &Library) -> Audiobook {
     .unwrap()
 }
 
-async fn track(db: &Database, album: &Album, file_id: Option<&str>) -> Track {
+pub(super) async fn track(db: &Database, album: &Album, file_id: Option<&str>) -> Track {
     Track::insert(
         db,
         CreateTrackInput {
@@ -172,7 +172,7 @@ async fn track(db: &Database, album: &Album, file_id: Option<&str>) -> Track {
     .unwrap()
 }
 
-async fn chapter(db: &Database, book: &Audiobook, file_id: Option<&str>) -> Chapter {
+pub(super) async fn chapter(db: &Database, book: &Audiobook, file_id: Option<&str>) -> Chapter {
     Chapter::insert(
         db,
         CreateChapterInput {
@@ -191,7 +191,7 @@ async fn chapter(db: &Database, book: &Audiobook, file_id: Option<&str>) -> Chap
     .unwrap()
 }
 
-async fn show(db: &Database, library: &Library) -> Show {
+pub(super) async fn show(db: &Database, library: &Library) -> Show {
     Show::insert(
         db,
         CreateShowInput {
@@ -221,7 +221,7 @@ async fn show(db: &Database, library: &Library) -> Show {
     .unwrap()
 }
 
-async fn episode(db: &Database, show: &Show, file_id: Option<&str>) -> Episode {
+pub(super) async fn episode(db: &Database, show: &Show, file_id: Option<&str>) -> Episode {
     Episode::insert(
         db,
         CreateEpisodeInput {
@@ -247,7 +247,7 @@ async fn episode(db: &Database, show: &Show, file_id: Option<&str>) -> Episode {
     .unwrap()
 }
 
-async fn movie(db: &Database, library: &Library) -> Movie {
+pub(super) async fn movie(db: &Database, library: &Library) -> Movie {
     Movie::insert(
         db,
         CreateMovieInput {
@@ -290,7 +290,7 @@ async fn movie(db: &Database, library: &Library) -> Movie {
     .unwrap()
 }
 
-async fn media_file(
+pub(super) async fn media_file(
     db: &Database,
     library: &Library,
     size: i64,
@@ -335,7 +335,7 @@ async fn media_file(
     .unwrap()
 }
 
-async fn person(db: &Database) -> Person {
+pub(super) async fn person(db: &Database) -> Person {
     Person::insert(
         db,
         CreatePersonInput {
@@ -348,7 +348,11 @@ async fn person(db: &Database) -> Person {
     .unwrap()
 }
 
-async fn movie_cast_credit(db: &Database, movie: &Movie, person: &Person) -> MovieCastCredit {
+pub(super) async fn movie_cast_credit(
+    db: &Database,
+    movie: &Movie,
+    person: &Person,
+) -> MovieCastCredit {
     MovieCastCredit::insert(
         db,
         CreateMovieCastCreditInput {
@@ -421,7 +425,7 @@ async fn library_scan_issue(
     .unwrap()
 }
 
-async fn video_stream(db: &Database, file: &MediaFile) -> VideoStream {
+pub(super) async fn video_stream(db: &Database, file: &MediaFile) -> VideoStream {
     VideoStream::insert(
         db,
         CreateVideoStreamInput {
@@ -514,7 +518,7 @@ async fn media_chapter(db: &Database, file: &MediaFile) -> MediaChapter {
     .unwrap()
 }
 
-async fn music_fixture(db: &Database) -> (User, Library, Artist, Album) {
+pub(super) async fn music_fixture(db: &Database) -> (User, Library, Artist, Album) {
     let owner = user(db).await;
     let lib = library(db, &owner).await;
     let performer = artist(db, &lib).await;

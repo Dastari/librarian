@@ -302,3 +302,97 @@ async fn nullable_notification_command_fields_cannot_be_created_rewritten_or_cle
     assert_eq!(row.action_data.as_deref(), Some("{}"));
     assert_eq!(row.user_id, f.member.user_id);
 }
+
+/// The torrent row mirrors the runtime session. Owners label and unlink their torrents and ask
+/// for payload deletion, but every field the sync loop owns is administrator-only through the
+/// generated update and bulk update. Internal writers use system authority or the repository.
+#[tokio::test]
+async fn member_cannot_write_runtime_mirrored_torrent_fields_but_keeps_label_and_remove_flag() {
+    let f = Fixture::new().await;
+    let id = f
+        .provision("Torrent", f.torrent_input("runtime-fields"))
+        .await;
+    for (field, value) in [
+        ("state", json!("seeding")),
+        ("progress", json!(1.0)),
+        ("totalBytes", json!(1)),
+        ("downloadedBytes", json!(1)),
+        ("uploadedBytes", json!(1)),
+        ("uploadedBytesTotal", json!(1)),
+        ("savePath", json!("/elsewhere")),
+        ("downloadPath", json!("/elsewhere")),
+        ("excludedFiles", json!([1])),
+        ("completedAt", json!("2026-10-25T00:00:00Z")),
+        ("postProcessStatus", json!("completed")),
+        ("postProcessError", json!("forged")),
+        ("processedAt", json!("2026-10-25T00:00:00Z")),
+    ] {
+        let mut input = json!({"name": "must not commit"});
+        input[field] = value.clone();
+        assert_forbidden(&f.update(&f.member, "Torrent", &id, input.clone()).await);
+        let bulk = f
+            .execute(
+                &f.member,
+                "mutation($where:TorrentWhereInput,$input:UpdateTorrentInput!){updateTorrents(where:$where,input:$input){success error}}"
+                    .to_string(),
+                json!({"where":{"id":{"eq":id}},"input":input}),
+            )
+            .await;
+        // The bulk path refuses it too (it reports a failed mutation rather than FORBIDDEN).
+        let bulk = bulk.data.into_json().unwrap();
+        assert_eq!(bulk["updateTorrents"]["success"], false, "{field}: {bulk}");
+        let row = Torrent::get(f.db.pool(), &id).await.unwrap().unwrap();
+        assert_eq!(
+            row.name, "Original torrent",
+            "{field} must not partly commit"
+        );
+        assert_eq!(row.state, "paused", "{field}");
+    }
+    // The same bulk call succeeds for a field owners may write, so the refusals above come
+    // from the field policy and not from the shape of the request.
+    let allowed = f
+        .execute(
+            &f.member,
+            "mutation($where:TorrentWhereInput,$input:UpdateTorrentInput!){updateTorrents(where:$where,input:$input){success error}}"
+                .to_string(),
+            json!({"where":{"id":{"eq":id}},"input":{"name":"Bulk label"}}),
+        )
+        .await;
+    assert!(allowed.errors.is_empty(), "{allowed:?}");
+    assert_eq!(
+        allowed.data.into_json().unwrap()["updateTorrents"]["success"],
+        true
+    );
+    // What owners legitimately set stays writable: the label and the remove-with-files flag.
+    assert_success(
+        f.update(
+            &f.member,
+            "Torrent",
+            &id,
+            json!({"name":"Member label","deleteFilesOnRemove":true}),
+        )
+        .await,
+        "updateTorrent",
+    );
+    let row = Torrent::get(f.db.pool(), &id).await.unwrap().unwrap();
+    assert_eq!(
+        (row.name.as_str(), row.delete_files_on_remove),
+        ("Member label", true)
+    );
+    // Administrators, and through them the worker's system authority, can write the mirror.
+    assert_success(
+        f.update(
+            &f.admin,
+            "Torrent",
+            &id,
+            json!({"state":"seeding","progress":1.0,"excludedFiles":[0]}),
+        )
+        .await,
+        "updateTorrent",
+    );
+    let row = Torrent::get(f.db.pool(), &id).await.unwrap().unwrap();
+    assert_eq!(
+        (row.state.as_str(), row.excluded_files.clone()),
+        ("seeding", vec![0])
+    );
+}

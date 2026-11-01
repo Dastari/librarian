@@ -88,7 +88,8 @@ pub struct RssFeed {
         target = "Library",
         from = "library_id",
         to = "id",
-        on_delete = "set_null",
+        on_delete = "cascade",
+        propagate_change = "up",
         emit_fk = false
     )]
     pub library: Option<Box<Library>>,

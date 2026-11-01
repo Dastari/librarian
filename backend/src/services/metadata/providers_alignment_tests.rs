@@ -488,7 +488,7 @@ async fn catalog_overlay_reads_only_owned_candidates_and_does_not_persist_matche
 }
 
 #[test]
-fn relation_metadata_has_one_stable_upward_route_and_preserves_physical_foreign_keys() {
+fn relation_metadata_declares_each_upward_route_once_and_preserves_physical_foreign_keys() {
     use crate::graphql::entities::*;
     use graphql_orm::graphql::orm::{Entity, RelationChangePropagation};
     use std::collections::{BTreeMap, BTreeSet};
@@ -520,31 +520,60 @@ fn relation_metadata_has_one_stable_upward_route_and_preserves_physical_foreign_
         PlaybackProgress,
         PlaybackSession,
         PendingFileMatch,
-        Notification
+        Notification,
+        Torrent
     );
-    let expected_up: BTreeMap<_, _> = [
-        ("Movie", "library"),
-        ("Show", "library"),
-        ("Collection", "library"),
-        ("Artist", "library"),
-        ("Album", "library"),
-        ("Audiobook", "library"),
-        ("Episode", "show"),
-        ("Season", "show"),
-        ("Track", "album"),
-        ("Chapter", "audiobook"),
-        ("MediaFile", "library"),
-        ("VideoStream", "mediaFile"),
-        ("AudioStream", "mediaFile"),
-        ("Subtitle", "mediaFile"),
-        ("MediaChapter", "mediaFile"),
-        ("TorrentFile", "torrent"),
-        ("RssFeedItem", "feed"),
-        ("LibraryScanRun", "library"),
-        ("LibraryScanIssue", "scanRun"),
-        ("MovieCastCredit", "movie"),
+    // Every route a change can take to a parent. A parent reachable by several routes
+    // (a track reaches its artist directly and through its album) receives one event:
+    // propagation deduplicates by (target, originating source). Deletes and moves are not
+    // covered by propagation and keep explicit parent writes in `AppMutationHook`.
+    let expected_up: BTreeMap<&str, BTreeSet<&str>> = [
+        ("Movie", vec!["library", "collection"]),
+        ("Show", vec!["library"]),
+        ("Collection", vec!["library"]),
+        ("Artist", vec!["library"]),
+        ("Album", vec!["library", "artist"]),
+        ("Audiobook", vec!["library"]),
+        ("Episode", vec!["show"]),
+        ("Season", vec!["show"]),
+        ("Track", vec!["album", "artist"]),
+        ("Chapter", vec!["audiobook"]),
+        (
+            "MediaFile",
+            vec!["library", "episode", "movie", "track", "chapter"],
+        ),
+        ("VideoStream", vec!["mediaFile"]),
+        ("AudioStream", vec!["mediaFile"]),
+        ("Subtitle", vec!["mediaFile"]),
+        ("MediaChapter", vec!["mediaFile"]),
+        ("TorrentFile", vec!["torrent"]),
+        ("RssFeed", vec!["library"]),
+        ("RssFeedItem", vec!["feed"]),
+        ("LibraryScanRun", vec!["library"]),
+        ("LibraryScanIssue", vec!["scanRun"]),
+        ("MovieCastCredit", vec!["movie"]),
+        // PendingFileMatch.torrent is deliberately absent: its source is an (info hash,
+        // owner) pair behind a `source_condition`, which propagation ignores.
+        (
+            "PendingFileMatch",
+            vec!["episode", "movie", "track", "chapter"],
+        ),
+        (
+            "Torrent",
+            vec![
+                "library",
+                "movie",
+                "show",
+                "episode",
+                "track",
+                "chapter",
+                "album",
+                "audiobook",
+            ],
+        ),
     ]
     .into_iter()
+    .map(|(entity, routes)| (entity, routes.into_iter().collect()))
     .collect();
     let existing_fks: BTreeSet<_> = [
         ("Artist", "library"),
@@ -571,7 +600,7 @@ fn relation_metadata_has_one_stable_upward_route_and_preserves_physical_foreign_
     let mut actual_fks = BTreeSet::new();
     for entity in &metadata {
         let mut fields = BTreeSet::new();
-        let mut upward = Vec::new();
+        let mut upward = BTreeSet::new();
         for relation in entity.relations.iter() {
             assert!(
                 fields.insert(relation.field_name),
@@ -594,18 +623,32 @@ fn relation_metadata_has_one_stable_upward_route_and_preserves_physical_foreign_
             }
             if relation.propagate_change == RelationChangePropagation::Up {
                 assert!(!relation.is_multiple);
-                assert_eq!(relation.target_columns, &["id"]);
-                assert_eq!(relation.source_columns.len(), 1);
-                upward.push(relation.field_name);
+                assert_eq!(
+                    relation.source_columns.len(),
+                    relation.target_columns.len(),
+                    "{}.{} tuple",
+                    entity.entity_name,
+                    relation.field_name
+                );
+                // Only Movie.collection is composite: (library, provider key) is how
+                // `Collection.movies` already joins.
+                if relation.source_columns.len() > 1 {
+                    assert_eq!(
+                        (entity.entity_name, relation.field_name),
+                        ("Movie", "collection")
+                    );
+                } else {
+                    assert_eq!(relation.target_columns, &["id"]);
+                }
+                upward.insert(relation.field_name);
             }
         }
         assert_eq!(
             upward,
             expected_up
                 .get(entity.entity_name)
-                .copied()
-                .into_iter()
-                .collect::<Vec<_>>(),
+                .cloned()
+                .unwrap_or_default(),
             "{} propagation",
             entity.entity_name
         );
@@ -631,7 +674,8 @@ async fn generated_schema_exposes_new_relations_without_duplicate_fields() {
                 "qualityProfile",
             ][..],
         ),
-        ("Movie", &["castCredits", "qualityProfile"]),
+        ("Movie", &["castCredits", "qualityProfile", "collection"]),
+        ("Person", &["castCredits"]),
         ("Show", &["qualityProfile"]),
         ("Artist", &["tracks"]),
         ("Album", &["artist", "qualityProfile"]),
@@ -656,6 +700,30 @@ async fn generated_schema_exposes_new_relations_without_duplicate_fields() {
         ("Subtitle", &["mediaFile"]),
         ("MediaChapter", &["mediaFile"]),
         ("TorrentFile", &["torrent", "mediaFile"]),
+        (
+            "Torrent",
+            &[
+                "files",
+                "library",
+                "movie",
+                "show",
+                "episode",
+                "track",
+                "chapter",
+                "album",
+                "audiobook",
+                "sourceFeed",
+                "pendingMatches",
+            ],
+        ),
+        (
+            "UsenetDownload",
+            &["library", "episode", "movie", "album", "audiobook"],
+        ),
+        ("ReleaseBlocklist", &["show", "movie", "album", "audiobook"]),
+        ("CastSession", &["device", "mediaFile", "episode"]),
+        ("SourcePriorityRule", &["library"]),
+        ("TorznabCategory", &["parent"]),
         ("RssFeed", &["library", "items"]),
         ("RssFeedItem", &["feed", "torrent"]),
         ("LibraryScanRun", &["library", "issues"]),

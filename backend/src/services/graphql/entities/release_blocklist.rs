@@ -15,8 +15,16 @@ use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    async_graphql::SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
 )]
+#[graphql(complex)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
@@ -87,6 +95,54 @@ pub struct ReleaseBlocklist {
     #[filterable(type = "date")]
     #[sortable]
     pub expires_at: Option<String>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Show",
+        from = "show_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub show: Option<Box<Show>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Movie",
+        from = "movie_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub movie: Option<Box<Movie>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Album",
+        from = "album_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub album: Option<Box<Album>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Audiobook",
+        from = "audiobook_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub audiobook: Option<Box<Audiobook>>,
 }
 
 #[derive(Default)]
