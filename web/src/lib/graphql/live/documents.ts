@@ -108,16 +108,21 @@ const extraRoots: Record<string, readonly LiveTopic[]> = {
   filesystemRoots: ["Filesystem", "AppSetting"], browseDirectory: ["Filesystem", "AppSetting"],
   libraryPathAvailability: ["Filesystem", "AppSetting"],
 };
-// MovieCastCredit, Episode, Track, Chapter, VideoStream, AudioStream, Subtitle, MediaChapter and
-// LibraryScanIssue are not listed under their parents: each has `propagate_change = "up"` for
-// creates and updates, and `maintain_summaries_and_parent_events` writes the parent when a child
-// is deleted (propagation is suppressed for a deleted source).
+// A root query does not also watch its children, or anything that reaches it by propagation:
+// each has `propagate_change = "up"` for creates and updates, and
+// `maintain_summaries_and_parent_events` writes the surviving parent when the child is deleted or
+// moved (propagation is suppressed for a deleted source and reads only the post-update row).
+//   - MovieCastCredit, Episode, Track, Chapter, VideoStream, AudioStream, Subtitle, MediaChapter
+//     and LibraryScanIssue reach their parents;
+//   - MediaFile reaches the Movie, Episode, Track or Chapter it is linked to, and through them
+//     the Show, Album, Artist, Audiobook and Collection above it;
+//   - Album and Track reach their Artist, and Movie reaches its Collection.
+// The entries below are the rest: a parent's own page reads the data of the entity named, and a
+// parent never propagates down.
 const directDependencies: Partial<Record<EntityTopic, readonly EntityTopic[]>> = {
-  Movie: ["MediaFile"], Show: ["MediaFile"],
-  Episode: ["Show", "MediaFile"], Album: ["MediaFile"],
-  Artist: ["Album", "Track", "MediaFile"], Track: ["Album", "Artist", "MediaFile"],
-  Audiobook: ["MediaFile"], Chapter: ["Audiobook", "MediaFile"],
-  Collection: ["Movie", "MediaFile"],
+  Episode: ["Show"],
+  Track: ["Album", "Artist"],
+  Chapter: ["Audiobook"],
   PlaybackProgress: ["MediaFile", "Movie", "Episode", "Track", "Chapter"],
   LibraryScanIssue: ["LibraryScanRun"],
 };

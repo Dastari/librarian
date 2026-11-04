@@ -4,8 +4,16 @@ use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    async_graphql::SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
 )]
+#[graphql(complex)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
@@ -43,6 +51,19 @@ pub struct Person {
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,
+
+    /// Movie credits for this person. Deleting the person deletes its credits.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "MovieCastCredit",
+        from = "id",
+        to = "person_id",
+        multiple,
+        emit_fk = false
+    )]
+    pub cast_credits: Vec<MovieCastCredit>,
 }
 
 #[derive(Default)]

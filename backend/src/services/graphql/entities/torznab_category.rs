@@ -4,8 +4,16 @@ use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    async_graphql::SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
 )]
+#[graphql(complex)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
@@ -34,6 +42,18 @@ pub struct TorznabCategory {
 
     #[graphql(name = "description")]
     pub description: Option<String>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "TorznabCategory",
+        from = "parent_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub parent: Option<Box<TorznabCategory>>,
 }
 
 #[derive(Default)]

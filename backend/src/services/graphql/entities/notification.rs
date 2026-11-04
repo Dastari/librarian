@@ -112,7 +112,7 @@ pub struct Notification {
         target = "Library",
         from = "library_id",
         to = "id",
-        on_delete = "set_null",
+        on_delete = "cascade",
         emit_fk = false
     )]
     pub library: Option<Box<Library>>,

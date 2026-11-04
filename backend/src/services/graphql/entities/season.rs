@@ -100,6 +100,19 @@ pub struct Season {
         propagate_change = "up"
     )]
     pub show: Option<Show>,
+
+    /// Episodes of this season: episodes carry the show id and season number, not a season id.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Episode",
+        from = ["show_id", "season"],
+        to = ["show_id", "season"],
+        multiple,
+        emit_fk = false
+    )]
+    pub episodes: Vec<Episode>,
 }
 
 #[derive(Default)]

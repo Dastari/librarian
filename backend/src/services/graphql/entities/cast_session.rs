@@ -4,8 +4,16 @@ use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    async_graphql::SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
 )]
+#[graphql(complex)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
@@ -110,6 +118,42 @@ pub struct CastSession {
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "CastDevice",
+        from = "device_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub device: Option<Box<CastDevice>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "MediaFile",
+        from = "media_file_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub media_file: Option<Box<MediaFile>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Episode",
+        from = "episode_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub episode: Option<Box<Episode>>,
 }
 
 #[derive(Default)]

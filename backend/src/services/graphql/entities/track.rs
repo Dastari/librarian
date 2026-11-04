@@ -154,6 +154,7 @@ pub struct Track {
         from = "artist_id",
         to = "id",
         on_delete = "set_null",
+        propagate_change = "up",
         emit_fk = false
     )]
     pub artist: Option<Box<Artist>>,

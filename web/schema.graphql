@@ -1215,102 +1215,42 @@ input CastMediaInput {
 	startPosition: Float
 }
 
-"""
-Cast Session
-"""
 type CastSession {
-	"""
-	Id
-	"""
 	id: String!
-	"""
-	User Id
-	"""
 	userId: String
-	"""
-	Device Id
-	"""
 	deviceId: String
-	"""
-	Media File Id
-	"""
 	mediaFileId: String
-	"""
-	Episode Id
-	"""
 	episodeId: String
-	"""
-	Receiver Address
-	"""
 	receiverAddress: String
-	"""
-	Grant Expires At
-	"""
 	grantExpiresAt: String
-	"""
-	Receiver Transport Id
-	"""
 	receiverTransportId: String
-	"""
-	Receiver Session Id
-	"""
 	receiverSessionId: String
-	"""
-	Media Session Id
-	"""
 	mediaSessionId: Int
-	"""
-	Last Error
-	"""
 	lastError: String
-	"""
-	Playback Decision
-	"""
 	playbackDecision: String
-	"""
-	Playback Reason
-	"""
 	playbackReason: String
-	"""
-	Player State
-	"""
 	playerState: String!
-	"""
-	Current Position
-	"""
 	currentPosition: Float!
-	"""
-	Duration
-	"""
 	duration: Float
-	"""
-	Volume
-	"""
 	volume: Float!
-	"""
-	Is Muted
-	"""
 	isMuted: Boolean!
-	"""
-	Started At
-	"""
 	startedAt: String!
-	"""
-	Ended At
-	"""
 	endedAt: String
-	"""
-	Last Position
-	"""
 	lastPosition: Float
-	"""
-	Created At
-	"""
 	createdAt: String!
-	"""
-	Updated At
-	"""
 	updatedAt: String!
+	"""
+	Device
+	"""
+	device: CastDevice
+	"""
+	Media File
+	"""
+	mediaFile: MediaFile
+	"""
+	Episode
+	"""
+	episode: Episode
 }
 
 """
@@ -4614,6 +4554,10 @@ type Movie {
 	Cast Credits
 	"""
 	castCredits(where: MovieCastCreditWhereInput, orderBy: MovieCastCreditOrderByInput, page: PageInput): MovieCastCreditConnection!
+	"""
+	The provider collection this movie belongs to, matched within the movie's library on the provider key (the inverse of `Collection.movies`). A change to a movie reaches its collection's `Changed` stream through propagation; moving a movie between collections and deleting it write the old collection explicitly (`AppMutationHook::maintain_summaries_and_parent_events`).
+	"""
+	collection: Collection
 	"""
 	Quality Profile
 	"""
@@ -7986,34 +7930,17 @@ input PendingFileMatchWhereInput {
 	not: PendingFileMatchWhereInput
 }
 
-"""
-Person
-"""
 type Person {
-	"""
-	Id
-	"""
 	id: String!
-	"""
-	Tmdb Person Id
-	"""
 	tmdbPersonId: Int!
-	"""
-	Name
-	"""
 	name: String!
-	"""
-	Profile Url
-	"""
 	profileUrl: String
-	"""
-	Created At
-	"""
 	createdAt: String!
-	"""
-	Updated At
-	"""
 	updatedAt: String!
+	"""
+	Movie credits for this person. Deleting the person deletes its credits.
+	"""
+	castCredits(where: MovieCastCreditWhereInput, orderBy: MovieCastCreditOrderByInput, page: PageInput): MovieCastCreditConnection!
 }
 
 """
@@ -10370,20 +10297,15 @@ input RelativeDateInput {
 	days: Int!
 }
 
-"""
-Release Blocklist
-"""
 type ReleaseBlocklist {
-	"""
-	Id
-	"""
 	id: String!
 	"""
 	Torrent info hash of the blocked release, when the source reported one.
 	"""
 	infoHash: String
 	"""
-	Source-specific release identifier (usually the details URL). Used when there is no info hash, and as a second matching key when there is.
+	Source-specific release identifier (usually the details URL). Used when
+	there is no info hash, and as a second matching key when there is.
 	"""
 	guid: String
 	"""
@@ -10399,29 +10321,34 @@ type ReleaseBlocklist {
 	"""
 	reason: String!
 	"""
-	Wanted-target the blocked release was grabbed for, so the UI can show "blocked releases" per item and the sweep knows what to re-hunt.
+	Wanted-target the blocked release was grabbed for, so the UI can show
+	"blocked releases" per item and the sweep knows what to re-hunt.
 	"""
 	showId: String
-	"""
-	Movie Id
-	"""
 	movieId: String
-	"""
-	Album Id
-	"""
 	albumId: String
-	"""
-	Audiobook Id
-	"""
 	audiobookId: String
-	"""
-	Created At
-	"""
 	createdAt: String!
 	"""
 	When the block lapses. Null blocks the release permanently.
 	"""
 	expiresAt: String
+	"""
+	Show
+	"""
+	show: Show
+	"""
+	Movie
+	"""
+	movie: Movie
+	"""
+	Album
+	"""
+	album: Album
+	"""
+	Audiobook
+	"""
+	audiobook: Audiobook
 }
 
 """
@@ -11250,6 +11177,10 @@ type Season {
 	Show
 	"""
 	show: Show
+	"""
+	Episodes of this season: episodes carry the show id and season number, not a season id.
+	"""
+	episodes(where: EpisodeWhereInput, orderBy: EpisodeOrderByInput, page: PageInput): EpisodeConnection!
 }
 
 """
@@ -11666,46 +11597,20 @@ input SourceOrderByInput {
 	updatedAt: OrderDirection
 }
 
-"""
-Source Priority Rule
-"""
 type SourcePriorityRule {
-	"""
-	Id
-	"""
 	id: String!
-	"""
-	User Id
-	"""
 	userId: String!
-	"""
-	Library Type
-	"""
 	libraryType: String
-	"""
-	Library Id
-	"""
 	libraryId: String
-	"""
-	Priority Order
-	"""
 	priorityOrder: [String!]!
-	"""
-	Search All Sources
-	"""
 	searchAllSources: Boolean!
-	"""
-	Enabled
-	"""
 	enabled: Boolean!
-	"""
-	Created At
-	"""
 	createdAt: String!
-	"""
-	Updated At
-	"""
 	updatedAt: String!
+	"""
+	Library
+	"""
+	library: Library
 }
 
 """
@@ -13187,6 +13092,14 @@ type Torrent {
 	"""
 	episode: Episode
 	"""
+	Track
+	"""
+	track: Track
+	"""
+	Chapter
+	"""
+	chapter: Chapter
+	"""
 	Album
 	"""
 	album: Album
@@ -13194,6 +13107,14 @@ type Torrent {
 	Audiobook
 	"""
 	audiobook: Audiobook
+	"""
+	The RSS feed this torrent was grabbed from. Deleting the feed clears the link.
+	"""
+	sourceFeed: RssFeed
+	"""
+	Pending file matches whose source is this torrent. Pending matches store the info hash (never `Torrent.id`) qualified by owner; see `PendingFileMatch.torrent`. Deleting the torrent keeps these rows as import history.
+	"""
+	pendingMatches(where: PendingFileMatchWhereInput, orderBy: PendingFileMatchOrderByInput, page: PageInput): PendingFileMatchConnection!
 }
 
 """
@@ -13443,26 +13364,15 @@ input TorrentWhereInput {
 	not: TorrentWhereInput
 }
 
-"""
-Torznab Category
-"""
 type TorznabCategory {
-	"""
-	Id
-	"""
 	id: String!
-	"""
-	Name
-	"""
 	name: String!
-	"""
-	Parent Id
-	"""
 	parentId: String
-	"""
-	Description
-	"""
 	description: String
+	"""
+	Parent
+	"""
+	parent: TorznabCategory
 }
 
 """
@@ -14786,110 +14696,52 @@ type UpsertShowResult {
 	show: Show
 }
 
-"""
-Usenet Download
-"""
 type UsenetDownload {
-	"""
-	Id
-	"""
 	id: String!
-	"""
-	User Id
-	"""
 	userId: String!
-	"""
-	Nzb Name
-	"""
 	nzbName: String!
-	"""
-	Nzb Hash
-	"""
 	nzbHash: String
-	"""
-	Nzb Url
-	"""
 	nzbUrl: String
-	"""
-	Nzb Data
-	"""
 	nzbData: String
-	"""
-	State
-	"""
 	state: String!
-	"""
-	Progress
-	"""
 	progress: String
-	"""
-	Size Bytes
-	"""
 	sizeBytes: Int
-	"""
-	Downloaded Bytes
-	"""
 	downloadedBytes: Int
-	"""
-	Download Speed
-	"""
 	downloadSpeed: Int
-	"""
-	Eta Seconds
-	"""
 	etaSeconds: Int
-	"""
-	Error Message
-	"""
 	errorMessage: String
-	"""
-	Retry Count
-	"""
 	retryCount: Int!
-	"""
-	Download Path
-	"""
 	downloadPath: String
-	"""
-	Library Id
-	"""
 	libraryId: String
-	"""
-	Episode Id
-	"""
 	episodeId: String
-	"""
-	Movie Id
-	"""
 	movieId: String
-	"""
-	Album Id
-	"""
 	albumId: String
-	"""
-	Audiobook Id
-	"""
 	audiobookId: String
-	"""
-	Indexer Id
-	"""
 	indexerId: String
-	"""
-	Post Process Status
-	"""
 	postProcessStatus: String
-	"""
-	Created At
-	"""
 	createdAt: String!
-	"""
-	Updated At
-	"""
 	updatedAt: String!
-	"""
-	Completed At
-	"""
 	completedAt: String
+	"""
+	Library
+	"""
+	library: Library
+	"""
+	Episode
+	"""
+	episode: Episode
+	"""
+	Movie
+	"""
+	movie: Movie
+	"""
+	Album
+	"""
+	album: Album
+	"""
+	Audiobook
+	"""
+	audiobook: Audiobook
 }
 
 """

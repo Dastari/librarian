@@ -275,9 +275,15 @@ async fn unchanged_artist_totals_still_deliver_metadata_invalidation_only_to_own
     let payload = response.data.into_json().unwrap();
     assert_eq!(payload["artistChanged"]["artist"]["id"], performer.id);
     assert_eq!(payload["artistChanged"]["artist"]["trackCount"], 1);
-    assert_eq!(
-        payload["artistChanged"]["sourceEntity"],
-        serde_json::Value::Null
+    // No total changed, so no Artist row was written: the signal is the propagated one
+    // from the track, and the two routes (Track.artist, Track -> Album -> Artist) deliver
+    // it once.
+    assert_eq!(payload["artistChanged"]["sourceEntity"], "Track");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), owned.next())
+            .await
+            .is_err(),
+        "one change to a track must reach its artist once"
     );
     assert!(
         tokio::time::timeout(Duration::from_millis(40), foreign.next())
@@ -324,9 +330,10 @@ async fn metadata_only_artist_events_leave_legacy_totals_for_explicit_repair() {
     .await
     .unwrap();
     assert_artist(&db, &performer.id, 99, 99, 999).await;
+    // No total changed, so the artist is not written: it hears the change by propagation.
     assert!(
-        std::iter::from_fn(|| events.try_recv().ok())
-            .any(|change| change.event.id == performer.id && change.event.source_entity.is_none())
+        std::iter::from_fn(|| events.try_recv().ok()).any(|change| change.event.id == performer.id
+            && change.event.source_entity.as_deref() == Some("Track"))
     );
     Album::update_by_id(
         &db,
@@ -341,8 +348,8 @@ async fn metadata_only_artist_events_leave_legacy_totals_for_explicit_repair() {
     .unwrap();
     assert_artist(&db, &performer.id, 99, 99, 999).await;
     assert!(
-        std::iter::from_fn(|| events.try_recv().ok())
-            .any(|change| change.event.id == performer.id && change.event.source_entity.is_none())
+        std::iter::from_fn(|| events.try_recv().ok()).any(|change| change.event.id == performer.id
+            && change.event.source_entity.as_deref() == Some("Album"))
     );
     let report = reconcile_stored_media_summaries(&db, false).await.unwrap();
     assert_eq!(report.artists_changed, 1);
@@ -372,7 +379,7 @@ async fn metadata_only_artist_events_leave_legacy_totals_for_explicit_repair() {
     assert_artist(&db, &performer.id, 1, 1, 0).await;
 }
 
-async fn pending(db: &Database, owner: &User, song: &Track) -> PendingFileMatch {
+pub(super) async fn pending(db: &Database, owner: &User, song: &Track) -> PendingFileMatch {
     PendingFileMatch::insert(
         db,
         CreatePendingFileMatchInput {
@@ -405,7 +412,7 @@ async fn pending(db: &Database, owner: &User, song: &Track) -> PendingFileMatch 
     .unwrap()
 }
 
-async fn source_torrent(db: &Database, owner: &User) -> Torrent {
+pub(super) async fn source_torrent(db: &Database, owner: &User) -> Torrent {
     Torrent::insert(
         db,
         CreateTorrentInput {
@@ -448,7 +455,7 @@ async fn source_torrent(db: &Database, owner: &User) -> Torrent {
     .unwrap()
 }
 
-fn member_request(document: String, owner: &User, role: &str) -> async_graphql::Request {
+pub(super) fn member_request(document: String, owner: &User, role: &str) -> async_graphql::Request {
     async_graphql::Request::new(document)
         .data(owner.id.clone())
         .data(AuthUser {
@@ -585,13 +592,34 @@ fn pending_torrent_relation_metadata_qualifies_hash_by_owner_without_physical_fk
     assert!(!relation.emit_foreign_key);
 }
 
-fn direct_tracks(
+/// Every Track event since the last call as (track id, source entity). A source entity means
+/// the event was propagated from that child; none means a direct write to the track.
+fn track_events(
     events: &mut tokio::sync::broadcast::Receiver<SubscriptionEvent<TrackChangedEvent>>,
-) -> BTreeSet<String> {
-    std::iter::from_fn(|| events.try_recv().ok())
-        .filter(|change| change.event.source_entity.is_none())
-        .map(|change| change.event.id.clone())
-        .collect()
+) -> Vec<(String, Option<String>)> {
+    let mut seen = std::iter::from_fn(|| events.try_recv().ok())
+        .map(|change| (change.event.id.clone(), change.event.source_entity.clone()))
+        .collect::<Vec<_>>();
+    seen.sort();
+    seen
+}
+
+fn event(id: &str, source: Option<&str>) -> (String, Option<String>) {
+    (id.to_string(), source.map(str::to_string))
+}
+
+/// Observed events are sorted; so are the expectations.
+fn expect(mut events: Vec<(String, Option<String>)>) -> Vec<(String, Option<String>)> {
+    events.sort();
+    events
+}
+
+/// Whether a direct write to `id` was observed (a deleted source also queues a propagated
+/// event, which delivery then suppresses because the source no longer exists).
+fn wrote_directly(events: &[(String, Option<String>)], id: &str) -> bool {
+    events
+        .iter()
+        .any(|(seen, source)| seen == id && source.is_none())
 }
 
 #[tokio::test]
@@ -646,9 +674,10 @@ async fn torrent_lifecycle_invalidates_old_new_typed_targets_without_changing_su
     )
     .await
     .unwrap();
+    // Creates and updates reach the track through `Torrent.track` propagation, once.
     assert_eq!(
-        direct_tracks(&mut events),
-        BTreeSet::from([first.id.clone()])
+        track_events(&mut events),
+        vec![event(&first.id, Some("Torrent"))]
     );
     Torrent::update_by_id(
         &db,
@@ -661,9 +690,12 @@ async fn torrent_lifecycle_invalidates_old_new_typed_targets_without_changing_su
     .await
     .unwrap();
     assert_eq!(
-        direct_tracks(&mut events),
-        BTreeSet::from([first.id.clone()])
+        track_events(&mut events),
+        vec![event(&first.id, Some("Torrent"))],
+        "a torrent state change writes no track row"
     );
+    // A move: propagation only knows the new track, so the old one is written directly
+    // (the new one is also written, which is why it appears twice).
     Torrent::update_by_id(
         &db,
         &torrent.id,
@@ -675,11 +707,16 @@ async fn torrent_lifecycle_invalidates_old_new_typed_targets_without_changing_su
     .await
     .unwrap();
     assert_eq!(
-        direct_tracks(&mut events),
-        BTreeSet::from([first.id, second.id.clone()])
+        track_events(&mut events),
+        expect(vec![
+            event(&first.id, None),
+            event(&second.id, None),
+            event(&second.id, Some("Torrent")),
+        ])
     );
+    // A delete has no surviving source, so the track is written directly.
     Torrent::delete_by_id(&db, &torrent.id).await.unwrap();
-    assert_eq!(direct_tracks(&mut events), BTreeSet::from([second.id]));
+    assert!(wrote_directly(&track_events(&mut events), &second.id));
     assert_artist(&db, &performer.id, 1, 2, 11).await;
 }
 
@@ -692,11 +729,12 @@ async fn rss_library_status_reparent_and_delete_invalidate_surviving_libraries()
     let mut events = db
         .ensure_event_sender::<SubscriptionEvent<LibraryChangedEvent>>()
         .subscribe();
-    let mut direct = || {
-        std::iter::from_fn(|| events.try_recv().ok())
-            .filter(|change| change.event.source_entity.is_none())
-            .map(|change| change.event.id.clone())
-            .collect::<BTreeSet<_>>()
+    let mut seen = || {
+        let mut seen = std::iter::from_fn(|| events.try_recv().ok())
+            .map(|change| (change.event.id.clone(), change.event.source_entity.clone()))
+            .collect::<Vec<_>>();
+        seen.sort();
+        seen
     };
     let feed = RssFeed::insert(
         &db,
@@ -716,7 +754,8 @@ async fn rss_library_status_reparent_and_delete_invalidate_surviving_libraries()
     )
     .await
     .unwrap();
-    assert_eq!(direct(), BTreeSet::from([first.id.clone()]));
+    // Creates and updates reach the library through `RssFeed.library` propagation, once.
+    assert_eq!(seen(), vec![event(&first.id, Some("RssFeed"))]);
     RssFeed::update_by_id(
         &db,
         &feed.id,
@@ -727,7 +766,8 @@ async fn rss_library_status_reparent_and_delete_invalidate_surviving_libraries()
     )
     .await
     .unwrap();
-    assert_eq!(direct(), BTreeSet::from([first.id.clone()]));
+    assert_eq!(seen(), vec![event(&first.id, Some("RssFeed"))]);
+    // A move writes the old library directly; the new one is propagated and also written.
     RssFeed::update_by_id(
         &db,
         &feed.id,
@@ -738,12 +778,19 @@ async fn rss_library_status_reparent_and_delete_invalidate_surviving_libraries()
     )
     .await
     .unwrap();
-    assert_eq!(direct(), BTreeSet::from([first.id, second.id.clone()]));
+    assert_eq!(
+        seen(),
+        expect(vec![
+            event(&first.id, None),
+            event(&second.id, None),
+            event(&second.id, Some("RssFeed")),
+        ])
+    );
     RssFeed::delete_by_id(&db, &feed.id).await.unwrap();
-    assert_eq!(direct(), BTreeSet::from([second.id]));
+    assert!(wrote_directly(&seen(), &second.id));
 }
 
-async fn collection(db: &Database, lib: &Library, key: i32) -> Collection {
+pub(super) async fn collection(db: &Database, lib: &Library, key: i32) -> Collection {
     Collection::insert(
         db,
         CreateCollectionInput {
@@ -775,11 +822,12 @@ async fn movie_collection_invalidation_uses_library_and_provider_key_and_old_new
     let mut events = db
         .ensure_event_sender::<SubscriptionEvent<CollectionChangedEvent>>()
         .subscribe();
-    let mut direct = || {
-        std::iter::from_fn(|| events.try_recv().ok())
-            .filter(|change| change.event.source_entity.is_none())
-            .map(|change| change.event.id.clone())
-            .collect::<BTreeSet<_>>()
+    let mut seen = || {
+        let mut seen = std::iter::from_fn(|| events.try_recv().ok())
+            .map(|change| (change.event.id.clone(), change.event.source_entity.clone()))
+            .collect::<Vec<_>>();
+        seen.sort();
+        seen
     };
     Movie::update_by_id(
         &db,
@@ -791,7 +839,9 @@ async fn movie_collection_invalidation_uses_library_and_provider_key_and_old_new
     )
     .await
     .unwrap();
-    assert_eq!(direct(), BTreeSet::from([first.id.clone()]));
+    // Joining a collection reaches it through `Movie.collection` propagation (library and
+    // provider key), never the same key in another library.
+    assert_eq!(seen(), vec![event(&first.id, Some("Movie"))]);
     Movie::update_by_id(
         &db,
         &row.id,
@@ -802,7 +852,8 @@ async fn movie_collection_invalidation_uses_library_and_provider_key_and_old_new
     )
     .await
     .unwrap();
-    assert_eq!(direct(), BTreeSet::from([first.id.clone()]));
+    assert_eq!(seen(), vec![event(&first.id, Some("Movie"))]);
+    // Leaving a collection writes it directly; the new one is reached by propagation only.
     Movie::update_by_id(
         &db,
         &row.id,
@@ -813,9 +864,15 @@ async fn movie_collection_invalidation_uses_library_and_provider_key_and_old_new
     )
     .await
     .unwrap();
-    assert_eq!(direct(), BTreeSet::from([first.id, second.id.clone()]));
+    assert_eq!(
+        seen(),
+        expect(vec![
+            event(&first.id, None),
+            event(&second.id, Some("Movie"))
+        ])
+    );
     Movie::delete_by_id(&db, &row.id).await.unwrap();
-    assert_eq!(direct(), BTreeSet::from([second.id]));
+    assert!(wrote_directly(&seen(), &second.id));
     // Catalog size is provider metadata, not a local-membership summary.
     assert_eq!(
         Collection::get(db.pool(), &foreign.id)
@@ -841,8 +898,8 @@ async fn pending_status_retarget_and_delete_invalidate_only_typed_old_new_target
         .subscribe();
     let row = pending(&db, &owner, &first).await;
     assert_eq!(
-        direct_tracks(&mut events),
-        BTreeSet::from([first.id.clone()])
+        track_events(&mut events),
+        vec![event(&first.id, Some("PendingFileMatch"))]
     );
     PendingFileMatch::update_by_id(
         &db,
@@ -855,8 +912,8 @@ async fn pending_status_retarget_and_delete_invalidate_only_typed_old_new_target
     .await
     .unwrap();
     assert_eq!(
-        direct_tracks(&mut events),
-        BTreeSet::from([first.id.clone()])
+        track_events(&mut events),
+        vec![event(&first.id, Some("PendingFileMatch"))]
     );
     PendingFileMatch::update_by_id(
         &db,
@@ -869,11 +926,15 @@ async fn pending_status_retarget_and_delete_invalidate_only_typed_old_new_target
     .await
     .unwrap();
     assert_eq!(
-        direct_tracks(&mut events),
-        BTreeSet::from([first.id, second.id.clone()])
+        track_events(&mut events),
+        expect(vec![
+            event(&first.id, None),
+            event(&second.id, None),
+            event(&second.id, Some("PendingFileMatch")),
+        ])
     );
     PendingFileMatch::delete_by_id(&db, &row.id).await.unwrap();
-    assert_eq!(direct_tracks(&mut events), BTreeSet::from([second.id]));
+    assert!(wrote_directly(&track_events(&mut events), &second.id));
 }
 
 async fn database(hooks: bool) -> Database {

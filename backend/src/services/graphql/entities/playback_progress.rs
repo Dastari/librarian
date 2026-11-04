@@ -79,7 +79,7 @@ pub struct PlaybackProgress {
         target = "MediaFile",
         from = "media_file_id",
         to = "id",
-        on_delete = "set_null",
+        on_delete = "cascade",
         emit_fk = false
     )]
     pub media_file: Option<Box<MediaFile>>,

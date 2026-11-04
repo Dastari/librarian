@@ -223,6 +223,23 @@ pub struct Movie {
     )]
     pub cast_credits: Vec<MovieCastCredit>,
 
+    /// The provider collection this movie belongs to, matched within the movie's library on
+    /// the provider key (the inverse of `Collection.movies`). A change to a movie reaches
+    /// its collection's `Changed` stream through propagation; moving a movie between
+    /// collections and deleting it write the old collection explicitly
+    /// (`AppMutationHook::maintain_summaries_and_parent_events`).
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Collection",
+        from = ["library_id", "collection_id"],
+        to = ["library_id", "tmdb_collection_id"],
+        propagate_change = "up",
+        emit_fk = false
+    )]
+    pub collection: Option<Box<Collection>>,
+
     #[graphql(skip)]
     #[serde(skip)]
     #[skip_db]

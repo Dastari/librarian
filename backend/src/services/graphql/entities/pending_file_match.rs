@@ -141,6 +141,7 @@ pub struct PendingFileMatch {
         from = "episode_id",
         to = "id",
         on_delete = "set_null",
+        propagate_change = "up",
         emit_fk = false
     )]
     pub episode: Option<Box<Episode>>,
@@ -153,6 +154,7 @@ pub struct PendingFileMatch {
         from = "movie_id",
         to = "id",
         on_delete = "set_null",
+        propagate_change = "up",
         emit_fk = false
     )]
     pub movie: Option<Box<Movie>>,
@@ -165,6 +167,7 @@ pub struct PendingFileMatch {
         from = "track_id",
         to = "id",
         on_delete = "set_null",
+        propagate_change = "up",
         emit_fk = false
     )]
     pub track: Option<Box<Track>>,
@@ -177,10 +180,14 @@ pub struct PendingFileMatch {
         from = "chapter_id",
         to = "id",
         on_delete = "set_null",
+        propagate_change = "up",
         emit_fk = false
     )]
     pub chapter: Option<Box<Chapter>>,
 
+    // The source is an info hash, so there is no id to clear: deleting the torrent keeps the
+    // pending match as import history and this relation simply resolves to nothing, which is
+    // what `set_null` describes. Nothing restricts the delete.
     #[graphql(skip)]
     #[serde(skip)]
     #[skip_db]
@@ -188,7 +195,7 @@ pub struct PendingFileMatch {
         target = "Torrent",
         from = ["source_id", "user_id"],
         to = ["info_hash", "user_id"],
-        on_delete = "restrict",
+        on_delete = "set_null",
         source_condition(field = "source_type", equals = "torrent"),
         emit_fk = false
     )]

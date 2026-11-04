@@ -169,6 +169,7 @@ pub struct Album {
         from = "artist_id",
         to = "id",
         on_delete = "restrict",
+        propagate_change = "up",
         emit_fk = false
     )]
     pub artist: Option<Box<Artist>>,

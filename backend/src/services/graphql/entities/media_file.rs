@@ -183,7 +183,7 @@ pub struct MediaFile {
         target = "Library",
         from = "library_id",
         to = "id",
-        on_delete = "set_null",
+        on_delete = "cascade",
         propagate_change = "up",
         emit_fk = false
     )]
@@ -197,6 +197,7 @@ pub struct MediaFile {
         from = "episode_id",
         to = "id",
         on_delete = "set_null",
+        propagate_change = "up",
         emit_fk = false
     )]
     pub episode: Option<Box<Episode>>,
@@ -209,6 +210,7 @@ pub struct MediaFile {
         from = "movie_id",
         to = "id",
         on_delete = "set_null",
+        propagate_change = "up",
         emit_fk = false
     )]
     pub movie: Option<Box<Movie>>,
@@ -221,6 +223,7 @@ pub struct MediaFile {
         from = "track_id",
         to = "id",
         on_delete = "set_null",
+        propagate_change = "up",
         emit_fk = false
     )]
     pub track: Option<Box<Track>>,
@@ -233,6 +236,7 @@ pub struct MediaFile {
         from = "chapter_id",
         to = "id",
         on_delete = "set_null",
+        propagate_change = "up",
         emit_fk = false
     )]
     pub chapter: Option<Box<Chapter>>,

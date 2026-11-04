@@ -58,20 +58,24 @@ pub struct Torrent {
     #[graphql(name = "state")]
     #[filterable(type = "string")]
     #[sortable]
+    #[graphql_orm(write_policy = "admin.write")]
     pub state: String,
 
     #[graphql(name = "progress")]
     #[filterable(type = "number")]
     #[sortable]
+    #[graphql_orm(write_policy = "admin.write")]
     pub progress: f64,
 
     #[graphql(name = "totalBytes")]
     #[filterable(type = "number")]
     #[sortable]
+    #[graphql_orm(write_policy = "admin.write")]
     pub total_bytes: i64,
 
     #[graphql(name = "downloadedBytes")]
     #[filterable(type = "number")]
+    #[graphql_orm(write_policy = "admin.write")]
     pub downloaded_bytes: i64,
 
     /// Bytes uploaded by the *current* librqbit session. librqbit resets this
@@ -79,6 +83,7 @@ pub struct Torrent {
     /// for a share ratio; use `uploaded_bytes_total`.
     #[graphql(name = "uploadedBytes")]
     #[filterable(type = "number")]
+    #[graphql_orm(write_policy = "admin.write")]
     pub uploaded_bytes: i64,
 
     /// Cumulative bytes uploaded across every session, kept monotonic by the
@@ -86,14 +91,16 @@ pub struct Torrent {
     /// counter the seeding-ratio rule is evaluated against.
     #[graphql(name = "uploadedBytesTotal")]
     #[filterable(type = "number")]
-    #[graphql_orm(default = "0")]
+    #[graphql_orm(default = "0", write_policy = "admin.write")]
     pub uploaded_bytes_total: i64,
 
     #[graphql(name = "savePath")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "admin.write")]
     pub save_path: String,
 
     #[graphql(name = "downloadPath")]
+    #[graphql_orm(write_policy = "admin.write")]
     pub download_path: Option<String>,
 
     #[graphql(name = "sourceUrl")]
@@ -114,13 +121,16 @@ pub struct Torrent {
 
     #[graphql(name = "postProcessStatus")]
     #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "admin.write")]
     pub post_process_status: Option<String>,
 
     #[graphql(name = "postProcessError")]
+    #[graphql_orm(write_policy = "admin.write")]
     pub post_process_error: Option<String>,
 
     #[graphql(name = "processedAt")]
     #[filterable(type = "date")]
+    #[graphql_orm(write_policy = "admin.write")]
     pub processed_at: Option<String>,
 
     // ========================================================================
@@ -198,6 +208,7 @@ pub struct Torrent {
 
     #[graphql(name = "excludedFiles")]
     #[json_field]
+    #[graphql_orm(write_policy = "admin.write")]
     pub excluded_files: Vec<i32>,
 
     /// Delete the downloaded payload from disk when this torrent is removed.
@@ -229,6 +240,7 @@ pub struct Torrent {
 
     #[graphql(name = "completedAt")]
     #[filterable(type = "date")]
+    #[graphql_orm(write_policy = "admin.write")]
     pub completed_at: Option<String>,
 
     #[graphql(skip)]
@@ -246,6 +258,7 @@ pub struct Torrent {
         from = "library_id",
         to = "id",
         on_delete = "set_null",
+        propagate_change = "up",
         emit_fk = false
     )]
     pub library: Option<Box<Library>>,
@@ -258,6 +271,7 @@ pub struct Torrent {
         from = "movie_id",
         to = "id",
         on_delete = "set_null",
+        propagate_change = "up",
         emit_fk = false
     )]
     pub movie: Option<Box<Movie>>,
@@ -270,6 +284,7 @@ pub struct Torrent {
         from = "show_id",
         to = "id",
         on_delete = "set_null",
+        propagate_change = "up",
         emit_fk = false
     )]
     pub show: Option<Box<Show>>,
@@ -282,9 +297,36 @@ pub struct Torrent {
         from = "episode_id",
         to = "id",
         on_delete = "set_null",
+        propagate_change = "up",
         emit_fk = false
     )]
     pub episode: Option<Box<Episode>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Track",
+        from = "track_id",
+        to = "id",
+        on_delete = "set_null",
+        propagate_change = "up",
+        emit_fk = false
+    )]
+    pub track: Option<Box<Track>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Chapter",
+        from = "chapter_id",
+        to = "id",
+        on_delete = "set_null",
+        propagate_change = "up",
+        emit_fk = false
+    )]
+    pub chapter: Option<Box<Chapter>>,
 
     #[graphql(skip)]
     #[serde(skip)]
@@ -294,6 +336,7 @@ pub struct Torrent {
         from = "album_id",
         to = "id",
         on_delete = "set_null",
+        propagate_change = "up",
         emit_fk = false
     )]
     pub album: Option<Box<Album>>,
@@ -306,9 +349,39 @@ pub struct Torrent {
         from = "audiobook_id",
         to = "id",
         on_delete = "set_null",
+        propagate_change = "up",
         emit_fk = false
     )]
     pub audiobook: Option<Box<Audiobook>>,
+
+    /// The RSS feed this torrent was grabbed from. Deleting the feed clears the link.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "RssFeed",
+        from = "source_feed_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub source_feed: Option<Box<RssFeed>>,
+
+    /// Pending file matches whose source is this torrent. Pending matches store the info
+    /// hash (never `Torrent.id`) qualified by owner; see `PendingFileMatch.torrent`.
+    /// Deleting the torrent keeps these rows as import history.
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "PendingFileMatch",
+        from = ["info_hash", "user_id"],
+        to = ["source_id", "user_id"],
+        target_condition(column = "source_type", equals = "torrent"),
+        multiple,
+        emit_fk = false
+    )]
+    pub pending_matches: Vec<PendingFileMatch>,
 }
 
 #[derive(Default)]
