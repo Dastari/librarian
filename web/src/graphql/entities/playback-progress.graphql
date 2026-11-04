@@ -34,13 +34,6 @@ query EntityPlaybackProgressGet($id: String!) {
   }
 }
 
-query EntityPlaybackProgressKeyset($where: PlaybackProgressWhereInput, $page: KeysetPageInput!) {
-  playbackProgressesKeyset(where: $where, page: $page) {
-    edges { cursor node { ...PlaybackProgressFields } }
-    pageInfo { hasNextPage hasPreviousPage startCursor endCursor totalCount }
-  }
-}
-
 mutation EntityPlaybackProgressCreate($input: CreatePlaybackProgressInput!) {
   createPlaybackProgress(input: $input) {
     success

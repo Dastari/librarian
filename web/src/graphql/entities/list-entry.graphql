@@ -35,13 +35,6 @@ query EntityListEntryGet($id: String!) {
   }
 }
 
-query EntityListEntryKeyset($where: ListEntryWhereInput, $page: KeysetPageInput!) {
-  listEntriesKeyset(where: $where, page: $page) {
-    edges { cursor node { ...ListEntryFields } }
-    pageInfo { hasNextPage hasPreviousPage startCursor endCursor totalCount }
-  }
-}
-
 mutation EntityListEntryCreate($input: CreateListEntryInput!) {
   createListEntry(input: $input) {
     success

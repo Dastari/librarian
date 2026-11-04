@@ -366,7 +366,7 @@ pub(super) async fn movie_cast_credit(
     .unwrap()
 }
 
-async fn library_scan_run(db: &Database, library: &Library) -> LibraryScanRun {
+pub(super) async fn library_scan_run(db: &Database, library: &Library) -> LibraryScanRun {
     LibraryScanRun::insert(
         db,
         CreateLibraryScanRunInput {
@@ -396,7 +396,7 @@ async fn library_scan_run(db: &Database, library: &Library) -> LibraryScanRun {
     .unwrap()
 }
 
-async fn library_scan_issue(
+pub(super) async fn library_scan_issue(
     db: &Database,
     library: &Library,
     run: &LibraryScanRun,
@@ -1228,7 +1228,7 @@ async fn stream_reparent_and_delete_invalidate_surviving_parents_without_metadat
     }
 }
 
-async fn session_token(db: &Database, owner: &User, revoked: bool) -> RefreshToken {
+pub(super) async fn session_token(db: &Database, owner: &User, revoked: bool) -> RefreshToken {
     RefreshToken::insert(
         db,
         CreateRefreshTokenInput {

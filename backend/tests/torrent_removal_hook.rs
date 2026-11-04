@@ -149,6 +149,29 @@ async fn live_hashes(service: &TorrentService) -> Vec<String> {
         .collect()
 }
 
+/// A seeded torrent is complete, so real post-processing can pick it up at any moment, and the
+/// guard then correctly refuses a delete that would remove its files. Retry until it has finished.
+async fn delete_once_import_finishes(
+    admin: &mut GqlClient,
+    mutation: &str,
+    field: &str,
+    variables: serde_json::Value,
+) {
+    let started = std::time::Instant::now();
+    loop {
+        let response = admin.post(mutation, variables.clone()).await;
+        if response.body["data"][field]["success"] == true {
+            return;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "delete still refused after 30s: {}",
+            response.body
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 async fn wait_for_live(service: &Arc<TorrentService>, hash: &str, present: bool) {
     common::wait_for(
         Duration::from_secs(30),
@@ -222,8 +245,13 @@ fn delete_with_the_flag_deletes_the_payload_too() {
         let item = &items[0];
 
         set_delete_files(&mut admin, &item.id, true).await;
-        let deleted = admin.query(DELETE_TORRENT, json!({ "id": item.id })).await;
-        assert_eq!(deleted["deleteTorrent"]["success"], true, "{deleted}");
+        delete_once_import_finishes(
+            &mut admin,
+            DELETE_TORRENT,
+            "deleteTorrent",
+            json!({ "id": item.id }),
+        )
+        .await;
 
         wait_for_live(&service, &item.hash, false).await;
         common::wait_for(Duration::from_secs(30), "payload deleted", || async {
@@ -317,13 +345,13 @@ fn a_rolled_back_bulk_delete_leaves_every_torrent_running() {
         service
             .set_post_processing_for_test(&items[1].hash, false)
             .await;
-        let done = admin
-            .query(
-                DELETE_TORRENTS,
-                json!({ "where": { "state": { "eq": "paused" } } }),
-            )
-            .await;
-        assert_eq!(done["deleteTorrents"]["success"], true, "{done}");
+        delete_once_import_finishes(
+            &mut admin,
+            DELETE_TORRENTS,
+            "deleteTorrents",
+            json!({ "where": { "state": { "eq": "paused" } } }),
+        )
+        .await;
         for item in &items {
             wait_for_live(&service, &item.hash, false).await;
             common::wait_for(Duration::from_secs(30), "payload deleted", || async {

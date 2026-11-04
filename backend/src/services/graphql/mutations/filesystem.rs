@@ -1,9 +1,9 @@
-//! GraphQL filesystem mutations currently exposed through legacy root fields:
-//! CreateDirectory, DeleteFiles, CopyFiles, MoveFiles, RenameFile.
-//! CreateDirectory is implemented with tokio::fs; others return "Filesystem service not configured"
-//! until Arc<FilesystemService> (or inline impl) is added.
-//! When implementing real ops, get FilesystemChangeBroker from ctx and call .send(FilesystemChangeEvent { ... })
-//! after each successful mutation so FilesystemChanged subscription receives events.
+//! GraphQL filesystem mutations: `createDirectory` plus network-path configuration.
+//! File delete, copy, move and rename are not exposed: they were never implemented and
+//! library files change through the organizer and the media file actions instead.
+//! A new filesystem mutation gets the FilesystemChangeBroker from ctx and calls
+//! .send(FilesystemChangeEvent { ... }) after each success so the FilesystemChanged
+//! subscription receives events.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -94,46 +94,6 @@ pub struct CreateDirectoryInput {
 }
 
 #[derive(InputObject)]
-#[graphql(name = "DeleteFilesInput")]
-pub struct DeleteFilesInput {
-    #[graphql(name = "paths")]
-    pub paths: Vec<String>,
-    #[graphql(name = "recursive")]
-    pub recursive: Option<bool>,
-}
-
-#[derive(InputObject)]
-#[graphql(name = "CopyFilesInput")]
-pub struct CopyFilesInput {
-    #[graphql(name = "sources")]
-    pub sources: Vec<String>,
-    #[graphql(name = "destination")]
-    pub destination: String,
-    #[graphql(name = "overwrite")]
-    pub overwrite: Option<bool>,
-}
-
-#[derive(InputObject)]
-#[graphql(name = "MoveFilesInput")]
-pub struct MoveFilesInput {
-    #[graphql(name = "sources")]
-    pub sources: Vec<String>,
-    #[graphql(name = "destination")]
-    pub destination: String,
-    #[graphql(name = "overwrite")]
-    pub overwrite: Option<bool>,
-}
-
-#[derive(InputObject)]
-#[graphql(name = "RenameFileInput")]
-pub struct RenameFileInput {
-    #[graphql(name = "path")]
-    pub path: String,
-    #[graphql(name = "newName")]
-    pub new_name: String,
-}
-
-#[derive(InputObject)]
 #[graphql(name = "ConfigureNetworkPathInput")]
 pub struct ConfigureNetworkPathInput {
     #[graphql(name = "path")]
@@ -210,46 +170,6 @@ impl FilesystemMutations {
     ) -> Result<FileOperationPayload> {
         ctx.require_admin()?;
         run_create_directory(ctx, &input).await
-    }
-
-    #[graphql(name = "deleteFiles")]
-    async fn delete_files(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(name = "input")] input: DeleteFilesInput,
-    ) -> Result<FileOperationPayload> {
-        ctx.require_admin()?;
-        run_delete_files(ctx, &input).await
-    }
-
-    #[graphql(name = "copyFiles")]
-    async fn copy_files(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(name = "input")] input: CopyFilesInput,
-    ) -> Result<FileOperationPayload> {
-        ctx.require_admin()?;
-        run_copy_files(ctx, &input).await
-    }
-
-    #[graphql(name = "moveFiles")]
-    async fn move_files(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(name = "input")] input: MoveFilesInput,
-    ) -> Result<FileOperationPayload> {
-        ctx.require_admin()?;
-        run_move_files(ctx, &input).await
-    }
-
-    #[graphql(name = "renameFile")]
-    async fn rename_file(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(name = "input")] input: RenameFileInput,
-    ) -> Result<FileOperationPayload> {
-        ctx.require_admin()?;
-        run_rename_file(ctx, &input).await
     }
 
     #[graphql(name = "configureNetworkPath")]
@@ -330,12 +250,6 @@ impl FilesystemMutations {
     }
 }
 
-fn not_configured() -> Result<FileOperationPayload> {
-    Ok(FileOperationPayload(FileOperationResult::err(
-        "Filesystem service not configured",
-    )))
-}
-
 async fn run_create_directory(
     ctx: &Context<'_>,
     input: &CreateDirectoryInput,
@@ -375,36 +289,4 @@ async fn run_create_directory(
             e
         )))),
     }
-}
-
-async fn run_delete_files(
-    _ctx: &Context<'_>,
-    input: &DeleteFilesInput,
-) -> Result<FileOperationPayload> {
-    let _ = input;
-    not_configured()
-}
-
-async fn run_copy_files(
-    _ctx: &Context<'_>,
-    input: &CopyFilesInput,
-) -> Result<FileOperationPayload> {
-    let _ = input;
-    not_configured()
-}
-
-async fn run_move_files(
-    _ctx: &Context<'_>,
-    input: &MoveFilesInput,
-) -> Result<FileOperationPayload> {
-    let _ = input;
-    not_configured()
-}
-
-async fn run_rename_file(
-    _ctx: &Context<'_>,
-    input: &RenameFileInput,
-) -> Result<FileOperationPayload> {
-    let _ = input;
-    not_configured()
 }

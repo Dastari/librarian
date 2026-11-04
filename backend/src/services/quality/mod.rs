@@ -13,4 +13,5 @@
 //! `docs/tier1-features-plan.md` §2).
 
 pub mod profile;
+pub mod recompute;
 pub mod scoring;

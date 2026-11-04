@@ -105,7 +105,7 @@ export function DownloadsSettings() {
             </FieldGroup>
           </div>
         </Panel>
-        <Panel title="Torrent client" description="Changes to folders and ports apply after the client restarts.">
+        <Panel title="Torrent client" description="The client reads these settings when it starts, so every change on this page, including seeding, takes effect after the server restarts.">
           <FieldGroup columns={2}>
             <form.AppField name="downloadDir">{(field) => <field.TextField label="Download folder" className="font-mono" required />}</form.AppField>
             <form.AppField name="sessionDir">{(field) => <field.TextField label="Session folder" className="font-mono" required hint="Resume data and DHT state." />}</form.AppField>

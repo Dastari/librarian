@@ -788,10 +788,9 @@ pub async fn resolve_profile_for_media_file(
 }
 
 /// Resolve the effective profile for a `MediaFile`, evaluate it, and persist
-/// the result to `MediaFile.quality_status`. Shared by the `analyzeMediaFile`
-/// ffprobe hook (`LibraryScanService::analyze_media_file_inner`) and the
-/// `evaluateMediaFileQuality`/`recomputeLibraryQualityStatus` GraphQL
-/// mutations so there is exactly one place that computes+writes this column.
+/// the result to `MediaFile.quality_status`. Shared by the `evaluateMediaFileQuality`
+/// GraphQL mutation and the `AppMutationHook` recompute (`quality::recompute`) so
+/// there is exactly one place that computes+writes this column.
 pub async fn recompute_and_persist(
     db: &Database,
     media_file_id: &str,
@@ -815,16 +814,20 @@ pub async fn recompute_and_persist(
     let parsed = parsed_release_for_media_file(&media_file);
     let evaluation = evaluate(&parsed, &quality_profile);
 
-    MediaFile::update_by_id(
-        db,
-        &media_file.id,
-        UpdateMediaFileInput {
-            quality_status: Some(Some(evaluation.status_str().to_string())),
-            ..Default::default()
-        },
-    )
-    .await
-    .context("failed to persist quality_status")?;
+    // An unchanged status is not written: the MediaFile hook recomputes on analysis and
+    // link changes, and a bulk recompute over settled files should emit nothing.
+    if media_file.quality_status.as_deref() != Some(evaluation.status_str()) {
+        MediaFile::update_by_id(
+            db,
+            &media_file.id,
+            UpdateMediaFileInput {
+                quality_status: Some(Some(evaluation.status_str().to_string())),
+                ..Default::default()
+            },
+        )
+        .await
+        .context("failed to persist quality_status")?;
+    }
 
     Ok(evaluation)
 }

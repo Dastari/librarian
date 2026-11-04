@@ -10,7 +10,7 @@ export function useShellCounts() {
   const downloads = useLiveQuery(ActiveDownloadCountDocument, { skip });
   const notifications = useLiveQuery(UnreadNotificationCountDocument, { skip });
   return {
-    downloads: downloads.data?.activeDownloadCount ?? 0,
+    downloads: downloads.data?.downloading.pageInfo.totalCount ?? 0,
     notifications: notifications.data?.notifications.pageInfo.totalCount ?? 0,
   };
 }

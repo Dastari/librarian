@@ -1,4 +1,4 @@
-//! FilesystemChanged subscription: emitted when CreateDirectory, DeleteFiles, CopyFiles, MoveFiles, or RenameFile runs.
+//! FilesystemChanged subscription: emitted when CreateDirectory runs.
 //! When a FilesystemChangeBroker is in schema data (e.g. from FilesystemService), mutations broadcast here.
 
 use std::pin::Pin;

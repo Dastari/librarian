@@ -255,10 +255,8 @@ impl ArtworkService {
                 }
                 return Err(err).context("Failed to replace artwork cache metadata");
             }
-            self.release_storage_object(&existing.storage_object_id)
-                .await;
-            self.delete_variants(entity_type, entity_id, artwork_type)
-                .await;
+            // The ArtworkCache update hook (`AppMutationHook`) releases the replaced
+            // storage object and drops the resized copies made from it.
             info!(
                 entity_type = %entity_type,
                 entity_id = %entity_id,
@@ -695,51 +693,6 @@ impl ArtworkService {
                 }
                 Err(err).context("Failed to insert resized artwork metadata")
             }
-        }
-    }
-
-    /// Resized copies belong to one original; drop them when it is replaced.
-    async fn delete_variants(&self, entity_type: &str, entity_id: &str, artwork_type: &str) {
-        let rows = ArtworkCache::query(self.db.pool())
-            .filter(ArtworkCacheWhereInput {
-                entity_type: Some(StringFilter {
-                    eq: Some(entity_type.to_string()),
-                    ..Default::default()
-                }),
-                entity_id: Some(StringFilter {
-                    eq: Some(entity_id.to_string()),
-                    ..Default::default()
-                }),
-                artwork_type: Some(StringFilter {
-                    starts_with: Some(format!("{artwork_type}@w")),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            })
-            .fetch_all()
-            .await;
-        let Ok(rows) = rows else {
-            warn!(
-                entity_type,
-                entity_id, artwork_type, "Failed to list resized artwork for removal"
-            );
-            return;
-        };
-        for row in rows {
-            // The ArtworkCache delete hook releases the storage object and its bytes.
-            if let Err(error) = ArtworkCache::delete_by_id(&self.db, &row.id).await {
-                warn!(artwork_cache_id = %row.id, error = %error, "Failed to remove resized artwork metadata");
-            }
-        }
-    }
-
-    /// Drop a storage object no artwork references any more. The StorageObject delete hook
-    /// removes its bytes after the transaction commits.
-    async fn release_storage_object(&self, storage_object_id: &str) {
-        if let Err(error) =
-            StorageObject::delete_by_id(&self.db, &storage_object_id.to_string()).await
-        {
-            warn!(storage_object_id, error = %error, "Failed to release replaced artwork object");
         }
     }
 

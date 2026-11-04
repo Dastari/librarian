@@ -4,7 +4,7 @@ import { defineActions, type ActionDefinition, type ActionSet } from "glass-ux/a
 import { IconCheck, IconCopy, IconExternalLink, IconFile, IconRefresh, IconTrash } from "glass-ux/icons";
 import { useMemo } from "react";
 
-import { ResolveScanIssueDocument, RetryScanIssueDocument, TrashDuplicateScanIssueDocument } from "@/graphql/generated/graphql";
+import { EntityLibraryScanIssueUpdateDocument, RetryScanIssueDocument, TrashDuplicateScanIssueDocument } from "@/graphql/generated/graphql";
 import { ENTITY_KINDS, type EntityKindName } from "@/lib/entities/kinds";
 import { linkedItem, mediaFileRef } from "@/lib/entities/linked";
 
@@ -26,7 +26,7 @@ function check(result: { success: boolean; message: string } | undefined, fallba
  */
 export function useScanIssueActions(onChanged: () => void, isAdmin: boolean): ActionSet<IssueRow> {
   const [retry] = useMutation(RetryScanIssueDocument);
-  const [resolve] = useMutation(ResolveScanIssueDocument);
+  const [resolve] = useMutation(EntityLibraryScanIssueUpdateDocument);
   const [trash] = useMutation(TrashDuplicateScanIssueDocument);
 
   return useMemo(() => {
@@ -66,7 +66,7 @@ export function useScanIssueActions(onChanged: () => void, isAdmin: boolean): Ac
         {
           id: "resolve", label: (rows) => plural(rows, "Mark resolved", "Mark {n} resolved"), icon: IconCheck, group: "manage", priority: 2, bulk: true,
           visible: (rows) => rows.some(open),
-          run: (rows) => runSelectionAction(rows.filter(open), "Resolve", (row) => row.issueCode, async (row) => check((await resolve({ variables: { issueId: row.id, resolution: "reviewed" } })).data?.resolveScanIssue, "Could not resolve"), onChanged),
+          run: (rows) => runSelectionAction(rows.filter(open), "Resolve", (row) => row.issueCode, async (row) => { const result = (await resolve({ variables: { id: row.id, input: { resolvedAt: new Date().toISOString(), resolution: "reviewed" } } })).data?.updateLibraryScanIssue; check(result && { success: result.success, message: result.error ?? "" }, "Could not resolve"); }, onChanged),
           successMessage: (rows) => plural(rows.filter(open), "Resolved", "Resolved {n} issues"),
         },
       );

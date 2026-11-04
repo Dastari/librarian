@@ -121,7 +121,7 @@ function fixture() {
     if (info.parentType.name === 'Query') {
       if (key === 'me') return authenticated ? user : null;
       if (key === 'needsSetup') return false;
-      if (key === 'activeDownloadCount') return 0;
+      if (key === 'torrents') return { edges: [], pageInfo: { totalCount: 0, hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null } };
       if (key === 'contentStatuses') return args.inputs.map((input) => ({ ...input, status: state.movies.some((row) => row.id === input.id && row.hasFile) || state.tracks.some((row) => row.id === input.id && row.mediaFileId) ? 'AVAILABLE' : 'MISSING' }));
       if (key === 'resumeShelf') return { items: [], hasMore: false, complete: true, scannedCount: 0, error: null };
       if (key === 'movieReleases') return [];

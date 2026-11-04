@@ -874,6 +874,56 @@ impl AppWriteInputTransform {
         }
     }
 
+    /// Content rules for the entities outside Cast. See `services::write_rules`.
+    fn prepare_content_create(
+        entity_name: &str,
+        input: &mut (dyn std::any::Any + Send + Sync),
+    ) -> async_graphql::Result<()> {
+        use crate::services::write_rules;
+        match entity_name {
+            "User" => input
+                .downcast_mut::<CreateUserInput>()
+                .map_or(Ok(()), write_rules::prepare_user_create),
+            _ => Ok(()),
+        }
+    }
+
+    fn prepare_content_update(
+        ctx: Option<&async_graphql::Context<'_>>,
+        entity_name: &str,
+        existing_row: Option<&(dyn std::any::Any + Send + Sync)>,
+        input: &mut (dyn std::any::Any + Send + Sync),
+    ) -> async_graphql::Result<()> {
+        use crate::services::write_rules;
+        match entity_name {
+            "User" => input
+                .downcast_mut::<UpdateUserInput>()
+                .map_or(Ok(()), write_rules::prepare_user_update),
+            "LibraryScanIssue" => {
+                input
+                    .downcast_mut::<UpdateLibraryScanIssueInput>()
+                    .map_or(Ok(()), |input| {
+                        write_rules::prepare_scan_issue_update(
+                            existing_row.and_then(|row| row.downcast_ref::<LibraryScanIssue>()),
+                            input,
+                        )
+                    })
+            }
+            "MediaFile" => {
+                if let Some(input) = input.downcast_mut::<UpdateMediaFileInput>() {
+                    write_rules::prepare_media_file_update(
+                        ctx.and_then(|ctx| ctx.data_opt::<AuthUser>()),
+                        existing_row.and_then(|row| row.downcast_ref::<MediaFile>()),
+                        input,
+                        &AppMutationHook::now_rfc3339(),
+                    );
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
     async fn encrypt_source_credentials(
         &self,
         ctx: Option<&async_graphql::Context<'_>>,
@@ -962,6 +1012,7 @@ impl WriteInputTransform for AppWriteInputTransform {
             Self::validate_upsert_link_workaround(ctx, db, entity_name, input, true).await?;
             Self::reject_member_artwork_source_write(ctx, entity_name, input)?;
             Self::prepare_cast_create(entity_name, input)?;
+            Self::prepare_content_create(entity_name, input)?;
             if entity_name == "Source"
                 && let Some(input) = input.downcast_mut::<CreateSourceInput>()
             {
@@ -992,6 +1043,7 @@ impl WriteInputTransform for AppWriteInputTransform {
             Self::validate_upsert_link_workaround(ctx, db, entity_name, input, false).await?;
             Self::reject_member_artwork_source_write(ctx, entity_name, input)?;
             Self::prepare_cast_update(entity_name, existing_row, input)?;
+            Self::prepare_content_update(ctx, entity_name, existing_row, input)?;
             if entity_name == "Source"
                 && let Some(input) = input.downcast_mut::<UpdateSourceInput>()
                 && let Some(credentials) = input.credentials.take()
@@ -1282,6 +1334,10 @@ async fn reconcile_audiobook_summary(
     }
     Ok(changed)
 }
+
+/// `artwork_type` of a resized copy is the original's type, this marker and a width
+/// (`poster@w300`); see `ArtworkService`.
+const ARTWORK_VARIANT_MARKER: &str = "@w";
 
 #[derive(Debug, Default)]
 struct AppMutationHook {
@@ -2955,18 +3011,19 @@ impl AppMutationHook {
         Ok(())
     }
 
-    async fn cleanup_deleted_artwork_cache(
+    /// Delete a storage object once no artwork row references it; the StorageObject
+    /// delete hook removes its bytes after commit.
+    async fn release_unreferenced_storage_object(
         hook_ctx: &mut MutationContext<'_>,
-        event: &MutationEvent,
+        storage_object_id: &str,
     ) -> async_graphql::Result<()> {
-        let cache = Self::before::<ArtworkCache>(event, "ArtworkCache")?;
-        if cache.storage_object_id.is_empty() {
+        if storage_object_id.is_empty() {
             return Ok(());
         }
         let remaining = hook_ctx
             .query::<ArtworkCache>()
             .filter(ArtworkCacheWhereInput {
-                storage_object_id: Some(Self::string_eq(&cache.storage_object_id)),
+                storage_object_id: Some(Self::string_eq(storage_object_id)),
                 ..ArtworkCacheWhereInput::default()
             })
             .limit(1)
@@ -2975,9 +3032,89 @@ impl AppMutationHook {
             .map_err(Self::db_error)?;
         if remaining.is_empty() {
             hook_ctx
-                .delete_by_id::<StorageObject>(&cache.storage_object_id)
+                .delete_by_id::<StorageObject>(&storage_object_id.to_string())
                 .await
                 .map_err(Self::db_error)?;
+        }
+        Ok(())
+    }
+
+    async fn cleanup_deleted_artwork_cache(
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        let cache = Self::before::<ArtworkCache>(event, "ArtworkCache")?;
+        Self::release_unreferenced_storage_object(hook_ctx, &cache.storage_object_id).await
+    }
+
+    /// Re-pointing artwork at a new storage object (the provider's image changed)
+    /// releases the old object like a delete does, and drops the resized copies made
+    /// from it. A resized copy that is itself re-pointed has none of its own.
+    async fn cleanup_replaced_artwork_cache(
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        let before = Self::before::<ArtworkCache>(event, "ArtworkCache")?;
+        let after = Self::after::<ArtworkCache>(event, "ArtworkCache")?;
+        if before.storage_object_id == after.storage_object_id {
+            return Ok(());
+        }
+        Self::release_unreferenced_storage_object(hook_ctx, &before.storage_object_id).await?;
+        if !after.artwork_type.contains(ARTWORK_VARIANT_MARKER) {
+            hook_ctx
+                .delete_where::<ArtworkCache>(ArtworkCacheWhereInput {
+                    entity_type: Some(Self::string_eq(&after.entity_type)),
+                    entity_id: Some(Self::string_eq(&after.entity_id)),
+                    artwork_type: Some(StringFilter {
+                        starts_with: Some(format!(
+                            "{}{ARTWORK_VARIANT_MARKER}",
+                            after.artwork_type
+                        )),
+                        ..StringFilter::default()
+                    }),
+                    ..ArtworkCacheWhereInput::default()
+                })
+                .await
+                .map_err(Self::db_error)?;
+        }
+        Ok(())
+    }
+
+    /// Cached artwork appears after its title is saved, so the title row does not
+    /// change by itself. A generated empty update republishes it, in the same
+    /// transaction as the cache write, so open library views refresh when the image
+    /// becomes available (this replaces the provider service's hand-made "touch").
+    /// Resized copies do not count; only the original changes what a view shows.
+    async fn publish_artwork_owner(
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        let cache = Self::after::<ArtworkCache>(event, "ArtworkCache")?;
+        if cache.artwork_type.contains(ARTWORK_VARIANT_MARKER) {
+            return Ok(());
+        }
+        let id = cache.entity_id.clone();
+        macro_rules! touch {
+            ($ty:ty, $input:ty) => {
+                if hook_ctx
+                    .find_by_id::<$ty>(&id)
+                    .await
+                    .map_err(Self::db_error)?
+                    .is_some()
+                {
+                    hook_ctx
+                        .update_by_id::<$ty>(&id, <$input>::default())
+                        .await
+                        .map_err(Self::db_error)?;
+                }
+            };
+        }
+        match cache.entity_type.as_str() {
+            "movie" => touch!(Movie, UpdateMovieInput),
+            "show" => touch!(Show, UpdateShowInput),
+            "album" => touch!(Album, UpdateAlbumInput),
+            "audiobook" => touch!(Audiobook, UpdateAudiobookInput),
+            _ => {}
         }
         Ok(())
     }
@@ -3233,6 +3370,225 @@ impl AppMutationHook {
         Ok(())
     }
 
+    /// Whether an edit to a quality profile can change any file's evaluation.
+    /// Naming and search-only fields (seeder floor, release age) cannot.
+    fn quality_profile_changes_evaluation(before: &QualityProfile, after: &QualityProfile) -> bool {
+        let mut comparable = after.clone();
+        comparable.name = before.name.clone();
+        comparable.updated_at = before.updated_at.clone();
+        comparable.min_seeders = before.min_seeders;
+        comparable.max_release_age_days = before.max_release_age_days;
+        serde_json::to_value(before).ok() != serde_json::to_value(&comparable).ok()
+    }
+
+    /// Libraries holding files that can resolve to this profile: the libraries
+    /// assigned it, the libraries of titles overriding it, and every library when it
+    /// is (or was) the default that unassigned files fall back to. Read inside the
+    /// transaction so a deleted profile's references are still visible.
+    async fn libraries_resolving_quality_profile(
+        tx: &mut MutationContext<'_>,
+        profile_id: &str,
+        is_default: bool,
+    ) -> async_graphql::Result<Vec<String>> {
+        let mut ids = BTreeSet::new();
+        if is_default {
+            for library in transaction_rows::<Library, _>(tx, LibraryWhereInput::default())
+                .await
+                .map_err(Self::db_error)?
+            {
+                ids.insert(library.id);
+            }
+            return Ok(ids.into_iter().collect());
+        }
+        macro_rules! collect {
+            ($ty:ty, $filter:ident, $library:expr) => {
+                for row in transaction_rows::<$ty, _>(
+                    tx,
+                    $filter {
+                        quality_profile_id: Some(Self::string_eq(profile_id)),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(Self::db_error)?
+                {
+                    ids.insert($library(row));
+                }
+            };
+        }
+        collect!(Library, LibraryWhereInput, |row: Library| row.id);
+        collect!(Movie, MovieWhereInput, |row: Movie| row.library_id);
+        collect!(Show, ShowWhereInput, |row: Show| row.library_id);
+        collect!(Album, AlbumWhereInput, |row: Album| row.library_id);
+        collect!(Audiobook, AudiobookWhereInput, |row: Audiobook| row
+            .library_id);
+        Ok(ids.into_iter().collect())
+    }
+
+    /// Re-evaluate quality after commit. Bulk work is spawned: `commit_and_emit`
+    /// awaits deferred actions inline, and a library pass must not hold the request
+    /// that triggered it. The pass only writes `qualityStatus`, which the MediaFile
+    /// hook ignores, so it cannot loop. Failures are logged by the pass.
+    fn defer_quality_recompute<F, Fut>(hook_ctx: &mut MutationContext<'_>, run: F)
+    where
+        F: FnOnce(Database) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        hook_ctx.defer(move |db| async move {
+            tokio::spawn(run(db));
+            Ok::<(), anyhow::Error>(())
+        });
+    }
+
+    async fn requalify_for_quality_profile(
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        let (profile, relevant) = match event.action {
+            ChangeAction::Updated => {
+                let before = Self::before::<QualityProfile>(event, "QualityProfile")?;
+                let after = Self::after::<QualityProfile>(event, "QualityProfile")?;
+                // The default flag moving changes which profile every unassigned
+                // file falls back to, for the old default as well as the new one.
+                let relevant = Self::quality_profile_changes_evaluation(before, after)
+                    || before.is_default != after.is_default;
+                (after.clone(), relevant)
+            }
+            _ => (
+                Self::before::<QualityProfile>(event, "QualityProfile")?.clone(),
+                true,
+            ),
+        };
+        if !relevant {
+            return Ok(());
+        }
+        let scope_is_default = profile.is_default
+            || event
+                .before::<QualityProfile>()?
+                .is_some_and(|before| before.is_default);
+        let libraries =
+            Self::libraries_resolving_quality_profile(hook_ctx, &profile.id, scope_is_default)
+                .await?;
+        if libraries.is_empty() {
+            return Ok(());
+        }
+        Self::defer_quality_recompute(hook_ctx, move |db| async move {
+            let summary =
+                crate::services::quality::recompute::recompute_libraries(&db, &libraries).await;
+            info!(
+                quality_profile_id = %profile.id,
+                libraries = libraries.len(),
+                evaluated = summary.evaluated,
+                failed = summary.failed,
+                "Re-evaluated quality status after a quality profile change"
+            );
+        });
+        Ok(())
+    }
+
+    /// A library or title assigned a different profile re-evaluates the files it
+    /// governs.
+    fn requalify_for_assignment(
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        use crate::services::quality::recompute::{self, TitleKind};
+        macro_rules! changed {
+            ($ty:ty, $name:literal) => {{
+                let before = Self::before::<$ty>(event, $name)?;
+                let after = Self::after::<$ty>(event, $name)?;
+                (before.quality_profile_id != after.quality_profile_id).then(|| after.id.clone())
+            }};
+        }
+        let id = event.id.clone();
+        match event.entity_name {
+            "Library" => {
+                if changed!(Library, "Library").is_some() {
+                    Self::defer_quality_recompute(hook_ctx, move |db| async move {
+                        recompute::recompute_libraries(&db, &[id]).await;
+                    });
+                }
+            }
+            name => {
+                let kind = match name {
+                    "Movie" if changed!(Movie, "Movie").is_some() => TitleKind::Movie,
+                    "Show" if changed!(Show, "Show").is_some() => TitleKind::Show,
+                    "Album" if changed!(Album, "Album").is_some() => TitleKind::Album,
+                    "Audiobook" if changed!(Audiobook, "Audiobook").is_some() => {
+                        TitleKind::Audiobook
+                    }
+                    _ => return Ok(()),
+                };
+                Self::defer_quality_recompute(hook_ctx, move |db| async move {
+                    recompute::recompute_title(&db, kind, &id).await;
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Re-evaluate one file after commit when its analysis or its link (which
+    /// decides its profile) changed, as `analyze_media_file_inner` used to do by
+    /// hand. Only analysed files have a status to judge;
+    /// the status write itself is not a trigger, which ends the loop.
+    fn requalify_media_file(
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        let after = Self::after::<MediaFile>(event, "MediaFile")?;
+        if after.analyzed_at.is_none() {
+            return Ok(());
+        }
+        let relevant = match event.before::<MediaFile>()? {
+            None => true,
+            Some(before) => {
+                before.analyzed_at != after.analyzed_at
+                    || before.library_id != after.library_id
+                    || before.movie_id != after.movie_id
+                    || before.episode_id != after.episode_id
+                    || before.track_id != after.track_id
+                    || before.chapter_id != after.chapter_id
+                    || before.path != after.path
+                    || before.size != after.size
+                    || before.container != after.container
+                    || before.video_codec != after.video_codec
+                    || before.audio_codec != after.audio_codec
+                    || before.resolution != after.resolution
+                    || before.is_hdr != after.is_hdr
+                    || before.hdr_type != after.hdr_type
+                    || before.audio_channels != after.audio_channels
+            }
+        };
+        if !relevant {
+            return Ok(());
+        }
+        // One file is cheap, so this runs inline after commit: the analysis job that
+        // wrote the properties finishes with the status already current.
+        let id = event.id.clone();
+        hook_ctx.defer(move |db| async move {
+            crate::services::quality::recompute::recompute_files(&db, &[id]).await;
+            Ok::<(), anyhow::Error>(())
+        });
+        Ok(())
+    }
+
+    /// A deleted user's sessions go with them: a refresh token left behind would still
+    /// name a user that no longer exists. Revocation on disable or role change is
+    /// `revoke_user_sessions_if_needed`; deletion removes the rows instead.
+    async fn cleanup_user_refresh_tokens(
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        hook_ctx
+            .delete_where::<RefreshToken>(RefreshTokenWhereInput {
+                user_id: Some(Self::string_eq(&event.id)),
+                ..RefreshTokenWhereInput::default()
+            })
+            .await
+            .map_err(Self::db_error)?;
+        Ok(())
+    }
+
     /// Refuse to delete a torrent's files while completed-file post-processing is still
     /// importing them. Runs before the delete so the error reaches the client and the
     /// transaction rolls back with the row, the files and the live torrent all intact.
@@ -3350,6 +3706,9 @@ impl MutationHook for AppMutationHook {
                 ) => {
                     Self::cleanup_parent_children(hook_ctx, event).await?;
                 }
+                (MutationPhase::Before, ChangeAction::Deleted, "User") => {
+                    Self::cleanup_user_refresh_tokens(hook_ctx, event).await?;
+                }
                 (MutationPhase::After, ChangeAction::Updated, "User") => {
                     Self::revoke_user_sessions_if_needed(hook_ctx, event).await?;
                 }
@@ -3388,6 +3747,13 @@ impl MutationHook for AppMutationHook {
                 }
                 (MutationPhase::After, ChangeAction::Deleted, "ArtworkCache") => {
                     Self::cleanup_deleted_artwork_cache(hook_ctx, event).await?;
+                }
+                (MutationPhase::After, ChangeAction::Updated, "ArtworkCache") => {
+                    Self::cleanup_replaced_artwork_cache(hook_ctx, event).await?;
+                    Self::publish_artwork_owner(hook_ctx, event).await?;
+                }
+                (MutationPhase::After, ChangeAction::Created, "ArtworkCache") => {
+                    Self::publish_artwork_owner(hook_ctx, event).await?;
                 }
                 (MutationPhase::After, ChangeAction::Deleted, "ScheduleCache") => {
                     Self::cleanup_guide_artwork(hook_ctx, event).await?;
@@ -3463,6 +3829,24 @@ impl MutationHook for AppMutationHook {
                 )
             {
                 Self::cleanup_entity_artwork(hook_ctx, event).await?;
+            }
+            if event.phase == MutationPhase::After && event.action == ChangeAction::Updated {
+                match event.entity_name {
+                    "Library" | "Movie" | "Show" | "Album" | "Audiobook" => {
+                        Self::requalify_for_assignment(hook_ctx, event)?;
+                    }
+                    "MediaFile" => Self::requalify_media_file(hook_ctx, event)?,
+                    _ => {}
+                }
+            }
+            if event.entity_name == "QualityProfile"
+                && match event.action {
+                    ChangeAction::Updated => event.phase == MutationPhase::After,
+                    ChangeAction::Deleted => event.phase == MutationPhase::Before,
+                    ChangeAction::Created => false,
+                }
+            {
+                Self::requalify_for_quality_profile(hook_ctx, event).await?;
             }
             Self::maintain_summaries_and_parent_events(hook_ctx, event).await?;
 
@@ -4040,3 +4424,7 @@ mod parent_summary_tests;
 #[cfg(test)]
 #[path = "entity_relations_tests.rs"]
 mod entity_relations_tests;
+
+#[cfg(test)]
+#[path = "database_write_rules_tests.rs"]
+mod write_rules_tests;

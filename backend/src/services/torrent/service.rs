@@ -521,25 +521,6 @@ impl TorrentService {
         Ok(out)
     }
 
-    /// List only active (initializing/checking/downloading) torrents.
-    ///
-    /// Matches [`count_active_downloads`], which is what the concurrency limit
-    /// is enforced against — previously `activeDownloadCount` excluded
-    /// initializing (`Queued`) torrents that the limit *did* count, so the UI
-    /// disagreed with the queue.
-    pub async fn list_active_downloads(&self) -> Result<Vec<TorrentInfo>> {
-        let all = self.list_torrents().await?;
-        Ok(all
-            .into_iter()
-            .filter(|t| {
-                matches!(
-                    t.state,
-                    TorrentState::Queued | TorrentState::Checking | TorrentState::Downloading
-                )
-            })
-            .collect())
-    }
-
     /// Get a single torrent by numeric id.
     pub async fn get_torrent_info(&self, id: usize) -> Result<TorrentInfo> {
         let r = self

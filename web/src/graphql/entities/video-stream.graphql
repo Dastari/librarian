@@ -46,48 +46,6 @@ query EntityVideoStreamGet($id: String!) {
   }
 }
 
-mutation EntityVideoStreamCreate($input: CreateVideoStreamInput!) {
-  createVideoStream(input: $input) {
-    success
-    error
-    videoStream {
-      ...VideoStreamFields
-    }
-  }
-}
-
-mutation EntityVideoStreamUpdate($id: String!, $input: UpdateVideoStreamInput!) {
-  updateVideoStream(id: $id, input: $input) {
-    success
-    error
-    videoStream {
-      ...VideoStreamFields
-    }
-  }
-}
-
-mutation EntityVideoStreamUpdateMany($where: VideoStreamWhereInput, $input: UpdateVideoStreamInput!) {
-  updateVideoStreams(where: $where, input: $input) {
-    success
-    error
-    affectedCount
-  }
-}
-
-mutation EntityVideoStreamDelete($id: String!) {
-  deleteVideoStream(id: $id) {
-    success
-    error
-  }
-}
-
-mutation EntityVideoStreamDeleteMany($where: VideoStreamWhereInput) {
-  deleteVideoStreams(where: $where) {
-    success
-    error
-  }
-}
-
 subscription EntityVideoStreamChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
   videoStreamChanged(filter: $filter, keys: $keys) {
     action

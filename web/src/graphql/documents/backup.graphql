@@ -47,10 +47,3 @@ mutation VerifyBackupSnapshot($snapshotId: String!) {
   }
 }
 
-mutation RestoreFullBackup($snapshotId: String!) {
-  restoreFullBackup(snapshotId: $snapshotId) {
-    success
-    snapshotId
-    error
-  }
-}
