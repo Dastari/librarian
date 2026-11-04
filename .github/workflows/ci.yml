@@ -17,10 +17,17 @@ jobs:
   backend:
     name: Backend
     runs-on: ubuntu-latest
+    # Each integration test links its own copy of the crate; with full debug info the
+    # test binaries outgrew the runner's disk. Line tables keep backtraces readable.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     defaults:
       run:
         working-directory: backend
     steps:
+      - name: Free runner disk
+        working-directory: /
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL && df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
