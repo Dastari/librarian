@@ -15,6 +15,7 @@ fits Librarian, including where it does not.
 | `TabBar` | `components/shell/BottomTabs.tsx` | Custom phone bar |
 | `VideoPlayer`, `CastAdapter` | `features/player/VideoPlayer.tsx`, `useCastAdapter.ts` | 448 lines of custom controls |
 | `EntityIdentity`, `FileIcon` | `features/files/FileIdentity.tsx` | `IdentityCell` with one generic glyph |
+| `DetailTile`, `Tabs`, `CopyButton`, `ActionBar` | `components/entities/EntityDetailDialog.tsx`, download and file dialogs | Long lists of label and value pairs, and a side pane on Downloads |
 | Icons | 20 files moved from Tabler to `glass-ux/icons` | Tabler where an exact match exists |
 
 ## Good fit, not done yet
@@ -23,7 +24,7 @@ fits Librarian, including where it does not.
 | --- | --- | --- |
 | `AudioPlayer` / `useMediaPlayer` | `features/player/PlayerDock.tsx` | Same core as video. The dock's queue and phone sheet need the headless form, so it is its own change. |
 | `FileDialog` over `FileProvider` | `features/files/FolderPickerDialog.tsx` | Replaces a custom folder picker with paging, path and keyboard handling. |
-| `FactList` | `KeyValueList` callers (10 files) | The same label and value rows, already used by `TorrentDetail`. |
+| `FactList` | `KeyValueList` callers (10 files) | The same label and value rows. |
 | `Rating` | Title facts and personal ratings | Replaces the hand-written star and score. |
 | `ImageLightbox` / `ImageViewer` | Poster and backdrop on title pages | Zoom and pan on artwork. |
 | `Carousel` | `HomeSpotlight` | Replaces custom previous, next and count controls with swipe and snap. Check TV focus first. |

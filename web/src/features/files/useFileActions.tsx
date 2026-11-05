@@ -1,13 +1,14 @@
 import { useMutation } from "@apollo/client/react";
 import { defineActions, type ActionSet } from "glass-ux/actions";
 import { copyText } from "glass-ux/copy-button";
-import { IconCopy, IconExternalLink, IconFile, IconInfo, IconLinkOff, IconRefresh, IconSearch, IconSparkle, IconTrash } from "glass-ux/icons";
+import { IconCopy, IconExternalLink, IconFile, IconGauge, IconInfo, IconLinkOff, IconRefresh, IconSearch, IconSparkle, IconTrash } from "glass-ux/icons";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 
 import { ManualMatchDialog } from "@/features/libraries/ManualMatchDialog";
 import {
   AnalyzeMediaFileDocument,
   DeleteMediaFileFromDiskDocument,
+  EvaluateMediaFileQualityDocument,
   MatchMediaFileDocument,
   OrganizeMediaFileDocument,
   UnmatchMediaFileDocument,
@@ -44,6 +45,7 @@ export function useFileActions(onChanged?: () => void, { inDialog = false }: { i
   const [analyzeFile] = useMutation(AnalyzeMediaFileDocument);
   const [organizeFile] = useMutation(OrganizeMediaFileDocument);
   const [unmatchFile] = useMutation(UnmatchMediaFileDocument);
+  const [evaluate] = useMutation(EvaluateMediaFileQualityDocument);
   const [deleteFile] = useMutation(DeleteMediaFileFromDiskDocument, { refetchQueries: ["LibraryMediaFiles"] });
   const changed = useRef(onChanged);
   changed.current = onChanged;
@@ -81,6 +83,13 @@ export function useFileActions(onChanged?: () => void, { inDialog = false }: { i
           }), successMessage: () => "Analysis requested",
         },
         {
+          id: "evaluate", label: "Re-evaluate quality", icon: IconGauge, group: "manage" as const, priority: 4, bulk: true,
+          run: (rows: readonly FileEntity[]) => run(rows, "Evaluation", async (row) => {
+            const { data } = await evaluate({ variables: { mediaFileId: row.id } });
+            return { ok: Boolean(data?.evaluateMediaFileQuality.success), message: data?.evaluateMediaFileQuality.error };
+          }), successMessage: () => "Quality re-evaluated",
+        },
+        {
           id: "organize", label: "Organize", icon: IconFile, group: "manage" as const, priority: 3, bulk: true,
           visible: (rows: readonly FileEntity[]) => rows.some(isFileLinked),
           disabledReason: (rows: readonly FileEntity[]) => rows.some((row) => !isFileLinked(row)) ? "Some selected files are unmatched. Match them before organizing." : false,
@@ -116,7 +125,7 @@ export function useFileActions(onChanged?: () => void, { inDialog = false }: { i
         },
       ] : []),
     ]);
-  }, [analyzeFile, deleteFile, inDialog, isAdmin, matchFile, organizeFile, unmatchFile]);
+  }, [analyzeFile, deleteFile, evaluate, inDialog, isAdmin, matchFile, organizeFile, unmatchFile]);
 
   const dialogs = <ManualMatchDialog file={matching} libraryId={matching?.libraryId ?? ""} onClose={() => setMatching(null)} onMatched={() => changed.current?.()} />;
   return { actions, dialogs };

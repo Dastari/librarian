@@ -3,7 +3,7 @@
  * The browser always talks to the same origin; the dev server proxies to the backend.
  */
 
-export type ArtworkEntity = "movie" | "show" | "season" | "episode" | "album" | "artist" | "audiobook" | "collection" | "person" | "guide";
+export type ArtworkEntity = "movie" | "show" | "season" | "episode" | "album" | "artist" | "audiobook" | "collection" | "person" | "guide" | "provider-movie" | "provider-show" | "provider-audiobook" | "provider-episode";
 export type ArtworkKind = "poster" | "backdrop" | "banner" | "cover" | "profile" | "thumbnail";
 
 export function artworkUrl(entity: ArtworkEntity, id: string | number, kind: ArtworkKind): string {

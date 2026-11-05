@@ -179,7 +179,7 @@ function TonightRow({ picks }: { picks: ReturnType<typeof tonightPicks> }) {
           tint={LIBRARY_TYPES.tv.tintVar}
           badge={pick.newShow || pick.premiere ? <span className="rounded bg-brand px-1.5 py-0.5 text-[0.625rem] font-bold uppercase tracking-wide text-brand-foreground">{pick.newShow ? "New" : `S${pick.season}`}</span> : undefined}
           actions={<IconPlus aria-label="Find and add" />}
-          onPress={() => void navigate({ to: "/search", search: { q: pick.name, in: "show" } as never })}
+          onPress={() => void navigate({ to: "/discover/shows/$tvmazeId", params: { tvmazeId: String(pick.tvmazeShowId) } })}
         />
       ))}
     </MediaRow>

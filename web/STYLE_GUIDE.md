@@ -158,6 +158,20 @@ remembered per browser). `?view=grid` keeps the choice in the URL.
 Home is shelves from the first line, as in Plex: continue watching, libraries and what is new.
 It does not preview one title; that belongs to a library's Recommended view.
 
+## Titles you don't have
+
+A movie, show or audiobook that is not in a library opens a normal page at `/discover/...`, built on
+`DetailShell`. Details come from `providerMovie`, `providerShow` and `providerAudiobook`, read through
+the metadata cache; pictures come from the artwork cache as `provider-*` entities, so nothing is
+fetched from a provider twice. A title already in a library redirects to its real page. **Add to
+library** is the one action: it adds straight away, then asks whether to choose a release, download
+automatically or leave it. Search, the TV guide and the release shelves all link here. Albums have no
+such page yet and still add from their search card.
+
+## Detail dialogs
+
+`EntityDetailDialog` is the one layout for a record's details: the record's `EntityIdentity` at its header tier with its actions on the same line (a long name truncates, the actions don't move), what matters next, and everything else in tabs that scroll under it, at a fixed height so changing tab never resizes it. A download shows its transfer as `Metric`s and a `Gauge` and its files as a `DataTable`, one row per file with what matching did with it.
+
 ## Files
 
 A media file has one identity (`FileIdentity`), one action set (`useFileActions`) and one dialog

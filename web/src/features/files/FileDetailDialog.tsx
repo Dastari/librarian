@@ -1,16 +1,20 @@
+import { ActionBar } from "glass-ux/actions";
+import { Badge } from "glass-ux/badge";
 import { Dialog } from "glass-ux/dialog";
 import { IconFile } from "glass-ux/icons";
 
 import { EntityChip } from "@/components/entities/EntityChip";
+import { EntityDetailDialog } from "@/components/entities/EntityDetailDialog";
 import { ErrorState, SkeletonBlock } from "@/components/ui";
-import { FileDetailsBody } from "@/features/media/FileDetails";
+import { FileSummary, fileSections, useFileStreams } from "@/features/media/FileDetails";
 import { MediaFileDetailDocument } from "@/graphql/generated/graphql";
-import { linkedItem } from "@/lib/entities/linked";
+import { badgeTone, fileName, linkedItem } from "@/lib/entities/linked";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+import { qualityStatus } from "@/lib/status";
 
 import { closeFileDialog, useOpenFileId } from "./fileDialog";
 import { FileIdentity } from "./FileIdentity";
-import { useFileActions, type FileEntity } from "./useFileActions";
+import { isFileLinked, useFileActions, type FileEntity } from "./useFileActions";
 
 /** The one file dialog. Mounted once in the shell; anything that names a file opens it. */
 export function FileDialogHost() {
@@ -18,31 +22,50 @@ export function FileDialogHost() {
   const { actions, dialogs } = useFileActions(undefined, { inDialog: true });
   return (
     <>
-      <Dialog.Root open={Boolean(id)} onOpenChange={(open) => { if (!open) closeFileDialog(); }}>
-        <Dialog.Popup size="lg">
-          <Dialog.Header title="File details" icon={<IconFile />} close />
-          <Dialog.Body className="flex min-w-0 flex-col gap-6">{id ? <FileDialogContent id={id} actions={actions} /> : null}</Dialog.Body>
-        </Dialog.Popup>
-      </Dialog.Root>
+      {id ? <FileDialog key={id} id={id} actions={actions} /> : null}
       {dialogs}
     </>
   );
 }
 
-function FileDialogContent({ id, actions }: { id: string; actions: ReturnType<typeof useFileActions>["actions"] }) {
+function FileDialog({ id, actions }: { id: string; actions: ReturnType<typeof useFileActions>["actions"] }) {
   const query = useQuery(MediaFileDetailDocument, { variables: { id } });
+  const streams = useFileStreams(id);
   const file = query.data?.mediaFile as FileEntity | null | undefined;
-  if (query.error && !file) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
+  const onOpenChange = (open: boolean) => { if (!open) closeFileDialog(); };
+
   if (!file) {
-    if (query.loading) return <SkeletonBlock className="h-64 rounded-xl" />;
-    return <p className="text-body-sm text-muted">This file is no longer in the library.</p>;
+    return (
+      <Dialog.Root open onOpenChange={onOpenChange}>
+        <Dialog.Popup size="lg">
+          <Dialog.Header title="File details" icon={<IconFile />} />
+          <Dialog.Body>
+            {query.error ? <ErrorState error={query.error} onRetry={() => void query.refetch()} />
+              : query.loading ? <SkeletonBlock className="h-64 rounded-xl" />
+              : <p className="text-body-sm text-muted">This file is no longer in the library.</p>}
+          </Dialog.Body>
+        </Dialog.Popup>
+      </Dialog.Root>
+    );
   }
+
   const item = linkedItem(file);
+  const quality = qualityStatus(file.qualityStatus);
   return (
-    <>
-      <FileIdentity file={file} actions={actions} tier="header" />
-      {item ? <div className="flex min-w-0 items-center gap-2 text-label-sm text-muted">Linked to <EntityChip entity={item} /></div> : null}
-      <FileDetailsBody file={file} />
-    </>
+    <EntityDetailDialog
+      open
+      onOpenChange={onOpenChange}
+      label="File details"
+      identity={<FileIdentity tier="header" file={file} />}
+      actions={<ActionBar set={actions} targets={[file]} label={`Actions for ${fileName(file.path)}`} maxButtons={2} />}
+      badges={
+        <>
+          {item ? <EntityChip entity={item} /> : <Badge size="sm" marker="dot" tone={isFileLinked(file) ? "success" : "warning"}>{isFileLinked(file) ? "Linked" : "Unmatched"}</Badge>}
+          <Badge size="sm" marker="dot" tone={badgeTone(quality.tone)}>{quality.label}</Badge>
+        </>
+      }
+      summary={<FileSummary file={file} />}
+      sections={fileSections(file, streams)}
+    />
   );
 }

@@ -2,8 +2,11 @@ import { Link } from "@tanstack/react-router";
 import { IconSpinner } from "glass-ux/icons";
 import { useMemo } from "react";
 
-import { PosterStrip } from "@/components/ui/PosterStrip";
 import type { LibrariesOverviewQuery } from "@/graphql/generated/graphql";
+import { LibraryFileCountDocument } from "@/graphql/generated/graphql";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+
+import { PosterStrip } from "@/components/ui/PosterStrip";
 import { albumCover, audiobookCover, moviePoster, showPoster } from "@/lib/artwork";
 import { formatRelative, pluralize } from "@/lib/format";
 import { libraryType } from "@/lib/library-types";
@@ -11,7 +14,8 @@ import { cn } from "@/lib/utils";
 
 export type LibraryOverview = LibrariesOverviewQuery["libraries"]["edges"][number]["node"];
 
-export function libraryItemCount(library: LibraryOverview): { count: number; noun: string } {
+/** What a library holds. A library of loose files is counted on its own (`LibraryFileCount`), so null here. */
+export function libraryItemCount(library: LibraryOverview): { count: number | null; noun: string } {
   const meta = libraryType(library.libraryType);
   switch (meta.type) {
     case "movies":
@@ -23,7 +27,7 @@ export function libraryItemCount(library: LibraryOverview): { count: number; nou
     case "audiobooks":
       return { count: library.audiobooks.pageInfo.totalCount ?? 0, noun: "book" };
     default:
-      return { count: library.mediaFiles.pageInfo.totalCount ?? 0, noun: "file" };
+      return { count: null, noun: "file" };
   }
 }
 
@@ -88,10 +92,15 @@ export function LibraryCard({ library, className, size = "md" }: LibraryCardProp
       <div className="relative p-4 pt-0">
         <p className="truncate text-title-lg text-foreground text-shadow-hero">{library.name}</p>
         <p className="text-label-sm text-foreground/75">
-          {pluralize(count, noun)}
+          {count === null ? <FileCount libraryId={library.id} /> : pluralize(count, noun)}
           {library.lastScannedAt ? ` · scanned ${formatRelative(library.lastScannedAt)}` : ""}
         </p>
       </div>
     </Link>
   );
+}
+
+function FileCount({ libraryId }: { libraryId: string }) {
+  const { data } = useQuery(LibraryFileCountDocument, { variables: { libraryId } });
+  return <>{pluralize(data?.mediaFiles.pageInfo.totalCount ?? 0, "file")}</>;
 }

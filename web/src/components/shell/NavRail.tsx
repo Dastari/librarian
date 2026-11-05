@@ -55,7 +55,7 @@ export function NavRail() {
             key={node.id}
             className="nav-focus"
             label={node.name}
-            icon={<meta.icon className={cn(meta.tint, node.scanning && "animate-pulse-soft")} />}
+            icon={<meta.icon className={node.scanning ? "animate-pulse-soft" : undefined} />}
             active={isNavActive(`/libraries/${node.id}`, pathname)}
             render={<Link to="/libraries/$libraryId" params={{ libraryId: node.id }} data-focusable />}
           />

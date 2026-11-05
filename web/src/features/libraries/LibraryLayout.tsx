@@ -6,7 +6,8 @@ import { IconWarning, IconSpinner, IconRefresh, IconSettings } from "glass-ux/ic
 import { PageScroller } from "@/components/shell/PageScroller";
 import { Button, MediaBackdrop, PageHeader, SegmentTabs, type TabItem } from "@/components/ui";
 import type { SpotlightArt } from "@/features/home/HomeSpotlight";
-import type { LibraryDetailQuery } from "@/graphql/generated/graphql";
+import { LibraryFileCountDocument, type LibraryDetailQuery } from "@/graphql/generated/graphql";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { formatRelative, pluralize } from "@/lib/format";
 import { libraryType, type LibraryType } from "@/lib/library-types";
@@ -20,7 +21,7 @@ export type LibraryDetail = NonNullable<LibraryDetailQuery["library"]>;
 export const LibraryArtContext = createContext<(art: SpotlightArt) => void>(() => {});
 
 /** Tab set per library type; the first entry is the default view. */
-export function libraryTabs(library: LibraryDetail): TabItem[] {
+export function libraryTabs(library: LibraryDetail, fileCount?: number | null): TabItem[] {
   const base = `/libraries/${library.id}`;
   const type = libraryType(library.libraryType).type;
   const byType: Record<LibraryType, TabItem[]> = {
@@ -43,7 +44,7 @@ export function libraryTabs(library: LibraryDetail): TabItem[] {
   };
   return [
     ...byType[type],
-    { key: "files", label: "Files", href: `${base}/files`, count: library.mediaFiles.pageInfo.totalCount },
+    { key: "files", label: "Files", href: `${base}/files`, count: fileCount ?? undefined },
     { key: "scans", label: "Scans", href: `${base}/scans` },
   ];
 }
@@ -52,7 +53,8 @@ export function LibraryLayout({ library }: { library: LibraryDetail }) {
   const meta = libraryType(library.libraryType);
   const isAdmin = useIsAdmin();
   const scan = useLibraryScan(library.id);
-  const tabs = libraryTabs(library);
+  const files = useQuery(LibraryFileCountDocument, { variables: { libraryId: library.id } });
+  const tabs = libraryTabs(library, files.data?.mediaFiles.pageInfo.totalCount);
   const primaryCount = tabs.find((tab) => tab.count !== undefined)?.count ?? 0;
   // Browsers own their result scrolling; forms and scan history need a scrolling pane;
   // Recommended is a page of artwork and shelves that scrolls as a whole.

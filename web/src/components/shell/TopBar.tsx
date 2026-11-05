@@ -6,6 +6,7 @@ import { SearchTrigger, TopBar as GlassTopBar } from "glass-ux/shell";
 import { Tooltip } from "glass-ux/tooltip";
 
 import { CastButton } from "@/features/player/CastButton";
+import { requestSearchFocus } from "@/features/search/searchFocus";
 import { cn } from "@/lib/utils";
 
 import { Breadcrumbs } from "./Breadcrumbs";
@@ -21,6 +22,11 @@ export function TopBar() {
   const palette = useCommandPalette();
   const overArt = useHasShellArt();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  // Already searching: going "to search" would clear the query and leave focus on this button.
+  const openSearch = () => {
+    if (pathname === "/search") requestSearchFocus();
+    else void navigate({ to: "/search" });
+  };
   const isRoot = pathname === "/" || /^\/(libraries|search|lists|guide|wanted|downloads|activity|settings)$/.test(pathname);
 
   return (
@@ -34,7 +40,7 @@ export function TopBar() {
           <Breadcrumbs className="min-w-0 flex-1" />
         </div>
       }
-      search={<SearchTrigger placeholder="Search library" shortcut="mod+shift+f" onOpen={() => void navigate({ to: "/search" })} className="nav-focus" data-focusable />}
+      search={<SearchTrigger placeholder="Search library" shortcut="mod+shift+f" onOpen={openSearch} className="nav-focus" data-focusable />}
       actions={
         <>
           <CastButton className="nav-focus" />

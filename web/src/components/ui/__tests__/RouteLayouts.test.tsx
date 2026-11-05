@@ -15,6 +15,7 @@ vi.mock("@tanstack/react-router", () => ({
   }),
 }));
 vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => false }));
+vi.mock("@/lib/graphql/live/hooks", () => ({ useLiveQuery: () => ({ data: undefined }) }));
 vi.mock("@/features/libraries/useLibraryScan", () => ({ useLibraryScan: () => ({ unresolvedIssues: 0 }) }));
 vi.mock("@/components/ui", async () => ({
   ...await vi.importActual("../PageHeader"),

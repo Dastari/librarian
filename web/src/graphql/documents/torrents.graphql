@@ -168,3 +168,81 @@ query DownloadCounts {
   paused: torrents(where: { state: { eq: "paused" } }, page: { limit: 1, offset: 0 }) { pageInfo { totalCount } }
   failed: torrents(where: { or: [{ state: { eq: "error" } }, { postProcessStatus: { eq: "failed" } }] }, page: { limit: 1, offset: 0 }) { pageInfo { totalCount } }
 }
+
+# Every file in a download and what became of it. Matching records one row per file it looked at,
+# so a pack shows which episodes landed and which did not.
+query TorrentFilesDetail($id: String!) {
+  torrent(id: $id) {
+    id
+    files(orderBy: { fileIndex: ASC }, page: { limit: 2000, offset: 0 }) {
+      edges {
+        node {
+          id
+          fileIndex
+          filePath
+          relativePath
+          fileSize
+          progress
+          isExcluded
+        }
+      }
+    }
+    pendingMatches(page: { limit: 2000, offset: 0 }) {
+      edges {
+        node {
+          id
+          sourcePath
+          sourceFileIndex
+          unmatchedReason
+          copiedAt
+          copyError
+          episode {
+            id
+            showId
+            season
+            episode
+            title
+            show {
+              id
+              name
+            }
+          }
+          movie {
+            id
+            title
+            year
+          }
+          track {
+            id
+            title
+            albumId
+          }
+          chapter {
+            id
+            title
+            audiobookId
+          }
+        }
+      }
+    }
+  }
+}
+
+# What one file of a download could be, and saying which it is.
+query TorrentFileCandidates($infoHash: String!, $fileIndex: Int!, $libraryId: String!) {
+  torrentFileCandidates(infoHash: $infoHash, fileIndex: $fileIndex, libraryId: $libraryId) {
+    targetType
+    targetId
+    targetName
+    score
+    reason
+  }
+}
+
+mutation MatchTorrentFile($input: MatchTorrentFileInput!) {
+  matchTorrentFile(input: $input) {
+    success
+    matchCount
+    error
+  }
+}

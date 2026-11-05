@@ -94,7 +94,7 @@ export function MovieReleases() {
         image={movie.posterUrl}
         tint={LIBRARY_TYPES.movies.tintVar}
         badge={badge ?? status}
-        {...(existing ? { to: "/movies/$movieId" as const, params: { movieId: existing.id } } : { onPress: () => void navigate({ to: "/search", search: { q: movie.title, in: "movie" } as never }) })}
+        {...(existing ? { to: "/movies/$movieId" as const, params: { movieId: existing.id } } : { onPress: () => void navigate({ to: "/discover/movies/$tmdbId", params: { tmdbId: String(movie.providerId) } }) })}
         actions={
           !existing && libraryId ? (
             <Button

@@ -18,6 +18,7 @@ fragment ShowFields on Show {
   posterUrl
   backdropUrl
   contentRating
+  status
   autoDownload
   autoDownloadMode
   qualityProfileId

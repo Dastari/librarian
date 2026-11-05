@@ -4,6 +4,7 @@ import { IconChevronLeft, IconChevronRight } from "glass-ux/icons";
 import { MultiSelect } from "glass-ux/multi-select";
 import { Segmented } from "glass-ux/segmented";
 import { Panel, PanelBody, PanelHeader } from "glass-ux/surface";
+import { Tooltip } from "glass-ux/tooltip";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { Artwork, ErrorState, SkeletonBlock } from "@/components/ui";
@@ -152,10 +153,10 @@ function YourShowsRow({ days, todayIso, episodes, loading }: { days: string[]; t
         : days.map((day) => (
           <div key={day} role="cell" className={cn("flex min-h-28 flex-wrap content-start gap-1.5 border-s border-t border-(--line) p-2", day === todayIso && "bg-brand-soft/40")}>
             {byDay.get(day)!.map((group) => (
-              <Link key={group.show.id} to="/shows/$showId" params={{ showId: group.show.id }} data-focusable aria-label={`${group.show.name} ${episodeRange(group.episodes)}`} className="nav-focus tv-lift relative w-14 rounded-md">
+              <Tooltip key={group.show.id} content={`${group.show.name} · ${episodeRange(group.episodes)}`}><Link to="/shows/$showId" params={{ showId: group.show.id }} data-focusable aria-label={`${group.show.name} ${episodeRange(group.episodes)}`} className="guide-tile nav-focus tv-lift relative w-14 rounded-md">
                 <Artwork src={showPoster(group.show)} alt="" aspect="poster" displayWidth={56} tint={LIBRARY_TYPES.tv.tintVar} className="tv-lift-target rounded-md" />
                 <span className="absolute -end-1 -top-1 rounded-pill border border-(--line) bg-background px-1 text-[0.625rem] text-muted">{episodeRange(group.episodes)}</span>
-              </Link>
+              </Link></Tooltip>
             ))}
           </div>
         ))}
@@ -170,21 +171,21 @@ function ScheduleCell({ shows, today }: { shows: ScheduledShow[]; today: boolean
   return (
     <div role="cell" className={cn("flex min-h-28 flex-wrap content-start gap-1.5 border-s border-t border-(--line) p-2", today && "bg-brand-soft/40")}>
       {visible.map((show) => (
+        <Tooltip key={show.key} content={`${show.name} · ${scheduledLabel(show)}`}>
         <button
-          key={show.key}
           type="button"
-          onClick={() => void navigate({ to: "/search", search: { q: show.name, in: "show" } as never })}
-          aria-label={`${show.name}, ${scheduledLabel(show)}${show.network ? `, ${show.network}` : ""}. Find and add`}
-          title={`${show.name} · ${scheduledLabel(show)}`}
+          onClick={() => void navigate({ to: "/discover/shows/$tvmazeId", params: { tvmazeId: String(show.tvmazeShowId) } })}
+          aria-label={`${show.name}, ${scheduledLabel(show)}${show.network ? `, ${show.network}` : ""}`}
           data-focusable
-          className="nav-focus tv-lift relative w-14 rounded-md text-start"
+          className="guide-tile nav-focus tv-lift relative w-14 rounded-md text-start"
         >
           <Artwork src={show.posterUrl ? artworkUrl("guide", show.tvmazeShowId, "poster") : undefined} alt="" aspect="poster" displayWidth={56} tint={LIBRARY_TYPES.tv.tintVar} className="tv-lift-target rounded-md" fallback={<span className="px-1 text-center text-[0.625rem] leading-tight text-foreground/80">{show.name}</span>} />
           {show.newShow || show.premiere ? <span className="absolute bottom-1 start-1 rounded bg-brand px-1 text-[0.5625rem] font-bold uppercase text-brand-foreground">{show.newShow ? "New" : `S${show.season}`}</span> : null}
         </button>
+        </Tooltip>
       ))}
       {shows.length > TILES_PER_CELL && !open ? (
-        <button type="button" onClick={() => setOpen(true)} data-focusable className="nav-focus grid aspect-[2/3] w-14 place-items-center rounded-md border border-dashed border-(--line-strong) text-label-sm text-muted">+{shows.length - TILES_PER_CELL}</button>
+        <Tooltip content={`Show ${shows.length - TILES_PER_CELL} more`}><button type="button" onClick={() => setOpen(true)} data-focusable className="guide-tile guide-tile-more nav-focus grid aspect-[2/3] w-14 place-items-center rounded-md border border-dashed border-(--line-strong) text-label-sm text-muted">+{shows.length - TILES_PER_CELL}</button></Tooltip>
       ) : null}
     </div>
   );

@@ -3,7 +3,7 @@ import { parse } from "graphql";
 import { describe, expect, it } from "vitest";
 import {
   ActiveDownloadCountDocument, BackupOverviewDocument, ContentStatusesDocument, EntityMovieGetDocument,
-  EntityMovieListDocument, EntitySeasonListDocument, EntitySeasonChangedDocument, LibrariesOverviewDocument, LiveTorrentsDocument, MovieDetailDocument, ShowEpisodesDocument,
+  EntityMovieListDocument, EntitySeasonListDocument, EntitySeasonChangedDocument, LibrariesOverviewDocument, LibraryFileCountDocument, LiveTorrentsDocument, MovieDetailDocument, ShowEpisodesDocument,
 } from "@/graphql/generated/graphql";
 import { apolloLiveSource, queryDependencies, topicDocuments } from "../documents";
 
@@ -14,7 +14,8 @@ describe("generated live dependencies", () => {
   });
   it("covers empty lists and membership/count changes without looking at returned rows", () => {
     expect(topics(EntityMovieListDocument)).toContain("Movie");
-    expect(topics(LibrariesOverviewDocument)).toEqual(expect.arrayContaining(["Library", "Movie", "Show", "Album", "Audiobook", "MediaFile"]));
+    expect(topics(LibrariesOverviewDocument)).toEqual(expect.arrayContaining(["Library", "Movie", "Show", "Album", "Audiobook"]));
+    expect(topics(LibraryFileCountDocument)).toContain("MediaFile");
   });
   it("keeps direct child and parent fallbacks and narrows only explicit ID roots", () => {
     expect(topics(ShowEpisodesDocument)).toEqual(expect.arrayContaining(["Episode", "Show", "MediaFile"]));

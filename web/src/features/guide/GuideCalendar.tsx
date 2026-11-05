@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { Button } from "glass-ux/button";
 import { IconChevronLeft, IconChevronRight } from "glass-ux/icons";
+import { Tooltip } from "glass-ux/tooltip";
 import { useMemo, useState } from "react";
 
 import { Artwork, SkeletonBlock } from "@/components/ui";
@@ -56,7 +57,7 @@ export function GuideCalendar() {
 
   return (
     <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
-      <section aria-label="Calendar" data-nav-section className="glass-panel min-w-0 rounded-card p-4 sm:p-5">
+      <section aria-label="Calendar" data-nav-section className="glass-panel flex min-w-0 flex-col rounded-card p-4 sm:p-5 lg:min-h-[calc(var(--view-h,100svh)-1.5rem)] lg:self-start">
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <h2 className="text-title-lg text-foreground me-2" aria-live="polite">{month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</h2>
           <Button variant="ghost" shape="circle" size="sm" icon={<IconChevronLeft className="rtl:rotate-180" />} aria-label="Previous month" onClick={() => step(-1)} data-focusable />
@@ -64,40 +65,41 @@ export function GuideCalendar() {
           <span className="text-label-sm text-muted">{total ? `${total} episode${total === 1 ? "" : "s"} this month` : "Nothing from your shows this month"}</span>
           <Button variant="ghost" size="sm" className="ms-auto" onClick={() => { setChosenMonth(monthOf(today)); setChosenDay(todayIso); }} data-focusable>Today</Button>
         </div>
-        <div role="grid" aria-label="Days" data-nav-group className="grid grid-cols-7 gap-1.5">
+        <div role="grid" aria-label="Days" data-nav-group className="grid min-h-0 flex-1 grid-cols-7 gap-1.5" style={{ gridTemplateRows: `auto repeat(${cells.length / 7}, minmax(4.25rem, 1fr))` }}>
           {WEEKDAYS.map((name) => <div key={name} role="columnheader" className="px-2 pb-1 text-overline text-muted">{name}</div>)}
           {cells.map((day) => {
             const iso = isoDate(day);
             const groups = groupDayByShow(byDay.get(iso) ?? []);
             return (
-              <button
-                key={iso}
-                type="button"
-                role="gridcell"
-                aria-selected={iso === selected}
-                aria-label={`${day.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}${groups.length ? `, ${groups.map((group) => group.show.name).join(", ")}` : ""}`}
-                onClick={() => setChosenDay(iso)}
-                data-focusable
-                className={cn(
-                  "nav-focus guide-day relative flex min-w-0 flex-col items-stretch gap-1 rounded-xl border p-1.5 text-start transition-colors sm:p-2",
-                  "border-white/5 bg-white/[0.03] hover-capable:hover:bg-white/[0.06]",
-                  !inMonth(iso) && "opacity-40",
-                  iso === todayIso && "border-brand/60 bg-brand-soft",
-                  iso === selected && "border-foreground/40 bg-white/[0.08]",
-                )}
-              >
-                <span className={cn("text-label-sm text-muted", iso === todayIso && "font-semibold text-brand")}>{day.getDate()}{iso === todayIso ? <span className="hidden sm:inline"> · Today</span> : null}</span>
-                {groups.slice(0, 1).map((group) => (
-                  <span key={group.show.id} className="mt-auto flex min-w-0 items-end gap-1.5">
-                    <Artwork src={showPoster(group.show)} alt="" aspect="poster" displayWidth={36} tint={LIBRARY_TYPES.tv.tintVar} className="w-7 shrink-0 rounded sm:w-9" />
-                    <span className="hidden min-w-0 text-label-sm leading-tight sm:block">
-                      <span className="line-clamp-2 text-foreground">{group.show.name}</span>
-                      <span className="block truncate text-muted">S{group.episodes[0]!.season} {episodeRange(group.episodes)}</span>
+              <Tooltip key={iso} enabled={groups.length > 0} content={groups.map((group) => `${group.show.name} · S${group.episodes[0]!.season} ${episodeRange(group.episodes)}`).join(", ")}>
+                <button
+                  type="button"
+                  role="gridcell"
+                  aria-selected={iso === selected}
+                  aria-label={`${day.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}${groups.length ? `, ${groups.map((group) => group.show.name).join(", ")}` : ""}`}
+                  onClick={() => setChosenDay(iso)}
+                  data-focusable
+                  className={cn(
+                    "nav-focus guide-day relative flex min-w-0 flex-col items-stretch gap-1 rounded-xl border p-1.5 text-start transition-colors sm:p-2",
+                    "border-white/5 bg-white/[0.03] hover-capable:hover:bg-white/[0.06]",
+                    !inMonth(iso) && "opacity-40",
+                    iso === todayIso && "border-brand/60 bg-brand-soft",
+                    iso === selected && "border-foreground/40 bg-white/[0.08]",
+                  )}
+                >
+                  <span className={cn("guide-day-date text-label-sm text-muted", iso === todayIso && "font-semibold text-brand")}>{day.getDate()}{iso === todayIso ? <span className="guide-day-today"> · Today</span> : null}</span>
+                  {groups.slice(0, 1).map((group) => (
+                    <span key={group.show.id} className="mt-auto flex min-h-0 min-w-0 items-end gap-1.5">
+                      <Artwork src={showPoster(group.show)} alt="" aspect="poster" displayWidth={80} tint={LIBRARY_TYPES.tv.tintVar} className="guide-day-poster shrink-0 rounded" />
+                      <span className="guide-day-text min-w-0 text-label-sm leading-tight">
+                        <span className="guide-day-title text-foreground">{group.show.name}</span>
+                        <span className="block truncate text-muted">S{group.episodes[0]!.season} {episodeRange(group.episodes)}</span>
+                      </span>
                     </span>
-                  </span>
-                ))}
-                {groups.length > 1 ? <span className="absolute end-1.5 top-1.5 rounded-pill bg-white/10 px-1.5 text-label-sm text-muted">+{groups.length - 1}</span> : null}
-              </button>
+                  ))}
+                  {groups.length > 1 ? <span className="absolute end-1.5 top-1.5 rounded-pill bg-white/10 px-1.5 text-label-sm text-muted">+{groups.length - 1}</span> : null}
+                </button>
+              </Tooltip>
             );
           })}
         </div>

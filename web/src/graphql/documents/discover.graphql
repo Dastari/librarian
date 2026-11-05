@@ -1,0 +1,89 @@
+# Titles that may not be in a library, for their pages. Read through the metadata cache.
+
+query ProviderMovie($tmdbId: Int!) {
+  providerMovie(tmdbId: $tmdbId) {
+    tmdbId
+    title
+    year
+    releaseDate
+    overview
+    tagline
+    genres
+    runtime
+    director
+    castNames
+    voteAverage
+    certification
+    imdbId
+    status
+  }
+}
+
+query ProviderShow($tvmazeId: Int!) {
+  providerShow(tvmazeId: $tvmazeId) {
+    tvmazeId
+    name
+    year
+    status
+    overview
+    network
+    runtime
+    genres
+    imdbId
+    episodes {
+      id
+      season
+      number
+      name
+      overview
+      airDate
+      runtime
+      hasStill
+    }
+  }
+}
+
+query ProviderAudiobook($providerId: String!) {
+  providerAudiobook(providerId: $providerId) {
+    providerId
+    title
+    authorName
+    description
+    publisher
+    language
+    isbn
+    publishedDate
+  }
+}
+
+# Whether a provider title is already in one of this person's libraries. Audiobooks keep their
+# provider id in audibleId.
+query OwnedMovieByTmdb($tmdbId: Int!) {
+  movies(where: { tmdbId: { eq: $tmdbId } }, page: { limit: 1 }) {
+    edges {
+      node {
+        id
+      }
+    }
+  }
+}
+
+query OwnedShowByTvmaze($tvmazeId: Int!) {
+  shows(where: { tvmazeId: { eq: $tvmazeId } }, page: { limit: 1 }) {
+    edges {
+      node {
+        id
+      }
+    }
+  }
+}
+
+query OwnedAudiobookByOpenlibrary($providerId: String!) {
+  audiobooks(where: { audibleId: { eq: $providerId } }, page: { limit: 1 }) {
+    edges {
+      node {
+        id
+      }
+    }
+  }
+}

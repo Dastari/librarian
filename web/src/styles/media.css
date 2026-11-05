@@ -159,6 +159,12 @@
 /* Posters grow upwards from their bottom edge so the title underneath stays readable. */
 .poster-art { transform-origin: 50% 100%; }
 
+/* A gallery's tiles lift from their centre and it leaves room for that: with a remote the focused
+ * tile grows and carries a thicker ring, which the scroller would otherwise cut off. */
+.poster-gallery-content .poster-art { transform-origin: 50% 50%; }
+:root[data-input-mode="tv"] .poster-gallery-content { padding: 1.5rem 1.25rem; }
+:root[data-input-mode="tv"] .poster-gallery-content [data-row-id] { scroll-margin-block: 1.5rem; }
+
 /* Rows reserve room for the grown tile so nothing clips. A tile grows upwards by 5% of its
  * height (1.5 × its width, at most --poster-max), and its focus ring, scaled with it, sits
  * outside that; the row's overflow clips anything beyond its padding. */
@@ -238,19 +244,63 @@
   }
 }
 
-/* Calendar days share the first screen with the guide header, so a six-week month never runs
- * past the fold: each row takes a sixth of what is left, within readable bounds. */
+/* A calendar day has the height its row gives it, so what it holds is sized from that height
+ * and can't push out into the week below. The poster takes what the date leaves over. */
 .guide-day {
-  block-size: clamp(4.25rem, calc((var(--view-h, 100svh) - 20rem) / 6), 7.5rem);
+  container-type: size;
+  overflow: clip;
 }
 
-@media (width < 48rem) {
-  /* Phones also lose the tab bar and a wrapped header row. */
-  .guide-day { block-size: clamp(3.5rem, calc((var(--view-h, 100svh) - 25rem) / 6), 6rem); }
+.guide-day-date {
+  block-size: 1rem;
+  line-height: 1rem;
+  flex: none;
+}
+
+.guide-day-poster {
+  inline-size: min(calc((100cqb - 1.25rem) * 2 / 3), 100cqi, 5rem);
+}
+
+.guide-day-title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+@container (min-height: 4.25rem) {
+  .guide-day-title { -webkit-line-clamp: 2; }
+}
+
+/* A narrow day has no room for a readable name, so it shows the poster and the tooltip names it. */
+.guide-day-today,
+.guide-day-text { display: none; }
+
+@container (min-width: 5.5rem) {
+  .guide-day-today { display: inline; }
+}
+
+@container (min-width: 6.5rem) {
+  .guide-day-text { display: block; }
+}
+
+/* Provider results in the add dialog: poster tiles that fill the dialog's width. */
+.provider-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(9rem, 100%), 1fr));
+  gap: var(--space-5) var(--space-4);
 }
 
 /* TV search: results sit in the column beside the keyboard, so rows start at the column edge
  * and bleed only to the right. */
+/* Search results scroll under still controls. The gutter keeps the columns the same width whether
+ * or not there are enough results to scroll; the row of suggestions scrolls sideways, not wraps. */
+.search-results { scrollbar-gutter: stable; }
+.search-terms { overflow-x: auto; scrollbar-width: none; }
+.search-tv { grid-template-rows: minmax(0, 1fr); }
+/* Room for a focused tile's lift and ring, without moving the first column off the heading. */
+.search-tv-scroll { scrollbar-gutter: stable; padding: 1rem 1.25rem 2rem; margin-inline: -1.25rem; }
+
 /* TV search: the alphabet grid and its suggestions in a column that stays put, results beside it. */
 .search-tv { grid-template-columns: clamp(19rem, 27vw, 30rem) minmax(0, 1fr); }
 .search-tv-keys {
@@ -283,6 +333,29 @@
 }
 
 /* ---- Streaming grid ---------------------------------------------------------------------- */
+
+/* A tile answers the pointer: it lifts, and "+3" fills in. Hover only, so touch never sticks. */
+.guide-tile {
+  transition:
+    transform calc(var(--duration-fast) * var(--motion-scale)) var(--ease-standard),
+    box-shadow calc(var(--duration-fast) * var(--motion-scale)) var(--ease-standard),
+    background-color calc(var(--duration-fast) * var(--motion-scale)) var(--ease-standard);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .guide-tile:hover {
+    z-index: 1;
+    transform: translateY(-0.125rem) scale(1.05);
+    box-shadow: var(--shadow-3);
+  }
+
+  .guide-tile-more:hover {
+    background-color: var(--fill-hover);
+    color: var(--fg);
+  }
+}
+
+.guide-tile:active { transform: scale(0.98); }
 
 /* Solid fills: the rows pass under these headings as they scroll. */
 .guide-grid-scroll { scroll-padding-block-start: 4rem; scroll-padding-inline-start: 9.5rem; }

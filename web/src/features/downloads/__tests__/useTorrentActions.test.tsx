@@ -8,7 +8,7 @@ const calls=vi.hoisted(()=>({pause:vi.fn(),resume:vi.fn(),remove:vi.fn(),update:
 vi.mock("@apollo/client/react",()=>({useMutation:(doc:unknown)=>[
   doc===PauseTorrentDocument?calls.pause:doc===ResumeTorrentDocument?calls.resume:doc===EntityTorrentDeleteDocument?calls.remove:doc===EntityTorrentUpdateDocument?calls.update:doc===ProcessSourceDocument?calls.process:()=>{throw new Error("Unexpected mutation");},
 ]}));
-const row=(id:number,state="seeding",loaded=true,deleteFilesOnRemove=false)=>({id:String(id),record:{id:`entity-${id}`,name:`Torrent ${id}`,state,progress:1,deleteFilesOnRemove},live:loaded?{id,state,progress:1}:null}) as unknown as DownloadRow;
+const row=(id:number,state="seeding",loaded=true,deleteFilesOnRemove=false)=>({id:String(id),record:{id:`entity-${id}`,infoHash:`hash-${id}`,name:`Torrent ${id}`,state,progress:1,deleteFilesOnRemove},live:loaded?{id,state,progress:1}:null}) as unknown as DownloadRow;
 const setup=()=>renderHook(()=>useTorrentActions({onLink:()=>{},onChanged:calls.changed},true)).result.current.actions;
 const actionContext={} as ActionContext;
 beforeEach(()=>{vi.clearAllMocks();calls.pause.mockResolvedValue({data:{pauseTorrent:{success:true}}});calls.resume.mockResolvedValue({data:{resumeTorrent:{success:true}}});calls.remove.mockResolvedValue({data:{deleteTorrent:{success:true}}});calls.update.mockResolvedValue({data:{updateTorrent:{success:true}}});calls.process.mockResolvedValue({data:{processSource:{success:true}}});});
@@ -48,7 +48,7 @@ describe("shared torrent bulk actions",()=>{
  });
  it("imports persisted identities and leaves destructive file removal separately confirmed",async()=>{
   const actions=setup(),imports=actions.find(a=>a.id==="import")!,deletes=actions.find(a=>a.id==="remove-files")!;
-  await imports.run!([row(1),row(2)],actionContext);expect(calls.process).toHaveBeenCalledWith({variables:{sourceId:"entity-1",sourceType:"torrent"}});
+  await imports.run!([row(1),row(2)],actionContext);expect(calls.process).toHaveBeenCalledWith({variables:{sourceId:"hash-1",sourceType:"torrent"}});
   expect(deletes.confirm!([row(1),row(2)])).toMatchObject({tone:"danger",confirmLabel:"Delete files"});
  });
 });
