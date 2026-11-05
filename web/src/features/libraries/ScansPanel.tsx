@@ -180,24 +180,31 @@ export function ScansPanel({ libraryId }: { libraryId: string }) {
   const detail = selectedIssue ? <ScanIssueDetail row={selectedIssue} actions={issueActions} onClose={close} />
     : selectedRun ? <ScanRunDetail row={selectedRun} actions={runActions} onClose={close} /> : null;
   const refresh = <Button size="sm" variant="ghost" isIconOnly aria-label="Refresh scans" isPending={history ? runs.list.fetching : issues.list.fetching} onPress={refetch}><IconRefresh /></Button>;
-
-  return (
-    <div data-print-flow className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
-      <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-3">
-        <Segmented<ScanView>
-          aria-label="Show"
-          value={view}
-          onValueChange={(value) => { setSelectedId(null); void setView(value === "open" ? null : value); }}
-          options={SCAN_VIEWS.map((value) => ({ value, label: counts.views[value] !== undefined ? `${VIEW_LABEL[value]} ${counts.views[value]}` : VIEW_LABEL[value] }))}
-        />
-        {scanRunId && !history ? (
+  // What the table shows belongs to the table: both of them carry these in their toolbar.
+  const controls = (
+    <div className="flex min-w-0 items-center gap-2">
+      {scanRunId && !history ? (
           <Badge tone="info" size="md">
             From the scan of {filteredRun ? formatDateTime(filteredRun.startedAt ?? filteredRun.createdAt) : "the selected run"}
             <button type="button" aria-label="Show issues from every scan" className="nav-focus -me-1 ms-1 rounded-full" onClick={() => void setScanRunId(null)}><IconClose size="xs" /></button>
           </Badge>
         ) : null}
+        <Segmented<ScanView>
+          aria-label="Show"
+          size="sm"
+          value={view}
+          onValueChange={(value) => { setSelectedId(null); void setView(value === "open" ? null : value); }}
+          options={SCAN_VIEWS.map((value) => ({ value, label: counts.views[value] !== undefined ? `${VIEW_LABEL[value]} ${counts.views[value]}` : VIEW_LABEL[value] }))}
+        />
+      {refresh}
+    </div>
+  );
+
+  return (
+    <div data-print-flow className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-6 gap-y-3">
         {latest ? (
-          <div className="ms-auto flex min-w-0 items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="h-12 w-60 max-lg:hidden"><Metric label="Files found" value={latest.discoveredCount} data={counts.recent.map((run) => run.discoveredCount)} range={`Last ${counts.recent.length} scans`} tone="info" better="none" /></div>
             <div className="h-12 w-60 max-lg:hidden"><Metric label="Unmatched" value={latest.unmatchedCount} data={counts.recent.map((run) => run.unmatchedCount)} range={`Last ${counts.recent.length} scans`} tone="warning" better="down" /></div>
           </div>
@@ -232,7 +239,7 @@ export function ScansPanel({ libraryId }: { libraryId: string }) {
               error={runs.list.error && runs.list.rows.length === 0 ? "Couldn't load the scan history. Retry to reconnect." : undefined}
               onRetry={refetch}
               emptyMessage="No scans yet. Scan the library to discover its files."
-              toolbar={refresh}
+              toolbar={controls}
             />
           ) : (
             <DataTable<IssueRow>
@@ -262,7 +269,7 @@ export function ScansPanel({ libraryId }: { libraryId: string }) {
               error={issues.list.error && issues.list.rows.length === 0 ? "Couldn't load scan issues. Retry to reconnect." : undefined}
               onRetry={refetch}
               emptyMessage={view === "open" ? "No open issues. The last scans found nothing that needs you." : "No resolved issues yet."}
-              toolbar={refresh}
+              toolbar={controls}
             />
           )}
         </div>

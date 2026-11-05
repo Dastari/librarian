@@ -188,10 +188,6 @@
 
   .app-shell-main { padding-block-end: 0; }
 
-  .app-shell-top {
-    position: static;
-    margin: 0;
-  }
 
   /* A kept custom chrome element must also leave fixed/sticky screen geometry. */
   .app-shell [data-print="keep"] {

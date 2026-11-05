@@ -1,7 +1,7 @@
 import { useMutation } from "@apollo/client/react";
 import { toast } from "glass-ux/toast";
 import { Form, FormActions, formBehaviour, useAppForm } from "glass-ux/form";
-import { IconPlayerPlay } from "@tabler/icons-react";
+import { IconPlay } from "glass-ux/icons";
 import { useEffect, useRef } from "react";
 import { z } from "zod";
 
@@ -95,7 +95,7 @@ export function DownloadsSettings() {
         <Panel
           title="Automatic downloads"
           description="Librarian searches your sources for anything wanted and sends the best match to the download client."
-          actions={<Button size="sm" variant="ghost" onPress={() => void runNow()} isPending={triggering}><IconPlayerPlay size={16} /> Run now</Button>}
+          actions={<Button size="sm" variant="ghost" onPress={() => void runNow()} isPending={triggering}><IconPlay size="md" /> Run now</Button>}
         >
           <div className="flex flex-col gap-4">
             <form.AppField name="autoEnabled">{(field) => <field.SwitchRow label="Search and download automatically" description="Turn this off to keep every grab manual." />}</form.AppField>

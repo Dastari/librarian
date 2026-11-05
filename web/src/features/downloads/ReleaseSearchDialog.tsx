@@ -1,8 +1,9 @@
+import { IconSearch } from "@tabler/icons-react";
 import { Dialog as GlassDialog } from "glass-ux/dialog";
 import { useDialogReturnFocus } from "@/components/ui/Dialog";
 import { defineActions } from "glass-ux/actions";
 import { copyText } from "glass-ux/copy-button";
-import { IconCopy } from "glass-ux/icons";
+import { IconCopy, IconDownload } from "glass-ux/icons";
 import { useMutation } from "@apollo/client/react";
 import { useSourceSearch } from "./useSourceSearch";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
@@ -10,7 +11,6 @@ import { SearchField } from "glass-ux/input";
 import { Select } from "glass-ux/select";
 import { Tooltip } from "glass-ux/tooltip";
 import { toast } from "glass-ux/toast";
-import { IconDownload, IconSearch } from "@tabler/icons-react";
 import { Badge, type BadgeTone } from "glass-ux/badge";
 import { createDataTableColumns, DataTable, IdentityCell, NumericCell, TextCell } from "glass-ux/data-table";
 import { LevelGauge, type GaugeLevel } from "glass-ux/level-gauge";
@@ -36,7 +36,7 @@ function GrabReleaseCell({ release }: { release: Release }) {
   const actions = useContext(ReleaseActionsContext)!;
   return (
     <Button size="sm" variant="primary" isPending={actions.busy === releaseId(release)} onPress={() => void actions.grab(release)} isDisabled={Boolean(actions.busy && actions.busy !== releaseId(release)) || (!release.magnetUri && !release.link)}>
-      <IconDownload size={14} /> Grab
+      <IconDownload size="sm" /> Grab
     </Button>
   );
 }
@@ -270,8 +270,21 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
             Search
           </Button>
         </form>
-        {allReleases.length > 0 ? (
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
+        {sourceCapability.data?.hasEnabledSources === false ? (
+          <EmptyState compact icon={IconSearch} title="No sources configured" description="Add a torrent indexer under Settings → Sources to search for releases." />
+        ) : result.loading ? (
+          <div className="grid h-48 place-items-center">
+            <Spinner size={28} />
+          </div>
+        ) : result.error ? (
+          <ErrorState error={result.error} onRetry={() => void search({ variables })} />
+        ) : (
+          <>
+            {failures.length ? <p className="shrink-0 text-label-sm text-warning">{failures.map((source) => `${source.sourceName}: ${source.error}`).join(" · ")}</p> : null}
+            {result.data ? <p className="shrink-0 text-label-sm text-muted">Source results may be partial. Filters apply to returned releases.</p> : null}
+            <DataTable<Release>
+              toolbar={allReleases.length > 0 ? (
+                <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
             <GlassSegmented<Resolution> ariaLabel="Resolution" size="sm" value={resolution} onChange={setResolution} items={[{ key: "any", label: "Any" }, { key: "2160p", label: "2160p" }, { key: "1080p", label: "1080p" }, { key: "720p", label: "720p" }, { key: "sd", label: "SD" }]} />
             <GlassSegmented<Codec> ariaLabel="Codec" size="sm" value={codec} onChange={setCodec} items={[{ key: "any", label: "Any codec" }, { key: "hevc", label: "HEVC" }, { key: "h264", label: "H.264" }, { key: "av1", label: "AV1" }]} />
             <GlassSegmented<Packs> ariaLabel="Season packs" size="sm" value={packs} onChange={setPacks} items={[{ key: "any", label: "All" }, { key: "packs", label: "Season packs" }, { key: "episodes", label: "Single" }]} />
@@ -287,22 +300,9 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
             <Button size="sm" variant={seededOnly ? "primary" : "secondary"} onPress={() => setSeededOnly((value) => !value)} aria-pressed={seededOnly}>
               Seeded
             </Button>
-            <span className="text-numeric ml-auto text-label-sm text-muted">{releases.length} of {allReleases.length}</span>
-          </div>
-        ) : null}
-        {sourceCapability.data?.hasEnabledSources === false ? (
-          <EmptyState compact icon={IconSearch} title="No sources configured" description="Add a torrent indexer under Settings → Sources to search for releases." />
-        ) : result.loading ? (
-          <div className="grid h-48 place-items-center">
-            <Spinner size={28} />
-          </div>
-        ) : result.error ? (
-          <ErrorState error={result.error} onRetry={() => void search({ variables })} />
-        ) : (
-          <>
-            {failures.length ? <p className="shrink-0 text-label-sm text-warning">{failures.map((source) => `${source.sourceName}: ${source.error}`).join(" · ")}</p> : null}
-            {result.data ? <p className="shrink-0 text-label-sm text-muted">Source results may be partial. Filters apply to returned releases.</p> : null}
-            <DataTable<Release>
+            <span className="text-numeric whitespace-nowrap text-label-sm text-muted">{releases.length} of {allReleases.length}</span>
+                </div>
+              ) : undefined}
               id="librarian.release-search"
               label="Releases"
               columns={columns}

@@ -1,5 +1,6 @@
 
-import { IconPlus, IconStack3 } from "@tabler/icons-react";
+import { IconPlus } from "glass-ux/icons";
+import { IconStack3 } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
 import { Button, EmptyState, ErrorState, PosterCard, PosterGallery } from "@/components/ui";
@@ -59,7 +60,7 @@ export function CollectionsBrowser({ libraryId }: { libraryId: string }) {
         onLetterChange={jump.jump} sort={{ options: SORTS, value: table.sorting, onChange: table.setSorting }}
         total={list.totalCount}
         placeholder="Filter collections"
-        trailing={isAdmin ? <Button variant="primary" size="sm" onPress={() => setAdding(true)}><IconPlus size={16} /> Add</Button> : null}
+        trailing={isAdmin ? <Button variant="primary" size="sm" onPress={() => setAdding(true)}><IconPlus size="md" /> Add</Button> : null}
       />
       <div className="flex min-h-0 min-w-0 flex-1 gap-3 sm:gap-4">
         <PosterGallery<CollectionRow>

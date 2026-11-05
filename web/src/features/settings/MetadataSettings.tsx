@@ -3,7 +3,8 @@ import { Select } from "glass-ux/select";
 import { useMutation } from "@apollo/client/react";
 import { toast } from "glass-ux/toast";
 import { Form, FormActions, formBehaviour, useAppForm } from "glass-ux/form";
-import { IconPlugConnected, IconTestPipe } from "@tabler/icons-react";
+import { IconPlug } from "glass-ux/icons";
+import { IconTestPipe } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
@@ -140,7 +141,7 @@ export function MetadataSettings() {
     <Form form={form} className="flex min-w-0 flex-col gap-6" onError={(error) => toast.danger(errorMessage(error, "Could not save settings"))}>
       <form.Subscribe selector={(state) => [state.isSubmitting, state.isDefaultValue]}>
         {([submitting, unchanged]) => <>
-          <Panel title="Movies · TMDB" actions={<Button size="sm" variant="ghost" onPress={() => void runTmdbTest()} isPending={tmdbTest.loading}><IconPlugConnected size={16} /> Test</Button>}>
+          <Panel title="Movies · TMDB" actions={<Button size="sm" variant="ghost" onPress={() => void runTmdbTest()} isPending={tmdbTest.loading}><IconPlug size="md" /> Test</Button>}>
             <FieldGroup>
               <form.AppField name="tmdbEnabled">{(field) => <field.SwitchRow label="Use TMDB for movies and collections" disabled={loading || submitting} />}</form.AppField>
               <form.AppField name="tmdbApiKey">{(field) => <field.TextField label="API key" type="password" autoComplete="off" className="font-mono" hint="Required for movie libraries. Get one at themoviedb.org." disabled={loading || submitting} />}</form.AppField>
@@ -165,7 +166,7 @@ export function MetadataSettings() {
               <form.AppField name="autoFetch">{(field) => <field.SwitchRow label="Fetch metadata automatically for scanned files" disabled={loading || submitting} />}</form.AppField>
             </div>
           </Panel>
-          <Panel title="Filename parsing with Ollama" description="Optional fallback when filenames are ambiguous. Deterministic parsing always runs first." actions={<Button size="sm" variant="ghost" onPress={() => void runOllamaTest()} isPending={ollamaTest.loading}><IconPlugConnected size={16} /> Test</Button>}>
+          <Panel title="Filename parsing with Ollama" description="Optional fallback when filenames are ambiguous. Deterministic parsing always runs first." actions={<Button size="sm" variant="ghost" onPress={() => void runOllamaTest()} isPending={ollamaTest.loading}><IconPlug size="md" /> Test</Button>}>
             <FieldGroup columns={2}>
               <form.AppField name="llmEnabled">{(field) => <field.SwitchRow label="Enable" className="sm:col-span-2" disabled={loading || submitting} />}</form.AppField>
               <form.AppField name="ollamaUrl">{(field) => <field.TextField label="Ollama URL" className="font-mono" disabled={loading || submitting} />}</form.AppField>

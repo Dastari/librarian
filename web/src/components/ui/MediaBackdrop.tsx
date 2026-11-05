@@ -1,5 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 
+import { registerShellArt, SHELL_ART_ID } from "@/components/shell/shellArt";
 import { resolveArtwork, sizedArtwork } from "@/lib/api/urls";
 import { cn } from "@/lib/utils";
 
@@ -14,7 +16,7 @@ interface MediaBackdropProps {
 }
 
 /**
- * Page-level artwork behind a media hero. The sharp image fades into the canvas, and a
+ * Page-level artwork behind a media hero and the shell. The sharp image fades into the canvas, and a
  * heavily blurred copy of the same picture spreads its colour further down the page, so a
  * title's art tints the whole view instead of ending at a hard edge. A poster fallback is
  * shown only as that colour field: a portrait image stretched to a banner looks wrong.
@@ -43,12 +45,13 @@ export function MediaBackdrop({ src, fallback, tint, className, onWideChange }: 
     setBehind(loaded && loaded !== wide ? loaded : null);
   }
   const behindSrc = wide && behind ? sizedArtwork(behind, sharpWidth) : undefined;
+  useEffect(() => registerShellArt(), []);
 
-  return (
+  const layer = (
     <div
       aria-hidden
       data-print="hide"
-      className={cn("media-backdrop pointer-events-none absolute inset-x-0 top-0 -z-10", className)}
+      className={cn("media-backdrop pointer-events-none absolute inset-0", className)}
       style={tint ? ({ "--placeholder-tint": tint } as CSSProperties) : undefined}
     >
       <div className="media-backdrop-tint absolute inset-0" />
@@ -83,4 +86,7 @@ export function MediaBackdrop({ src, fallback, tint, className, onWideChange }: 
       <div className="media-backdrop-scrim absolute inset-0" />
     </div>
   );
+  // Behind the whole shell, so the picture reaches under the rail and the top bar.
+  const target = typeof document === "undefined" ? null : document.getElementById(SHELL_ART_ID);
+  return target ? createPortal(layer, target) : layer;
 }

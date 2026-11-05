@@ -1,5 +1,5 @@
 import { Outlet, RouterProvider, createMemoryHistory, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { Breadcrumbs } from "../Breadcrumbs";
@@ -58,27 +58,18 @@ describe("Breadcrumbs", () => {
 
   it("shows a single unlinked crumb for a top-level page", async () => {
     await mount("/settings");
-    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toBeInTheDocument();
-    const current = screen.getByText("Settings");
-    expect(current).toHaveAttribute("aria-current", "page");
-    expect(screen.queryByRole("link")).toBeNull();
+    const trail = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(trail.querySelector('[aria-current="page"]')).toHaveTextContent("Settings");
+    expect(within(trail).queryByRole("link")).toBeNull();
   });
 
   it("builds the trail from static, param and loader labels", async () => {
     await mount("/libraries/lib-1/shows/s-9");
-    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Libraries", "Library lib-1", "Andor"]);
-    expect(screen.getByRole("link", { name: "Libraries" })).toHaveAttribute("href", "/libraries");
-    expect(screen.getByRole("link", { name: "Library lib-1" })).toHaveAttribute("href", "/libraries/lib-1");
+    const trail = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(trail).getByRole("link", { name: "Libraries" })).toHaveAttribute("href", "/libraries");
+    expect(within(trail).getByRole("link", { name: "Library lib-1" })).toHaveAttribute("href", "/libraries/lib-1");
     // The page itself is never a link.
-    expect(screen.queryByRole("link", { name: "Andor" })).toBeNull();
-    expect(screen.getByText("Andor")).toHaveAttribute("aria-current", "page");
-  });
-
-  it("hides all but the last two crumbs on a phone", async () => {
-    await mount("/libraries/lib-1/shows/s-9");
-    const [first, second, third] = screen.getAllByRole("listitem");
-    expect(first!.className).toContain("hidden sm:block");
-    expect(second!.className).not.toContain("hidden");
-    expect(third!.className).not.toContain("hidden");
+    expect(within(trail).queryByRole("link", { name: "Andor" })).toBeNull();
+    expect(trail.querySelector('[aria-current="page"]')).toHaveTextContent("Andor");
   });
 });

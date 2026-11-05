@@ -3,7 +3,8 @@ import { useMutation } from "@apollo/client/react";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, IdentityCell, NumericCell, RelativeTime, TextCell } from "glass-ux/data-table";
-import { IconDatabase, IconDatabaseExport, IconShieldCheck } from "@tabler/icons-react";
+import { IconBackup } from "glass-ux/icons";
+import { IconDatabase, IconShieldCheck } from "@tabler/icons-react";
 import { useMemo } from "react";
 
 import { Button } from "@/components/ui";
@@ -70,7 +71,7 @@ export function BackupSettings() {
     <SettingsSection
       title="Snapshots"
       description="Full backups of the catalogue database and stored objects such as artwork."
-      actions={<Button size="sm" variant="primary" onPress={() => void create()} isPending={creating} isDisabled={!capabilities?.fullDatabaseBackupAvailable}><IconDatabaseExport size={16} /> Back up now</Button>}
+      actions={<Button size="sm" variant="primary" onPress={() => void create()} isPending={creating} isDisabled={!capabilities?.fullDatabaseBackupAvailable}><IconBackup size="md" /> Back up now</Button>}
     >
       {capabilities ? (
         <div className="flex flex-wrap items-center gap-2">

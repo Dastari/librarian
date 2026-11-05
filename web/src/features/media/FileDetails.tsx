@@ -1,8 +1,11 @@
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+import { IconGauge, IconRefresh } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
-import { IconRefresh, IconRulerMeasure } from "@tabler/icons-react";
 
 import { Button, KeyValueList, Panel, StatusChip } from "@/components/ui";
+import { openFileDialog } from "@/features/files/fileDialog";
+import { FileIdentity } from "@/features/files/FileIdentity";
+import { useFileActions, type FileEntity } from "@/features/files/useFileActions";
 import { useMutation } from "@apollo/client/react";
 import { EvaluateMediaFileQualityDocument, MediaFileStreamsDocument, type MediaFileFieldsFragment } from "@/graphql/generated/graphql";
 import { useIsAdmin } from "@/lib/auth/useSession";
@@ -10,8 +13,19 @@ import { formatBytes, formatDateTime, formatRuntime } from "@/lib/format";
 import { errorMessage } from "@/lib/graphql/errors";
 import { qualityStatus } from "@/lib/status";
 
-/** Technical panel for a linked media file: container, streams, subtitles and quality verdict. */
-export function FileDetails({ file }: { file: MediaFileFieldsFragment }) {
+/** Technical panel for a linked media file on its title's page. */
+export function FileDetails({ file }: { file: FileEntity }) {
+  const { actions, dialogs } = useFileActions();
+  return (
+    <Panel title={<FileIdentity file={file} actions={actions} onOpen={() => openFileDialog(file.id)} />}>
+      <FileDetailsBody file={file} />
+      {dialogs}
+    </Panel>
+  );
+}
+
+/** Everything known about a file: container, streams, subtitles and quality verdict. */
+export function FileDetailsBody({ file }: { file: MediaFileFieldsFragment }) {
   const isAdmin = useIsAdmin();
   const streams = useQuery(MediaFileStreamsDocument, { variables: { mediaFileId: file.id } });
   const [evaluate, { loading }] = useMutation(EvaluateMediaFileQualityDocument);
@@ -32,19 +46,15 @@ export function FileDetails({ file }: { file: MediaFileFieldsFragment }) {
   };
 
   return (
-    <Panel
-      title="File"
-      actions={
-        <>
-          <StatusChip status={quality} />
-          {isAdmin ? (
-            <Button size="sm" variant="ghost" onPress={() => void reevaluate()} isPending={loading}>
-              <IconRulerMeasure size={16} /> Re-evaluate
-            </Button>
-          ) : null}
-        </>
-      }
-    >
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusChip status={quality} />
+        {isAdmin ? (
+          <Button size="sm" variant="ghost" onPress={() => void reevaluate()} isPending={loading}>
+            <IconGauge /> Re-evaluate
+          </Button>
+        ) : null}
+      </div>
       <KeyValueList
         columns={2}
         items={[
@@ -61,14 +71,14 @@ export function FileDetails({ file }: { file: MediaFileFieldsFragment }) {
         ]}
       />
       {video.length || audio.length || subtitles.length ? (
-        <div className="mt-5 grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-3">
           <StreamList title="Video" items={video.map((stream) => `${stream.codec.toUpperCase()} · ${stream.width}×${stream.height}${stream.frameRate ? ` · ${stream.frameRate.replace(/\/1$/, "")} fps` : ""}${stream.hdrType ? ` · ${stream.hdrType}` : ""}`)} />
           <StreamList title="Audio" items={audio.map((stream) => `${stream.codec.toUpperCase()} · ${stream.channelLayout ?? `${stream.channels}ch`}${stream.language ? ` · ${stream.language}` : ""}${stream.isCommentary ? " · commentary" : ""}`)} />
           <StreamList title="Subtitles" items={subtitles.map((subtitle) => `${subtitle.language ?? subtitle.title ?? subtitle.codec ?? "Track"}${subtitle.isForced ? " · forced" : ""}${subtitle.isHearingImpaired ? " · SDH" : ""}`)} />
         </div>
       ) : null}
-      {streams.loading ? <p className="mt-3 inline-flex items-center gap-1 text-label-sm text-muted"><IconRefresh size={12} className="animate-spin" /> Loading streams</p> : null}
-    </Panel>
+      {streams.loading ? <p className="inline-flex items-center gap-1 text-label-sm text-muted"><IconRefresh size="xs" className="animate-spin" /> Loading streams</p> : null}
+    </div>
   );
 }
 

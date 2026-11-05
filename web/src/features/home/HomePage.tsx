@@ -5,10 +5,11 @@ import { HomeCustomization } from "@/features/personal/HomeCustomization";
 import { PersonalShelf } from "@/features/personal/PersonalShelf";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { IconPlus, IconStack2 } from "@tabler/icons-react";
+import { IconPlus } from "glass-ux/icons";
+import { IconStack2 } from "@tabler/icons-react";
 
 import { SceneBackdrop } from "@/components/three/SceneBackdrop";
-import { BackdropCard, Button, EmptyState, ErrorState, MediaRow, PosterCard, Section } from "@/components/ui";
+import { BackdropCard, Button, EmptyState, ErrorState, MediaRow, PosterCard, Section, SkeletonBlock } from "@/components/ui";
 import { LibraryCard } from "@/features/libraries/LibraryCard";
 import { usePlayer } from "@/features/player/usePlayer";
 import { LibrariesOverviewDocument, RecentAlbumsDocument, RecentAudiobooksDocument, RecentMoviesDocument, RecentShowsDocument } from "@/graphql/generated/graphql";
@@ -16,7 +17,6 @@ import { albumCover, audiobookCover, moviePoster, showPoster } from "@/lib/artwo
 import { formatClock, formatRuntime, formatYear } from "@/lib/format";
 import { LIBRARY_TYPES } from "@/lib/library-types";
 
-import { HomeSpotlight, spotlightItems } from "./HomeSpotlight";
 import { GuideSpotlight } from "@/features/guide/GuideSpotlight";
 import { MovieReleases } from "./MovieReleases";
 import { useContinueWatching } from "./useContinueWatching";
@@ -47,7 +47,7 @@ export function HomePage() {
   if (libraries.error && libraryList.length === 0) return <ErrorState error={libraries.error} onRetry={() => void libraries.refetch()} className="page-gutter my-6" />;
   if (!booting && libraryList.length === 0) {
     return (
-      <div className="relative flex min-h-svh flex-col items-center justify-center page-gutter">
+      <div className="relative flex min-h-full flex-1 flex-col items-center justify-center page-gutter">
         <SceneBackdrop density={8} />
         <EmptyState
           icon={IconStack2}
@@ -56,7 +56,7 @@ export function HomePage() {
           action={
             <Link to="/settings/libraries">
               <Button variant="primary" size="lg">
-                <IconPlus size={18} /> Add library
+                <IconPlus size="lg" /> Add library
               </Button>
             </Link>
           }
@@ -94,9 +94,9 @@ export function HomePage() {
       ) : null),
     libraries: (<Section title="Libraries" bleed trailing={<Link to="/libraries" className="nav-focus rounded hover:text-foreground">See all</Link>}>
         <MediaRow ariaLabel="Libraries">
-          {libraryList.map((library) => (
-            <LibraryCard key={library.id} library={library} className="w-64 shrink-0" />
-          ))}
+          {booting && libraryList.length === 0
+            ? [0, 1, 2].map((index) => <SkeletonBlock key={index} className="h-40 w-64 shrink-0 rounded-card" />)
+            : libraryList.map((library) => <LibraryCard key={library.id} library={library} className="w-64 shrink-0" />)}
         </MediaRow>
       </Section>),
     movies: (movieList.length > 0 ? (
@@ -153,17 +153,9 @@ export function HomePage() {
       </div>),
     releases: (<MovieReleases />),
   };
-  const spotlight = spotlightItems(movieList, showList);
-  const playSpotlight = (item: (typeof spotlight)[number]) => {
-    if (!item.mediaFileId) return;
-    player.playVideo({ mediaFileId: item.mediaFileId, title: item.title, artwork: item.poster ?? undefined, entity: { kind: "movie", id: item.id }, href: `/movies/${item.id}` });
-    void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: item.mediaFileId } });
-  };
   const shelves = home.shelves.filter((shelf) => shelf.visible && (shelf.listId || sections[shelf.key]));
-  return <div className="relative isolate flex min-w-0 flex-col gap-10 overflow-clip pb-12">
-    {spotlight.length > 0 ? <HomeSpotlight items={spotlight} onPlay={playSpotlight} />
-      : (movies.loading || shows.loading) && !movies.data && !shows.data ? <div aria-hidden data-fill="home" className="media-hero" />
-      : <div aria-hidden className="h-[calc(var(--topbar-height)+var(--safe-top))]" />}
+  // Shelves from the first line: what to watch next is the page, not a preview of one title.
+  return <div className="relative isolate flex min-w-0 flex-col gap-10 overflow-x-clip pb-12 pt-2">
     {shelves.map((shelf, index) => <div key={shelf.key} data-nav-section className="media-rise min-w-0" style={{ "--rise-order": Math.min(index, 6) } as CSSProperties}>{shelf.listId ? <PersonalShelf listId={shelf.listId} /> : sections[shelf.key]}</div>)}
     <div className="page-gutter flex justify-center" data-print="hide"><Button variant="ghost" onPress={() => setCustomizing(true)}>Customize home</Button></div>
     {customizing ? <HomeCustomization open={customizing} onOpenChange={setCustomizing} /> : null}

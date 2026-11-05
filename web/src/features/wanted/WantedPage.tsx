@@ -1,13 +1,13 @@
+import { IconBookmark, IconBookmarkOff, IconEyeOff, IconTargetArrow } from "@tabler/icons-react";
 import { useMutation } from "@apollo/client/react";
 import { copyText } from "glass-ux/copy-button";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, filters, IdentityCell, NumericCell, type DataTableSearch } from "glass-ux/data-table";
-import { IconCopy, IconExternalLink, IconRefresh, IconSearch } from "glass-ux/icons";
+import { IconCopy, IconDownload, IconExternalLink, IconRefresh, IconSearch } from "glass-ux/icons";
 import { Segmented } from "glass-ux/segmented";
 import { toast } from "glass-ux/toast";
 import { useNavigate } from "@tanstack/react-router";
-import { IconBookmark, IconBookmarkOff, IconDownload, IconEyeOff, IconTargetArrow } from "@tabler/icons-react";
 import { parseAsStringEnum, useQueryState } from "nuqs";
 import { useMemo, useState } from "react";
 
@@ -161,15 +161,6 @@ export function WantedPage() {
   return (
     <div data-print-flow className="page-gutter flex min-h-0 flex-1 flex-col gap-4 overflow-hidden py-4 md:py-6 [@media(max-height:35rem)]:gap-2 [@media(max-height:35rem)]:py-2">
       <h1 className="sr-only">Wanted</h1>
-      <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-3">
-        <Segmented<WantedTab> aria-label="Show" value={tab} onValueChange={(value) => void setTab(value === "wanted" ? null : value)} options={WANTED_TABS.map((value) => ({ value, label: WANTED_TAB_LABEL[value] }))} />
-        {list.groups.length > 0 ? <span className="text-numeric text-label-sm text-muted">{list.groups.length} titles · {list.itemCount} items</span> : null}
-        {isAdmin ? (
-          <div className="ms-auto">
-            <Button variant="primary" onPress={() => void searchAll()} isPending={triggering || libraries.loading} isDisabled={Boolean(libraries.error)}><IconDownload size={16} /> Search all missing</Button>
-          </div>
-        ) : null}
-      </div>
       {isAdmin && libraries.error ? <ErrorState compact error={libraries.error} onRetry={() => void libraries.refetch()} /> : null}
       {list.error && list.groups.length > 0 ? <ErrorState compact error={list.error} onRetry={list.refetch} /> : null}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -194,7 +185,14 @@ export function WantedPage() {
           rowOpen="click"
           error={list.error && list.groups.length === 0 ? <ErrorState error={list.error} onRetry={() => list.refetch()} /> : undefined}
           emptyMessage={`${EMPTY[tab].title}. ${EMPTY[tab].description}`}
-          toolbar={<Button size="sm" variant="ghost" isIconOnly aria-label="Refresh" isPending={list.refreshing} onPress={() => list.refetch()}><IconRefresh /></Button>}
+          toolbar={
+            <div className="flex min-w-0 items-center gap-2">
+              <Segmented<WantedTab> aria-label="Show" size="sm" value={tab} onValueChange={(value) => void setTab(value === "wanted" ? null : value)} options={WANTED_TABS.map((value) => ({ value, label: WANTED_TAB_LABEL[value] }))} />
+              {list.groups.length > 0 ? <span className="text-numeric whitespace-nowrap text-label-sm max-xl:hidden text-muted">{list.groups.length} titles · {list.itemCount} items</span> : null}
+              {isAdmin ? <Button size="sm" variant="primary" onPress={() => void searchAll()} isPending={triggering || libraries.loading} isDisabled={Boolean(libraries.error)}><IconDownload size="md" /> Search all missing</Button> : null}
+              <Button size="sm" variant="ghost" isIconOnly aria-label="Refresh" isPending={list.refreshing} onPress={() => list.refetch()}><IconRefresh /></Button>
+            </div>
+          }
         />
       </div>
       <ReleaseSearchDialog

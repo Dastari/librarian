@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { IconLoader2 } from "@tabler/icons-react";
+import { IconSpinner } from "glass-ux/icons";
 import { useMemo } from "react";
 
 import { PosterStrip } from "@/components/ui/PosterStrip";
@@ -81,7 +81,7 @@ export function LibraryCard({ library, className, size = "md" }: LibraryCardProp
         </span>
         {library.scanning ? (
           <span className="glass-control inline-flex items-center gap-1.5 rounded-pill px-2 py-1 text-label-sm text-foreground">
-            <IconLoader2 size={12} className="animate-spin" /> Scanning
+            <IconSpinner size="xs" className="animate-spin" /> Scanning
           </span>
         ) : null}
       </div>

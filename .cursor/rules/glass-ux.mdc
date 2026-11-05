@@ -7,7 +7,7 @@ alwaysApply: false
 
 # Glass UX integration contract
 
-The installed release is `glass-ux` 0.11.7. Its authoritative guides and API pages
+The installed release is `glass-ux` 0.16.1. Its authoritative guides and API pages
 are under `web/node_modules/glass-ux/docs/`. Read `docs/glass-ux/README.md` for
 provenance, offline documentation, skills, and refresh instructions.
 
@@ -44,7 +44,7 @@ app without introducing a window manager or assistant feature merely to use a co
   react-hook-form bridge may compose bare Glass UX controls; remove it when its
   final consumer migrates. Do not maintain two independent validation engines.
 - Use LoginFlow with existing auth callbacks. Invite-token collection remains
-  host-owned because 0.11.7 has no arbitrary sign-up field slot. Do not expose
+  host-owned because LoginFlow has no arbitrary sign-up field slot. Do not expose
   reset, MFA, provider sign-in or open registration without backend support.
 - Use DataTable controlled state and stable user/library/view IDs. Map schema
   casing explicitly; never send the bundled PascalCase Where directly to this API.
@@ -59,10 +59,21 @@ app without introducing a window manager or assistant feature merely to use a co
   key and a replacement revision to both table and gallery loaders. A refresh must
   not consume the end-of-list trigger, and returning to a former query must permit
   continuation again. Clear selection on changed dataset scope, preserve on append.
+- Anything that filters or switches what a table shows sits in that table's own toolbar: `search`,
+  column filters, and `toolbar` for saved views such as Unread or Needs action. Nothing above the
+  table does this. Above it go routed tabs (places), page actions, and a filter that drives several
+  things on the page at once. Poster galleries have no table, so `BrowserToolbar` plays this part.
 - Keep DataTable column definitions and cell renderer component identities stable.
   TanStack renders cell functions as component types; recreating them on status or
   action updates remounts controls and loses focus. Use stable cell components with
   React context for changing actions/status/progress. Let ActionBar own each action's
   pending feedback instead of applying a global pending reason to every row.
+- The frame is Glass `AppShell`, `Rail`, `TopBar`, `TabBar`, `ShellBrand` and `AccountButton`. The rail
+  and top bar sit on the canvas and never scroll. Page artwork goes through `MediaBackdrop`, into the
+  layer behind the shell. A page has one `PageScroller`; a bounded pane uses `overflow: clip`, because
+  an `overflow: hidden` box can still be scrolled from code, with no way back for the person using it.
+- Routed tabs stay outside the view's scroller, so they never scroll away.
+- Video uses Glass `VideoPlayer`: the stream through `attach`, the server's sessions through a
+  `CastAdapter` (`useCastAdapter`). Glass controls stay Glass; add to them with `controlsEnd`.
 - Verify actual geometry and focus at scroll edges, live updates, slow images,
   validation and loading. Typecheck/render success alone is insufficient.

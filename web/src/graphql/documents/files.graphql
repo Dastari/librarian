@@ -17,3 +17,10 @@ subscription FilesystemChanged($path: String) {
     timestamp
   }
 }
+
+query MediaFileDetail($id: String!) {
+  mediaFile(id: $id) {
+    ...MediaFileFields
+    ...LinkedMediaFile
+  }
+}

@@ -5,9 +5,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, IdentityCell, RelativeTime, TextCell } from "glass-ux/data-table";
-import { IconExternalLink, IconPlus, IconRefresh, IconSettings } from "glass-ux/icons";
+import { IconExternalLink, IconFolder, IconPlus, IconRefresh, IconSettings } from "glass-ux/icons";
 import { useNavigate } from "@tanstack/react-router";
-import { IconFolder } from "@tabler/icons-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -135,7 +134,7 @@ export function LibrariesSettings() {
             <div className="flex items-end gap-2">
               <FormTextField control={form.control} name="path" label="Folder" mono isRequired className="min-w-0 flex-1" placeholder="/data/media/Movies" />
               <Button variant="secondary" isIconOnly aria-label="Browse folders" onPress={() => setPickingFolder(true)} className="mb-px">
-                <IconFolder size={18} />
+                <IconFolder size="lg" />
               </Button>
             </div>
             <FormSwitchField control={form.control} name="autoScan" label="Scan on a schedule" />

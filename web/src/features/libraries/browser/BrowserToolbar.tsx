@@ -22,8 +22,6 @@ interface BrowserToolbarProps {
   placeholder?: string;
   /** The table footer reports the count; kept so callers can pass it without a second display. */
   total?: number;
-  /** Table-only views have no alphabet jump. */
-  tableOnly?: boolean;
 }
 
 export interface BrowserSortOption extends SortingState {
@@ -56,8 +54,8 @@ function SortSelect({ options, value, onChange }: BrowserSort) {
   );
 }
 
-/** Filter row shared by every library list: search, availability chips, sort, letter rail. */
-export function BrowserToolbar({ query, onQueryChange, letter, onLetterChange, availability, onAvailabilityChange, sort, trailing, placeholder = "Filter", tableOnly = false }: BrowserToolbarProps) {
+/** Filter row for poster galleries, which have no table toolbar: search, availability, sort, letters. */
+export function BrowserToolbar({ query, onQueryChange, letter, onLetterChange, availability, onAvailabilityChange, sort, trailing, placeholder = "Filter" }: BrowserToolbarProps) {
   const desktop = useIsDesktop();
   return (
     <div className="flex shrink-0 flex-col gap-2 sm:gap-3">
@@ -81,7 +79,7 @@ export function BrowserToolbar({ query, onQueryChange, letter, onLetterChange, a
         {sort ? <SortSelect {...sort} /> : null}
         {trailing}
       </div>
-      {!desktop && !tableOnly ? <AlphabetRail orientation="horizontal" value={letter} onChange={onLetterChange} /> : null}
+      {!desktop ? <AlphabetRail orientation="horizontal" value={letter} onChange={onLetterChange} /> : null}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { EntityIdentity } from "glass-ux/entity";
 
+import { openFileDialog } from "@/features/files/fileDialog";
 import { ENTITY_KINDS, type EntityKindName } from "@/lib/entities/kinds";
 import type { LinkedRef } from "@/lib/entities/linked";
 
@@ -11,5 +12,5 @@ import type { LinkedRef } from "@/lib/entities/linked";
 export function EntityChip({ entity, className }: { entity: LinkedRef; className?: string }) {
   const spec = ENTITY_KINDS[entity.kind as EntityKindName];
   const Glyph = spec?.icon;
-  return <EntityIdentity tier="chip" size="sm" className={className} kind={spec?.noun} name={entity.label} href={entity.href} icon={Glyph ? <Glyph /> : undefined} />;
+  return <EntityIdentity tier="chip" size="sm" className={className} kind={spec?.noun} name={entity.label} href={entity.href} onOpen={entity.kind === "mediaFile" ? () => openFileDialog(entity.id) : undefined} icon={Glyph ? <Glyph /> : undefined} />;
 }

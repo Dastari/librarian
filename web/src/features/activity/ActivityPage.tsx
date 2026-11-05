@@ -98,7 +98,23 @@ export function ActivityPage() {
   const url = useTableUrlState({ namespace: "activity", columns, ...urlSchema, filters: { ...urlSchema.filters, library: tableUrlFilters.options(libraryOptions.map((library) => library.id), ["in"]) }, defaultSorting });
   const baseState = useMemo<DataTableState>(() => ({ pagination: { pageIndex: 0, pageSize: 50 }, selection: {}, ...url.state }), [url.state]);
   const activity = useActivity(baseState, preset);
-  const selectedRows = useTableSelection({ scope: [user?.id, preset, url.state], rows: activity.list.rows, ready: !activity.list.loading && !activity.list.fetching });
+  // Reading a notification must not pull it out from under the pointer: what was opened in this
+  // view stays where it was, shown as read, until the view changes or the list is refreshed.
+  const [opened, setOpened] = useState<ReadonlyMap<string, { row: ActivityRow; index: number }>>(() => new Map());
+  const openedScope = JSON.stringify([preset, activity.variables]);
+  const [lastScope, setLastScope] = useState(openedScope);
+  if (openedScope !== lastScope) {
+    setLastScope(openedScope);
+    setOpened(new Map());
+  }
+  const rows = useMemo(() => {
+    const merged = [...activity.list.rows];
+    for (const { row, index } of [...opened.values()].sort((a, b) => a.index - b.index)) {
+      if (!merged.some((candidate) => candidate.id === row.id)) merged.splice(Math.min(index, merged.length), 0, row);
+    }
+    return merged;
+  }, [activity.list.rows, opened]);
+  const selectedRows = useTableSelection({ scope: [user?.id, preset, url.state], rows, ready: !activity.list.loading && !activity.list.fetching });
   const state = { ...baseState, selection: selectedRows.selection };
   const onStateChange = (next: DataTableState, change: DataTableStateChange) => change === "selection" ? selectedRows.onSelectionChange(next.selection) : url.onStateChange(next, change);
   const refetch = activity.refetch;
@@ -108,27 +124,23 @@ export function ActivityPage() {
   const { markAllRead, loading: markingAllRead } = useMarkAllRead(onChanged);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selected = activity.list.rows.find((row) => row.id === selectedId) ?? null;
+  const selected = rows.find((row) => row.id === selectedId) ?? null;
   const open = (row: ActivityRow) => {
     setSelectedId(row.id);
-    if (!row.readAt) void update({ variables: { id: row.id, input: { readAt: new Date().toISOString() } } }).then(onChanged);
+    if (row.readAt) return;
+    const readAt = new Date().toISOString();
+    setOpened((current) => new Map(current).set(row.id, { row: { ...row, readAt }, index: rows.findIndex((candidate) => candidate.id === row.id) }));
+    void update({ variables: { id: row.id, input: { readAt } } }).then(onChanged);
+  };
+  const refresh = () => {
+    setOpened(new Map());
+    refetch();
   };
 
   return (
-    <div data-print-flow className="page-gutter flex min-h-0 flex-1 flex-col gap-4 overflow-hidden py-4 md:py-6 [@media(max-height:35rem)]:gap-2 [@media(max-height:35rem)]:py-2">
+    <div data-print-flow className="page-gutter flex min-h-0 flex-1 flex-col gap-4 overflow-clip py-4 md:py-6 [@media(max-height:35rem)]:gap-2 [@media(max-height:35rem)]:py-2">
       <h1 className="sr-only">Activity</h1>
-      <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-3">
-        <Segmented<ActivityPreset>
-          aria-label="Show activity"
-          value={preset}
-          onValueChange={(value) => void setPreset(value === "unread" ? null : value)}
-          options={ACTIVITY_PRESETS.map((value) => ({ value, label: activity.counts[value] !== undefined ? `${PRESET_LABEL[value]} ${activity.counts[value]}` : PRESET_LABEL[value] }))}
-        />
-        <div className="ms-auto flex items-center gap-2">
-          <Button variant="secondary" isDisabled={!activity.counts.unread || markingAllRead} onPress={() => void markAllRead()}><IconCheck /> Mark all read</Button>
-        </div>
-      </div>
-      <div data-print-flow className={cn("grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-6 overflow-hidden", selected && wide && "xl:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]")}>
+      <div data-print-flow className={cn("grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-6 overflow-clip", selected && wide && "xl:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]")}>
         <div className="flex min-h-0 min-w-0 flex-col">
           <DataTable<ActivityRow>
             id={`librarian.${user?.id ?? "session"}.activity`}
@@ -137,12 +149,12 @@ export function ActivityPage() {
             height="fill"
             columns={columns}
             defaultHiddenColumns={hiddenColumns}
-            rows={activity.list.rows}
+            rows={rows}
             getRowId={getRowId}
             getRowLabel={getRowLabel}
             loading={activity.list.loading}
             refetching={activity.list.fetching && !activity.list.loading}
-            rowCount={activity.list.totalCount}
+            rowCount={(activity.list.totalCount ?? 0) + (rows.length - activity.list.rows.length)}
             state={state}
             onStateChange={onStateChange}
             infinite={{ revision: activity.list.revision, hasMore: !printing && activity.list.hasMore, onLoadMore: activity.list.loadMore, loadingMore: activity.list.loadingMore, error: activity.list.moreError?.message }}
@@ -155,9 +167,21 @@ export function ActivityPage() {
             onRowOpen={open}
             rowOpen="click"
             error={activity.list.error && activity.list.rows.length === 0 ? "Couldn't load activity. Retry to reconnect." : undefined}
-            onRetry={refetch}
+            onRetry={refresh}
             emptyMessage={preset === "unread" ? "You're all caught up." : preset === "action" ? "Nothing needs a decision." : "No activity yet."}
-            toolbar={<Button size="sm" variant="ghost" isIconOnly aria-label="Refresh activity" isPending={activity.list.fetching} onPress={refetch}><IconRefresh /></Button>}
+            toolbar={
+              <div className="flex min-w-0 items-center gap-2">
+                <Segmented<ActivityPreset>
+                  aria-label="Show activity"
+                  size="sm"
+                  value={preset}
+                  onValueChange={(value) => void setPreset(value === "unread" ? null : value)}
+                  options={ACTIVITY_PRESETS.map((value) => ({ value, label: activity.counts[value] !== undefined ? `${PRESET_LABEL[value]} ${activity.counts[value]}` : PRESET_LABEL[value] }))}
+                />
+                <Button size="sm" variant="secondary" isDisabled={!activity.counts.unread || markingAllRead} onPress={() => void markAllRead()}><IconCheck /> Mark all read</Button>
+                <Button size="sm" variant="ghost" isIconOnly aria-label="Refresh activity" isPending={activity.list.fetching} onPress={refresh}><IconRefresh /></Button>
+              </div>
+            }
           />
         </div>
         {selected && wide ? <div data-print-flow className="scrollbar-thin min-h-0 overflow-y-auto"><ActivityDetail row={selected} actions={actions} onClose={() => setSelectedId(null)} /></div> : null}

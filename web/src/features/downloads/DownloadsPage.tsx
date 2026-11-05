@@ -212,7 +212,18 @@ export function DownloadsPage() {
             error={downloads.list.error && downloads.rows.length === 0 ? "Couldn't load downloads. Retry to reconnect." : undefined}
             onRetry={refetch}
             emptyMessage={preset === "all" ? "No downloads. Add a torrent or magnet link, or find a release from a movie or show page." : `Nothing ${PRESET_LABEL[preset].toLowerCase()}`}
-            toolbar={<Button size="sm" variant="ghost" isIconOnly aria-label="Refresh downloads" isPending={downloads.list.fetching} onPress={refetch}><IconRefresh /></Button>}
+            toolbar={
+              <div className="flex min-w-0 items-center gap-2">
+                <Segmented<DownloadPreset>
+                  aria-label="Show downloads"
+                  size="sm"
+                  value={preset}
+                  onValueChange={(value) => void setPreset(value === "all" ? null : value)}
+                  options={DOWNLOAD_PRESETS.map((value) => ({ value, label: downloads.counts[value] !== undefined ? `${PRESET_LABEL[value]} ${downloads.counts[value]}` : PRESET_LABEL[value] }))}
+                />
+                <Button size="sm" variant="ghost" isIconOnly aria-label="Refresh downloads" isPending={downloads.list.fetching} onPress={refetch}><IconRefresh /></Button>
+              </div>
+            }
           />
       </RateContext.Provider>
     </div>
@@ -221,14 +232,8 @@ export function DownloadsPage() {
   return (
     <div data-print-flow className="page-gutter flex min-h-0 flex-1 flex-col gap-4 overflow-hidden py-4 md:py-6 [@media(max-height:35rem)]:gap-2 [@media(max-height:35rem)]:py-2">
       <h1 className="sr-only">Downloads</h1>
-      <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-3">
-        <Segmented<DownloadPreset>
-          aria-label="Show downloads"
-          value={preset}
-          onValueChange={(value) => void setPreset(value === "all" ? null : value)}
-          options={DOWNLOAD_PRESETS.map((value) => ({ value, label: downloads.counts[value] !== undefined ? `${PRESET_LABEL[value]} ${downloads.counts[value]}` : PRESET_LABEL[value] }))}
-        />
-        <div className="ms-auto flex min-w-0 items-center gap-3">
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-6 gap-y-3">
+        <div className="flex min-w-0 items-center gap-3">
           <div className="h-12 w-60 max-lg:hidden"><Metric label="Download" value={totals.down} data={rates.total.down} format={formatSpeed} range="Last two minutes" tone="info" better="none" /></div>
           <div className="h-12 w-60 max-lg:hidden"><Metric label="Upload" value={totals.up} data={rates.total.up} format={formatSpeed} range="Last two minutes" tone="success" better="none" /></div>
           {isAdmin ? <Button variant="primary" onPress={() => setAdding(true)}><IconPlus /> Add torrent</Button> : null}

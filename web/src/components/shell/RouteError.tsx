@@ -2,7 +2,7 @@
 import { Button } from "@/components/ui";
 import { useRouter } from "@tanstack/react-router";
 import type { ErrorComponentProps } from "@tanstack/react-router";
-import { IconAlertTriangle } from "@tabler/icons-react";
+import { IconWarning } from "glass-ux/icons";
 
 import { useEffect } from "react";
 
@@ -19,7 +19,7 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
   }, [stale]);
   return (
     <div role="alert" className="flex min-h-[70svh] flex-col items-center justify-center gap-4 px-6 text-center">
-      <IconAlertTriangle size={40} stroke={1.5} className="text-danger" />
+      <IconWarning size="2xl" className="text-danger" />
       <h1 className="text-display-md text-foreground">{stale ? "Reloading the app" : "Something went wrong"}</h1>
       <p className="max-w-lg text-body text-muted">{stale ? "A newer version of Librarian was loaded. Reload if this page does not refresh by itself." : errorMessage(error)}</p>
       <div className="flex gap-2">

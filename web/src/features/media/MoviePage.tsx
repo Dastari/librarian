@@ -1,9 +1,8 @@
-import { IconInfo } from "glass-ux/icons";
+import { IconImage, IconInfo } from "glass-ux/icons";
 import { useApolloClient, useMutation } from "@apollo/client/react";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { toast } from "glass-ux/toast";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { IconInfoCircle, IconPhoto } from "@tabler/icons-react";
 import { useState } from "react";
 
 import { Artwork, ConfirmDialog, EmptyState, ErrorState, HeroFacts, KeyValueList, MediaRow, MetaLine, Panel, PosterCard, Section, SkeletonHero, StatusChip } from "@/components/ui";
@@ -137,7 +136,7 @@ export function MoviePage({ movieId }: { movieId: string }) {
           <MediaRow ariaLabel="Cast">
             {castList.map((credit) => (
               <Link key={credit.id} to="/search" search={{ q: credit.person?.name ?? "" }} data-focusable className="tv-lift nav-focus group w-28 shrink-0 rounded-tile p-1 text-center" aria-label={[credit.person?.name, credit.characterName].filter(Boolean).join(" as ")}>
-                <Artwork src={personProfile(credit.person)} alt="" aspect="square" displayWidth={96} className="tv-lift-target mx-auto w-24 overflow-clip rounded-full" fallback={<IconPhoto size={24} />} />
+                <Artwork src={personProfile(credit.person)} alt="" aspect="square" displayWidth={96} className="tv-lift-target mx-auto w-24 overflow-clip rounded-full" fallback={<IconImage size="xl" />} />
                 <p className="mt-2 truncate text-label text-foreground">{credit.person?.name}</p>
                 <p className="truncate text-label-sm text-muted">{credit.characterName}</p>
               </Link>
@@ -179,7 +178,7 @@ export function MoviePage({ movieId }: { movieId: string }) {
         ) : (
           <Panel title="File" tone="secondary">
             <p className="inline-flex items-center gap-2 text-body-sm text-muted">
-              <IconInfoCircle size={16} /> No file is linked yet. {movie.wanted ? "Librarian is looking for a release." : "Mark it as wanted to search automatically."}
+              <IconInfo size="md" /> No file is linked yet. {movie.wanted ? "Librarian is looking for a release." : "Mark it as wanted to search automatically."}
             </p>
           </Panel>
         )}

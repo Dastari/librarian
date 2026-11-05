@@ -27,10 +27,15 @@ export interface CastButtonProps {
   position?: number;
   /** Identity of this playback activation, including same-file restarts. */
   activationKey?: string | number;
-  /** Pause local playback here; called only after a successful remote start. */
+  /** Called only after a successful remote start. */
   onStarted?: () => void;
   className?: string;
   variant?: ButtonVariant;
+  /** Controlled picker, for a player whose own cast button opens it. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** No button here: something else opens the picker. */
+  hideTrigger?: boolean;
 }
 
 function deviceReason(device: CastDeviceFieldsFragment): string | undefined {
@@ -50,8 +55,13 @@ export function CastButton(props: CastButtonProps) {
   return <CastDialog key={`${epoch}:${user?.id ?? "anonymous"}`} {...props} userId={user?.id} />;
 }
 
-function CastDialog({ item, position, activationKey, onStarted, className, variant = "ghost", userId }: CastButtonProps & { userId?: string }) {
-  const [open, setOpen] = useState(false);
+function CastDialog({ item, position, activationKey, onStarted, className, variant = "ghost", userId, open: controlledOpen, onOpenChange, hideTrigger }: CastButtonProps & { userId?: string }) {
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = controlledOpen ?? ownOpen;
+  const setOpen = (next: boolean) => {
+    setOwnOpen(next);
+    onOpenChange?.(next);
+  };
   const [deviceId, setDeviceId] = useState<string>();
   const [sessionId, setSessionId] = useState<string>();
   const [pending, setPending] = useState<string>();
@@ -157,7 +167,7 @@ function CastDialog({ item, position, activationKey, onStarted, className, varia
 
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Trigger render={<Button ref={trigger} variant={variant} shape="circle" size="sm" className={className} aria-label={item ? "Cast" : "Casting"} data-focusable><IconDisplays /></Button>} />
+      {hideTrigger ? null : <Dialog.Trigger render={<Button ref={trigger} variant={variant} shape="circle" size="sm" className={className} aria-label={item ? "Cast" : "Casting"} data-focusable><IconDisplays /></Button>} />}
       <Dialog.Popup size="md" finalFocus={trigger}>
         <Dialog.Header title="Casting" icon={<IconDisplays />} subtitle={item?.title} />
         <Dialog.Body className="flex flex-col gap-4">

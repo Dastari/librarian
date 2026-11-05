@@ -1,92 +1,95 @@
-import { act, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { CastAdapter } from "glass-ux/media-player";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithProviders } from "@/test";
 
-import { VideoPlayer } from "../VideoPlayer";
+import { subtitleTracks, VideoPlayer } from "../VideoPlayer";
 
-const media = vi.hoisted(() => {
-  const listeners = new Map<string, Set<() => void>>();
-  return {
-    listeners,
-    hls: {
-      subtitleTracks: [] as Array<{ name: string; lang: string }>,
-      audioTracks: [] as Array<{ name: string; lang: string }>,
-      audioTrack: 0,
-      subtitleTrack: -1,
-      subtitleDisplay: false,
-      on(event: string, callback: () => void) {
-        const handlers = listeners.get(event) ?? new Set();
-        handlers.add(callback);
-        listeners.set(event, handlers);
-      },
-      off(event: string, callback: () => void) { listeners.get(event)?.delete(callback); },
-    },
-  };
-});
-vi.mock("@/lib/graphql/live/hooks", () => ({ useLiveQuery: () => ({ data: { mediaChapters: { edges: [] } } }) }));
-vi.mock("@/features/settings/useSettingsConnection", () => ({ useSettingsConnection: () => ({ rows: [], error: null }) }));
+const mocks = vi.hoisted(() => ({
+  retry: vi.fn(),
+  source: vi.fn(),
+  connect: vi.fn(),
+  audio: [] as Array<{ streamIndex: number; title: string; language: string; isDefault: boolean }>,
+  subtitles: [] as Array<{ id: string; title: string; language: string; codec: string }>,
+}));
+
+vi.mock("@/features/settings/useSettingsConnection", () => ({
+  useSettingsConnection: (_document: unknown, _variables: unknown, select: (data: Record<string, unknown>) => unknown) => {
+    const probe = { audioStreams: "audio", subtitles: "subtitles", mediaChapters: "chapters" };
+    const kind = select(probe);
+    return { rows: kind === "audio" ? mocks.audio : kind === "subtitles" ? mocks.subtitles : [], error: null };
+  },
+}));
+vi.mock("@/lib/input-mode", () => ({ useInputMode: () => ({ mode: "pointer" }) }));
 vi.mock("../CastButton", () => ({ CastButton: () => null }));
-vi.mock("../useMediaSource", () => ({ useMediaSource: () => ({ source: null, loading: false, error: null, duration: 300, hls: media.hls, retry: vi.fn(), isTransitioning: () => false }) }));
-vi.mock("../useProgressSync", () => ({ useProgressSync: () => ({ loading: false, resumePosition: 0, report: vi.fn(), flush: vi.fn().mockResolvedValue(undefined) }) }));
+vi.mock("../useMediaSource", () => ({
+  useMediaSource: (fileId: string | null, _element: unknown, _start: unknown, options: { audioStreamIndex?: number }) => {
+    mocks.source(fileId, options.audioStreamIndex);
+    return { source: null, loading: false, error: null, duration: 300, hls: null, retry: mocks.retry, isTransitioning: () => false };
+  },
+}));
+vi.mock("../useProgressSync", () => ({ useProgressSync: () => ({ loading: false, resumePosition: 0, report: vi.fn(), flush: vi.fn() }) }));
+vi.mock("../useCastAdapter", () => ({
+  useCastAdapter: () => {
+    const adapter: CastAdapter = {
+      getSession: () => ({ status: "available" }), subscribe: () => () => undefined, connect: mocks.connect, disconnect: vi.fn(),
+      load: vi.fn(), play: vi.fn(), pause: vi.fn(), seek: vi.fn(), stop: vi.fn(), setVolume: vi.fn(),
+    };
+    return { adapter, pickerOpen: false, setPickerOpen: vi.fn(), refresh: vi.fn() };
+  },
+}));
 
-describe("VideoPlayer menus", () => {
+const item = { mediaFileId: "file-1", title: "Film", entity: { kind: "movie" as const, id: "movie-1" } };
+
+describe("VideoPlayer", () => {
   beforeEach(() => {
-    media.listeners.clear();
-    media.hls.audioTracks = [{ name: "English", lang: "en" }, { name: "French", lang: "fr" }];
-    media.hls.subtitleTracks = [];
-    media.hls.audioTrack = 0;
-    media.hls.subtitleTrack = -1;
-    media.hls.subtitleDisplay = false;
+    vi.clearAllMocks();
+    mocks.audio = [];
+    mocks.subtitles = [];
   });
 
-  it("changes playback speed and audio, closes with Escape, and returns focus without leaving playback", async () => {
+  it("offers the file's audio tracks and re-requests the source for the one chosen", async () => {
+    mocks.audio = [{ streamIndex: 1, title: "English", language: "en", isDefault: true }, { streamIndex: 2, title: "French", language: "fr", isDefault: false }];
     const onBack = vi.fn();
-    const { container } = await renderWithProviders(<VideoPlayer item={{ mediaFileId: "file-1", title: "Film", entity: { kind: "movie", id: "movie-1" } }} onBack={onBack} />);
-    const video = container.querySelector("video")!;
-    const settings = screen.getByRole("button", { name: "Playback settings" });
-    await userEvent.click(settings);
-    const faster = await screen.findByRole("menuitemradio", { name: "1.5×" });
-    faster.focus();
-    await userEvent.keyboard("{Enter}");
-    expect(video.playbackRate).toBe(1.5);
-    await userEvent.click(settings);
+    await renderWithProviders(<VideoPlayer item={item} onBack={onBack} />);
+    await userEvent.click(screen.getByRole("button", { name: "Audio track" }));
+    await userEvent.click(await screen.findByRole("menuitemradio", { name: "French" }));
+    expect(mocks.source).toHaveBeenLastCalledWith("file-1", 2);
+    expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it("has no audio menu for a file with one track", async () => {
+    mocks.audio = [{ streamIndex: 1, title: "English", language: "en", isDefault: true }];
+    await renderWithProviders(<VideoPlayer item={item} onBack={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Audio track" })).not.toBeInTheDocument();
+  });
+
+  it("gives the player only the subtitles the server can deliver as WebVTT", () => {
+    expect(subtitleTracks("file-1", [
+      { id: "sub-1", title: "English", language: "en", codec: "subrip" },
+      { id: "sub-2", title: "Signs", language: "en", codec: "hdmv_pgs_subtitle" },
+    ])).toEqual([{ id: "sub-1", src: "/api/media/file-1/subtitles/sub-1.vtt", label: "English", language: "en" }]);
+  });
+
+  it("leaves on Back and Escape, but not from inside a menu", async () => {
+    mocks.audio = [{ streamIndex: 1, title: "English", language: "en", isDefault: true }, { streamIndex: 2, title: "French", language: "fr", isDefault: false }];
+    const onBack = vi.fn();
+    await renderWithProviders(<VideoPlayer item={item} onBack={onBack} />);
+    await userEvent.click(screen.getByRole("button", { name: "Audio track" }));
     await screen.findByRole("menu");
     await userEvent.keyboard("{Escape}");
-    await vi.waitFor(() => expect(settings).toHaveFocus());
     expect(onBack).not.toHaveBeenCalled();
-
-    await userEvent.click(screen.getByRole("button", { name: "Audio track" }));
-    const french = await screen.findByRole("menuitemradio", { name: "French" });
-    french.focus();
-    await userEvent.keyboard("{Enter}");
-    expect(media.hls.audioTrack).toBe(1);
-    expect(onBack).not.toHaveBeenCalled();
+    await act(async () => { fireEvent.keyDown(window, { key: "GoBack" }); });
+    expect(onBack).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(onBack).toHaveBeenCalledTimes(2);
   });
 
-  it("offers tracks discovered after an initially empty manifest and unregisters listeners", async () => {
-    media.hls.audioTracks = [];
-    const { unmount } = await renderWithProviders(<VideoPlayer item={{ mediaFileId: "late-tracks", title: "Film", entity: { kind: "movie", id: "movie-1" } }} onBack={vi.fn()} />);
-    expect(screen.queryByRole("button", { name: "Audio track" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Subtitles" })).not.toBeInTheDocument();
-    act(() => {
-      media.hls.audioTracks = [{ name: "English", lang: "en" }, { name: "French", lang: "fr" }];
-      media.hls.subtitleTracks = [{ name: "English captions", lang: "en" }];
-      for (const event of ["hlsAudioTracksUpdated", "hlsSubtitleTracksUpdated"]) {
-        media.listeners.get(event)?.forEach((handler) => handler());
-      }
-    });
-    expect(screen.getByRole("button", { name: "Audio track" })).toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Subtitles" }));
-    await userEvent.click(await screen.findByRole("menuitemradio", { name: "English captions" }));
-    expect(media.hls.subtitleTrack).toBe(0);
-    expect(media.hls.subtitleDisplay).toBe(true);
-    await userEvent.click(screen.getByRole("button", { name: "Subtitles" }));
-    await userEvent.click(await screen.findByRole("menuitemradio", { name: "Off" }));
-    expect(media.hls.subtitleTrack).toBe(-1);
-    expect(media.hls.subtitleDisplay).toBe(false);
-    unmount();
-    expect([...media.listeners.values()].every((handlers) => handlers.size === 0)).toBe(true);
+  it("opens the receiver picker from the player's cast button", async () => {
+    await renderWithProviders(<VideoPlayer item={item} onBack={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Cast to a device" }));
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
   });
 });
