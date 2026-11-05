@@ -33,7 +33,7 @@ use uuid::Uuid;
 use crate::services::manager::{Service, ServiceHealth, ServicesManager};
 use crate::services::transcode::ffmpeg;
 use crate::services::transcode::session::{
-    SessionKey, SessionRegistry, TranscodeKind, TranscodeSession,
+    SegmentPlan, SessionKey, SessionRegistry, TranscodeKind, TranscodeSession, segment_path,
 };
 
 /// Config for [`TranscodeService`]. `ffmpeg_path` mirrors `Config::cache_path`'s
@@ -122,17 +122,7 @@ impl TranscodeService {
             "negative audio stream index"
         );
         let key = SessionKey::new(media_file_id, kind, audio_stream);
-        let start_lock = {
-            let mut starts = self.starts.lock().await;
-            starts.retain(|_, lock| lock.strong_count() > 0);
-            if let Some(lock) = starts.get(&key).and_then(Weak::upgrade) {
-                lock
-            } else {
-                let lock = Arc::new(tokio::sync::Mutex::new(()));
-                starts.insert(key.clone(), Arc::downgrade(&lock));
-                lock
-            }
-        };
+        let start_lock = self.start_lock(&key).await;
         let _start = start_lock.lock().await;
         if let Some(dir) = self.sessions.touch_variant(&key).await {
             return Ok(dir);
@@ -180,6 +170,90 @@ impl TranscodeService {
         session.audio_stream = audio_stream;
         self.sessions.insert(session).await;
         Ok(output_dir)
+    }
+
+    async fn start_lock(&self, key: &SessionKey) -> Arc<tokio::sync::Mutex<()>> {
+        let mut starts = self.starts.lock().await;
+        starts.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = starts.get(key).and_then(Weak::upgrade) {
+            lock
+        } else {
+            let lock = Arc::new(tokio::sync::Mutex::new(()));
+            starts.insert(key.clone(), Arc::downgrade(&lock));
+            lock
+        }
+    }
+
+    /// Make sure an on-demand session exists. The caller holds this variant's start lock.
+    async fn ensure_on_demand_session(&self, key: &SessionKey) -> Result<()> {
+        if self.sessions.touch_variant(key).await.is_some() {
+            return Ok(());
+        }
+        let session_id = Uuid::new_v4().to_string();
+        let output_dir = self.hls_root().join(&session_id);
+        tokio::fs::create_dir_all(&output_dir)
+            .await
+            .with_context(|| format!("failed to create HLS output dir {}", output_dir.display()))?;
+        info!(
+            media_file_id = %key.media_file_id,
+            session_id = %session_id,
+            audio_stream = ?key.audio_stream,
+            "Transcode: opened on-demand HLS session"
+        );
+        self.sessions
+            .insert(TranscodeSession::on_demand(
+                key.media_file_id.clone(),
+                session_id,
+                output_dir,
+                key.kind,
+                key.audio_stream,
+            ))
+            .await;
+        Ok(())
+    }
+
+    /// Prepare `segment` of an on-demand transcode: serve it if it's on disk, wait if the encoder
+    /// is nearly there, or move the encoder to it. Returns where it will appear, or `None` if the
+    /// file ended before it. The caller has authorized the file and the audio stream.
+    pub async fn on_demand_segment(
+        &self,
+        media_file_id: &str,
+        input_path: &Path,
+        kind: TranscodeKind,
+        audio_stream: Option<i32>,
+        segment: u32,
+    ) -> Result<Option<PathBuf>> {
+        anyhow::ensure!(
+            audio_stream.is_none_or(|index| index >= 0),
+            "negative audio stream index"
+        );
+        let key = SessionKey::new(media_file_id, kind, audio_stream);
+        let start_lock = self.start_lock(&key).await;
+        let _start = start_lock.lock().await;
+        self.ensure_on_demand_session(&key).await?;
+        let plan = self
+            .sessions
+            .plan_segment(&key, segment)
+            .await
+            .context("HLS session disappeared while it was in use")?;
+        let dir = match plan {
+            SegmentPlan::PastEnd => return Ok(None),
+            SegmentPlan::Ready(dir) | SegmentPlan::Wait(dir) => dir,
+            SegmentPlan::Restart(dir) => {
+                info!(media_file_id = %media_file_id, segment, "Transcode: encoding from segment");
+                let child = ffmpeg::spawn_on_demand_transcode(
+                    &self.config.ffmpeg_path,
+                    input_path,
+                    &dir,
+                    media_file_id,
+                    segment,
+                    audio_stream,
+                )?;
+                self.sessions.set_encoder(&key, child).await;
+                dir
+            }
+        };
+        Ok(Some(segment_path(&dir, segment)))
     }
 
     /// Bump `last_accessed` for an existing session and return its output

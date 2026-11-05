@@ -14,7 +14,7 @@ input AddAlbumInput {
 
 input AddAudiobookInput {
 	libraryId: String!
-	openlibraryId: String!
+	providerId: String!
 	"""
 	Enable auto-download for the audiobook. Ignored when
 	`autoDownloadMode` is given explicitly. Defaults to false (`NONE`).
@@ -871,7 +871,7 @@ type AudiobookResult {
 }
 
 """
-Search result for OpenLibrary audiobook search.
+Search result for audiobook search.
 """
 type AudiobookSearchResult {
 	provider: String!
@@ -2331,6 +2331,7 @@ input CreateShowInput {
 	posterUrl: String
 	backdropUrl: String
 	contentRating: String
+	status: String
 	autoDownload: Boolean!
 	autoDownloadMode: AutoDownloadMode!
 	qualityProfileId: String
@@ -4083,6 +4084,17 @@ enum MatchMethod {
 	OLLAMA
 }
 
+"""
+One file of a download, and what a person says it is.
+"""
+input MatchTorrentFileInput {
+	infoHash: String!
+	fileIndex: Int!
+	libraryId: String!
+	targetType: String!
+	targetId: String!
+}
+
 enum MatchWantedPolicy {
 	PREFER_WANTED
 	WANTED_ONLY
@@ -4904,6 +4916,10 @@ type Mutation {
 	"""
 	processSource(sourceType: String!, sourceId: String!): ProcessSourceResult!
 	"""
+	Say what one file of a download is, and import it as that.
+	"""
+	matchTorrentFile(input: MatchTorrentFileInput!): RematchSourceResult!
+	"""
 	Re-run matching for files from a source.
 	"""
 	rematchSource(sourceType: String!, sourceId: String!, libraryId: String): RematchSourceResult!
@@ -4932,7 +4948,7 @@ type Mutation {
 	"""
 	addAlbum(input: AddAlbumInput!): AlbumOperationResult!
 	"""
-	Add an audiobook to a library by fetching metadata from OpenLibrary.
+	Add an audiobook to a library by fetching metadata from its provider.
 	"""
 	addAudiobook(input: AddAudiobookInput!): AudiobookOperationResult!
 	"""
@@ -8403,6 +8419,73 @@ type ProcessSourceResult {
 	error: String
 }
 
+"""
+An audiobook as its provider describes it, whether or not it is in a library. Its cover is
+served from the cache at `/api/artwork/provider-audiobook/{providerId}/cover`.
+"""
+type ProviderAudiobook {
+	providerId: String!
+	title: String!
+	authorName: String
+	description: String
+	publisher: String
+	language: String
+	isbn: String
+	publishedDate: String
+}
+
+"""
+One episode of a provider show. Its still is `/api/artwork/provider-episode/{show}-{id}/thumbnail`.
+"""
+type ProviderEpisode {
+	id: Int!
+	season: Int!
+	number: Int!
+	name: String!
+	overview: String
+	airDate: String
+	runtime: Int
+	hasStill: Boolean!
+}
+
+"""
+A movie as its provider describes it, whether or not it is in a library. Its artwork is served
+from the cache at `/api/artwork/provider-movie/{tmdbId}/{poster,backdrop}`.
+"""
+type ProviderMovie {
+	tmdbId: Int!
+	title: String!
+	year: Int
+	releaseDate: String
+	overview: String
+	tagline: String
+	genres: [String!]!
+	runtime: Int
+	director: String
+	castNames: [String!]!
+	voteAverage: Float
+	certification: String
+	imdbId: String
+	status: String
+}
+
+"""
+A show as its provider describes it, whether or not it is in a library. Its artwork is served
+from the cache at `/api/artwork/provider-show/{tvmazeId}/{poster,backdrop}`.
+"""
+type ProviderShow {
+	tvmazeId: Int!
+	name: String!
+	year: Int
+	status: String
+	overview: String
+	network: String
+	runtime: Int
+	genres: [String!]!
+	imdbId: String
+	episodes: [ProviderEpisode!]!
+}
+
 type QualityEvaluationResult {
 	success: Boolean!
 	qualityStatus: String
@@ -8612,6 +8695,10 @@ type Query {
 	"""
 	me: MeUser
 	"""
+	What one file of a download could be. Administrators, as for matching a library file.
+	"""
+	torrentFileCandidates(infoHash: String!, fileIndex: Int!, libraryId: String!): [TorrentFileCandidate!]!
+	"""
 	Get all torrents with live state from the torrent client
 	"""
 	liveTorrents: [LiveTorrent!]!
@@ -8619,6 +8706,10 @@ type Query {
 	Get a single live torrent by numeric id
 	"""
 	liveTorrent(id: Int!): LiveTorrent
+	"""
+	A movie from TMDB that may not be in a library, for its page. Cached.
+	"""
+	providerMovie(tmdbId: Int!): ProviderMovie!
 	"""
 	Search for movies on TMDB
 	"""
@@ -8636,6 +8727,10 @@ type Query {
 	"""
 	movieCollectionDetails(libraryId: String!, collectionId: Int!): MovieCollectionDetails!
 	"""
+	A show from TVMaze that may not be in a library, with its episodes, for its page. Cached.
+	"""
+	providerShow(tvmazeId: Int!): ProviderShow!
+	"""
 	Search for TV shows on TVMaze
 	"""
 	searchTvShows(query: String!): [TvShowSearchResult!]!
@@ -8644,7 +8739,11 @@ type Query {
 	"""
 	searchAlbums(query: String!, includeEps: Boolean! = false, includeSingles: Boolean! = false, includeCompilations: Boolean! = false, includeLive: Boolean! = false, includeSoundtracks: Boolean! = false): [AlbumSearchResult!]!
 	"""
-	Search audiobooks on OpenLibrary.
+	An audiobook from a provider that may not be in a library, for its page. Cached.
+	"""
+	providerAudiobook(providerId: String!): ProviderAudiobook!
+	"""
+	Search audiobooks: Audible, or Open Library when Audible has nothing.
 	"""
 	searchAudiobooks(query: String!): [AudiobookSearchResult!]!
 	"""
@@ -11312,6 +11411,11 @@ type Show {
 	posterUrl: String
 	backdropUrl: String
 	contentRating: String
+	"""
+	Where the show is up to: "Running", "Ended". TVmaze has no age rating, so this used to be
+	stored in `contentRating`; older rows keep it there until they're next refreshed.
+	"""
+	status: String
 	autoDownload: Boolean!
 	autoDownloadMode: AutoDownloadMode!
 	"""
@@ -11411,6 +11515,7 @@ input ShowWhereInput {
 	network: StringFilter
 	runtime: IntFilter
 	contentRating: StringFilter
+	status: StringFilter
 	autoDownload: BoolFilter
 	qualityProfileId: StringFilter
 	createdAt: DateFilter
@@ -13212,6 +13317,17 @@ type TorrentFile {
 }
 
 """
+What one file of a download could be, for a person to choose from.
+"""
+type TorrentFileCandidate {
+	targetType: String!
+	targetId: String!
+	targetName: String
+	score: Float!
+	reason: String
+}
+
+"""
 Event for #struct_name changes (subscriptions)
 """
 type TorrentFileChangedEvent {
@@ -14493,6 +14609,7 @@ input UpdateShowInput {
 	posterUrl: String
 	backdropUrl: String
 	contentRating: String
+	status: String
 	autoDownload: Boolean
 	autoDownloadMode: AutoDownloadMode
 	qualityProfileId: String

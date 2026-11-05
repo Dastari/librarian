@@ -336,6 +336,41 @@ pub struct MovieCustomOperations;
 
 #[async_graphql::Object]
 impl MovieCustomOperations {
+    /// A movie from TMDB that may not be in a library, for its page. Cached.
+    #[graphql(name = "providerMovie")]
+    async fn provider_movie(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "tmdbId")] tmdb_id: i32,
+    ) -> async_graphql::Result<ProviderMovie> {
+        use crate::graphql::auth::AuthExt;
+
+        let _user = ctx.librarian_auth_user()?;
+        let tmdb_id =
+            u32::try_from(tmdb_id).map_err(|_| async_graphql::Error::new("Invalid TMDB id"))?;
+        let movie = ctx
+            .data_unchecked::<Arc<crate::services::metadata::providers::MetadataService>>()
+            .get_movie(tmdb_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(ProviderMovie {
+            tmdb_id: tmdb_id as i32,
+            title: movie.title,
+            year: movie.year,
+            release_date: movie.release_date,
+            overview: movie.overview,
+            tagline: movie.tagline,
+            genres: movie.genres,
+            runtime: movie.runtime,
+            director: movie.director,
+            cast_names: movie.cast_names,
+            vote_average: movie.vote_average,
+            certification: movie.certification,
+            imdb_id: movie.imdb_id,
+            status: movie.tmdb_status,
+        })
+    }
+
     /// Search for movies on TMDB
     #[graphql(name = "searchMovies")]
     async fn search_movies(
@@ -538,6 +573,27 @@ pub struct AddMovieCollectionInput {
     /// Mark missing imported movies as wanted
     #[graphql(name = "wantedMissing")]
     pub wanted_missing: Option<bool>,
+}
+
+/// A movie as its provider describes it, whether or not it is in a library. Its artwork is served
+/// from the cache at `/api/artwork/provider-movie/{tmdbId}/{poster,backdrop}`.
+#[derive(Debug, Clone, async_graphql::SimpleObject)]
+#[graphql(name = "ProviderMovie", rename_fields = "camelCase")]
+pub struct ProviderMovie {
+    pub tmdb_id: i32,
+    pub title: String,
+    pub year: Option<i32>,
+    pub release_date: Option<String>,
+    pub overview: Option<String>,
+    pub tagline: Option<String>,
+    pub genres: Vec<String>,
+    pub runtime: Option<i32>,
+    pub director: Option<String>,
+    pub cast_names: Vec<String>,
+    pub vote_average: Option<f64>,
+    pub certification: Option<String>,
+    pub imdb_id: Option<String>,
+    pub status: Option<String>,
 }
 
 /// Movie search result from TMDB

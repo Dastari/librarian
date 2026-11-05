@@ -211,6 +211,7 @@ pub(super) async fn show(db: &Database, library: &Library) -> Show {
             poster_url: None,
             backdrop_url: None,
             content_rating: None,
+            status: None,
             auto_download: false,
             auto_download_mode: AutoDownloadMode::None,
             quality_profile_id: None,

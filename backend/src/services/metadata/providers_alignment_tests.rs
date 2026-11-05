@@ -199,7 +199,7 @@ async fn all_import_entrypoints_reject_foreign_and_missing_libraries_before_prov
         "addMovieCollection(libraryId: $id, input: {collectionId: 42})",
         "addTvShow(libraryId: $id, input: {tvmazeId: 42})",
         "addAlbum(input: {libraryId: $id, musicbrainzId: \"00000000-0000-0000-0000-000000000001\"})",
-        "addAudiobook(input: {libraryId: $id, openlibraryId: \"OL1W\"})",
+        "addAudiobook(input: {libraryId: $id, providerId: \"OL1W\"})",
     ] {
         let query = format!("mutation($id: String!) {{ {action} {{ success error }} }}");
         f.denied(

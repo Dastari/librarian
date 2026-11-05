@@ -969,6 +969,9 @@ These scenarios have been explicitly decided and should be implemented according
 5. Still matches a pack's contents file-by-file on import — a pack download is not itself "the match". Partial packs work fine (matched episodes get processed, unmatched stay as files).
 6. A profile with `allowSeasonPacks: false` neither hunts nor accepts pack releases.
 
+### Q52a: Where does audiobook metadata come from?
+**Answer:** Audible's catalogue for search and details, and Audnexus for chapters, because Open Library lists every printed book and has no chapters. Neither API is officially public, so results are cached and Open Library remains the fallback when Audible fails or finds nothing. A book's provider id is stored in `audibleId` whichever provider it came from, and its form (a ten-character ASIN or an `OL…` id) says which provider it belongs to.
+
 ### Q52: How does auto-download handle audiobooks, where chapters aren't individually released?
 **Answer:** Search and grab at the whole-audiobook level, not per-chapter. Unlike TV episodes and music tracks, audiobook releases are essentially never published as one-file-per-chapter torrents — a real indexer release is "the whole book" (often as a single file or a small number of parts). So:
 1. Auto-download considers an audiobook a candidate when `Audiobook.auto_download = true` and at least one of its chapters is `wanted = true` with no `media_file_id`.

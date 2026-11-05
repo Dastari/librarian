@@ -61,6 +61,335 @@ fn check_mutation_payloads(data: &serde_json::Value) -> anyhow::Result<()> {
     Ok(())
 }
 
+const AUDIBLE_API: &str = "https://api.audible.com/1.0";
+const AUDNEXUS_API: &str = "https://api.audnex.us";
+const AUDIBLE_RESPONSE_GROUPS: &str =
+    "contributors,media,product_attrs,product_desc,product_extended_attrs,series";
+
+#[derive(Debug, Deserialize)]
+struct AudibleSearchResponse {
+    #[serde(default)]
+    products: Vec<AudibleProduct>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AudibleProductResponse {
+    product: AudibleProduct,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AudibleProduct {
+    asin: String,
+    title: Option<String>,
+    subtitle: Option<String>,
+    #[serde(default)]
+    authors: Option<Vec<AudibleContributor>>,
+    #[serde(default)]
+    narrators: Option<Vec<AudibleContributor>>,
+    content_delivery_type: Option<String>,
+    language: Option<String>,
+    publisher_name: Option<String>,
+    publisher_summary: Option<String>,
+    merchandising_summary: Option<String>,
+    release_date: Option<String>,
+    runtime_length_min: Option<i64>,
+    #[serde(default)]
+    product_images: Option<std::collections::BTreeMap<String, String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AudibleContributor {
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AudnexusChapters {
+    #[serde(rename = "runtimeLengthSec")]
+    runtime_length_sec: Option<i64>,
+    #[serde(default)]
+    chapters: Vec<AudnexusChapter>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AudnexusChapter {
+    title: Option<String>,
+    #[serde(rename = "startOffsetMs")]
+    start_offset_ms: i64,
+    #[serde(rename = "lengthMs")]
+    length_ms: i64,
+}
+
+/// Audible's ids are ten letters and digits. Open Library's look like `OL45171322W`.
+fn is_asin(id: &str) -> bool {
+    id.len() == 10 && id.bytes().all(|byte| byte.is_ascii_alphanumeric()) && !id.starts_with("OL")
+}
+
+/// Which provider an audiobook id belongs to. Results from either can reach the same paths.
+pub fn audiobook_provider_for_id(id: &str) -> MetadataProvider {
+    if is_asin(id) {
+        MetadataProvider::Audible
+    } else {
+        MetadataProvider::OpenLibrary
+    }
+}
+
+/// Books only: the catalogue also holds podcast episodes.
+fn is_audible_book(product: &AudibleProduct) -> bool {
+    matches!(
+        product.content_delivery_type.as_deref(),
+        Some("SinglePartBook" | "MultiPartBook")
+    )
+}
+
+fn first_contributor(people: &Option<Vec<AudibleContributor>>) -> Option<String> {
+    people
+        .as_ref()?
+        .iter()
+        .find_map(|person| person.name.clone())
+}
+
+/// The largest cover offered: the keys are pixel sizes.
+fn audible_cover(product: &AudibleProduct) -> Option<String> {
+    let images = product.product_images.as_ref()?;
+    images
+        .iter()
+        .max_by_key(|(size, _)| size.parse::<u32>().unwrap_or(0))
+        .map(|(_, url)| url.clone())
+}
+
+fn release_year(date: Option<&str>) -> Option<i32> {
+    date?.get(..4)?.parse().ok()
+}
+
+/// Audible's summaries are HTML. What's wanted is the text.
+fn strip_html(text: &str) -> String {
+    let mut plain = String::with_capacity(text.len());
+    let mut in_tag = false;
+    for character in text.chars() {
+        match character {
+            '<' => in_tag = true,
+            '>' if in_tag => {
+                in_tag = false;
+                if !plain.ends_with(char::is_whitespace) {
+                    plain.push(' ');
+                }
+            }
+            _ if !in_tag => plain.push(character),
+            _ => {}
+        }
+    }
+    plain
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn audible_search_results(mut products: Vec<AudibleProduct>) -> Vec<AudiobookSearchResult> {
+    // Audible's relevance can rank a translation above the original. Stable, so otherwise its
+    // order stands.
+    products.sort_by_key(|product| {
+        !product
+            .language
+            .as_deref()
+            .is_some_and(|language| language.eq_ignore_ascii_case("english"))
+    });
+    products
+        .into_iter()
+        .filter(is_audible_book)
+        .filter_map(|product| {
+            let cover_url = audible_cover(&product);
+            let author_name = first_contributor(&product.authors);
+            let year = release_year(product.release_date.as_deref());
+            let description = product
+                .merchandising_summary
+                .as_deref()
+                .or(product.publisher_summary.as_deref())
+                .map(strip_html);
+            Some(AudiobookSearchResult {
+                provider: MetadataProvider::Audible,
+                provider_id: product.asin,
+                title: product.title?,
+                author_name,
+                year,
+                cover_url,
+                isbn: None,
+                description,
+            })
+        })
+        .collect()
+}
+
+fn audible_details(product: AudibleProduct) -> AudiobookDetails {
+    let cover_url = audible_cover(&product);
+    let author_name = first_contributor(&product.authors);
+    let narrators = product
+        .narrators
+        .iter()
+        .flatten()
+        .filter_map(|person| person.name.clone())
+        .collect();
+    let description = product
+        .publisher_summary
+        .as_deref()
+        .or(product.merchandising_summary.as_deref())
+        .map(strip_html);
+    let title = match (product.title, product.subtitle) {
+        (Some(title), Some(subtitle)) if !title.contains(&subtitle) => {
+            format!("{title}: {subtitle}")
+        }
+        (Some(title), _) => title,
+        (None, _) => "Unknown Audiobook".to_string(),
+    };
+    AudiobookDetails {
+        provider: MetadataProvider::Audible,
+        provider_id: product.asin,
+        title,
+        sort_title: None,
+        author_name,
+        description,
+        publisher: product.publisher_name,
+        language: product.language,
+        isbn: None,
+        published_date: product.release_date,
+        cover_url,
+        narrators,
+        total_duration_secs: product.runtime_length_min.map(|minutes| minutes * 60),
+        chapters: Vec::new(),
+    }
+}
+
+fn audiobook_chapters(chapters: Vec<AudnexusChapter>) -> Vec<AudiobookChapterDetails> {
+    chapters
+        .into_iter()
+        .enumerate()
+        .map(|(index, chapter)| AudiobookChapterDetails {
+            title: chapter
+                .title
+                .map(|title| title.replace('\u{a0}', " ").trim().to_string())
+                .filter(|title| !title.is_empty())
+                .unwrap_or_else(|| format!("Chapter {}", index + 1)),
+            start_secs: chapter.start_offset_ms as f64 / 1000.0,
+            length_secs: chapter.length_ms as f64 / 1000.0,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod audible_tests {
+    use super::*;
+
+    fn product(asin: &str, title: &str, delivery: &str) -> AudibleProduct {
+        AudibleProduct {
+            asin: asin.to_string(),
+            title: Some(title.to_string()),
+            content_delivery_type: Some(delivery.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn search_keeps_books_and_drops_podcast_episodes() {
+        let results = audible_search_results(vec![
+            product("B017V6627U", "A book", "SinglePartBook"),
+            product("B0HQDSCZZ6", "Episode 15", "PodcastEpisode"),
+            product("B0AAAAAAAA", "In parts", "MultiPartBook"),
+        ]);
+        let ids: Vec<_> = results
+            .iter()
+            .map(|book| book.provider_id.as_str())
+            .collect();
+        assert_eq!(ids, ["B017V6627U", "B0AAAAAAAA"]);
+        assert!(
+            results
+                .iter()
+                .all(|book| book.provider == MetadataProvider::Audible)
+        );
+    }
+
+    #[test]
+    fn english_editions_come_first_and_otherwise_keep_their_rank() {
+        let edition = |asin: &str, language: &str| AudibleProduct {
+            language: Some(language.to_string()),
+            ..product(asin, asin, "SinglePartBook")
+        };
+        let results = audible_search_results(vec![
+            edition("1781105030", "spanish"),
+            edition("B017V6627U", "English"),
+            edition("B07T3PFL59", "japanese"),
+            edition("B0F1553GZJ", "english"),
+        ]);
+        let ids: Vec<_> = results
+            .iter()
+            .map(|book| book.provider_id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            ["B017V6627U", "B0F1553GZJ", "1781105030", "B07T3PFL59"]
+        );
+    }
+
+    #[test]
+    fn ids_name_their_provider() {
+        assert_eq!(
+            audiobook_provider_for_id("B017V6627U"),
+            MetadataProvider::Audible
+        );
+        assert_eq!(
+            audiobook_provider_for_id("OL45171322W"),
+            MetadataProvider::OpenLibrary
+        );
+        assert_eq!(
+            audiobook_provider_for_id("OL1W"),
+            MetadataProvider::OpenLibrary
+        );
+        assert!(!is_asin("../../etc"));
+    }
+
+    #[test]
+    fn the_largest_cover_wins() {
+        let mut book = product("B017V6627U", "A book", "SinglePartBook");
+        book.product_images = Some(
+            [
+                ("500".to_string(), "small".to_string()),
+                ("1000".to_string(), "large".to_string()),
+            ]
+            .into(),
+        );
+        assert_eq!(audible_cover(&book).as_deref(), Some("large"));
+    }
+
+    #[test]
+    fn summaries_lose_their_markup() {
+        assert_eq!(
+            strip_html("<p>One &amp; two</p><p>Three&nbsp;four</p>"),
+            "One & two Three four"
+        );
+    }
+
+    #[test]
+    fn chapters_read_cleanly_and_none_is_left_without_a_name() {
+        let chapters = audiobook_chapters(vec![
+            AudnexusChapter {
+                title: Some("Chapter One -\u{a0}The Worst Birthday".into()),
+                start_offset_ms: 29_970,
+                length_ms: 1_099_285,
+            },
+            AudnexusChapter {
+                title: None,
+                start_offset_ms: 1_129_255,
+                length_ms: 1000,
+            },
+        ]);
+        assert_eq!(chapters[0].title, "Chapter One - The Worst Birthday");
+        assert!((chapters[0].start_secs - 29.97).abs() < 0.001);
+        assert_eq!(chapters[1].title, "Chapter 2");
+    }
+}
+
 #[cfg(test)]
 fn timestamp_touch_variables(id: &str) -> serde_json::Value {
     serde_json::json!({ "id": id, "input": {} })
@@ -74,6 +403,8 @@ pub enum MetadataProvider {
     Tvmaze,
     Musicbrainz,
     OpenLibrary,
+    /// Audible's catalogue, with chapters from Audnexus. Audiobooks only.
+    Audible,
 }
 
 /// Unified movie search result (from TMDB search)
@@ -180,6 +511,22 @@ pub struct TvShowDetails {
     pub imdb_id: Option<String>,
 }
 
+/// The metadata cache's operation name for a show's episodes, shared with the artwork lookup.
+pub const TV_SHOW_EPISODES_OPERATION: &str = "GetTvShowEpisodes";
+
+/// One episode of a show that may not be in any library, from TVMaze.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TvShowEpisodeDetails {
+    pub id: u32,
+    pub season: u32,
+    pub number: u32,
+    pub name: String,
+    pub overview: Option<String>,
+    pub air_date: Option<String>,
+    pub runtime: Option<u32>,
+    pub still_url: Option<String>,
+}
+
 /// Unified album search result (from MusicBrainz search)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlbumSearchResult {
@@ -220,6 +567,20 @@ pub struct AudiobookDetails {
     pub isbn: Option<String>,
     pub published_date: Option<String>,
     pub cover_url: Option<String>,
+    #[serde(default)]
+    pub narrators: Vec<String>,
+    #[serde(default)]
+    pub total_duration_secs: Option<i64>,
+    #[serde(default)]
+    pub chapters: Vec<AudiobookChapterDetails>,
+}
+
+/// One chapter of an audiobook, where the provider publishes them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AudiobookChapterDetails {
+    pub title: String,
+    pub start_secs: f64,
+    pub length_secs: f64,
 }
 
 /// Options for adding a movie from a metadata provider
@@ -603,6 +964,7 @@ impl MetadataService {
             MetadataProvider::Tvmaze => "tvmaze",
             MetadataProvider::Musicbrainz => "musicbrainz",
             MetadataProvider::OpenLibrary => "openlibrary",
+            MetadataProvider::Audible => "audible",
         }
     }
 
@@ -616,7 +978,10 @@ impl MetadataService {
                 MetadataProvider::Tmdb => settings.tmdb_cache_days,
                 MetadataProvider::Tvmaze => settings.tvmaze_cache_days,
                 MetadataProvider::Musicbrainz => settings.musicbrainz_cache_days,
-                MetadataProvider::OpenLibrary => settings.openlibrary_cache_days,
+                // Same setting: both describe the same books, and it isn't worth a second dial.
+                MetadataProvider::OpenLibrary | MetadataProvider::Audible => {
+                    settings.openlibrary_cache_days
+                }
             },
             Err(error) => {
                 warn!(
@@ -1551,7 +1916,76 @@ impl MetadataService {
             .await
     }
 
+    /// Audible first: it only lists audiobooks, and has chapters and narrators. Open Library, which
+    /// lists every book ever printed, is what's left if Audible is unreachable or has nothing.
     async fn search_audiobooks_with_policy(
+        &self,
+        query: &str,
+        policy: MetadataFetchPolicy,
+    ) -> Result<Vec<AudiobookSearchResult>> {
+        match self.search_audible(query, policy).await {
+            Ok(results) if !results.is_empty() => return Ok(results),
+            Ok(_) => {}
+            Err(error) => {
+                warn!(error = %error, "Audible search failed; falling back to Open Library");
+            }
+        }
+        self.search_open_library_audiobooks(query, policy).await
+    }
+
+    async fn search_audible(
+        &self,
+        query: &str,
+        policy: MetadataFetchPolicy,
+    ) -> Result<Vec<AudiobookSearchResult>> {
+        let cache_key = format!("query={}", Self::normalized_cache_component(query));
+        if policy == MetadataFetchPolicy::PreferCache {
+            let max_age_days = self.provider_cache_days(MetadataProvider::Audible).await;
+            if let Some(cached) = self
+                .read_metadata_cache::<Vec<AudiobookSearchResult>>(
+                    MetadataProvider::Audible,
+                    "SearchAudiobooks",
+                    &cache_key,
+                    max_age_days,
+                )
+                .await?
+            {
+                return Ok(cached);
+            }
+        }
+        let client = crate::services::http_client::outbound_client(
+            crate::services::http_client::OutboundHttpProfile::Metadata,
+        )?;
+        let response = client
+            .get(format!("{AUDIBLE_API}/catalog/products"))
+            .query(&[
+                ("keywords", query),
+                ("num_results", "40"),
+                ("products_sort_by", "Relevance"),
+                ("response_groups", AUDIBLE_RESPONSE_GROUPS),
+                ("image_sizes", "500,1000"),
+            ])
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<AudibleSearchResponse>()
+            .await?;
+        let results = audible_search_results(response.products);
+        if let Err(error) = self
+            .upsert_metadata_cache(
+                MetadataProvider::Audible,
+                "SearchAudiobooks",
+                &cache_key,
+                &results,
+            )
+            .await
+        {
+            warn!(error = %error, "Failed to update metadata cache for Audible search");
+        }
+        Ok(results)
+    }
+
+    async fn search_open_library_audiobooks(
         &self,
         query: &str,
         policy: MetadataFetchPolicy,
@@ -1839,6 +2273,55 @@ impl MetadataService {
         Ok(details)
     }
 
+    /// Every episode of a show from TVMaze, cached like the show itself.
+    pub async fn get_tv_show_episodes(&self, tvmaze_id: u32) -> Result<Vec<TvShowEpisodeDetails>> {
+        let cache_key = tvmaze_id.to_string();
+        let max_age_days = self.provider_cache_days(MetadataProvider::Tvmaze).await;
+        if let Some(cached) = self
+            .read_metadata_cache::<Vec<TvShowEpisodeDetails>>(
+                MetadataProvider::Tvmaze,
+                TV_SHOW_EPISODES_OPERATION,
+                &cache_key,
+                max_age_days,
+            )
+            .await?
+        {
+            return Ok(cached);
+        }
+
+        let tvmaze = self.get_tvmaze_client().await?;
+        let episodes: Vec<TvShowEpisodeDetails> = tvmaze
+            .get_episodes(tvmaze_id)
+            .await?
+            .into_iter()
+            .map(|episode| TvShowEpisodeDetails {
+                overview: episode.clean_summary(),
+                still_url: episode
+                    .image
+                    .as_ref()
+                    .and_then(|image| image.original.clone()),
+                id: episode.id,
+                season: episode.season,
+                number: episode.number,
+                name: episode.name,
+                air_date: episode.airdate,
+                runtime: episode.runtime,
+            })
+            .collect();
+        if let Err(error) = self
+            .upsert_metadata_cache(
+                MetadataProvider::Tvmaze,
+                TV_SHOW_EPISODES_OPERATION,
+                &cache_key,
+                &episodes,
+            )
+            .await
+        {
+            warn!(error = %error, "Failed to update metadata cache for a show's episodes");
+        }
+        Ok(episodes)
+    }
+
     /// Get audiobook details from OpenLibrary work API
     pub async fn get_audiobook(&self, openlibrary_id: &str) -> Result<AudiobookDetails> {
         self.get_audiobook_with_policy(openlibrary_id, MetadataFetchPolicy::PreferCache)
@@ -1847,9 +2330,100 @@ impl MetadataService {
 
     async fn get_audiobook_with_policy(
         &self,
+        provider_id: &str,
+        policy: MetadataFetchPolicy,
+    ) -> Result<AudiobookDetails> {
+        if audiobook_provider_for_id(provider_id) == MetadataProvider::Audible {
+            self.get_audible_audiobook(provider_id, policy).await
+        } else {
+            self.get_open_library_audiobook(provider_id, policy).await
+        }
+    }
+
+    async fn get_audible_audiobook(
+        &self,
+        asin: &str,
+        policy: MetadataFetchPolicy,
+    ) -> Result<AudiobookDetails> {
+        anyhow::ensure!(is_asin(asin), "Not an Audible identifier: {asin}");
+        let cache_key = Self::normalized_cache_component(asin);
+        if policy == MetadataFetchPolicy::PreferCache {
+            let max_age_days = self.provider_cache_days(MetadataProvider::Audible).await;
+            if let Some(cached) = self
+                .read_metadata_cache::<AudiobookDetails>(
+                    MetadataProvider::Audible,
+                    "GetAudiobook",
+                    &cache_key,
+                    max_age_days,
+                )
+                .await?
+            {
+                return Ok(cached);
+            }
+        }
+        let client = crate::services::http_client::outbound_client(
+            crate::services::http_client::OutboundHttpProfile::Metadata,
+        )?;
+        let product = client
+            .get(format!("{AUDIBLE_API}/catalog/products/{asin}"))
+            .query(&[
+                ("response_groups", AUDIBLE_RESPONSE_GROUPS),
+                ("image_sizes", "500,1000"),
+            ])
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<AudibleProductResponse>()
+            .await?
+            .product;
+        let mut details = audible_details(product);
+        // Chapters are a bonus: the book is still worth having without them.
+        match client
+            .get(format!("{AUDNEXUS_API}/books/{asin}/chapters"))
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+        {
+            Ok(response) => match response.json::<AudnexusChapters>().await {
+                Ok(listing) => {
+                    if let Some(seconds) = listing.runtime_length_sec {
+                        details.total_duration_secs = Some(seconds);
+                    }
+                    details.chapters = audiobook_chapters(listing.chapters);
+                }
+                Err(error) => warn!(asin, error = %error, "Could not read Audnexus chapters"),
+            },
+            Err(error) => warn!(asin, error = %error, "No chapter listing from Audnexus"),
+        }
+        if let Err(error) = self
+            .upsert_metadata_cache(
+                MetadataProvider::Audible,
+                "GetAudiobook",
+                &cache_key,
+                &details,
+            )
+            .await
+        {
+            warn!(error = %error, "Failed to update metadata cache for Audible details");
+        }
+        Ok(details)
+    }
+
+    async fn get_open_library_audiobook(
+        &self,
         openlibrary_id: &str,
         policy: MetadataFetchPolicy,
     ) -> Result<AudiobookDetails> {
+        #[derive(Debug, Deserialize)]
+        struct OpenLibrarySearchCover {
+            cover_i: Option<i64>,
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct OpenLibrarySearchCovers {
+            docs: Vec<OpenLibrarySearchCover>,
+        }
+
         #[derive(Debug, Deserialize)]
         struct OpenLibraryWorkAuthor {
             author: OpenLibraryAuthorRef,
@@ -1923,10 +2497,27 @@ impl MetadataService {
             None => None,
         };
 
-        let cover_url = work
-            .covers
-            .and_then(|covers| covers.first().copied())
-            .map(|id| format!("https://covers.openlibrary.org/b/id/{}-L.jpg", id));
+        let mut cover_id = work.covers.and_then(|covers| covers.first().copied());
+        if cover_id.is_none() {
+            // A work's own record often has no cover though its search entry does.
+            let found = client
+                .get("https://openlibrary.org/search.json")
+                .query(&[
+                    ("q", format!("key:/works/{openlibrary_id}").as_str()),
+                    ("fields", "cover_i"),
+                    ("limit", "1"),
+                ])
+                .send()
+                .await
+                .and_then(reqwest::Response::error_for_status);
+            if let Ok(response) = found
+                && let Ok(covers) = response.json::<OpenLibrarySearchCovers>().await
+            {
+                cover_id = covers.docs.first().and_then(|doc| doc.cover_i);
+            }
+        }
+        let cover_url =
+            cover_id.map(|id| format!("https://covers.openlibrary.org/b/id/{}-L.jpg", id));
 
         let author_name = if let Some(authors) = work.authors {
             if let Some(author_ref) = authors.first() {
@@ -1963,6 +2554,9 @@ impl MetadataService {
             isbn: None,
             published_date: work.first_publish_date,
             cover_url,
+            narrators: Vec::new(),
+            total_duration_secs: None,
+            chapters: Vec::new(),
         };
 
         if let Err(error) = self
@@ -2581,7 +3175,7 @@ impl MetadataService {
                 "tvmazeId": details.provider_id as i32, "tmdbId": null, "tvdbId": details.tvdb_id,
                 "imdbId": details.imdb_id, "overview": details.overview, "network": details.network,
                 "runtime": details.runtime, "genres": details.genres, "posterUrl": details.poster_url,
-                "backdropUrl": details.backdrop_url, "contentRating": details.status,
+                "backdropUrl": details.backdrop_url, "status": details.status,
                 "autoDownload": auto_download, "autoDownloadMode": options.monitor_type.to_string().to_uppercase(),
                 "qualityProfileId": null, "path": options.path
             }})).await?;
@@ -3295,8 +3889,11 @@ impl MetadataService {
     ) -> Result<Audiobook> {
         self.require_import_owner(options.library_id, options.user_id)
             .await?;
-        if options.provider != MetadataProvider::OpenLibrary {
-            anyhow::bail!("Only OpenLibrary is supported for audiobook metadata");
+        if !matches!(
+            options.provider,
+            MetadataProvider::OpenLibrary | MetadataProvider::Audible
+        ) {
+            anyhow::bail!("Audiobook metadata comes from Audible or Open Library");
         }
 
         let details = self.get_audiobook(&options.provider_id).await?;
@@ -3358,11 +3955,16 @@ impl MetadataService {
                         "isbn": details.isbn,
                         "publishedDate": details.published_date,
                         "coverUrl": details.cover_url,
+                        // The provider's id for the book, whichever provider that is.
                         "audibleId": details.provider_id,
+                        "asin": (details.provider == MetadataProvider::Audible).then_some(&details.provider_id),
+                        "narratorName": details.narrators.first(),
+                        "totalDurationSecs": details.total_duration_secs,
+                        "chapterCount": details.chapters.len(),
                         "autoDownload": options.monitor_type != AutoDownloadMode::None,
                         "autoDownloadMode": auto_download_mode_graphql_name(options.monitor_type),
                         "hasFiles": false,
-                        "narrators": Vec::<String>::new()
+                        "narrators": details.narrators
                     }
                 }),
             )
@@ -3394,22 +3996,43 @@ impl MetadataService {
             .await?
             .ok_or_else(|| anyhow::anyhow!("Audiobook not found after creation"))?;
 
-        // Chapters are only created from real provider data. OpenLibrary is a
-        // book (not audiobook) catalogue and publishes no chapter/track
-        // listing, so we deliberately create nothing rather than inventing
-        // chapter rows that would never line up with a real release
-        // (docs/design.md Q52). Import still links the release's files once
-        // chapters exist, and the audiobook itself is already monitorable.
-        warn!(
-            audiobook_id = %audiobook.id,
-            title = %audiobook.title,
-            provider = ?options.provider,
-            provider_id = %options.provider_id,
-            "No chapter listing available from {:?} for audiobook '{}' ({}); created 0 chapters — add chapters manually or let a scan create them from the downloaded files",
-            options.provider,
-            audiobook.title,
-            options.provider_id
-        );
+        // Chapters come only from real provider data (docs/design.md Q52): Audnexus has them, Open
+        // Library doesn't, and made-up rows would never line up with a real release. Import still
+        // links the release's files once chapters exist.
+        let wanted = options.monitor_type != AutoDownloadMode::None;
+        for (index, chapter) in details.chapters.iter().enumerate() {
+            let created = self
+                .execute_mutation(
+                    &auth_user,
+                    r#"mutation CreateChapter($input: CreateChapterInput!) {
+                        CreateChapter: createChapter(input: $input) { Success: success Error: error }
+                    }"#,
+                    serde_json::json!({
+                        "input": {
+                            "audiobookId": audiobook.id,
+                            "chapterNumber": index as i32 + 1,
+                            "title": chapter.title,
+                            "startTimeSecs": chapter.start_secs,
+                            "endTimeSecs": chapter.start_secs + chapter.length_secs,
+                            "durationSecs": chapter.length_secs.round() as i32,
+                            "wanted": wanted,
+                        }
+                    }),
+                )
+                .await;
+            if let Err(error) = created {
+                warn!(audiobook_id = %audiobook.id, chapter = index + 1, error = %error, "Could not create audiobook chapter");
+            }
+        }
+        if details.chapters.is_empty() {
+            warn!(
+                audiobook_id = %audiobook.id,
+                title = %audiobook.title,
+                provider = ?details.provider,
+                "No chapter listing available for audiobook '{}'; a scan can create them from its files",
+                audiobook.title
+            );
+        }
 
         // Cache artwork, then emit a lightweight entity update so library/media
         // subscribers refresh once cached artwork is ready.
@@ -4033,7 +4656,7 @@ impl MetadataService {
                         "genres": details.genres,
                         "posterUrl": details.poster_url,
                         "backdropUrl": details.backdrop_url,
-                        "contentRating": details.status,
+                        "status": details.status,
                     }
                 }),
             )

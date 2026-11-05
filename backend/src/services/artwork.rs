@@ -26,15 +26,19 @@ use crate::db::Database;
 use crate::graphql::entities::{
     Album, AppSetting, AppSettingWhereInput, Artist, ArtworkCache, ArtworkCacheWhereInput,
     Audiobook, Collection, CollectionWhereInput, CreateArtworkCacheInput, CreateStorageObjectInput,
-    Episode, Movie, Person, ScheduleCache, ScheduleCacheWhereInput, Season, Show, StorageObject,
-    UpdateArtworkCacheInput,
+    Episode, MetadataCache, MetadataCacheWhereInput, Movie, Person, ScheduleCache,
+    ScheduleCacheWhereInput, Season, Show, StorageObject, UpdateArtworkCacheInput,
 };
 use crate::services::ObjectStorageService;
+use crate::services::metadata::providers::{
+    AudiobookDetails, MovieDetails, TV_SHOW_EPISODES_OPERATION, TvShowDetails, TvShowEpisodeDetails,
+};
 
 const DEFAULT_ARTWORK_HOSTS: &[&str] = &[
     "image.tmdb.org",
     "static.tvmaze.com",
     "covers.openlibrary.org",
+    "m.media-amazon.com",
     "coverartarchive.org",
     "archive.org",
 ];
@@ -132,6 +136,14 @@ struct DownloadedArtwork {
 pub struct ArtworkService {
     db: Database,
     storage: Arc<ObjectStorageService>,
+}
+
+/// Which provider's cache holds this audiobook's record.
+fn audiobook_record_provider(id: &str) -> &'static str {
+    match crate::services::metadata::providers::audiobook_provider_for_id(id) {
+        crate::services::metadata::providers::MetadataProvider::Audible => "audible",
+        _ => "openlibrary",
+    }
 }
 
 impl ArtworkService {
@@ -533,6 +545,53 @@ impl ArtworkService {
             ("person", "profile") => Person::get(pool, &id)
                 .await?
                 .and_then(|row| row.profile_url),
+            // Titles not in any library: the provider's own record, kept in the metadata cache.
+            ("provider-movie", "poster" | "backdrop") => self
+                .cached_provider_record::<MovieDetails>("tmdb", "GetMovie", entity_id)
+                .await?
+                .and_then(|movie| {
+                    if artwork_type == "poster" {
+                        movie.poster_url
+                    } else {
+                        movie.backdrop_url
+                    }
+                }),
+            ("provider-show", "poster" | "backdrop") => self
+                .cached_provider_record::<TvShowDetails>("tvmaze", "GetTvShow", entity_id)
+                .await?
+                .and_then(|show| {
+                    if artwork_type == "poster" {
+                        show.poster_url
+                    } else {
+                        show.backdrop_url
+                    }
+                }),
+            ("provider-audiobook", "cover") => self
+                .cached_provider_record::<AudiobookDetails>(
+                    audiobook_record_provider(entity_id),
+                    "GetAudiobook",
+                    // The metadata cache keys are lowercased; Audible's ids aren't.
+                    &entity_id.to_ascii_lowercase(),
+                )
+                .await?
+                .and_then(|book| book.cover_url),
+            ("provider-episode", "thumbnail") => {
+                let Some((show, episode)) = entity_id.split_once('-') else {
+                    return Ok(None);
+                };
+                self.cached_provider_record::<Vec<TvShowEpisodeDetails>>(
+                    "tvmaze",
+                    TV_SHOW_EPISODES_OPERATION,
+                    show,
+                )
+                .await?
+                .and_then(|episodes| {
+                    episodes
+                        .into_iter()
+                        .find(|row| row.id.to_string() == episode)
+                        .and_then(|row| row.still_url)
+                })
+            }
             // TV guide posters, addressed by TVMaze show id: the guide lists shows that are
             // not in any library, and is rebuilt daily from the same few hundred posters.
             ("guide", "poster") => {
@@ -727,6 +786,27 @@ impl ArtworkService {
                     .await?
                     .is_empty()
             }
+            "provider-movie" => {
+                self.provider_record_exists("tmdb", "GetMovie", entity_id)
+                    .await?
+            }
+            "provider-show" => {
+                self.provider_record_exists("tvmaze", "GetTvShow", entity_id)
+                    .await?
+            }
+            "provider-audiobook" => {
+                self.provider_record_exists(
+                    audiobook_record_provider(entity_id),
+                    "GetAudiobook",
+                    &entity_id.to_ascii_lowercase(),
+                )
+                .await?
+            }
+            "provider-episode" => {
+                let show = entity_id.split('-').next().unwrap_or(entity_id);
+                self.provider_record_exists("tvmaze", TV_SHOW_EPISODES_OPERATION, show)
+                    .await?
+            }
             "guide" => {
                 let Ok(tvmaze_show_id) = entity_id.parse::<i32>() else {
                     return Ok(false);
@@ -746,6 +826,58 @@ impl ArtworkService {
             }
             _ => true,
         })
+    }
+
+    async fn provider_record(
+        &self,
+        provider: &str,
+        operation: &str,
+        cache_key: &str,
+    ) -> Result<Option<MetadataCache>> {
+        let string = |value: &str| {
+            Some(StringFilter {
+                eq: Some(value.to_string()),
+                ..Default::default()
+            })
+        };
+        Ok(MetadataCache::query(self.db.pool())
+            .filter(MetadataCacheWhereInput {
+                provider: string(provider),
+                operation: string(operation),
+                cache_key: string(cache_key),
+                ..Default::default()
+            })
+            .limit(1)
+            .fetch_all()
+            .await?
+            .into_iter()
+            .next())
+    }
+
+    /// A provider's record from the metadata cache. A stale record is still a good source for a
+    /// picture, and one that no longer parses just means no artwork.
+    async fn cached_provider_record<T: serde::de::DeserializeOwned>(
+        &self,
+        provider: &str,
+        operation: &str,
+        cache_key: &str,
+    ) -> Result<Option<T>> {
+        Ok(self
+            .provider_record(provider, operation, cache_key)
+            .await?
+            .and_then(|row| serde_json::from_str(&row.payload).ok()))
+    }
+
+    async fn provider_record_exists(
+        &self,
+        provider: &str,
+        operation: &str,
+        cache_key: &str,
+    ) -> Result<bool> {
+        Ok(self
+            .provider_record(provider, operation, cache_key)
+            .await?
+            .is_some())
     }
 
     /// Remove cached artwork whose entity is gone: rows left by deletions made before the

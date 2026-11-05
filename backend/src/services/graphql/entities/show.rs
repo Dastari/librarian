@@ -125,6 +125,12 @@ pub struct Show {
     #[filterable(type = "string")]
     pub content_rating: Option<String>,
 
+    /// Where the show is up to: "Running", "Ended". TVmaze has no age rating, so this used to be
+    /// stored in `contentRating`; older rows keep it there until they're next refreshed.
+    #[graphql(name = "status")]
+    #[filterable(type = "string")]
+    pub status: Option<String>,
+
     #[graphql(name = "autoDownload")]
     #[filterable(type = "boolean")]
     pub auto_download: bool,
@@ -200,11 +206,87 @@ pub struct Show {
     pub quality_profile: Option<Box<QualityProfile>>,
 }
 
+/// A show as its provider describes it, whether or not it is in a library. Its artwork is served
+/// from the cache at `/api/artwork/provider-show/{tvmazeId}/{poster,backdrop}`.
+#[derive(Debug, Clone, async_graphql::SimpleObject)]
+#[graphql(name = "ProviderShow", rename_fields = "camelCase")]
+pub struct ProviderShow {
+    pub tvmaze_id: i32,
+    pub name: String,
+    pub year: Option<i32>,
+    pub status: Option<String>,
+    pub overview: Option<String>,
+    pub network: Option<String>,
+    pub runtime: Option<i32>,
+    pub genres: Vec<String>,
+    pub imdb_id: Option<String>,
+    pub episodes: Vec<ProviderEpisode>,
+}
+
+/// One episode of a provider show. Its still is `/api/artwork/provider-episode/{show}-{id}/thumbnail`.
+#[derive(Debug, Clone, async_graphql::SimpleObject)]
+#[graphql(name = "ProviderEpisode", rename_fields = "camelCase")]
+pub struct ProviderEpisode {
+    pub id: i32,
+    pub season: i32,
+    pub number: i32,
+    pub name: String,
+    pub overview: Option<String>,
+    pub air_date: Option<String>,
+    pub runtime: Option<i32>,
+    pub has_still: bool,
+}
+
 #[derive(Default)]
 pub struct ShowCustomOperations;
 
 #[async_graphql::Object]
 impl ShowCustomOperations {
+    /// A show from TVMaze that may not be in a library, with its episodes, for its page. Cached.
+    #[graphql(name = "providerShow")]
+    async fn provider_show(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "tvmazeId")] tvmaze_id: i32,
+    ) -> async_graphql::Result<ProviderShow> {
+        let _user = ctx.librarian_auth_user()?;
+        let tvmaze_id =
+            u32::try_from(tvmaze_id).map_err(|_| async_graphql::Error::new("Invalid TVMaze id"))?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+        let show = metadata
+            .get_tv_show(tvmaze_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let episodes = metadata
+            .get_tv_show_episodes(tvmaze_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(ProviderShow {
+            tvmaze_id: tvmaze_id as i32,
+            name: show.name,
+            year: show.year,
+            status: show.status,
+            overview: show.overview,
+            network: show.network,
+            runtime: show.runtime,
+            genres: show.genres,
+            imdb_id: show.imdb_id,
+            episodes: episodes
+                .into_iter()
+                .map(|episode| ProviderEpisode {
+                    id: episode.id as i32,
+                    season: episode.season as i32,
+                    number: episode.number as i32,
+                    name: episode.name,
+                    overview: episode.overview,
+                    air_date: episode.air_date,
+                    runtime: episode.runtime.map(|value| value as i32),
+                    has_still: episode.still_url.is_some(),
+                })
+                .collect(),
+        })
+    }
+
     /// Search for TV shows on TVMaze
     #[graphql(name = "searchTvShows")]
     async fn search_tv_shows(
@@ -228,6 +310,7 @@ impl ShowCustomOperations {
                     MetadataProvider::Tmdb => "tmdb".to_string(),
                     MetadataProvider::Musicbrainz => "musicbrainz".to_string(),
                     MetadataProvider::OpenLibrary => "openlibrary".to_string(),
+                    MetadataProvider::Audible => "audible".to_string(),
                 },
                 provider_id: show.provider_id as i32,
                 name: show.name,

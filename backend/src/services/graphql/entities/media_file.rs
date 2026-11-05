@@ -20,6 +20,8 @@ use serde::{Deserialize, Serialize};
     table = "media_files",
     plural = "MediaFiles",
     default_sort = "path",
+    // A library's files in path order, without sorting every row of a large library to find a page.
+    index = "library_id,path",
     read_policy = "member.read",
     write_policy = "admin.write"
 )]

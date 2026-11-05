@@ -180,7 +180,7 @@ pub struct Audiobook {
 #[derive(Default)]
 pub struct AudiobookCustomOperations;
 
-/// Search result for OpenLibrary audiobook search.
+/// Search result for audiobook search.
 #[derive(Debug, Clone, async_graphql::SimpleObject)]
 #[graphql(name = "AudiobookSearchResult")]
 pub struct AudiobookSearchResultGql {
@@ -202,9 +202,49 @@ pub struct AudiobookSearchResultGql {
     pub description: Option<String>,
 }
 
+/// An audiobook as its provider describes it, whether or not it is in a library. Its cover is
+/// served from the cache at `/api/artwork/provider-audiobook/{providerId}/cover`.
+#[derive(Debug, Clone, async_graphql::SimpleObject)]
+#[graphql(name = "ProviderAudiobook", rename_fields = "camelCase")]
+pub struct ProviderAudiobook {
+    pub provider_id: String,
+    pub title: String,
+    pub author_name: Option<String>,
+    pub description: Option<String>,
+    pub publisher: Option<String>,
+    pub language: Option<String>,
+    pub isbn: Option<String>,
+    pub published_date: Option<String>,
+}
+
 #[Object]
 impl AudiobookCustomOperations {
-    /// Search audiobooks on OpenLibrary.
+    /// An audiobook from a provider that may not be in a library, for its page. Cached.
+    #[graphql(name = "providerAudiobook")]
+    async fn provider_audiobook(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "providerId")] provider_id: String,
+    ) -> Result<ProviderAudiobook> {
+        let _user = ctx.librarian_auth_user()?;
+        let book = ctx
+            .data_unchecked::<Arc<MetadataService>>()
+            .get_audiobook(&provider_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(ProviderAudiobook {
+            provider_id,
+            title: book.title,
+            author_name: book.author_name,
+            description: book.description,
+            publisher: book.publisher,
+            language: book.language,
+            isbn: book.isbn,
+            published_date: book.published_date,
+        })
+    }
+
+    /// Search audiobooks: Audible, or Open Library when Audible has nothing.
     #[graphql(name = "searchAudiobooks")]
     async fn search_audiobooks(
         &self,
@@ -224,6 +264,7 @@ impl AudiobookCustomOperations {
             .map(|a| AudiobookSearchResultGql {
                 provider: match a.provider {
                     MetadataProvider::OpenLibrary => "openlibrary".to_string(),
+                    MetadataProvider::Audible => "audible".to_string(),
                     MetadataProvider::Musicbrainz => "musicbrainz".to_string(),
                     MetadataProvider::Tmdb => "tmdb".to_string(),
                     MetadataProvider::Tvmaze => "tvmaze".to_string(),
@@ -245,8 +286,8 @@ impl AudiobookCustomOperations {
 pub struct AddAudiobookInput {
     #[graphql(name = "libraryId")]
     pub library_id: String,
-    #[graphql(name = "openlibraryId")]
-    pub openlibrary_id: String,
+    #[graphql(name = "providerId")]
+    pub provider_id: String,
     /// Enable auto-download for the audiobook. Ignored when
     /// `autoDownloadMode` is given explicitly. Defaults to false (`NONE`).
     #[graphql(name = "autoDownload")]
@@ -272,7 +313,7 @@ pub struct AudiobookMetadataMutations;
 
 #[Object]
 impl AudiobookMetadataMutations {
-    /// Add an audiobook to a library by fetching metadata from OpenLibrary.
+    /// Add an audiobook to a library by fetching metadata from its provider.
     #[graphql(name = "addAudiobook")]
     async fn add_audiobook(
         &self,
@@ -299,8 +340,10 @@ impl AudiobookMetadataMutations {
 
         match metadata
             .add_audiobook_from_provider(AddAudiobookOptions {
-                provider: MetadataProvider::OpenLibrary,
-                provider_id: input.openlibrary_id,
+                provider: crate::services::metadata::providers::audiobook_provider_for_id(
+                    &input.provider_id,
+                ),
+                provider_id: input.provider_id,
                 library_id,
                 user_id,
                 monitor_type,

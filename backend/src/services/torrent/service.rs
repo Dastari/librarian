@@ -201,6 +201,12 @@ fn authorize_existing_add(
     Ok(())
 }
 
+/// What `addTorrent` was given: a magnet or URL the client can fetch, or the file itself.
+enum TorrentAddRequest<'a> {
+    Uri(&'a str),
+    File(Vec<u8>),
+}
+
 impl TorrentService {
     /// Create the service. It will not connect or start until [Service::start] is called.
     pub fn new(
@@ -276,6 +282,31 @@ impl TorrentService {
         actor: &AuthUser,
         metadata: TorrentAddMetadata,
     ) -> Result<TorrentAddOutcome> {
+        self.add_for_actor(TorrentAddRequest::Uri(magnet), actor, metadata)
+            .await
+    }
+
+    /// Add a `.torrent` file already fetched, for a source that needs its login to hand one over.
+    pub async fn add_torrent_file_for_actor_with_outcome(
+        &self,
+        torrent_file: Vec<u8>,
+        actor: &AuthUser,
+        metadata: TorrentAddMetadata,
+    ) -> Result<TorrentAddOutcome> {
+        self.add_for_actor(TorrentAddRequest::File(torrent_file), actor, metadata)
+            .await
+    }
+
+    async fn add_for_actor(
+        &self,
+        add: TorrentAddRequest<'_>,
+        actor: &AuthUser,
+        metadata: TorrentAddMetadata,
+    ) -> Result<TorrentAddOutcome> {
+        let stored_uri = match &add {
+            TorrentAddRequest::Uri(uri) => Some(*uri),
+            TorrentAddRequest::File(_) => None,
+        };
         let _add_guard = self.add_lock.lock().await;
         let r = self
             .runtime()
@@ -296,12 +327,12 @@ impl TorrentService {
         let deadline = tokio::time::Instant::now() + ADD_TORRENT_TIMEOUT;
         // A URL can hide an already-owned hash. Resolve its metadata in list-only mode,
         // which the pinned client returns before creating storage or a managed handle.
-        let (request, hash) = match librqbit::Magnet::parse(magnet)
-            .ok()
-            .and_then(|magnet| magnet.as_id20())
-        {
+        let magnet_hash = stored_uri
+            .and_then(|uri| librqbit::Magnet::parse(uri).ok())
+            .and_then(|magnet| magnet.as_id20());
+        let (request, hash) = match magnet_hash {
             Some(hash) => (
-                AddTorrent::from_url(magnet),
+                AddTorrent::from_url(stored_uri.unwrap_or_default()),
                 hash.0
                     .iter()
                     .map(|byte| format!("{byte:02x}"))
@@ -310,13 +341,14 @@ impl TorrentService {
             None => {
                 let mut options = add_torrent_opts(true);
                 options.list_only = true;
-                let resolved = tokio::time::timeout_at(
-                    deadline,
-                    r.session
-                        .add_torrent(AddTorrent::from_url(magnet), Some(options)),
-                )
-                .await
-                .context("Timed out resolving torrent metadata")??;
+                let source = match add {
+                    TorrentAddRequest::Uri(uri) => AddTorrent::from_url(uri),
+                    TorrentAddRequest::File(bytes) => AddTorrent::from_bytes(bytes),
+                };
+                let resolved =
+                    tokio::time::timeout_at(deadline, r.session.add_torrent(source, Some(options)))
+                        .await
+                        .context("Timed out resolving torrent metadata")??;
                 let AddTorrentResponse::ListOnly(resolved) = resolved else {
                     anyhow::bail!("Torrent metadata resolution did not return a read-only result");
                 };
@@ -386,7 +418,7 @@ impl TorrentService {
                         &r.schema,
                         &actor,
                         &info_hash,
-                        Some(magnet),
+                        stored_uri,
                         metadata.library_id.as_deref(),
                         metadata.source_url.as_deref(),
                         metadata.source_indexer_id.as_deref(),
@@ -501,6 +533,36 @@ impl TorrentService {
                 })
             }
         }
+    }
+
+    /// One completed file of a loaded download, ready to import or match by hand.
+    pub async fn completed_file(
+        &self,
+        info_hash: &str,
+        file_index: i32,
+    ) -> Result<SourceFileImport> {
+        let r = self
+            .runtime()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("torrent service not started"))?;
+        let rows = database::completed_torrent_file_rows(&r.session, &r.db, info_hash)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Load this download in the client first"))?;
+        let row = rows
+            .into_iter()
+            .find(|row| row.file_index == file_index)
+            .ok_or_else(|| anyhow::anyhow!("That file is not in this download"))?;
+        anyhow::ensure!(
+            row.file_size > 0 && row.downloaded_bytes >= row.file_size,
+            "That file hasn't finished downloading"
+        );
+        Ok(SourceFileImport {
+            source_path: row.file_path,
+            relative_path: row.relative_path,
+            file_size: row.file_size,
+            downloaded_bytes: row.downloaded_bytes,
+            file_index: Some(row.file_index),
+        })
     }
 
     /// List all torrents.

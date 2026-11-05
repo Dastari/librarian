@@ -191,6 +191,17 @@ struct SelectedImportMatch {
     candidate: MatchCandidate,
 }
 
+/// A person's choice of what one downloaded file is. Imported as a manual match.
+#[derive(Debug, Clone)]
+pub struct ManualFileTarget {
+    pub library_id: String,
+    pub target_type: String,
+    pub target_id: String,
+}
+
+/// `match_type` recorded when a person chose the target.
+const MANUAL_MATCH_TYPE: &str = "manual";
+
 /// `match_type` recorded when the Torrent row named the exact target.
 const TORRENT_LINK_MATCH_TYPE: &str = "torrent_link";
 
@@ -615,6 +626,33 @@ pub struct LibraryScanService {
     episode_candidate_cache: Arc<RwLock<HashMap<String, Vec<EpisodeCandidateRow>>>>,
     track_candidate_cache: Arc<RwLock<HashMap<String, Vec<TrackCandidateRow>>>>,
     chapter_candidate_cache: Arc<RwLock<HashMap<String, Vec<ChapterCandidateRow>>>>,
+}
+
+/// Finds an unanswered action notification about this same thing: the same action on the same
+/// file, for the same reason. A different upgrade found for that file is still news.
+fn open_action_notification_lookup(
+    owner_id: &str,
+    action_type: &str,
+    media_file_id: Option<&str>,
+    message: &str,
+) -> serde_json::Value {
+    let mut filter = serde_json::json!({
+        "userId": { "eq": owner_id },
+        "actionType": { "eq": action_type },
+        "message": { "eq": message },
+        "resolvedAt": { "isNull": true }
+    });
+    if let Some(media_file_id) = media_file_id {
+        filter["mediaFileId"] = serde_json::json!({ "eq": media_file_id });
+    }
+    serde_json::json!({ "where": filter, "page": { "limit": 1, "offset": 0 } })
+}
+
+fn notifications_found(data: &serde_json::Value) -> bool {
+    data.get("Notifications")
+        .and_then(|notifications| notifications.get("Edges"))
+        .and_then(|edges| edges.as_array())
+        .is_some_and(|edges| !edges.is_empty())
 }
 
 impl LibraryScanService {
@@ -1272,6 +1310,27 @@ impl LibraryScanService {
         action_type: &str,
         action_data: &str,
     ) {
+        // Whatever finds this keeps running until the question is answered, so ask it once.
+        let open = self
+            .execute_graphql(
+                auth_user,
+                r#"query OpenActionNotification($where: NotificationWhereInput, $page: PageInput) {
+                    Notifications: notifications(where: $where, page: $page) {
+                        Edges: edges { Node: node { Id: id } }
+                    }
+                }"#,
+                open_action_notification_lookup(owner_id, action_type, media_file_id, message),
+            )
+            .await;
+        match open {
+            Ok(data) if notifications_found(&data) => return,
+            Ok(_) => {}
+            Err(error) => {
+                // Better to skip one than to risk another run of duplicates.
+                warn!(user_id = %owner_id, title, error = %error, "Failed to check for an open action notification");
+                return;
+            }
+        }
         if let Err(e) = self
             .execute_mutation(
                 auth_user,
@@ -6251,7 +6310,9 @@ impl LibraryScanService {
         let user_uuid = Uuid::parse_str(&library.user_id)?;
         let audiobook = metadata
             .add_audiobook_from_provider(AddAudiobookOptions {
-                provider: MetadataProvider::OpenLibrary,
+                provider: crate::services::metadata::providers::audiobook_provider_for_id(
+                    &candidate.provider_id,
+                ),
                 provider_id: candidate.provider_id,
                 library_id: library_uuid,
                 user_id: user_uuid,
@@ -8370,15 +8431,38 @@ impl LibraryScanService {
                 target_path = %target_path.to_string_lossy(),
                 "{}", message
             );
-            self.create_notification(
-                &auth_user,
-                &library.user_id,
-                "WARNING",
-                "ORGANIZATION",
-                "Organize conflict skipped",
-                &message,
-            )
-            .await;
+            // A retried organize meets the same conflict every time.
+            let already_said = self
+                .execute_graphql(
+                    &auth_user,
+                    r#"query OpenOrganizeConflict($where: NotificationWhereInput, $page: PageInput) {
+                        Notifications: notifications(where: $where, page: $page) {
+                            Edges: edges { Node: node { Id: id } }
+                        }
+                    }"#,
+                    serde_json::json!({
+                        "where": {
+                            "userId": { "eq": library.user_id },
+                            "title": { "eq": "Organize conflict skipped" },
+                            "message": { "eq": message },
+                            "resolvedAt": { "isNull": true }
+                        },
+                        "page": { "limit": 1, "offset": 0 }
+                    }),
+                )
+                .await
+                .is_ok_and(|data| notifications_found(&data));
+            if !already_said {
+                self.create_notification(
+                    &auth_user,
+                    &library.user_id,
+                    "WARNING",
+                    "ORGANIZATION",
+                    "Organize conflict skipped",
+                    &message,
+                )
+                .await;
+            }
 
             return Ok(OrganizeResult {
                 success: false,
@@ -8523,6 +8607,147 @@ impl LibraryScanService {
         library_override: Option<String>,
         files: Vec<SourceFileImport>,
     ) -> SourceProcessSummary {
+        self.run_torrent_import(auth_user, info_hash, library_override, files, None)
+            .await
+    }
+
+    /// Import one file of a download as what a person says it is. The target must be in the
+    /// chosen library; the same checks as any import then apply, and an existing library file is
+    /// still never overwritten.
+    pub async fn import_torrent_file_as(
+        &self,
+        auth_user: &AuthUser,
+        info_hash: &str,
+        file: SourceFileImport,
+        target: ManualFileTarget,
+    ) -> SourceProcessSummary {
+        match self.manual_target_library(&target).await {
+            Ok(library_id) if library_id == target.library_id => {}
+            Ok(_) => {
+                return Self::failed_source_summary(anyhow::anyhow!(
+                    "That title is not in the chosen library"
+                ));
+            }
+            Err(error) => return Self::failed_source_summary(error),
+        }
+        self.run_torrent_import(
+            auth_user,
+            info_hash,
+            Some(target.library_id.clone()),
+            vec![file],
+            Some(&target),
+        )
+        .await
+    }
+
+    /// What the matcher thinks one downloaded file could be, to choose from. Changes no match.
+    pub async fn torrent_file_candidates(
+        &self,
+        auth_user: &AuthUser,
+        info_hash: &str,
+        file: &SourceFileImport,
+        library_id: &str,
+    ) -> Result<MatchResult> {
+        let database = self.database().await?;
+        let import =
+            Self::authorize_torrent_import(database.pool(), auth_user, info_hash, Some(library_id))
+                .await?;
+        let owner = AuthUser::system_admin();
+        let media_file_id = self
+            .ensure_source_media_file(&owner, &import.owner_id, info_hash, file)
+            .await?;
+        self.match_media_file(MatchRequest {
+            media_file_id,
+            library_id: Some(library_id.to_string()),
+            episode_id: None,
+            movie_id: None,
+            track_id: None,
+            chapter_id: None,
+            methods: Vec::new(),
+            requested_by_user_id: None,
+            force: false,
+            auto_match: false,
+            candidate_limit: 12,
+            allow_provider_fallback: false,
+            wanted_policy: MatchWantedPolicy::All,
+        })
+        .await
+    }
+
+    async fn manual_target_library(&self, target: &ManualFileTarget) -> Result<String> {
+        use crate::graphql::entities::{Audiobook, Chapter, Episode, Movie, Show, Track};
+        let database = self.database().await?;
+        let pool = database.pool().pool();
+        let id = &target.target_id;
+        let missing = || anyhow::anyhow!("That title no longer exists");
+        Ok(match target.target_type.as_str() {
+            "Movie" => Movie::get(pool, id).await?.ok_or_else(missing)?.library_id,
+            "Track" => Track::get(pool, id).await?.ok_or_else(missing)?.library_id,
+            "Episode" => {
+                let episode = Episode::get(pool, id).await?.ok_or_else(missing)?;
+                Show::get(pool, &episode.show_id)
+                    .await?
+                    .ok_or_else(missing)?
+                    .library_id
+            }
+            "Chapter" => {
+                let chapter = Chapter::get(pool, id).await?.ok_or_else(missing)?;
+                Audiobook::get(pool, &chapter.audiobook_id)
+                    .await?
+                    .ok_or_else(missing)?
+                    .library_id
+            }
+            other => anyhow::bail!("Unsupported match target: {other}"),
+        })
+    }
+
+    /// After one file was imported by hand: finished if nothing else is waiting, otherwise a
+    /// count of what is, since the file names in the previous message are out of date.
+    async fn status_after_manual_import(
+        &self,
+        import: &AuthorizedTorrentImport,
+    ) -> Result<(&'static str, Option<String>)> {
+        let owner = AuthUser::system_admin();
+        let data = self
+            .execute_graphql(
+                &owner,
+                r#"query WaitingSourceFiles($where: PendingFileMatchWhereInput, $page: PageInput) {
+                    PendingFileMatches: pendingFileMatches(where: $where, page: $page) {
+                        PageInfo: pageInfo { TotalCount: totalCount }
+                    }
+                }"#,
+                serde_json::json!({
+                    "where": {
+                        "sourceId": { "eq": import.info_hash },
+                        "userId": { "eq": import.owner_id },
+                        "copiedAt": { "isNull": true }
+                    },
+                    "page": { "limit": 1, "offset": 0 }
+                }),
+            )
+            .await?;
+        let waiting = data
+            .pointer("/PendingFileMatches/PageInfo/TotalCount")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0);
+        Ok(if waiting == 0 {
+            ("completed", None)
+        } else {
+            (
+                "partial",
+                Some(format!("{waiting} file(s) did not match any library item")),
+            )
+        })
+    }
+
+    async fn run_torrent_import(
+        &self,
+        auth_user: &AuthUser,
+        info_hash: &str,
+        library_override: Option<String>,
+        files: Vec<SourceFileImport>,
+        manual: Option<&ManualFileTarget>,
+    ) -> SourceProcessSummary {
         let admission = async {
             let database = self.database().await?;
             Self::authorize_torrent_import(
@@ -8539,7 +8764,7 @@ impl LibraryScanService {
             Err(error) => return Self::failed_source_summary(error),
         };
         match self
-            .process_torrent_source_files_inner(&import, library_override, files)
+            .process_torrent_source_files_inner(&import, library_override, files, manual)
             .await
         {
             Ok(summary) => summary,
@@ -8642,6 +8867,7 @@ impl LibraryScanService {
         import: &AuthorizedTorrentImport,
         library_override: Option<String>,
         files: Vec<SourceFileImport>,
+        manual: Option<&ManualFileTarget>,
     ) -> Result<SourceProcessSummary> {
         let info_hash = import.info_hash.as_str();
         let link = &import.link;
@@ -8848,7 +9074,9 @@ impl LibraryScanService {
             // linkage-based matches too: a recorded grab target never overrides a
             // human decision.
             match self.get_media_file(&media_file_id).await {
-                Ok(existing) if existing.match_type.as_deref() == Some("manual") => {
+                Ok(existing)
+                    if manual.is_none() && existing.match_type.as_deref() == Some("manual") =>
+                {
                     debug!(
                         media_file_id = %media_file_id,
                         source_path = %file.source_path,
@@ -8873,7 +9101,19 @@ impl LibraryScanService {
                 }
             }
 
-            let selected = if let Some(target) = linked.targets.get(&file.source_path) {
+            let selected = if let Some(manual) = manual {
+                Some(SelectedImportMatch {
+                    library: self.get_library(&manual.library_id).await?,
+                    candidate: MatchCandidate {
+                        target_type: manual.target_type.clone(),
+                        target_id: manual.target_id.clone(),
+                        target_name: None,
+                        score: 1.0,
+                        reason: Some(MANUAL_MATCH_TYPE.to_string()),
+                        wanted: None,
+                    },
+                })
+            } else if let Some(target) = linked.targets.get(&file.source_path) {
                 let library = match library_cache.get(&target.library_id) {
                     Some(library) => library.clone(),
                     None => match self.get_library(&target.library_id).await {
@@ -9188,7 +9428,21 @@ impl LibraryScanService {
         } else {
             "unmatched"
         };
-        let error = Self::summarize_import_outcome(&diagnostics, processed, failed);
+        let mut error = Self::summarize_import_outcome(&diagnostics, processed, failed);
+        let mut status = status;
+        if manual.is_some() {
+            if processed == 0 {
+                // One file not landing says nothing about the rest of the download.
+                return Ok(SourceProcessSummary {
+                    success: false,
+                    files_processed: 0,
+                    files_failed: failed,
+                    messages,
+                    error,
+                });
+            }
+            (status, error) = self.status_after_manual_import(import).await?;
+        }
         self.update_torrent_post_process_status(
             import,
             status,
@@ -9442,7 +9696,9 @@ impl LibraryScanService {
     /// the source of an import decision auditable after the fact.
     fn import_match_type(candidate: &MatchCandidate) -> &'static str {
         let reason = candidate.reason.as_deref().unwrap_or_default();
-        if reason.starts_with(TORRENT_LINK_PARSED_MATCH_TYPE) {
+        if reason.starts_with(MANUAL_MATCH_TYPE) {
+            MANUAL_MATCH_TYPE
+        } else if reason.starts_with(TORRENT_LINK_PARSED_MATCH_TYPE) {
             TORRENT_LINK_PARSED_MATCH_TYPE
         } else if reason.starts_with(TORRENT_LINK_MATCH_TYPE) {
             TORRENT_LINK_MATCH_TYPE
