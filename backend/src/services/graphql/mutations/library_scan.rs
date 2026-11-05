@@ -157,6 +157,14 @@ pub struct UnmatchMediaFileResult {
 }
 
 #[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "DeleteMediaFileFromDiskResult")]
+#[graphql(rename_fields = "camelCase")]
+pub struct DeleteMediaFileFromDiskResult {
+    pub success: bool,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
 #[graphql(name = "OrganizeMediaFileResult")]
 #[graphql(rename_fields = "camelCase")]
 pub struct OrganizeMediaFileResult {
@@ -590,6 +598,37 @@ impl LibraryScanMutations {
             Err(e) => Ok(UnmatchMediaFileResult {
                 success: false,
                 reason: Some(e.to_string()),
+            }),
+        }
+    }
+
+    /// Delete a media file from disk as well as from the library. It cannot be undone, so it
+    /// takes an administrator, whoever owns the library.
+    #[graphql(name = "deleteMediaFileFromDisk")]
+    async fn delete_media_file_from_disk(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "mediaFileId")] media_file_id: String,
+    ) -> async_graphql::Result<DeleteMediaFileFromDiskResult> {
+        ctx.require_admin()?;
+        authorized_media_file(ctx, &media_file_id).await?;
+        let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
+        let scan_service = services
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+
+        match scan_service
+            .delete_media_file_from_disk(&media_file_id)
+            .await
+        {
+            Ok(()) => Ok(DeleteMediaFileFromDiskResult {
+                success: true,
+                reason: None,
+            }),
+            Err(e) => Ok(DeleteMediaFileFromDiskResult {
+                success: false,
+                reason: Some(format!("{e:#}")),
             }),
         }
     }

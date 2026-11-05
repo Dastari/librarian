@@ -7592,6 +7592,66 @@ impl LibraryScanService {
         Ok(())
     }
 
+    /// Delete a media file for good: its record through the generated mutation, then the file.
+    ///
+    /// The file goes last because that step cannot be undone. If it fails, the record is already
+    /// gone and the file is still safe on disk, where the next scan finds it again. The checks
+    /// run first, so a file outside its library's root loses neither.
+    pub async fn delete_media_file_from_disk(&self, media_file_id: &str) -> Result<()> {
+        // A sandbox copies the real database, so its paths are the real library's files.
+        if std::env::var_os("LIBRARIAN_DISABLE_DISK_DELETE").is_some() {
+            anyhow::bail!("Deleting files from disk is disabled on this server");
+        }
+        let file = self.get_media_file(media_file_id).await?;
+        let library_id = file
+            .library_id
+            .as_deref()
+            .context("This file does not belong to a library, so it cannot be deleted from disk")?;
+        let library = self.get_library(library_id).await?;
+        let root = PathBuf::from(&library.path);
+        let path = PathBuf::from(&file.path);
+        let target = {
+            let (root, path) = (root.clone(), path.clone());
+            tokio::task::spawn_blocking(move || deletable_media_file_path(&root, &path)).await??
+        };
+
+        let auth_user = self.system_auth_user(None).await?;
+        let data = self
+            .execute_mutation(
+                &auth_user,
+                r#"mutation deleteMediaFileRecord($id: String!) {
+                    DeleteMediaFile: deleteMediaFile(id: $id) { Success: success Error: error }
+                }"#,
+                serde_json::json!({ "id": media_file_id }),
+            )
+            .await?;
+        if !data
+            .get("DeleteMediaFile")
+            .and_then(|v| v.get("Success"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            let error = data
+                .get("DeleteMediaFile")
+                .and_then(|v| v.get("Error"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("failed to delete the media file record");
+            anyhow::bail!(error.to_string());
+        }
+
+        let Some(target) = target else {
+            return Ok(());
+        };
+        tokio::task::spawn_blocking(move || remove_media_file(&root, &target))
+            .await?
+            .with_context(|| {
+                format!(
+                    "{} left the library, but the file could not be deleted from disk. The next scan will find it again",
+                    file.original_name.as_deref().unwrap_or(&file.path)
+                )
+            })
+    }
+
     pub async fn match_media_file(&self, mut request: MatchRequest) -> Result<MatchResult> {
         let media_file = self.get_media_file(&request.media_file_id).await?;
         let library_id = request
@@ -12670,6 +12730,43 @@ pub(crate) fn checked_library_path(root: &Path, destination: &Path) -> Result<Pa
     Ok(resolved)
 }
 
+/// The directory entry to unlink for a media file, or `None` when it is already gone.
+///
+/// Only the parent is resolved, so a symlink in the library loses the link and never what it
+/// points at. The parent's real location must be inside the library root.
+fn deletable_media_file_path(root: &Path, file: &Path) -> Result<Option<PathBuf>> {
+    let name = file
+        .file_name()
+        .context("Media file path has no file name")?;
+    let parent = file.parent().context("Media file path has no parent")?;
+    let target = checked_library_path(root, parent)?.join(name);
+    match std::fs::symlink_metadata(&target) {
+        Ok(metadata) if metadata.is_dir() => {
+            anyhow::bail!("Media file path is a directory, not a file")
+        }
+        Ok(_) => Ok(Some(target)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).context("Cannot inspect the media file"),
+    }
+}
+
+/// Unlink a checked media file, then its folder if that leaves it empty. The library root stays,
+/// and `remove_dir` refuses a folder with anything left in it (subtitles, artwork).
+fn remove_media_file(root: &Path, target: &Path) -> Result<()> {
+    match std::fs::remove_file(target) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    }
+    if let (Ok(root), Some(parent)) = (std::fs::canonicalize(root), target.parent())
+        && parent != root
+        && parent.starts_with(&root)
+    {
+        let _ = std::fs::remove_dir(parent);
+    }
+    Ok(())
+}
+
 fn create_library_directory(root: &Path, directory: &Path) -> Result<PathBuf> {
     checked_library_path(root, directory)?;
     let relative = directory.strip_prefix(root)?;
@@ -15450,5 +15547,117 @@ mod library_path_safety_tests {
             b"preserve source"
         );
         assert_eq!(std::fs::read(&source).unwrap(), b"preserve source");
+    }
+}
+
+#[cfg(test)]
+mod media_file_disk_deletion_tests {
+    use super::*;
+
+    struct Library {
+        _temp: tempfile::TempDir,
+        root: PathBuf,
+        outside: PathBuf,
+    }
+
+    fn library() -> Library {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("library");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(root.join("Film (2020)")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        Library {
+            _temp: temp,
+            root,
+            outside,
+        }
+    }
+
+    fn delete(library: &Library, file: &Path) -> Result<()> {
+        match deletable_media_file_path(&library.root, file)? {
+            Some(target) => remove_media_file(&library.root, &target),
+            None => Ok(()),
+        }
+    }
+
+    #[test]
+    fn deletes_the_file_and_the_folder_it_empties_but_never_the_root() {
+        let library = library();
+        let folder = library.root.join("Film (2020)");
+        let film = folder.join("Film (2020).mkv");
+        std::fs::write(&film, b"film").unwrap();
+        delete(&library, &film).unwrap();
+        assert!(!film.exists());
+        assert!(!folder.exists());
+
+        let loose = library.root.join("Loose.mkv");
+        std::fs::write(&loose, b"film").unwrap();
+        delete(&library, &loose).unwrap();
+        assert!(!loose.exists());
+        assert!(library.root.is_dir());
+    }
+
+    #[test]
+    fn keeps_a_folder_that_still_holds_other_files() {
+        let library = library();
+        let folder = library.root.join("Film (2020)");
+        let film = folder.join("Film (2020).mkv");
+        let subtitles = folder.join("Film (2020).srt");
+        std::fs::write(&film, b"film").unwrap();
+        std::fs::write(&subtitles, b"subtitles").unwrap();
+        delete(&library, &film).unwrap();
+        assert!(!film.exists());
+        assert!(subtitles.exists());
+    }
+
+    #[test]
+    fn refuses_anything_outside_the_library_root() {
+        let library = library();
+        let outside = library.outside.join("Other.mkv");
+        std::fs::write(&outside, b"other").unwrap();
+        let traversal = library.root.join("..").join("outside").join("Other.mkv");
+        for path in [&outside, &traversal] {
+            assert!(delete(&library, path).is_err(), "{}", path.display());
+        }
+        assert!(outside.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_folder_symlink_that_escapes_the_root() {
+        let library = library();
+        let outside = library.outside.join("Other.mkv");
+        std::fs::write(&outside, b"other").unwrap();
+        let link = library.root.join("Escape");
+        std::os::unix::fs::symlink(&library.outside, &link).unwrap();
+        assert!(delete(&library, &link.join("Other.mkv")).is_err());
+        assert!(outside.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_file_loses_the_link_and_not_its_target() {
+        let library = library();
+        let outside = library.outside.join("Other.mkv");
+        std::fs::write(&outside, b"other").unwrap();
+        let link = library.root.join("Linked.mkv");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        delete(&library, &link).unwrap();
+        assert!(std::fs::symlink_metadata(&link).is_err());
+        assert!(outside.exists());
+    }
+
+    #[test]
+    fn refuses_a_directory_and_accepts_a_file_already_gone() {
+        let library = library();
+        let folder = library.root.join("Film (2020)");
+        assert!(deletable_media_file_path(&library.root, &folder).is_err());
+        assert!(folder.is_dir());
+        let gone = library.root.join("Gone.mkv");
+        assert!(
+            deletable_media_file_path(&library.root, &gone)
+                .unwrap()
+                .is_none()
+        );
     }
 }

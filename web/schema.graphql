@@ -2647,6 +2647,11 @@ type DeleteListEntriesResult {
 	deletedCount: Int!
 }
 
+type DeleteMediaFileFromDiskResult {
+	success: Boolean!
+	reason: String
+}
+
 """
 Result of bulk delete by Where filter
 """
@@ -4873,6 +4878,11 @@ type Mutation {
 	matchMediaFile(input: MatchMediaFileInput!): MatchMediaFileResult!
 	organizeMediaFile(input: OrganizeMediaFileInput!): OrganizeMediaFileResult!
 	unmatchMediaFile(mediaFileId: String!): UnmatchMediaFileResult!
+	"""
+	Delete a media file from disk as well as from the library. It cannot be undone, so it
+	takes an administrator, whoever owns the library.
+	"""
+	deleteMediaFileFromDisk(mediaFileId: String!): DeleteMediaFileFromDiskResult!
 	testOllamaConnection(input: TestOllamaConnectionInput!): OllamaConnectionResult!
 	testLlmParser(input: TestLlmParserInput!): LlmParserTestResult!
 	"""

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Sandbox backend for screenshots and manual QA: a copy of the real database and artwork under
 # /tmp/librarian-sandbox, served on :3011, plus a dev server on :3003 that proxies to it.
-# Scans, organization and DHT are disabled in the copy so real media is never touched.
+# Scans, organization and DHT are disabled in the copy so real media is never touched. The copy's
+# file paths are the real library's, so deleting files from disk is switched off here too.
 #
 #   e2e/sandbox.sh start | stop | status | reset
 #
@@ -18,7 +19,7 @@ start_backend() {
   ( cd "$SB" && set -a && . "$REPO/backend/.env" && set +a \
     && PORT=3011 HOST=127.0.0.1 DATABASE_PATH=$SB/data/librarian.db MEDIA_PATH=$SB/data/media DOWNLOADS_PATH=$SB/data/downloads \
        CACHE_PATH=$SB/data/cache SESSION_PATH=$SB/data/session STORAGE_PATH=$SB/data/storage BACKUP_PATH=$SB/data/backups \
-       LIBRARIAN_CORS_ORIGINS="http://localhost:3003,http://127.0.0.1:3003" LIBRARIAN_SECURE_COOKIES=false TORRENT_LISTEN_PORT=6899 \
+       LIBRARIAN_CORS_ORIGINS="http://localhost:3003,http://127.0.0.1:3003" LIBRARIAN_SECURE_COOKIES=false LIBRARIAN_DISABLE_DISK_DELETE=1 TORRENT_LISTEN_PORT=6899 \
        nohup "$BIN" --server > "$SB/backend.log" 2>&1 & echo $! > "$SB/backend.pid" )
   for _ in $(seq 1 40); do curl -s -o /dev/null http://127.0.0.1:3011/graphql -H 'content-type: application/json' -d '{"query":"{ needsSetup }"}' && { echo "backend started"; return; }; sleep 0.5; done
   echo "backend failed"; tail -20 "$SB/backend.log"; exit 1
