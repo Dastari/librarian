@@ -40,9 +40,27 @@ Ctrl+B and becomes a sheet on phones (`docs/components/sidebar.md`). Rows take a
 line, a quiet `count` or an entity `face`; `Sidebar.Match` marks a filter's matches, and
 `Sidebar.Content fill` hands the height to a Tree that scrolls itself.
 
+For a list that opens from text and leaves focus there, use `Typeahead` with `useTypeahead`
+(glass-ux/typeahead), anchored to a caret or any rectangle; base UI menus move focus and cannot
+do this. `RichTextInput` takes `mentions` and `slashCommands`. For find in a log, table or
+document use `FindBar` (glass-ux/find-bar): the host owns matching. For a change to text use
+`DiffView` (glass-ux/diff-view). For choosing files or where to save over host storage, use
+`FileDialog` (glass-ux/file-dialog) with a `FileProvider` (glass-ux/file-provider): it lists and
+chooses, and the host reads and writes. For a rating from icons, or an average shown as one, use `Rating` (glass-ux/rating) and `field.RatingField`; it is a radio group. For slides of any content one at a time use `Carousel` (glass-ux/carousel): `ratio` reserves its height and `autoplay` shows a Pause button. For items of different heights in columns use `Masonry` (glass-ux/masonry) with `getRatio`, never CSS `columns`, which breaks the tab order. A version history is an `ActivityFeed` with `tone`, `children`
+and `selectedId`; a ticket or case history is one with `variant="timeline"` (markers on a rail),
+avatar markers, a `detail` under each post and `order="oldest"`. For the rows behind an unread count use `NotificationList` or `NotificationPopover`
+(glass-ux/notification-list), passing the count to `AccountButton` or a `Rail.Item`, which do not change. For discussion use
+`CommentThread` (glass-ux/comment-thread): `permissions` decides which controls exist. Use `ReactionBar`
+(glass-ux/reaction-bar) for reactions and `EmojiPicker` (glass-ux/emoji-picker) to choose an emoji. `AppShell focusRegions`, or `useFocusRegions` from glass-ux/hooks, gives F6
+between panes.
+
 For a tree beside a table or a list above its details, use `SplitPane` (glass-ux/split-pane)
 rather than a hand-built divider: it is keyboard operable, clamps each pane, remembers its
-size per window kind and hides a pane behind a button when narrow. An explorer tree uses
+size per window kind and hides a pane behind a button when narrow. For more than two panes,
+or panels people rearrange, use `PaneLayout` (glass-ux/pane-layout): a JSON tree of splits and
+stacks where a panel moves without remounting. `locked` gives a resize-only layout with no tabs
+for mail and dashboards. A panel that must stay connected while hidden, such as a remote session,
+needs `whenHidden: "run"`. An explorer tree uses
 `Tree` with `selectableGroups`, and `hasChildren`/`onLoadChildren` (and `hasMore`/`onLoadMore`)
 for hierarchies too large to load at once. Wrap window app bar actions in `Window.Action`
 with a label and priority so a narrow window folds them into More instead of pushing its

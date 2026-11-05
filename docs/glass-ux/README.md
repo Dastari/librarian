@@ -1,9 +1,9 @@
 # Glass UX reference installation
 
-Reviewed on 2026-11-01 against **0.13.1**. Release API metadata is retained in
-`tmp/glass-ux-0.13.1/`; archive checksums were verified before installation.
+Reviewed on 2026-11-05 against **0.16.1**; see the
+[upgrade audit](upgrade-audit-2026-11-05.md) for where each new component fits.
 
-- [Release and assets](https://github.com/Dastari/glass-ux/releases/tag/v0.13.1)
+- [Release and assets](https://github.com/Dastari/glass-ux/releases/tag/v0.16.1)
 - [Documentation site](https://dastari.github.io/glass-ux/)
 - [Migration plan](../glass-ux-migration-plan.md)
 - [Complete library catalogue](component-catalogue.md)
@@ -28,7 +28,7 @@ agents) and `.claude/skills/` (Claude Code), installed with the release CLI's
 - `glass-ux-assistant`
 - `glass-ux-author`
 
-The project skills were refreshed using the 0.13.1 release CLI and are available
+The project skills were refreshed using the 0.16.1 release CLI and are available
 to skill discovery on the next turn. The refresh command, run from the repository
 root, is:
 

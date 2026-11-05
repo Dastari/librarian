@@ -33,6 +33,16 @@ Six traits make the set read as one hand. A new icon has all six.
    - **dome:** `camera-dome`, `camera-ptz`, `siren`
    - **contactless arcs:** `nfc`, `access-reader`, `access-card`
    - **doorway:** `door`, `door-open`
+   - **speaker:** `volume`, `volume-low`, `volume-off`, held in one position across levels
+   - **rotate ring:** `rotate-cw`, `rotate-ccw`, `seek-forward`, `seek-back`
+   - **git node:** `git-branch`, `git-merge`, `git-pull-request`
+   - **picture frame** (of `image`): `image-info`, `image-metadata`, `fill-edges`, `batch`,
+     `before-after`, `fit-screen`, `actual-size`, `mask`
+   - **tool axis** (the 45° axis of `edit` and `brush`): `brush`, `healing-brush`,
+     `colour-replace`, `smudge`, `sharpen`, `eraser`, `effects`
+   - **medical cross:** `healing-brush`, `spot-healing`
+   - **mask** (a frame with a round window): `mask`, `mask-plus`, `mask-apply`
+   - **layer plate** (of `layers`): `merge-down`, `flatten`, `file-layers`
 6. **Even mass.** Every glyph fills the keyline shape nearest to it, so a circle, a square
    and a monitor read as the same weight at 14px.
 
@@ -173,6 +183,36 @@ masking.
 - `nfc` is the contactless mark (arcs opening to the reading side), never `wifi`. `gate` is
   a pedestrian or driveway gate; `barrier` is the boom across a vehicle lane. `vehicle` is a
   car; `supplier` stays the delivery truck.
+- `ban` is a crossed-out octagon: blocking something. `offline` stays the slashed circle, a
+  status. `cast` puts the `wifi` arcs under a screen, because `sessions` owns the corner arcs.
+  `backup` is also the upload-to-cloud arrow, `return` the corner arrow, `unpin` the pin off
+  and `supplier` the truck; do not draw second copies of them.
+- `search` is the magnifier, and `zoom-in` and `zoom-out` add to it. `zoom` is the Zoom company
+  mark, so no other icon takes that word.
+- `sliders` is a pair of tracks and `adjust` a rotary knob. `fold` and `unfold` are arrows at
+  a rule; the rule keeps `unfold` apart from `chevrons-up-down`. `split-horizontal` has a
+  horizontal divider with the panes stacked. `columns` holds panes side by side.
+- `shrink` and `expand` are diagonal arrows for resizing content. `maximise`, `restore` and
+  `fullscreen` stay the window controls. `seek-back` and `seek-forward` state no step: the
+  double chevron leaves the number of seconds to a visible label.
+- Image editing (`scripts/icon-authoring/defs/image-editing.mjs`) keeps the set's meanings:
+  - `patch` is the plaster of software patching, so healing is the medical cross
+    (`healing-brush`, `spot-healing`) and the patch tool is `patch-region`, a sewn patch.
+  - `droplet` stays water and colour, so `blur` is a disc dissolving into points. `sharpen` is a
+    cone on the tool axis, never an upright triangle, which is `warning`.
+  - `dodge` and `burn` stand their paddle upright: tilted, it would be a mirrored `search`.
+  - `sparkle` marks what the editor works out for itself (`fill-edges`, `auto-enhance`);
+    `effects` is the wand and `looks` the three overlapping discs of colour looks.
+  - `image-size` scales the picture to the frame; `canvas-size` keeps it and moves the crop
+    marks out; `transform` is the box with handles; `expand` still resizes content in place.
+  - `before-after` is a frame split by a handle that runs past its edges; `columns` and
+    `split-horizontal` stay panes. `transparency` is two checker squares in a frame, never a
+    3 × 3 grid, which is `camera-grid-9`. `sharp` (Sharp), `meta` (Meta) and `patch` keep
+    their names.
+- Glyphs that point along the reading direction mirror in right-to-left layouts (the list is
+  in `src/ui/icon/icon.tsx`). Of the image-editing set, `image-size` (it grows from the
+  start corner) and `before-after` (before sits on the start side) mirror; hand tools, tone
+  graphs and the `1:1` of `actual-size` keep their shape.
 - Use the simplest metaphor that survives at 14px, with at most three ideas per icon.
 - Status icons: `success` (check in a circle), `warning` (triangle), `error` (× in a
   circle), `info`, `help`, `pending` (dashed ring) and `offline` (slashed circle). They
@@ -205,7 +245,7 @@ rather than "PDF". The exact format is text beside the icon.
 ## Company and manufacturer icons
 
 Author these in `scripts/icon-authoring/defs/brands.mjs`, then run the authoring build
-and `pnpm icons`. They follow the same 24 grid, live area, circular arcs, rounded stroke,
+(`node scripts/icon-authoring/build.mjs`) and `pnpm icons`. They follow the same 24 grid, live area, circular arcs, rounded stroke,
 optional tint and size compensation as the rest of the set. Brand letterforms and symbols
 may require angles other than 45°; preserve their identifying geometry without adding
 freehand Béziers, embedded text, gradients or hard-coded brand colours. Use deliberate
