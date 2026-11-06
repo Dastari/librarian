@@ -81,6 +81,8 @@ query SearchSources($input: SearchSourcesInput!) {
     totalReleases
     totalElapsedMs
     sourcesSearched
+    searchedTerm
+    widened
     sources {
       sourceId
       sourceName
@@ -90,6 +92,11 @@ query SearchSources($input: SearchSourcesInput!) {
       pageInfo { support state hasMore nextCursor retryCursor returnedCount }
       releases {
         stableId
+        format
+        formatReason
+        packHint
+        relevance
+        otherBookNumber
         title
         guid
         link

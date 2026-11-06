@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   llm: { values: new Map<string, string>(), loading: false, save: vi.fn() },
   testTmdb: vi.fn(), testOllama: vi.fn(), testParser: vi.fn(),
 }));
+vi.mock("../SmartMatchingPanel", () => ({ SmartMatchingPanel: () => null }));
 vi.mock("../useAppSettings", async (original) => ({
   ...await original<typeof import("../useAppSettings")>(),
   useAppSettings: (category: "metadata" | "llm") => state[category],

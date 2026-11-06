@@ -70,7 +70,7 @@ describe("Glass player controls", () => {
     slider.getBoundingClientRect = () => ({ width: 180, height: 24, x: 0, y: 0, top: 0, left: 0, right: 180, bottom: 24, toJSON: () => ({}) });
     fireEvent.pointerDown(slider, { clientX: 45, pointerId: 1, pointerType: "mouse" });
     fireEvent.pointerMove(slider, { clientX: 90, pointerId: 1, pointerType: "mouse" });
-    expect(screen.getByText("1:30")).toBeInTheDocument();
+    expect(screen.getByText("Chapter two · 1:30")).toBeInTheDocument();
     expect(seek).not.toHaveBeenCalled();
     fireEvent.pointerUp(slider, { clientX: 90, pointerId: 1, pointerType: "mouse" });
     expect(seek.mock.calls).toEqual([[90]]);

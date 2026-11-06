@@ -18,7 +18,7 @@ import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { EntityEpisodeUpdateDocument, EntityEpisodeUpdateManyDocument, type PlaybackProgressFieldsFragment, type UpdateEpisodeInput } from "@/graphql/generated/graphql";
 import { episodeThumb } from "@/lib/artwork";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
-import { formatBytes, formatDate } from "@/lib/format";
+import { formatDate } from "@/lib/format";
 import { activeContentStatusQueries } from "@/lib/graphql/content-status";
 import { assertSuccess } from "@/lib/graphql/errors";
 import { contentStatusMeta, type ContentStatusMap } from "@/hooks/useContentStatuses";
@@ -26,6 +26,7 @@ import { qualityStatus, statusMeta } from "@/lib/status";
 
 import { groupBySeason, type SeasonGroup } from "./seasons";
 import type { EpisodeRow } from "./ShowPage";
+import { noRowMenu, RowActions, type RowPlayState } from "./RowPlayAction";
 
 interface EpisodeListProps {
   episodes: EpisodeRow[];
@@ -60,6 +61,8 @@ interface EpisodePresentation {
   actions: ActionSet<EpisodeRow>;
   statuses: ContentStatusMap;
   progressByFile: EpisodeListProps["progressByFile"];
+  playEpisode: (episode: EpisodeRow) => void;
+  wantEpisode?: (episode: EpisodeRow) => Promise<unknown>;
   playbackUnavailable?: string;
 }
 const EpisodePresentationContext = createContext<EpisodePresentation | null>(null);
@@ -82,12 +85,22 @@ function EpisodeProgressCell({ row }: EpisodeCellProps) {
   const fraction = saved.isWatched ? 1 : saved.duration && saved.duration > 0 ? Math.max(0, Math.min(1, saved.currentPosition / saved.duration)) : 0;
   return <MeterCell label={`Playback progress for ${episodeCode(row.original)}`} value={fraction * 100} max={100} valueText={saved.isWatched ? "Watched" : `${Math.round(fraction * 100)}%`} warningAt={2} dangerAt={2} tone="data" />;
 }
-function EpisodeActionsCell({ row }: EpisodeCellProps) {
-  const { actions } = useEpisodePresentation();
-  return <ActionBar set={actions} targets={[row.original]} label={episodeLabel(row.original)} maxButtons={3} className="table-row-actions" />;
+function EpisodeActionsCell({ row: { original: episode } }: EpisodeCellProps) {
+  const { actions, progressByFile, playbackUnavailable, playEpisode, wantEpisode } = useEpisodePresentation();
+  const saved = episode.mediaFileId ? progressByFile.get(episode.mediaFileId) : undefined;
+  const state: RowPlayState = saved?.isWatched ? "finished" : saved && saved.currentPosition > 0 ? "resume" : "ready";
+  return (
+    <RowActions
+      set={actions}
+      target={episode}
+      label={episodeLabel(episode)}
+      play={episode.mediaFileId ? { state, onPress: () => playEpisode(episode), disabledReason: playbackUnavailable ?? undefined } : undefined}
+      want={wantEpisode && !episode.mediaFileId && !episode.ignored ? { wanted: episode.wanted, onPress: () => wantEpisode(episode) } : undefined}
+    />
+  );
 }
 
-function createEpisodeColumns(isAdmin: boolean) {
+function createEpisodeColumns() {
     const col = createDataTableColumns<EpisodeRow>();
     return col.columns([
       col.accessor("title", {
@@ -115,7 +128,7 @@ function createEpisodeColumns(isAdmin: boolean) {
         cell: ({ row }) => {
           const file = row.original.mediaFile;
           if (!file) return <TextCell muted>{row.original.mediaFileId ? "File linked" : "No file"}</TextCell>;
-          return <TwoLineCell title={[file.resolution, file.videoCodec?.toUpperCase(), formatBytes(file.size)].filter(Boolean).join(" · ")} subtitle={qualityStatus(file.qualityStatus).label} />;
+          return <TwoLineCell title={[file.resolution, file.videoCodec?.toUpperCase()].filter(Boolean).join(" · ")} subtitle={qualityStatus(file.qualityStatus).label} />;
         },
       }),
       col.display({
@@ -125,7 +138,7 @@ function createEpisodeColumns(isAdmin: boolean) {
       // A real column keeps promoted actions visible without relying on the table's
       // hover-enhanced trailing menu; priority 1 keeps them in responsive cards too.
       col.display({
-        id: "episodeActions", header: "Actions", priority: 1, width: isAdmin ? 21 : 6, minWidth: isAdmin ? 18 : 5, hideable: false, grow: false,
+        id: "episodeActions", header: "", priority: 1, width: 7, minWidth: 6, hideable: false, grow: false,
         cell: EpisodeActionsCell,
       }),
       col.accessor("overview", {
@@ -134,8 +147,7 @@ function createEpisodeColumns(isAdmin: boolean) {
       }),
     ]);
 }
-const adminColumns = createEpisodeColumns(true);
-const memberColumns = createEpisodeColumns(false);
+const episodeColumns = createEpisodeColumns();
 
 /** Season tables over the parent-owned episode query, playback and acquisition handlers. */
 export function EpisodeList({ episodes, statuses, progressByFile, loading, complete = true, status, playbackUnavailable, onPlay, showId, showName, libraryId, onChanged, view = "table", tint, headerExtra }: EpisodeListProps) {
@@ -233,8 +245,12 @@ export function EpisodeList({ episodes, statuses, progressByFile, loading, compl
       run: async (rows) => { await copyText(rows.map(episodeLabel).join("\n")); }, successMessage: () => "Episode titles copied" },
   ]), [isAdmin, onPlay, update, updateSelected, playbackUnavailable]);
 
-  const columns = isAdmin ? adminColumns : memberColumns;
-  const presentation = useMemo(() => ({ actions, statuses, progressByFile, playbackUnavailable }), [actions, statuses, progressByFile, playbackUnavailable]);
+  const columns = episodeColumns;
+  const presentation = useMemo(() => ({
+    actions, statuses, progressByFile, playbackUnavailable,
+    playEpisode: onPlay,
+    wantEpisode: isAdmin ? (episode: EpisodeRow) => update(episode, { wanted: !episode.wanted }) : undefined,
+  }), [actions, statuses, progressByFile, playbackUnavailable, onPlay, isAdmin, update]);
 
   if (view === "row") {
     return (
@@ -251,7 +267,7 @@ export function EpisodeList({ episodes, statuses, progressByFile, loading, compl
   }
 
   if (loading || episodes.length === 0) {
-    return <EpisodePresentationContext.Provider value={presentation}><LoadedDataTable id={`${tableScope}:empty`} label={`${showName} episodes`} rows={[]} columns={columns} getRowId={episodeId} loading={loading} status={status} height="auto" selectable actions={actions} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={episodeNoun} />} complete={complete} search={{ fields: ["title", { field: "episodeCode", value: episodeCode }], placeholder: "Search episodes" }} noun={episodeNoun} emptyMessage="No episodes in this season" defaultHiddenColumns={["overview"]} /></EpisodePresentationContext.Provider>;
+    return <EpisodePresentationContext.Provider value={presentation}><LoadedDataTable id={`${tableScope}:empty`} label={`${showName} episodes`} rows={[]} columns={columns} getRowId={episodeId} loading={loading} status={status} height="auto" selectable actions={actions} renderRowActions={noRowMenu} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={episodeNoun} />} complete={complete} search={{ fields: ["title", { field: "episodeCode", value: episodeCode }], placeholder: "Search episodes" }} noun={episodeNoun} emptyMessage="No episodes in this season" defaultHiddenColumns={["overview"]} /></EpisodePresentationContext.Provider>;
   }
 
   return (
@@ -272,7 +288,7 @@ export function EpisodeList({ episodes, statuses, progressByFile, loading, compl
             selectable
             complete={complete} search={{ fields: ["title", { field: "episodeCode", value: episodeCode }], placeholder: "Search episodes" }}
             noun={episodeNoun}
-            actions={actions}
+            actions={actions} renderRowActions={noRowMenu}
             renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={episodeNoun} />}
             defaultHiddenColumns={["overview"]}
           />

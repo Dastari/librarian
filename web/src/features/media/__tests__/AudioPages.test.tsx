@@ -40,7 +40,7 @@ const track = (n: number, overrides: Partial<Track> = {}): Track => ({
   mediaFile: null, ...overrides,
 });
 const chapter = (n: number, overrides: Partial<Chapter> = {}): Chapter => ({
-  __typename: "Chapter", id: `chapter-${n}`, audiobookId: "book", title: `Part ${n}`, chapterNumber: n, startTimeSecs: 0,
+  __typename: "Chapter", id: `chapter-${n}`, audiobookId: "book", title: `Part ${n}`, chapterNumber: n, startTimeSecs: 0, fileOffsetSecs: null,
   endTimeSecs: null, durationSecs: 300, wanted: false, ignored: false, mediaFileId: `chapter-file-${n}`,
   createdAt: stamp, updatedAt: stamp, mediaFile: null, ...overrides,
 });
@@ -55,7 +55,7 @@ const album = (rows: Track[], total = rows.length, hasMore = false): NonNullable
   library: null, tracks: connection(rows, total, hasMore),
 });
 const book = (rows: Chapter[], total = rows.length, hasMore = false): NonNullable<AudiobookDetailQuery["audiobook"]> & { __typename: "Audiobook" } => ({
-  __typename: "Audiobook", id: "book", libraryId: "books", userId: "audio-user", title: "Long book", sortTitle: null, authorName: "Author",
+  __typename: "Audiobook", id: "book", libraryId: "books", userId: "audio-user", title: "Long book", sortTitle: null, authorName: "Author", seriesName: null, seriesPosition: null, chapterCheckState: null, chapterCheck: null, chapterSource: null, fileShape: null, providerChapters: null,
   narratorName: null, narrators: [], description: null, publisher: null, publishedDate: null, language: null,
   isbn: null, asin: null, audibleId: null, goodreadsId: null, totalDurationSecs: null, chapterCount: total,
   coverUrl: null, autoDownload: false, autoDownloadMode: "NONE", qualityProfileId: null, hasFiles: true,
@@ -241,7 +241,7 @@ describe("audio detail tables", { timeout: 30000 }, () => {
     expect(playAudio.mock.lastCall![0][100]).toMatchObject({ mediaFileId: "chapter-file-101", startPosition: 45, entity: { kind: "chapter", id: "chapter-101" }, audiobookId: "book", href: "/audiobooks/book" });
     const later = row("book", "Part 101");
     expect(within(later).getByRole("button", { name: "Resume" })).toBeVisible();
-    await userEvent.click(within(row("book", "Part 1")).getByRole("button", { name: "Play" }));
+    await userEvent.click(within(row("book", "Part 1")).getByRole("button", { name: "Play again" }));
     expect(playAudio.mock.lastCall![1]).toBe(0);
     expect(playAudio.mock.lastCall![0][0]).toMatchObject({ startPosition: 0 });
   });
@@ -268,23 +268,22 @@ describe("audio detail tables", { timeout: 30000 }, () => {
       mediaFileId: `chapter-file-${n}`, title: "Long book", entity: { kind: "chapter", id: `chapter-${n}` },
     })), 0));
     await waitFor(() => expect(title).toHaveClass("text-brand"));
-    expect(within(first).getByRole("button", { name: "Play" })).toBe(play);
+    expect(within(first).getByRole("button", { name: "Pause" })).toBe(play);
 
     act(() => client.cache.writeQuery({
       query: PlaybackProgressForFilesDocument,
       variables: { userId: "audio-user", mediaFileIds: ["chapter-file-1", "chapter-file-2"] },
       data: { playbackProgresses: { edges: [saved(1, 45), saved(2, 300, true)].map((node) => ({ node })) } },
     }));
-    await waitFor(() => expect(within(first).getByRole("button", { name: "Resume" })).toBe(play));
+    await waitFor(() => expect(within(second).getByRole("button", { name: "Play again" })).toBeVisible());
     expect(play.isConnected).toBe(true);
-    expect(within(second).getByText("Finished")).toBeVisible();
-    await userEvent.click(play);
-    expect(playAudio.mock.lastCall![0][0]).toMatchObject({ mediaFileId: "chapter-file-1", startPosition: 45 });
 
     act(() => playerStore.jumpTo(1));
     await waitFor(() => expect(nextTitle).toHaveClass("text-brand"));
     expect(title).not.toHaveClass("text-brand");
     expect(within(first).getByRole("button", { name: "Resume" })).toBe(play);
+    await userEvent.click(play);
+    expect(playAudio.mock.lastCall![0][0]).toMatchObject({ mediaFileId: "chapter-file-1", startPosition: 45 });
   });
 
   it("labels in-progress chapter 1 as Resume chapter 1 and keeps actions in narrow cards", async () => {

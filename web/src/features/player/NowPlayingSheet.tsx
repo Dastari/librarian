@@ -9,7 +9,8 @@ import { useDialogReturnFocus } from "@/components/ui/Dialog";
 import { formatClock } from "@/lib/format";
 
 import { PlayPauseButton, SeekBar, SkipButton, VolumeControl } from "./controls";
-import { audioCommands } from "./usePlayer";
+import { audioCommands, canSkipAudio, skipAudio } from "./usePlayer";
+import { currentChapterTitle } from "./chapterNav";
 import { currentAudioItem, playerStore, usePlayerState } from "./store";
 
 interface NowPlayingSheetProps {
@@ -35,7 +36,7 @@ export function NowPlayingSheet({ open, onClose, onOpenEntity }: NowPlayingSheet
             <Artwork src={item.artwork} alt="" aspect="square" className="w-full max-w-72 rounded-card shadow-poster-hover" />
             <div className="w-full text-center">
               <p className="truncate text-title-lg text-foreground">{item.title}</p>
-              {item.subtitle ? <p className="truncate text-body-sm text-muted">{item.subtitle}</p> : null}
+              {currentChapterTitle(item, transport.position) ?? item.subtitle ? <p className="truncate text-body-sm text-muted">{currentChapterTitle(item, transport.position) ?? item.subtitle}</p> : null}
               {item.href ? (
                 <Button variant="ghost" size="sm" className="mt-1" onPress={() => onOpenEntity(item.href!)}>
                   Open <IconExternalLink />
@@ -43,16 +44,16 @@ export function NowPlayingSheet({ open, onClose, onOpenEntity }: NowPlayingSheet
               ) : null}
             </div>
             <div className="w-full">
-              <SeekBar position={transport.position} duration={transport.duration} buffered={transport.buffered} onSeek={(position) => audioCommands.seek?.(position)} />
+              <SeekBar position={transport.position} duration={transport.duration} buffered={transport.buffered} onSeek={(position) => audioCommands.seek?.(position)} chapters={item.chapters} />
               <div className="text-numeric flex justify-between text-label-sm text-muted">
                 <span>{formatClock(transport.position)}</span>
                 <span>{formatClock(transport.duration)}</span>
               </div>
             </div>
             <div className="flex items-center gap-4">
-              <SkipButton direction="back" onPress={() => playerStore.skip(-1)} disabled={state.index <= 0} />
+              <SkipButton direction="back" onPress={() => skipAudio(-1)} disabled={!canSkipAudio(state.queue, state.index, transport.position, -1)} />
               <PlayPauseButton playing={transport.playing} onToggle={() => playerStore.updateTransport({ playing: !transport.playing })} size="lg" />
-              <SkipButton direction="forward" onPress={() => playerStore.skip(1)} disabled={state.index >= state.queue.length - 1} />
+              <SkipButton direction="forward" onPress={() => skipAudio(1)} disabled={!canSkipAudio(state.queue, state.index, transport.position, 1)} />
             </div>
             <div className="min-h-12 w-full">
               {transport.error ? <Notice tone="danger" role="alert" action={<GlassButton size="sm" onClick={() => audioCommands.retry?.()}>Retry</GlassButton>}>{transport.error}</Notice> : null}

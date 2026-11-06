@@ -1,3 +1,4 @@
+import { chapterTarget } from "./chapterNav";
 import { useMemo } from "react";
 
 import { currentAudioItem, playerStore, usePlayerState, type PlayItem } from "./store";
@@ -38,3 +39,20 @@ export function usePlayer() {
 
 /** Imperative hooks the audio engine registers so seeking works from anywhere. */
 export const audioCommands: { seek?: (position: number) => void; retry?: () => void } = {};
+
+/** Next or Previous: between chapters where the queue has them, otherwise between items. */
+export function skipAudio(direction: 1 | -1) {
+  const { queue, index, transport } = playerStore.getSnapshot();
+  const target = chapterTarget(queue, index, transport.position, direction);
+  if (!target) {
+    playerStore.skip(direction);
+    return;
+  }
+  if (target.index === index) audioCommands.seek?.(target.start);
+  else playerStore.jumpToChapter(target.index, target.start);
+}
+
+export function canSkipAudio(queue: readonly PlayItem[], index: number, position: number, direction: 1 | -1) {
+  if (chapterTarget(queue, index, position, direction)) return true;
+  return direction === 1 ? index < queue.length - 1 : index > 0;
+}

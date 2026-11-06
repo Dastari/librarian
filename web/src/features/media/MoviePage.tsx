@@ -5,7 +5,7 @@ import { toast } from "glass-ux/toast";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 
-import { Artwork, ConfirmDialog, EmptyState, ErrorState, HeroFacts, KeyValueList, MediaRow, MetaLine, Panel, PosterCard, Section, SkeletonHero, StatusChip } from "@/components/ui";
+import { Artwork, ConfirmDialog, EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, Panel, PosterCard, Section, SkeletonHero, StatusChip } from "@/components/ui";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
 import { AcquisitionDialog } from "@/features/acquisition/AcquisitionDialog";
 import { movieAcquisitionMeta } from "@/features/acquisition/mode";
@@ -24,7 +24,7 @@ import {
 import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
 import { movieBackdrop, moviePoster, personProfile } from "@/lib/artwork";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
-import { formatClock, formatDate, formatRuntime } from "@/lib/format";
+import { formatClock, formatRuntime } from "@/lib/format";
 import { activeContentStatusQueries } from "@/lib/graphql/content-status";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { LIBRARY_TYPES } from "@/lib/library-types";
@@ -127,7 +127,17 @@ export function MoviePage({ movieId }: { movieId: string }) {
         ),
         tagline: movie.tagline,
         description: movie.overview,
-        facts: <HeroFacts items={[{ label: "Director", value: movie.director }, { label: "Genres", value: movie.genres.join(", ") }]} />,
+        facts: <HeroFacts items={[
+          { label: "Director", value: movie.director },
+          { label: "Genres", value: movie.genres.join(", ") },
+          { label: "Original title", value: movie.originalTitle !== movie.title ? movie.originalTitle : null },
+          { label: "Links", value: movie.tmdbId || movie.imdbId ? (
+            <span className="inline-flex gap-3">
+              {movie.tmdbId ? <a className="nav-focus rounded text-brand hover:underline" href={`https://www.themoviedb.org/movie/${movie.tmdbId}`} target="_blank" rel="noreferrer">TMDB</a> : null}
+              {movie.imdbId ? <a className="nav-focus rounded text-brand hover:underline" href={`https://www.imdb.com/title/${movie.imdbId}`} target="_blank" rel="noreferrer">IMDb</a> : null}
+            </span>
+          ) : null },
+        ]} />,
       }}
     >
       {castList.length > 0 ? (
@@ -158,20 +168,7 @@ export function MoviePage({ movieId }: { movieId: string }) {
         </Section>
       ) : null}
 
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-        <Panel title="Details">
-          <KeyValueList
-            items={[
-              { label: "Released", value: formatDate(movie.releaseDate) },
-              { label: "Original title", value: movie.originalTitle !== movie.title ? movie.originalTitle : undefined },
-              { label: "Countries", value: movie.productionCountries.join(", ") || undefined },
-              { label: "Languages", value: movie.spokenLanguages.join(", ") || undefined },
-              { label: "TMDB", value: movie.tmdbId ? <a className="nav-focus rounded text-brand hover:underline" href={`https://www.themoviedb.org/movie/${movie.tmdbId}`} target="_blank" rel="noreferrer">{movie.tmdbId}</a> : undefined },
-              { label: "IMDb", value: movie.imdbId ? <a className="nav-focus rounded text-brand hover:underline" href={`https://www.imdb.com/title/${movie.imdbId}`} target="_blank" rel="noreferrer">{movie.imdbId}</a> : undefined },
-              { label: "Added", value: formatDate(movie.createdAt) },
-            ]}
-          />
-        </Panel>
+      <div>
         {movie.mediaFile ? (
           <FileDetails file={movie.mediaFile} />
         ) : (

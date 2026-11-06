@@ -11,7 +11,8 @@ import { cn } from "@/lib/utils";
 import { PlayPauseButton, SeekBar, SkipButton, VolumeControl } from "./controls";
 import { NowPlayingSheet } from "./NowPlayingSheet";
 import { CastButton } from "./CastButton";
-import { audioCommands } from "./usePlayer";
+import { currentChapterTitle } from "./chapterNav";
+import { audioCommands, canSkipAudio, skipAudio } from "./usePlayer";
 import { currentAudioItem, playerStore, usePlayerState } from "./store";
 import { useMediaSource } from "./useMediaSource";
 import { useProgressSync } from "./useProgressSync";
@@ -152,8 +153,8 @@ export function PlayerDock() {
     const handlers: Array<[MediaSessionAction, MediaSessionActionHandler]> = [
       ["play", () => playerStore.updateTransport({ playing: true })],
       ["pause", () => playerStore.updateTransport({ playing: false })],
-      ["previoustrack", () => playerStore.skip(-1)],
-      ["nexttrack", () => playerStore.skip(1)],
+      ["previoustrack", () => skipAudio(-1)],
+      ["nexttrack", () => skipAudio(1)],
       ["seekto", (details) => details.seekTime !== undefined && audioCommands.seek?.(details.seekTime)],
       ["seekbackward", () => audioCommands.seek?.(Math.max(0, (audioRef.current?.currentTime ?? 0) - 15))],
       ["seekforward", () => audioCommands.seek?.((audioRef.current?.currentTime ?? 0) + 30)],
@@ -201,7 +202,7 @@ export function PlayerDock() {
           onClick={() => playerStore.setSheetOpen(true)}
           aria-label="Open now playing"
           title={item.title}
-          meta={item.subtitle}
+          meta={currentChapterTitle(item, transport.position) ?? item.subtitle}
           icon={<Artwork src={item.artwork} alt="" aspect="square" className="size-11 shrink-0 rounded-md md:size-12" />}
           trailing={<IconChevronUp size="sm" className="text-muted md:hidden" />}
           className="min-w-0 flex-1 md:w-48 md:flex-none lg:w-72"
@@ -210,13 +211,13 @@ export function PlayerDock() {
 
         <div className="hidden min-w-0 flex-1 flex-col items-center gap-1 md:flex">
           <div className="flex items-center gap-1">
-            <SkipButton direction="back" onPress={() => playerStore.skip(-1)} disabled={state.index <= 0} />
+            <SkipButton direction="back" onPress={() => skipAudio(-1)} disabled={!canSkipAudio(state.queue, state.index, transport.position, -1)} />
             <PlayPauseButton playing={transport.playing} onToggle={() => playerStore.updateTransport({ playing: !transport.playing })} size="sm" />
-            <SkipButton direction="forward" onPress={() => playerStore.skip(1)} disabled={state.index >= state.queue.length - 1} />
+            <SkipButton direction="forward" onPress={() => skipAudio(1)} disabled={!canSkipAudio(state.queue, state.index, transport.position, 1)} />
           </div>
           <div className="flex w-full max-w-2xl items-center gap-3 text-label-sm text-muted">
             <span className="text-numeric w-10 text-right">{formatTime(transport.position)}</span>
-            <SeekBar thin position={transport.position} duration={transport.duration} buffered={transport.buffered} onSeek={(position) => audioCommands.seek?.(position)} />
+            <SeekBar thin position={transport.position} duration={transport.duration} buffered={transport.buffered} onSeek={(position) => audioCommands.seek?.(position)} chapters={item.chapters} />
             <span className="text-numeric w-10">{formatTime(transport.duration)}</span>
           </div>
         </div>
