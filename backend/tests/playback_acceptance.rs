@@ -128,6 +128,33 @@ fn real_media_fixture_and_stream_contract() {
                 .unwrap();
             assert_eq!(response.status().as_u16(), 200);
             assert!(!response.bytes().await.unwrap().is_empty());
+            if kind == "transcode" {
+                // The whole file is listed before it's encoded, so a player can seek anywhere,
+                // and a segment far from the last one is encoded when it's asked for.
+                assert!(body.contains("#EXT-X-PLAYLIST-TYPE:VOD"), "{body}");
+                assert!(body.trim_end().ends_with("#EXT-X-ENDLIST"), "{body}");
+                let last = body.lines().rfind(|line| line.starts_with("seg_")).unwrap();
+                let last_url = reqwest::Url::parse(&url).unwrap().join(last).unwrap();
+                let response = http
+                    .get(last_url)
+                    .header("Cookie", &cookie)
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(response.status().as_u16(), 200, "{last}");
+                assert!(!response.bytes().await.unwrap().is_empty());
+                // Outside the file, and not a segment at all.
+                for name in ["seg_99999.ts", "other.ts"] {
+                    let outside = reqwest::Url::parse(&url).unwrap().join(name).unwrap();
+                    let response = http
+                        .get(outside)
+                        .header("Cookie", &cookie)
+                        .send()
+                        .await
+                        .unwrap();
+                    assert_eq!(response.status().as_u16(), 404, "{name}");
+                }
+            }
         }
         manifest["credentials"] = json!({"email":"admin@example.test","password":password});
         if let Ok(directory) = std::env::var("LIBRARIAN_PLAYBACK_ACCEPTANCE_DIR") {

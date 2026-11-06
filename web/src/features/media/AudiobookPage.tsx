@@ -19,7 +19,7 @@ import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { usePlayer } from "@/features/player/usePlayer";
 import type { PlayItem } from "@/features/player/store";
 import { AudiobookDetailDocument, AudiobookChaptersPageDocument, EntityAudiobookDeleteDocument, EntityChapterUpdateDocument, EntityChapterUpdateManyDocument, type AudiobookDetailQuery } from "@/graphql/generated/graphql";
-import { useContentStatuses } from "@/hooks/useContentStatuses";
+import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
 import { audiobookCover } from "@/lib/artwork";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { formatBytes, formatClock, formatDate, formatRuntime } from "@/lib/format";
@@ -41,6 +41,8 @@ const AudiobookTableContext = createContext<{
   statuses: ReturnType<typeof useContentStatuses>;
   progressByFile: ReturnType<typeof useMediaProgress>["progressByFile"];
   currentItemId: string | undefined;
+  /** Whether listening has got past this chapter. A chapter of one long file can't say by itself. */
+  isFinished: (chapter: ChapterRow) => boolean;
 } | null>(null);
 
 function useAudiobookTable() {
@@ -59,10 +61,10 @@ function ChapterNumberCell({ row }: ChapterCellProps) {
 }
 
 function ChapterStatusCell({ row: { original: chapter } }: ChapterCellProps) {
-  const { progressByFile, statuses } = useAudiobookTable();
-  return chapter.mediaFileId && progressByFile.get(chapter.mediaFileId)?.isWatched
+  const { isFinished, statuses } = useAudiobookTable();
+  return chapter.mediaFileId && isFinished(chapter)
     ? <StatusChip status={{ label: "Finished", tone: "success", dot: "bg-success" }} />
-    : <StatusChip status={statusMeta(chapter.mediaFileId ? "AVAILABLE" : statuses.get(chapter.id))} />;
+    : <StatusChip status={chapter.mediaFileId ? statusMeta("AVAILABLE") : contentStatusMeta(statuses, chapter.id)} />;
 }
 
 function ChapterFormatCell({ row: { original: chapter } }: ChapterCellProps) {
@@ -75,7 +77,7 @@ function ChapterDurationCell({ row: { original: chapter } }: ChapterCellProps) {
 
 function ChapterActionsCell({ row }: ChapterCellProps) {
   const { actions } = useAudiobookTable();
-  return <ActionBar set={actions} targets={[row.original]} label={row.original.title ?? `Chapter ${row.original.chapterNumber}`} maxButtons={1} />;
+  return <ActionBar set={actions} targets={[row.original]} label={row.original.title ?? `Chapter ${row.original.chapterNumber}`} maxButtons={1} className="table-row-actions" />;
 }
 
 // Keep component types stable for flexRender; context also propagates progress
@@ -125,7 +127,26 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
     await refetch();
   }, [isAdmin, updateChapter, refetch, pages.updateRow]);
 
-  const queue = useMemo<PlayItem[]>(() => book ? chapters
+  // One file holding the whole book: it plays once, and a chapter is a place in it.
+  const wholeFile = chapters.length > 1 && Boolean(chapters[0]?.mediaFileId) && chapters.every((chapter) => chapter.mediaFileId === chapters[0]!.mediaFileId);
+  const chapterEnd = useCallback((chapter: ChapterRow) => chapter.endTimeSecs ?? chapter.startTimeSecs + (chapter.durationSecs ?? 0), []);
+  const chapterAt = useCallback((position: number) => [...chapters].reverse().find((chapter) => chapter.startTimeSecs <= position), [chapters]);
+  const isFinished = useCallback((chapter: ChapterRow) => {
+    const saved = chapter.mediaFileId ? progressByFile.get(chapter.mediaFileId) : undefined;
+    if (!saved) return false;
+    return saved.isWatched || (wholeFile && saved.currentPosition >= chapterEnd(chapter));
+  }, [progressByFile, wholeFile, chapterEnd]);
+
+  const queue = useMemo<PlayItem[]>(() => !book ? [] : wholeFile ? [{
+    mediaFileId: chapters[0]!.mediaFileId!,
+    title: book.title,
+    subtitle: book.authorName ?? undefined,
+    artwork: audiobookCover(book),
+    entity: { kind: "chapter", id: chapters[0]!.id },
+    audiobookId: book.id,
+    href: `/audiobooks/${book.id}`,
+    duration: chapters[0]!.mediaFile?.duration ?? undefined,
+  }] : chapters
     .filter((chapter) => chapter.mediaFileId)
     .map((chapter) => ({
       mediaFileId: chapter.mediaFileId!,
@@ -136,16 +157,26 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
       audiobookId: book.id,
       href: `/audiobooks/${book.id}`,
       duration: chapter.durationSecs ?? undefined,
-    })) : [], [chapters, book]);
+    })), [chapters, book, wholeFile]);
   const resumeIndex = Math.max(0, queue.findIndex((item) => !progressByFile.get(item.mediaFileId)?.isWatched));
   const resumeItem = queue[resumeIndex];
-  const resumeChapter = chapters.find((chapter) => chapter.id === resumeItem?.entity.id);
   const savedResume = resumeItem ? progressByFile.get(resumeItem.mediaFileId) : undefined;
+  const resumeChapter = wholeFile ? chapterAt(savedResume?.currentPosition ?? 0) : chapters.find((chapter) => chapter.id === resumeItem?.entity.id);
   const resumeLabel = resumeIndex > 0 || (savedResume && !savedResume.isWatched && savedResume.currentPosition > 0)
     ? `Resume chapter ${resumeChapter?.chapterNumber ?? resumeIndex + 1}` : "Listen";
   const progressUnavailable = progress.error ? "Retry playback progress before listening" : progress.loading ? "Loading playback progress" : undefined;
   const playFrom = useCallback((chapter?: ChapterRow) => {
     if (progressUnavailable || (!chapter && !pages.complete)) return;
+    if (wholeFile) {
+      const item = queue[0];
+      if (!item) return;
+      const saved = progressByFile.get(item.mediaFileId);
+      const position = saved && !saved.isWatched ? saved.currentPosition : 0;
+      // Asking for a chapter starts it, unless listening had got part-way through it.
+      const start = !chapter || (position > chapter.startTimeSecs && position < chapterEnd(chapter)) ? position : chapter.startTimeSecs;
+      player.playAudio([{ ...item, startPosition: start }], 0);
+      return;
+    }
     const playable = pages.complete ? queue : queue.filter((item) => item.entity.id === chapter?.id);
     const index = chapter ? playable.findIndex((item) => item.entity.id === chapter.id) : resumeIndex;
     if (playable.length === 0 || index < 0) return;
@@ -155,7 +186,7 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
       return { ...item, startPosition: position === index && saved && !saved.isWatched ? saved.currentPosition : 0 };
     });
     player.playAudio(items, index);
-  }, [progressUnavailable, pages.complete, queue, resumeIndex, progressByFile, player]);
+  }, [progressUnavailable, pages.complete, queue, resumeIndex, progressByFile, player, wholeFile, chapterEnd]);
   const setSelectedWanted = useCallback(async (selected: readonly ChapterRow[], wanted: boolean) => {
     if (!isAdmin) throw new Error("Administrator access required");
     const missing = selected.filter((item) => !item.mediaFileId && item.wanted !== wanted);
@@ -178,6 +209,7 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
   const actions = useMemo(() => defineActions<ChapterRow>("chapter", [
     { id: "play", label: ([chapter]) => {
         const saved = chapter?.mediaFileId ? progressByFile.get(chapter.mediaFileId) : undefined;
+        if (wholeFile) return chapter && saved && !saved.isWatched && saved.currentPosition > chapter.startTimeSecs && saved.currentPosition < chapterEnd(chapter) ? "Resume" : "Play";
         return saved && !saved.isWatched && saved.currentPosition > 0 ? "Resume" : "Play";
       }, icon: IconPlay, group: "open", primary: true, bulk: true,
       visible: (rows) => rows.length === 1 && Boolean(rows[0]?.mediaFileId),
@@ -187,9 +219,10 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
       visible: (rows) => rows.length === 1 && isAdmin && Boolean(rows[0] && !rows[0].mediaFileId),
       run: ([chapter]) => chapter && toggleWanted(chapter) },
     { id: "play-selected", label: "Play selected chapters", icon: IconPlay, group: "open", bulk: true,
-      visible: (rows) => rows.length > 1, disabledReason: selectedPlaybackUnavailable,
+      visible: (rows) => rows.length > 1 && !wholeFile, disabledReason: selectedPlaybackUnavailable,
       run: (rows) => { const items = selectedQueue(rows); if (!items.length || selectedPlaybackUnavailable(rows)) throw new Error("Selected chapters are not ready to play"); player.playAudio(items); } },
     { id: "enqueue", label: "Add to queue", icon: IconPlus, group: "organise", bulk: true,
+      visible: () => !wholeFile,
       disabledReason: selectedPlaybackUnavailable,
       run: (rows) => { const items = selectedQueue(rows).map((item) => ({ ...item, startPosition: 0 })); if (!items.length || selectedPlaybackUnavailable(rows)) throw new Error("Selected chapters are not ready to queue"); player.enqueue(items); }, successMessage: () => "Added to queue" },
     { id: "want-selected", label: "Want selected missing chapters", icon: IconBookmark, group: "manage", bulk: true,
@@ -200,7 +233,7 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
       run: (rows) => setSelectedWanted(rows, false), successMessage: () => "Selected missing chapters no longer wanted" },
     { id: "copy-titles", label: "Copy chapter titles", icon: IconCopy, group: "organise", bulk: true,
       run: async (rows) => { await copyText(rows.map((item) => item.title ?? `Chapter ${item.chapterNumber}`).join("\n")); }, successMessage: () => "Chapter titles copied" },
-  ]), [isAdmin, playFrom, toggleWanted, setSelectedWanted, selectedQueue, player, progressByFile, progressUnavailable]);
+  ]), [isAdmin, playFrom, toggleWanted, setSelectedWanted, selectedQueue, player, progressByFile, progressUnavailable, wholeFile, chapterEnd]);
 
   if (error && !book) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!book) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Audiobook not found" description="This item may have been removed from the library." className="page-gutter my-8" />;
@@ -248,7 +281,7 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
         ),
       }}
     >
-      <AudiobookTableContext.Provider value={{ actions, statuses, progressByFile, currentItemId: player.audio?.entity.id }}>
+      <AudiobookTableContext.Provider value={{ actions, statuses, progressByFile, isFinished, currentItemId: wholeFile && player.audio?.audiobookId === book.id ? chapterAt(player.transport.position)?.id : player.audio?.entity.id }}>
         <LoadedDataTable
           id={`audiobook-chapters:${user?.id ?? "anonymous"}:${book.libraryId}:${book.id}`}
           label={`${book.title} chapters`} columns={chapterColumns} rows={chapters} getRowId={(chapter) => chapter.id} getRowLabel={(chapter) => chapter.title ?? `Chapter ${chapter.chapterNumber}`}

@@ -10,7 +10,7 @@ describe("primary navigation", () => {
     for (const item of PRIMARY_NAV) {
       expect(item.href.startsWith("/")).toBe(true);
       expect(item.label).toBeTruthy();
-      expect(item.icon).toBeTypeOf("object");
+      expect(item.icon).toBeTruthy();
     }
   });
 

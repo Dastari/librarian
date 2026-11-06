@@ -1,11 +1,6 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 
-import { WatchPage } from "@/features/player/WatchPage";
-
+/** The player itself lives above the routes (`GlobalVideo`), and fills the screen while this is open. */
 export const Route = createFileRoute("/_player/watch/$mediaFileId")({
-  component: () => {
-    const { mediaFileId } = Route.useParams();
-    const navigate = useNavigate();
-    return <WatchPage mediaFileId={mediaFileId} onBack={() => (window.history.length > 1 ? window.history.back() : void navigate({ to: "/" }))} />;
-  },
+  component: () => <div className="h-svh w-full bg-black" />,
 });

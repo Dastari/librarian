@@ -19,6 +19,8 @@ export interface PlayItem {
   /** Where "back" and the dock title should go. */
   href?: string;
   startPosition?: number;
+  /** Open paused: a mini player that was paused when the page was refreshed. */
+  startPaused?: boolean;
   duration?: number;
 }
 
@@ -36,6 +38,8 @@ export interface AudioTransport {
 
 export interface PlayerState {
   video: PlayItem | null;
+  /** The video is in its floating window rather than on /watch. */
+  videoMini: boolean;
   queue: PlayItem[];
   index: number;
   /** Changes for each selected queue entry, including entries sharing a file. */
@@ -55,6 +59,7 @@ const initialVolume = (() => {
 
 let state: PlayerState = {
   video: null,
+  videoMini: false,
   queue: [],
   index: -1,
   audioActivation: 0,
@@ -79,6 +84,10 @@ export const playerStore = {
 
   setVideo(item: PlayItem | null) {
     set({ video: item });
+  },
+  /** The video keeps playing in a floating window while the app is used around it. */
+  setVideoMini(videoMini: boolean) {
+    set({ videoMini });
   },
 
   /** Replaces the audio queue and starts at `index`. */

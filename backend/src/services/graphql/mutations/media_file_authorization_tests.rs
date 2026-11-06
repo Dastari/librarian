@@ -145,6 +145,17 @@ async fn another_member_cannot_reach_a_file_through_hand_written_mutations() {
 }
 
 #[tokio::test]
+async fn deleting_from_disk_takes_an_administrator_even_for_the_owner() {
+    let f = setup().await;
+    let id = json!({ "id": f.file });
+    let document = "mutation($id:String!){deleteMediaFileFromDisk(mediaFileId:$id){success}}";
+    for member in [&f.owner, &f.other] {
+        let response = run(&f, member, document, id.clone()).await;
+        assert!(!response.errors.is_empty(), "{response:?}");
+    }
+}
+
+#[tokio::test]
 async fn a_member_cannot_link_their_file_to_someone_elses_title() {
     let f = setup().await;
     let response = run(

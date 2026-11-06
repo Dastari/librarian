@@ -251,6 +251,7 @@ impl AlbumCustomOperations {
                     MetadataProvider::Tmdb => "tmdb".to_string(),
                     MetadataProvider::Tvmaze => "tvmaze".to_string(),
                     MetadataProvider::OpenLibrary => "openlibrary".to_string(),
+                    MetadataProvider::Audible => "audible".to_string(),
                 },
                 provider_id: a.provider_id,
                 title: a.title,

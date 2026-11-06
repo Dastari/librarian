@@ -2799,6 +2799,22 @@ impl AppMutationHook {
         {
             Self::set_chapter_media_file(tx, id, None).await?;
         }
+        // A file that held a whole book leaves every chapter it was shared with.
+        if old.is_some() && old != active_chapter {
+            tx.update_where::<Chapter>(
+                ChapterWhereInput {
+                    media_file_id: Some(Self::string_eq(&after.id)),
+                    ..Default::default()
+                },
+                UpdateChapterInput {
+                    media_file_id: Some(None),
+                    wanted: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(Self::db_error)?;
+        }
         if let Some(id) = active_chapter {
             Self::set_chapter_media_file(tx, id, Some(&after.id)).await?;
         }
@@ -2961,10 +2977,41 @@ impl AppMutationHook {
         if let Some(file_id) = old {
             Self::clear_media_file_target_if_matches(tx, file_id, "Chapter", &after.id).await?;
         }
-        if let Some(file_id) = after.media_file_id.as_deref() {
+        if let Some(file_id) = after.media_file_id.as_deref()
+            && !Self::file_belongs_to_chapters_book(tx, file_id, &after).await?
+        {
             Self::set_media_file_target(tx, file_id, None, None, None, Some(&after.id)).await?;
         }
         Self::set_chapter_media_file(tx, &after.id, after.media_file_id.as_deref()).await
+    }
+
+    /// One file can hold a whole book, so every chapter of that book points at it while the file
+    /// names just one of them. A chapter joining them must not take the file from the others.
+    async fn file_belongs_to_chapters_book(
+        tx: &mut MutationContext<'_>,
+        file_id: &str,
+        chapter: &Chapter,
+    ) -> async_graphql::Result<bool> {
+        let Some(named) = tx
+            .find_by_id::<MediaFile>(&file_id.to_string())
+            .await
+            .map_err(Self::db_error)?
+            .and_then(|file| file.chapter_id)
+        else {
+            return Ok(false);
+        };
+        if named == chapter.id {
+            return Ok(true);
+        }
+        let Some(other) = tx
+            .find_by_id::<Chapter>(&named)
+            .await
+            .map_err(Self::db_error)?
+        else {
+            return Ok(false);
+        };
+        Ok(other.audiobook_id == chapter.audiobook_id
+            && other.media_file_id.as_deref() == Some(file_id))
     }
 
     fn defer_storage_object_delete(

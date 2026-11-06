@@ -1,4 +1,4 @@
-import { IconWifiOff } from "@tabler/icons-react";
+import { IconWifiOff } from "glass-ux/icons";
 import { useEffect, useState } from "react";
 
 import { wsClient } from "@/lib/apollo/client";
@@ -28,7 +28,7 @@ export function ConnectionBanner() {
   if (!offline && !socketDown) return null;
   return (
     <div role="status" className="flex items-center justify-center gap-2 bg-warning/15 px-4 py-1.5 text-label text-foreground">
-      <IconWifiOff size={14} className="text-warning" />
+      <IconWifiOff size="sm" className="text-warning" />
       {offline ? "You're offline. Showing what was loaded last." : "Reconnecting to the server…"}
     </div>
   );

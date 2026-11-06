@@ -265,8 +265,9 @@ async fn can_access_artwork(
                 .map(|show| show.user_id),
             None => None,
         },
-        // People and the TV guide are shared catalogue data, readable by every member.
-        "person" | "guide" => return Ok(true),
+        // People, the TV guide and provider titles are shared catalogue data, readable by every member.
+        "person" | "guide" | "provider-movie" | "provider-show" | "provider-audiobook"
+        | "provider-episode" => return Ok(true),
         "artist" => Artist::get(state.db.pool(), &entity_id)
             .await?
             .map(|entity| entity.user_id),

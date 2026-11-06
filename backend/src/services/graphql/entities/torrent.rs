@@ -804,6 +804,28 @@ pub struct ProcessSourceResult {
     pub error: Option<String>,
 }
 
+/// One file of a download, and what a person says it is.
+#[derive(Debug, InputObject)]
+#[graphql(rename_fields = "camelCase")]
+pub struct MatchTorrentFileInput {
+    pub info_hash: String,
+    pub file_index: i32,
+    pub library_id: String,
+    pub target_type: String,
+    pub target_id: String,
+}
+
+/// What one file of a download could be, for a person to choose from.
+#[derive(Debug, async_graphql::SimpleObject)]
+#[graphql(rename_fields = "camelCase")]
+pub struct TorrentFileCandidate {
+    pub target_type: String,
+    pub target_id: String,
+    pub target_name: Option<String>,
+    pub score: f64,
+    pub reason: Option<String>,
+}
+
 /// Result of re-matching files for a source
 #[derive(Debug, async_graphql::SimpleObject)]
 #[graphql(name = "RematchSourceResult")]
@@ -816,6 +838,46 @@ pub struct RematchSourceResult {
 
 #[Object]
 impl TorrentCustomOperations {
+    /// What one file of a download could be. Administrators, as for matching a library file.
+    #[graphql(name = "torrentFileCandidates")]
+    async fn torrent_file_candidates(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "infoHash")] info_hash: String,
+        #[graphql(name = "fileIndex")] file_index: i32,
+        #[graphql(name = "libraryId")] library_id: String,
+    ) -> Result<Vec<TorrentFileCandidate>> {
+        let user = ctx.require_admin()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let torrents = manager
+            .get_torrent()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
+        let scan = manager
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+        let file = torrents
+            .completed_file(&info_hash, file_index)
+            .await
+            .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+        let result = scan
+            .torrent_file_candidates(user, &info_hash, &file, &library_id)
+            .await
+            .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+        Ok(result
+            .candidates
+            .into_iter()
+            .map(|candidate| TorrentFileCandidate {
+                target_type: candidate.target_type,
+                target_id: candidate.target_id,
+                target_name: candidate.target_name,
+                score: candidate.score,
+                reason: candidate.reason,
+            })
+            .collect())
+    }
+
     /// Get all torrents with live state from the torrent client
     #[graphql(name = "liveTorrents")]
     async fn live_torrents(&self, ctx: &Context<'_>) -> Result<Vec<LiveTorrent>> {
@@ -998,25 +1060,49 @@ impl TorrentClientMutations {
                 error: Some("Either magnet or url must be provided".to_string()),
             });
         };
-        let result = service
-            .add_magnet_for_actor_with_outcome(
-                uri,
-                &user,
-                TorrentAddMetadata {
-                    library_id: input.library_id,
-                    movie_id: input.movie_id,
-                    show_id: input.show_id,
-                    episode_id: input.episode_id,
-                    track_id: input.track_id,
-                    chapter_id: input.chapter_id,
-                    album_id: input.album_id,
-                    audiobook_id: input.audiobook_id,
-                    source_url: input.source_url,
-                    source_indexer_id: input.source_indexer_id,
-                    source_feed_id: input.source_feed_id,
-                },
-            )
-            .await;
+        // Some sources (IPTorrents) only hand a torrent file to a logged-in client, and the torrent
+        // client has no login. Fetch those through the source, which does.
+        let source_file = match (input.magnet.as_deref(), input.source_indexer_id.as_deref()) {
+            (None, Some(source_id)) => {
+                match fetch_torrent_from_source(manager, source_id, uri).await {
+                    Ok(file) => file,
+                    Err(error) => {
+                        tracing::warn!(source_id = %source_id, error = %error, "addTorrent: source could not supply the torrent file");
+                        return Ok(AddTorrentResult {
+                            success: false,
+                            torrent: None,
+                            error: Some(error.to_string()),
+                        });
+                    }
+                }
+            }
+            _ => None,
+        };
+        let metadata = TorrentAddMetadata {
+            library_id: input.library_id,
+            movie_id: input.movie_id,
+            show_id: input.show_id,
+            episode_id: input.episode_id,
+            track_id: input.track_id,
+            chapter_id: input.chapter_id,
+            album_id: input.album_id,
+            audiobook_id: input.audiobook_id,
+            source_url: input.source_url,
+            source_indexer_id: input.source_indexer_id,
+            source_feed_id: input.source_feed_id,
+        };
+        let result = match source_file {
+            Some(file) => {
+                service
+                    .add_torrent_file_for_actor_with_outcome(file, &user, metadata)
+                    .await
+            }
+            None => {
+                service
+                    .add_magnet_for_actor_with_outcome(uri, &user, metadata)
+                    .await
+            }
+        };
         match result {
             Ok(outcome) => {
                 let info = outcome.info;
@@ -1214,6 +1300,55 @@ impl TorrentClientMutations {
         }
     }
 
+    /// Say what one file of a download is, and import it as that.
+    #[graphql(name = "matchTorrentFile")]
+    async fn match_torrent_file(
+        &self,
+        ctx: &Context<'_>,
+        input: MatchTorrentFileInput,
+    ) -> Result<RematchSourceResult> {
+        let user = ctx.require_admin()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let torrents = manager
+            .get_torrent()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
+        let scan = manager
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+        let file = match torrents
+            .completed_file(&input.info_hash, input.file_index)
+            .await
+        {
+            Ok(file) => file,
+            Err(error) => {
+                return Ok(RematchSourceResult {
+                    success: false,
+                    match_count: 0,
+                    error: Some(error.to_string()),
+                });
+            }
+        };
+        let summary = scan
+            .import_torrent_file_as(
+                user,
+                &input.info_hash,
+                file,
+                crate::services::library_scan::ManualFileTarget {
+                    library_id: input.library_id,
+                    target_type: input.target_type,
+                    target_id: input.target_id,
+                },
+            )
+            .await;
+        Ok(RematchSourceResult {
+            success: summary.success,
+            match_count: summary.files_processed,
+            error: summary.error,
+        })
+    }
+
     /// Re-run matching for files from a source.
     #[graphql(name = "rematchSource")]
     async fn rematch_source(
@@ -1258,9 +1393,88 @@ impl TorrentClientMutations {
     }
 }
 
+/// True when `link` is on the source's own site. The source sends its login with the request, so
+/// a link from anywhere else, and the caller supplies it, must never get that far.
+fn link_is_on_source_site(link: &str, site_link: &str) -> bool {
+    match (url::Url::parse(link), url::Url::parse(site_link)) {
+        (Ok(link), Ok(site)) => {
+            matches!(link.scheme(), "http" | "https")
+                && link.host_str().is_some()
+                && link.host_str() == site.host_str()
+        }
+        _ => false,
+    }
+}
+
+/// A bencoded torrent is a dictionary; a login or error page is HTML.
+fn looks_like_torrent_file(bytes: &[u8]) -> bool {
+    bytes.first() == Some(&b'd')
+}
+
+/// The release's torrent file, fetched with its source's login. `None` means the source has no
+/// part in this link, and the client should fetch it directly as before.
+async fn fetch_torrent_from_source(
+    manager: &ServicesManager,
+    source_id: &str,
+    link: &str,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    let Some(sources) = manager.get_sources().await else {
+        return Ok(None);
+    };
+    let Some(sources) = sources.get_manager().await else {
+        return Ok(None);
+    };
+    let Some(source) = sources.get_source(source_id) else {
+        return Ok(None);
+    };
+    if !link_is_on_source_site(link, source.site_link()) {
+        return Ok(None);
+    }
+    let bytes = source.download(link).await.map_err(|error| {
+        anyhow::anyhow!("{} could not supply this torrent: {error}", source.name())
+    })?;
+    if !looks_like_torrent_file(&bytes) {
+        anyhow::bail!(
+            "{} returned a web page instead of a torrent. Its login may have expired: check the source in Settings.",
+            source.name()
+        );
+    }
+    Ok(Some(bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_source_login_is_only_sent_to_its_own_site() {
+        let site = "https://iptorrents.com/";
+        assert!(link_is_on_source_site(
+            "https://iptorrents.com/download.php/1/a.torrent",
+            site
+        ));
+        assert!(!link_is_on_source_site(
+            "https://evil.example/download.php/1/a.torrent",
+            site
+        ));
+        assert!(!link_is_on_source_site(
+            "https://iptorrents.com.evil.example/a.torrent",
+            site
+        ));
+        assert!(!link_is_on_source_site(
+            "https://iptorrents.com@evil.example/a.torrent",
+            site
+        ));
+        assert!(!link_is_on_source_site("file:///etc/passwd", site));
+        assert!(!link_is_on_source_site("not a url", site));
+    }
+
+    #[test]
+    fn a_login_page_is_not_a_torrent_file() {
+        assert!(looks_like_torrent_file(b"d8:announce"));
+        assert!(!looks_like_torrent_file(b"<!DOCTYPE html>"));
+        assert!(!looks_like_torrent_file(b""));
+    }
 
     #[test]
     fn uploaded_total_accumulates_session_deltas() {

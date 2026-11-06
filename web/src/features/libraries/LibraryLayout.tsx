@@ -3,9 +3,11 @@ import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { createContext, useState } from "react";
 import { IconWarning, IconSpinner, IconRefresh, IconSettings } from "glass-ux/icons";
 
+import { PageScroller } from "@/components/shell/PageScroller";
 import { Button, MediaBackdrop, PageHeader, SegmentTabs, type TabItem } from "@/components/ui";
 import type { SpotlightArt } from "@/features/home/HomeSpotlight";
-import type { LibraryDetailQuery } from "@/graphql/generated/graphql";
+import { LibraryFileCountDocument, type LibraryDetailQuery } from "@/graphql/generated/graphql";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { formatRelative, pluralize } from "@/lib/format";
 import { libraryType, type LibraryType } from "@/lib/library-types";
@@ -19,7 +21,7 @@ export type LibraryDetail = NonNullable<LibraryDetailQuery["library"]>;
 export const LibraryArtContext = createContext<(art: SpotlightArt) => void>(() => {});
 
 /** Tab set per library type; the first entry is the default view. */
-export function libraryTabs(library: LibraryDetail): TabItem[] {
+export function libraryTabs(library: LibraryDetail, fileCount?: number | null): TabItem[] {
   const base = `/libraries/${library.id}`;
   const type = libraryType(library.libraryType).type;
   const byType: Record<LibraryType, TabItem[]> = {
@@ -42,7 +44,7 @@ export function libraryTabs(library: LibraryDetail): TabItem[] {
   };
   return [
     ...byType[type],
-    { key: "files", label: "Files", href: `${base}/files`, count: library.mediaFiles.pageInfo.totalCount },
+    { key: "files", label: "Files", href: `${base}/files`, count: fileCount ?? undefined },
     { key: "scans", label: "Scans", href: `${base}/scans` },
   ];
 }
@@ -51,7 +53,8 @@ export function LibraryLayout({ library }: { library: LibraryDetail }) {
   const meta = libraryType(library.libraryType);
   const isAdmin = useIsAdmin();
   const scan = useLibraryScan(library.id);
-  const tabs = libraryTabs(library);
+  const files = useQuery(LibraryFileCountDocument, { variables: { libraryId: library.id } });
+  const tabs = libraryTabs(library, files.data?.mediaFiles.pageInfo.totalCount);
   const primaryCount = tabs.find((tab) => tab.count !== undefined)?.count ?? 0;
   // Browsers own their result scrolling; forms and scan history need a scrolling pane;
   // Recommended is a page of artwork and shelves that scrolls as a whole.
@@ -63,12 +66,12 @@ export function LibraryLayout({ library }: { library: LibraryDetail }) {
 
   return (
     <LibraryArtContext value={setArt}>
-    <div data-print-flow className={cn("relative isolate flex min-w-0 flex-col gap-3 page-gutter sm:gap-4 [@media(max-height:35rem)]:gap-2",
-      flow ? "overflow-x-clip pt-[calc(var(--topbar-height)+var(--safe-top)+var(--space-3))]" : "min-h-0 flex-1 pt-3 sm:pt-5 [@media(max-height:35rem)]:pt-2")}>
+    <div data-print-flow className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       {flow && art ? <MediaBackdrop src={art.src} fallback={art.fallback} tint={art.tint} /> : null}
       {/* The breadcrumb names the library; the heading stays for assistive technology and print. */}
       <PageHeader className="sr-only" titleVisibility="accessible" title={library.name} />
-      <div className={cn("flex min-w-0 shrink-0 items-center gap-x-4 gap-y-2 max-sm:flex-wrap", flow && "over-imagery")}>
+      {/* The tabs never scroll away; only the view under them does. */}
+      <div className={cn("page-gutter flex min-w-0 shrink-0 items-center gap-x-4 gap-y-2 pb-3 max-sm:flex-wrap sm:pb-4 [@media(max-height:35rem)]:pb-2", flow && "over-imagery")}>
         <SegmentTabs items={tabs} ariaLabel="Library sections" className="min-w-0 flex-1" />
         <div className="flex min-w-0 shrink-0 items-center gap-3 text-label-sm text-muted max-sm:w-full max-sm:justify-between">
           <span className="inline-flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
@@ -95,9 +98,9 @@ export function LibraryLayout({ library }: { library: LibraryDetail }) {
           ) : null}
         </div>
       </div>
-      <div data-print-flow className={cn("fa-focus-room flex min-h-0 min-w-0 flex-1 flex-col", flow ? "" : scrollOutlet ? "scrollbar-thin overflow-y-auto pb-[calc(var(--space-8)+var(--focus-reach))]" : "overflow-hidden pb-[calc(var(--space-3)+var(--focus-reach))] sm:pb-[calc(var(--space-4)+var(--focus-reach))]")}>
+      <PageScroller data-print-flow scrolling={flow || scrollOutlet} className={cn("page-gutter flex min-h-0 flex-1 flex-col", !flow && "fa-focus-room", scrollOutlet && "pb-[calc(var(--space-8)+var(--focus-reach))]", !flow && !scrollOutlet && "pb-[calc(var(--space-3)+var(--focus-reach))] sm:pb-[calc(var(--space-4)+var(--focus-reach))]")}>
         <Outlet />
-      </div>
+      </PageScroller>
     </div>
     </LibraryArtContext>
   );

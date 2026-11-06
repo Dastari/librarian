@@ -3,7 +3,7 @@ import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { toast } from "glass-ux/toast";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate } from "@tanstack/react-router";
-import { IconFolder, IconTrash } from "@tabler/icons-react";
+import { IconFolder, IconTrash } from "glass-ux/icons";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -107,7 +107,7 @@ export function LibrarySettingsForm({ library }: { library: LibraryFieldsFragmen
           <div className="flex items-end gap-2">
             <FormTextField control={form.control} name="path" label="Folder" mono isRequired className="min-w-0 flex-1" />
             <Button variant="secondary" onPress={() => setPickingFolder(true)} aria-label="Browse folders" isIconOnly className="mb-px">
-              <IconFolder size={18} />
+              <IconFolder size="lg" />
             </Button>
           </div>
           <FormSelectField control={form.control} name="qualityProfileId" label="Quality profile" options={profileOptions} placeholder="Use the default profile" />
@@ -132,7 +132,7 @@ export function LibrarySettingsForm({ library }: { library: LibraryFieldsFragmen
       <Panel title="Danger zone" tone="secondary">
         <p className="text-body-sm text-muted">Removing the library deletes its catalogue from Librarian. Files on disk are never touched.</p>
         <Button variant="danger-soft" className="mt-3" onPress={() => setConfirmDelete(true)}>
-          <IconTrash size={16} /> Remove library
+          <IconTrash size="md" /> Remove library
         </Button>
       </Panel>
 

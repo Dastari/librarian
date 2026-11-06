@@ -1,27 +1,30 @@
-import { SidebarInset, SidebarProvider } from "glass-ux/sidebar";
-import { Outlet, useRouter, useRouterState } from "@tanstack/react-router";
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { Outlet, useRouter, useRouterState, Link } from "@tanstack/react-router";
+import { AppShell as GlassAppShell, ShellBrand } from "glass-ux/shell";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 
+import { FileDialogHost } from "@/features/files/FileDetailDialog";
+import { PlayerDock } from "@/features/player/PlayerDock";
+import { currentAudioItem, playerStore } from "@/features/player/store";
+import "@/lib/glass/brand";
 import { useInputMode, useRouteFocus, useSpatialNavigation } from "@/lib/input-mode";
 import { cn } from "@/lib/utils";
 
-
-import { ShellCommands } from "./ShellCommands";
 import { BottomTabs } from "./BottomTabs";
 import { ConnectionBanner } from "./ConnectionBanner";
 import { NavRail } from "./NavRail";
-import { PlayerDock } from "@/features/player/PlayerDock";
-import { currentAudioItem, playerStore } from "@/features/player/store";
+import { PageScroller } from "./PageScroller";
+import { SHELL_ART_ID } from "./shellArt";
+import { ShellCommands } from "./ShellCommands";
 import { TopBar } from "./TopBar";
 import { UpdatePrompt } from "./UpdatePrompt";
 
 const hasAudio = () => Boolean(currentAudioItem(playerStore.getSnapshot()));
 
 /**
- * Authenticated application frame: rail + top bar + scrolling content + player dock.
- * Pages that open with a hero (home, detail pages) set `hero` in their route static data so
- * the top bar floats transparently over the artwork until the user scrolls. `--view-h` on
- * the scroller is its visible height, which heroes use to fill exactly the first screen.
+ * The authenticated frame: Glass UX's AppShell owns the viewport, with the rail and top bar on
+ * the canvas so they never scroll. Pages put their artwork in the layer behind it all, which
+ * is how a title's picture reaches under the top bar and the rail. Each page has one scroller;
+ * a route with `fixedHeight` scrolls inside its own panes instead.
  */
 export function AppShell() {
   const { mode } = useInputMode();
@@ -35,44 +38,53 @@ export function AppShell() {
   const resolvedPath = useRouterState({ select: (state) => state.resolvedLocation?.pathname ?? state.location.pathname });
   useRouteFocus(resolvedPath, mode === "tv");
   const audioActive = useSyncExternalStore(playerStore.subscribe, hasAudio, hasAudio);
-  const hero = useRouterState({ select: (state) => state.matches.some((match) => match.staticData?.hero) });
   const fixedHeight = useRouterState({ select: (state) => state.matches.some((match) => match.staticData?.fixedHeight) });
-  const [scrolled, setScrolled] = useState(false);
+  const body = useRef<HTMLDivElement>(null);
 
+  // Backdrops recede as their page scrolls, so text further down never fights the picture.
   useEffect(() => {
-    const main = document.getElementById("main-scroll");
-    if (!main) return;
-    const onScroll = () => setScrolled(main.scrollTop > 24);
-    const measure = () => main.style.setProperty("--view-h", `${main.clientHeight}px`);
-    onScroll();
-    measure();
-    main.addEventListener("scroll", onScroll, { passive: true });
-    const observer = new ResizeObserver(measure);
-    observer.observe(main);
-    return () => {
-      main.removeEventListener("scroll", onScroll);
-      observer.disconnect();
+    const root = body.current;
+    const art = document.getElementById(SHELL_ART_ID);
+    if (!root || !art) return;
+    art.style.setProperty("--art-scroll", "0");
+    let frame = 0;
+    const onScroll = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.hasAttribute("data-page-scroller")) return;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => art.style.setProperty("--art-scroll", String(Math.min(1, target.scrollTop / Math.max(1, target.clientHeight)))));
     };
-  }, []);
+    root.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      root.removeEventListener("scroll", onScroll, { capture: true });
+    };
+  }, [resolvedPath]);
 
   return (
-    <SidebarProvider storageKey="librarian.sidebar" defaultOpen={false} className="app-shell canvas-ambient h-svh w-full overflow-hidden text-foreground">
+    <div className="app-shell canvas-ambient relative isolate h-dvh w-full overflow-clip text-foreground">
+      <div id={SHELL_ART_ID} className="shell-art" aria-hidden data-print="hide" />
       <ShellCommands />
-      <NavRail />
-      <SidebarInset render={<div />} className="app-shell-body relative flex min-w-0 flex-1 flex-col">
-        <ConnectionBanner />
-        <div id="main-scroll" className={cn("app-shell-scroll scrollbar-thin relative flex min-h-0 flex-1 flex-col overflow-x-hidden", fixedHeight ? "overflow-y-hidden" : "overflow-y-auto", hero && "[scrollbar-gutter:stable]")}>
-          <div className={cn("app-shell-top sticky top-0 z-20 shrink-0", hero && "-mb-[calc(var(--topbar-height)+var(--safe-top))]")}>
-            <TopBar overlay={hero && !scrolled} />
-          </div>
-          <main id="main" data-print="keep" className={cn("app-shell-main flex min-h-0 flex-1 flex-col md:pb-0", audioActive ? "pb-[calc(var(--tabbar-height)+var(--safe-bottom)+4rem)]" : "pb-[calc(var(--tabbar-height)+var(--safe-bottom))]", fixedHeight && "overflow-hidden")} tabIndex={-1}>
-            <Outlet />
-          </main>
+      <GlassAppShell
+        className="app-frame"
+        contentAs="div"
+        brand={<ShellBrand label="Librarian home" render={<Link to="/" />} data-focusable data-nav-zone="top" data-print="hide" className="nav-focus" />}
+        rail={<NavRail />}
+        topBar={<TopBar />}
+        tabBar={<BottomTabs />}
+      >
+        <div ref={body} className="app-shell-body relative flex min-h-0 min-w-0 flex-col">
+          <ConnectionBanner />
+          <PageScroller id="main-scroll" scrolling={!fixedHeight} className={cn("app-shell-scroll relative flex flex-1 flex-col", audioActive && "max-md:pb-16")}>
+            <main id="main" data-print="keep" className={cn("app-shell-main flex min-w-0 flex-1 flex-col", fixedHeight && "min-h-0")} tabIndex={-1}>
+              <Outlet />
+            </main>
+          </PageScroller>
+          <div className="contents" data-print="hide"><PlayerDock /></div>
         </div>
-        <div className="contents" data-print="hide"><PlayerDock /></div>
-      </SidebarInset>
-      <BottomTabs />
+      </GlassAppShell>
+      <FileDialogHost />
       <div className="contents" data-print="hide"><UpdatePrompt /></div>
-    </SidebarProvider>
+    </div>
   );
 }

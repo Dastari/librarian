@@ -54,6 +54,16 @@ Return a promise for server saves; a rejection reverts the move. Do not add your
 handles or disable sorting UI; the grips explain why they are off while sorted, filtered,
 searched, grouped or paged.
 
+For a record's related detail, pass `renderRowDetail` rather than opening a dialog or a second
+table: an expander shows host content under the row, measured and rendered only while open.
+For a hierarchy, pass `tree={{ getSubRows, hasChildren, getChildCount, onLoadChildren }}`: the
+grid becomes a `treegrid` and children load in reserved space with Retry. Open rows are the
+`expanded` state slice, not in the URL. Paging counts top-level rows; keep sorting and filtering
+on the server, sorted within each parent, keeping ancestors of a match (`tree.isContext`, or
+`filterTreeRows` for local rows). Selection names rows, never descendants, and `onStateChange`
+reports `{ unloaded }`. Reordering is off while a row is open, and export adds a Level column
+(docs/data-filters.md).
+
 Below `cardBreakpoint` the table renders cards. Mark one column `cardRole: "title"` and,
 where useful, `"subtitle"` and `"status"`. Other columns with priority 1–3 flow as compact
 label/value pairs, lowest priority number first, so give the facts a phone user scans
@@ -80,3 +90,11 @@ Charts use the data palette and assign stable series identifiers. Semantic red/a
 represent thresholds and states. Provide a definite plot height and an accessible table view.
 Maps and topology accept host-owned points, nodes, tile providers and attribution. Keep fixture
 providers out of production integration and retain the declared source attribution.
+
+Choose the chart by the question. `ComboChart` mixes columns and lines over the same categories;
+give it a second axis only for two measures of one process that differ in unit, name both axes
+(`valueLabel`, `secondaryAxis.label`) and set `axis: "secondary"` on the series that read it. The
+crossing point of two scales means nothing, so never use two axes for amounts in one unit.
+`FunnelChart` reads stages in order. `RadarChart` compares the shape of two or three profiles on
+one scale; for exact amounts use `BarChart`. `SankeyChart` shows how amounts divide and join across
+stages; past eight groups, colour stops telling nodes apart, so set `group` on related nodes.

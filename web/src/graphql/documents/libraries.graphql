@@ -46,11 +46,6 @@ query LibrariesOverview($page: PageInput = { limit: 100, offset: 0 }) {
             totalCount
           }
         }
-        mediaFiles(page: { limit: 1, offset: 0 }) {
-          pageInfo {
-            totalCount
-          }
-        }
       }
     }
     pageInfo {
@@ -88,10 +83,15 @@ query LibraryDetail($id: String!) {
         totalCount
       }
     }
-    mediaFiles(page: { limit: 1, offset: 0 }) {
-      pageInfo {
-        totalCount
-      }
+  }
+}
+
+# Counting a library's files takes around a second on a large library, so it is asked for on its
+# own: nothing else on a page waits for it.
+query LibraryFileCount($libraryId: String!) {
+  mediaFiles(where: { libraryId: { eq: $libraryId } }, page: { limit: 1, offset: 0 }) {
+    pageInfo {
+      totalCount
     }
   }
 }

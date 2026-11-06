@@ -1,6 +1,6 @@
 # Librarian web style guide
 
-Glass UX 0.11.7 owns the shared UI and appearance runtime. Follow the
+Glass UX 0.16.1 owns the shared UI and appearance runtime. Follow the
 [migration plan](../docs/glass-ux-migration-plan.md),
 [shared design rules](../docs/glass-ux/ui-rules.md) and
 [layout contract](../docs/glass-ux/layout-contract.md). The
@@ -9,9 +9,12 @@ implemented components and the remaining compatibility boundary.
 
 ## Product layout
 
-- Keep the full-screen media app: rail on desktop, bottom navigation on phones,
-  persistent player, artwork shelves and full-bleed heroes. Use `page-gutter` for
-  page content; preserve safe areas and dock offsets.
+- The frame is Glass `AppShell` with its `Rail`, `TopBar` and phone `TabBar`, all on the canvas:
+  the bar has no material, so artwork shows through it. Use `page-gutter` for page content;
+  preserve safe areas and dock offsets.
+- The document never scrolls and neither does the frame. Each page has one `PageScroller`. Routed
+  tabs sit outside it, so they stay put while the view under them scrolls. A bounded pane clips
+  (`overflow: clip`); `overflow: hidden` can still be scrolled from code by a focus or a reveal.
 - Artwork and media facts carry the page. Use factual labels and reserve space for
   loading, artwork failures, validation and live results. Avoid repeated headings
   when navigation already names the view.
@@ -71,6 +74,10 @@ galleries use a Glass ScrollArea and keep their count footer outside it. Tables
 embedded in scrolling artwork/detail pages use `height="auto"`. Failed refreshes
 keep readable loaded rows and offer retry.
 
+Filters belong to their table. Search, column filters and saved views (Unread, Needs action) all
+sit in the table's toolbar, through `search`, column `filter` and `toolbar`. Above a table go only
+routed tabs, page actions and a filter that drives several things at once.
+
 Server-backed views compose public Glass DataTable directly. Complete datasets
 use `components/ui/LoadedDataTable.tsx` for local filtering and progressive reveal.
 Main-page tables sit directly on the page canvas, without an enclosing glass
@@ -99,19 +106,20 @@ See [responsive audit](../docs/responsive-media-audit.md) for route coverage and
 the release-source continuation limitation. Never filter a partial server batch
 while presenting it as the complete dataset.
 
-The pinned Glass 0.11.7 dependency has a small pnpm patch at
-`patches/glass-ux@0.11.7.patch`: grid focus capture synchronizes the virtualizer's
-active row after native focus, retaining alphabet-jump and cell focus while
-scrolling. Its additive `infinite.revision` also rearms replaced batches without
-using the semantic query key or resetting the reader. See [patch notes](patches/README.md).
+The pinned Glass dependency has a small pnpm patch at `patches/glass-ux@0.16.1.patch`: grid
+focus capture synchronizes the virtualizer's active row after native focus, retaining
+alphabet-jump and cell focus while scrolling. Its additive `infinite.revision` rearms replaced
+batches without using the semantic query key or resetting the reader, and `setDuration` lets the
+player show a growing playlist's real length. See [patch notes](patches/README.md).
 Keep these reproducible fixes until a library release includes them.
 
 ## Media pages
 
-Detail pages (`DetailShell`) and Home put the title's artwork behind the whole page,
-not in a boxed banner. `MediaBackdrop` draws the backdrop under the transparent top
-bar, fades it into the canvas and spreads a single static blur of the same image as
-a colour wash (hidden in Solid). A poster is only ever used as that wash. With wide
+Detail pages (`DetailShell`) put the title's artwork behind the whole window, not in a boxed
+banner. `MediaBackdrop` renders into the layer behind the shell, so the picture reaches under the
+rail and the top bar. It does not scroll: it recedes as the page scrolls over it. It fades into
+the canvas and spreads a single static blur of the same image as a colour wash (hidden in Solid).
+A poster is only ever used as that wash. With wide
 art the `HeroBanner` fills exactly the first screen (`--view-h`, the scroller's
 visible height), so the next section starts at the fold rather than half on screen;
 without it (albums, books, missing art) the hero sizes to its text.
@@ -147,6 +155,38 @@ week rows share the first screen through `.guide-day`) and **Streaming grid** (s
 days, defaulting to the subscription streamers listed that week, with the chosen services
 remembered per browser). `?view=grid` keeps the choice in the URL.
 
+Home is shelves from the first line, as in Plex: continue watching, libraries and what is new.
+It does not preview one title; that belongs to a library's Recommended view.
+
+## Titles you don't have
+
+A movie, show or audiobook that is not in a library opens a normal page at `/discover/...`, built on
+`DetailShell`. Details come from `providerMovie`, `providerShow` and `providerAudiobook`, read through
+the metadata cache; pictures come from the artwork cache as `provider-*` entities, so nothing is
+fetched from a provider twice. A title already in a library redirects to its real page. **Add to
+library** is the one action: it adds straight away, then asks whether to choose a release, download
+automatically or leave it. Search, the TV guide and the release shelves all link here. Albums have no
+such page yet and still add from their search card.
+
+## Detail dialogs
+
+`EntityDetailDialog` is the one layout for a record's details: the record's `EntityIdentity` at its header tier with its actions on the same line (a long name truncates, the actions don't move), what matters next, and everything else in tabs that scroll under it, at a fixed height so changing tab never resizes it. A download shows its transfer as `Metric`s and a `Gauge` and its files as a `DataTable`, one row per file with what matching did with it.
+
+## Files
+
+A media file has one identity (`FileIdentity`), one action set (`useFileActions`) and one dialog
+(`FileDialogHost`, mounted in the shell). A file row, a file chip and `openFileDialog(id)` all open
+that dialog. "Delete file" takes an administrator and removes the file from disk as well as the library
+(`deleteMediaFileFromDisk`). The record goes first and the file last, and a path outside the library's
+root is refused before either.
+
+## Video
+
+`features/player/VideoPlayer.tsx` uses Glass `VideoPlayer`. Librarian supplies the stream through
+`attach` (`useMediaSource`), watch progress, tracks, chapters and casting through a `CastAdapter`
+(`useCastAdapter`, over the server's cast sessions). On a remote, Down reaches the controls, Left and
+Right walk them and Up returns to the picture, where Left and Right seek.
+
 ## Artwork
 
 Library artwork always comes from the local cache (`lib/artwork.ts`): never pass an
@@ -179,7 +219,8 @@ results that are not in the library keep their remote URLs.
 ## Motion
 
 Routes cross-fade with the View Transitions API (`defaultViewTransition`). Only the
-routed view moves; the rail and top bar are named layers that stay still (R6.3). An
+routed view moves (R6.3): AppShell takes the root out of the transition, so the rail, top bar and
+artwork stay live, and the view is named only while a transition runs. An
 opened tile's artwork morphs into the detail poster (`claimMorph`). Hero text rises
 in and backdrops settle once; nothing loops, and every duration multiplies by
 `--motion-scale`, so Still and reduced motion stop it all.
@@ -191,8 +232,8 @@ Use `glass-ux/toast` for mutation results, inline field validation for forms, an
 reserved status space for refresh/connection feedback. Confirm destructive actions.
 
 Use `glass-ux/icons` for migrated presentation; let controls size their icons.
-Existing Tabler icons remain where product compositions or library gaps require
-them until their slice migrates.
+Tabler remains only where Glass has no equivalent (film, disc, microphone, books and similar media
+kinds) or where an icon is passed as a value to a host bridge that has not migrated.
 
 HeroUI, React Aria components and their component recipes are retired. Do not
 restore their providers, dependencies or styles. Host API bridges compose public

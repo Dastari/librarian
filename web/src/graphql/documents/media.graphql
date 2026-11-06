@@ -374,3 +374,10 @@ mutation AnalyzeMediaFile($mediaFileId: String!, $path: String!) {
     message
   }
 }
+
+mutation DeleteMediaFileFromDisk($mediaFileId: String!) {
+  deleteMediaFileFromDisk(mediaFileId: $mediaFileId) {
+    success
+    reason
+  }
+}

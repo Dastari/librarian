@@ -191,6 +191,28 @@ struct SelectedImportMatch {
     candidate: MatchCandidate,
 }
 
+/// A person's choice of what one downloaded file is. Imported as a manual match.
+#[derive(Debug, Clone)]
+pub struct ManualFileTarget {
+    pub library_id: String,
+    pub target_type: String,
+    pub target_id: String,
+}
+
+/// `match_type` recorded when a person chose the target.
+const MANUAL_MATCH_TYPE: &str = "manual";
+
+/// In a match's reason: this one file is the entire book, so it belongs to every chapter.
+const WHOLE_BOOK_REASON: &str = "one file holds the whole book";
+
+/// How much of a book's length one file has to cover to count as the whole of it.
+const WHOLE_BOOK_MINIMUM_COVERAGE: f64 = 0.8;
+
+/// Whether a book's one linked file is the whole book, rather than the first of many.
+fn file_covers_book(file_seconds: i64, book_seconds: f64) -> bool {
+    book_seconds > 0.0 && file_seconds as f64 >= book_seconds * WHOLE_BOOK_MINIMUM_COVERAGE
+}
+
 /// `match_type` recorded when the Torrent row named the exact target.
 const TORRENT_LINK_MATCH_TYPE: &str = "torrent_link";
 
@@ -615,6 +637,33 @@ pub struct LibraryScanService {
     episode_candidate_cache: Arc<RwLock<HashMap<String, Vec<EpisodeCandidateRow>>>>,
     track_candidate_cache: Arc<RwLock<HashMap<String, Vec<TrackCandidateRow>>>>,
     chapter_candidate_cache: Arc<RwLock<HashMap<String, Vec<ChapterCandidateRow>>>>,
+}
+
+/// Finds an unanswered action notification about this same thing: the same action on the same
+/// file, for the same reason. A different upgrade found for that file is still news.
+fn open_action_notification_lookup(
+    owner_id: &str,
+    action_type: &str,
+    media_file_id: Option<&str>,
+    message: &str,
+) -> serde_json::Value {
+    let mut filter = serde_json::json!({
+        "userId": { "eq": owner_id },
+        "actionType": { "eq": action_type },
+        "message": { "eq": message },
+        "resolvedAt": { "isNull": true }
+    });
+    if let Some(media_file_id) = media_file_id {
+        filter["mediaFileId"] = serde_json::json!({ "eq": media_file_id });
+    }
+    serde_json::json!({ "where": filter, "page": { "limit": 1, "offset": 0 } })
+}
+
+fn notifications_found(data: &serde_json::Value) -> bool {
+    data.get("Notifications")
+        .and_then(|notifications| notifications.get("Edges"))
+        .and_then(|edges| edges.as_array())
+        .is_some_and(|edges| !edges.is_empty())
 }
 
 impl LibraryScanService {
@@ -1272,6 +1321,27 @@ impl LibraryScanService {
         action_type: &str,
         action_data: &str,
     ) {
+        // Whatever finds this keeps running until the question is answered, so ask it once.
+        let open = self
+            .execute_graphql(
+                auth_user,
+                r#"query OpenActionNotification($where: NotificationWhereInput, $page: PageInput) {
+                    Notifications: notifications(where: $where, page: $page) {
+                        Edges: edges { Node: node { Id: id } }
+                    }
+                }"#,
+                open_action_notification_lookup(owner_id, action_type, media_file_id, message),
+            )
+            .await;
+        match open {
+            Ok(data) if notifications_found(&data) => return,
+            Ok(_) => {}
+            Err(error) => {
+                // Better to skip one than to risk another run of duplicates.
+                warn!(user_id = %owner_id, title, error = %error, "Failed to check for an open action notification");
+                return;
+            }
+        }
         if let Err(e) = self
             .execute_mutation(
                 auth_user,
@@ -6251,7 +6321,9 @@ impl LibraryScanService {
         let user_uuid = Uuid::parse_str(&library.user_id)?;
         let audiobook = metadata
             .add_audiobook_from_provider(AddAudiobookOptions {
-                provider: MetadataProvider::OpenLibrary,
+                provider: crate::services::metadata::providers::audiobook_provider_for_id(
+                    &candidate.provider_id,
+                ),
                 provider_id: candidate.provider_id,
                 library_id: library_uuid,
                 user_id: user_uuid,
@@ -6279,6 +6351,38 @@ impl LibraryScanService {
                 reason: Some(
                     "Created audiobook from metadata provider and matched chapter".to_string(),
                 ),
+                candidates: Vec::new(),
+            }));
+        }
+
+        // A file as long as the whole book belongs to the chapters the book already has.
+        let chapters = self.book_chapters(&audiobook.id).await?;
+        let first_chapter = chapters
+            .iter()
+            .filter(|chapter| chapter.media_file_id.is_none())
+            .min_by_key(|chapter| chapter.chapter_number)
+            .map(|chapter| chapter.id.clone());
+        if let Some(first) = first_chapter.filter(|_| {
+            chapters.len() > 1
+                && chapters
+                    .iter()
+                    .all(|chapter| chapter.media_file_id.is_none())
+        }) && self
+            .file_is_whole_book(&audiobook.id, &chapters, media_file_id)
+            .await?
+        {
+            self.link_chapter(auth_user, media_file_id, &library.id, &first, "auto", None)
+                .await?;
+            self.link_whole_book(auth_user, &first, media_file_id)
+                .await?;
+            return Ok(Some(MatchResult {
+                success: true,
+                auto_matched: true,
+                already_matched: false,
+                matched_type: Some("Chapter".to_string()),
+                matched_id: Some(first),
+                confidence: candidate_score.min(1.0),
+                reason: Some("Linked the book's one file to all of its chapters".to_string()),
                 candidates: Vec::new(),
             }));
         }
@@ -7592,6 +7696,66 @@ impl LibraryScanService {
         Ok(())
     }
 
+    /// Delete a media file for good: its record through the generated mutation, then the file.
+    ///
+    /// The file goes last because that step cannot be undone. If it fails, the record is already
+    /// gone and the file is still safe on disk, where the next scan finds it again. The checks
+    /// run first, so a file outside its library's root loses neither.
+    pub async fn delete_media_file_from_disk(&self, media_file_id: &str) -> Result<()> {
+        // A sandbox copies the real database, so its paths are the real library's files.
+        if std::env::var_os("LIBRARIAN_DISABLE_DISK_DELETE").is_some() {
+            anyhow::bail!("Deleting files from disk is disabled on this server");
+        }
+        let file = self.get_media_file(media_file_id).await?;
+        let library_id = file
+            .library_id
+            .as_deref()
+            .context("This file does not belong to a library, so it cannot be deleted from disk")?;
+        let library = self.get_library(library_id).await?;
+        let root = PathBuf::from(&library.path);
+        let path = PathBuf::from(&file.path);
+        let target = {
+            let (root, path) = (root.clone(), path.clone());
+            tokio::task::spawn_blocking(move || deletable_media_file_path(&root, &path)).await??
+        };
+
+        let auth_user = self.system_auth_user(None).await?;
+        let data = self
+            .execute_mutation(
+                &auth_user,
+                r#"mutation deleteMediaFileRecord($id: String!) {
+                    DeleteMediaFile: deleteMediaFile(id: $id) { Success: success Error: error }
+                }"#,
+                serde_json::json!({ "id": media_file_id }),
+            )
+            .await?;
+        if !data
+            .get("DeleteMediaFile")
+            .and_then(|v| v.get("Success"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            let error = data
+                .get("DeleteMediaFile")
+                .and_then(|v| v.get("Error"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("failed to delete the media file record");
+            anyhow::bail!(error.to_string());
+        }
+
+        let Some(target) = target else {
+            return Ok(());
+        };
+        tokio::task::spawn_blocking(move || remove_media_file(&root, &target))
+            .await?
+            .with_context(|| {
+                format!(
+                    "{} left the library, but the file could not be deleted from disk. The next scan will find it again",
+                    file.original_name.as_deref().unwrap_or(&file.path)
+                )
+            })
+    }
+
     pub async fn match_media_file(&self, mut request: MatchRequest) -> Result<MatchResult> {
         let media_file = self.get_media_file(&request.media_file_id).await?;
         let library_id = request
@@ -8206,9 +8370,263 @@ impl LibraryScanService {
         };
 
         validate_relative_library_path(&relative_path)?;
-        let target = PathBuf::from(&library.path).join(relative_path);
+        let mut target = PathBuf::from(&library.path).join(relative_path);
+        if target_type == "Chapter" && self.chapter_shares_a_file(target_id).await? {
+            target = self.named_after_book(target_id, target).await?;
+        }
         checked_library_path(Path::new(&library.path), &target)?;
         Ok(target)
+    }
+
+    /// One file holding a whole book takes the book's name, not its first chapter's.
+    async fn named_after_book(&self, chapter_id: &str, path: PathBuf) -> Result<PathBuf> {
+        use crate::graphql::entities::{Audiobook, Chapter};
+        let database = self.database().await?;
+        let pool = database.pool().pool();
+        let chapter = Chapter::get(pool, &chapter_id.to_string())
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("That chapter no longer exists"))?;
+        let book = Audiobook::get(pool, &chapter.audiobook_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("That audiobook no longer exists"))?;
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("m4b")
+            .to_string();
+        Ok(path.with_file_name(format!(
+            "{}.{extension}",
+            sanitize_for_filename(&book.title)
+        )))
+    }
+
+    async fn book_chapters(
+        &self,
+        audiobook_id: &str,
+    ) -> Result<Vec<crate::graphql::entities::Chapter>> {
+        use crate::graphql::entities::{Chapter, ChapterWhereInput};
+        let database = self.database().await?;
+        Ok(Chapter::query(database.pool().pool())
+            .filter(ChapterWhereInput {
+                audiobook_id: Some(graphql_orm::graphql::filters::StringFilter {
+                    eq: Some(audiobook_id.to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await?)
+    }
+
+    /// Whether a file is about as long as the whole of the book these chapters belong to.
+    async fn file_is_whole_book(
+        &self,
+        audiobook_id: &str,
+        chapters: &[crate::graphql::entities::Chapter],
+        media_file_id: &str,
+    ) -> Result<bool> {
+        use crate::graphql::entities::{Audiobook, MediaFile};
+        let database = self.database().await?;
+        let pool = database.pool().pool();
+        let Some(file_seconds) = MediaFile::get(pool, &media_file_id.to_string())
+            .await?
+            .and_then(|file| file.duration)
+            .map(i64::from)
+        else {
+            return Ok(false);
+        };
+        let listed: f64 = chapters
+            .iter()
+            .filter_map(|chapter| chapter.duration_secs)
+            .map(f64::from)
+            .sum();
+        let book_seconds = Audiobook::get(pool, &audiobook_id.to_string())
+            .await?
+            .and_then(|book| book.total_duration_secs)
+            .map_or(listed, f64::from);
+        Ok(file_covers_book(file_seconds, book_seconds))
+    }
+
+    async fn chapter_shares_a_file(&self, chapter_id: &str) -> Result<bool> {
+        use crate::graphql::entities::Chapter;
+        let database = self.database().await?;
+        let Some(chapter) = Chapter::get(database.pool().pool(), &chapter_id.to_string()).await?
+        else {
+            return Ok(false);
+        };
+        let chapters = self.book_chapters(&chapter.audiobook_id).await?;
+        let mut files = chapters
+            .iter()
+            .map(|chapter| chapter.media_file_id.as_deref());
+        let first = files.next().flatten();
+        Ok(chapters.len() > 1 && first.is_some() && files.all(|file| file == first))
+    }
+
+    /// Point every chapter of the book `chapter_id` belongs to at one file.
+    async fn link_whole_book(
+        &self,
+        auth_user: &AuthUser,
+        chapter_id: &str,
+        media_file_id: &str,
+    ) -> Result<()> {
+        use crate::graphql::entities::Chapter;
+        let database = self.database().await?;
+        let chapter = Chapter::get(database.pool().pool(), &chapter_id.to_string())
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("That chapter no longer exists"))?;
+        let data = self
+            .execute_mutation(
+                auth_user,
+                r#"mutation LinkWholeBook($where: ChapterWhereInput, $input: UpdateChapterInput!) {
+                    UpdateChapters: updateChapters(where: $where, input: $input) {
+                        Success: success
+                        Error: error
+                    }
+                }"#,
+                serde_json::json!({
+                    "where": { "audiobookId": { "eq": chapter.audiobook_id } },
+                    "input": { "mediaFileId": media_file_id, "wanted": false }
+                }),
+            )
+            .await?;
+        if data
+            .pointer("/UpdateChapters/Success")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+        {
+            anyhow::bail!(
+                "{}",
+                data.pointer("/UpdateChapters/Error")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("Could not update the book's chapters")
+            );
+        }
+        Ok(())
+    }
+
+    /// Chapters from the file itself, for a book whose provider has none. A file with no chapters
+    /// of its own becomes a single chapter, so it still has somewhere to belong.
+    async fn create_chapters_from_file(
+        &self,
+        auth_user: &AuthUser,
+        audiobook_id: &str,
+        title: &str,
+        path: &str,
+    ) -> Result<Vec<LinkedChapterRow>> {
+        let embedded = ffprobe_analyze(path)
+            .await
+            .map(|analysis| analysis.chapters)
+            .unwrap_or_default();
+        let mut rows: Vec<(String, f64, Option<f64>)> = embedded
+            .iter()
+            .enumerate()
+            .map(|(index, chapter)| {
+                (
+                    chapter
+                        .title
+                        .as_deref()
+                        .map(|name| name.replace('\u{a0}', " ").trim().to_string())
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or_else(|| format!("Chapter {}", index + 1)),
+                    chapter.start_secs,
+                    Some(chapter.end_secs),
+                )
+            })
+            .collect();
+        if rows.is_empty() {
+            rows.push((title.to_string(), 0.0, None));
+        }
+        let mut created = Vec::with_capacity(rows.len());
+        for (index, (name, start, end)) in rows.into_iter().enumerate() {
+            let number = index as i32 + 1;
+            let data = self
+                .execute_mutation(
+                    auth_user,
+                    r#"mutation ChapterFromFile($input: CreateChapterInput!) {
+                        CreateChapter: createChapter(input: $input) {
+                            Success: success
+                            Error: error
+                            Chapter: chapter { Id: id }
+                        }
+                    }"#,
+                    serde_json::json!({ "input": {
+                        "audiobookId": audiobook_id,
+                        "chapterNumber": number,
+                        "title": name,
+                        "startTimeSecs": start,
+                        "endTimeSecs": end,
+                        "durationSecs": end.map(|end: f64| (end - start).round() as i32),
+                        "wanted": false,
+                    }}),
+                )
+                .await?;
+            let id = data
+                .pointer("/CreateChapter/Chapter/Id")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("Could not create a chapter from the file"))?;
+            created.push(LinkedChapterRow {
+                id: id.to_string(),
+                number,
+                title: Some(name),
+            });
+        }
+        Ok(created)
+    }
+
+    /// Books already imported with one file linked to their first chapter only: link the rest,
+    /// and, where the library organizes its files, give the file the book's name. Safe to repeat.
+    pub async fn repair_whole_file_audiobooks(&self) -> Result<usize> {
+        use crate::graphql::entities::Audiobook;
+        let database = self.database().await?;
+        let books = Audiobook::query(database.pool().pool()).fetch_all().await?;
+        let owner = AuthUser::system_admin();
+        let mut repaired = 0;
+        for book in books {
+            let chapters = self.book_chapters(&book.id).await?;
+            if chapters.len() < 2 {
+                continue;
+            }
+            let files: HashSet<&str> = chapters
+                .iter()
+                .filter_map(|chapter| chapter.media_file_id.as_deref())
+                .collect();
+            let (1, Some(file_id)) = (files.len(), files.iter().next().copied()) else {
+                continue;
+            };
+            let linked_everywhere = chapters
+                .iter()
+                .all(|chapter| chapter.media_file_id.is_some());
+            let file = self.get_media_file(file_id).await?;
+            if !self
+                .file_is_whole_book(&book.id, &chapters, file_id)
+                .await?
+            {
+                continue;
+            }
+            if !linked_everywhere {
+                let first = chapters
+                    .iter()
+                    .find(|chapter| chapter.media_file_id.is_some())
+                    .map(|chapter| chapter.id.clone())
+                    .unwrap_or_default();
+                self.link_whole_book(&owner, &first, file_id).await?;
+                repaired += 1;
+                info!(audiobook_id = %book.id, title = %book.title, "Linked every chapter to the book's one file");
+            }
+            let library = self.get_library(&book.library_id).await?;
+            let expected_name = format!("{}.", sanitize_for_filename(&book.title));
+            let named_for_book = Path::new(&file.path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(&expected_name));
+            if library.auto_organize && !named_for_book {
+                let organized = self.organize_media_file(file_id).await?;
+                if !organized.success {
+                    warn!(media_file_id = %file_id, reason = ?organized.reason, "Could not rename a whole-book file");
+                }
+            }
+        }
+        Ok(repaired)
     }
 
     pub async fn organize_media_file(&self, media_file_id: &str) -> Result<OrganizeResult> {
@@ -8310,15 +8728,38 @@ impl LibraryScanService {
                 target_path = %target_path.to_string_lossy(),
                 "{}", message
             );
-            self.create_notification(
-                &auth_user,
-                &library.user_id,
-                "WARNING",
-                "ORGANIZATION",
-                "Organize conflict skipped",
-                &message,
-            )
-            .await;
+            // A retried organize meets the same conflict every time.
+            let already_said = self
+                .execute_graphql(
+                    &auth_user,
+                    r#"query OpenOrganizeConflict($where: NotificationWhereInput, $page: PageInput) {
+                        Notifications: notifications(where: $where, page: $page) {
+                            Edges: edges { Node: node { Id: id } }
+                        }
+                    }"#,
+                    serde_json::json!({
+                        "where": {
+                            "userId": { "eq": library.user_id },
+                            "title": { "eq": "Organize conflict skipped" },
+                            "message": { "eq": message },
+                            "resolvedAt": { "isNull": true }
+                        },
+                        "page": { "limit": 1, "offset": 0 }
+                    }),
+                )
+                .await
+                .is_ok_and(|data| notifications_found(&data));
+            if !already_said {
+                self.create_notification(
+                    &auth_user,
+                    &library.user_id,
+                    "WARNING",
+                    "ORGANIZATION",
+                    "Organize conflict skipped",
+                    &message,
+                )
+                .await;
+            }
 
             return Ok(OrganizeResult {
                 success: false,
@@ -8463,6 +8904,147 @@ impl LibraryScanService {
         library_override: Option<String>,
         files: Vec<SourceFileImport>,
     ) -> SourceProcessSummary {
+        self.run_torrent_import(auth_user, info_hash, library_override, files, None)
+            .await
+    }
+
+    /// Import one file of a download as what a person says it is. The target must be in the
+    /// chosen library; the same checks as any import then apply, and an existing library file is
+    /// still never overwritten.
+    pub async fn import_torrent_file_as(
+        &self,
+        auth_user: &AuthUser,
+        info_hash: &str,
+        file: SourceFileImport,
+        target: ManualFileTarget,
+    ) -> SourceProcessSummary {
+        match self.manual_target_library(&target).await {
+            Ok(library_id) if library_id == target.library_id => {}
+            Ok(_) => {
+                return Self::failed_source_summary(anyhow::anyhow!(
+                    "That title is not in the chosen library"
+                ));
+            }
+            Err(error) => return Self::failed_source_summary(error),
+        }
+        self.run_torrent_import(
+            auth_user,
+            info_hash,
+            Some(target.library_id.clone()),
+            vec![file],
+            Some(&target),
+        )
+        .await
+    }
+
+    /// What the matcher thinks one downloaded file could be, to choose from. Changes no match.
+    pub async fn torrent_file_candidates(
+        &self,
+        auth_user: &AuthUser,
+        info_hash: &str,
+        file: &SourceFileImport,
+        library_id: &str,
+    ) -> Result<MatchResult> {
+        let database = self.database().await?;
+        let import =
+            Self::authorize_torrent_import(database.pool(), auth_user, info_hash, Some(library_id))
+                .await?;
+        let owner = AuthUser::system_admin();
+        let media_file_id = self
+            .ensure_source_media_file(&owner, &import.owner_id, info_hash, file)
+            .await?;
+        self.match_media_file(MatchRequest {
+            media_file_id,
+            library_id: Some(library_id.to_string()),
+            episode_id: None,
+            movie_id: None,
+            track_id: None,
+            chapter_id: None,
+            methods: Vec::new(),
+            requested_by_user_id: None,
+            force: false,
+            auto_match: false,
+            candidate_limit: 12,
+            allow_provider_fallback: false,
+            wanted_policy: MatchWantedPolicy::All,
+        })
+        .await
+    }
+
+    async fn manual_target_library(&self, target: &ManualFileTarget) -> Result<String> {
+        use crate::graphql::entities::{Audiobook, Chapter, Episode, Movie, Show, Track};
+        let database = self.database().await?;
+        let pool = database.pool().pool();
+        let id = &target.target_id;
+        let missing = || anyhow::anyhow!("That title no longer exists");
+        Ok(match target.target_type.as_str() {
+            "Movie" => Movie::get(pool, id).await?.ok_or_else(missing)?.library_id,
+            "Track" => Track::get(pool, id).await?.ok_or_else(missing)?.library_id,
+            "Episode" => {
+                let episode = Episode::get(pool, id).await?.ok_or_else(missing)?;
+                Show::get(pool, &episode.show_id)
+                    .await?
+                    .ok_or_else(missing)?
+                    .library_id
+            }
+            "Chapter" => {
+                let chapter = Chapter::get(pool, id).await?.ok_or_else(missing)?;
+                Audiobook::get(pool, &chapter.audiobook_id)
+                    .await?
+                    .ok_or_else(missing)?
+                    .library_id
+            }
+            other => anyhow::bail!("Unsupported match target: {other}"),
+        })
+    }
+
+    /// After one file was imported by hand: finished if nothing else is waiting, otherwise a
+    /// count of what is, since the file names in the previous message are out of date.
+    async fn status_after_manual_import(
+        &self,
+        import: &AuthorizedTorrentImport,
+    ) -> Result<(&'static str, Option<String>)> {
+        let owner = AuthUser::system_admin();
+        let data = self
+            .execute_graphql(
+                &owner,
+                r#"query WaitingSourceFiles($where: PendingFileMatchWhereInput, $page: PageInput) {
+                    PendingFileMatches: pendingFileMatches(where: $where, page: $page) {
+                        PageInfo: pageInfo { TotalCount: totalCount }
+                    }
+                }"#,
+                serde_json::json!({
+                    "where": {
+                        "sourceId": { "eq": import.info_hash },
+                        "userId": { "eq": import.owner_id },
+                        "copiedAt": { "isNull": true }
+                    },
+                    "page": { "limit": 1, "offset": 0 }
+                }),
+            )
+            .await?;
+        let waiting = data
+            .pointer("/PendingFileMatches/PageInfo/TotalCount")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0);
+        Ok(if waiting == 0 {
+            ("completed", None)
+        } else {
+            (
+                "partial",
+                Some(format!("{waiting} file(s) did not match any library item")),
+            )
+        })
+    }
+
+    async fn run_torrent_import(
+        &self,
+        auth_user: &AuthUser,
+        info_hash: &str,
+        library_override: Option<String>,
+        files: Vec<SourceFileImport>,
+        manual: Option<&ManualFileTarget>,
+    ) -> SourceProcessSummary {
         let admission = async {
             let database = self.database().await?;
             Self::authorize_torrent_import(
@@ -8479,7 +9061,7 @@ impl LibraryScanService {
             Err(error) => return Self::failed_source_summary(error),
         };
         match self
-            .process_torrent_source_files_inner(&import, library_override, files)
+            .process_torrent_source_files_inner(&import, library_override, files, manual)
             .await
         {
             Ok(summary) => summary,
@@ -8582,6 +9164,7 @@ impl LibraryScanService {
         import: &AuthorizedTorrentImport,
         library_override: Option<String>,
         files: Vec<SourceFileImport>,
+        manual: Option<&ManualFileTarget>,
     ) -> Result<SourceProcessSummary> {
         let info_hash = import.info_hash.as_str();
         let link = &import.link;
@@ -8788,7 +9371,9 @@ impl LibraryScanService {
             // linkage-based matches too: a recorded grab target never overrides a
             // human decision.
             match self.get_media_file(&media_file_id).await {
-                Ok(existing) if existing.match_type.as_deref() == Some("manual") => {
+                Ok(existing)
+                    if manual.is_none() && existing.match_type.as_deref() == Some("manual") =>
+                {
                     debug!(
                         media_file_id = %media_file_id,
                         source_path = %file.source_path,
@@ -8813,7 +9398,19 @@ impl LibraryScanService {
                 }
             }
 
-            let selected = if let Some(target) = linked.targets.get(&file.source_path) {
+            let selected = if let Some(manual) = manual {
+                Some(SelectedImportMatch {
+                    library: self.get_library(&manual.library_id).await?,
+                    candidate: MatchCandidate {
+                        target_type: manual.target_type.clone(),
+                        target_id: manual.target_id.clone(),
+                        target_name: None,
+                        score: 1.0,
+                        reason: Some(MANUAL_MATCH_TYPE.to_string()),
+                        wanted: None,
+                    },
+                })
+            } else if let Some(target) = linked.targets.get(&file.source_path) {
                 let library = match library_cache.get(&target.library_id) {
                     Some(library) => library.clone(),
                     None => match self.get_library(&target.library_id).await {
@@ -8954,7 +9551,12 @@ impl LibraryScanService {
             }
 
             let source_path = PathBuf::from(&file.source_path);
-            let target_path = match self
+            let whole_book = selected
+                .candidate
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains(WHOLE_BOOK_REASON));
+            let planned_path = self
                 .plan_media_target_path(
                     auth_user,
                     &selected.library,
@@ -8962,8 +9564,15 @@ impl LibraryScanService {
                     &selected.candidate.target_id,
                     &source_path,
                 )
-                .await
-            {
+                .await;
+            let planned_path = match planned_path {
+                Ok(path) if whole_book => {
+                    self.named_after_book(&selected.candidate.target_id, path)
+                        .await
+                }
+                other => other,
+            };
+            let target_path = match planned_path {
                 Ok(path) => path,
                 Err(error) => {
                     failed += 1;
@@ -9090,6 +9699,14 @@ impl LibraryScanService {
                 );
             }
 
+            if whole_book
+                && let Err(error) = self
+                    .link_whole_book(auth_user, &selected.candidate.target_id, &media_file_id)
+                    .await
+            {
+                warn!(media_file_id = %media_file_id, error = %error, "Could not link every chapter of a whole-book file");
+            }
+
             self.upsert_pending_file_match(
                 auth_user,
                 &owner_id,
@@ -9128,7 +9745,21 @@ impl LibraryScanService {
         } else {
             "unmatched"
         };
-        let error = Self::summarize_import_outcome(&diagnostics, processed, failed);
+        let mut error = Self::summarize_import_outcome(&diagnostics, processed, failed);
+        let mut status = status;
+        if manual.is_some() {
+            if processed == 0 {
+                // One file not landing says nothing about the rest of the download.
+                return Ok(SourceProcessSummary {
+                    success: false,
+                    files_processed: 0,
+                    files_failed: failed,
+                    messages,
+                    error,
+                });
+            }
+            (status, error) = self.status_after_manual_import(import).await?;
+        }
         self.update_torrent_post_process_status(
             import,
             status,
@@ -9382,7 +10013,9 @@ impl LibraryScanService {
     /// the source of an import decision auditable after the fact.
     fn import_match_type(candidate: &MatchCandidate) -> &'static str {
         let reason = candidate.reason.as_deref().unwrap_or_default();
-        if reason.starts_with(TORRENT_LINK_PARSED_MATCH_TYPE) {
+        if reason.starts_with(MANUAL_MATCH_TYPE) {
+            MANUAL_MATCH_TYPE
+        } else if reason.starts_with(TORRENT_LINK_PARSED_MATCH_TYPE) {
             TORRENT_LINK_PARSED_MATCH_TYPE
         } else if reason.starts_with(TORRENT_LINK_MATCH_TYPE) {
             TORRENT_LINK_MATCH_TYPE
@@ -10115,6 +10748,14 @@ impl LibraryScanService {
             return Ok(());
         }
 
+        // A provider with no chapter list leaves a book with none. One file can supply them.
+        if let ([only], true) = (audio, chapters.is_empty()) {
+            chapters = self
+                .create_chapters_from_file(auth_user, audiobook_id, title, &only.file.source_path)
+                .await?;
+        }
+        let whole_book = audio.len() == 1 && chapters.len() > 1;
+
         // Q52: audiobook releases are whole-book, not per-chapter, so files map
         // onto chapters in release (filename) order. `audio` is already sorted
         // naturally by the caller.
@@ -10144,15 +10785,22 @@ impl LibraryScanService {
                     target_id: chapter.id.clone(),
                     target_name: Some(label),
                     match_type: TORRENT_LINK_PARSED_MATCH_TYPE,
-                    reason: format!(
+                    reason: {
+                        let reason = format!(
                         "{TORRENT_LINK_PARSED_MATCH_TYPE}: torrent is linked to audiobook '{title}' and this is file {} of the release",
                         index + 1
-                    ),
+                    );
+                        if whole_book {
+                            format!("{reason}; {WHOLE_BOOK_REASON}")
+                        } else {
+                            reason
+                        }
+                    },
                 },
             );
         }
 
-        if audio.len() < chapters.len() {
+        if audio.len() < chapters.len() && !whole_book {
             plan.notes.push(format!(
                 "audiobook '{title}': {} of {} chapters have a file from this release",
                 audio.len(),
@@ -11600,6 +12248,12 @@ impl Service for LibraryScanService {
             .await
             .ok_or_else(|| anyhow::anyhow!("library_scan service handle not registered"))?;
 
+        // Before any scan can start: it may rename a file, and a scan that sees the new name before
+        // the database does takes it for a new file and drops the old record.
+        if let Err(error) = this.repair_whole_file_audiobooks().await {
+            warn!(error = %error, "Could not repair whole-file audiobooks");
+        }
+
         let scheduler = this.clone();
         let scheduler_handle = tokio::spawn(supervise_worker(
             "scheduler",
@@ -12668,6 +13322,43 @@ pub(crate) fn checked_library_path(root: &Path, destination: &Path) -> Result<Pa
         }
     }
     Ok(resolved)
+}
+
+/// The directory entry to unlink for a media file, or `None` when it is already gone.
+///
+/// Only the parent is resolved, so a symlink in the library loses the link and never what it
+/// points at. The parent's real location must be inside the library root.
+fn deletable_media_file_path(root: &Path, file: &Path) -> Result<Option<PathBuf>> {
+    let name = file
+        .file_name()
+        .context("Media file path has no file name")?;
+    let parent = file.parent().context("Media file path has no parent")?;
+    let target = checked_library_path(root, parent)?.join(name);
+    match std::fs::symlink_metadata(&target) {
+        Ok(metadata) if metadata.is_dir() => {
+            anyhow::bail!("Media file path is a directory, not a file")
+        }
+        Ok(_) => Ok(Some(target)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).context("Cannot inspect the media file"),
+    }
+}
+
+/// Unlink a checked media file, then its folder if that leaves it empty. The library root stays,
+/// and `remove_dir` refuses a folder with anything left in it (subtitles, artwork).
+fn remove_media_file(root: &Path, target: &Path) -> Result<()> {
+    match std::fs::remove_file(target) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    }
+    if let (Ok(root), Some(parent)) = (std::fs::canonicalize(root), target.parent())
+        && parent != root
+        && parent.starts_with(&root)
+    {
+        let _ = std::fs::remove_dir(parent);
+    }
+    Ok(())
 }
 
 fn create_library_directory(root: &Path, directory: &Path) -> Result<PathBuf> {
@@ -15450,5 +16141,132 @@ mod library_path_safety_tests {
             b"preserve source"
         );
         assert_eq!(std::fs::read(&source).unwrap(), b"preserve source");
+    }
+}
+
+#[cfg(test)]
+mod whole_book_tests {
+    use super::file_covers_book;
+
+    #[test]
+    fn a_file_is_the_whole_book_only_if_it_is_about_as_long() {
+        assert!(file_covers_book(34628, 34627.0));
+        assert!(file_covers_book(30000, 34627.0));
+        // The first of many files in a book split by chapter.
+        assert!(!file_covers_book(64, 34627.0));
+        // Nothing to compare it with.
+        assert!(!file_covers_book(64, 0.0));
+    }
+}
+
+#[cfg(test)]
+mod media_file_disk_deletion_tests {
+    use super::*;
+
+    struct Library {
+        _temp: tempfile::TempDir,
+        root: PathBuf,
+        outside: PathBuf,
+    }
+
+    fn library() -> Library {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("library");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(root.join("Film (2020)")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        Library {
+            _temp: temp,
+            root,
+            outside,
+        }
+    }
+
+    fn delete(library: &Library, file: &Path) -> Result<()> {
+        match deletable_media_file_path(&library.root, file)? {
+            Some(target) => remove_media_file(&library.root, &target),
+            None => Ok(()),
+        }
+    }
+
+    #[test]
+    fn deletes_the_file_and_the_folder_it_empties_but_never_the_root() {
+        let library = library();
+        let folder = library.root.join("Film (2020)");
+        let film = folder.join("Film (2020).mkv");
+        std::fs::write(&film, b"film").unwrap();
+        delete(&library, &film).unwrap();
+        assert!(!film.exists());
+        assert!(!folder.exists());
+
+        let loose = library.root.join("Loose.mkv");
+        std::fs::write(&loose, b"film").unwrap();
+        delete(&library, &loose).unwrap();
+        assert!(!loose.exists());
+        assert!(library.root.is_dir());
+    }
+
+    #[test]
+    fn keeps_a_folder_that_still_holds_other_files() {
+        let library = library();
+        let folder = library.root.join("Film (2020)");
+        let film = folder.join("Film (2020).mkv");
+        let subtitles = folder.join("Film (2020).srt");
+        std::fs::write(&film, b"film").unwrap();
+        std::fs::write(&subtitles, b"subtitles").unwrap();
+        delete(&library, &film).unwrap();
+        assert!(!film.exists());
+        assert!(subtitles.exists());
+    }
+
+    #[test]
+    fn refuses_anything_outside_the_library_root() {
+        let library = library();
+        let outside = library.outside.join("Other.mkv");
+        std::fs::write(&outside, b"other").unwrap();
+        let traversal = library.root.join("..").join("outside").join("Other.mkv");
+        for path in [&outside, &traversal] {
+            assert!(delete(&library, path).is_err(), "{}", path.display());
+        }
+        assert!(outside.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_folder_symlink_that_escapes_the_root() {
+        let library = library();
+        let outside = library.outside.join("Other.mkv");
+        std::fs::write(&outside, b"other").unwrap();
+        let link = library.root.join("Escape");
+        std::os::unix::fs::symlink(&library.outside, &link).unwrap();
+        assert!(delete(&library, &link.join("Other.mkv")).is_err());
+        assert!(outside.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_file_loses_the_link_and_not_its_target() {
+        let library = library();
+        let outside = library.outside.join("Other.mkv");
+        std::fs::write(&outside, b"other").unwrap();
+        let link = library.root.join("Linked.mkv");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        delete(&library, &link).unwrap();
+        assert!(std::fs::symlink_metadata(&link).is_err());
+        assert!(outside.exists());
+    }
+
+    #[test]
+    fn refuses_a_directory_and_accepts_a_file_already_gone() {
+        let library = library();
+        let folder = library.root.join("Film (2020)");
+        assert!(deletable_media_file_path(&library.root, &folder).is_err());
+        assert!(folder.is_dir());
+        let gone = library.root.join("Gone.mkv");
+        assert!(
+            deletable_media_file_path(&library.root, &gone)
+                .unwrap()
+                .is_none()
+        );
     }
 }

@@ -1,5 +1,4 @@
 import { render, screen } from "@testing-library/react";
-import { SidebarProvider } from "glass-ux/sidebar";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { InputModeProvider } from "@/lib/input-mode";
@@ -18,7 +17,7 @@ vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => true, useSession: ()
 vi.mock("../useShellCounts", () => ({ useShellCounts: () => ({ downloads: 3, notifications: 0 }) }));
 
 function rail() {
-  render(<InputModeProvider><SidebarProvider defaultOpen><NavRail /></SidebarProvider></InputModeProvider>);
+  render(<InputModeProvider><NavRail /></InputModeProvider>);
   return screen.getByRole("navigation", { name: "Primary" });
 }
 
@@ -31,7 +30,6 @@ describe("NavRail", () => {
     expect(nav).toHaveAttribute("data-nav-side");
     expect(screen.getByRole("link", { name: /Downloads/ })).toHaveAttribute("data-focusable");
     expect(screen.getByRole("link", { name: "Movies" })).toHaveAttribute("data-focusable");
-    expect(screen.getByRole("button", { name: "Collapse navigation" })).toHaveAttribute("data-focusable");
   });
 
   it("marks the current page and counts downloads", () => {
@@ -40,11 +38,10 @@ describe("NavRail", () => {
     expect(screen.getByText("3")).toBeInTheDocument();
   });
 
-  it("has a resize handle for a pointer but none for a remote", () => {
-    const pointer = rail();
-    expect(pointer.querySelector(".fa-sidebar-rail")).not.toBeNull();
-    pointer.remove();
-    window.localStorage.setItem("librarian.inputMode", "tv");
-    expect(rail().querySelector(".fa-sidebar-rail")).toBeNull();
+  it("keeps Settings at the foot, after the libraries", () => {
+    const nav = rail();
+    const names = [...nav.querySelectorAll("a")].map((link) => link.getAttribute("aria-label"));
+    expect(names.at(-1)).toBe("Settings");
+    expect(names.indexOf("Movies")).toBeGreaterThan(names.indexOf("Activity"));
   });
 });

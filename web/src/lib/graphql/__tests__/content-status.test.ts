@@ -15,7 +15,7 @@ describe("computed status refresh after media mutations", () => {
           wanted = false;
           observer.next({ data: { updateEpisode: { __typename: "UpdateEpisodeResult", success: true, error: null, episode: null } } });
         } else if (operation.operationName === "ContentStatuses") {
-          observer.next({ data: { contentStatuses: [{ __typename: "ContentStatusResult", contentType: "EPISODE", id: "ep-1", status: wanted ? "WANTED" : "MISSING" }] } });
+          observer.next({ data: { contentStatuses: [{ __typename: "ContentStatusResult", contentType: "EPISODE", id: "ep-1", status: wanted ? "WANTED" : "MISSING", downloadProgress: null }] } });
         } else observer.next({ data: { episodes: { total: 201 } } });
         observer.complete();
       });

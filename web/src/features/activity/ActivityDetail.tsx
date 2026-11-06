@@ -1,4 +1,5 @@
 import { ActionBar, type ActionSet } from "glass-ux/actions";
+import { Tooltip } from "glass-ux/tooltip";
 import { Badge } from "glass-ux/badge";
 import { EntityIdentity } from "glass-ux/entity";
 import { IconArrowRight, IconClose } from "glass-ux/icons";
@@ -46,13 +47,13 @@ export function ActivityDetail({ row, actions, onClose }: { row: ActivityRow; ac
           <div className="min-w-0 flex-1">
             <p className="text-overline text-muted">Current</p>
             <p className="text-title-sm">{upgrade.from ?? "Unknown"}</p>
-            {upgrade.targetPath ? <p className="truncate text-label-sm text-muted" title={upgrade.targetPath}>{fileName(upgrade.targetPath)}</p> : null}
+            {upgrade.targetPath ? <Tooltip content={upgrade.targetPath}><p className="truncate text-label-sm text-muted">{fileName(upgrade.targetPath)}</p></Tooltip> : null}
           </div>
           <IconArrowRight className="shrink-0 text-muted" />
           <div className="min-w-0 flex-1">
             <p className="text-overline text-muted">Upgrade</p>
             <p className="text-title-sm text-success">{upgrade.to ?? "Unknown"}</p>
-            {upgrade.sourcePath ? <p className="truncate text-label-sm text-muted" title={upgrade.sourcePath}>{fileName(upgrade.sourcePath)}</p> : null}
+            {upgrade.sourcePath ? <Tooltip content={upgrade.sourcePath}><p className="truncate text-label-sm text-muted">{fileName(upgrade.sourcePath)}</p></Tooltip> : null}
           </div>
         </div>
       ) : null}

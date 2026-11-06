@@ -1,19 +1,19 @@
 
 import { useNavigate } from "@tanstack/react-router";
-import { IconMovie, IconPlus } from "@tabler/icons-react";
+import { IconPlus } from "glass-ux/icons";
+import { IconMovie } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
 import { Button, EmptyState, ErrorState, PosterCard, PosterGallery } from "@/components/ui";
 import { ProviderSearchDialog } from "@/features/library-add/ProviderSearchDialog";
 import { usePlayer } from "@/features/player/usePlayer";
 import { LibraryMoviesDocument, type LibraryMoviesQuery, type MovieOrderByInput, type MovieWhereInput } from "@/graphql/generated/graphql";
-import { useContentStatuses } from "@/hooks/useContentStatuses";
+import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
 import { useServerTable } from "@/hooks/useServerTable";
 import { moviePoster } from "@/lib/artwork";
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { formatRuntime } from "@/lib/format";
 import { LIBRARY_TYPES } from "@/lib/library-types";
-import { statusMeta } from "@/lib/status";
 
 import { BrowserLetterRail, BrowserToolbar, type BrowserSortOption } from "./BrowserToolbar";
 import { useBrowserFilters, titleFilter } from "./useBrowserFilters";
@@ -83,7 +83,7 @@ export function MoviesBrowser({ libraryId }: { libraryId: string }) {
       icon={IconMovie}
       title={filtered ? "No movies match" : "No movies yet"}
       description={filtered ? "Try clearing the filters." : "Scan the library folder or add a movie from TMDB."}
-      action={isAdmin && !filtered ? <Button variant="primary" onPress={() => setAdding(true)}><IconPlus size={16} /> Add movie</Button> : undefined}
+      action={isAdmin && !filtered ? <Button variant="primary" onPress={() => setAdding(true)}><IconPlus size="md" /> Add movie</Button> : undefined}
     />
   );
 
@@ -99,7 +99,7 @@ export function MoviesBrowser({ libraryId }: { libraryId: string }) {
         sort={{ options: SORTS, value: table.sorting, onChange: table.setSorting }}
         total={list.totalCount}
         placeholder="Filter movies"
-        trailing={isAdmin ? <Button variant="primary" size="sm" onPress={() => setAdding(true)}><IconPlus size={16} /> Add</Button> : null}
+        trailing={isAdmin ? <Button variant="primary" size="sm" onPress={() => setAdding(true)}><IconPlus size="md" /> Add</Button> : null}
       />
       <div className="flex min-h-0 min-w-0 flex-1 gap-3 sm:gap-4">
         <PosterGallery<MovieRow>
@@ -122,7 +122,7 @@ export function MoviesBrowser({ libraryId }: { libraryId: string }) {
               tint={LIBRARY_TYPES.movies.tintVar}
               to="/movies/$movieId"
               params={{ movieId: row.id }}
-              status={statusMeta(statuses.get(row.id))}
+              status={contentStatusMeta(statuses, row.id)}
               onPlay={row.mediaFileId ? () => play(row) : undefined}
             />
           )}

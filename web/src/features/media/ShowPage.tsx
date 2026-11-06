@@ -5,7 +5,7 @@ import { toast } from "glass-ux/toast";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 
-import { Button, ConfirmDialog, EmptyState, ErrorState, HeroFacts, KeyValueList, MediaRow, MetaLine, Panel, PosterCard, Section, SkeletonHero, ViewToggle, type ViewMode } from "@/components/ui";
+import { Button, ConfirmDialog, EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, PosterCard, Section, SkeletonHero, ViewToggle, type ViewMode } from "@/components/ui";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
 import { AcquisitionDialog } from "@/features/acquisition/AcquisitionDialog";
 import { autoDownloadMeta } from "@/features/acquisition/mode";
@@ -15,7 +15,7 @@ import { EntitySeasonListDocument, EntityShowDeleteDocument, RefreshShowDocument
 import { useContentStatuses } from "@/hooks/useContentStatuses";
 import { seasonPoster, showBackdrop, showPoster } from "@/lib/artwork";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
-import { formatDate, formatRuntime } from "@/lib/format";
+import { formatRuntime } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { LIBRARY_TYPES } from "@/lib/library-types";
 import { usePref } from "@/lib/prefs";
@@ -106,12 +106,15 @@ export function ShowPage({ showId }: { showId: string }) {
         title: show.name,
         meta: (
           <>
-            <MetaLine items={[show.year, show.network, show.contentRating, show.runtime ? formatRuntime(show.runtime, "minutes") : null, episodes.complete ? `${downloaded}/${list.length} episodes` : "Loading episodes"]} />
+            <MetaLine items={[show.year, show.network, show.status ?? show.contentRating, show.runtime ? formatRuntime(show.runtime, "minutes") : null, episodes.complete ? `${downloaded}/${list.length} episodes` : "Loading episodes"]} />
             <AcquisitionChip status={autoDownloadMeta(show.autoDownloadMode)} onPress={isAdmin ? () => setAcquisition(true) : undefined} />
           </>
         ),
         description: show.overview,
-        facts: <HeroFacts items={[{ label: "Genres", value: show.genres.join(", ") }]} />,
+        facts: <HeroFacts items={[
+          { label: "Genres", value: show.genres.join(", ") },
+          { label: "Links", value: show.tvmazeId || show.imdbId ? <ProviderLinks tvmazeId={show.tvmazeId} imdbId={show.imdbId} /> : null },
+        ]} />,
         actions: (
           <MediaActions
             personal={show.userId === user?.id ? { kind: "show", id: show.id } : undefined}
@@ -156,24 +159,19 @@ export function ShowPage({ showId }: { showId: string }) {
         </section>
       </div>
 
-      <Panel title="Details" className="lg:max-w-2xl">
-        <KeyValueList
-          columns={2}
-          items={[
-            { label: "Genres", value: show.genres.join(", ") || undefined },
-            { label: "Network", value: show.network },
-            { label: "Rating", value: show.contentRating },
-            { label: "Folder", value: show.path, mono: true },
-            { label: "TVmaze", value: show.tvmazeId ? <a className="nav-focus rounded text-brand hover:underline" href={`https://www.tvmaze.com/shows/${show.tvmazeId}`} target="_blank" rel="noreferrer">{show.tvmazeId}</a> : undefined },
-            { label: "IMDb", value: show.imdbId ? <a className="nav-focus rounded text-brand hover:underline" href={`https://www.imdb.com/title/${show.imdbId}`} target="_blank" rel="noreferrer">{show.imdbId}</a> : undefined },
-            { label: "Added", value: formatDate(show.createdAt) },
-          ]}
-        />
-      </Panel>
-
       <ConfirmDialog isOpen={confirmDelete} onOpenChange={setConfirmDelete} title={`Remove ${show.name}?`} description="The show and its episodes leave the catalogue. Files stay on disk." confirmLabel="Remove" destructive isPending={deleting} onConfirm={remove} />
       <AcquisitionDialog isOpen={acquisition} onOpenChange={setAcquisition} target={{ kind: "show", id: show.id, title: show.name, libraryId: show.libraryId, autoDownloadMode: show.autoDownloadMode, qualityProfileId: show.qualityProfileId }} onSaved={() => void refetch()} />
       <ReleaseSearchDialog isOpen={searching} onOpenChange={setSearching} query={show.name} imdbId={show.imdbId} season={activeSeason} libraryId={show.libraryId} target={{ showId: show.id }} />
     </DetailShell>
+  );
+}
+
+function ProviderLinks({ tvmazeId, imdbId }: { tvmazeId?: number | null; imdbId?: string | null }) {
+  const link = "nav-focus rounded text-brand hover:underline";
+  return (
+    <span className="flex flex-wrap gap-x-3">
+      {tvmazeId ? <a className={link} href={`https://www.tvmaze.com/shows/${tvmazeId}`} target="_blank" rel="noreferrer">TVmaze</a> : null}
+      {imdbId ? <a className={link} href={`https://www.imdb.com/title/${imdbId}`} target="_blank" rel="noreferrer">IMDb</a> : null}
+    </span>
   );
 }

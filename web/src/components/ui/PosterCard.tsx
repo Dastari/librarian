@@ -32,6 +32,8 @@ export interface PosterCardProps {
   selected?: boolean;
   /** `row` sizes a shelf tile; `compact` a smaller one (seasons); `fill` takes the grid cell. */
   width?: "row" | "compact" | "fill";
+  /** Two lines for the title, where titles differ only near the end (search results). */
+  wrapTitle?: boolean;
   priority?: boolean;
   /** Focus on the tile's link or button, so a page can preview the title (see `useFocusPreview`). */
   onFocus?: (event: FocusEvent<HTMLElement>) => void;
@@ -43,7 +45,7 @@ export interface PosterCardProps {
  * playback and extra actions are separate targets over the artwork and never hide on hover.
  * Watched progress runs along the poster's bottom edge.
  */
-export function PosterCard({ title, meta, image, aspect = "poster", tint, to, params, onPress, progress, status, badge, actions, onPlay, className, style, fallbackIcon, selected, width = "fill", priority, onFocus }: PosterCardProps) {
+export function PosterCard({ title, meta, image, aspect = "poster", tint, to, params, onPress, progress, status, badge, actions, onPlay, className, style, fallbackIcon, selected, width = "fill", priority, onFocus, wrapTitle }: PosterCardProps) {
   const labelId = useId();
   const navigationClass = "poster-navigation absolute inset-0 z-10 rounded-tile outline-none";
   const morph = (event: MouseEvent<HTMLElement>) => claimMorph(event.currentTarget.nextElementSibling);
@@ -82,7 +84,7 @@ export function PosterCard({ title, meta, image, aspect = "poster", tint, to, pa
         ) : null}
       </Surface>
       <div className="pointer-events-none min-w-0 px-0.5 pt-2">
-        <p id={labelId} className="truncate text-title-sm text-foreground">{title}</p>
+        <p id={labelId} className={cn("text-title-sm text-foreground", wrapTitle ? "line-clamp-2" : "truncate")}>{title}</p>
         {meta ? <p className="truncate text-label-sm text-muted">{meta}</p> : null}
       </div>
     </article>

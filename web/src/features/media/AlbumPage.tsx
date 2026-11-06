@@ -20,7 +20,7 @@ import { trackToPlayItem } from "@/features/libraries/browser/TracksBrowser";
 import { usePlayer } from "@/features/player/usePlayer";
 import type { PlayItem } from "@/features/player/store";
 import { AlbumDetailDocument, AlbumTracksPageDocument, EntityAlbumDeleteDocument, EntityTrackUpdateDocument, EntityTrackUpdateManyDocument, type AlbumDetailQuery } from "@/graphql/generated/graphql";
-import { useContentStatuses } from "@/hooks/useContentStatuses";
+import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
 import { albumCover } from "@/lib/artwork";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { formatBytes, formatClock, formatDate, formatRuntime, formatYear } from "@/lib/format";
@@ -61,7 +61,7 @@ function TrackNumberCell({ row: { original: track } }: TrackCellProps) {
 
 function TrackStatusCell({ row: { original: track } }: TrackCellProps) {
   const { statuses } = useAlbumTable();
-  return <StatusChip status={statusMeta(track.mediaFileId ? "AVAILABLE" : statuses.get(track.id))} />;
+  return <StatusChip status={track.mediaFileId ? statusMeta("AVAILABLE") : contentStatusMeta(statuses, track.id)} />;
 }
 
 function TrackFormatCell({ row: { original: track } }: TrackCellProps) {
@@ -74,7 +74,7 @@ function TrackDurationCell({ row: { original: track } }: TrackCellProps) {
 
 function TrackActionsCell({ row }: TrackCellProps) {
   const { actions } = useAlbumTable();
-  return <ActionBar set={actions} targets={[row.original]} label={row.original.title} maxButtons={1} />;
+  return <ActionBar set={actions} targets={[row.original]} label={row.original.title} maxButtons={1} className="table-row-actions" />;
 }
 
 // flexRender treats cell functions as component types. Context keeps live values

@@ -250,7 +250,7 @@ function revealInRow(element: HTMLElement, behavior: ScrollBehavior) {
 export function revealFocused(element: HTMLElement) {
   const behavior = scrollBehavior();
   const inRow = revealInRow(element, behavior);
-  const scroller = element.closest<HTMLElement>("#main-scroll");
+  const scroller = element.closest<HTMLElement>("[data-page-scroller]");
   // The largest enclosing section that fits: a row together with the rows it belongs with.
   let section: HTMLElement | null = null;
   for (let candidate = element.closest<HTMLElement>("[data-nav-section]"); candidate && scroller?.contains(candidate); candidate = candidate.parentElement?.closest<HTMLElement>("[data-nav-section]") ?? null) {
@@ -267,9 +267,8 @@ export function revealFocused(element: HTMLElement) {
   // the rows around it stay in view.
   if (scroller) {
     const view = scroller.getBoundingClientRect();
-    const top = view.top + (parseFloat(getComputedStyle(scroller).getPropertyValue("--topbar-height")) || 0);
     const rect = element.getBoundingClientRect();
-    if (rect.top >= top && rect.bottom <= view.bottom) return;
+    if (rect.top >= view.top && rect.bottom <= view.bottom) return;
   }
   element.scrollIntoView({ block: "center", inline: inRow ? undefined : "nearest", behavior });
 }

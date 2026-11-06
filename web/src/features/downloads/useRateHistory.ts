@@ -7,11 +7,12 @@ const INTERVAL_MS = 2000;
 export interface RateSample {
   down: number;
   up: number;
+  peers: number;
 }
 
 export interface RateHistory {
   /** Per torrent (by info hash), oldest first. */
-  byHash: ReadonlyMap<string, { down: readonly number[]; up: readonly number[] }>;
+  byHash: ReadonlyMap<string, { down: readonly number[]; up: readonly number[]; peers: readonly number[] }>;
   total: { down: readonly number[]; up: readonly number[] };
 }
 
@@ -35,12 +36,12 @@ export function useRateHistory(current: ReadonlyMap<string, RateSample>): RateHi
   useEffect(() => {
     const sample = () => {
       setHistory((previous) => {
-        const byHash = new Map<string, { down: readonly number[]; up: readonly number[] }>();
+        const byHash = new Map<string, { down: readonly number[]; up: readonly number[]; peers: readonly number[] }>();
         let down = 0;
         let up = 0;
         for (const [hash, rate] of latest.current) {
           const series = previous.byHash.get(hash);
-          byHash.set(hash, { down: push(series?.down, rate.down), up: push(series?.up, rate.up) });
+          byHash.set(hash, { down: push(series?.down, rate.down), up: push(series?.up, rate.up), peers: push(series?.peers, rate.peers) });
           down += rate.down;
           up += rate.up;
         }

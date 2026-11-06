@@ -2,6 +2,8 @@ import { defineActions, type ActionSet } from "glass-ux/actions";
 import type { EntityKind, EntityRef, EntityResolver } from "glass-ux/ai";
 import { IconExternalLink } from "glass-ux/icons";
 
+import { openFileDialog } from "@/features/files/fileDialog";
+
 import { ENTITY_KINDS, entityPath, type EntityKindName } from "./kinds";
 import type { LinkedRef } from "./linked";
 
@@ -35,7 +37,11 @@ export function createEntityResolver(navigate: (href: string) => void): EntityRe
       facts: ref.state ? [{ label: "Status", value: ref.state.label }] : undefined,
     }),
     actions: actionsFor,
-    open: (ref) => { const href = refHref(ref); if (href) navigate(href); },
+    open: (ref) => {
+      if (ref.kind === "mediaFile") return openFileDialog(ref.id);
+      const href = refHref(ref);
+      if (href) navigate(href);
+    },
     openWindow: (ref) => { const href = refHref(ref); if (href) window.open(href, "_blank", "noopener"); },
   };
 }

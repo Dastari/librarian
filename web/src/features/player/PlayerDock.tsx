@@ -187,7 +187,7 @@ export function PlayerDock() {
         className={cn(
           "glass-chrome relative z-30 flex shrink-0 items-center gap-3 rounded-none border-0 border-t px-3",
           "h-dock md:px-4",
-          "max-md:fixed max-md:inset-x-0 max-md:bottom-[calc(var(--tabbar-height)+var(--safe-bottom))] max-md:h-16",
+          "max-md:fixed max-md:inset-x-0 max-md:bottom-[calc(var(--tabbar-height)+max(var(--space-3),var(--safe-bottom))+var(--space-2))] max-md:h-16",
         )}
         role="region"
         aria-label="Now playing"

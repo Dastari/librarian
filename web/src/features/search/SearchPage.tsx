@@ -5,7 +5,8 @@ import { OnScreenKeyboard, type NavigationDirection } from "glass-ux/on-screen-k
 import { parseAsString, parseAsStringEnum, useQueryState } from "nuqs";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { Button, EmptyState, PageHeader, SegmentTabs, SkeletonRow } from "@/components/ui";
+import { PageScroller } from "@/components/shell/PageScroller";
+import { Button, EmptyState, SegmentTabs, SkeletonRow } from "@/components/ui";
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { LibrariesOverviewDocument, LibrarySearchDocument, SearchCreditsDocument, SearchStartDocument } from "@/graphql/generated/graphql";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
@@ -17,6 +18,7 @@ import { cn } from "@/lib/utils";
 
 import { ProviderResults } from "./ProviderResults";
 import { SearchTile } from "./SearchTile";
+import { useSearchFocusRequest } from "./searchFocus";
 import { rankHits, startHits, suggestTerms, type SearchHit } from "./searchResults";
 
 const SCOPES = ["library", "movie", "show", "album", "audiobook"] as const;
@@ -64,6 +66,15 @@ export function SearchPage() {
     if (!tv) inputRef.current?.focus();
   }, [tv]);
 
+  // The top bar's search box, pressed while already here.
+  useSearchFocusRequest(() => {
+    const input = inputRef.current;
+    if (input) {
+      input.focus();
+      input.select();
+    } else document.querySelector<HTMLElement>(".search-tv-keys button")?.focus();
+  });
+
   const remember = () => {
     const term = debounced;
     if (term) setRecent((previous) => [term, ...previous.filter((item) => item.toLocaleLowerCase() !== term.toLocaleLowerCase())].slice(0, RECENT_LIMIT));
@@ -101,21 +112,22 @@ export function SearchPage() {
       revealFocused(next);
     };
     return (
-      <div className="search-tv page-gutter grid shrink-0 items-start gap-10 py-8">
-        <aside data-nav-section className="search-tv-keys flex flex-col gap-6">
+      <div className="search-tv page-gutter grid min-h-0 flex-1 gap-10 pt-8">
+        <aside data-nav-section className="search-tv-keys flex min-h-0 flex-col gap-6">
           <OnScreenKeyboard layout="alphabet" size="lg" value={query} onValueChange={(value) => void setQuery(value || null)} onNavigateOut={leaveKeys} autoFocus aria-label="Search keyboard" aria-describedby="search-query" />
           <SuggestionList title={searching ? undefined : terms.length ? "Recent searches" : undefined} terms={terms.slice(0, TV_TERMS)} onChoose={choose} />
         </aside>
-        <div className="flex min-w-0 flex-col gap-6">
-          <div className="flex min-h-16 flex-wrap items-end justify-between gap-4">
+        {/* The query, its heading and the tabs hold still; only the results scroll. */}
+        <div className="flex min-h-0 min-w-0 flex-col gap-4">
+          <div className="flex shrink-0 items-start justify-between gap-4">
             <div className="min-w-0">
               <p id="search-query" aria-live="polite" className={`truncate text-display-xl ${query ? "text-foreground" : "text-muted"}`}>{query || "Search"}</p>
-              {heading ? <p className="text-overline mt-1 text-muted">{heading}</p> : null}
+              <p className="text-overline mt-1 min-h-4 text-muted">{heading}</p>
             </div>
-            {isAdmin && debounced ? <Button variant="secondary" onPress={() => setReleases(true)}><IconDownload /> Find releases</Button> : null}
+            {isAdmin && debounced ? <Button variant="secondary" className="shrink-0" onPress={() => setReleases(true)}><IconDownload /> Find releases</Button> : null}
           </div>
-          {scopes}
-          {body}
+          <div className="min-h-10 shrink-0">{scopes}</div>
+          <PageScroller className="search-tv-scroll flex-1">{body}</PageScroller>
         </div>
         <ReleaseSearchDialog isOpen={releases} onOpenChange={setReleases} query={debounced} />
       </div>
@@ -123,25 +135,30 @@ export function SearchPage() {
   }
 
   return (
-    <div className="page-gutter flex flex-col gap-6 py-8">
-      <PageHeader
-        title="Search"
-        actions={isAdmin && debounced ? <Button variant="secondary" onPress={() => setReleases(true)}><IconDownload /> Find releases</Button> : null}
-      />
-      <div className="flex flex-col gap-3">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      {/* Everything you steer the search with holds still; only the results scroll. */}
+      <div className="page-gutter flex shrink-0 flex-col gap-3 pb-3 pt-2">
+        <h1 className="sr-only">Search</h1>
         <SearchField ref={inputRef} aria-label="Search" value={query} onValueChange={(value) => void setQuery(value || null)} placeholder="Titles, people, albums…" size="lg" className="w-full max-w-2xl" data-spatial-start />
-        {terms.length && scope === "library" ? (
-          <div className="flex flex-wrap items-center gap-2" role="group" aria-label={searching ? "Suggested searches" : "Recent searches"}>
-            {!searching ? <span className="text-label-sm text-muted">Recent</span> : null}
-            {terms.map((term) => (
-              <Button key={term} variant="ghost" size="sm" className="rounded-full border border-separator" onPress={() => choose(term)}>{term}</Button>
-            ))}
-          </div>
-        ) : null}
+        <div className="search-terms flex h-9 min-w-0 items-center gap-2" role="group" aria-label={searching ? "Suggested searches" : "Recent searches"}>
+          {terms.length && scope === "library" ? (
+            <>
+              {!searching ? <span className="shrink-0 text-label-sm text-muted">Recent</span> : null}
+              {terms.map((term) => (
+                <Button key={term} variant="ghost" size="sm" className="shrink-0 rounded-full border border-separator" onPress={() => choose(term)}>{term}</Button>
+              ))}
+            </>
+          ) : null}
+        </div>
+        <div className="flex min-h-10 min-w-0 items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">{scopes}</div>
+          {isAdmin && debounced ? <Button variant="secondary" size="sm" className="shrink-0" onPress={() => setReleases(true)}><IconDownload /> Find releases</Button> : null}
+        </div>
       </div>
-      {scopes}
-      {heading && scope === "library" ? <p className="text-overline -mb-2 text-muted">{heading}</p> : null}
-      {body}
+      <PageScroller className="search-results page-gutter flex flex-1 flex-col gap-3 pb-8 pt-1">
+        {scope === "library" ? <p className="text-overline min-h-4 shrink-0 text-muted">{heading}</p> : null}
+        {body}
+      </PageScroller>
       <ReleaseSearchDialog isOpen={releases} onOpenChange={setReleases} query={debounced} />
     </div>
   );

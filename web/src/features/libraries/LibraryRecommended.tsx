@@ -160,7 +160,7 @@ function RecommendedPage({ spotlight, shelves, loading, onPlay, preview, onBrows
   // as the space under the library header, and the spotlight grows into what is left.
   useLayoutEffect(() => {
     const element = opening.current;
-    const scroller = element?.closest<HTMLElement>("#main-scroll");
+    const scroller = element?.closest<HTMLElement>("[data-page-scroller]");
     if (!element || !scroller) return;
     const measure = () => {
       const above = element.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
@@ -177,7 +177,7 @@ function RecommendedPage({ spotlight, shelves, loading, onPlay, preview, onBrows
   );
   return (
     <div data-print-flow className="flex min-w-0 flex-col gap-10 pb-12">
-      <div ref={opening} className="flex min-w-0 flex-col gap-10 md:min-h-[calc(var(--view-h,100svh)-var(--above,0px)-var(--space-6))]">
+      <div ref={opening} className="over-imagery flex min-w-0 flex-col gap-10 md:min-h-[calc(var(--view-h,100svh)-var(--above,0px)-var(--space-6))]">
         {spotlight.length > 0 ? (
           <HomeSpotlight className="bleed-gutter min-w-0 flex-1 !px-0" items={spotlight} preview={preview} onBrowse={onBrowse} fill="library" poster={false} eyebrow={() => null} onArtChange={setArt} onPlay={onPlay ?? (() => {})} />
         ) : loading ? <div aria-hidden data-fill="library" className="media-hero flex-1" /> : null}

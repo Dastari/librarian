@@ -4,15 +4,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ContentStatusesDocument, type ContentStatus, type ContentStatusType } from "@/graphql/generated/graphql";
 import { useLiveEpoch, useLiveInvalidation } from "@/lib/graphql/live/hooks";
 import { useSession } from "@/lib/auth/useSession";
+import { statusMeta, type StatusMeta } from "@/lib/status";
 
 // The contentStatuses resolver rejects requests above 500 inputs. Keep each
 // observable active so media mutations can still invalidate its computed values.
 export const CONTENT_STATUS_BATCH_SIZE = 500;
 
+/** Statuses by id, and how far along each running download is, from 0 to 1. */
+export type ContentStatusMap = Map<string, ContentStatus> & { progress?: ReadonlyMap<string, number> };
+
 interface Snapshot {
   key: string;
   scope: string;
-  statuses: Map<string, ContentStatus>;
+  statuses: ContentStatusMap;
   loading: boolean;
   error?: Error;
 }
@@ -33,6 +37,7 @@ export function useContentStatusState(contentType: ContentStatusType, ids: strin
     return Array.from({ length: Math.ceil(inputs.length / CONTENT_STATUS_BATCH_SIZE) }, (_, index) => inputs.slice(index * CONTENT_STATUS_BATCH_SIZE, (index + 1) * CONTENT_STATUS_BATCH_SIZE));
   }, [contentType, idsKey]);
   const [snapshot, setSnapshot] = useState<Snapshot>({ key: "", scope: "", statuses: new Map(), loading: false });
+  const progress = useRef(new Map<string, number>());
   const previous = useRef(snapshot);
   previous.current = snapshot;
   useEffect(() => {
@@ -67,7 +72,10 @@ export function useContentStatusState(contentType: ContentStatusType, ids: strin
       next: (result) => {
         const statuses = new Map<string, ContentStatus>();
         for (const status of result.data?.contentStatuses ?? []) {
-          if (status?.id && status.status) statuses.set(status.id, status.status);
+          if (!status?.id || !status.status) continue;
+          statuses.set(status.id, status.status);
+          if (status.downloadProgress == null) progress.current.delete(status.id);
+          else progress.current.set(status.id, status.downloadProgress);
         }
         results[index] = {
           statuses: result.data?.contentStatuses ? statuses : results[index]!.statuses,
@@ -92,7 +100,16 @@ export function useContentStatusState(contentType: ContentStatusType, ids: strin
     const wanted = new Set(ids);
     return { key, scope: scopeKey, statuses: new Map(snapshot.scope === scopeKey ? [...snapshot.statuses].filter(([id]) => wanted.has(id)) : []), loading: true };
   }, [idsKey, key, scopeKey, snapshot]);
-  return { ...current, refetch };
+  // A new map each time a result arrives, so a memoized table cell sees the change.
+  const statuses = useMemo<ContentStatusMap>(() => Object.assign(new Map(current.statuses), { progress: new Map(progress.current) }), [current.statuses]);
+  return { ...current, statuses, refetch };
+}
+
+/** The status to show for a title: "Downloading 36%" while a download is running. */
+export function contentStatusMeta(statuses: ContentStatusMap, id: string): StatusMeta {
+  const meta = statusMeta(statuses.get(id));
+  const progress = statuses.progress?.get(id);
+  return statuses.get(id) === "DOWNLOADING" && progress !== undefined ? { ...meta, label: `Downloading ${Math.floor(progress * 100)}%` } : meta;
 }
 
 /** Existing consumers keep the Map API; filtered views can use the richer state above. */

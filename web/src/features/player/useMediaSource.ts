@@ -127,29 +127,44 @@ export function useMediaSource(
           return;
         }
 
-        // Native HLS does not need the lazy hls.js bundle.
-        if (media.canPlayType("application/vnd.apple.mpegurl")) {
+        // hls.js whenever it can run. Current Chrome also answers yes to native HLS, but its player
+        // reads our growing playlist as a live stream of unknown length: no timeline, no seeking,
+        // and a demuxer error on a segment hls.js plays. Native is for devices without Media Source.
+        const hasMediaSource = "MediaSource" in window || "ManagedMediaSource" in window;
+        const Hls: HlsModule["default"] | null = hasMediaSource ? (await import("hls.js")).default : null;
+        if (!active() || terminal) return;
+        if (!Hls?.isSupported()) {
+          if (!media.canPlayType("application/vnd.apple.mpegurl")) {
+            fail("This browser cannot play streamed media.");
+            return;
+          }
           setState({ source, loading: true, error: null, duration: source.duration, hls: null });
           media.src = source.url;
           return;
         }
-        const { default: Hls }: HlsModule = await import("hls.js");
-        if (!active() || terminal) return;
-        if (!Hls.isSupported()) {
-          fail("This browser cannot play streamed media.");
-          return;
-        }
         const instance = new Hls({
           lowLatencyMode: false, backBufferLength: 90, maxBufferLength: 60,
-          enableWorker: true, startPosition: position > 0 ? position : -1,
+          enableWorker: true,
+          // A stream copy's playlist stays open until it's finished, which hls.js treats as live:
+          // without this it starts near the newest segment rather than at the beginning.
+          startPosition: position,
           // Bound hls.js's own request attempts as well as our fatal recoveries.
           manifestLoadingMaxRetry: 2, levelLoadingMaxRetry: 2, fragLoadingMaxRetry: 2,
+          // The server holds the first request until the transcode has written a playlist, and
+          // can still answer "not yet" on a slow start.
+          manifestLoadingRetryDelay: 1000,
+          // After a seek the server has to start encoding from there, which can take a while.
+          fragLoadingTimeOut: 45_000,
         });
         hls = instance;
         instance.on(Hls.Events.ERROR, (_event, data) => {
           if (!active() || terminal || !data.fatal) return;
           if (recoveries < MAX_HLS_RECOVERIES) {
             recoveries += 1;
+            if (data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR || data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT) {
+              instance.loadSource(source.url);
+              return;
+            }
             if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
               instance.startLoad();
               return;

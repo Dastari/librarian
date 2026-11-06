@@ -1,10 +1,11 @@
-import { IconBookmark, IconBell, IconCalendarEvent, IconDownload, IconHome, IconListSearch, IconSearch, IconSettings, IconStack2, type Icon as TablerIcon } from "@tabler/icons-react";
+import type { IconComponent } from "glass-ux/icon";
+import { IconBell, IconBookmark, IconCalendar, IconDownload, IconHome, IconLayers, IconListCheck, IconSearch, IconSettings } from "glass-ux/icons";
 
 export interface NavItem {
   key: string;
   label: string;
   href: string;
-  icon: TablerIcon;
+  icon: IconComponent;
   /** Show on the phone tab bar. */
   mobile?: boolean;
   /** Only admins see it. */
@@ -15,11 +16,11 @@ export interface NavItem {
 /** Primary destinations. Order matters: it is the order on the rail and the tab bar. */
 export const PRIMARY_NAV: NavItem[] = [
   { key: "home", label: "Home", href: "/", icon: IconHome, mobile: true },
-  { key: "libraries", label: "Libraries", href: "/libraries", icon: IconStack2, mobile: true },
+  { key: "libraries", label: "Libraries", href: "/libraries", icon: IconLayers, mobile: true },
   { key: "search", label: "Search", href: "/search", icon: IconSearch, mobile: true },
   { key: "lists", label: "My lists", href: "/lists", icon: IconBookmark },
-  { key: "guide", label: "TV guide", href: "/guide", icon: IconCalendarEvent },
-  { key: "wanted", label: "Wanted", href: "/wanted", icon: IconListSearch, mobile: true },
+  { key: "guide", label: "TV guide", href: "/guide", icon: IconCalendar },
+  { key: "wanted", label: "Wanted", href: "/wanted", icon: IconListCheck, mobile: true },
   { key: "downloads", label: "Downloads", href: "/downloads", icon: IconDownload, mobile: true, badge: "downloads" },
   { key: "activity", label: "Activity", href: "/activity", icon: IconBell, badge: "notifications" },
   { key: "settings", label: "Settings", href: "/settings", icon: IconSettings, mobile: true },

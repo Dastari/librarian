@@ -1,5 +1,6 @@
 
-import { IconBooks, IconPlus } from "@tabler/icons-react";
+import { IconPlus } from "glass-ux/icons";
+import { IconBooks } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
 import { Button, EmptyState, ErrorState, PosterCard, PosterGallery } from "@/components/ui";
@@ -64,7 +65,7 @@ export function AudiobooksBrowser({ libraryId }: { libraryId: string }) {
         onAvailabilityChange={filters.setAvailability} sort={{ options: SORTS, value: table.sorting, onChange: table.setSorting }}
         total={list.totalCount}
         placeholder="Filter audiobooks"
-        trailing={isAdmin ? <Button variant="primary" size="sm" onPress={() => setAdding(true)}><IconPlus size={16} /> Add</Button> : null}
+        trailing={isAdmin ? <Button variant="primary" size="sm" onPress={() => setAdding(true)}><IconPlus size="md" /> Add</Button> : null}
       />
       <div className="flex min-h-0 min-w-0 flex-1 gap-3 sm:gap-4">
         <PosterGallery<BookRow>
@@ -78,7 +79,7 @@ export function AudiobooksBrowser({ libraryId }: { libraryId: string }) {
           noun="audiobooks"
           infinite={{ hasMore: list.hasMore, loadMore: list.loadMore, loadingMore: list.loadingMore }}
           error={list.error && list.rows.length === 0 ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : undefined}
-          emptyState={<EmptyState icon={IconBooks} title="No audiobooks yet" description="Scan the library folder or add a book from Open Library." action={isAdmin ? <Button variant="primary" onPress={() => setAdding(true)}><IconPlus size={16} /> Add audiobook</Button> : undefined} />}
+          emptyState={<EmptyState icon={IconBooks} title="No audiobooks yet" description="Scan the library folder or add a book from Open Library." action={isAdmin ? <Button variant="primary" onPress={() => setAdding(true)}><IconPlus size="md" /> Add audiobook</Button> : undefined} />}
           renderCard={(row) => (
             <PosterCard
               title={row.title}

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { Icon as TablerIcon } from "@tabler/icons-react";
+import type { IconComponent } from "glass-ux/icon";
 import { RouteTabs, Tabs, type RouteTabItem, type TabItem as GlassTabItem } from "glass-ux/tabs";
 import { RouteVerticalTabs } from "glass-ux/vertical-tabs";
 
@@ -8,7 +9,7 @@ import { cn } from "@/lib/utils";
 export interface TabItem {
   key: string;
   label: string;
-  icon?: TablerIcon;
+  icon?: TablerIcon | IconComponent;
   count?: number | null;
   /** Resolved href. When set the tab navigates and the active state follows the URL. */
   href?: string;

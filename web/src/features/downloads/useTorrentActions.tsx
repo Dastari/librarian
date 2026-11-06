@@ -94,13 +94,13 @@ export function useTorrentActions({ onLink, onChanged }: TorrentActionHandlers, 
         {
           id: "import", label: (rows) => plural(rows, "Import now", "Import {n} downloads"), icon: IconDownload, group: "organise", bulk: true,
           visible: (rows) => rows.every(finished),
-          run: (rows) => each(rows, "Import", async (row) => assertSuccess((await process({ variables: { sourceId: row.record.id, sourceType: "torrent" } })).data?.processSource, "Import failed")),
+          run: (rows) => each(rows, "Import", async (row) => assertSuccess((await process({ variables: { sourceId: row.record.infoHash, sourceType: "torrent" } })).data?.processSource, "Import failed")),
           successMessage: (rows) => plural(rows, "Import started", "Import started for {n} downloads"),
         },
         {
           id: "recheck", bulk: true, label: "Retry import", icon: IconRefresh, group: "organise",
           visible: (rows) => rows.length === 1 && rows[0]!.record.postProcessStatus === "failed",
-          run: async (rows) => { assertSuccess((await process({ variables: { sourceId: rows[0]!.record.id, sourceType: "torrent" } })).data?.processSource, "Import failed"); onChanged(); },
+          run: async (rows) => { assertSuccess((await process({ variables: { sourceId: rows[0]!.record.infoHash, sourceType: "torrent" } })).data?.processSource, "Import failed"); onChanged(); },
           successMessage: () => "Import started",
         },
         {

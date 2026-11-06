@@ -110,7 +110,7 @@ function NextUp({ schedule, today }: { schedule: ShowSchedule; today: Date }) {
             {batches.length > 1 ? <Countdown value={String(weeks)} label={weeks === 1 ? "week" : "weeks"} /> : null}
           </dl>
           <div className="mt-5 flex flex-wrap items-center gap-3">
-            <Button variant="primary" size="lg" icon={<IconInfo />} nativeButton={false} render={<Link to="/shows/$showId" params={{ showId: show.id }} />} data-tv-autofocus data-focusable>Open show</Button>
+            <Button variant="primary" size="lg" icon={<IconInfo />} nativeButton={false} render={<Link to="/shows/$showId" params={{ showId: show.id }} />} data-focusable>Open show</Button>
             {show.autoDownload ? <span className="glass-control flex items-center gap-2 rounded-pill px-4 py-2 text-label text-foreground"><IconCheck aria-hidden /> Auto-download on</span> : <Button variant="secondary" size="lg" onClick={() => void navigate({ to: "/shows/$showId", params: { showId: show.id } })} data-focusable>Set up downloads</Button>}
           </div>
         </div>
@@ -179,7 +179,7 @@ function TonightRow({ picks }: { picks: ReturnType<typeof tonightPicks> }) {
           tint={LIBRARY_TYPES.tv.tintVar}
           badge={pick.newShow || pick.premiere ? <span className="rounded bg-brand px-1.5 py-0.5 text-[0.625rem] font-bold uppercase tracking-wide text-brand-foreground">{pick.newShow ? "New" : `S${pick.season}`}</span> : undefined}
           actions={<IconPlus aria-label="Find and add" />}
-          onPress={() => void navigate({ to: "/search", search: { q: pick.name, in: "show" } as never })}
+          onPress={() => void navigate({ to: "/discover/shows/$tvmazeId", params: { tvmazeId: String(pick.tvmazeShowId) } })}
         />
       ))}
     </MediaRow>

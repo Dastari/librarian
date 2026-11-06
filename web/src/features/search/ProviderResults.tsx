@@ -4,14 +4,12 @@ import { Select } from "glass-ux/select";
 import { Surface } from "glass-ux/surface";
 import { toast } from "glass-ux/toast";
 import { IconPlus, IconSearch } from "glass-ux/icons";
+import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 
-import { Artwork, Button, EmptyState, Spinner } from "@/components/ui";
+import { Artwork, Button, EmptyState, PosterCard, Spinner } from "@/components/ui";
 import {
   AddAlbumDocument,
-  AddAudiobookDocument,
-  AddMovieDocument,
-  AddTvShowDocument,
   SearchAlbumsDocument,
   SearchAudiobooksDocument,
   SearchMoviesDocument,
@@ -35,7 +33,7 @@ interface Card {
   add: (libraryId: string) => Promise<string>;
 }
 
-/** Provider search results as a poster grid with a target-library picker. */
+/** Provider search results as posters that open each title's page. Albums, which have no such page yet, add from their card. */
 export function ProviderResults({ kind, query, libraries }: { kind: Kind; query: string; libraries: Library[] }) {
   const targets = useMemo(() => libraries.filter((library) => libraryType(library.libraryType).type === KIND_TYPE[kind]), [libraries, kind]);
   const [libraryId, setLibraryId] = useState<string | null>(null);
@@ -49,18 +47,19 @@ export function ProviderResults({ kind, query, libraries }: { kind: Kind; query:
   const shows = useQuery(SearchTvShowsDocument, { variables: { query }, skip: !enabled || kind !== "show" });
   const albums = useQuery(SearchAlbumsDocument, { variables: { query, includeSingles: true, includeEps: true, includeCompilations: false, includeLive: false, includeSoundtracks: true }, skip: !enabled || kind !== "album" });
   const books = useQuery(SearchAudiobooksDocument, { variables: { query }, skip: !enabled || kind !== "audiobook" });
-  const [addMovie] = useMutation(AddMovieDocument);
-  const [addShow] = useMutation(AddTvShowDocument);
   const [addAlbum] = useMutation(AddAlbumDocument);
-  const [addBook] = useMutation(AddAudiobookDocument);
 
   const active = kind === "movie" ? movies : kind === "show" ? shows : kind === "album" ? albums : books;
-  const cards = useMemo<Card[]>(() => {
-    if (kind === "movie") return (movies.data?.searchMovies ?? []).map((result) => ({ key: String(result.providerId), title: result.title, subtitle: [result.year, result.voteAverage ? `★ ${result.voteAverage.toFixed(1)}` : null].filter(Boolean).join(" · "), overview: result.overview, image: result.posterUrl, add: async (target) => { assertSuccess((await addMovie({ variables: { libraryId: target, input: { tmdbId: result.providerId, monitored: true } } })).data?.addMovie, "Could not add"); return result.title; } }));
-    if (kind === "show") return (shows.data?.searchTvShows ?? []).map((result) => ({ key: String(result.providerId), title: result.name, subtitle: [result.year, result.network].filter(Boolean).join(" · "), overview: result.overview, image: result.posterUrl, add: async (target) => { assertSuccess((await addShow({ variables: { libraryId: target, input: { tvmazeId: result.providerId, autoDownloadMode: "WANTED" } } })).data?.addTvShow, "Could not add"); return result.name; } }));
-    if (kind === "album") return (albums.data?.searchAlbums ?? []).map((result) => ({ key: result.providerId, title: result.title, subtitle: [result.artistName, result.year].filter(Boolean).join(" · "), image: result.coverUrl, add: async (target) => { assertSuccess((await addAlbum({ variables: { input: { libraryId: target, musicbrainzId: result.providerId } } })).data?.addAlbum, "Could not add"); return result.title; } }));
-    return (books.data?.searchAudiobooks ?? []).map((result) => ({ key: result.providerId, title: result.title, subtitle: [result.authorName, result.year].filter(Boolean).join(" · "), overview: result.description, image: result.coverUrl, add: async (target) => { assertSuccess((await addBook({ variables: { input: { libraryId: target, openlibraryId: result.providerId } } })).data?.addAudiobook, "Could not add"); return result.title; } }));
-  }, [kind, movies.data, shows.data, albums.data, books.data, addMovie, addShow, addAlbum, addBook]);
+  const cards = useMemo<Card[]>(() => (kind === "album" ? (albums.data?.searchAlbums ?? []).map((result) => ({ key: result.providerId, title: result.title, subtitle: [result.artistName, result.year].filter(Boolean).join(" · "), image: result.coverUrl, add: async (target) => { assertSuccess((await addAlbum({ variables: { input: { libraryId: target, musicbrainzId: result.providerId } } })).data?.addAlbum, "Could not add"); return result.title; } })) : []), [kind, albums.data, addAlbum]);
+
+  const navigate = useNavigate();
+  // Everything but albums has a page of its own, with Add to library on it.
+  const pages = useMemo(() => {
+    if (kind === "movie") return (movies.data?.searchMovies ?? []).map((result) => ({ key: String(result.providerId), title: result.title, meta: [result.year, result.voteAverage ? `★ ${result.voteAverage.toFixed(1)}` : null].filter(Boolean).join(" · "), image: result.posterUrl, open: () => void navigate({ to: "/discover/movies/$tmdbId", params: { tmdbId: String(result.providerId) } }) }));
+    if (kind === "show") return (shows.data?.searchTvShows ?? []).map((result) => ({ key: String(result.providerId), title: result.name, meta: [result.year, result.network].filter(Boolean).join(" · "), image: result.posterUrl, open: () => void navigate({ to: "/discover/shows/$tvmazeId", params: { tvmazeId: String(result.providerId) } }) }));
+    if (kind === "audiobook") return (books.data?.searchAudiobooks ?? []).map((result) => ({ key: result.providerId, title: result.title, meta: [result.authorName, result.year].filter(Boolean).join(" · "), image: result.coverUrl, open: () => void navigate({ to: "/discover/audiobooks/$providerId", params: { providerId: result.providerId } }) }));
+    return [];
+  }, [kind, movies.data, shows.data, books.data, navigate]);
 
   const meta = LIBRARY_TYPES[KIND_TYPE[kind]];
 
@@ -69,7 +68,7 @@ export function ProviderResults({ kind, query, libraries }: { kind: Kind; query:
 
   return (
     <div className="flex flex-col gap-4">
-      {targets.length > 1 ? (
+      {kind === "album" && targets.length > 1 ? (
         <Select aria-label="Add to library" value={libraryId} onValueChange={setLibraryId} options={targets.map((library) => ({ value: library.id, label: library.name }))} className="w-64 max-w-full" />
       ) : null}
       {active.loading && !active.data ? (
@@ -78,8 +77,12 @@ export function ProviderResults({ kind, query, libraries }: { kind: Kind; query:
         </div>
       ) : active.error ? (
         <EmptyState icon={IconSearch} title="Search failed" description={errorMessage(active.error)} className="border-none" />
-      ) : cards.length === 0 ? (
+      ) : (kind === "album" ? cards.length : pages.length) === 0 ? (
         <EmptyState icon={IconSearch} title="No results" className="border-none" />
+      ) : kind !== "album" ? (
+        <div data-nav-group className="grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-x-4 gap-y-6">
+          {pages.map((page) => <PosterCard key={page.key} width="fill" title={page.title} meta={page.meta} image={page.image} tint={meta.tintVar} onPress={page.open} />)}
+        </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {cards.map((card) => (

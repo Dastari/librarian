@@ -29,9 +29,11 @@ use crate::graphql::AuthUser;
 use crate::graphql::entities::{
     AudioStream, AudioStreamWhereInput, CastSession, Library, MediaFile, Subtitle,
 };
-use crate::services::transcode::TranscodeKind;
-use crate::services::transcode::ffmpeg::{MAX_SUBTITLE_BYTES, PLAYLIST_FILENAME, SubtitleError};
-use crate::services::transcode::session::sanitize_segment_name;
+use crate::services::transcode::ffmpeg::{
+    self, MAX_SUBTITLE_BYTES, PLAYLIST_FILENAME, SubtitleError,
+};
+use crate::services::transcode::session::{self, sanitize_segment_name};
+use crate::services::transcode::{TranscodeKind, TranscodeService};
 
 /// Create media routes
 pub fn router() -> Router<AppState> {
@@ -333,6 +335,19 @@ async fn hls_playlist(
         StatusCode::SERVICE_UNAVAILABLE
     })?;
 
+    // With a known length the whole file is listed up front and encoded as it's asked for, so
+    // it can be scrubbed end to end. Stream copies can't do this: their segments are cut at the
+    // source's key frames, so where one starts isn't known until it has been written.
+    if let Some(duration) = on_demand_duration(kind, &media_file) {
+        let bytes = rewrite_playlist(ffmpeg::vod_playlist(duration).as_bytes(), &params)?;
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "application/vnd.apple.mpegurl")
+            .header(CACHE_CONTROL, "private, no-cache")
+            .body(Body::from(bytes))
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
     let output_dir = transcode
         .get_or_start_session_with_audio(&file_id, path, kind, params.audio_stream)
         .await
@@ -426,6 +441,18 @@ async fn hls_segment(
         .await
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
+    if let Some(duration) = on_demand_duration(kind, &media_file) {
+        return on_demand_segment_response(
+            &transcode,
+            &media_file,
+            kind,
+            params.audio_stream,
+            segment_name,
+            duration,
+        )
+        .await;
+    }
+
     let Some(output_dir) = transcode
         .touch_session_with_audio(&file_id, kind, params.audio_stream)
         .await
@@ -469,6 +496,87 @@ async fn hls_segment(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "video/mp2t")
+        .header(CACHE_CONTROL, "private, max-age=3600")
+        .body(Body::from(bytes))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+/// How long one request waits for a segment. The first after a seek has to start `ffmpeg` and decode
+/// up to that point; a client that gives up sooner simply asks again and joins the same encode.
+const ON_DEMAND_SEGMENT_WAIT: Duration = Duration::from_secs(40);
+
+/// The length to list for a variant encoded on demand; `None` for one packaged start to finish.
+fn on_demand_duration(kind: TranscodeKind, media_file: &MediaFileRecord) -> Option<u32> {
+    (kind == TranscodeKind::Transcode)
+        .then_some(media_file.duration)
+        .flatten()
+        .and_then(|duration| u32::try_from(duration).ok())
+        .filter(|duration| *duration > 0)
+}
+
+/// No picture to encode: nothing but sound, or only a cover image in a video stream's clothing.
+fn is_audio_only(media_file: &MediaFileRecord) -> bool {
+    media_file.video_codec.as_deref().is_none_or(|codec| {
+        matches!(
+            codec.to_ascii_lowercase().as_str(),
+            "mjpeg" | "png" | "bmp" | "gif" | "webp"
+        )
+    })
+}
+
+async fn on_demand_segment_response(
+    transcode: &TranscodeService,
+    media_file: &MediaFileRecord,
+    kind: TranscodeKind,
+    audio_stream: Option<i32>,
+    segment_name: &str,
+    duration: u32,
+) -> Result<Response, StatusCode> {
+    let segment = session::segment_number(segment_name)
+        .filter(|segment| *segment < ffmpeg::segment_count(duration))
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if !Path::new(&media_file.path).exists() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let path = transcode
+        .on_demand_segment(
+            &media_file.id,
+            Path::new(&media_file.path),
+            kind,
+            audio_stream,
+            segment,
+            is_audio_only(media_file),
+        )
+        .await
+        .map_err(|e| {
+            error!(
+                media_file_id = %media_file.id,
+                segment,
+                error = %e,
+                "Failed to encode HLS segment: media_file_id={}, segment={}, error={}",
+                media_file.id,
+                segment,
+                e
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if !wait_for_nonempty_file(&path, Duration::from_millis(100), ON_DEMAND_SEGMENT_WAIT).await {
+        warn!(
+            media_file_id = %media_file.id,
+            segment,
+            "Timed out waiting for on-demand HLS segment: media_file_id={}, segment={}",
+            media_file.id,
+            segment
+        );
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "video/mp2t")

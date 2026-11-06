@@ -993,8 +993,23 @@ fn plan_torrent_file_sync(
     existing: &[TorrentFile],
     desired: &[TorrentFileRow],
 ) -> TorrentFileSyncPlan {
+    // One row per file. Should a file ever have two, the sync keeps the furthest along and removes
+    // the other, which would otherwise sit at its old progress for good.
     let mut existing_by_index: std::collections::HashMap<i32, &TorrentFile> =
-        existing.iter().map(|row| (row.file_index, row)).collect();
+        std::collections::HashMap::new();
+    let mut duplicates = Vec::new();
+    for row in existing {
+        match existing_by_index.get(&row.file_index).copied() {
+            Some(kept) if kept.progress >= row.progress => duplicates.push(row.id.clone()),
+            Some(kept) => {
+                duplicates.push(kept.id.clone());
+                existing_by_index.insert(row.file_index, row);
+            }
+            None => {
+                existing_by_index.insert(row.file_index, row);
+            }
+        }
+    }
 
     let mut to_insert = Vec::new();
     let mut to_update = Vec::new();
@@ -1014,6 +1029,7 @@ fn plan_torrent_file_sync(
     let to_delete = existing_by_index
         .values()
         .map(|row| row.id.clone())
+        .chain(duplicates)
         .collect();
 
     TorrentFileSyncPlan {
@@ -1659,6 +1675,7 @@ mod ownership_tests {
                 poster_url: None,
                 backdrop_url: None,
                 content_rating: None,
+                status: None,
                 auto_download: false,
                 auto_download_mode: AutoDownloadMode::None,
                 quality_profile_id: None,

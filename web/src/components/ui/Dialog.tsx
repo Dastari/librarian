@@ -38,7 +38,7 @@ export function Dialog({ isOpen, onOpenChange, title, description, children, foo
       <GlassDialog.Popup size={SIZE[size]} className={className} finalFocus={finalFocus}>
         <GlassDialog.Header title={title} close={isDismissable} />
         <GlassDialog.Body>
-          {description ? <GlassDialog.Description>{description}</GlassDialog.Description> : null}
+          {description ? <GlassDialog.Description className="min-w-0 [overflow-wrap:anywhere]">{description}</GlassDialog.Description> : null}
           {children}
         </GlassDialog.Body>
         {footer ? <GlassDialog.Footer>{footer}</GlassDialog.Footer> : null}

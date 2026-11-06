@@ -1,12 +1,11 @@
 import { Badge } from "glass-ux/badge";
+import { Tooltip } from "glass-ux/tooltip";
 import { createDataTableColumns, DataTable, filters, NumericCell, RelativeTime, SparklineCell, TextCell, type DataTableSearch, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
 import { IconPlus, IconRefresh } from "glass-ux/icons";
 import { LevelGauge, type GaugeLevel } from "glass-ux/level-gauge";
 import { MeterCell } from "glass-ux/meter-cell";
 import { Metric } from "glass-ux/metric";
 import { Segmented } from "glass-ux/segmented";
-import { SplitPane } from "glass-ux/split-pane";
-import { Dialog as GlassDialog } from "glass-ux/dialog";
 import { parseAsStringEnum, useQueryState } from "nuqs";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
@@ -16,7 +15,6 @@ import { Button } from "@/components/ui";
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
 import { EntityLibraryListDocument } from "@/graphql/generated/graphql";
 import { tableUrlFilters, useTableUrlState } from "@/hooks/useTableUrlState";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { usePrintMode } from "@/hooks/usePrintMode";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { ratioLevel, torrentImport, torrentStatus, torrentTarget, TORRENT_IMPORT_STATES, TORRENT_STATES, type RatioLevel } from "@/lib/entities/torrent";
@@ -87,10 +85,10 @@ function columnsFor(libraries: Array<{ id: string; name: string }>) {
         const ratio = ratioOf(row.original);
         const target = row.original.record.minimumRatio;
         return (
-          <span className="flex min-w-0 items-center gap-2" title={target ? `Tracker minimum ${target.toFixed(2)}` : "No tracker minimum; 1.00 is the goal"}>
+          <Tooltip content={target ? `Tracker minimum ${target.toFixed(2)}` : "No tracker minimum; 1.00 is the goal"}><span className="flex min-w-0 items-center gap-2">
             <span className="text-numeric shrink-0 tabular-nums">{ratio.toFixed(2)}</span>
             <LevelGauge label="Share ratio" levels={RATIO_LEVELS} value={ratioLevel(ratio, target)} />
-          </span>
+          </span></Tooltip>
         );
       },
     }),
@@ -138,7 +136,6 @@ export function DownloadsPage() {
   const isAdmin = useIsAdmin();
   const { user } = useSession();
   const printing = usePrintMode();
-  const wide = useMediaQuery("(min-width: 1280px)");
   const [preset, setPreset] = useQueryState("show", parseAsStringEnum<DownloadPreset>([...DOWNLOAD_PRESETS]).withDefault("all").withOptions({ history: "push" }));
   const libraries = useCompleteConnection(EntityLibraryListDocument, { orderBy: [{ name: "ASC" }] }, (data) => data.libraries);
   const libraryOptions = useMemo(() => libraries.rows.map((library) => ({ id: library.id, name: library.name })), [libraries.rows]);
@@ -165,7 +162,7 @@ export function DownloadsPage() {
       return { key: selectionKey, ids: Object.fromEntries(Object.entries(previous.ids).filter(([id]) => loaded.has(id))) };
     });
   }, [downloads.rows, downloads.list.loading, downloads.list.fetching, selectionKey]);
-  const samples = useMemo(() => new Map<string, RateSample>(downloads.live.map((torrent) => [torrent.infoHash.toLowerCase(), { down: torrent.downloadSpeed ?? 0, up: torrent.uploadSpeed ?? 0 }])), [downloads.live]);
+  const samples = useMemo(() => new Map<string, RateSample>(downloads.live.map((torrent) => [torrent.infoHash.toLowerCase(), { down: torrent.downloadSpeed ?? 0, up: torrent.uploadSpeed ?? 0, peers: torrent.peers ?? 0 }])), [downloads.live]);
   const rates = useRateHistory(samples);
   const columns = baseColumns;
   const totals = useMemo(() => downloads.live.reduce((sum, torrent) => ({ down: sum.down + (torrent.downloadSpeed ?? 0), up: sum.up + (torrent.uploadSpeed ?? 0) }), { down: 0, up: 0 }), [downloads.live]);
@@ -180,7 +177,7 @@ export function DownloadsPage() {
   const onChanged = useCallback(() => latestRefetch.current(), []);
   const actions = useTorrentActions({ onLink: setLinking, onChanged }, isAdmin);
 
-  const detailsOpen = Boolean(selected) && !wide;
+  const detailsOpen = Boolean(selected);
   const finalFocus = useDialogReturnFocus(detailsOpen);
   const table = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -212,7 +209,18 @@ export function DownloadsPage() {
             error={downloads.list.error && downloads.rows.length === 0 ? "Couldn't load downloads. Retry to reconnect." : undefined}
             onRetry={refetch}
             emptyMessage={preset === "all" ? "No downloads. Add a torrent or magnet link, or find a release from a movie or show page." : `Nothing ${PRESET_LABEL[preset].toLowerCase()}`}
-            toolbar={<Button size="sm" variant="ghost" isIconOnly aria-label="Refresh downloads" isPending={downloads.list.fetching} onPress={refetch}><IconRefresh /></Button>}
+            toolbar={
+              <div className="flex min-w-0 items-center gap-2">
+                <Segmented<DownloadPreset>
+                  aria-label="Show downloads"
+                  size="sm"
+                  value={preset}
+                  onValueChange={(value) => void setPreset(value === "all" ? null : value)}
+                  options={DOWNLOAD_PRESETS.map((value) => ({ value, label: downloads.counts[value] !== undefined ? `${PRESET_LABEL[value]} ${downloads.counts[value]}` : PRESET_LABEL[value] }))}
+                />
+                <Button size="sm" variant="ghost" isIconOnly aria-label="Refresh downloads" isPending={downloads.list.fetching} onPress={refetch}><IconRefresh /></Button>
+              </div>
+            }
           />
       </RateContext.Provider>
     </div>
@@ -221,38 +229,15 @@ export function DownloadsPage() {
   return (
     <div data-print-flow className="page-gutter flex min-h-0 flex-1 flex-col gap-4 overflow-hidden py-4 md:py-6 [@media(max-height:35rem)]:gap-2 [@media(max-height:35rem)]:py-2">
       <h1 className="sr-only">Downloads</h1>
-      <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-3">
-        <Segmented<DownloadPreset>
-          aria-label="Show downloads"
-          value={preset}
-          onValueChange={(value) => void setPreset(value === "all" ? null : value)}
-          options={DOWNLOAD_PRESETS.map((value) => ({ value, label: downloads.counts[value] !== undefined ? `${PRESET_LABEL[value]} ${downloads.counts[value]}` : PRESET_LABEL[value] }))}
-        />
-        <div className="ms-auto flex min-w-0 items-center gap-3">
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-6 gap-y-3">
+        <div className="flex min-w-0 items-center gap-3">
           <div className="h-12 w-60 max-lg:hidden"><Metric label="Download" value={totals.down} data={rates.total.down} format={formatSpeed} range="Last two minutes" tone="info" better="none" /></div>
           <div className="h-12 w-60 max-lg:hidden"><Metric label="Upload" value={totals.up} data={rates.total.up} format={formatSpeed} range="Last two minutes" tone="success" better="none" /></div>
           {isAdmin ? <Button variant="primary" onPress={() => setAdding(true)}><IconPlus /> Add torrent</Button> : null}
         </div>
       </div>
-      <div data-print-flow className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {selected && wide ? (
-          <SplitPane
-            className="min-h-0 flex-1"
-            startLabel="Downloads table"
-            endLabel="Download details"
-            storageKey={`librarian.${user?.id ?? "session"}.downloads.split`}
-            defaultSize="60%" startMin="22rem" endMin="20rem" collapse="end"
-            start={table}
-            end={<TorrentDetail row={selected} actions={actions} onClose={() => setSelectedId(null)} />}
-          />
-        ) : table}
-      </div>
-      <GlassDialog.Root open={detailsOpen} onOpenChange={(open) => { if (!open) setSelectedId(null); }}>
-        <GlassDialog.Popup size="lg" finalFocus={finalFocus} className="flex h-[min(48rem,85dvh)] min-h-0 flex-col overflow-hidden">
-          <GlassDialog.Title className="sr-only">Download details</GlassDialog.Title>
-          {selected ? <TorrentDetail embedded row={selected} actions={actions} onClose={() => setSelectedId(null)} /> : null}
-        </GlassDialog.Popup>
-      </GlassDialog.Root>
+      <div data-print-flow className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{table}</div>
+      {selected ? <TorrentDetail key={selected.id} open row={selected} rates={rates.byHash.get(selected.record.infoHash.toLowerCase())} actions={actions} onClose={() => setSelectedId(null)} finalFocus={finalFocus} /> : null}
 
       <AddTorrentDialog isOpen={adding} onOpenChange={setAdding} onAdded={refetch} />
       <LinkTorrentDialog row={linking} onClose={() => setLinking(null)} onLinked={refetch} />

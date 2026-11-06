@@ -33,6 +33,13 @@ pub const PLAYLIST_FILENAME: &str = "playlist.m3u8";
 /// under an output directory that is unique per session.
 pub const SEGMENT_FILENAME_PATTERN: &str = "seg_%03d.ts";
 
+/// Length of a transcoded segment, in seconds. Key frames are forced at multiples of this.
+pub const SEGMENT_SECONDS: u32 = 6;
+
+/// The playlist `ffmpeg` keeps for itself in an on-demand session. Nothing reads it: clients get
+/// [`vod_playlist`], which already lists the whole file.
+const ENCODER_PLAYLIST_FILENAME: &str = "encoder.m3u8";
+
 /// Check whether the configured `ffmpeg` binary is invocable. Copies the
 /// shape of `LibraryScanService::check_ffprobe_available` exactly: a
 /// `-version` call, `Ok(status_success)` -> true, anything else -> false with
@@ -126,6 +133,125 @@ pub fn build_transcode_args(input: &Path, output_dir: &Path) -> Vec<String> {
             .into_owned(),
         playlist_path(output_dir).to_string_lossy().into_owned(),
     ]
+}
+
+/// How many segments a file of this length has.
+pub fn segment_count(duration_seconds: u32) -> u32 {
+    duration_seconds.div_ceil(SEGMENT_SECONDS)
+}
+
+/// The whole file as a finished playlist, before any of it has been encoded. Players then know
+/// its real length and can seek anywhere in it, and asking for a segment is what encodes it.
+pub fn vod_playlist(duration_seconds: u32) -> String {
+    let count = segment_count(duration_seconds);
+    let mut playlist = format!(
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:{}\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n",
+        SEGMENT_SECONDS + 1
+    );
+    for segment in 0..count {
+        let remaining = duration_seconds - segment * SEGMENT_SECONDS;
+        playlist.push_str(&format!(
+            "#EXTINF:{}.000000,\nseg_{segment:03}.ts\n",
+            remaining.min(SEGMENT_SECONDS)
+        ));
+    }
+    playlist.push_str("#EXT-X-ENDLIST\n");
+    playlist
+}
+
+/// Re-encode from `start_segment` to the end of the file. The output keeps the file's own
+/// timeline, so a segment is the same wherever the encoder started: a later seek can reuse it.
+pub fn build_on_demand_transcode_args(
+    input: &Path,
+    output_dir: &Path,
+    start_segment: u32,
+    audio_stream: Option<i32>,
+    audio_only: bool,
+) -> Vec<String> {
+    let offset = (start_segment * SEGMENT_SECONDS).to_string();
+    let mut args: Vec<String> = ["-y", "-ss", &offset, "-i"].map(str::to_owned).to_vec();
+    args.push(input.to_string_lossy().into_owned());
+    if let Some(index) = audio_stream {
+        args.extend([
+            "-map".to_owned(),
+            "0:v:0?".to_owned(),
+            "-map".to_owned(),
+            format!("0:{index}"),
+            "-sn".to_owned(),
+            "-dn".to_owned(),
+        ]);
+    }
+    let forced_key_frames = format!("expr:gte(t,n_forced*{SEGMENT_SECONDS})");
+    let segment_seconds = SEGMENT_SECONDS.to_string();
+    let start_number = start_segment.to_string();
+    if audio_only {
+        // An audiobook's "video" is its cover. Stereo is what every browser's AAC decoder plays.
+        args.extend(["-vn", "-sn", "-dn", "-ac", "2"].map(str::to_owned));
+    } else {
+        args.extend(
+            [
+                "-threads",
+                "2",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-force_key_frames",
+                &forced_key_frames,
+                "-preset",
+                "veryfast",
+            ]
+            .map(str::to_owned),
+        );
+    }
+    args.extend(
+        [
+            "-c:a",
+            "aac",
+            "-output_ts_offset",
+            &offset,
+            "-start_number",
+            &start_number,
+            "-f",
+            "hls",
+            "-hls_time",
+            &segment_seconds,
+            "-hls_list_size",
+            "0",
+            // A segment appears only once it's complete, so its existence means it can be served.
+            "-hls_flags",
+            "temp_file",
+            "-hls_segment_filename",
+        ]
+        .map(str::to_owned),
+    );
+    args.push(
+        segment_filename_pattern(output_dir)
+            .to_string_lossy()
+            .into_owned(),
+    );
+    args.push(
+        output_dir
+            .join(ENCODER_PLAYLIST_FILENAME)
+            .to_string_lossy()
+            .into_owned(),
+    );
+    args
+}
+
+/// Start an on-demand encoder at `start_segment`.
+pub fn spawn_on_demand_transcode(
+    ffmpeg_path: &str,
+    input: &Path,
+    output_dir: &Path,
+    session_id: &str,
+    start_segment: u32,
+    audio_stream: Option<i32>,
+    audio_only: bool,
+) -> Result<Child> {
+    let args =
+        build_on_demand_transcode_args(input, output_dir, start_segment, audio_stream, audio_only);
+    spawn_ffmpeg(ffmpeg_path, &args, session_id)
 }
 
 /// Spawn `ffmpeg` with the given argument vector. `stdout`/`stderr` are
@@ -291,6 +417,50 @@ pub async fn subtitle_webvtt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vod_playlist_lists_the_whole_file_and_is_closed() {
+        let playlist = vod_playlist(14);
+        assert!(playlist.contains("#EXT-X-PLAYLIST-TYPE:VOD"));
+        assert!(playlist.contains("#EXTINF:6.000000,\nseg_000.ts"));
+        assert!(playlist.contains("#EXTINF:6.000000,\nseg_001.ts"));
+        // Two seconds left over.
+        assert!(playlist.contains("#EXTINF:2.000000,\nseg_002.ts"));
+        assert!(playlist.ends_with("#EXT-X-ENDLIST\n"));
+        assert_eq!(segment_count(14), 3);
+        assert_eq!(segment_count(12), 2);
+    }
+
+    #[test]
+    fn an_audiobook_is_not_encoded_as_video() {
+        let args =
+            build_on_demand_transcode_args(Path::new("/in.m4b"), Path::new("/out"), 10, None, true);
+        assert!(args.contains(&"-vn".to_string()));
+        assert!(!args.contains(&"libx264".to_string()));
+        assert!(args.contains(&"aac".to_string()));
+        assert!(args.contains(&"60".to_string()));
+    }
+
+    #[test]
+    fn on_demand_args_seek_to_the_segment_and_keep_the_file_timeline() {
+        let args = build_on_demand_transcode_args(
+            Path::new("/in.mkv"),
+            Path::new("/out"),
+            700,
+            Some(2),
+            false,
+        );
+        let after = |flag: &str| args[args.iter().position(|arg| arg == flag).unwrap() + 1].clone();
+        assert_eq!(after("-ss"), "4200");
+        assert_eq!(after("-output_ts_offset"), "4200");
+        assert_eq!(after("-start_number"), "700");
+        assert_eq!(after("-hls_flags"), "temp_file");
+        // The seek comes before the input, and the selected audio after it.
+        let position = |flag: &str| args.iter().position(|arg| arg == flag).unwrap();
+        assert!(position("-ss") < position("-i"));
+        assert!(position("-i") < position("-map"));
+        assert!(args.contains(&"0:2".to_string()));
+    }
 
     #[test]
     fn remux_args_use_stream_copy_and_expected_hls_flags() {

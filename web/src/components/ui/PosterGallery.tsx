@@ -35,7 +35,7 @@ export function PosterGallery<TRow>({ label, noun, rows, getRowId, renderCard, l
   return (
     <div data-print-flow className={cn("flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-(--focus-reach)", className)}>
       <ScrollArea className="min-h-0 flex-1" aria-label={`${label} results`}>
-        <div className="p-(--focus-reach)">
+        <div className="poster-gallery-content p-(--focus-reach)">
           {error ? error : !loading && rows.length === 0 ? emptyState : (
             <div className="poster-grid">
               {initial ? Array.from({ length: 12 }, (_, index) => <SkeletonCard key={index} />) : rows.map((row) => {

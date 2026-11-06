@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { IconPlus, IconStack2 } from "@tabler/icons-react";
+import { IconStack2 } from "@tabler/icons-react";
 
 import { Button, EmptyState, ErrorState, PageHeader, SkeletonBlock } from "@/components/ui";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
@@ -8,7 +8,7 @@ import { LibrariesOverviewDocument } from "@/graphql/generated/graphql";
 import { LibraryCard } from "./LibraryCard";
 import { useCompleteConnection } from "./browser/useCompleteConnection";
 import { useLibraryPreferences } from "@/features/personal/usePersonalLibrary";
-import { IconStar } from "glass-ux/icons";
+import { IconPlus, IconStar } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
 import { errorMessage } from "@/lib/graphql/errors";
 import { useState } from "react";
@@ -30,7 +30,7 @@ export function LibrariesPage() {
           isAdmin ? (
             <Link to="/settings/libraries">
               <Button variant="primary">
-                <IconPlus size={16} /> Add library
+                <IconPlus size="md" /> Add library
               </Button>
             </Link>
           ) : null

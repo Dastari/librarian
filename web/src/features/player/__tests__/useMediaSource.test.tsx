@@ -6,7 +6,7 @@ import { resolvePlaybackSource, type PlaybackSource } from "@/lib/api/urls";
 import { useMediaSource } from "../useMediaSource";
 
 const hls = vi.hoisted(() => ({ instances: [] as Array<{
-  emit: (event: string, data?: { fatal: boolean; type: string }) => void;
+  emit: (event: string, data?: { fatal: boolean; type: string; details?: string }) => void;
   startLoad: ReturnType<typeof vi.fn>;
   recoverMediaError: ReturnType<typeof vi.fn>;
   destroy: ReturnType<typeof vi.fn>;
@@ -18,15 +18,16 @@ vi.mock("hls.js", () => ({
     static isSupported = () => true;
     static Events = { ERROR: "error", MEDIA_ATTACHED: "attached" };
     static ErrorTypes = { NETWORK_ERROR: "network", MEDIA_ERROR: "media" };
-    handlers = new Map<string, (event: string, data?: { fatal: boolean; type: string }) => void>();
+    static ErrorDetails = { MANIFEST_LOAD_ERROR: "manifestLoadError", MANIFEST_LOAD_TIMEOUT: "manifestLoadTimeOut" };
+    handlers = new Map<string, (event: string, data?: { fatal: boolean; type: string; details?: string }) => void>();
     startLoad = vi.fn();
     recoverMediaError = vi.fn();
     destroy = vi.fn();
     loadSource = vi.fn();
     constructor() { hls.instances.push(this); }
-    on(event: string, handler: (event: string, data?: { fatal: boolean; type: string }) => void) { this.handlers.set(event, handler); }
+    on(event: string, handler: (event: string, data?: { fatal: boolean; type: string; details?: string }) => void) { this.handlers.set(event, handler); }
     attachMedia() { this.emit("attached"); }
-    emit(event: string, data?: { fatal: boolean; type: string }) { this.handlers.get(event)?.(event, data); }
+    emit(event: string, data?: { fatal: boolean; type: string; details?: string }) { this.handlers.get(event)?.(event, data); }
   },
 }));
 
@@ -45,8 +46,40 @@ beforeEach(() => {
   element = { current: audio };
   vi.spyOn(audio, "load").mockImplementation(() => {});
   vi.spyOn(audio, "canPlayType").mockReturnValue("");
+  vi.stubGlobal("MediaSource", class {});
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+describe("choosing how to play a stream", () => {
+  it("uses hls.js even when the browser also claims native HLS, which reads a growing playlist as live", async () => {
+    vi.mocked(audio.canPlayType).mockReturnValue("maybe");
+    vi.mocked(resolvePlaybackSource).mockResolvedValue(source("/playlist.m3u8", true));
+    const { result } = renderHook(() => useMediaSource("file", element));
+    await waitFor(() => expect(result.current.source?.url).toBe("/playlist.m3u8"));
+    expect(hls.instances).toHaveLength(1);
+    expect(hls.instances[0]!.loadSource).toHaveBeenCalledWith("/playlist.m3u8");
+    expect(audio.getAttribute("src")).toBeNull();
+  });
+
+  it("falls back to native HLS only where Media Source does not exist", async () => {
+    vi.unstubAllGlobals();
+    vi.mocked(audio.canPlayType).mockReturnValue("maybe");
+    vi.mocked(resolvePlaybackSource).mockResolvedValue(source("/playlist.m3u8", true));
+    const { result } = renderHook(() => useMediaSource("file", element));
+    await waitFor(() => expect(result.current.source?.url).toBe("/playlist.m3u8"));
+    expect(hls.instances).toHaveLength(0);
+    expect(audio.getAttribute("src")).toBe("/playlist.m3u8");
+  });
+
+  it("asks for the playlist again when the server is not ready yet", async () => {
+    vi.mocked(resolvePlaybackSource).mockResolvedValue(source("/playlist.m3u8", true));
+    const { result } = renderHook(() => useMediaSource("file", element));
+    await waitFor(() => expect(result.current.source?.url).toBe("/playlist.m3u8"));
+    act(() => hls.instances[0]!.emit("error", { fatal: true, type: "network", details: "manifestLoadError" }));
+    expect(hls.instances[0]!.loadSource).toHaveBeenCalledTimes(2);
+    expect(result.current.error).toBeNull();
+  });
+});
 
 describe("useMediaSource generations", () => {
   it("ignores an old resolver and removes its metadata listener during rapid file changes", async () => {

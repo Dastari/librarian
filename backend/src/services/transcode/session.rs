@@ -52,7 +52,12 @@ pub struct TranscodeSession {
     pub output_dir: PathBuf,
     pub kind: TranscodeKind,
     pub audio_stream: Option<i32>,
-    child: Child,
+    child: Option<Child>,
+    /// Segments are encoded on request, so this session has no fixed `ffmpeg`
+    /// run: its encoder restarts wherever someone seeks to.
+    on_demand: bool,
+    /// The segment the current encoder started from (on-demand sessions).
+    encoder_start: u32,
     last_accessed: DateTime<Utc>,
 }
 
@@ -70,7 +75,30 @@ impl TranscodeSession {
             output_dir,
             kind,
             audio_stream: None,
-            child,
+            child: Some(child),
+            on_demand: false,
+            encoder_start: 0,
+            last_accessed: Utc::now(),
+        }
+    }
+
+    /// A session with no encoder yet. It starts when the first segment is asked for.
+    pub fn on_demand(
+        media_file_id: String,
+        session_id: String,
+        output_dir: PathBuf,
+        kind: TranscodeKind,
+        audio_stream: Option<i32>,
+    ) -> Self {
+        Self {
+            media_file_id,
+            session_id,
+            output_dir,
+            kind,
+            audio_stream,
+            child: None,
+            on_demand: true,
+            encoder_start: 0,
             last_accessed: Utc::now(),
         }
     }
@@ -90,6 +118,50 @@ pub fn session_is_idle(
     idle_minutes: i64,
 ) -> bool {
     now.signed_duration_since(last_accessed) >= chrono::Duration::minutes(idle_minutes)
+}
+
+/// How close ahead of the encoder a request can be and still be worth waiting for. Encoding
+/// runs faster than playback, so stopping it for a segment this near would only lose time.
+const ENCODER_WAIT_SEGMENTS: u32 = 4;
+
+/// The outcome of asking for an on-demand segment; see [`SessionRegistry::plan_segment`].
+#[derive(Debug, PartialEq, Eq)]
+pub enum SegmentPlan {
+    /// Already on disk.
+    Ready(PathBuf),
+    /// The running encoder will reach it shortly.
+    Wait(PathBuf),
+    /// Start an encoder at this segment; any earlier one has been stopped.
+    Restart(PathBuf),
+    /// The file ended before this segment.
+    PastEnd,
+}
+
+/// Whether an encoder that started at `start` and has written up to `reached` will soon write `segment`.
+pub fn segment_is_coming(start: u32, reached: u32, segment: u32) -> bool {
+    segment >= start && segment <= reached.saturating_add(ENCODER_WAIT_SEGMENTS)
+}
+
+/// A segment's file, by the same naming `ffmpeg` is told to use.
+pub fn segment_path(output_dir: &std::path::Path, segment: u32) -> PathBuf {
+    output_dir.join(format!("seg_{segment:03}.ts"))
+}
+
+/// The number of a segment name asked for over HTTP: `seg_0042.ts` is 42.
+pub fn segment_number(name: &str) -> Option<u32> {
+    let digits = name.strip_prefix("seg_")?.strip_suffix(".ts")?;
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+fn next_missing_segment(output_dir: &std::path::Path, from: u32) -> u32 {
+    let mut segment = from;
+    while segment_path(output_dir, segment).exists() {
+        segment += 1;
+    }
+    segment
 }
 
 /// Validate a segment filename requested over HTTP before it's joined onto a
@@ -156,15 +228,16 @@ impl SessionRegistry {
         let failed = {
             let mut guard = self.sessions.write().await;
             let session = guard.get_mut(key)?;
-            let reusable = match session.child.try_wait() {
-                Ok(None) => true,
-                Ok(Some(status)) => status.success(),
-                Err(error) => {
-                    warn!(media_file_id = %session.media_file_id, session_id = %session.session_id,
-                        %error, "Transcode: failed to inspect HLS child");
-                    false
-                }
-            };
+            let reusable = session.on_demand
+                || match session.child.as_mut().map(Child::try_wait) {
+                    None | Some(Ok(None)) => true,
+                    Some(Ok(Some(status))) => status.success(),
+                    Some(Err(error)) => {
+                        warn!(media_file_id = %session.media_file_id, session_id = %session.session_id,
+                            %error, "Transcode: failed to inspect HLS child");
+                        false
+                    }
+                };
             if reusable {
                 session.last_accessed = Utc::now();
                 return Some(session.output_dir.clone());
@@ -175,6 +248,50 @@ impl SessionRegistry {
             kill_and_cleanup(&mut session).await;
         }
         None
+    }
+
+    /// What to do for a request of on-demand `segment`, given how far the encoder has got.
+    /// `Restart` has already stopped the old encoder and returns the session's directory.
+    pub async fn plan_segment(&self, key: &SessionKey, segment: u32) -> Option<SegmentPlan> {
+        let mut stopped = None;
+        let plan = {
+            let mut guard = self.sessions.write().await;
+            let session = guard.get_mut(key)?;
+            session.last_accessed = Utc::now();
+            let dir = session.output_dir.clone();
+            if segment_path(&dir, segment).exists() {
+                return Some(SegmentPlan::Ready(dir));
+            }
+            let status = session.child.as_mut().map(Child::try_wait);
+            let start = session.encoder_start;
+            let reached = next_missing_segment(&dir, start);
+            match status {
+                Some(Ok(None)) if segment_is_coming(start, reached, segment) => {
+                    SegmentPlan::Wait(dir)
+                }
+                // Encoded through to the end of the file, and this wasn't in it.
+                Some(Ok(Some(status))) if status.success() && segment >= start => {
+                    SegmentPlan::PastEnd
+                }
+                _ => {
+                    stopped = session.child.take();
+                    session.encoder_start = segment;
+                    SegmentPlan::Restart(dir)
+                }
+            }
+        };
+        if let Some(mut child) = stopped {
+            let _ = child.start_kill();
+            let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
+        }
+        Some(plan)
+    }
+
+    /// Hand a freshly spawned encoder to its session.
+    pub async fn set_encoder(&self, key: &SessionKey, child: Child) {
+        if let Some(session) = self.sessions.write().await.get_mut(key) {
+            session.child = Some(child);
+        }
     }
 
     /// Stop and remove one active session, if present.
@@ -269,30 +386,32 @@ impl SessionRegistry {
 }
 
 async fn kill_and_cleanup(session: &mut TranscodeSession) {
-    if let Err(e) = session.child.start_kill() {
-        warn!(
-            media_file_id = %session.media_file_id,
-            session_id = %session.session_id,
-            kind = ?session.kind,
-            error = %e,
-            "Transcode: failed to signal ffmpeg child to stop"
-        );
-    }
-    // Bounded wait for the process to actually exit after the kill signal;
-    // never block shutdown/reap indefinitely on a wedged child.
-    match tokio::time::timeout(Duration::from_secs(5), session.child.wait()).await {
-        Ok(Ok(_status)) => {}
-        Ok(Err(e)) => warn!(
-            media_file_id = %session.media_file_id,
-            session_id = %session.session_id,
-            error = %e,
-            "Transcode: error waiting for killed ffmpeg child to exit"
-        ),
-        Err(_) => warn!(
-            media_file_id = %session.media_file_id,
-            session_id = %session.session_id,
-            "Transcode: timed out waiting for ffmpeg child to exit after kill"
-        ),
+    if let Some(child) = session.child.as_mut() {
+        if let Err(e) = child.start_kill() {
+            warn!(
+                media_file_id = %session.media_file_id,
+                session_id = %session.session_id,
+                kind = ?session.kind,
+                error = %e,
+                "Transcode: failed to signal ffmpeg child to stop"
+            );
+        }
+        // Bounded wait for the process to actually exit after the kill signal;
+        // never block shutdown/reap indefinitely on a wedged child.
+        match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+            Ok(Ok(_status)) => {}
+            Ok(Err(e)) => warn!(
+                media_file_id = %session.media_file_id,
+                session_id = %session.session_id,
+                error = %e,
+                "Transcode: error waiting for killed ffmpeg child to exit"
+            ),
+            Err(_) => warn!(
+                media_file_id = %session.media_file_id,
+                session_id = %session.session_id,
+                "Transcode: timed out waiting for ffmpeg child to exit after kill"
+            ),
+        }
     }
 
     if let Err(e) = tokio::fs::remove_dir_all(&session.output_dir).await
@@ -310,6 +429,27 @@ async fn kill_and_cleanup(session: &mut TranscodeSession) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn segment_numbers_come_only_from_segment_names() {
+        assert_eq!(segment_number("seg_000.ts"), Some(0));
+        assert_eq!(segment_number("seg_1351.ts"), Some(1351));
+        assert_eq!(segment_number("seg_.ts"), None);
+        assert_eq!(segment_number("seg_12a.ts"), None);
+        assert_eq!(segment_number("seg_-1.ts"), None);
+        assert_eq!(segment_number("../seg_1.ts"), None);
+        assert_eq!(segment_number("seg_99999999999.ts"), None);
+    }
+
+    #[test]
+    fn an_encoder_is_only_waited_for_when_it_is_nearly_there() {
+        // Started at 100, has written up to 110.
+        assert!(segment_is_coming(100, 110, 110));
+        assert!(segment_is_coming(100, 110, 114));
+        assert!(!segment_is_coming(100, 110, 115));
+        // Behind where it started: it will never write this.
+        assert!(!segment_is_coming(100, 110, 99));
+    }
+
     use super::*;
 
     #[test]

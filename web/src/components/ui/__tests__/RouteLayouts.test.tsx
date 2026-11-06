@@ -15,6 +15,7 @@ vi.mock("@tanstack/react-router", () => ({
   }),
 }));
 vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => false }));
+vi.mock("@/lib/graphql/live/hooks", () => ({ useLiveQuery: () => ({ data: undefined }) }));
 vi.mock("@/features/libraries/useLibraryScan", () => ({ useLibraryScan: () => ({ unresolvedIssues: 0 }) }));
 vi.mock("@/components/ui", async () => ({
   ...await vi.importActual("../PageHeader"),
@@ -48,7 +49,8 @@ describe("nested route boundaries", () => {
   it.each(["", "/_app/libraries/$libraryId/settings", "/_app/libraries/$libraryId/scans"])("reserves focus room and print flow for library outlet %s", (routeId) => {
     route.routeId = routeId;
     render(<LibraryLayout library={library} />);
-    expect(outletPane()).toHaveClass(routeId ? "overflow-y-auto" : "overflow-hidden");
+    // A bounded pane clips rather than hides: code must not be able to scroll it away.
+    expect(outletPane()).toHaveClass(routeId ? "overflow-y-auto" : "overflow-y-clip");
     // The breadcrumb names the library on screen; the heading remains for assistive technology.
     expect(screen.getByRole("heading", { name: "Family films" })).toHaveClass("sr-only");
   });
@@ -56,7 +58,7 @@ describe("nested route boundaries", () => {
   it.each(["/settings/general", "/settings/logs"])("keeps the screen scroll owner and print marker for %s", (pathname) => {
     route.pathname = pathname;
     render(<SettingsLayout />);
-    expect(outletPane()).toHaveClass(pathname.endsWith("logs") ? "overflow-hidden" : "overflow-y-auto");
+    expect(outletPane()).toHaveClass(pathname.endsWith("logs") ? "overflow-y-clip" : "overflow-y-auto");
   });
 
   it("lets detail content flow through both host boundaries on paper", () => {

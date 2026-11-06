@@ -5,9 +5,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, IdentityCell, RelativeTime, TextCell } from "glass-ux/data-table";
-import { IconExternalLink, IconPlus, IconRefresh, IconSettings } from "glass-ux/icons";
+import { IconExternalLink, IconFolder, IconPlus, IconRefresh, IconSettings } from "glass-ux/icons";
 import { useNavigate } from "@tanstack/react-router";
-import { IconFolder } from "@tabler/icons-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -44,7 +43,7 @@ const columns = column.columns([
     cell: ({ row }) => { const meta = libraryType(row.original.libraryType); return <IdentityCell icon={<meta.icon className={meta.tint} />} title={row.original.name} subtitle={row.original.path} status={row.original.scanning ? "installing" : "online"} statusLabel={row.original.scanning ? "Scanning" : "Idle"} />; },
   }),
   column.accessor((row) => libraryType(row.libraryType).label, { id: "type", header: "Type", width: 8, priority: 2, sortable: true, cell: ({ row }) => <Badge size="sm" tone="neutral">{libraryType(row.original.libraryType).label}</Badge> }),
-  column.accessor((row) => libraryItemCount(row).count, { id: "items", header: "Items", width: 8, priority: 2, align: "end", sortable: true, sortDescFirst: true, cell: ({ row }) => { const { count, noun } = libraryItemCount(row.original); return <TextCell>{pluralize(count, noun)}</TextCell>; } }),
+  column.accessor((row) => libraryItemCount(row).count, { id: "items", header: "Items", width: 8, priority: 2, align: "end", sortable: true, sortDescFirst: true, cell: ({ row }) => { const { count, noun } = libraryItemCount(row.original); return <TextCell muted={count === null}>{count === null ? "Files" : pluralize(count, noun)}</TextCell>; } }),
   column.display({ id: "schedule", header: "Scanning", width: 9, priority: 3, cell: ({ row }) => <TextCell muted>{row.original.autoScan ? `Every ${row.original.scanIntervalMinutes} min` : "Manual"}</TextCell> }),
   column.accessor((row) => row.lastScannedAt ?? "", { id: "scanned", header: "Last scan", width: 9, priority: 3, sortable: true, sortDescFirst: true, cell: ({ row }) => <RelativeTime value={parseTimestamp(row.original.lastScannedAt)} fallback="Never" /> }),
   column.display({ id: "organize", header: "Organize", width: 7, priority: 4, cell: ({ row }) => <Badge size="sm" tone={row.original.autoOrganize ? "success" : "neutral"}>{row.original.autoOrganize ? "On" : "Off"}</Badge> }),
@@ -135,7 +134,7 @@ export function LibrariesSettings() {
             <div className="flex items-end gap-2">
               <FormTextField control={form.control} name="path" label="Folder" mono isRequired className="min-w-0 flex-1" placeholder="/data/media/Movies" />
               <Button variant="secondary" isIconOnly aria-label="Browse folders" onPress={() => setPickingFolder(true)} className="mb-px">
-                <IconFolder size={18} />
+                <IconFolder size="lg" />
               </Button>
             </div>
             <FormSwitchField control={form.control} name="autoScan" label="Scan on a schedule" />

@@ -1,18 +1,18 @@
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
-import { createDataTableColumns, DataTable, IdentityCell, TextCell, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
+import { createDataTableColumns, DataTable, IdentityCell, TextCell, type DataTableSearch, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
 import { IconExternalLink, IconPlay, IconPlus } from "glass-ux/icons";
 import { createContext, useContext, useMemo, useState } from "react";
 
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { useTableSelection } from "@/hooks/useTableSelection";
 import { EntityChip } from "@/components/entities/EntityChip";
-import { ErrorState } from "@/components/ui";
+import { ErrorState, GlassSegmented } from "@/components/ui";
 import { SaveToListDialog } from "@/features/personal/SaveToListDialog";
 import type { PlayItem } from "@/features/player/store";
 import { usePlayer } from "@/features/player/usePlayer";
 import { EntityLibraryGetDocument, LibraryTracksDocument, type ContentStatus, type LibraryTracksQuery, type TrackOrderByInput, type TrackWhereInput } from "@/graphql/generated/graphql";
-import { useContentStatuses } from "@/hooks/useContentStatuses";
+import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
 import { useServerTable } from "@/hooks/useServerTable";
 import { useSession } from "@/lib/auth/useSession";
 import { albumCover } from "@/lib/artwork";
@@ -20,9 +20,8 @@ import { ENTITY_KINDS, entityPath } from "@/lib/entities/kinds";
 import { badgeTone } from "@/lib/entities/linked";
 import { formatBytes, formatClock } from "@/lib/format";
 import { useLiveQuery } from "@/lib/graphql/live/hooks";
-import { statusMeta } from "@/lib/status";
 
-import { BrowserToolbar } from "./BrowserToolbar";
+import type { AvailabilityFilter } from "./BrowserToolbar";
 import { useBrowserFilters, titleFilter } from "./useBrowserFilters";
 import { useInfiniteConnection } from "./useInfiniteConnection";
 
@@ -33,7 +32,7 @@ const TrackGlyph = ENTITY_KINDS.track.icon;
 const StatusContext = createContext<Map<string, ContentStatus>>(new Map());
 function TrackStatusCell({ row }: { row: TrackRow }) {
   const statuses = useContext(StatusContext);
-  const meta = statusMeta(statuses.get(row.id));
+  const meta = contentStatusMeta(statuses, row.id);
   return <Badge size="sm" marker="dot" tone={badgeTone(meta.tone)}>{meta.label}</Badge>;
 }
 function columnsFor() {
@@ -63,6 +62,8 @@ export function trackToPlayItem(row: { id: string; title: string; mediaFileId?: 
     duration: row.durationSecs ?? undefined,
   };
 }
+
+const search: DataTableSearch<TrackRow> = { fields: [], placeholder: "Filter tracks", toCondition: (query) => ({ title: { contains: query } }) };
 
 export function TracksBrowser({ libraryId }: { libraryId: string }) {
   const { user } = useSession();
@@ -101,8 +102,8 @@ export function TracksBrowser({ libraryId }: { libraryId: string }) {
 
   const columns = useMemo(() => columnsFor(), []);
   const selection = useTableSelection({ scope: [user?.id, libraryId, where, table.sorting], rows: list.rows, ready: !list.fetching });
-  const state = useMemo<DataTableState>(() => ({ pagination: { pageIndex: 0, pageSize: 50 }, selection: selection.selection, filters: [], sorting: table.sorting }), [table.sorting, selection.selection]);
-  const onStateChange = (next: DataTableState, change: DataTableStateChange) => { if (change === "sorting") table.setSorting(next.sorting); else if (change === "selection") selection.onSelectionChange(next.selection); };
+  const state = useMemo<DataTableState>(() => ({ pagination: { pageIndex: 0, pageSize: 50 }, selection: selection.selection, filters: [], sorting: table.sorting, search: filters.query }), [table.sorting, selection.selection, filters.query]);
+  const onStateChange = (next: DataTableState, change: DataTableStateChange) => { if (change === "search") filters.setQuery(next.search ?? ""); else if (change === "sorting") table.setSorting(next.sorting); else if (change === "selection") selection.onSelectionChange(next.selection); };
   const selectedQueue = (rows: readonly TrackRow[]) => {
     const ids = new Set(rows.map((row) => row.id));
     return list.rows.filter((row) => ids.has(row.id)).map(trackToPlayItem).filter((item): item is PlayItem => item !== null);
@@ -120,17 +121,6 @@ export function TracksBrowser({ libraryId }: { libraryId: string }) {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 sm:gap-4">
-      <BrowserToolbar
-        tableOnly
-        query={filters.query}
-        onQueryChange={filters.setQuery}
-        letter={null}
-        onLetterChange={() => undefined}
-        availability={filters.availability}
-        onAvailabilityChange={filters.setAvailability}
-        total={list.totalCount}
-        placeholder="Filter tracks"
-      />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <StatusContext.Provider value={statuses}>
         <DataTable<TrackRow>
@@ -153,6 +143,16 @@ export function TracksBrowser({ libraryId }: { libraryId: string }) {
           renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "track", other: "tracks" }} />}
           density="compact"
           noun={{ one: "track", other: "tracks" }}
+          search={search}
+          toolbar={
+            <GlassSegmented<AvailabilityFilter>
+              ariaLabel="Availability"
+              size="sm"
+              value={filters.availability}
+              onChange={filters.setAvailability}
+              items={[{ key: "all", label: "All" }, { key: "available", label: "Available" }, { key: "wanted", label: "Wanted" }, { key: "missing", label: "Missing" }]}
+            />
+          }
           onRowOpen={(row) => { if (row.mediaFileId) playFrom(row); }}
           rowOpen="click"
           error={list.error && list.rows.length === 0 ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : undefined}

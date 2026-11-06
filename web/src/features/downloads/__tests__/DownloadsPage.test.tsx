@@ -19,6 +19,8 @@ vi.mock("@apollo/client/react", () => ({ useMutation: (doc: unknown) => {
   throw new Error("Unexpected mutation");
 } }));
 vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => fixture.admin, useSession: () => ({ user: { id: "owner", role: fixture.admin ? "admin" : "member" } }) }));
+vi.mock("@/lib/graphql/live/hooks", () => ({ useLiveQuery: () => ({ data: undefined, loading: false, refetch: vi.fn() }) }));
+vi.mock("../MatchFileDialog", () => ({ MatchFileDialog: () => null }));
 vi.mock("@/hooks/useMediaQuery", () => ({ useMediaQuery: () => fixture.wide }));
 vi.mock("@/features/libraries/browser/useCompleteConnection", () => ({ useCompleteConnection: () => ({ rows: [] }) }));
 vi.mock("../useDownloads", () => ({
@@ -103,20 +105,12 @@ describe("download selection and panes", () => {
     await userEvent.type(await screen.findByRole("searchbox"),"Download 1");
     await waitFor(()=>expect(screen.getByRole("checkbox",{name:"Select Download 1"})).not.toBeChecked());
   });
-  it("uses a real resizable SplitPane and one identity contract for table and details", async () => {
-    const view=mount();await userEvent.click(screen.getByText("Download 1"));
-    expect(await screen.findByRole("separator",{name:/Resize Downloads table/})).toBeInTheDocument();
-    expect(view.container.querySelectorAll('[data-torrent-identity]').length).toBeGreaterThan(2);
-    expect(screen.getByLabelText("Download details content")).toBeInTheDocument();
-    expect(screen.getByRole("button",{name:"Close download details"})).toBeInTheDocument();
-  });
-  it("uses a bounded modal with only the details body scrolling at narrow widths", async () => {
-    fixture.wide=false;mount();await userEvent.click(screen.getByText("Download 1"));
-    const dialog=await screen.findByRole("dialog",{name:"Download details"});
-    expect(dialog).toHaveClass("overflow-hidden");
-    expect(dialog.querySelector('.glass-panel')).toBeNull();
-    await userEvent.click(within(dialog).getByRole("button",{name:"Close download details"}));
-    await waitFor(()=>expect(screen.queryByRole("dialog",{name:"Download details"})).toBeNull());
+  it("opens a row in the details dialog at every width, and closes back to the table", async () => {
+    mount();await userEvent.click(screen.getByText("Download 1"));
+    const dialog=await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("tab",{name:/Files/})).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(()=>expect(screen.queryByRole("dialog")).toBeNull());
   });
   it("keeps read-only selection while withholding management actions from a non-admin", async () => {
     fixture.admin=false;mount();expect(screen.getByRole("checkbox",{name:"Select Download 1"})).toBeInTheDocument();

@@ -1,4 +1,5 @@
 import { ActionBar, type ActionSet } from "glass-ux/actions";
+import { Tooltip } from "glass-ux/tooltip";
 import { Badge } from "glass-ux/badge";
 import { EntityIdentity } from "glass-ux/entity";
 import { IconClose } from "glass-ux/icons";
@@ -22,7 +23,7 @@ function DuplicateComparison({ details }: { details: Record<string, string | num
   const side = (title: string, path: string, quality: unknown, tone: "success" | "warning") => (
     <div className="min-w-0 flex-1 rounded-control border border-separator p-3">
       <div className="flex items-center gap-2"><p className="text-overline text-muted">{title}</p>{typeof quality === "string" ? <Badge size="sm" tone={tone}>{quality}</Badge> : null}</div>
-      <p className="mt-1 break-all text-label" title={path}>{fileName(path)}</p>
+      <Tooltip content={path}><p className="mt-1 break-all text-label">{fileName(path)}</p></Tooltip>
       <p className="break-all font-mono text-label-sm text-muted">{path.slice(0, Math.max(0, path.length - fileName(path).length))}</p>
     </div>
   );
