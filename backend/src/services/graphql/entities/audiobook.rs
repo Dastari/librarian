@@ -110,6 +110,33 @@ pub struct Audiobook {
     #[filterable(type = "number")]
     pub chapter_count: Option<i32>,
 
+    #[graphql(name = "seriesName")]
+    #[filterable(type = "string")]
+    pub series_name: Option<String>,
+
+    #[graphql(name = "seriesPosition")]
+    pub series_position: Option<String>,
+
+    /// Where the chapters came from: `provider`, `embedded`, `files` or `parts`.
+    #[graphql(name = "chapterSource")]
+    pub chapter_source: Option<String>,
+
+    /// How the book's files are cut: `whole_book`, `per_chapter` or `parts`.
+    #[graphql(name = "fileShape")]
+    pub file_shape: Option<String>,
+
+    /// Whether chapters are being checked by listening: `listening`, `done` or `failed`.
+    #[graphql(name = "chapterCheckState")]
+    pub chapter_check_state: Option<String>,
+
+    /// What listening found, in plain words.
+    #[graphql(name = "chapterCheck")]
+    pub chapter_check: Option<String>,
+
+    /// The provider's chapter list, kept while the release's own chapters replace it. JSON.
+    #[graphql(name = "providerChapters")]
+    pub provider_chapters: Option<String>,
+
     #[graphql(name = "coverUrl")]
     pub cover_url: Option<String>,
 

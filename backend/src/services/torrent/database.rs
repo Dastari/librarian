@@ -141,7 +141,7 @@ fn check_mutation_payloads(data: &serde_json::Value) -> anyhow::Result<()> {
 }
 
 /// Parse a hex info_hash string into a 20-byte `Id20`.
-fn hex_to_info_hash(hex: &str) -> Result<librqbit::dht::Id20, anyhow::Error> {
+pub(super) fn hex_to_info_hash(hex: &str) -> Result<librqbit::dht::Id20, anyhow::Error> {
     if hex.len() != 40 {
         anyhow::bail!(
             "Invalid info_hash hex length: expected 40, got {}",
@@ -1228,16 +1228,15 @@ pub async fn find_active_torrents(db: &Database) -> Result<Vec<Torrent>, anyhow:
 
 /// Every torrent that has finished downloading, for the seeding-policy sweep.
 pub async fn find_completed_torrents(db: &Database) -> Result<Vec<Torrent>, anyhow::Error> {
+    // Not by progress alone: a torrent reads as empty while the client verifies it, and stopping then
+    // leaves that low progress stored. Treating it as unfinished at the next start would run its
+    // imports again as though it had just finished.
     Ok(Torrent::query(db.pool())
-        .filter(TorrentWhereInput {
-            progress: Some(IntFilter {
-                gte: Some(1),
-                ..Default::default()
-            }),
-            ..Default::default()
-        })
         .fetch_all()
-        .await?)
+        .await?
+        .into_iter()
+        .filter(|torrent| torrent.completed_at.is_some() || torrent.progress >= 1.0)
+        .collect())
 }
 
 /// Sync all session torrents into the database (upsert by info_hash).

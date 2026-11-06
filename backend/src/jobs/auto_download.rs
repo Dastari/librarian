@@ -33,6 +33,7 @@
 //! `docs/design.md`'s Media Pipeline Decision Guide (Q1, Q23, Q25, Q37, Q39,
 //! Q50, Q52).
 
+use crate::services::release_match;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -970,23 +971,39 @@ async fn discover_audiobook_candidates(
             continue;
         }
 
+        let short = release_match::short_title(&audiobook.title);
         let term = match &audiobook.author_name {
-            Some(author) => format!("{} {}", author, audiobook.title),
-            None => audiobook.title.clone(),
+            Some(author) => format!("{author} {short}"),
+            None => short.clone(),
         };
+        // Every spelling at each width: results are merged, so a wider term only adds choices, and
+        // the ranking below still has to find a title close to what's wanted.
+        let queries = release_match::book_search_ladder(
+            &term,
+            audiobook.author_name.as_deref(),
+            &audiobook.title,
+            audiobook.series_name.as_deref(),
+        )
+        .into_iter()
+        .flat_map(|term| {
+            let plain = release_match::without_apostrophes(&term);
+            std::iter::once(term).chain(plain)
+        })
+        .map(|term| SourceQuery {
+            query_type: QueryType::BookSearch,
+            search_term: Some(term),
+            title: Some(audiobook.title.clone()),
+            author: audiobook.author_name.clone(),
+            year: year_from_date(audiobook.published_date.as_deref()),
+            cache: true,
+            ..Default::default()
+        })
+        .collect();
         out.push(WantedCandidate {
             label: format!("audiobook '{term}'"),
             library_id: audiobook.library_id.clone(),
-            match_title: term.clone(),
-            queries: vec![SourceQuery {
-                query_type: QueryType::BookSearch,
-                search_term: Some(term),
-                title: Some(audiobook.title.clone()),
-                author: audiobook.author_name.clone(),
-                year: year_from_date(audiobook.published_date.as_deref()),
-                cache: true,
-                ..Default::default()
-            }],
+            match_title: short,
+            queries,
             linkage: CandidateLinkage {
                 audiobook_id: Some(audiobook.id.clone()),
                 ..Default::default()
@@ -1121,6 +1138,33 @@ async fn collect_releases(ctx: &HuntContext, candidate: &WantedCandidate) -> Vec
     for query in &candidate.queries {
         for result in ctx.sources.search_all(query).await {
             for release in result.releases {
+                // Only a person can sort out a pack, an ebook is never what was wanted, and neither
+                // is another book of the series.
+                if candidate.linkage.audiobook_id.is_some()
+                    && (release_match::book_pack_hint(&release.title).is_some()
+                        || query.title.as_deref().is_some_and(|title| {
+                            release_match::release_relevance(
+                                &release.title,
+                                &release_match::BookFacts {
+                                    title: title.to_string(),
+                                    author: query.author.clone(),
+                                    ..Default::default()
+                                },
+                                None,
+                            )
+                            .1
+                            .is_some()
+                        })
+                        || release_match::classify_book_release(
+                            &release.title,
+                            &release.categories,
+                            release.size,
+                            None,
+                        )
+                        .0 == release_match::ReleaseFormat::Ebook)
+                {
+                    continue;
+                }
                 let key = release
                     .info_hash
                     .clone()

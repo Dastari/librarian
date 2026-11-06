@@ -118,6 +118,13 @@ pub(super) async fn audiobook(db: &Database, library: &Library) -> Audiobook {
     Audiobook::insert(
         db,
         CreateAudiobookInput {
+            series_name: None,
+            series_position: None,
+            chapter_source: None,
+            file_shape: None,
+            chapter_check_state: None,
+            chapter_check: None,
+            provider_chapters: None,
             library_id: library.id.clone(),
             user_id: library.user_id.clone(),
             title: "fixture audiobook".to_string(),
@@ -176,6 +183,7 @@ pub(super) async fn chapter(db: &Database, book: &Audiobook, file_id: Option<&st
     Chapter::insert(
         db,
         CreateChapterInput {
+            file_offset_secs: None,
             audiobook_id: book.id.clone(),
             chapter_number: 0,
             title: None,

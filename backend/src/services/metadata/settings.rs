@@ -13,6 +13,12 @@ pub struct MetadataSettings {
     pub tvmaze_cache_days: i32,
     pub musicbrainz_cache_days: i32,
     pub openlibrary_cache_days: i32,
+    pub audible_cache_days: i32,
+    pub audible_enabled: bool,
+    pub audnexus_enabled: bool,
+    pub openlibrary_enabled: bool,
+    /// Listen to audiobooks to check their chapters and identify them.
+    pub listening_enabled: bool,
 }
 
 impl MetadataSettings {
@@ -45,6 +51,19 @@ impl MetadataSettings {
         let openlibrary_cache_days =
             Self::load_cache_days(db, "metadata.cache_days.openlibrary").await;
 
+        let audible_cache_days = Self::load_cache_days(db, "metadata.cache_days.audible").await;
+        let enabled = |key: &'static str, default: bool| async move {
+            get_setting::<bool>(db, key)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or(default)
+        };
+        let audible_enabled = enabled("metadata.audible_enabled", true).await;
+        let audnexus_enabled = enabled("metadata.audnexus_enabled", true).await;
+        let openlibrary_enabled = enabled("metadata.openlibrary_enabled", true).await;
+        let listening_enabled = enabled("metadata.listening_enabled", true).await;
+
         Ok(Self {
             tmdb_api_key,
             musicbrainz_user_agent,
@@ -52,6 +71,11 @@ impl MetadataSettings {
             tvmaze_cache_days,
             musicbrainz_cache_days,
             openlibrary_cache_days,
+            audible_cache_days,
+            audible_enabled,
+            audnexus_enabled,
+            openlibrary_enabled,
+            listening_enabled,
         })
     }
 }

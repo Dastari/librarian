@@ -252,6 +252,24 @@
     "changed": "usenetServerChanged"
   },
   {
+    "entity": "MatchingAssistant",
+    "list": "matchingAssistants",
+    "get": "matchingAssistant",
+    "changed": "matchingAssistantChanged"
+  },
+  {
+    "entity": "IdentificationEvent",
+    "list": "identificationEvents",
+    "get": "identificationEvent",
+    "changed": "identificationEventChanged"
+  },
+  {
+    "entity": "IdentifiedItem",
+    "list": "identifiedItems",
+    "get": "identifiedItem",
+    "changed": "identifiedItemChanged"
+  },
+  {
     "entity": "UsenetDownload",
     "list": "usenetDownloads",
     "get": "usenetDownload",

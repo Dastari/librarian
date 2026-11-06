@@ -575,7 +575,7 @@ All file matching must go through a single GraphQL mutation-driven code path:
 - `Metadata` (ffprobe/embedded tags when available)
 - `Ollama` (optional AI-assisted parsing; may be disabled at runtime)
 
-`Ollama` is a fallback parser only. Deterministic filename/metadata matching runs first. If the best deterministic candidate is missing or below `llm.confidence_threshold`, and the caller explicitly requested the `Ollama` method, the Ollama parser may produce structured hints which are fed back into the same candidate collectors. Routine library scans default to deterministic methods only; torrent import may request Ollama as part of its fallback path. Ollama never directly chooses a target and never plans final paths. When `Ollama` is disabled or unavailable, matching must still proceed with non-AI methods in the same mutation flow.
+`Ollama` is a fallback parser only, separate from Jev (Q52b), which decides among known candidates rather than parsing names. Deterministic filename/metadata matching runs first. If the best deterministic candidate is missing or below `llm.confidence_threshold`, and the caller explicitly requested the `Ollama` method, the Ollama parser may produce structured hints which are fed back into the same candidate collectors. Routine library scans default to deterministic methods only; torrent import may request Ollama as part of its fallback path. Ollama never directly chooses a target and never plans final paths. When `Ollama` is disabled or unavailable, matching must still proceed with non-AI methods in the same mutation flow.
 
 Related pipeline mutations that must remain reusable across all library types:
 
@@ -987,6 +987,41 @@ These scenarios have been explicitly decided and should be implemented according
 4. Missing files → unlink from items, set `wanted = true`
 5. New files → queue analyze, then match and optionally organize
 6. Existing files can be re-analyzed through `analyzeMediaFile`
+
+### Q52b: How is a release matched to a book when its files don't look like the book's chapters?
+**Answer:** A provider's chapter list describes the provider's edition, so it is a reference, never slots to fill by position. `services/release_match.rs` holds the rules as pure code, and a preview and an import share one answer.
+
+1. **Which files are the book.** Files are grouped by album tag, then folder, then the pattern of their names. A group is the book if an ASIN tag matches, or its name or tags match the title. A lone group whose name doesn't match needs a length within 3%, and tags naming another book always stop it. ffprobe reads ID3, MP4 atoms, APE and Vorbis comments, and `tags_from_pairs` reads them all the same way.
+2. **Where chapters come from**, first match wins:
+   1. Chapter markers inside the file. If their names are only numbers and the counts agree, the provider's names are kept with the file's times.
+   2. File names that match the provider's chapter titles, even if some chapters are missing (partial fulfilment, Q39).
+   3. The same recording, within 3% of the book's length: the provider's chapters stay, placed on the files by time. Each chapter gets `mediaFileId` and `fileOffsetSecs`. This covers one whole file, one file per chapter, and parts that ignore chapter breaks.
+   4. Files with real names of their own: each file becomes a chapter.
+   5. No chapter information, within 15% of the length: the files in order, as numbered parts.
+3. **Anything else needs a person.** The torrent gets `postProcessStatus = needs_review`, nothing moves, and it isn't retried. They can accept the fallback from the torrent's Identified tab (`importIdentifiedItem`).
+4. **Replacing chapters is reversible.** The provider's list is kept in `Audiobook.providerChapters`, rows are reused so references survive, and `restoreAudiobookChapters` puts it back.
+5. **Packs.** Other books in a release are never imported into this one. Their files are reported as belonging to another book, the torrent ends `partial`, and `importIdentifiedItem` imports them as a library book or adds them from the provider.
+6. **A release with no audio** is refused while still paused when the file list is known, before anything downloads. If that is missed, the import fails with `failed`, which blocklists it so a hunt can try another release. Hunts never grab ebooks or multi-book packs.
+7. **Previews.** `torrentMatchPreview` runs the same plan from names and sizes while downloading, and from tags and lengths once files finish. Nothing moves on an estimate.
+8. **Jev** (`services/jev.rs`) is optional and off by default, enabled in Settings → Metadata. Its key lives in `MatchingAssistant.api_key`, encrypted by the write transform like `Source.credentials`, writable but never readable through GraphQL. It is asked only what rules couldn't settle, which group is this book and which track is this file, and only among candidates the rules found. A book answer needs at least 85% and a 10-point lead over the next group; a track answer needs 80%. Lengths still have to agree. File and title names are sent to TypeSafe when it is on.
+
+Files in parts are named `<book> - Part NN` and keep that name through organizing, because a chapter's name would be wrong on them. Music uses tags, names and lengths together through `match_tracks`.
+
+### Q52c: How does a download get identified?
+**Answer:** Every torrent goes through one recorded pipeline, `services/library_scan/identify.rs`, with its rules as pure code in `services/identify_rules.rs`. It runs when a torrent's files are first seen, 30 seconds after more files finish, when the torrent finishes, and on request (`identifyTorrent`). Runs are repeatable: results are kept by what they describe, a step that fails is recorded and passed over, and a torrent with no finished run is picked up after a restart.
+
+1. **Request.** The Torrent row's link, or its library's type, is a hint: what it was grabbed for is tried first. A request can't make files into something they can't be.
+2. **Reading.** Tags, lengths and chapter markers from finished files, and `.txt`, `.nfo`, `.cue` and `.md` files up to 256 KB. Text files are evidence from a stranger, compared with other sources and never acted on directly.
+3. **Kind.** Audiobook, music, TV, movie or ebook, from the request, formats, genre tags, names, text files and track lengths. Long albums are books only if their tracks are too, or if they run past seven hours.
+4. **Components.** Books and albums by `group_files`, TV by show and season, movies by file.
+5. **Which thing.** The library first, then providers. For books the title alone is never enough: a listing must have the right author and a matching length, which is how another author's book of the same name is kept out. An Audible id in a name settles it if the length agrees. Otherwise, in order: searches with each author and then the plain title, then what's heard in the recording's opening, then Jev among the listings that remain. Two readings of the same length are left to a person. Music compares track lengths with MusicBrainz, and movies compare runtime with TMDB.
+6. **Results.** `IdentifiedItem` holds each thing found, with its candidates and its evidence, each piece recording its source (`files`, `heard`, `listing`, `library`, `jev` or `other`), whether it is a warning, and a short label for warnings shown beside the title. Statuses are `imported`, `wanted`, `in_library`, `identified`, `needs_choice` and `unknown`. `IdentificationEvent` holds each step with its timing, for the last three runs. Both are shown on the torrent, and both go when it's removed.
+7. **Imports.** A complete item matching something wanted imports at once, through the same paths as a linked download. A run from merely seeing a torrent, such as after a restart, never imports. A restored torrent's files seem to finish while the client checks them; that never imports either, and a first look replaced that way while queued still runs as a first look. A pending "file finished" run stops waiting as soon as the torrent finishes. Everything else waits for `importIdentifiedItem`. Imported stays imported across runs.
+8. **Files that can't be read** don't replace results. A run that can't read a file retries once, and if there are results already, it keeps them and says so. Mid-verification a restored torrent reads as empty, so `completedAt` decides whether its files are there.
+9. **Imports of one torrent run one at a time**, because finishing, identification and a person can each start one.
+10. **Unlinked audiobooks** skip the generic per-file matcher, whose view of one file at a time can place a pack's parts on the wrong book.
+
+**Listening** (`services/whisper.rs`, `library_scan/listen.rs`) is one more source of evidence, on by default where installed, and it runs on the server only. It uses `whisper-cli` from whisper.cpp as a separate program, found by `LIBRARIAN_WHISPER_CLI` and `LIBRARIAN_WHISPER_MODEL` or in `data/models`. After a book imports it listens at each listed chapter's start for that chapter being announced, such as "Chapter Ten" or "Prologue". The listing keeps its names and order, and only times move. A heard chapter starts at the end of the last real pause before its announcement, since word timings are out by a second or so. One not heard falls between the heard chapters around it, then on the longest pause nearby. Credits and titles of a single ordinary word aren't listened for. Unless at least half of the chapters that can be heard are, nothing changes and the book says so. `restoreAudiobookChapters` undoes it. `changeAudiobookEdition` makes a book a different listing and keeps its files.
 
 ### Q53: Which `QualityProfile` applies to a given media file/wanted item?
 **Answer:** Precedence, resolved by `services::quality::profile::resolve_profile_for_media_file`/`resolve_profile_for_library`:

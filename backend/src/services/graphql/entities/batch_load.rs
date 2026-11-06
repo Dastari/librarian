@@ -68,6 +68,9 @@ impl_string_pk_batch_load!(
     super::Track,
     super::UsenetDownload,
     super::UsenetServer,
+    super::MatchingAssistant,
+    super::IdentificationEvent,
+    super::IdentifiedItem,
     super::User,
     super::VideoStream,
 );

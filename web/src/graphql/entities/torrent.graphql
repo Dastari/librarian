@@ -19,6 +19,9 @@ fragment TorrentFields on Torrent {
   sourceIndexerId
   libraryId
   postProcessStatus
+  identificationStatus
+  identificationKind
+  identificationSummary
   postProcessError
   processedAt
   episodeId

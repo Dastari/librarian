@@ -194,6 +194,20 @@ pub struct SourceReleaseInfoGql {
     /// Source-scoped hash/GUID identity for deduplicating continued pages.
     #[graphql(name = "stableId")]
     pub stable_id: String,
+    /// For book searches: `audio`, `ebook` or `unknown`.
+    #[graphql(name = "format")]
+    pub format: Option<String>,
+    #[graphql(name = "formatReason")]
+    pub format_reason: Option<String>,
+    /// For book searches: how many books the release's name says it holds, like `5 books`.
+    #[graphql(name = "packHint")]
+    pub pack_hint: Option<String>,
+    /// For a search for one book: how well the name fits it, from 0 to 1.
+    #[graphql(name = "relevance")]
+    pub relevance: Option<f64>,
+    /// For a search for one book: the other book of the series this release names.
+    #[graphql(name = "otherBookNumber")]
+    pub other_book_number: Option<i32>,
     #[graphql(name = "title")]
     pub title: String,
     #[graphql(name = "guid")]
@@ -342,6 +356,12 @@ pub struct SourceSearchResultSetGql {
     /// Number of per-source result entries, including failed/unavailable sources.
     #[graphql(name = "sourcesSearched")]
     pub sources_searched: i32,
+    /// What was actually searched for, which differs from the request after cleaning or widening.
+    #[graphql(name = "searchedTerm")]
+    pub searched_term: String,
+    /// True when the requested term found nothing and a wider one was used instead.
+    #[graphql(name = "widened")]
+    pub widened: bool,
 }
 
 /// Generic success/error result for source mutations
@@ -430,6 +450,10 @@ pub struct SearchSourcesInput {
     /// A movie can return multiple torrent variants; all are preserved.
     #[graphql(name = "limit")]
     pub limit: Option<i32>,
+    /// If nothing is found, try wider terms built from the target's title and author. For a default
+    /// search: a term someone typed is searched as they typed it.
+    #[graphql(name = "autoWiden")]
+    pub auto_widen: Option<bool>,
 }
 
 /// Opaque, expiring source page handle. Contains no provider URL or secret.
@@ -455,6 +479,7 @@ fn source_search_binding(
     if let Some(fields) = request.as_object_mut() {
         fields.remove("continuations");
         fields.remove("source_ids");
+        fields.remove("auto_widen");
     }
     let mut profile = serde_json::to_value(profile)
         .map_err(|_| async_graphql::Error::new("Invalid search profile"))?;
@@ -581,7 +606,7 @@ impl SourceCustomQueries {
 
         use crate::services::sources::{QueryType, SourceQuery};
 
-        let query = SourceQuery {
+        let mut query = SourceQuery {
             query_type: if input.season.is_some()
                 || input.episode.is_some()
                 || input.tvdb_id.is_some()
@@ -617,7 +642,21 @@ impl SourceCustomQueries {
 
         let start = std::time::Instant::now();
 
-        let binding = source_search_binding(&input, quality_profile.as_ref())?;
+        use crate::services::release_match;
+        // The target is authorized above. A book's length tells an ebook from an audiobook, and its
+        // title and author give the wider terms to try if the first finds nothing.
+        let target_book = match input.audiobook_id.as_deref() {
+            Some(id) => crate::graphql::entities::Audiobook::get(db.pool(), &id.to_string())
+                .await
+                .map_err(|error| async_graphql::Error::new(error.to_string()))?,
+            None => None,
+        };
+        let book_search = target_book.is_some() || input.author.is_some();
+        let book_seconds = target_book
+            .as_ref()
+            .and_then(|book| book.total_duration_secs)
+            .map(f64::from);
+
         let principal = serde_json::to_string(&(&user.user_id, &user.role))
             .map_err(|_| async_graphql::Error::new("Invalid search principal"))?;
         let continuations: Vec<_> = input
@@ -627,16 +666,60 @@ impl SourceCustomQueries {
             .iter()
             .map(|continuation| (continuation.source_id.clone(), continuation.cursor.clone()))
             .collect();
-        let results = sources_manager
-            .search_paged(
-                &principal,
-                &binding,
-                input.source_ids.as_deref(),
-                &query,
-                &continuations,
-            )
-            .await
-            .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+        let ladder = match target_book.as_ref() {
+            Some(book) if input.auto_widen == Some(true) && continuations.is_empty() => {
+                release_match::book_search_ladder(
+                    &input.query,
+                    book.author_name.as_deref().or(input.author.as_deref()),
+                    &book.title,
+                    book.series_name.as_deref(),
+                )
+            }
+            _ => vec![release_match::clean_search_term(&input.query)],
+        };
+        let requested_term = ladder.first().cloned().unwrap_or_default();
+        let mut searched_term = requested_term.clone();
+        let mut results = Vec::new();
+        let mut binding_input = input.clone();
+        for term in &ladder {
+            searched_term = term.clone();
+            binding_input.query = term.clone();
+            query.search_term = Some(term.clone());
+            let binding = source_search_binding(&binding_input, quality_profile.as_ref())?;
+            results = sources_manager
+                .search_paged(
+                    &principal,
+                    &binding,
+                    input.source_ids.as_deref(),
+                    &query,
+                    &continuations,
+                )
+                .await
+                .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+            // Some sites index `Man's` and `Mans` separately, so a first page tries both.
+            if continuations.is_empty()
+                && let Some(plain) = release_match::without_apostrophes(term)
+            {
+                let mut variant = query.clone();
+                variant.search_term = Some(plain.clone());
+                binding_input.query = plain;
+                let binding = source_search_binding(&binding_input, quality_profile.as_ref())?;
+                let extra = sources_manager
+                    .search_paged(
+                        &principal,
+                        &binding,
+                        input.source_ids.as_deref(),
+                        &variant,
+                        &[],
+                    )
+                    .await
+                    .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+                merge_variant_results(&mut results, extra);
+            }
+            if results.iter().any(|page| !page.result.releases.is_empty()) {
+                break;
+            }
+        }
 
         let mut total_releases = 0;
         let gql_results: Vec<SourceSearchResultItemGql> = results
@@ -672,6 +755,50 @@ impl SourceCustomQueries {
                             }
                             None => (None, Vec::new()),
                         };
+                        // A quality profile says nothing about whether this is even audio.
+                        let (format, format_reason) = if book_search {
+                            release_match::classify_book_release(
+                                &rel.title,
+                                &rel.categories,
+                                rel.size,
+                                book_seconds,
+                            )
+                        } else {
+                            (release_match::ReleaseFormat::Unknown, None)
+                        };
+                        let (profile_match, reject_reasons) =
+                            if format == release_match::ReleaseFormat::Ebook {
+                                let mut reasons = reject_reasons;
+                                reasons.insert(
+                                    0,
+                                    format!(
+                                        "Looks like an ebook: {}",
+                                        format_reason.clone().unwrap_or_default()
+                                    ),
+                                );
+                                (Some("rejected".to_string()), reasons)
+                            } else {
+                                (profile_match, reject_reasons)
+                            };
+                        let pack_hint = book_search
+                            .then(|| release_match::book_pack_hint(&rel.title))
+                            .flatten();
+                        let (relevance, other_book_number) = match target_book.as_ref() {
+                            Some(book) => {
+                                let facts = release_match::BookFacts {
+                                    title: book.title.clone(),
+                                    author: book.author_name.clone(),
+                                    ..Default::default()
+                                };
+                                let (score, other) = release_match::release_relevance(
+                                    &rel.title,
+                                    &facts,
+                                    book.series_position.as_deref(),
+                                );
+                                (Some(score), other)
+                            }
+                            None => (None, None),
+                        };
                         SourceReleaseInfoGql {
                             stable_id: rel.stable_id(&r.source_id),
                             title: rel.title.clone(),
@@ -699,6 +826,11 @@ impl SourceCustomQueries {
                             parsed: ParsedReleaseGql::from(&parsed),
                             profile_match,
                             reject_reasons,
+                            format: book_search.then(|| format.as_str().to_string()),
+                            format_reason,
+                            pack_hint,
+                            relevance,
+                            other_book_number,
                         }
                     })
                     .collect();
@@ -722,7 +854,41 @@ impl SourceCustomQueries {
             total_releases,
             total_elapsed_ms: start.elapsed().as_millis() as i64,
             sources_searched,
+            widened: searched_term != requested_term,
+            searched_term,
         })
+    }
+}
+
+/// Add a second spelling's releases to each source's first page. The first spelling's page state is
+/// kept, since continuing a search follows that term.
+fn merge_variant_results(
+    results: &mut Vec<crate::services::sources::PagedSourceSearchResult>,
+    extra: Vec<crate::services::sources::PagedSourceSearchResult>,
+) {
+    for page in extra {
+        let Some(existing) = results
+            .iter_mut()
+            .find(|existing| existing.result.source_id == page.result.source_id)
+        else {
+            results.push(page);
+            continue;
+        };
+        let source_id = existing.result.source_id.clone();
+        let seen: std::collections::HashSet<String> = existing
+            .result
+            .releases
+            .iter()
+            .map(|release| release.stable_id(&source_id))
+            .collect();
+        for release in page.result.releases {
+            if !seen.contains(&release.stable_id(&source_id)) {
+                existing.result.releases.push(release);
+            }
+        }
+        if existing.result.error.is_some() && page.result.error.is_none() {
+            existing.result.error = None;
+        }
     }
 }
 
@@ -1136,6 +1302,7 @@ mod continuation_binding_tests {
             album_id: None,
             audiobook_id: None,
             limit: Some(50),
+            auto_widen: None,
         }
     }
     #[test]

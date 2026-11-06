@@ -95,6 +95,14 @@ struct AudibleProduct {
     runtime_length_min: Option<i64>,
     #[serde(default)]
     product_images: Option<std::collections::BTreeMap<String, String>>,
+    #[serde(default)]
+    series: Option<Vec<AudibleSeries>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AudibleSeries {
+    title: Option<String>,
+    sequence: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -203,6 +211,7 @@ fn audible_search_results(mut products: Vec<AudibleProduct>) -> Vec<AudiobookSea
         .filter_map(|product| {
             let cover_url = audible_cover(&product);
             let author_name = first_contributor(&product.authors);
+            let narrator = first_contributor(&product.narrators);
             let year = release_year(product.release_date.as_deref());
             let description = product
                 .merchandising_summary
@@ -218,6 +227,8 @@ fn audible_search_results(mut products: Vec<AudibleProduct>) -> Vec<AudiobookSea
                 cover_url,
                 isbn: None,
                 description,
+                duration_secs: product.runtime_length_min.map(|minutes| minutes * 60),
+                narrator,
             })
         })
         .collect()
@@ -237,6 +248,14 @@ fn audible_details(product: AudibleProduct) -> AudiobookDetails {
         .as_deref()
         .or(product.merchandising_summary.as_deref())
         .map(strip_html);
+    let series = product.series.iter().flatten().find(|series| {
+        series
+            .title
+            .as_deref()
+            .is_some_and(|name| !name.trim().is_empty())
+    });
+    let series_name = series.and_then(|series| series.title.clone());
+    let series_position = series.and_then(|series| series.sequence.clone());
     let title = match (product.title, product.subtitle) {
         (Some(title), Some(subtitle)) if !title.contains(&subtitle) => {
             format!("{title}: {subtitle}")
@@ -259,6 +278,8 @@ fn audible_details(product: AudibleProduct) -> AudiobookDetails {
         narrators,
         total_duration_secs: product.runtime_length_min.map(|minutes| minutes * 60),
         chapters: Vec::new(),
+        series_name,
+        series_position,
     }
 }
 
@@ -551,6 +572,11 @@ pub struct AudiobookSearchResult {
     pub cover_url: Option<String>,
     pub isbn: Option<String>,
     pub description: Option<String>,
+    /// How long the listing runs, which tells editions and same-named books apart.
+    #[serde(default)]
+    pub duration_secs: Option<i64>,
+    #[serde(default)]
+    pub narrator: Option<String>,
 }
 
 /// Unified audiobook details (from OpenLibrary work details)
@@ -573,6 +599,10 @@ pub struct AudiobookDetails {
     pub total_duration_secs: Option<i64>,
     #[serde(default)]
     pub chapters: Vec<AudiobookChapterDetails>,
+    #[serde(default)]
+    pub series_name: Option<String>,
+    #[serde(default)]
+    pub series_position: Option<String>,
 }
 
 /// One chapter of an audiobook, where the provider publishes them.
@@ -978,10 +1008,8 @@ impl MetadataService {
                 MetadataProvider::Tmdb => settings.tmdb_cache_days,
                 MetadataProvider::Tvmaze => settings.tvmaze_cache_days,
                 MetadataProvider::Musicbrainz => settings.musicbrainz_cache_days,
-                // Same setting: both describe the same books, and it isn't worth a second dial.
-                MetadataProvider::OpenLibrary | MetadataProvider::Audible => {
-                    settings.openlibrary_cache_days
-                }
+                MetadataProvider::OpenLibrary => settings.openlibrary_cache_days,
+                MetadataProvider::Audible => settings.audible_cache_days,
             },
             Err(error) => {
                 warn!(
@@ -1923,12 +1951,18 @@ impl MetadataService {
         query: &str,
         policy: MetadataFetchPolicy,
     ) -> Result<Vec<AudiobookSearchResult>> {
-        match self.search_audible(query, policy).await {
-            Ok(results) if !results.is_empty() => return Ok(results),
-            Ok(_) => {}
-            Err(error) => {
-                warn!(error = %error, "Audible search failed; falling back to Open Library");
+        let settings = MetadataSettings::load(&self.db).await.ok();
+        if settings.as_ref().is_none_or(|s| s.audible_enabled) {
+            match self.search_audible(query, policy).await {
+                Ok(results) if !results.is_empty() => return Ok(results),
+                Ok(_) => {}
+                Err(error) => {
+                    warn!(error = %error, "Audible search failed; falling back to Open Library");
+                }
             }
+        }
+        if settings.as_ref().is_some_and(|s| !s.openlibrary_enabled) {
+            return Ok(Vec::new());
         }
         self.search_open_library_audiobooks(query, policy).await
     }
@@ -1944,7 +1978,7 @@ impl MetadataService {
             if let Some(cached) = self
                 .read_metadata_cache::<Vec<AudiobookSearchResult>>(
                     MetadataProvider::Audible,
-                    "SearchAudiobooks",
+                    "SearchAudiobookListings",
                     &cache_key,
                     max_age_days,
                 )
@@ -1974,7 +2008,7 @@ impl MetadataService {
         if let Err(error) = self
             .upsert_metadata_cache(
                 MetadataProvider::Audible,
-                "SearchAudiobooks",
+                "SearchAudiobookListings",
                 &cache_key,
                 &results,
             )
@@ -2060,6 +2094,8 @@ impl MetadataService {
                     cover_url,
                     isbn,
                     description: None,
+                    duration_secs: None,
+                    narrator: None,
                 })
             })
             .collect::<Vec<_>>();
@@ -2378,22 +2414,27 @@ impl MetadataService {
             .product;
         let mut details = audible_details(product);
         // Chapters are a bonus: the book is still worth having without them.
-        match client
-            .get(format!("{AUDNEXUS_API}/books/{asin}/chapters"))
-            .send()
+        let audnexus_enabled = MetadataSettings::load(&self.db)
             .await
-            .and_then(reqwest::Response::error_for_status)
-        {
-            Ok(response) => match response.json::<AudnexusChapters>().await {
-                Ok(listing) => {
-                    if let Some(seconds) = listing.runtime_length_sec {
-                        details.total_duration_secs = Some(seconds);
+            .map_or(true, |settings| settings.audnexus_enabled);
+        if audnexus_enabled {
+            match client
+                .get(format!("{AUDNEXUS_API}/books/{asin}/chapters"))
+                .send()
+                .await
+                .and_then(reqwest::Response::error_for_status)
+            {
+                Ok(response) => match response.json::<AudnexusChapters>().await {
+                    Ok(listing) => {
+                        if let Some(seconds) = listing.runtime_length_sec {
+                            details.total_duration_secs = Some(seconds);
+                        }
+                        details.chapters = audiobook_chapters(listing.chapters);
                     }
-                    details.chapters = audiobook_chapters(listing.chapters);
-                }
-                Err(error) => warn!(asin, error = %error, "Could not read Audnexus chapters"),
-            },
-            Err(error) => warn!(asin, error = %error, "No chapter listing from Audnexus"),
+                    Err(error) => warn!(asin, error = %error, "Could not read Audnexus chapters"),
+                },
+                Err(error) => warn!(asin, error = %error, "No chapter listing from Audnexus"),
+            }
         }
         if let Err(error) = self
             .upsert_metadata_cache(
@@ -2557,6 +2598,8 @@ impl MetadataService {
             narrators: Vec::new(),
             total_duration_secs: None,
             chapters: Vec::new(),
+            series_name: None,
+            series_position: None,
         };
 
         if let Err(error) = self
@@ -3961,6 +4004,8 @@ impl MetadataService {
                         "narratorName": details.narrators.first(),
                         "totalDurationSecs": details.total_duration_secs,
                         "chapterCount": details.chapters.len(),
+                        "seriesName": details.series_name,
+                        "seriesPosition": details.series_position,
                         "autoDownload": options.monitor_type != AutoDownloadMode::None,
                         "autoDownloadMode": auto_download_mode_graphql_name(options.monitor_type),
                         "hasFiles": false,

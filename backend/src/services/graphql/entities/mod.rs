@@ -45,6 +45,8 @@ pub mod playback_progress;
 pub mod playback_session;
 
 // Download entities
+pub mod identification;
+pub mod matching_assistant;
 pub mod pending_file_match;
 pub mod usenet_download;
 pub mod usenet_server;
@@ -89,10 +91,12 @@ pub use chapter::*;
 pub use collection::*;
 pub use common::*;
 pub use episode::*;
+pub use identification::*;
 pub use invite_token::*;
 pub use library::*;
 pub use library_scan_issue::*;
 pub use library_scan_run::*;
+pub use matching_assistant::*;
 pub use media_chapter::*;
 pub use media_file::*;
 pub use metadata_cache::*;

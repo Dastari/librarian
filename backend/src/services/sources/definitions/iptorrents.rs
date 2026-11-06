@@ -261,7 +261,7 @@ impl IPTorrentsSource {
                 search_term.push('*');
             }
 
-            search_parts.push(format!("+({})", search_term));
+            search_parts.push(format!("+({})", urlencoding::encode(&search_term)));
         }
 
         // Episode string
@@ -536,15 +536,9 @@ impl Source for IPTorrentsSource {
                 && query.genre.is_none()
                 && let Some(ref term) = query.search_term
                 && !term.is_empty()
+                && !crate::services::release_match::title_has_all_words(term, &title)
             {
-                let term_lower = term.to_lowercase();
-                let title_lower = title.to_lowercase();
-                if !term_lower
-                    .split_whitespace()
-                    .all(|word| title_lower.contains(word))
-                {
-                    continue;
-                }
+                continue;
             }
 
             let href = title_el.value().attr("href").unwrap_or("");
