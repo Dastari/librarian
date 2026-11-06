@@ -1,6 +1,6 @@
 # Glass UX patch
 
-`glass-ux@0.16.1.patch` is registered in `pnpm-workspace.yaml` and the lockfile.
+`glass-ux@0.17.0.patch` is registered in `pnpm-workspace.yaml` and the lockfile.
 It contains two bounded DataTable corrections and one media player addition:
 
 - Native focus inside a grid synchronizes its active row, so virtualization retains
