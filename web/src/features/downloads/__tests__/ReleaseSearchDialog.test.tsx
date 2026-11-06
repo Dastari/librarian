@@ -54,6 +54,11 @@ const parsed = (overrides: Parsed = {}) => ({
 const release = (guid: string, overrides: Partial<Record<string, unknown>> = {}) => ({
   __typename: "SourceRelease" as const,
   title: `Release ${guid}`,
+  format: null,
+  formatReason: null,
+  packHint: null,
+  relevance: null,
+  otherBookNumber: null,
   guid,
   stableId: `${String(overrides.sourceId ?? "src-1")}:${guid}`,
   link: `https://tracker/${guid}.torrent`,
@@ -93,6 +98,7 @@ const searchInput = (overrides: Partial<Record<string, unknown>> = {}) => ({
   movieId: null,
   albumId: null,
   audiobookId: null,
+  autoWiden: false,
   limit: null,
   ...overrides,
 });
@@ -106,6 +112,8 @@ const searchMock = (releases: unknown[], sourceOverrides: Partial<Record<string,
         totalReleases: releases.length,
         totalElapsedMs: 120,
         sourcesSearched: 1,
+        searchedTerm: "Andor",
+        widened: false,
         sources: [
           {
             __typename: "SourceSearchResult",

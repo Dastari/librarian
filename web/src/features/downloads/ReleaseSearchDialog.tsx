@@ -90,6 +90,8 @@ const columns = column.columns([
   column.display({ id: "grab", header: "", width: 7, priority: 1, align: "end", grow: false, cell: ({ row }) => <GrabReleaseCell release={row.original} /> }),
 ]);
 const MATCH_RANK: Record<string, number> = { optimal: 0, suboptimal: 1, rejected: 2 };
+/** For a book: this book, then packs holding it, then other books of the series, then ebooks. Within each, the closest name. */
+const bookRank = (release: Release) => (release.format === "ebook" ? 8 : 0) + (release.otherBookNumber != null ? 4 : 0) + (release.packHint ? 2 : 0);
 
 /** Which of the segmented resolution buckets a parsed resolution belongs to. */
 function resolutionBucket(resolution: string | null | undefined): Resolution {
@@ -142,6 +144,9 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
   const [hdrOnly, setHdrOnly] = useState(false);
   const [freeleechOnly, setFreeleechOnly] = useState(false);
   const [seededOnly, setSeededOnly] = useState(true);
+  const [showEbooks, setShowEbooks] = useState(false);
+  const bookSearch = Boolean(target?.audiobookId || target?.chapterId || author);
+  const audioSearch = bookSearch || Boolean(target?.albumId || target?.trackId || artist || album);
   const sourceCapability = useQuery(HasEnabledSourcesDocument, { skip: !isOpen });
 
   const variables = useMemo(
@@ -159,12 +164,13 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
         movieId: target?.movieId ?? null,
         albumId: target?.albumId ?? null,
         audiobookId: target?.audiobookId ?? null,
+        autoWiden: bookSearch,
         // The response count describes this batch, not an external total.
         // Local filters apply to accumulated returned releases only.
         limit: null,
       },
     }),
-    [initialQuery, imdbId, season, episode, year, artist, album, author, target?.showId, target?.movieId, target?.albumId, target?.audiobookId],
+    [initialQuery, imdbId, season, episode, year, artist, album, author, target?.showId, target?.movieId, target?.albumId, target?.audiobookId, bookSearch],
   );
 
   useEffect(() => {
@@ -175,8 +181,9 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
 
   const allReleases = useMemo<Release[]>(() => {
     const all = result.data?.searchSources.sources.flatMap((source) => source.releases) ?? [];
-    return [...all].sort((a, b) => (MATCH_RANK[a.profileMatch ?? ""] ?? 1) - (MATCH_RANK[b.profileMatch ?? ""] ?? 1) || (b.seeders ?? 0) - (a.seeders ?? 0));
+    return [...all].sort((a, b) => bookRank(a) - bookRank(b) || Math.round(((b.relevance ?? 0) - (a.relevance ?? 0)) * 10) || (MATCH_RANK[a.profileMatch ?? ""] ?? 1) - (MATCH_RANK[b.profileMatch ?? ""] ?? 1) || (b.seeders ?? 0) - (a.seeders ?? 0));
   }, [result.data]);
+  const ebookCount = useMemo(() => allReleases.filter((release) => release.format === "ebook").length, [allReleases]);
 
   const languages = useMemo(() => [...new Set(allReleases.flatMap((release) => release.parsed.languages))].sort(), [allReleases]);
 
@@ -184,6 +191,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
     () =>
       allReleases.filter((release) => {
         const parsed = release.parsed;
+        if (release.format === "ebook" && !showEbooks) return false;
         if (resolution !== "any" && resolutionBucket(parsed.resolution) !== resolution) return false;
         if (codec !== "any" && parsed.codec?.toLowerCase() !== codec) return false;
         if (packs === "packs" && !parsed.isSeasonPack) return false;
@@ -194,9 +202,9 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
         if (seededOnly && !(release.seeders && release.seeders > 0)) return false;
         return true;
       }),
-    [allReleases, resolution, codec, packs, language, hdrOnly, freeleechOnly, seededOnly],
+    [allReleases, showEbooks, resolution, codec, packs, language, hdrOnly, freeleechOnly, seededOnly],
   );
-  const selection = useSelectableTableState({ scope: [isOpen, user?.id, queryKey, libraryId, target, resolution, codec, packs, language, hdrOnly, freeleechOnly, seededOnly], rows: releases, columns, getRowId: releaseId, ready: !result.loading });
+  const selection = useSelectableTableState({ scope: [isOpen, user?.id, queryKey, libraryId, target, showEbooks, resolution, codec, packs, language, hdrOnly, freeleechOnly, seededOnly], rows: releases, columns, getRowId: releaseId, ready: !result.loading });
   const failures = result.data?.searchSources.sources.filter((source) => source.error) ?? [];
   const retryableSource = failures.find((source) => source.pageInfo.retryCursor);
   const paginationError = result.moreError ?? (!hasMore && retryableSource ? new Error(retryableSource.error ?? "Source page failed") : undefined);
@@ -262,7 +270,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
           className="flex min-w-0 shrink-0 gap-2"
           onSubmit={(event) => {
             event.preventDefault();
-            void search({ variables: { input: { ...variables.input, query } } });
+            void search({ variables: { input: { ...variables.input, query, autoWiden: false } } });
           }}
         >
           <SearchField aria-label="Search releases" value={query} onValueChange={setQuery} placeholder="Search releases" className="min-w-0 flex-1" />
@@ -281,19 +289,31 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
         ) : (
           <>
             {failures.length ? <p className="shrink-0 text-label-sm text-warning">{failures.map((source) => `${source.sourceName}: ${source.error}`).join(" · ")}</p> : null}
+            {result.data?.searchSources.widened ? <p className="shrink-0 text-label-sm text-foreground">Nothing for the full title, so this searched for {"\u201c"}{result.data.searchSources.searchedTerm}{"\u201d"}.</p> : null}
             {result.data ? <p className="shrink-0 text-label-sm text-muted">Source results may be partial. Filters apply to returned releases.</p> : null}
             <DataTable<Release>
               toolbar={allReleases.length > 0 ? (
                 <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-            <GlassSegmented<Resolution> ariaLabel="Resolution" size="sm" value={resolution} onChange={setResolution} items={[{ key: "any", label: "Any" }, { key: "2160p", label: "2160p" }, { key: "1080p", label: "1080p" }, { key: "720p", label: "720p" }, { key: "sd", label: "SD" }]} />
-            <GlassSegmented<Codec> ariaLabel="Codec" size="sm" value={codec} onChange={setCodec} items={[{ key: "any", label: "Any codec" }, { key: "hevc", label: "HEVC" }, { key: "h264", label: "H.264" }, { key: "av1", label: "AV1" }]} />
-            <GlassSegmented<Packs> ariaLabel="Season packs" size="sm" value={packs} onChange={setPacks} items={[{ key: "any", label: "All" }, { key: "packs", label: "Season packs" }, { key: "episodes", label: "Single" }]} />
+            {audioSearch ? null : (
+              <>
+                <GlassSegmented<Resolution> ariaLabel="Resolution" size="sm" value={resolution} onChange={setResolution} items={[{ key: "any", label: "Any" }, { key: "2160p", label: "2160p" }, { key: "1080p", label: "1080p" }, { key: "720p", label: "720p" }, { key: "sd", label: "SD" }]} />
+                <GlassSegmented<Codec> ariaLabel="Codec" size="sm" value={codec} onChange={setCodec} items={[{ key: "any", label: "Any codec" }, { key: "hevc", label: "HEVC" }, { key: "h264", label: "H.264" }, { key: "av1", label: "AV1" }]} />
+                <GlassSegmented<Packs> ariaLabel="Season packs" size="sm" value={packs} onChange={setPacks} items={[{ key: "any", label: "All" }, { key: "packs", label: "Season packs" }, { key: "episodes", label: "Single" }]} />
+              </>
+            )}
+            {ebookCount > 0 ? (
+              <Button size="sm" variant={showEbooks ? "primary" : "secondary"} onPress={() => setShowEbooks((value) => !value)} aria-pressed={showEbooks}>
+                Ebooks ({ebookCount})
+              </Button>
+            ) : null}
             {languages.length > 0 ? (
               <Select aria-label="Language" value={language} onValueChange={(value) => setLanguage(value ?? "any")} size="sm" className="w-40" options={[{ value: "any", label: "Any language" }, ...languages.map((code) => ({ value: code, label: languageName(code) }))]} />
             ) : null}
-            <Button size="sm" variant={hdrOnly ? "primary" : "secondary"} onPress={() => setHdrOnly((value) => !value)} aria-pressed={hdrOnly}>
-              HDR
-            </Button>
+            {audioSearch ? null : (
+              <Button size="sm" variant={hdrOnly ? "primary" : "secondary"} onPress={() => setHdrOnly((value) => !value)} aria-pressed={hdrOnly}>
+                HDR
+              </Button>
+            )}
             <Button size="sm" variant={freeleechOnly ? "primary" : "secondary"} onPress={() => setFreeleechOnly((value) => !value)} aria-pressed={freeleechOnly}>
               Freeleech
             </Button>
@@ -307,7 +327,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
               label="Releases"
               columns={columns}
               rows={selection.rows}
-              queryKey={[user?.id, queryKey, libraryId, target, resolution, codec, packs, language, hdrOnly, freeleechOnly, seededOnly]}
+              queryKey={[user?.id, queryKey, libraryId, target, showEbooks, resolution, codec, packs, language, hdrOnly, freeleechOnly, seededOnly]}
               actions={actions}
               state={selection.state}
               onStateChange={selection.onStateChange}
@@ -319,7 +339,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
               getRowLabel={(release) => release.title}
               density="compact"
               noun={{ one: "release", other: "releases" }}
-              emptyMessage={<span className="flex flex-col items-center gap-1"><span>{allReleases.length ? "Nothing matches these filters" : "No releases found"}</span><span className="shrink-0 text-label-sm text-muted">{allReleases.length ? "Loosen a filter to see more." : "Try a shorter title or search without the year."}</span></span>}
+              emptyMessage={<span className="flex flex-col items-center gap-1"><span>{allReleases.length ? "Nothing matches these filters" : "No releases found"}</span><span className="shrink-0 text-label-sm text-muted">{allReleases.length ? (ebookCount === allReleases.length ? "Every result looks like an ebook." : "Loosen a filter to see more.") : "Try a shorter title or search without the year."}</span></span>}
             />
             {result.data ? <p className="shrink-0 text-label-sm text-muted">{allReleases.length} returned releases from {result.data.searchSources.sources.length} sources · latest response {result.data.searchSources.totalElapsedMs} ms</p> : null}
           </>
@@ -336,6 +356,10 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
 function ReleaseTags({ release }: { release: Release }) {
   const parsed = release.parsed;
   const tags: Array<{ key: string; label: string; tone?: "brand" | "info" }> = [];
+  if (release.format === "audio") tags.push({ key: "format", label: "Audiobook", tone: "info" });
+  if (release.format === "ebook") tags.push({ key: "format", label: "Ebook" });
+  if (release.packHint) tags.push({ key: "books", label: release.packHint, tone: "info" });
+  if (release.otherBookNumber != null) tags.push({ key: "other-book", label: `Book ${release.otherBookNumber}, not this one` });
   if (parsed.resolution) tags.push({ key: "resolution", label: parsed.resolution });
   if (parsed.sourceType) tags.push({ key: "source", label: parsed.sourceType });
   if (parsed.codec) tags.push({ key: "codec", label: parsed.codec.toUpperCase() });

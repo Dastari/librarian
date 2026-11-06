@@ -239,10 +239,171 @@ query TorrentFileCandidates($infoHash: String!, $fileIndex: Int!, $libraryId: St
   }
 }
 
+query TorrentMatchPreview($infoHash: String!) {
+  torrentMatchPreview(infoHash: $infoHash) {
+    status
+    summary
+    reason
+    canAccept
+    chapterSource
+    fileShape
+    evidence
+    completeFacts
+    groups {
+      key
+      label
+      fileCount
+      seconds
+      isTarget
+      bookId
+      bookTitle
+      author
+    }
+    files {
+      fileIndex
+      groupKey
+      status
+      target
+      detail
+      warning
+    }
+  }
+}
+
+mutation TestJevConnection($apiKey: String) {
+  testJevConnection(apiKey: $apiKey) {
+    success
+    models
+    error
+  }
+}
+
+mutation RestoreAudiobookChapters($audiobookId: String!) {
+  restoreAudiobookChapters(audiobookId: $audiobookId) {
+    success
+    error
+  }
+}
+
 mutation MatchTorrentFile($input: MatchTorrentFileInput!) {
   matchTorrentFile(input: $input) {
     success
     matchCount
+    error
+  }
+}
+
+query TorrentIdentification($infoHash: String!) {
+  identifiedItems(where: { infoHash: { eq: $infoHash } }, page: { limit: 500 }) {
+    edges {
+      node {
+        id
+        itemKey
+        kind
+        status
+        label
+        title
+        creator
+        year
+        coverUrl
+        fileCount
+        finishedFiles
+        seconds
+        confidence
+        summary
+        evidence
+        identity
+        filePaths
+        providerId
+        libraryItemType
+        libraryItemId
+        libraryId
+        season
+        canAccept
+      }
+    }
+  }
+  identificationEvents(where: { infoHash: { eq: $infoHash } }, page: { limit: 1000 }) {
+    edges {
+      node {
+        id
+        runId
+        trigger
+        sequence
+        status
+        message
+        detail
+        durationMs
+        createdAt
+      }
+    }
+  }
+}
+
+query IdentificationCandidates($itemId: String!, $query: String) {
+  identificationCandidates(itemId: $itemId, query: $query) {
+    ...IdentificationCandidateFields
+  }
+}
+
+query AudiobookEditions($audiobookId: String!, $query: String) {
+  audiobookEditions(audiobookId: $audiobookId, query: $query) {
+    ...IdentificationCandidateFields
+  }
+}
+
+fragment IdentificationCandidateFields on IdentificationCandidate {
+  source
+  provider
+  providerId
+  libraryItemType
+  libraryItemId
+  libraryId
+  title
+  creator
+  narrator
+  year
+  coverUrl
+  seconds
+  chapters
+  lengthPercent
+  fit
+  score
+  reasons
+}
+
+query ListeningStatus {
+  listeningStatus {
+    available
+    detail
+  }
+}
+
+mutation IdentifyTorrent($infoHash: String!, $kind: String) {
+  identifyTorrent(infoHash: $infoHash, kind: $kind) {
+    success
+    error
+  }
+}
+
+mutation ImportIdentifiedItem($input: ImportIdentifiedItemInput!) {
+  importIdentifiedItem(input: $input) {
+    success
+    matchCount
+    error
+  }
+}
+
+mutation ChangeAudiobookEdition($audiobookId: String!, $providerId: String!) {
+  changeAudiobookEdition(audiobookId: $audiobookId, providerId: $providerId) {
+    success
+    error
+  }
+}
+
+mutation ListenToAudiobookChapters($audiobookId: String!) {
+  listenToAudiobookChapters(audiobookId: $audiobookId) {
+    success
     error
   }
 }

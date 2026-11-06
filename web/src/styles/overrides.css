@@ -1,2 +1,9 @@
 /* Host media elements retain their own focus interaction; controls use Glass UX. */
 video:focus, audio:focus { outline: none; }
+
+/* The download dialog: wider and taller than a settings dialog, for a table beside its section
+   rail, and without rules between rows. Glass UX has no prop for these yet. */
+.torrent-detail { --_h: 54rem; }
+.torrent-detail .fa-dt { --_hairline: transparent; }
+.torrent-detail .fa-dt-frame::before { display: none; }
+.torrent-detail .fa-dt[data-scrolled-bottom] .fa-dt-footer { box-shadow: none; }
