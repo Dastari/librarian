@@ -12,7 +12,7 @@ import { SaveToListDialog } from "@/features/personal/SaveToListDialog";
 import type { PlayItem } from "@/features/player/store";
 import { usePlayer } from "@/features/player/usePlayer";
 import { EntityLibraryGetDocument, LibraryTracksDocument, type ContentStatus, type LibraryTracksQuery, type TrackOrderByInput, type TrackWhereInput } from "@/graphql/generated/graphql";
-import { useContentStatuses } from "@/hooks/useContentStatuses";
+import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
 import { useServerTable } from "@/hooks/useServerTable";
 import { useSession } from "@/lib/auth/useSession";
 import { albumCover } from "@/lib/artwork";
@@ -20,7 +20,6 @@ import { ENTITY_KINDS, entityPath } from "@/lib/entities/kinds";
 import { badgeTone } from "@/lib/entities/linked";
 import { formatBytes, formatClock } from "@/lib/format";
 import { useLiveQuery } from "@/lib/graphql/live/hooks";
-import { statusMeta } from "@/lib/status";
 
 import type { AvailabilityFilter } from "./BrowserToolbar";
 import { useBrowserFilters, titleFilter } from "./useBrowserFilters";
@@ -33,7 +32,7 @@ const TrackGlyph = ENTITY_KINDS.track.icon;
 const StatusContext = createContext<Map<string, ContentStatus>>(new Map());
 function TrackStatusCell({ row }: { row: TrackRow }) {
   const statuses = useContext(StatusContext);
-  const meta = statusMeta(statuses.get(row.id));
+  const meta = contentStatusMeta(statuses, row.id);
   return <Badge size="sm" marker="dot" tone={badgeTone(meta.tone)}>{meta.label}</Badge>;
 }
 function columnsFor() {

@@ -25,7 +25,7 @@ vi.mock("@/features/player/usePlayer", async (importOriginal) => {
   return { ...actual, usePlayer: () => ({ ...actual.usePlayer(), playAudio, enqueue }) };
 });
 vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => admin, useSession: () => ({ user: { id: "audio-user", role: admin ? "admin" : "member" } }) }));
-vi.mock("@/hooks/useContentStatuses", () => ({ useContentStatuses: () => new Map() }));
+vi.mock("@/hooks/useContentStatuses", async (original) => ({ ...(await original<typeof import("@/hooks/useContentStatuses")>()), useContentStatuses: () => new Map() }));
 vi.mock("@/features/acquisition/AcquisitionDialog", () => ({ AcquisitionDialog: () => null }));
 vi.mock("@/features/downloads/ReleaseSearchDialog", () => ({ ReleaseSearchDialog: () => null }));
 

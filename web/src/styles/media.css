@@ -284,6 +284,18 @@
   .guide-day-text { display: block; }
 }
 
+/* Video sits on black, whatever the theme: a coloured canvas shows up as bars around the picture. */
+.fa-media[data-kind="video"],
+.fa-media[data-kind="video"] .fa-media-frame { background-color: #000; }
+
+/* The one video player, above the routes. Small, Glass floats it in the top layer, so its own box
+ * in the page takes no room. */
+.video-host-full { position: fixed; inset: 0; z-index: 60; background-color: #000; }
+.video-host-mini { position: fixed; inset-block-end: 0; inset-inline-end: 0; inline-size: 0; block-size: 0; overflow: clip; }
+
+/* A row's actions are smaller than a page's: they sit in every row of a table. */
+.table-row-actions { --control-h-md: 1.75rem; --control-h-sm: 1.75rem; }
+
 /* Provider results in the add dialog: poster tiles that fill the dialog's width. */
 .provider-results {
   display: grid;

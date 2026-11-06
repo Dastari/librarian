@@ -1,6 +1,6 @@
 import { Button } from "glass-ux/button";
 import { IconArrowLeft, IconSkipForward, IconVolume } from "glass-ux/icons";
-import { VideoPlayer as GlassVideoPlayer, type MediaAttach, type MediaPlayerController, type MediaStreamContext, type MediaTextTrack } from "glass-ux/media-player";
+import { VideoPlayer as GlassVideoPlayer, type MediaAttach, type MediaPlayerController, type MediaStreamContext, type MediaTextTrack, type MediaViewMode, type MediaViewModeChangeDetails } from "glass-ux/media-player";
 import { Menu } from "glass-ux/menu";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
@@ -11,12 +11,16 @@ import { useInputMode } from "@/lib/input-mode";
 import { cn } from "@/lib/utils";
 
 import { CastButton } from "./CastButton";
-import type { PlayItem } from "./store";
+import { usePlayerState, type PlayItem } from "./store";
 import { useCastAdapter } from "./useCastAdapter";
 import { useMediaSource } from "./useMediaSource";
 import { useProgressSync } from "./useProgressSync";
+import { readMiniRect, saveMiniRect, saveVideoSession } from "./videoSession";
 
-const VIEW_MODES = ["fullscreen", "pip"] as const;
+const VIEW_MODES: readonly MediaViewMode[] = ["inline", "windowed", "fullscreen", "pip"];
+/** A remote has nothing to drag a window with. */
+const TV_VIEW_MODES: readonly MediaViewMode[] = ["inline", "fullscreen"];
+const SESSION_SAVE_MS = 5000;
 const CHROME_DELAY_MS = 3000;
 /** webOS (461) and Tizen (10009) report their remote's Back key only as a key code. */
 const BACK_KEY_CODES = new Set([461, 10009]);
@@ -36,6 +40,13 @@ interface VideoPlayerProps {
   onEnded?: () => void;
   nextLabel?: string;
   onNext?: () => void;
+  /** In the floating window, over the app, rather than filling the screen on /watch. */
+  mini?: boolean;
+  /** Whose session to keep for the mini player to resume after a refresh. */
+  userId?: string;
+  onMinimise?: () => void;
+  onExpand?: () => void;
+  onClose?: () => void;
 }
 
 /**
@@ -43,12 +54,16 @@ interface VideoPlayerProps {
  * shortcuts. Librarian supplies what it alone knows: the stream (`useMediaSource`, through
  * `attach`), watch progress, the file's tracks and chapters, and the server's cast sessions.
  */
-export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext }: VideoPlayerProps) {
+export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = false, userId, onMinimise, onExpand, onClose }: VideoPlayerProps) {
   const controller = useRef<MediaPlayerController>(null);
   const element = useRef<HTMLMediaElement | null>(null);
   const stream = useRef<MediaStreamContext | null>(null);
   const attached = useRef(false);
-  const playIntent = useRef(true);
+  const playIntent = useRef(!item.startPaused);
+  const [viewMode, setViewMode] = useState<MediaViewMode>(mini ? "windowed" : "inline");
+  const miniRef = useRef(mini);
+  miniRef.current = mini;
+  const audioPlaying = usePlayerState().transport.playing;
   const [video, setVideo] = useState<HTMLMediaElement | null>(null);
   const [selectedAudio, setSelectedAudio] = useState<number>();
   const [paused, setPaused] = useState(false);
@@ -78,12 +93,47 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext }: VideoP
     attached.current = true;
     // Shortcuts work while focus is inside the player, without holding the controls open.
     node.tabIndex = -1;
-    node.focus({ preventScroll: true });
+    if (!miniRef.current) node.focus({ preventScroll: true });
     // `media.retry` is stable; the source hook owns everything else.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => { if (media.error) stream.current?.fail(); }, [media.error]);
+
+  // The route decides the size: leaving /watch shrinks it, coming back grows it.
+  useEffect(() => {
+    setViewMode((current) => mini ? "windowed" : current === "windowed" ? "inline" : current);
+  }, [mini]);
+  const changeViewMode = useCallback((mode: MediaViewMode, details: MediaViewModeChangeDetails) => {
+    if (mode !== "windowed" && details.previous === "windowed" && miniRef.current) {
+      // Glass's close pauses and leaves; its other button brings the player back.
+      if (details.reason === "close") onClose?.();
+      else onExpand?.();
+      return;
+    }
+    setViewMode(mode);
+    if (mode === "windowed" && !miniRef.current) onMinimise?.();
+  }, [onClose, onExpand, onMinimise]);
+  // Two things shouldn't talk at once: starting an audiobook pauses the small video.
+  useEffect(() => { if (mini && audioPlaying) element.current?.pause(); }, [audioPlaying, mini]);
+
+  // What a refresh needs to pick the mini player back up.
+  const savedAt = useRef(0);
+  const saveSession = useCallback(() => {
+    const node = element.current;
+    if (!miniRef.current || !userId || !node || media.isTransitioning()) return;
+    savedAt.current = Date.now();
+    const { startPosition: _position, startPaused: _paused, ...rest } = item;
+    saveVideoSession(userId, { item: rest, position: node.currentTime, playing: !node.paused });
+    // `media.isTransitioning` is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item, userId]);
+  useEffect(() => {
+    if (!mini) return;
+    saveSession();
+    window.addEventListener("pagehide", saveSession);
+    return () => window.removeEventListener("pagehide", saveSession);
+  }, [mini, saveSession]);
   // A growing playlist under-reports its length; the server knows the file's real one.
   useEffect(() => { if (media.duration) stream.current?.setDuration(media.duration); }, [media.duration, media.source]);
 
@@ -91,11 +141,16 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext }: VideoP
   const fullDuration = useCallback(() => media.duration && video && media.duration > video.duration ? media.duration : video?.duration ?? 0, [media.duration, video]);
   useEffect(() => {
     if (!video) return;
-    const onTime = () => { if (!media.isTransitioning()) progress.report(video.currentTime, fullDuration(), !video.paused); };
+    const onTime = () => {
+      if (media.isTransitioning()) return;
+      progress.report(video.currentTime, fullDuration(), !video.paused);
+      if (Date.now() - savedAt.current > SESSION_SAVE_MS) saveSession();
+    };
     const onPlay = () => {
       playIntent.current = true;
       setPaused(false);
       progress.report(video.currentTime, fullDuration(), true);
+      saveSession();
     };
     const onPause = () => {
       if (media.isTransitioning()) return;
@@ -103,6 +158,7 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext }: VideoP
       setPaused(true);
       progress.report(video.currentTime, fullDuration(), false);
       void progress.flush(true);
+      saveSession();
     };
     const onEnd = () => {
       if (media.isTransitioning()) return;
@@ -120,11 +176,19 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext }: VideoP
       video.removeEventListener("pause", onPause);
       video.removeEventListener("ended", onEnd);
     };
-  }, [fullDuration, media.isTransitioning, onEnded, progress, video]);
+  }, [fullDuration, media.isTransitioning, onEnded, progress, saveSession, video]);
 
   // Start once the source is attached; a blocked autoplay leaves the player's Play button.
   useEffect(() => {
-    if (video && media.source && playIntent.current) void video.play().catch(() => undefined);
+    if (!video || !media.source || !playIntent.current) return;
+    void video.play().catch((error: unknown) => {
+      // After a refresh a browser may refuse sound before you've touched the page. A mini player
+      // that was playing carries on silently; its volume control brings the sound back.
+      if (miniRef.current && error instanceof DOMException && error.name === "NotAllowedError") {
+        video.muted = true;
+        void video.play().catch(() => undefined);
+      }
+    });
   }, [media.source, video]);
 
   // The title and Back fade with the player's controls.
@@ -142,6 +206,8 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext }: VideoP
   // What the player does not cover: leaving, media keys, and keys when focus has fallen out of it.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      // In the floating window the keyboard belongs to the page around it.
+      if (miniRef.current) return;
       wake();
       const target = event.target instanceof Element ? event.target : null;
       if (event.defaultPrevented || target?.closest('[role="menu"], [role="dialog"], [role="listbox"], input, textarea')) return;
@@ -168,6 +234,7 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext }: VideoP
   // A remote has no Tab: Down reaches the controls, Left and Right walk them, Up returns to the
   // picture, where Left and Right seek. Menus and the seek bar's own keys stay theirs.
   const tv = useInputMode().mode === "tv";
+  const showTitle = !mini;
   const remoteKeys = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (!tv || event.defaultPrevented) return;
     const target = event.target instanceof HTMLElement ? event.target : null;
@@ -195,7 +262,7 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext }: VideoP
   const failed = audioRows.error || subtitleRows.error || chapterRows.error;
 
   return (
-    <div className="relative h-svh w-full overflow-clip bg-black text-white" onPointerMove={wake} onPointerDown={wake} onKeyDownCapture={remoteKeys}>
+    <div className="relative h-full w-full overflow-clip bg-black text-white" onPointerMove={wake} onPointerDown={wake} onKeyDownCapture={remoteKeys}>
       <GlassVideoPlayer
         fill
         className="h-full"
@@ -207,7 +274,11 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext }: VideoP
         tracks={tracks}
         chapters={chapters}
         crossOrigin="use-credentials"
-        viewModes={VIEW_MODES}
+        viewModes={tv ? TV_VIEW_MODES : VIEW_MODES}
+        viewMode={viewMode}
+        onViewModeChange={changeViewMode}
+        defaultWindowRect={readMiniRect()}
+        onWindowRectChange={saveMiniRect}
         castAdapter={cast.adapter}
         loading={progress.loading}
         controlsEnd={
@@ -229,6 +300,7 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext }: VideoP
           </>
         }
       />
+      {showTitle ? (
       <div className={cn("over-imagery pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center gap-3 bg-linear-to-b from-black/70 to-transparent px-4 pb-12 pt-[calc(var(--safe-top)+0.75rem)] transition-opacity duration-base", !showChrome && "opacity-0")}>
         <Button variant="secondary" className={showChrome ? "pointer-events-auto" : undefined} tabIndex={showChrome ? undefined : -1} data-spatial-start aria-label="Back" onClick={onBack} icon={<IconArrowLeft className="rtl:rotate-180" />} />
         <div className="min-w-0 flex-1">
@@ -237,6 +309,7 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext }: VideoP
           {media.error || failed ? <p role="status" className="truncate text-label-sm text-white/80">{media.error ?? "Some playback options could not be loaded."}</p> : null}
         </div>
       </div>
+      ) : null}
       <CastButton item={item} position={castPosition} open={cast.pickerOpen} onOpenChange={cast.setPickerOpen} hideTrigger onStarted={cast.refresh} />
     </div>
   );

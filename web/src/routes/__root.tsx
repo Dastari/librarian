@@ -1,3 +1,4 @@
+import { GlobalVideo } from "@/features/player/GlobalVideo";
 import { Outlet, createRootRouteWithContext } from "@tanstack/react-router";
 import type { ApolloClient } from "@apollo/client";
 import { NuqsAdapter } from "nuqs/adapters/tanstack-router";
@@ -22,6 +23,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
   component: () => (
     <NuqsAdapter>
       <Outlet />
+      <GlobalVideo />
     </NuqsAdapter>
   ),
   notFoundComponent: NotFound,

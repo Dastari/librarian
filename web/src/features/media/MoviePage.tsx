@@ -21,14 +21,13 @@ import {
   RecacheMovieArtworkDocument,
   RefreshMovieDocument,
 } from "@/graphql/generated/graphql";
-import { useContentStatuses } from "@/hooks/useContentStatuses";
+import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
 import { movieBackdrop, moviePoster, personProfile } from "@/lib/artwork";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { formatClock, formatDate, formatRuntime } from "@/lib/format";
 import { activeContentStatusQueries } from "@/lib/graphql/content-status";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { LIBRARY_TYPES } from "@/lib/library-types";
-import { statusMeta } from "@/lib/status";
 
 import { MediaActions } from "./MediaActions";
 import { DetailShell } from "./DetailShell";
@@ -61,7 +60,7 @@ export function MoviePage({ movieId }: { movieId: string }) {
 
   const resume = progress.data?.playbackProgresses.edges[0]?.node;
   const resumeAt = resume && !resume.isWatched && resume.currentPosition > 5 ? resume.currentPosition : undefined;
-  const status = statusMeta(statuses.get(movie.id));
+  const status = contentStatusMeta(statuses, movie.id);
 
   const play = () => {
     if (!movie.mediaFileId) return;

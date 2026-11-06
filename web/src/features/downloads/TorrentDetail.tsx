@@ -69,7 +69,7 @@ function TransferMetrics({ row, rates, ratio }: { row: DownloadRow; rates?: Rate
       <div className="h-20 min-w-0"><Metric label="Upload" value={live ? live.uploadSpeed ?? 0 : null} data={rates?.up} format={formatSpeed} range={RANGE} tone="success" better="none" /></div>
       <div className="h-20 min-w-0"><Metric label="Peers" value={live ? live.peers ?? 0 : null} data={rates?.peers} range={RANGE} tone="neutral" better="none" /></div>
       <div className="flex h-20 min-w-0 items-center gap-3">
-        <div className="size-20 shrink-0"><Gauge label="Share ratio" value={ratio} min={0} max={Math.max(target, ratio)} warningAt={null} dangerAt={null} format={(value) => value.toFixed(2)} /></div>
+        <div className="h-20 w-28 shrink-0"><Gauge label="Share ratio" value={ratio} min={0} max={Math.max(target, ratio)} warningAt={null} dangerAt={null} format={(value) => value.toFixed(2)} /></div>
         <div className="min-w-0 text-label-sm">
           <p className="text-muted">Share ratio</p>
           <p className="text-numeric text-foreground">{formatBytes(record.uploadedBytesTotal)} uploaded</p>

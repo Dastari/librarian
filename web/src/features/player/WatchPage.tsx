@@ -12,13 +12,18 @@ import { VideoPlayer } from "./VideoPlayer";
 interface WatchPageProps {
   mediaFileId: string;
   onBack: () => void;
+  mini?: boolean;
+  userId?: string;
+  onMinimise?: () => void;
+  onExpand?: () => void;
+  onClose?: () => void;
 }
 
 /**
  * Resolves the item to play when the route is opened directly (deep link, refresh) and wires
  * "next episode" for shows. Audio playback is paused while video plays.
  */
-export function WatchPage({ mediaFileId, onBack }: WatchPageProps) {
+export function WatchPage({ mediaFileId, onBack, mini = false, userId, onMinimise, onExpand, onClose }: WatchPageProps) {
   const navigate = useNavigate();
   const state = usePlayerState();
   const known = state.video?.mediaFileId === mediaFileId ? state.video : null;
@@ -73,8 +78,9 @@ export function WatchPage({ mediaFileId, onBack }: WatchPageProps) {
     if (!nextEpisode?.mediaFileId || !resolved) return;
     const code = `S${String(nextEpisode.season).padStart(2, "0")} · E${String(nextEpisode.episode).padStart(2, "0")}`;
     playerStore.setVideo({ mediaFileId: nextEpisode.mediaFileId, title: resolved.title, subtitle: [code, nextEpisode.title].filter(Boolean).join("  "), artwork: resolved.artwork, entity: { kind: "episode", id: nextEpisode.id }, href: resolved.href });
-    void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: nextEpisode.mediaFileId }, replace: true });
-  }, [navigate, nextEpisode, resolved]);
+    // In the floating window the next episode just plays there.
+    if (!mini) void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: nextEpisode.mediaFileId }, replace: true });
+  }, [mini, navigate, nextEpisode, resolved]);
 
   if (!resolved) {
     return <div className="h-svh w-full bg-black" aria-busy />;
@@ -88,6 +94,11 @@ export function WatchPage({ mediaFileId, onBack }: WatchPageProps) {
       onNext={nextEpisode ? playNext : undefined}
       nextLabel={nextEpisode ? `Next: E${String(nextEpisode.episode).padStart(2, "0")}` : undefined}
       onEnded={nextEpisode ? playNext : undefined}
+      mini={mini}
+      userId={userId}
+      onMinimise={onMinimise}
+      onExpand={onExpand}
+      onClose={onClose}
     />
   );
 }

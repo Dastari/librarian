@@ -15,12 +15,13 @@ import { MediaRow } from "@/components/ui/MediaRow";
 import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
-import { EntityEpisodeUpdateDocument, EntityEpisodeUpdateManyDocument, type ContentStatus, type PlaybackProgressFieldsFragment, type UpdateEpisodeInput } from "@/graphql/generated/graphql";
+import { EntityEpisodeUpdateDocument, EntityEpisodeUpdateManyDocument, type PlaybackProgressFieldsFragment, type UpdateEpisodeInput } from "@/graphql/generated/graphql";
 import { episodeThumb } from "@/lib/artwork";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { formatBytes, formatDate } from "@/lib/format";
 import { activeContentStatusQueries } from "@/lib/graphql/content-status";
 import { assertSuccess } from "@/lib/graphql/errors";
+import { contentStatusMeta, type ContentStatusMap } from "@/hooks/useContentStatuses";
 import { qualityStatus, statusMeta } from "@/lib/status";
 
 import { groupBySeason, type SeasonGroup } from "./seasons";
@@ -28,7 +29,7 @@ import type { EpisodeRow } from "./ShowPage";
 
 interface EpisodeListProps {
   episodes: EpisodeRow[];
-  statuses: Map<string, ContentStatus>;
+  statuses: ContentStatusMap;
   progressByFile: Map<string | null | undefined, PlaybackProgressFieldsFragment>;
   loading: boolean;
   complete?: boolean;
@@ -57,7 +58,7 @@ const episodeLabel = (episode: EpisodeRow) => `${episodeCode(episode)} · ${epis
 // reactive without replacing a focused control when a status or action changes.
 interface EpisodePresentation {
   actions: ActionSet<EpisodeRow>;
-  statuses: Map<string, ContentStatus>;
+  statuses: ContentStatusMap;
   progressByFile: EpisodeListProps["progressByFile"];
   playbackUnavailable?: string;
 }
@@ -70,7 +71,7 @@ const useEpisodePresentation = () => {
 type EpisodeCellProps = { row: { original: EpisodeRow } };
 function EpisodeStatusCell({ row }: EpisodeCellProps) {
   const { statuses } = useEpisodePresentation();
-  const status = row.original.ignored ? statusMeta("IGNORED") : statusMeta(statuses.get(row.original.id));
+  const status = row.original.ignored ? statusMeta("IGNORED") : contentStatusMeta(statuses, row.original.id);
   return <Badge size="sm" marker="dot" tone={status.tone === "default" ? "neutral" : status.tone}>{status.label}</Badge>;
 }
 function EpisodeProgressCell({ row }: EpisodeCellProps) {
@@ -83,7 +84,7 @@ function EpisodeProgressCell({ row }: EpisodeCellProps) {
 }
 function EpisodeActionsCell({ row }: EpisodeCellProps) {
   const { actions } = useEpisodePresentation();
-  return <ActionBar set={actions} targets={[row.original]} label={episodeLabel(row.original)} maxButtons={3} />;
+  return <ActionBar set={actions} targets={[row.original]} label={episodeLabel(row.original)} maxButtons={3} className="table-row-actions" />;
 }
 
 function createEpisodeColumns(isAdmin: boolean) {
@@ -354,7 +355,7 @@ function EpisodeTile({ episode, onPlay, tint, active, nextUp, onActive }: { epis
   const isAdmin = useIsAdmin();
   const saved = episode.mediaFileId ? progressByFile.get(episode.mediaFileId) : undefined;
   const fraction = saved ? (saved.isWatched ? 1 : saved.duration && saved.duration > 0 ? Math.max(0, Math.min(1, saved.currentPosition / saved.duration)) : 0) : 0;
-  const state = episode.ignored ? statusMeta("IGNORED") : statusMeta(statuses.get(episode.id));
+  const state = episode.ignored ? statusMeta("IGNORED") : contentStatusMeta(statuses, episode.id);
   const title = episode.title ?? `Episode ${episode.episode}`;
   const playable = Boolean(episode.mediaFileId);
   const label = `${episodeCode(episode)} · ${title}`;

@@ -8,13 +8,12 @@ import { Button, EmptyState, ErrorState, PosterCard, PosterGallery } from "@/com
 import { ProviderSearchDialog } from "@/features/library-add/ProviderSearchDialog";
 import { usePlayer } from "@/features/player/usePlayer";
 import { LibraryMoviesDocument, type LibraryMoviesQuery, type MovieOrderByInput, type MovieWhereInput } from "@/graphql/generated/graphql";
-import { useContentStatuses } from "@/hooks/useContentStatuses";
+import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
 import { useServerTable } from "@/hooks/useServerTable";
 import { moviePoster } from "@/lib/artwork";
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { formatRuntime } from "@/lib/format";
 import { LIBRARY_TYPES } from "@/lib/library-types";
-import { statusMeta } from "@/lib/status";
 
 import { BrowserLetterRail, BrowserToolbar, type BrowserSortOption } from "./BrowserToolbar";
 import { useBrowserFilters, titleFilter } from "./useBrowserFilters";
@@ -123,7 +122,7 @@ export function MoviesBrowser({ libraryId }: { libraryId: string }) {
               tint={LIBRARY_TYPES.movies.tintVar}
               to="/movies/$movieId"
               params={{ movieId: row.id }}
-              status={statusMeta(statuses.get(row.id))}
+              status={contentStatusMeta(statuses, row.id)}
               onPlay={row.mediaFileId ? () => play(row) : undefined}
             />
           )}

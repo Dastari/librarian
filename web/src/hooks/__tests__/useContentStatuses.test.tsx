@@ -30,7 +30,7 @@ function fixture(resolve: (inputs: ContentStatusRequestInput[], userId: string) 
     const timer = setTimeout(() => {
       if (reply.error) observer.error(reply.error);
       else {
-        observer.next({ data: { contentStatuses: inputs.map((input) => ({ __typename: "ContentStatusResult", ...input, status: reply.status ?? (wanted ? "WANTED" : "MISSING") })) } });
+        observer.next({ data: { contentStatuses: inputs.map((input) => ({ __typename: "ContentStatusResult", ...input, status: reply.status ?? (wanted ? "WANTED" : "MISSING"), downloadProgress: null })) } });
         observer.complete();
       }
     }, reply.delay ?? 1);
