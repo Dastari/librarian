@@ -257,8 +257,47 @@
   flex: none;
 }
 
-.guide-day-poster {
-  inline-size: min(calc((100cqb - 1.25rem) * 2 / 3), 100cqi, 5rem);
+/* One show portrait, in any of the guide's sizes. */
+.guide-poster-slot { display: block; flex: none; }
+.guide-poster-slot[data-size="day"] { inline-size: min(calc((100cqb - 1.25rem) * 2 / 3), 100cqi, 5rem); }
+.guide-poster-slot[data-size="tile"] { inline-size: 3.5rem; }
+.guide-poster-slot[data-size="row"] { inline-size: 2.5rem; }
+.guide-poster-slot[data-size="panel"] { inline-size: 4.5rem; }
+
+.guide-poster {
+  position: relative;
+  display: block;
+  inline-size: 100%;
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-1);
+  transition:
+    transform calc(var(--duration-fast) * var(--motion-scale)) var(--ease-standard),
+    box-shadow calc(var(--duration-fast) * var(--motion-scale)) var(--ease-standard);
+}
+.guide-poster[data-size="day"],
+.guide-poster[data-size="row"] { border-radius: var(--radius-control-sm, calc(var(--radius-control) * 0.75)); }
+
+@media (hover: hover) and (pointer: fine) {
+  .guide-poster[data-pressable]:hover {
+    z-index: 1;
+    transform: translateY(-0.125rem) scale(1.05);
+    box-shadow: var(--shadow-3);
+  }
+}
+.guide-poster[data-pressable]:active { transform: scale(0.98); }
+
+.guide-poster-badge {
+  position: absolute;
+  inset-block-end: 0.25rem;
+  inset-inline-start: 0.25rem;
+  padding-inline: 0.25rem;
+  border-radius: 0.25rem;
+  background-color: var(--color-brand, var(--accent));
+  color: var(--color-brand-foreground, var(--accent-fg));
+  font-size: 0.5625rem;
+  font-weight: 700;
+  line-height: 1.4;
+  text-transform: uppercase;
 }
 
 .guide-day-title {
@@ -295,6 +334,19 @@
 
 /* A row's actions are smaller than a page's: they sit in every row of a table. */
 .table-row-actions { --control-h-md: 1.75rem; --control-h-sm: 1.75rem; }
+
+/* The main action's slot is always there, so every row's menu lines up. */
+.row-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-1); min-inline-size: 0; }
+.row-actions-slot { display: grid; place-items: center; inline-size: 2rem; flex: none; }
+
+/* Now playing: three bars, swapped for a pause icon when pointing at it. */
+.playing-bars { display: inline-flex; align-items: flex-end; gap: 2px; block-size: 0.875rem; color: var(--brand); }
+.playing-bars > span { inline-size: 3px; block-size: 100%; border-radius: 1px; background: currentColor; }
+.row-play .row-play-pause { display: none; }
+@media (hover: hover) {
+  .row-play:hover .row-play-pause { display: block; }
+  .row-play:hover .playing-bars { display: none; }
+}
 
 /* Provider results in the add dialog: poster tiles that fill the dialog's width. */
 .provider-results {
@@ -369,25 +421,31 @@
 
 .guide-tile:active { transform: scale(0.98); }
 
-/* Solid fills: the rows pass under these headings as they scroll. */
+/* Frosted fills on the canvas: the rows pass under these headings as they scroll. */
 .guide-grid-scroll { scroll-padding-block-start: 4rem; scroll-padding-inline-start: 9.5rem; }
+
+.guide-grid-corner,
+.guide-grid-day,
+.guide-grid-service {
+  background-color: color-mix(in oklab, var(--canvas) 72%, transparent);
+  -webkit-backdrop-filter: blur(1rem);
+  backdrop-filter: blur(1rem);
+}
 
 .guide-grid-corner,
 .guide-grid-day {
   position: sticky;
   inset-block-start: 0;
   z-index: 2;
-  background-color: var(--surface-2);
 }
 
 .guide-grid-corner { inset-inline-start: 0; z-index: 3; }
-.guide-grid-day.guide-grid-today { background-color: color-mix(in oklab, var(--accent) 22%, var(--surface-2)); }
+.guide-grid-day.guide-grid-today { background-color: color-mix(in oklab, var(--accent) 18%, color-mix(in oklab, var(--canvas) 72%, transparent)); }
 
 .guide-grid-service {
   position: sticky;
   inset-inline-start: 0;
   z-index: 1;
-  background-color: var(--surface-2);
 }
 
-.guide-grid-service.guide-grid-yours { background-color: color-mix(in oklab, var(--accent) 16%, var(--surface-2)); }
+.guide-grid-service.guide-grid-yours { background-color: color-mix(in oklab, var(--accent) 12%, color-mix(in oklab, var(--canvas) 72%, transparent)); }
