@@ -1757,6 +1757,10 @@ type ContentStatusResult {
 	contentType: ContentStatusType!
 	id: String!
 	status: ContentStatus!
+	"""
+	How far along its download is, from 0 to 1, while one is running.
+	"""
+	downloadProgress: Float
 }
 
 """

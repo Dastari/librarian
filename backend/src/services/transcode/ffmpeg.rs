@@ -166,6 +166,7 @@ pub fn build_on_demand_transcode_args(
     output_dir: &Path,
     start_segment: u32,
     audio_stream: Option<i32>,
+    audio_only: bool,
 ) -> Vec<String> {
     let offset = (start_segment * SEGMENT_SECONDS).to_string();
     let mut args: Vec<String> = ["-y", "-ss", &offset, "-i"].map(str::to_owned).to_vec();
@@ -183,18 +184,28 @@ pub fn build_on_demand_transcode_args(
     let forced_key_frames = format!("expr:gte(t,n_forced*{SEGMENT_SECONDS})");
     let segment_seconds = SEGMENT_SECONDS.to_string();
     let start_number = start_segment.to_string();
+    if audio_only {
+        // An audiobook's "video" is its cover. Stereo is what every browser's AAC decoder plays.
+        args.extend(["-vn", "-sn", "-dn", "-ac", "2"].map(str::to_owned));
+    } else {
+        args.extend(
+            [
+                "-threads",
+                "2",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-force_key_frames",
+                &forced_key_frames,
+                "-preset",
+                "veryfast",
+            ]
+            .map(str::to_owned),
+        );
+    }
     args.extend(
         [
-            "-threads",
-            "2",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-force_key_frames",
-            &forced_key_frames,
-            "-preset",
-            "veryfast",
             "-c:a",
             "aac",
             "-output_ts_offset",
@@ -236,8 +247,10 @@ pub fn spawn_on_demand_transcode(
     session_id: &str,
     start_segment: u32,
     audio_stream: Option<i32>,
+    audio_only: bool,
 ) -> Result<Child> {
-    let args = build_on_demand_transcode_args(input, output_dir, start_segment, audio_stream);
+    let args =
+        build_on_demand_transcode_args(input, output_dir, start_segment, audio_stream, audio_only);
     spawn_ffmpeg(ffmpeg_path, &args, session_id)
 }
 
@@ -419,9 +432,24 @@ mod tests {
     }
 
     #[test]
-    fn on_demand_args_seek_to_the_segment_and_keep_the_file_timeline() {
+    fn an_audiobook_is_not_encoded_as_video() {
         let args =
-            build_on_demand_transcode_args(Path::new("/in.mkv"), Path::new("/out"), 700, Some(2));
+            build_on_demand_transcode_args(Path::new("/in.m4b"), Path::new("/out"), 10, None, true);
+        assert!(args.contains(&"-vn".to_string()));
+        assert!(!args.contains(&"libx264".to_string()));
+        assert!(args.contains(&"aac".to_string()));
+        assert!(args.contains(&"60".to_string()));
+    }
+
+    #[test]
+    fn on_demand_args_seek_to_the_segment_and_keep_the_file_timeline() {
+        let args = build_on_demand_transcode_args(
+            Path::new("/in.mkv"),
+            Path::new("/out"),
+            700,
+            Some(2),
+            false,
+        );
         let after = |flag: &str| args[args.iter().position(|arg| arg == flag).unwrap() + 1].clone();
         assert_eq!(after("-ss"), "4200");
         assert_eq!(after("-output_ts_offset"), "4200");

@@ -202,6 +202,17 @@ pub struct ManualFileTarget {
 /// `match_type` recorded when a person chose the target.
 const MANUAL_MATCH_TYPE: &str = "manual";
 
+/// In a match's reason: this one file is the entire book, so it belongs to every chapter.
+const WHOLE_BOOK_REASON: &str = "one file holds the whole book";
+
+/// How much of a book's length one file has to cover to count as the whole of it.
+const WHOLE_BOOK_MINIMUM_COVERAGE: f64 = 0.8;
+
+/// Whether a book's one linked file is the whole book, rather than the first of many.
+fn file_covers_book(file_seconds: i64, book_seconds: f64) -> bool {
+    book_seconds > 0.0 && file_seconds as f64 >= book_seconds * WHOLE_BOOK_MINIMUM_COVERAGE
+}
+
 /// `match_type` recorded when the Torrent row named the exact target.
 const TORRENT_LINK_MATCH_TYPE: &str = "torrent_link";
 
@@ -6344,6 +6355,38 @@ impl LibraryScanService {
             }));
         }
 
+        // A file as long as the whole book belongs to the chapters the book already has.
+        let chapters = self.book_chapters(&audiobook.id).await?;
+        let first_chapter = chapters
+            .iter()
+            .filter(|chapter| chapter.media_file_id.is_none())
+            .min_by_key(|chapter| chapter.chapter_number)
+            .map(|chapter| chapter.id.clone());
+        if let Some(first) = first_chapter.filter(|_| {
+            chapters.len() > 1
+                && chapters
+                    .iter()
+                    .all(|chapter| chapter.media_file_id.is_none())
+        }) && self
+            .file_is_whole_book(&audiobook.id, &chapters, media_file_id)
+            .await?
+        {
+            self.link_chapter(auth_user, media_file_id, &library.id, &first, "auto", None)
+                .await?;
+            self.link_whole_book(auth_user, &first, media_file_id)
+                .await?;
+            return Ok(Some(MatchResult {
+                success: true,
+                auto_matched: true,
+                already_matched: false,
+                matched_type: Some("Chapter".to_string()),
+                matched_id: Some(first),
+                confidence: candidate_score.min(1.0),
+                reason: Some("Linked the book's one file to all of its chapters".to_string()),
+                candidates: Vec::new(),
+            }));
+        }
+
         let chapter_id = self
             .create_minimal_chapter_for_audiobook(auth_user, &audiobook.id, &hint)
             .await?;
@@ -8327,9 +8370,263 @@ impl LibraryScanService {
         };
 
         validate_relative_library_path(&relative_path)?;
-        let target = PathBuf::from(&library.path).join(relative_path);
+        let mut target = PathBuf::from(&library.path).join(relative_path);
+        if target_type == "Chapter" && self.chapter_shares_a_file(target_id).await? {
+            target = self.named_after_book(target_id, target).await?;
+        }
         checked_library_path(Path::new(&library.path), &target)?;
         Ok(target)
+    }
+
+    /// One file holding a whole book takes the book's name, not its first chapter's.
+    async fn named_after_book(&self, chapter_id: &str, path: PathBuf) -> Result<PathBuf> {
+        use crate::graphql::entities::{Audiobook, Chapter};
+        let database = self.database().await?;
+        let pool = database.pool().pool();
+        let chapter = Chapter::get(pool, &chapter_id.to_string())
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("That chapter no longer exists"))?;
+        let book = Audiobook::get(pool, &chapter.audiobook_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("That audiobook no longer exists"))?;
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("m4b")
+            .to_string();
+        Ok(path.with_file_name(format!(
+            "{}.{extension}",
+            sanitize_for_filename(&book.title)
+        )))
+    }
+
+    async fn book_chapters(
+        &self,
+        audiobook_id: &str,
+    ) -> Result<Vec<crate::graphql::entities::Chapter>> {
+        use crate::graphql::entities::{Chapter, ChapterWhereInput};
+        let database = self.database().await?;
+        Ok(Chapter::query(database.pool().pool())
+            .filter(ChapterWhereInput {
+                audiobook_id: Some(graphql_orm::graphql::filters::StringFilter {
+                    eq: Some(audiobook_id.to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await?)
+    }
+
+    /// Whether a file is about as long as the whole of the book these chapters belong to.
+    async fn file_is_whole_book(
+        &self,
+        audiobook_id: &str,
+        chapters: &[crate::graphql::entities::Chapter],
+        media_file_id: &str,
+    ) -> Result<bool> {
+        use crate::graphql::entities::{Audiobook, MediaFile};
+        let database = self.database().await?;
+        let pool = database.pool().pool();
+        let Some(file_seconds) = MediaFile::get(pool, &media_file_id.to_string())
+            .await?
+            .and_then(|file| file.duration)
+            .map(i64::from)
+        else {
+            return Ok(false);
+        };
+        let listed: f64 = chapters
+            .iter()
+            .filter_map(|chapter| chapter.duration_secs)
+            .map(f64::from)
+            .sum();
+        let book_seconds = Audiobook::get(pool, &audiobook_id.to_string())
+            .await?
+            .and_then(|book| book.total_duration_secs)
+            .map_or(listed, f64::from);
+        Ok(file_covers_book(file_seconds, book_seconds))
+    }
+
+    async fn chapter_shares_a_file(&self, chapter_id: &str) -> Result<bool> {
+        use crate::graphql::entities::Chapter;
+        let database = self.database().await?;
+        let Some(chapter) = Chapter::get(database.pool().pool(), &chapter_id.to_string()).await?
+        else {
+            return Ok(false);
+        };
+        let chapters = self.book_chapters(&chapter.audiobook_id).await?;
+        let mut files = chapters
+            .iter()
+            .map(|chapter| chapter.media_file_id.as_deref());
+        let first = files.next().flatten();
+        Ok(chapters.len() > 1 && first.is_some() && files.all(|file| file == first))
+    }
+
+    /// Point every chapter of the book `chapter_id` belongs to at one file.
+    async fn link_whole_book(
+        &self,
+        auth_user: &AuthUser,
+        chapter_id: &str,
+        media_file_id: &str,
+    ) -> Result<()> {
+        use crate::graphql::entities::Chapter;
+        let database = self.database().await?;
+        let chapter = Chapter::get(database.pool().pool(), &chapter_id.to_string())
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("That chapter no longer exists"))?;
+        let data = self
+            .execute_mutation(
+                auth_user,
+                r#"mutation LinkWholeBook($where: ChapterWhereInput, $input: UpdateChapterInput!) {
+                    UpdateChapters: updateChapters(where: $where, input: $input) {
+                        Success: success
+                        Error: error
+                    }
+                }"#,
+                serde_json::json!({
+                    "where": { "audiobookId": { "eq": chapter.audiobook_id } },
+                    "input": { "mediaFileId": media_file_id, "wanted": false }
+                }),
+            )
+            .await?;
+        if data
+            .pointer("/UpdateChapters/Success")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+        {
+            anyhow::bail!(
+                "{}",
+                data.pointer("/UpdateChapters/Error")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("Could not update the book's chapters")
+            );
+        }
+        Ok(())
+    }
+
+    /// Chapters from the file itself, for a book whose provider has none. A file with no chapters
+    /// of its own becomes a single chapter, so it still has somewhere to belong.
+    async fn create_chapters_from_file(
+        &self,
+        auth_user: &AuthUser,
+        audiobook_id: &str,
+        title: &str,
+        path: &str,
+    ) -> Result<Vec<LinkedChapterRow>> {
+        let embedded = ffprobe_analyze(path)
+            .await
+            .map(|analysis| analysis.chapters)
+            .unwrap_or_default();
+        let mut rows: Vec<(String, f64, Option<f64>)> = embedded
+            .iter()
+            .enumerate()
+            .map(|(index, chapter)| {
+                (
+                    chapter
+                        .title
+                        .as_deref()
+                        .map(|name| name.replace('\u{a0}', " ").trim().to_string())
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or_else(|| format!("Chapter {}", index + 1)),
+                    chapter.start_secs,
+                    Some(chapter.end_secs),
+                )
+            })
+            .collect();
+        if rows.is_empty() {
+            rows.push((title.to_string(), 0.0, None));
+        }
+        let mut created = Vec::with_capacity(rows.len());
+        for (index, (name, start, end)) in rows.into_iter().enumerate() {
+            let number = index as i32 + 1;
+            let data = self
+                .execute_mutation(
+                    auth_user,
+                    r#"mutation ChapterFromFile($input: CreateChapterInput!) {
+                        CreateChapter: createChapter(input: $input) {
+                            Success: success
+                            Error: error
+                            Chapter: chapter { Id: id }
+                        }
+                    }"#,
+                    serde_json::json!({ "input": {
+                        "audiobookId": audiobook_id,
+                        "chapterNumber": number,
+                        "title": name,
+                        "startTimeSecs": start,
+                        "endTimeSecs": end,
+                        "durationSecs": end.map(|end: f64| (end - start).round() as i32),
+                        "wanted": false,
+                    }}),
+                )
+                .await?;
+            let id = data
+                .pointer("/CreateChapter/Chapter/Id")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("Could not create a chapter from the file"))?;
+            created.push(LinkedChapterRow {
+                id: id.to_string(),
+                number,
+                title: Some(name),
+            });
+        }
+        Ok(created)
+    }
+
+    /// Books already imported with one file linked to their first chapter only: link the rest,
+    /// and, where the library organizes its files, give the file the book's name. Safe to repeat.
+    pub async fn repair_whole_file_audiobooks(&self) -> Result<usize> {
+        use crate::graphql::entities::Audiobook;
+        let database = self.database().await?;
+        let books = Audiobook::query(database.pool().pool()).fetch_all().await?;
+        let owner = AuthUser::system_admin();
+        let mut repaired = 0;
+        for book in books {
+            let chapters = self.book_chapters(&book.id).await?;
+            if chapters.len() < 2 {
+                continue;
+            }
+            let files: HashSet<&str> = chapters
+                .iter()
+                .filter_map(|chapter| chapter.media_file_id.as_deref())
+                .collect();
+            let (1, Some(file_id)) = (files.len(), files.iter().next().copied()) else {
+                continue;
+            };
+            let linked_everywhere = chapters
+                .iter()
+                .all(|chapter| chapter.media_file_id.is_some());
+            let file = self.get_media_file(file_id).await?;
+            if !self
+                .file_is_whole_book(&book.id, &chapters, file_id)
+                .await?
+            {
+                continue;
+            }
+            if !linked_everywhere {
+                let first = chapters
+                    .iter()
+                    .find(|chapter| chapter.media_file_id.is_some())
+                    .map(|chapter| chapter.id.clone())
+                    .unwrap_or_default();
+                self.link_whole_book(&owner, &first, file_id).await?;
+                repaired += 1;
+                info!(audiobook_id = %book.id, title = %book.title, "Linked every chapter to the book's one file");
+            }
+            let library = self.get_library(&book.library_id).await?;
+            let expected_name = format!("{}.", sanitize_for_filename(&book.title));
+            let named_for_book = Path::new(&file.path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(&expected_name));
+            if library.auto_organize && !named_for_book {
+                let organized = self.organize_media_file(file_id).await?;
+                if !organized.success {
+                    warn!(media_file_id = %file_id, reason = ?organized.reason, "Could not rename a whole-book file");
+                }
+            }
+        }
+        Ok(repaired)
     }
 
     pub async fn organize_media_file(&self, media_file_id: &str) -> Result<OrganizeResult> {
@@ -9254,7 +9551,12 @@ impl LibraryScanService {
             }
 
             let source_path = PathBuf::from(&file.source_path);
-            let target_path = match self
+            let whole_book = selected
+                .candidate
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains(WHOLE_BOOK_REASON));
+            let planned_path = self
                 .plan_media_target_path(
                     auth_user,
                     &selected.library,
@@ -9262,8 +9564,15 @@ impl LibraryScanService {
                     &selected.candidate.target_id,
                     &source_path,
                 )
-                .await
-            {
+                .await;
+            let planned_path = match planned_path {
+                Ok(path) if whole_book => {
+                    self.named_after_book(&selected.candidate.target_id, path)
+                        .await
+                }
+                other => other,
+            };
+            let target_path = match planned_path {
                 Ok(path) => path,
                 Err(error) => {
                     failed += 1;
@@ -9388,6 +9697,14 @@ impl LibraryScanService {
                     target_path_string,
                     error
                 );
+            }
+
+            if whole_book
+                && let Err(error) = self
+                    .link_whole_book(auth_user, &selected.candidate.target_id, &media_file_id)
+                    .await
+            {
+                warn!(media_file_id = %media_file_id, error = %error, "Could not link every chapter of a whole-book file");
             }
 
             self.upsert_pending_file_match(
@@ -10431,6 +10748,14 @@ impl LibraryScanService {
             return Ok(());
         }
 
+        // A provider with no chapter list leaves a book with none. One file can supply them.
+        if let ([only], true) = (audio, chapters.is_empty()) {
+            chapters = self
+                .create_chapters_from_file(auth_user, audiobook_id, title, &only.file.source_path)
+                .await?;
+        }
+        let whole_book = audio.len() == 1 && chapters.len() > 1;
+
         // Q52: audiobook releases are whole-book, not per-chapter, so files map
         // onto chapters in release (filename) order. `audio` is already sorted
         // naturally by the caller.
@@ -10460,15 +10785,22 @@ impl LibraryScanService {
                     target_id: chapter.id.clone(),
                     target_name: Some(label),
                     match_type: TORRENT_LINK_PARSED_MATCH_TYPE,
-                    reason: format!(
+                    reason: {
+                        let reason = format!(
                         "{TORRENT_LINK_PARSED_MATCH_TYPE}: torrent is linked to audiobook '{title}' and this is file {} of the release",
                         index + 1
-                    ),
+                    );
+                        if whole_book {
+                            format!("{reason}; {WHOLE_BOOK_REASON}")
+                        } else {
+                            reason
+                        }
+                    },
                 },
             );
         }
 
-        if audio.len() < chapters.len() {
+        if audio.len() < chapters.len() && !whole_book {
             plan.notes.push(format!(
                 "audiobook '{title}': {} of {} chapters have a file from this release",
                 audio.len(),
@@ -11915,6 +12247,12 @@ impl Service for LibraryScanService {
             .get_library_scan_unchecked()
             .await
             .ok_or_else(|| anyhow::anyhow!("library_scan service handle not registered"))?;
+
+        // Before any scan can start: it may rename a file, and a scan that sees the new name before
+        // the database does takes it for a new file and drops the old record.
+        if let Err(error) = this.repair_whole_file_audiobooks().await {
+            warn!(error = %error, "Could not repair whole-file audiobooks");
+        }
 
         let scheduler = this.clone();
         let scheduler_handle = tokio::spawn(supervise_worker(
@@ -15803,6 +16141,21 @@ mod library_path_safety_tests {
             b"preserve source"
         );
         assert_eq!(std::fs::read(&source).unwrap(), b"preserve source");
+    }
+}
+
+#[cfg(test)]
+mod whole_book_tests {
+    use super::file_covers_book;
+
+    #[test]
+    fn a_file_is_the_whole_book_only_if_it_is_about_as_long() {
+        assert!(file_covers_book(34628, 34627.0));
+        assert!(file_covers_book(30000, 34627.0));
+        // The first of many files in a book split by chapter.
+        assert!(!file_covers_book(64, 34627.0));
+        // Nothing to compare it with.
+        assert!(!file_covers_book(64, 0.0));
     }
 }
 

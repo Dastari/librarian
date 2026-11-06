@@ -3,5 +3,6 @@ query ContentStatuses($inputs: [ContentStatusRequestInput!]!) {
     contentType
     id
     status
+    downloadProgress
   }
 }

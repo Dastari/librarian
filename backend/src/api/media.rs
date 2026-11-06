@@ -517,6 +517,16 @@ fn on_demand_duration(kind: TranscodeKind, media_file: &MediaFileRecord) -> Opti
         .filter(|duration| *duration > 0)
 }
 
+/// No picture to encode: nothing but sound, or only a cover image in a video stream's clothing.
+fn is_audio_only(media_file: &MediaFileRecord) -> bool {
+    media_file.video_codec.as_deref().is_none_or(|codec| {
+        matches!(
+            codec.to_ascii_lowercase().as_str(),
+            "mjpeg" | "png" | "bmp" | "gif" | "webp"
+        )
+    })
+}
+
 async fn on_demand_segment_response(
     transcode: &TranscodeService,
     media_file: &MediaFileRecord,
@@ -538,6 +548,7 @@ async fn on_demand_segment_response(
             kind,
             audio_stream,
             segment,
+            is_audio_only(media_file),
         )
         .await
         .map_err(|e| {

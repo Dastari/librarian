@@ -222,6 +222,7 @@ impl TranscodeService {
         kind: TranscodeKind,
         audio_stream: Option<i32>,
         segment: u32,
+        audio_only: bool,
     ) -> Result<Option<PathBuf>> {
         anyhow::ensure!(
             audio_stream.is_none_or(|index| index >= 0),
@@ -248,6 +249,7 @@ impl TranscodeService {
                     media_file_id,
                     segment,
                     audio_stream,
+                    audio_only,
                 )?;
                 self.sessions.set_encoder(&key, child).await;
                 dir
