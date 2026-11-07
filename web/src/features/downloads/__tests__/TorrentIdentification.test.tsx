@@ -14,6 +14,9 @@ vi.mock("@apollo/client/react", () => ({
 }));
 vi.mock("@/lib/graphql/live/hooks", () => ({ useLiveQuery: () => ({ data: undefined, loading: false, refetch: vi.fn() }) }));
 
+// jsdom has no Web Animations; the feed's scroll area waits on them.
+Element.prototype.getAnimations ??= () => [];
+
 type Item = TorrentIdentificationState["items"][number];
 type Event = TorrentIdentificationState["events"][number];
 
