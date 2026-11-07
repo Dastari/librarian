@@ -49,9 +49,10 @@ function persisted(overrides: Partial<CastSessionFieldsFragment> = {}): CastSess
     playbackDecision: "DIRECT_PLAY", playbackReason: null, createdAt: STAMP, updatedAt: STAMP, ...overrides,
   };
 }
-function legacy(row = persisted()): LegacyCastSessionFieldsFragment {
+/** Real replies carry `__typename`; Apollo 4.3+ drops fragment fields from a reply without it. */
+function legacy(row = persisted()): LegacyCastSessionFieldsFragment & { __typename: "LegacyCastSession" } {
   return {
-    id: row.id, deviceId: row.deviceId, deviceName: "Living room Google TV", mediaFileId: row.mediaFileId,
+    __typename: "LegacyCastSession", id: row.id, deviceId: row.deviceId, deviceName: "Living room Google TV", mediaFileId: row.mediaFileId,
     episodeId: row.episodeId, playerState: row.playerState, currentTime: row.currentPosition,
     duration: row.duration, volume: row.volume, isMuted: row.isMuted, startedAt: row.startedAt,
     lastError: row.lastError, playbackDecision: row.playbackDecision, playbackReason: row.playbackReason,
