@@ -27,6 +27,7 @@ use crate::services::jev::Jev;
 use crate::services::metadata::settings::MetadataSettings;
 use crate::services::release_match::{BookFacts, BookGroup, BookOutcome, ReleaseFile, TrackFacts};
 use crate::services::whisper::{self, Whisper};
+use crate::services::write_rules;
 
 /// Files can finish in quick succession, so a run waits for a pause in them.
 const FILE_FINISHED_PAUSE: Duration = Duration::from_secs(30);
@@ -2900,9 +2901,9 @@ impl LibraryScanService {
         self.update_audiobook_fields(
             &owner,
             &book.id,
-            serde_json::json!({
+            write_rules::without_locked_fields(serde_json::json!({
                 "title": details.title,
-                "sortTitle": details.sort_title,
+                "sortTitle": write_rules::sort_key_for_new(&details.title, details.sort_title.clone()),
                 "authorName": details.author_name,
                 "description": details.description,
                 "publisher": details.publisher,
@@ -2920,7 +2921,7 @@ impl LibraryScanService {
                 "providerChapters": serde_json::Value::Null,
                 "chapterCheckState": serde_json::Value::Null,
                 "chapterCheck": serde_json::Value::Null,
-            }),
+            }), book.locked_fields.as_deref().unwrap_or_default()),
         )
         .await?;
         // A listing without chapters says nothing about them, so the ones it has stay.

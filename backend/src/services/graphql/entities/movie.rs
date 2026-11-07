@@ -96,6 +96,11 @@ pub struct Movie {
     #[json_field]
     pub genres: Vec<String>,
 
+    /// Fields a metadata refresh must leave alone, by their GraphQL names.
+    #[graphql(name = "lockedFields")]
+    #[json_field]
+    pub locked_fields: Option<Vec<String>>,
+
     #[graphql(name = "director")]
     #[filterable(type = "string")]
     pub director: Option<String>,
@@ -283,6 +288,7 @@ impl Movie {
         let movie = Self::insert(
             db,
             CreateMovieInput {
+                locked_fields: None,
                 library_id: options.library_id.to_string(),
                 user_id: options.user_id.to_string(),
                 title: details.title.clone(),

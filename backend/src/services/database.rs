@@ -921,15 +921,25 @@ impl AppWriteInputTransform {
                 if let (Some(input), Some(row)) = (
                     input.downcast_mut::<$input>(),
                     existing_row.and_then(|row| row.downcast_ref::<$row>()),
-                ) && input.$key.is_none()
-                    && let Some(new_title) = input.$title.as_deref()
-                {
-                    input.$key = write_rules::sort_key_after_rename(
-                        &row.$title,
-                        row.$key.as_deref(),
-                        new_title,
-                    )
-                    .map(Some);
+                ) {
+                    let cleared = matches!(
+                        &input.$key,
+                        Some(key) if key.as_deref().is_none_or(|key| key.trim().is_empty())
+                    );
+                    if cleared {
+                        // Blanking it hands the sort order back to the title.
+                        let title = input.$title.as_deref().unwrap_or(&row.$title);
+                        input.$key = Some(Some(write_rules::sort_key(title)));
+                    } else if input.$key.is_none()
+                        && let Some(new_title) = input.$title.as_deref()
+                    {
+                        input.$key = write_rules::sort_key_after_rename(
+                            &row.$title,
+                            row.$key.as_deref(),
+                            new_title,
+                        )
+                        .map(Some);
+                    }
                 }
             };
         }
@@ -4264,6 +4274,7 @@ mod lifecycle_tests {
         Movie::insert(
             db,
             CreateMovieInput {
+                locked_fields: None,
                 library_id: library_id.to_string(),
                 user_id: user_id.to_string(),
                 title: title.to_string(),

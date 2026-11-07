@@ -69,6 +69,11 @@ pub struct Audiobook {
     #[json_field]
     pub narrators: Vec<String>,
 
+    /// Fields a metadata refresh must leave alone, by their GraphQL names.
+    #[graphql(name = "lockedFields")]
+    #[json_field]
+    pub locked_fields: Option<Vec<String>>,
+
     #[graphql(name = "description")]
     pub description: Option<String>,
 

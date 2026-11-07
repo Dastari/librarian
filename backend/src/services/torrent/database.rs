@@ -1658,6 +1658,7 @@ mod ownership_tests {
         Show::insert(
             db,
             CreateShowInput {
+                locked_fields: None,
                 library_id: library.id.clone(),
                 user_id: library.user_id.clone(),
                 name: "fixture show".to_string(),

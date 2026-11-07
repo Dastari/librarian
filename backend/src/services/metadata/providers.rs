@@ -24,6 +24,7 @@ use crate::services::graphql::entities::{
 };
 use crate::services::graphql::{AuthUser, LibrarianSchema};
 use crate::services::manager::ServicesManager;
+use crate::services::write_rules;
 use async_graphql::{Request, Variables};
 use graphql_orm::graphql::filters::StringFilter;
 
@@ -4134,9 +4135,9 @@ impl MetadataService {
                 }"#,
                 serde_json::json!({
                     "id": movie.id,
-                    "input": {
+                    "input": write_rules::without_locked_fields(serde_json::json!({
                         "title": details.title,
-                        "sortTitle": details.original_title.clone().unwrap_or_else(|| details.title.clone()),
+                        "sortTitle": write_rules::sort_key(&details.title),
                         "originalTitle": details.original_title,
                         "year": details.year,
                         "tmdbId": details.provider_id as i32,
@@ -4157,7 +4158,7 @@ impl MetadataService {
                         "collectionName": details.collection_name,
                         "collectionPosterUrl": cached_collection_poster_url,
                         "tmdbStatus": details.tmdb_status,
-                    }
+                    }), movie.locked_fields.as_deref().unwrap_or_default())
                 }),
             )
             .await?;
@@ -4688,9 +4689,9 @@ impl MetadataService {
                 }"#,
                 serde_json::json!({
                     "id": show.id,
-                    "input": {
+                    "input": write_rules::without_locked_fields(serde_json::json!({
                         "name": details.name,
-                        "sortName": details.sort_name,
+                        "sortName": write_rules::sort_key(&details.name),
                         "year": details.year,
                         "tvmazeId": details.provider_id as i32,
                         "tvdbId": details.tvdb_id,
@@ -4702,7 +4703,7 @@ impl MetadataService {
                         "posterUrl": details.poster_url,
                         "backdropUrl": details.backdrop_url,
                         "status": details.status,
-                    }
+                    }), show.locked_fields.as_deref().unwrap_or_default())
                 }),
             )
             .await?;
@@ -4929,6 +4930,7 @@ mod timestamp_notification_tests {
         Movie::insert(
             db,
             CreateMovieInput {
+                locked_fields: None,
                 library_id: library.id.clone(),
                 user_id: library.user_id.clone(),
                 title: "fixture movie".to_string(),

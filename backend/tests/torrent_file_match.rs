@@ -687,6 +687,18 @@ async fn titles_sort_without_a_leading_article() {
         sort_title(admin.query(READ, json!({ "id": book })).await),
         "Mine"
     );
+
+    // Blanking it hands the order back to the title.
+    admin
+        .query(
+            RENAME,
+            json!({ "id": book, "input": { "sortTitle": null } }),
+        )
+        .await;
+    assert_eq!(
+        sort_title(admin.query(READ, json!({ "id": book })).await),
+        "Third Way"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

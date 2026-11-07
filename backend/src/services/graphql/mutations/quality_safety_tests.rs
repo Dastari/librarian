@@ -65,6 +65,7 @@ async fn movie(db: &Database, library: &Library) -> Movie {
     Movie::insert(
         db,
         CreateMovieInput {
+            locked_fields: None,
             library_id: library.id.clone(),
             user_id: library.user_id.clone(),
             title: "fixture movie".to_string(),

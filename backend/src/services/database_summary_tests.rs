@@ -118,6 +118,7 @@ pub(super) async fn audiobook(db: &Database, library: &Library) -> Audiobook {
     Audiobook::insert(
         db,
         CreateAudiobookInput {
+            locked_fields: None,
             series_name: None,
             series_position: None,
             chapter_source: None,
@@ -203,6 +204,7 @@ pub(super) async fn show(db: &Database, library: &Library) -> Show {
     Show::insert(
         db,
         CreateShowInput {
+            locked_fields: None,
             library_id: library.id.clone(),
             user_id: library.user_id.clone(),
             name: "fixture show".to_string(),
@@ -260,6 +262,7 @@ pub(super) async fn movie(db: &Database, library: &Library) -> Movie {
     Movie::insert(
         db,
         CreateMovieInput {
+            locked_fields: None,
             library_id: library.id.clone(),
             user_id: library.user_id.clone(),
             title: "fixture movie".to_string(),

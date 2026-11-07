@@ -16293,6 +16293,7 @@ mod tests {
         let movie = Movie::insert(
             database.pool(),
             CreateMovieInput {
+                locked_fields: None,
                 library_id: library.id.clone(),
                 user_id: user.id.clone(),
                 title: "Example Movie".to_string(),

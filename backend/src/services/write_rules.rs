@@ -358,6 +358,78 @@ pub fn sort_key_after_rename(
     followed_title.then(|| sort_key(new_title))
 }
 
+/// What a provider may still write, given the fields someone locked. Locks hold the GraphQL names.
+/// A locked title keeps its sort key too, and locked narrators keep the lead narrator.
+pub fn without_locked_fields(mut input: serde_json::Value, locked: &[String]) -> serde_json::Value {
+    let Some(fields) = input.as_object_mut() else {
+        return input;
+    };
+    for field in locked {
+        fields.remove(field);
+        match field.as_str() {
+            "title" => drop(fields.remove("sortTitle")),
+            "name" => drop(fields.remove("sortName")),
+            "narrators" => drop(fields.remove("narratorName")),
+            _ => {}
+        }
+    }
+    input
+}
+
+#[cfg(test)]
+mod locked_field_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn locked(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn locked_fields_are_left_out_and_others_still_write() {
+        let input = json!({ "overview": "provider", "tagline": "provider", "year": 1999 });
+        assert_eq!(
+            without_locked_fields(input, &locked(&["overview", "year"])),
+            json!({ "tagline": "provider" })
+        );
+    }
+
+    #[test]
+    fn a_locked_title_keeps_its_sort_key() {
+        let input = json!({ "title": "Provider", "sortTitle": "Provider", "year": 1999 });
+        assert_eq!(
+            without_locked_fields(input, &locked(&["title"])),
+            json!({ "year": 1999 })
+        );
+        let input = json!({ "name": "Provider", "sortName": "Provider" });
+        assert_eq!(without_locked_fields(input, &locked(&["name"])), json!({}));
+    }
+
+    #[test]
+    fn a_locked_sort_key_leaves_the_title_free() {
+        let input = json!({ "title": "Provider", "sortTitle": "Provider" });
+        assert_eq!(
+            without_locked_fields(input, &locked(&["sortTitle"])),
+            json!({ "title": "Provider" })
+        );
+    }
+
+    #[test]
+    fn locked_narrators_keep_the_lead_narrator() {
+        let input = json!({ "narrators": ["A"], "narratorName": "A", "publisher": "P" });
+        assert_eq!(
+            without_locked_fields(input, &locked(&["narrators"])),
+            json!({ "publisher": "P" })
+        );
+    }
+
+    #[test]
+    fn nothing_locked_writes_everything() {
+        let input = json!({ "title": "Provider", "sortTitle": "Provider" });
+        assert_eq!(without_locked_fields(input.clone(), &[]), input);
+    }
+}
+
 #[cfg(test)]
 mod sort_key_tests {
     use super::*;
