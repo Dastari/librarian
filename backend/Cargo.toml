@@ -93,7 +93,7 @@ sysinfo = "0.39.6"
 
 # Config
 dotenvy = "0.15.7"
-dirs = "6.0.0"
+dirs = "7.0.0"
 mime_guess = "2.0.5"
 chrono = { version = "0.4.45", features = ["serde"] }
 sha2 = "0.11.1"
