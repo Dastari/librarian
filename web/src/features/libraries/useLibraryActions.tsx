@@ -1,6 +1,6 @@
 import { useMutation } from "@apollo/client/react";
 import { defineActions, type ActionSet } from "glass-ux/actions";
-import { IconExternalLink, IconRefresh, IconSettings, IconTrash, IconWarning } from "glass-ux/icons";
+import { IconExternalLink, IconFile, IconRefresh, IconSettings, IconTrash, IconWarning } from "glass-ux/icons";
 import { parseAsString, useQueryState } from "nuqs";
 import { useCallback, useMemo } from "react";
 
@@ -39,6 +39,11 @@ export function useLibraryActions<T extends LibraryEntity>({ settings, open = tr
       },
       successMessage: (rows: readonly T[]) => (rows.length === 1 ? "Scan started" : `Started ${rows.length} scans`),
     }] : []),
+    {
+      id: "files", label: "Files", icon: IconFile, group: "open", priority: 2,
+      visible: (rows) => rows.length === 1,
+      run: (rows) => settings(rows[0]!, "files"),
+    },
     {
       id: "issues", label: "Scan issues", icon: IconWarning, group: "open", priority: 3,
       visible: (rows) => rows.length === 1,

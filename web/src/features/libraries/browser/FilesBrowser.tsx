@@ -39,9 +39,13 @@ const columns = column.columns([
 ]);
 
 /** Every media file the scanner knows about, with the unmatched ones one filter away. */
-export function FilesBrowser({ libraryId }: { libraryId: string }) {
+export function FilesBrowser({ libraryId, filterPrefix }: {
+  libraryId: string;
+  /** Keeps this list's filters in the URL apart from those of a page behind it. */
+  filterPrefix?: string;
+}) {
   const { user } = useSession();
-  const filters = useBrowserFilters();
+  const filters = useBrowserFilters(filterPrefix);
   const table = useServerTable<MediaFileOrderByInput>({ persistKey: `files.${libraryId}`, defaultSorting: [{ id: "addedAt", desc: true }] });
 
   const where = useMemo<MediaFileWhereInput>(() => {

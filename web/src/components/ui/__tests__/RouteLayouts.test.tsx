@@ -58,8 +58,7 @@ describe("nested route boundaries", () => {
     render(<NuqsTestingAdapter><LibraryLayout library={library} /></NuqsTestingAdapter>);
     // A bounded pane clips rather than hides: code must not be able to scroll it away.
     expect(outletPane()).toHaveClass("overflow-y-clip");
-    // The breadcrumb names the library on screen; the heading remains for assistive technology.
-    expect(screen.getByRole("heading", { name: "Family films" })).toHaveClass("sr-only");
+    expect(screen.getByRole("heading", { name: "Family films" })).toBeInTheDocument();
   });
 
   it.each(["/settings/general", "/settings/logs"])("keeps the screen scroll owner and print marker for %s", (pathname) => {

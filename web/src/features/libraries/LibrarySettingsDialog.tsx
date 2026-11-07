@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { ActionBar } from "glass-ux/actions";
 import { EntitySettingsDialog, type EntitySettingsTab } from "glass-ux/entity-settings";
 import { formBehaviour, useAppForm } from "glass-ux/form";
-import { IconClock, IconFolder, IconHistory, IconSettings, IconTrash, IconWarning } from "glass-ux/icons";
+import { IconClock, IconFile, IconFolder, IconHistory, IconSettings, IconTrash, IconWarning } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
 import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
@@ -21,15 +21,16 @@ import { useIsAdmin } from "@/lib/auth/useSession";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 
+import { FilesBrowser } from "./browser/FilesBrowser";
 import { LibraryIdentity } from "./LibraryIdentity";
 import { ScansPanel } from "./ScansPanel";
 import { useLibraryActions } from "./useLibraryActions";
 
-export const LIBRARY_SETTINGS_TABS = ["general", "scanning", "organization", "issues", "history", "remove"] as const;
+export const LIBRARY_SETTINGS_TABS = ["general", "scanning", "organization", "files", "issues", "history", "remove"] as const;
 export type LibrarySettingsTab = (typeof LIBRARY_SETTINGS_TABS)[number];
 export const isLibrarySettingsTab = (value: string | null): value is LibrarySettingsTab => LIBRARY_SETTINGS_TABS.includes(value as LibrarySettingsTab);
 /** What someone who can't change a library can still look at. */
-const READ_ONLY_TABS: readonly LibrarySettingsTab[] = ["issues", "history"];
+const READ_ONLY_TABS: readonly LibrarySettingsTab[] = ["files", "issues", "history"];
 
 const schema = z.object({
   name: z.string().trim().min(1, "Give the library a name").max(80),
@@ -54,7 +55,7 @@ const valuesOf = (library: LibraryFieldsFragment) => ({
 });
 
 /** A library's settings and its scanning record, with its identity and actions in the header. */
-export function LibrarySettingsDialog({ library, open, onOpenChange, tab, onTabChange, items, issues = 0 }: {
+export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosenTab, onTabChange, items, issues = 0, fileCount }: {
   library: LibraryFieldsFragment;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -62,9 +63,11 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab, onTabC
   onTabChange: (tab: LibrarySettingsTab) => void;
   items?: number | null;
   issues?: number;
+  fileCount?: number | null;
 }) {
   const navigate = useNavigate();
   const isAdmin = useIsAdmin();
+  const tab = isAdmin || READ_ONLY_TABS.includes(chosenTab) ? chosenTab : READ_ONLY_TABS[0]!;
   const [update] = useMutation(EntityLibraryUpdateDocument);
   const [remove, { loading: deleting }] = useMutation(EntityLibraryDeleteDocument);
   const patterns = useQuery(NamingPatternsForTypeDocument, { variables: { libraryType: library.libraryType.toLowerCase() } });
@@ -134,6 +137,10 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab, onTabC
           <form.AppField name="namingPattern">{(field) => <field.SelectField label="Naming pattern" options={patternOptions} />}</form.AppField>
         </div>
       ),
+    },
+    {
+      value: "files", label: fileCount != null ? `Files ${fileCount}` : "Files", icon: <IconFile />,
+      content: tab === "files" ? <div className="flex h-[min(32rem,70svh)] min-h-0 flex-col overflow-hidden"><FilesBrowser libraryId={library.id} filterPrefix="file" /></div> : null,
     },
     {
       value: "issues", label: issues > 0 ? `Issues ${issues}` : "Issues", icon: <IconWarning />,
