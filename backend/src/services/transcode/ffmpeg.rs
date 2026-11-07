@@ -67,6 +67,11 @@ pub async fn ffmpeg_available(ffmpeg_path: &str) -> bool {
     }
 }
 
+/// Keeps surround but only in layouts AAC has a standard code for. A file's 5.1(side), the usual
+/// layout of E-AC-3 and AC-3, otherwise makes ffmpeg describe the channels in a way browsers can't
+/// append: the audio is rejected and the video waits on it forever.
+const AAC_CHANNEL_LAYOUTS: &str = "aformat=channel_layouts=5.1|stereo|mono";
+
 /// Full path to the playlist file inside a session's output directory.
 pub fn playlist_path(output_dir: &Path) -> PathBuf {
     output_dir.join(PLAYLIST_FILENAME)
@@ -118,6 +123,10 @@ pub fn build_transcode_args(input: &Path, output_dir: &Path) -> Vec<String> {
         "expr:gte(t,n_forced*6)".to_string(),
         "-preset".to_string(),
         "veryfast".to_string(),
+        "-sn".to_string(),
+        "-dn".to_string(),
+        "-af".to_string(),
+        AAC_CHANNEL_LAYOUTS.to_string(),
         "-c:a".to_string(),
         "aac".to_string(),
         "-f".to_string(),
@@ -177,8 +186,6 @@ pub fn build_on_demand_transcode_args(
             "0:v:0?".to_owned(),
             "-map".to_owned(),
             format!("0:{index}"),
-            "-sn".to_owned(),
-            "-dn".to_owned(),
         ]);
     }
     let forced_key_frames = format!("expr:gte(t,n_forced*{SEGMENT_SECONDS})");
@@ -200,6 +207,12 @@ pub fn build_on_demand_transcode_args(
                 &forced_key_frames,
                 "-preset",
                 "veryfast",
+                // Subtitles are served by their own route. Converting them here wastes work, and
+                // an image format would stop the encoder.
+                "-sn",
+                "-dn",
+                "-af",
+                AAC_CHANNEL_LAYOUTS,
             ]
             .map(str::to_owned),
         );
@@ -429,6 +442,38 @@ mod tests {
         assert!(playlist.ends_with("#EXT-X-ENDLIST\n"));
         assert_eq!(segment_count(14), 3);
         assert_eq!(segment_count(12), 2);
+    }
+
+    /// The value after a flag, for asserting on what an encoder is told.
+    fn after(args: &[String], flag: &str) -> Option<String> {
+        args.iter()
+            .position(|arg| arg == flag)
+            .and_then(|index| args.get(index + 1).cloned())
+    }
+
+    #[test]
+    fn video_transcodes_only_write_aac_layouts_browsers_can_append() {
+        let on_demand =
+            build_on_demand_transcode_args(Path::new("/in.mkv"), Path::new("/out"), 0, None, false);
+        let full = build_transcode_args(Path::new("/in.mkv"), Path::new("/out"));
+        for args in [&on_demand, &full] {
+            assert_eq!(after(args, "-af").as_deref(), Some(AAC_CHANNEL_LAYOUTS));
+            assert!(args.contains(&"-sn".to_string()));
+            assert!(args.contains(&"-dn".to_string()));
+        }
+    }
+
+    #[test]
+    fn a_chosen_audio_track_gets_the_same_layouts() {
+        let args = build_on_demand_transcode_args(
+            Path::new("/in.mkv"),
+            Path::new("/out"),
+            0,
+            Some(2),
+            false,
+        );
+        assert_eq!(after(&args, "-af").as_deref(), Some(AAC_CHANNEL_LAYOUTS));
+        assert!(args.contains(&"0:2".to_string()));
     }
 
     #[test]
