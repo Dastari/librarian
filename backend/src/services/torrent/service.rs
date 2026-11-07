@@ -1122,32 +1122,15 @@ impl Service for TorrentService {
             }
         }
 
-        // Seed already-completed torrents so startup doesn't emit Completed
-        // events for torrents that were complete before this process started.
+        // Seed already-processed torrents so startup doesn't emit Completed events for them.
         //
-        // The session alone is not enough: a restored torrent is still
-        // `Initializing` (hash-checking) when `Session::new_with_opts` returns,
-        // so its `progress_bytes` reads 0 and it looks unfinished. A second
-        // later the progress loop saw it hit 100% and emitted a fresh
-        // `Completed` event — re-running the whole import pipeline for every
-        // finished torrent on every restart and overwriting its
-        // `post_process_status`. So the database is the authority: any row that
-        // already reached 100% *and* has a post-process status has been through
-        // the pipeline. Rows that finished but never got a status are
-        // deliberately left out, so the reconciliation sweep still retries them.
+        // The database is the authority: any row that already reached 100% *and* has a
+        // post-process status has been through the pipeline. The session can't say. A restored
+        // torrent reads as 0% while it's hash-checked, then 100%, and a small one may already
+        // read 100% here whether or not it was ever processed. So it isn't consulted, and a
+        // torrent that finished without being processed gets its Completed event now.
         let mut completed_hashes: std::collections::HashSet<String> =
-            session.with_torrents(|iter| {
-                iter.filter_map(|(_, handle)| {
-                    let stats = handle.stats();
-                    let progress = progress_ratio(stats.progress_bytes, stats.total_bytes);
-                    if progress >= 1.0 {
-                        Some(get_info_hash_hex(handle))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-            });
+            std::collections::HashSet::new();
         match database::find_completed_torrents(&db).await {
             Ok(rows) => completed_hashes.extend(
                 rows.into_iter()
