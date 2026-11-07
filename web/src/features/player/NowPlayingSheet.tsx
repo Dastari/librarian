@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Dialog } from "glass-ux/dialog";
 import { Button as GlassButton } from "glass-ux/button";
 import { Notice } from "glass-ux/notice";
@@ -23,6 +24,13 @@ interface NowPlayingSheetProps {
 export function NowPlayingSheet({ open, onClose, onOpenEntity }: NowPlayingSheetProps) {
   const finalFocus = useDialogReturnFocus(open);
   const state = usePlayerState();
+  const queueRef = useRef<HTMLOListElement>(null);
+  // Open on what's playing, which may be far down a long queue.
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => queueRef.current?.querySelector("[data-current]")?.scrollIntoView({ block: "nearest" }));
+    return () => cancelAnimationFrame(frame);
+  }, [open, state.index]);
   const item = currentAudioItem(state);
   const { transport } = state;
   if (!item) return null;
@@ -31,7 +39,7 @@ export function NowPlayingSheet({ open, onClose, onOpenEntity }: NowPlayingSheet
     <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()} sheet>
       <Dialog.Popup size="lg" finalFocus={finalFocus}>
         <Dialog.Header title="Now playing" />
-        <Dialog.Body className="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <Dialog.Body className="now-playing grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)] md:overflow-hidden">
           <div className="flex flex-col items-center gap-5">
             <Artwork src={item.artwork} alt="" aspect="square" className="w-full max-w-72 rounded-card shadow-poster-hover" />
             <div className="w-full text-center">
@@ -60,13 +68,14 @@ export function NowPlayingSheet({ open, onClose, onOpenEntity }: NowPlayingSheet
             </div>
             <VolumeControl volume={transport.volume} muted={transport.muted} onVolume={(volume) => playerStore.updateTransport({ volume, muted: volume === 0 })} onMuted={(muted) => playerStore.updateTransport({ muted })} />
           </div>
+          {/* Beside the player, only the queue scrolls: the controls stay where they are. */}
           <div className="flex min-h-0 flex-col">
-            <p className="text-title-md mb-2 text-foreground">Up next</p>
-            <ol className="flex flex-col gap-0.5">
+            <p className="text-title-md mb-2 shrink-0 text-foreground">Up next</p>
+            <ol ref={queueRef} className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-0.5 md:overflow-y-auto md:overscroll-contain">
               {state.queue.map((entry, index) => {
                 const active = index === state.index;
                 return (
-                  <li key={`${entry.mediaFileId}-${index}`}>
+                  <li key={`${entry.mediaFileId}-${index}`} data-current={active ? "" : undefined}>
                     <ListRow
                       onClick={() => playerStore.jumpTo(index)}
                       selected={active}
