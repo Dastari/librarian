@@ -1,7 +1,7 @@
 # Glass UX patch
 
 `glass-ux@0.17.0.patch` is registered in `pnpm-workspace.yaml` and the lockfile.
-It contains two bounded DataTable corrections and one media player addition:
+It contains two bounded DataTable corrections, one media player addition and one EntityIdentity correction:
 
 - Native focus inside a grid synchronizes its active row, so virtualization retains
   the focused alphabet-jump target or row control. Portaled controls are excluded by
@@ -19,6 +19,9 @@ The compatibility adapter passes its `loadRevision`; Logs passes the connection'
 `revision`. Append leaves this generation unchanged. No private modules are imported
 by application code, and no table geometry or material recipes are overridden.
 
-On upgrade, inspect upstream for all three, regenerate the patch from the published
+- `EntityIdentity` wraps its facts in a `<div>` instead of a `<p>` when they are more than text, because `facts`
+  accepts a node and a Metric or Sparkline can't validly sit inside a paragraph. The download dialog's stats need it.
+
+On upgrade, inspect upstream for all four, regenerate the patch from the published
 archive if needed, and run the real Glass table/Logs/URL-history regressions plus a
 populated browser scroll/focus check before removing it.

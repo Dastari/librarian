@@ -11,12 +11,12 @@ import type { DownloadRow } from "./useDownloads";
 const TorrentGlyph = ENTITY_KINDS.torrent.icon;
 
 /** One identity for a download: a row in the table, the header of its dialog. */
-export function TorrentIdentity({ row, actions, tier = "row", stats, className }: {
+export function TorrentIdentity({ row, actions, tier = "row", facts, className }: {
   row: DownloadRow;
   actions?: ActionSet<DownloadRow>;
   tier?: "row" | "header";
-  /** A line of live values under the name, in place of the usual facts. */
-  stats?: ReactNode;
+  /** Replaces the usual facts under the name. */
+  facts?: ReactNode;
   className?: string;
 }) {
   const rawState = (row.live?.state ?? row.record.state).toLowerCase();
@@ -30,8 +30,7 @@ export function TorrentIdentity({ row, actions, tier = "row", stats, className }
       name={row.record.name}
       icon={<TorrentGlyph />}
       state={{ id: rawState, label: state.label, tone: rawState === "error" ? "danger" : rawState === "seeding" || rawState === "completed" ? "success" : rawState === "downloading" || rawState === "checking" || rawState === "initializing" ? "info" : "neutral", paused: rawState === "paused" }}
-      facts={stats ? undefined : [...(tier === "row" ? [state.label] : []), formatBytes(row.record.totalBytes), row.record.library?.name ?? "No library"]}
-      tabs={stats}
+      facts={facts ?? [...(tier === "row" ? [state.label] : []), formatBytes(row.record.totalBytes), row.record.library?.name ?? "No library"]}
       target={row}
       actions={actions}
     />

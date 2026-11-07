@@ -97,7 +97,7 @@ function Stat({ icon, label, children }: { icon: ReactNode; label: string; child
 
 /** Metric hides its own label at this width, leaving the value and a small trend beside the icon. */
 function LiveStat({ icon, ...metric }: { icon: ReactNode; label: string } & ComponentProps<typeof Metric>) {
-  return <Stat icon={icon} label={metric.label}><div className="h-7 w-36 min-w-0 max-sm:w-[5.25rem]"><Metric better="none" range={RANGE} sparklineFill {...metric} /></div></Stat>;
+  return <Stat icon={icon} label={metric.label}><div className="h-6 w-36 min-w-0 max-sm:w-[5.25rem]"><Metric better="none" range={RANGE} sparklineFill {...metric} /></div></Stat>;
 }
 
 /**
@@ -108,7 +108,7 @@ function LiveStat({ icon, ...metric }: { icon: ReactNode; label: string } & Comp
 function TorrentStats({ row, rates, ratio }: { row: DownloadRow; rates?: Rates; ratio: number }) {
   const { record, live } = row;
   return (
-    <div role="group" aria-label="Transfer" className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-body-sm text-foreground sm:ps-16">
+    <div role="group" aria-label="Transfer" className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-0.5 text-body-sm text-foreground">
       <Stat icon={<IconDisk size="sm" />} label="Size"><span className="text-numeric">{formatBytes(record.totalBytes)}</span></Stat>
       <Stat icon={<IconPercent size="sm" />} label="Share ratio"><span className="text-numeric">{ratio.toFixed(2)}</span></Stat>
       <LiveStat icon={<IconArrowDown size="sm" />} label="Download" value={live ? live.downloadSpeed ?? 0 : null} data={rates?.down} format={formatSpeed} />
@@ -152,7 +152,7 @@ export function TorrentDetail({ row, rates, actions, open, onClose, finalFocus }
     <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <Dialog.Popup size="full" kind="settings" aria-label="Download details" finalFocus={finalFocus} className="torrent-detail mx-auto max-w-[88rem]">
         <div className="flex min-w-0 shrink-0 items-center gap-3 px-(--inset-panel) pb-4 pt-(--inset-panel) max-sm:flex-wrap">
-          <div className="min-w-0 flex-1 max-sm:order-last max-sm:basis-full"><TorrentIdentity tier="header" row={row} stats={<TorrentStats row={row} rates={rates} ratio={ratio} />} className="min-w-0" /></div>
+          <div className="min-w-0 flex-1 max-sm:order-last max-sm:basis-full"><TorrentIdentity tier="header" row={row} facts={<TorrentStats row={row} rates={rates} ratio={ratio} />} className="min-w-0" /></div>
           <div className="shrink-0 max-sm:ms-auto"><ActionBar set={actions} targets={[row]} label={`Actions for ${record.name}`} maxButtons={0} /></div>
           <Dialog.Close render={<Button variant="ghost" shape="circle" size="sm" icon={<IconClose />} aria-label="Close" className="shrink-0" />} />
         </div>
