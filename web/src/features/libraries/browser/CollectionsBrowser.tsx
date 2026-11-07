@@ -28,7 +28,7 @@ const SORTS: readonly BrowserSortOption[] = [
 export function CollectionsBrowser({ libraryId }: { libraryId: string }) {
   const isAdmin = useIsAdmin();
   const filters = useBrowserFilters();
-  const table = useServerTable<CollectionOrderByInput>({ persistKey: `collections.${libraryId}`, defaultSorting: [{ id: "name", desc: false }] });
+  const table = useServerTable<CollectionOrderByInput>({ persistKey: `collections.${libraryId}`, defaultSorting: [{ id: "name", desc: false }], sortMap: { name: "sortName" } });
   const [adding, setAdding] = useState(false);
 
   const where = useMemo<CollectionWhereInput>(() => {
@@ -42,7 +42,7 @@ export function CollectionsBrowser({ libraryId }: { libraryId: string }) {
   const jump = useLetterJump({
     rows: list.rows,
     getRowId,
-    getTitle: (row) => row.name,
+    getTitle: (row) => row.sortName || row.name,
     hasMore: list.hasMore,
     loading: list.fetching || list.loadingMore,
     queryKey: JSON.stringify(where),

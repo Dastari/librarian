@@ -65,6 +65,11 @@ pub struct Chapter {
     #[filterable(type = "number")]
     pub duration_secs: Option<i32>,
 
+    /// Where this chapter starts in its file, when files don't line up with chapters. `None` means
+    /// the file starts with it, or holds the whole book and `startTimeSecs` is the position.
+    #[graphql(name = "fileOffsetSecs")]
+    pub file_offset_secs: Option<f64>,
+
     #[graphql(name = "wanted")]
     #[filterable(type = "boolean")]
     pub wanted: bool,

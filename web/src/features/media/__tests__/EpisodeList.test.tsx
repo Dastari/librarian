@@ -164,6 +164,12 @@ describe("EpisodeList seasons", () => {
   });
 });
 
+/** A row's less common actions are in its menu. */
+async function chooseFromMenu(name: string, within_: HTMLElement = document.body) {
+  await userEvent.click(within(within_).getByRole("button", { name: /^More actions/ }));
+  await userEvent.click(await screen.findByRole("menuitem", { name }));
+}
+
 describe("EpisodeList rows", () => {
   it("marks an episode wanted", async () => {
     const { called, mock } = singleMock("ep-1-1", { wanted: true });
@@ -175,14 +181,14 @@ describe("EpisodeList rows", () => {
   it("ignores an episode and drops the wanted flag with it", async () => {
     const { called, mock } = singleMock("ep-1-1", { ignored: true, wanted: false });
     await mount([episode(1, 1, { wanted: true })], [mock]);
-    await userEvent.click(screen.getByRole("button", { name: "Ignore" }));
+    await chooseFromMenu("Ignore");
     await vi.waitFor(() => expect(called).toHaveBeenCalled());
   });
 
   it("unignores an episode without touching anything else", async () => {
     const { called, mock } = singleMock("ep-1-1", { ignored: false });
     await mount([episode(1, 1, { ignored: true })], [mock]);
-    await userEvent.click(screen.getByRole("button", { name: "Unignore" }));
+    await chooseFromMenu("Unignore");
     await vi.waitFor(() => expect(called).toHaveBeenCalled());
   });
 
@@ -197,13 +203,15 @@ describe("EpisodeList rows", () => {
     const available = rowFor(1, 1);
     const missing = rowFor(1, 2);
     expect(within(available).getByRole("button", { name: "Play" })).toBeEnabled();
-    expect(available).toHaveTextContent("1080p · HEVC · 2.3 GB");
+    expect(available).toHaveTextContent("1080p · HEVC");
+    expect(available).not.toHaveTextContent("2.3 GB");
     expect(available).toHaveTextContent("Optimal");
     expect(available).toHaveTextContent("Available");
     expect(within(missing).queryByRole("button", { name: "Play" })).not.toBeInTheDocument();
     expect(within(missing).getByRole("button", { name: "Want" })).toBeEnabled();
-    expect(within(missing).getByRole("button", { name: "Find" })).toBeEnabled();
-    expect(within(missing).getByRole("button", { name: "Ignore" })).toBeEnabled();
+    await userEvent.click(within(missing).getByRole("button", { name: /^More actions/ }));
+    expect(await screen.findByRole("menuitem", { name: "Find" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Ignore" })).toBeInTheDocument();
   });
 
   it("says so when a season has no episodes", async () => {
@@ -230,8 +238,6 @@ describe("EpisodeList Glass DataTable integration", () => {
     expect(onPlay).toHaveBeenCalledExactlyOnceWith(available);
     expect(within(rowFor(2, 1)).queryByRole("button", { name: "Play" })).not.toBeInTheDocument();
     expect(within(rowFor(2, 1)).getByRole("button", { name: "Want" })).toBeVisible();
-    expect(within(rowFor(2, 1)).getByRole("button", { name: "Find" })).toBeVisible();
-    expect(within(rowFor(2, 1)).getByRole("button", { name: "Ignore" })).toBeVisible();
     expect(container.querySelector("button button")).not.toBeInTheDocument();
   });
 
@@ -246,8 +252,7 @@ describe("EpisodeList Glass DataTable integration", () => {
     expect(onPlay).toHaveBeenCalledExactlyOnceWith(available);
     const missing = rowFor(1, 2);
     expect(within(missing).getByRole("button", { name: "Want" })).toBeVisible();
-    expect(within(missing).getByRole("button", { name: "Find" })).toBeVisible();
-    await userEvent.click(within(missing).getByRole("button", { name: /Actions for/ }));
+    await userEvent.click(within(missing).getByRole("button", { name: /^More actions/ }));
     expect(await screen.findByRole("menuitem", { name: "Ignore" })).toBeVisible();
     await userEvent.keyboard("{Escape}");
     expect(rowFor(2, 1)).toHaveTextContent("No file");
@@ -286,7 +291,7 @@ describe("EpisodeList Glass DataTable integration", () => {
     expect(screen.queryByRole("button", { name: /^(Want|Wanted|Find|Ignore|Unignore|Want all missing|Unwant all|Ignore season|Unignore season)$/ })).not.toBeInTheDocument();
     await userEvent.click(within(rowFor(1, 1)).getByRole("button", { name: "Play" }));
     expect(onPlay).toHaveBeenCalledExactlyOnceWith(available);
-    await userEvent.click(within(rowFor(1, 1)).getByRole("button", { name: /^Actions for/ }));
+    await userEvent.click(within(rowFor(1, 1)).getByRole("button", { name: /^More actions/ }));
     expect(await screen.findByRole("menuitem", { name: "Play" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: /Want|Find|Ignore/ })).not.toBeInTheDocument();
   });
@@ -295,7 +300,7 @@ describe("EpisodeList Glass DataTable integration", () => {
     const { called, mock } = singleMock("ep-2-1", { wanted: true });
     const onChanged = vi.fn();
     await mount([episode(1, 1, { mediaFileId: "file-1" }), episode(2, 1)], [mock], onChanged);
-    await userEvent.click(within(rowFor(2, 1)).getByRole("button", { name: /^Actions for/ }));
+    await userEvent.click(within(rowFor(2, 1)).getByRole("button", { name: /^More actions/ }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Want" }));
     await vi.waitFor(() => expect(called).toHaveBeenCalledOnce());
     expect(onChanged).toHaveBeenCalledOnce();
@@ -313,7 +318,7 @@ describe("EpisodeList Glass DataTable integration", () => {
 
   it("passes the selected episode, show and library through to release search", async () => {
     await mount([episode(1, 1, { mediaFileId: "file-1" }), episode(2, 7)]);
-    await userEvent.click(within(rowFor(2, 7)).getByRole("button", { name: "Find" }));
+    await chooseFromMenu("Find", rowFor(2, 7));
     expect(vi.mocked(ReleaseSearchDialog).mock.lastCall?.[0]).toMatchObject({
       isOpen: true, query: "Andor", season: 2, episode: 7, libraryId: "lib-1", target: { showId: "show-1", episodeId: "ep-2-7" },
     });

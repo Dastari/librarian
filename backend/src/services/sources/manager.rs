@@ -366,8 +366,24 @@ impl SourcesManager {
             None
         };
 
-        // Perform search
-        match source.search(query).await {
+        // Perform search. Sites hiccup, so one failure gets a second try before it counts.
+        let first = source.search(query).await;
+        let attempt = match first {
+            Ok(releases) => Ok(releases),
+            Err(error) => {
+                tracing::warn!(
+                    source_id = source.id(),
+                    source_name = source.name(),
+                    error = %error,
+                    "Source search failed, trying once more: source_name='{}', error={}",
+                    source.name(),
+                    error
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+                source.search(query).await
+            }
+        };
+        match attempt {
             Ok(mut releases) => {
                 // Add source info to releases
                 for release in &mut releases {
@@ -388,7 +404,7 @@ impl SourcesManager {
                 }
             }
             Err(e) => {
-                tracing::error!(
+                tracing::warn!(
                     source_id = source.id(),
                     source_name = source.name(),
                     error = %e,

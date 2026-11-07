@@ -1,6 +1,6 @@
 import { Input } from "glass-ux/input";
 import { Select } from "glass-ux/select";
-import { useMutation } from "@apollo/client/react";
+import { useMutation, useQuery } from "@apollo/client/react";
 import { toast } from "glass-ux/toast";
 import { Form, FormActions, formBehaviour, useAppForm } from "glass-ux/form";
 import { IconPlug } from "glass-ux/icons";
@@ -9,10 +9,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
 import { Button, FieldGroup, KeyValueList, Panel } from "@/components/ui";
-import { TestLlmParserDocument, TestOllamaConnectionDocument, TestTmdbConnectionDocument } from "@/graphql/generated/graphql";
+import { ListeningStatusDocument, TestLlmParserDocument, TestOllamaConnectionDocument, TestTmdbConnectionDocument } from "@/graphql/generated/graphql";
 import { errorMessage } from "@/lib/graphql/errors";
 import { LIBRARY_TYPE_OPTIONS } from "@/lib/library-types";
 
+import { SmartMatchingPanel } from "./SmartMatchingPanel";
 import { asBool, asNumber, useAppSettings } from "./useAppSettings";
 
 const requiredNumber = (rule: z.ZodNumber) => z.number().nullable().transform((value, context) => {
@@ -30,11 +31,15 @@ const schema = z.object({
   tvmazeEnabled: z.boolean(),
   musicbrainzEnabled: z.boolean(),
   openlibraryEnabled: z.boolean(),
+  audibleEnabled: z.boolean(),
+  audnexusEnabled: z.boolean(),
+  listeningEnabled: z.boolean(),
   autoFetch: z.boolean(),
   cacheTmdb: requiredNumber(z.number().int().min(0).max(365)),
   cacheTvmaze: requiredNumber(z.number().int().min(0).max(365)),
   cacheMusicbrainz: requiredNumber(z.number().int().min(0).max(365)),
   cacheOpenlibrary: requiredNumber(z.number().int().min(0).max(365)),
+  cacheAudible: requiredNumber(z.number().int().min(0).max(365)),
   llmEnabled: z.boolean(),
   ollamaUrl: z.string().trim(),
   ollamaModel: z.string().trim(),
@@ -47,6 +52,7 @@ type Values = z.input<typeof schema>;
 export function MetadataSettings() {
   const metadata = useAppSettings("metadata");
   const llm = useAppSettings("llm");
+  const listening = useQuery(ListeningStatusDocument);
   const [testTmdb, tmdbTest] = useMutation(TestTmdbConnectionDocument);
   const [testOllama, ollamaTest] = useMutation(TestOllamaConnectionDocument);
   const [testParser, parserTest] = useMutation(TestLlmParserDocument);
@@ -62,11 +68,15 @@ export function MetadataSettings() {
       tvmazeEnabled: asBool(m.get("metadata.tvmaze_enabled"), true),
       musicbrainzEnabled: asBool(m.get("metadata.musicbrainz_enabled"), true),
       openlibraryEnabled: asBool(m.get("metadata.openlibrary_enabled"), true),
+      audibleEnabled: asBool(m.get("metadata.audible_enabled"), true),
+      audnexusEnabled: asBool(m.get("metadata.audnexus_enabled"), true),
+      listeningEnabled: asBool(m.get("metadata.listening_enabled"), true),
       autoFetch: asBool(m.get("metadata.auto_fetch"), true),
       cacheTmdb: asNumber(m.get("metadata.cache_days.tmdb"), 7),
       cacheTvmaze: asNumber(m.get("metadata.cache_days.tvmaze"), 7),
       cacheMusicbrainz: asNumber(m.get("metadata.cache_days.musicbrainz"), 30),
       cacheOpenlibrary: asNumber(m.get("metadata.cache_days.openlibrary"), 30),
+      cacheAudible: asNumber(m.get("metadata.cache_days.audible"), 7),
       llmEnabled: asBool(l.get("llm.enabled"), false),
       ollamaUrl: l.get("llm.ollama_url") || "http://localhost:11434",
       ollamaModel: l.get("llm.ollama_model") ?? "",
@@ -90,11 +100,15 @@ export function MetadataSettings() {
         "metadata.tvmaze_enabled": values.tvmazeEnabled,
         "metadata.musicbrainz_enabled": values.musicbrainzEnabled,
         "metadata.openlibrary_enabled": values.openlibraryEnabled,
+        "metadata.audible_enabled": values.audibleEnabled,
+        "metadata.audnexus_enabled": values.audnexusEnabled,
+        "metadata.listening_enabled": values.listeningEnabled,
         "metadata.auto_fetch": values.autoFetch,
         "metadata.cache_days.tmdb": values.cacheTmdb,
         "metadata.cache_days.tvmaze": values.cacheTvmaze,
         "metadata.cache_days.musicbrainz": values.cacheMusicbrainz,
         "metadata.cache_days.openlibrary": values.cacheOpenlibrary,
+        "metadata.cache_days.audible": values.cacheAudible,
       });
       await llm.save({
         "llm.enabled": values.llmEnabled,
@@ -138,6 +152,7 @@ export function MetadataSettings() {
   };
 
   return (
+    <div className="flex min-w-0 flex-col gap-6">
     <Form form={form} className="flex min-w-0 flex-col gap-6" onError={(error) => toast.danger(errorMessage(error, "Could not save settings"))}>
       <form.Subscribe selector={(state) => [state.isSubmitting, state.isDefaultValue]}>
         {([submitting, unchanged]) => <>
@@ -159,12 +174,18 @@ export function MetadataSettings() {
             <FieldGroup columns={2}>
               <form.AppField name="musicbrainzEnabled">{(field) => <field.SwitchRow label="MusicBrainz" disabled={loading || submitting} />}</form.AppField>
               <form.AppField name="cacheMusicbrainz">{(field) => <field.NumberField label="Cache (days)" min={0} max={365} disabled={loading || submitting} />}</form.AppField>
-              <form.AppField name="openlibraryEnabled">{(field) => <field.SwitchRow label="Open Library" disabled={loading || submitting} />}</form.AppField>
+              <form.AppField name="audibleEnabled">{(field) => <field.SwitchRow label="Audible" description="Audiobook search, details and lengths. Searched first." disabled={loading || submitting} />}</form.AppField>
+              <form.AppField name="cacheAudible">{(field) => <field.NumberField label="Cache (days)" min={0} max={365} disabled={loading || submitting} />}</form.AppField>
+              <form.AppField name="audnexusEnabled">{(field) => <field.SwitchRow label="Audnexus" description="Chapter lists for Audible's books. Cached with Audible." className="sm:col-span-2" disabled={loading || submitting} />}</form.AppField>
+              <form.AppField name="openlibraryEnabled">{(field) => <field.SwitchRow label="Open Library" description="Audiobooks, when Audible has nothing." disabled={loading || submitting} />}</form.AppField>
               <form.AppField name="cacheOpenlibrary">{(field) => <field.NumberField label="Cache (days)" min={0} max={365} disabled={loading || submitting} />}</form.AppField>
             </FieldGroup>
             <div className="mt-4">
               <form.AppField name="autoFetch">{(field) => <field.SwitchRow label="Fetch metadata automatically for scanned files" disabled={loading || submitting} />}</form.AppField>
             </div>
+          </Panel>
+          <Panel title="Listening" description="Runs on this server, and nothing leaves it. Hears what a book's opening says about it, and where its chapters are announced.">
+            <form.AppField name="listeningEnabled">{(field) => <field.SwitchRow label="Listen to audiobooks to identify them and check their chapters" description={listening.data?.listeningStatus.detail} disabled={loading || submitting} />}</form.AppField>
           </Panel>
           <Panel title="Filename parsing with Ollama" description="Optional fallback when filenames are ambiguous. Deterministic parsing always runs first." actions={<Button size="sm" variant="ghost" onPress={() => void runOllamaTest()} isPending={ollamaTest.loading}><IconPlug size="md" /> Test</Button>}>
             <FieldGroup columns={2}>
@@ -209,5 +230,7 @@ export function MetadataSettings() {
         </>}
       </form.Subscribe>
     </Form>
+    <SmartMatchingPanel />
+    </div>
   );
 }

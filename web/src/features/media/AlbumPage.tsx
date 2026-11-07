@@ -3,13 +3,13 @@ import { useApolloClient, useMutation } from "@apollo/client/react";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { toast } from "glass-ux/toast";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ActionBar, defineActions, type ActionSet } from "glass-ux/actions";
+import { defineActions, type ActionSet } from "glass-ux/actions";
 import { Button } from "glass-ux/button";
 import { createDataTableColumns, filters, NumericCell, TextCell, TwoLineCell } from "glass-ux/data-table";
 import { IconBookmark, IconCopy, IconInfo, IconPlay, IconPlus } from "glass-ux/icons";
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 
-import { ConfirmDialog, EmptyState, ErrorState, KeyValueList, MetaLine, Panel, SkeletonHero, StatusChip } from "@/components/ui";
+import { ConfirmDialog, EmptyState, ErrorState, MetaLine, SkeletonHero, StatusChip } from "@/components/ui";
 import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
@@ -18,18 +18,20 @@ import { autoDownloadMeta } from "@/features/acquisition/mode";
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { trackToPlayItem } from "@/features/libraries/browser/TracksBrowser";
 import { usePlayer } from "@/features/player/usePlayer";
-import type { PlayItem } from "@/features/player/store";
+import { playerStore, type PlayItem } from "@/features/player/store";
 import { AlbumDetailDocument, AlbumTracksPageDocument, EntityAlbumDeleteDocument, EntityTrackUpdateDocument, EntityTrackUpdateManyDocument, type AlbumDetailQuery } from "@/graphql/generated/graphql";
 import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
 import { albumCover } from "@/lib/artwork";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
-import { formatBytes, formatClock, formatDate, formatRuntime, formatYear } from "@/lib/format";
+import { formatClock, formatRuntime, formatYear } from "@/lib/format";
 import { activeContentStatusQueries } from "@/lib/graphql/content-status";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { LIBRARY_TYPES } from "@/lib/library-types";
 import { statusMeta } from "@/lib/status";
 
 import { MediaActions } from "./MediaActions";
+import { noRowMenu, PlayProgressCell, RowActions, type RowPlayState } from "./RowPlayAction";
+import { useMediaProgress } from "./useMediaProgress";
 import { DetailShell } from "./DetailShell";
 import { useAudioPages } from "./useAudioPages";
 
@@ -41,6 +43,10 @@ const AlbumTableContext = createContext<{
   statuses: ReturnType<typeof useContentStatuses>;
   currentItemId: string | undefined;
   discs: number;
+  fractionOf: (track: TrackRow) => number;
+  playStateOf: (track: TrackRow) => RowPlayState;
+  press: (track: TrackRow) => void;
+  want?: (track: TrackRow) => Promise<unknown>;
 } | null>(null);
 
 function useAlbumTable() {
@@ -65,16 +71,29 @@ function TrackStatusCell({ row: { original: track } }: TrackCellProps) {
 }
 
 function TrackFormatCell({ row: { original: track } }: TrackCellProps) {
-  return <TextCell muted>{track.mediaFile ? [track.mediaFile.audioCodec?.toUpperCase(), track.mediaFile.bitrate ? `${Math.round(track.mediaFile.bitrate / 1000)} kb/s` : null, formatBytes(track.mediaFile.size)].filter(Boolean).join(" · ") : "—"}</TextCell>;
+  return <TextCell muted>{track.mediaFile ? [track.mediaFile.audioCodec?.toUpperCase(), track.mediaFile.bitrate ? `${Math.round(track.mediaFile.bitrate / 1000)} kb/s` : null].filter(Boolean).join(" · ") || "—" : "—"}</TextCell>;
 }
 
 function TrackDurationCell({ row: { original: track } }: TrackCellProps) {
   return <TextCell identifier>{formatClock(track.durationSecs ?? track.mediaFile?.duration)}</TextCell>;
 }
 
-function TrackActionsCell({ row }: TrackCellProps) {
-  const { actions } = useAlbumTable();
-  return <ActionBar set={actions} targets={[row.original]} label={row.original.title} maxButtons={1} className="table-row-actions" />;
+function TrackProgressCell({ row: { original: track } }: TrackCellProps) {
+  const { fractionOf } = useAlbumTable();
+  return <PlayProgressCell fraction={fractionOf(track)} label={`Listening progress for ${track.title}`} available={Boolean(track.mediaFileId)} />;
+}
+
+function TrackActionsCell({ row: { original: track } }: TrackCellProps) {
+  const { actions, playStateOf, press, want } = useAlbumTable();
+  return (
+    <RowActions
+      set={actions}
+      target={track}
+      label={track.title}
+      play={track.mediaFileId ? { state: playStateOf(track), onPress: () => press(track) } : undefined}
+      want={want && !track.mediaFileId ? { wanted: track.wanted, onPress: () => want(track) } : undefined}
+    />
+  );
 }
 
 // flexRender treats cell functions as component types. Context keeps live values
@@ -84,9 +103,10 @@ const trackColumns = trackColumn.columns([
   trackColumn.accessor("title", { header: "Title", sortable: true, filter: filters.text({ field: "title" }), cardRole: "title", priority: 1, width: 20, minWidth: 10, hideable: false, cell: TrackTitleCell }),
   trackColumn.accessor("trackNumber", { header: "Track", sortable: true, filter: filters.number({ field: "trackNumber", server: "int" }), priority: 2, width: 5, minWidth: 4, align: "end", grow: false, cell: TrackNumberCell }),
   trackColumn.display({ id: "status", header: "Status", cardRole: "status", priority: 2, width: 9, minWidth: 7, cell: TrackStatusCell }),
+  trackColumn.display({ id: "progress", header: "Progress", priority: 3, width: 10, minWidth: 8, cell: TrackProgressCell }),
   trackColumn.display({ id: "format", header: "Format", priority: 4, width: 14, minWidth: 8, cell: TrackFormatCell }),
   trackColumn.display({ id: "duration", header: "Length", priority: 3, width: 6, minWidth: 5, align: "end", grow: false, cell: TrackDurationCell }),
-  trackColumn.display({ id: "trackActions", header: "Actions", priority: 1, width: 12, minWidth: 10, grow: false, hideable: false, cell: TrackActionsCell }),
+  trackColumn.display({ id: "trackActions", header: "", priority: 1, width: 7, minWidth: 6, grow: false, hideable: false, cell: TrackActionsCell }),
 ]);
 
 export function AlbumPage({ albumId }: { albumId: string }) {
@@ -129,6 +149,8 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     if (items.length && index >= 0) player.playAudio(items, index);
   }, [pages.complete, queue, player]);
   const discs = new Set(tracks.map((track) => track.discNumber ?? 1)).size;
+  const fileIds = useMemo(() => tracks.map((track) => track.mediaFileId).filter((id): id is string => Boolean(id)), [tracks]);
+  const { progressByFile } = useMediaProgress(fileIds, user?.id);
   const setSelectedWanted = useCallback(async (selected: readonly TrackRow[], wanted: boolean) => {
     if (!isAdmin) throw new Error("Administrator access required");
     const missing = selected.filter((item) => !item.mediaFileId && item.wanted !== wanted);
@@ -167,6 +189,26 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     { id: "copy-titles", label: "Copy track titles", icon: IconCopy, group: "organise", bulk: true,
       run: async (rows) => { await copyText(rows.map((item) => item.title).join("\n")); }, successMessage: () => "Track titles copied" },
   ]), [isAdmin, playFrom, toggleWanted, setSelectedWanted, selectedQueue, player]);
+
+  const currentItemId = player.audio?.entity.id;
+  const fractionOf = (track: TrackRow) => {
+    if (!track.mediaFileId) return 0;
+    const saved = progressByFile.get(track.mediaFileId);
+    if (track.id === currentItemId && player.transport.duration > 0) return Math.min(1, player.transport.position / player.transport.duration);
+    if (saved?.isWatched) return 1;
+    const seconds = track.mediaFile?.duration ?? track.durationSecs ?? saved?.duration ?? 0;
+    return saved && seconds > 0 ? Math.min(1, saved.currentPosition / seconds) : 0;
+  };
+  const playStateOf = (track: TrackRow): RowPlayState => {
+    if (track.id === currentItemId && player.transport.playing) return "playing";
+    if (track.id !== currentItemId && track.mediaFileId && progressByFile.get(track.mediaFileId)?.isWatched) return "finished";
+    return fractionOf(track) > 0 ? "resume" : "ready";
+  };
+  // Pressing what's already playing pauses or carries on; pressing anything else starts it.
+  const press = (track: TrackRow) => {
+    if (track.id === currentItemId) playerStore.updateTransport({ playing: !player.transport.playing });
+    else playFrom(track);
+  };
 
   if (error && !album) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!album) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Album not found" description="This item may have been removed from the library." className="page-gutter my-8" />;
@@ -225,20 +267,17 @@ export function AlbumPage({ albumId }: { albumId: string }) {
         ),
       }}
     >
-      <AlbumTableContext.Provider value={{ actions, statuses, currentItemId: player.audio?.entity.id, discs }}>
+      <AlbumTableContext.Provider value={{ actions, statuses, currentItemId, discs, fractionOf, playStateOf, press, want: isAdmin ? toggleWanted : undefined }}>
         <LoadedDataTable
           id={`album-tracks:${user?.id ?? "anonymous"}:${album.libraryId}:${album.id}`}
           label={`${album.name} tracks`} columns={trackColumns} rows={tracks} getRowId={(track) => track.id} getRowLabel={(track) => track.title}
-          height="auto" density="compact" noun={{ one: "track", other: "tracks" }} selectable actions={actions}
+          height="auto" density="compact" noun={{ one: "track", other: "tracks" }} selectable actions={actions} renderRowActions={noRowMenu}
           renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "track", other: "tracks" }} />}
           complete={pages.complete} search={{ fields: ["title", { field: "artistName", value: (track) => track.artistName }], placeholder: "Search tracks" }} refetching={loading || pages.loading}
           status={pages.error ? <span role="status">Could not load all tracks. Play individual tracks or <Button size="sm" variant="ghost" onClick={pages.retry}>Retry tracks</Button></span> : pages.loading ? "Loading remaining tracks…" : error ? <span role="status">Could not refresh tracks. <Button size="sm" variant="ghost" onClick={() => void refetch()}>Retry refresh</Button></span> : undefined}
           emptyMessage="No tracks" onRowOpen={(track) => { if (track.mediaFileId) playFrom(track); }}
         />
       </AlbumTableContext.Provider>
-      <Panel title="Details" className="lg:max-w-2xl">
-        <KeyValueList columns={2} items={[{ label: "Label", value: album.label }, { label: "Country", value: album.country }, { label: "Genres", value: album.genres.join(", ") || undefined }, { label: "Released", value: formatDate(album.releaseDate) }, { label: "Discs", value: album.discCount }, { label: "Size", value: formatBytes(album.sizeBytes) }, { label: "Folder", value: album.path, mono: true }, { label: "MusicBrainz", value: album.musicbrainzId ? <a className="nav-focus rounded text-brand hover:underline" href={`https://musicbrainz.org/release-group/${album.musicbrainzId}`} target="_blank" rel="noreferrer">{album.musicbrainzId}</a> : undefined }]} />
-      </Panel>
       <AcquisitionDialog isOpen={acquisition} onOpenChange={setAcquisition} target={{ kind: "album", id: album.id, title: album.name, libraryId: album.libraryId, autoDownloadMode: album.autoDownloadMode, qualityProfileId: album.qualityProfileId }} onSaved={() => void refetch()} />
       <ReleaseSearchDialog isOpen={searching} onOpenChange={setSearching} query={[tracks[0]?.artistName, album.name].filter(Boolean).join(" ")} year={album.year} libraryId={album.libraryId} artist={tracks[0]?.artistName} album={album.name} target={{ albumId: album.id }} />
       <ConfirmDialog isOpen={confirmDelete} onOpenChange={setConfirmDelete} title={`Remove ${album.name}?`} description="The album and its tracks leave the catalogue. Files stay on disk." confirmLabel="Remove" destructive isPending={deleting} onConfirm={remove} />

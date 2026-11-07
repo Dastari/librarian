@@ -45,7 +45,7 @@ export function AudiobooksBrowser({ libraryId }: { libraryId: string }) {
   const jump = useLetterJump({
     rows: list.rows,
     getRowId,
-    getTitle: (row) => row.title,
+    getTitle: (row) => row.sortTitle || row.title,
     hasMore: list.hasMore,
     loading: list.fetching || list.loadingMore,
     queryKey: JSON.stringify(where),

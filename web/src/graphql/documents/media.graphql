@@ -232,6 +232,19 @@ query AudiobookDetail($id: String!) {
   }
 }
 
+query AudiobookParts($chapterIds: [String!]!) {
+  mediaFiles(where: { chapterId: { inList: $chapterIds } }, page: { limit: 2000, offset: 0 }) {
+    edges {
+      node {
+        id
+        chapterId
+        path
+        duration
+      }
+    }
+  }
+}
+
 query AudiobookChaptersPage($id: String!, $offset: Int!) {
   audiobook(id: $id) {
     id

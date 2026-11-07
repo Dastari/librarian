@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
     default_sort = "path",
     // A library's files in path order, without sorting every row of a large library to find a page.
     index = "library_id,path",
+    // One record per file in a library. Re-imports and scans used to add more for the same path.
+    unique_index = "path,library_id",
     read_policy = "member.read",
     write_policy = "admin.write"
 )]

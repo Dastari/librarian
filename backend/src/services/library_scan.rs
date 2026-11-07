@@ -46,6 +46,12 @@ use crate::services::metadata::providers::{
 };
 use crate::services::ollama::{OllamaClient, OllamaParsedHint, OllamaParserSettings};
 use crate::services::quality::{profile, scoring};
+use crate::services::release_match;
+
+mod identify;
+mod listen;
+
+pub use identify::{IdentifiedChoice, IdentifyCandidate, IdentifyTrigger};
 
 /// Transport success is not mutation success. These internal documents select a
 /// success/error payload for every mutation root, including compatibility aliases.
@@ -330,6 +336,8 @@ struct LinkedImportTarget {
     target_name: Option<String>,
     match_type: &'static str,
     reason: String,
+    /// The file's name in the library, when it isn't named after what it's linked to.
+    file_stem: Option<String>,
 }
 
 /// Per-file plan produced from the torrent linkage.
@@ -340,6 +348,90 @@ struct LinkedImportPlan {
     unmatched_reasons: HashMap<String, String>,
     notes: Vec<String>,
     target_label: Option<String>,
+    /// Chapters to point at the imported files once they have landed.
+    book_writes: Option<BookWrites>,
+    /// Files in this release that belong to something else and are left alone.
+    left_alone: HashSet<String>,
+    /// A person has to decide: nothing is imported and the release isn't tried again.
+    review: Option<String>,
+    /// This release can never satisfy the grab, so another one should be tried.
+    hard_failure: Option<String>,
+    /// One plain line for the torrent, replacing the per-file detail.
+    summary: Option<String>,
+    /// Each file's place in a book of several files, and the book's title, for when a library's
+    /// naming pattern has nothing in it to tell the files apart.
+    book_file_numbers: HashMap<String, usize>,
+    book_title: Option<String>,
+}
+
+/// What an import writes to a book's chapters after its files land.
+#[derive(Debug, Clone, Default)]
+struct BookWrites {
+    audiobook_id: String,
+    /// Chapter id, source path of the file holding it, and where it starts in that file.
+    placements: Vec<(String, String, f64)>,
+    source: &'static str,
+    shape: &'static str,
+}
+
+/// What matching thinks of a download, for showing before and after anything moves.
+#[derive(Debug, Clone, Default)]
+pub struct TorrentMatchPreview {
+    /// `ready`, `review`, `unlinked` or `none`.
+    pub status: &'static str,
+    pub summary: Option<String>,
+    pub reason: Option<String>,
+    /// A person can accept this anyway.
+    pub can_accept: bool,
+    pub chapter_source: Option<String>,
+    pub file_shape: Option<String>,
+    pub evidence: Vec<String>,
+    /// False while it rests on names and sizes alone.
+    pub complete_facts: bool,
+    pub groups: Vec<PreviewGroup>,
+    pub files: Vec<PreviewFile>,
+}
+
+/// One book, or what looks like one, in a download.
+#[derive(Debug, Clone, Default)]
+pub struct PreviewGroup {
+    pub key: String,
+    pub label: String,
+    pub file_count: i32,
+    pub seconds: Option<f64>,
+    pub is_target: bool,
+    pub book_id: Option<String>,
+    pub book_title: Option<String>,
+    pub author: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PreviewFile {
+    pub path: String,
+    pub group_key: Option<String>,
+    /// `match`, `review`, `other` or `none`.
+    pub status: &'static str,
+    pub target: Option<String>,
+    pub detail: Option<String>,
+    pub warning: Option<String>,
+}
+
+/// What an import should bring files in as, in place of what the download was grabbed for.
+#[derive(Debug, Clone, Default)]
+struct ImportLinkPatch {
+    movie_id: Option<String>,
+    show_id: Option<String>,
+    season: Option<i32>,
+    album_id: Option<String>,
+}
+
+/// How a person told an import to treat a release.
+#[derive(Debug, Clone, Default)]
+pub struct BookImportChoice {
+    /// Import this group of files as the book.
+    pub group_key: Option<String>,
+    /// Import even though the plan asks for review.
+    pub accept_review: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -356,13 +448,7 @@ struct LinkedTrackRow {
     title: String,
     track_number: Option<i32>,
     disc_number: Option<i32>,
-}
-
-#[derive(Debug, Clone)]
-struct LinkedChapterRow {
-    id: String,
-    number: i32,
-    title: Option<String>,
+    seconds: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -621,11 +707,30 @@ struct ParsedChapterHint {
     chapter_number: Option<i32>,
 }
 
+type ReleaseProbe = (
+    Option<f64>,
+    release_match::FileTags,
+    Vec<release_match::EmbeddedChapter>,
+);
+
 pub struct LibraryScanService {
     manager: Arc<ServicesManager>,
     config: LibraryScanServiceConfig,
     runtime: RwLock<Option<Runtime>>,
     ffprobe_available: RwLock<bool>,
+    /// Length, tags and chapter markers of files in downloads, by path and size.
+    release_probe_cache: Mutex<HashMap<(String, i64), ReleaseProbe>>,
+    /// Jev's answers, since previews ask again and each question costs something.
+    jev_group_cache: Mutex<HashMap<String, Option<(usize, f64)>>>,
+    /// Downloads waiting to be identified, and what asked for the most thorough look.
+    identify_pending: std::sync::Mutex<HashMap<String, IdentifyTrigger>>,
+    identify_active: Mutex<HashSet<String>>,
+    /// One import of a download at a time. Finishing, identification and a person can all start one,
+    /// and two at once can each add a record for the same file.
+    torrent_import_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    identify_slots: Arc<tokio::sync::Semaphore>,
+    /// Listening is the slowest thing identification does, so one book at a time.
+    listen_slot: Arc<tokio::sync::Semaphore>,
     scan_tx: mpsc::Sender<ScanJob>,
     scan_rx: Arc<Mutex<mpsc::Receiver<ScanJob>>>,
     analyze_tx: mpsc::Sender<AnalyzeJob>,
@@ -671,7 +776,10 @@ impl LibraryScanService {
     const AUTO_ORGANIZE_MOVIE_TITLE_SIMILARITY_GUARD: f64 = 0.86;
     const SCAN_QUEUE_CAPACITY: usize = 64;
     const ANALYSIS_QUEUE_CAPACITY: usize = 256;
-    const ENTITY_PAGE_SIZE: i64 = 1_000;
+    /// Must not exceed what a query on the raw pool returns: the ORM clamps an explicit limit to its
+    /// default maximum without saying so, and these loops stop at the first short page. At 1,000 they
+    /// read only 100 records, so a scan took every file past those for new and added a record for it.
+    const ENTITY_PAGE_SIZE: i64 = 100;
     const MAX_SCAN_RUN_HISTORY_PER_LIBRARY: usize = 50;
     const RESOLVED_ISSUE_RETENTION_DAYS: i64 = 30;
 
@@ -709,6 +817,13 @@ impl LibraryScanService {
             config,
             runtime: RwLock::new(None),
             ffprobe_available: RwLock::new(true),
+            release_probe_cache: Mutex::new(HashMap::new()),
+            jev_group_cache: Mutex::new(HashMap::new()),
+            identify_pending: std::sync::Mutex::new(HashMap::new()),
+            identify_active: Mutex::new(HashSet::new()),
+            torrent_import_locks: Mutex::new(HashMap::new()),
+            identify_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+            listen_slot: Arc::new(tokio::sync::Semaphore::new(1)),
             scan_tx,
             scan_rx: Arc::new(Mutex::new(scan_rx)),
             analyze_tx,
@@ -1774,7 +1889,109 @@ impl LibraryScanService {
             "Completed startup scan-state reconciliation: reset_libraries={}", libraries_reset
         );
 
+        self.backfill_sort_keys().await;
+
         Ok(())
+    }
+
+    /// Records from before sort keys were written get them here. Anyone's own choice stays.
+    async fn backfill_sort_keys(&self) {
+        use crate::services::graphql::entities::{
+            Album, Artist, Audiobook, Collection, Movie, Show,
+        };
+
+        let Ok(database) = self.database().await else {
+            return;
+        };
+        let pool = database.pool().pool();
+        let mut changes: Vec<(&str, &str, String, String)> = Vec::new();
+        let mut note = |entity, field, id: String, title: &str, key: Option<&str>| {
+            let target = crate::services::write_rules::sort_key(title);
+            let stale = match key.map(str::trim) {
+                None | Some("") => true,
+                Some(key) => key == title.trim(),
+            };
+            if stale && key != Some(target.as_str()) {
+                changes.push((entity, field, id, target));
+            }
+        };
+        for row in Movie::query(pool).fetch_all().await.unwrap_or_default() {
+            note(
+                "Movie",
+                "sortTitle",
+                row.id,
+                &row.title,
+                row.sort_title.as_deref(),
+            );
+        }
+        for row in Audiobook::query(pool).fetch_all().await.unwrap_or_default() {
+            note(
+                "Audiobook",
+                "sortTitle",
+                row.id,
+                &row.title,
+                row.sort_title.as_deref(),
+            );
+        }
+        for row in Show::query(pool).fetch_all().await.unwrap_or_default() {
+            note(
+                "Show",
+                "sortName",
+                row.id,
+                &row.name,
+                row.sort_name.as_deref(),
+            );
+        }
+        for row in Album::query(pool).fetch_all().await.unwrap_or_default() {
+            note(
+                "Album",
+                "sortName",
+                row.id,
+                &row.name,
+                row.sort_name.as_deref(),
+            );
+        }
+        for row in Artist::query(pool).fetch_all().await.unwrap_or_default() {
+            note(
+                "Artist",
+                "sortName",
+                row.id,
+                &row.name,
+                row.sort_name.as_deref(),
+            );
+        }
+        for row in Collection::query(pool)
+            .fetch_all()
+            .await
+            .unwrap_or_default()
+        {
+            note(
+                "Collection",
+                "sortName",
+                row.id,
+                &row.name,
+                row.sort_name.as_deref(),
+            );
+        }
+        let total = changes.len();
+        for (entity, field, id, key) in changes {
+            let mutation = format!(
+                "mutation Backfill($id: String!, $input: Update{entity}Input!) {{ Result: update{entity}(id: $id, input: $input) {{ Success: success }} }}"
+            );
+            if let Err(error) = self
+                .execute_mutation(
+                    &AuthUser::system_admin(),
+                    &mutation,
+                    serde_json::json!({ "id": id, "input": { field: key } }),
+                )
+                .await
+            {
+                warn!(entity, id, error = %error, "Could not set a sort key");
+            }
+        }
+        if total > 0 {
+            info!(total, "Set sort keys on existing records");
+        }
     }
 
     fn extensions_for_library(library_type: &str) -> &'static [&'static str] {
@@ -2178,6 +2395,213 @@ impl LibraryScanService {
             anyhow::bail!(message.to_string());
         }
         Ok(())
+    }
+
+    /// The record to use for a file landing at `target`: the library's own if it already has one, in
+    /// which case the unassigned record just made for the download is removed.
+    async fn settle_on_library_record(
+        &self,
+        auth_user: &AuthUser,
+        media_file_id: &str,
+        library_id: &str,
+        target: &Path,
+    ) -> Result<String> {
+        let database = self.database().await?;
+        let pool = database.pool().pool();
+        let existing = MediaFile::query(pool)
+            .filter(MediaFileWhereInput {
+                library_id: Some(StringFilter {
+                    eq: Some(library_id.to_string()),
+                    ..Default::default()
+                }),
+                path: Some(StringFilter {
+                    eq: Some(target.to_string_lossy().to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .limit(1)
+            .fetch_all()
+            .await?
+            .into_iter()
+            .next();
+        let Some(existing) = existing.filter(|row| row.id != media_file_id) else {
+            return Ok(media_file_id.to_string());
+        };
+        let is_unassigned = MediaFile::get(pool, &media_file_id.to_string())
+            .await?
+            .is_some_and(|row| {
+                row.library_id.is_none()
+                    && row.episode_id.is_none()
+                    && row.movie_id.is_none()
+                    && row.track_id.is_none()
+                    && row.chapter_id.is_none()
+            });
+        if is_unassigned {
+            self.execute_mutation(
+                auth_user,
+                r#"mutation RemoveSourceRecord($id: String!) {
+                    Result: deleteMediaFile(id: $id) { Success: success }
+                }"#,
+                serde_json::json!({ "id": media_file_id }),
+            )
+            .await?;
+        }
+        Ok(existing.id)
+    }
+
+    /// Re-importing a download used to add a new record for the same file every time, each with its
+    /// own streams. One record per file stays: the one linked to a title, else the newest analyzed.
+    /// Anything pointing at the others moves to it first, and no file on disk is touched.
+    async fn collapse_duplicate_media_files(&self) -> Result<usize> {
+        use crate::graphql::entities::{
+            Notification, NotificationWhereInput, PlaybackProgress, PlaybackProgressWhereInput,
+            PlaybackSession, PlaybackSessionWhereInput,
+        };
+        const BATCH: usize = 200;
+        let database = self.database().await?;
+        let pool = database.pool().pool();
+        let owner = AuthUser::system_admin();
+        // Library by library, like the scan's own lookup. Records with no library aren't visible to
+        // this read, and one short page would look like the end of the table.
+        let mut rows = Vec::new();
+        for library in crate::graphql::entities::Library::query(pool)
+            .fetch_all()
+            .await?
+        {
+            let mut offset = 0_i64;
+            loop {
+                let page = MediaFile::query(pool)
+                    .filter(MediaFileWhereInput {
+                        library_id: Some(StringFilter {
+                            eq: Some(library.id.clone()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    })
+                    .limit(Self::ENTITY_PAGE_SIZE)
+                    .offset(offset)
+                    .fetch_all()
+                    .await?;
+                let page_len = page.len();
+                rows.extend(page.into_iter().map(|file| {
+                    let linked = file.episode_id.is_some()
+                        || file.movie_id.is_some()
+                        || file.track_id.is_some()
+                        || file.chapter_id.is_some();
+                    let rank = (linked, file.analyzed_at.is_some(), file.added_at.clone());
+                    (file.path, rank, file.id)
+                }));
+                if page_len < Self::ENTITY_PAGE_SIZE as usize {
+                    break;
+                }
+                offset = offset.saturating_add(Self::ENTITY_PAGE_SIZE);
+            }
+        }
+        let mut by_file: HashMap<_, Vec<_>> = HashMap::new();
+        for (key, rank, id) in rows {
+            by_file.entry(key).or_default().push((rank, id));
+        }
+        let mut keeper_of: HashMap<String, String> = HashMap::new();
+        for (_, mut records) in by_file {
+            if records.len() < 2 {
+                continue;
+            }
+            records.sort_by(|a, b| b.0.cmp(&a.0));
+            let keeper = records[0].1.clone();
+            for (_, id) in records.into_iter().skip(1) {
+                keeper_of.insert(id, keeper.clone());
+            }
+        }
+        if keeper_of.is_empty() {
+            return Ok(0);
+        }
+        let total = keeper_of.len();
+        warn!(
+            duplicates = total,
+            "Collapsing duplicate media file records"
+        );
+        let doomed: Vec<String> = keeper_of.keys().cloned().collect();
+        for ids in doomed.chunks(BATCH) {
+            let filter = StringFilter {
+                in_list: Some(ids.to_vec()),
+                ..Default::default()
+            };
+            macro_rules! repoint {
+                ($entity:ty, $where:ident, $update:literal, $input:literal) => {
+                    for row in <$entity>::query(pool)
+                        .filter($where {
+                            media_file_id: Some(filter.clone()),
+                            ..Default::default()
+                        })
+                        .fetch_all()
+                        .await?
+                    {
+                        let Some(keeper) = row
+                            .media_file_id
+                            .as_deref()
+                            .and_then(|id| keeper_of.get(id))
+                        else {
+                            continue;
+                        };
+                        self.execute_mutation(
+                            &owner,
+                            concat!(
+                                "mutation Repoint($id: String!, $input: ",
+                                $input,
+                                "!) { Result: ",
+                                $update,
+                                "(id: $id, input: $input) { Success: success } }"
+                            ),
+                            serde_json::json!({ "id": row.id, "input": { "mediaFileId": keeper } }),
+                        )
+                        .await?;
+                    }
+                };
+            }
+            repoint!(
+                PlaybackProgress,
+                PlaybackProgressWhereInput,
+                "updatePlaybackProgress",
+                "UpdatePlaybackProgressInput"
+            );
+            repoint!(
+                PlaybackSession,
+                PlaybackSessionWhereInput,
+                "updatePlaybackSession",
+                "UpdatePlaybackSessionInput"
+            );
+            repoint!(
+                Notification,
+                NotificationWhereInput,
+                "updateNotification",
+                "UpdateNotificationInput"
+            );
+            let deleted = self
+                .execute_mutation(
+                    &owner,
+                    r#"mutation RemoveDuplicateRecords($where: MediaFileWhereInput) {
+                        Result: deleteMediaFiles(where: $where) { Success: success Error: error }
+                    }"#,
+                    serde_json::json!({ "where": { "id": { "inList": ids } } }),
+                )
+                .await?;
+            if deleted
+                .pointer("/Result/Success")
+                .and_then(serde_json::Value::as_bool)
+                != Some(true)
+            {
+                anyhow::bail!(
+                    "{}",
+                    deleted
+                        .pointer("/Result/Error")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("Could not remove duplicate media file records")
+                );
+            }
+        }
+        info!(removed = total, "Collapsed duplicate media file records");
+        Ok(total)
     }
 
     async fn load_media_files_by_path(
@@ -6098,7 +6522,29 @@ impl LibraryScanService {
         media_path: &str,
         match_source: &str,
     ) -> Result<Option<MatchResult>> {
-        let hint = Self::parse_track_hint(match_source);
+        let mut hint = Self::parse_track_hint(match_source);
+        // What a file says about itself beats what its folders suggest.
+        let tags = self.stored_media_tags(media_file_id).await;
+        if let Some(album) = tags
+            .album
+            .as_deref()
+            .filter(|album| !album.trim().is_empty())
+        {
+            hint.album_name = Some(album.to_string());
+        }
+        if let Some(artist) = tags.album_artist.as_deref().or(tags.artist.as_deref()) {
+            hint.artist_name = Some(artist.to_string());
+        }
+        if let Some(title) = tags
+            .title
+            .as_deref()
+            .filter(|title| !title.trim().is_empty())
+        {
+            hint.title = Some(title.to_string());
+        }
+        if tags.track.is_some() {
+            hint.track_number = tags.track;
+        }
         let query = hint
             .album_name
             .clone()
@@ -6244,6 +6690,453 @@ impl LibraryScanService {
         }))
     }
 
+    /// Tags a media file was analyzed with, read back from its stored probe output.
+    async fn stored_media_tags(&self, media_file_id: &str) -> release_match::FileTags {
+        use crate::graphql::entities::MediaFile;
+        let Ok(database) = self.database().await else {
+            return Default::default();
+        };
+        let Ok(Some(file)) =
+            MediaFile::get(database.pool().pool(), &media_file_id.to_string()).await
+        else {
+            return Default::default();
+        };
+        let Some(probe) = file
+            .metadata
+            .as_deref()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+        else {
+            return Default::default();
+        };
+        let audio_tags = probe
+            .get("streams")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|streams| {
+                streams.iter().find(|stream| {
+                    stream.get("codec_type").and_then(serde_json::Value::as_str) == Some("audio")
+                })
+            })
+            .and_then(|stream| stream.get("tags"));
+        let pairs = [probe.pointer("/format/tags"), audio_tags]
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_object)
+            .flatten()
+            .filter_map(|(key, value)| Some((key.as_str(), value.as_str()?)));
+        release_match::tags_from_pairs(pairs)
+    }
+
+    /// What a download looks like against the library, before or after anything has moved. It
+    /// shares its plan with the import, so what it shows is what importing would do.
+    pub async fn torrent_match_preview(
+        &self,
+        auth_user: &AuthUser,
+        info_hash: &str,
+        files: Vec<SourceFileImport>,
+    ) -> Result<TorrentMatchPreview> {
+        let database = self.database().await?;
+        let import =
+            Self::authorize_torrent_import(database.pool(), auth_user, info_hash, None).await?;
+        let owner = AuthUser::system_admin();
+        let audio: Vec<&SourceFileImport> = files
+            .iter()
+            .filter(|file| Self::is_audio_import_path(&file.source_path))
+            .collect();
+        let video_count = files
+            .iter()
+            .filter(|file| Self::is_video_import_path(&file.source_path))
+            .count();
+        let link = &import.link;
+        if let Some(book_id) = link.audiobook_id.as_deref() {
+            return self.book_preview(book_id, &audio, &files).await;
+        }
+        if link.has_target() {
+            let import_files: Vec<ImportFile> = files
+                .iter()
+                .cloned()
+                .map(|file| ImportFile { file })
+                .collect();
+            let (usable, _) = Self::filter_import_candidates(import_files);
+            let plan = self
+                .plan_linked_import_targets(&owner, link, &usable, None)
+                .await?;
+            let mut targets_seen: HashMap<String, usize> = HashMap::new();
+            for target in plan.targets.values() {
+                *targets_seen.entry(target.target_id.clone()).or_default() += 1;
+            }
+            let previews = files
+                .iter()
+                .filter(|file| Self::is_supported_import_extension(&file.source_path))
+                .map(|file| {
+                    let target = plan.targets.get(&file.source_path);
+                    PreviewFile {
+                        path: file.source_path.clone(),
+                        group_key: None,
+                        status: if target.is_some() { "match" } else { "none" },
+                        target: target.and_then(|target| target.target_name.clone()),
+                        detail: plan.unmatched_reasons.get(&file.source_path).cloned(),
+                        warning: target
+                            .filter(|target| {
+                                targets_seen.get(&target.target_id).copied().unwrap_or(0) > 1
+                            })
+                            .map(|_| "More than one file matches this".to_string()),
+                    }
+                })
+                .collect::<Vec<_>>();
+            let matched = plan.targets.len();
+            let total = previews.len();
+            return Ok(TorrentMatchPreview {
+                status: if matched > 0 { "ready" } else { "review" },
+                summary: Some(format!(
+                    "{matched} of {total} files match {}",
+                    plan.target_label
+                        .as_deref()
+                        .unwrap_or("the title it was grabbed for")
+                )),
+                complete_facts: files
+                    .iter()
+                    .all(|file| file.downloaded_bytes >= file.file_size),
+                files: previews,
+                ..Default::default()
+            });
+        }
+        if audio.is_empty() || video_count > audio.len() {
+            return Ok(TorrentMatchPreview {
+                status: "none",
+                ..Default::default()
+            });
+        }
+        // Linked to nothing: see whether its files look like books already in the library.
+        self.unlinked_audio_preview(&import.owner_id, &audio, &files)
+            .await
+    }
+
+    async fn release_facts_for(
+        &self,
+        audio: &[&SourceFileImport],
+    ) -> Vec<release_match::ReleaseFile> {
+        self.release_file_facts(
+            audio
+                .iter()
+                .map(|file| {
+                    (
+                        file.source_path.clone(),
+                        file.relative_path.clone(),
+                        file.file_size,
+                        file.file_size > 0 && file.downloaded_bytes >= file.file_size,
+                    )
+                })
+                .collect(),
+        )
+        .await
+    }
+
+    async fn book_preview(
+        &self,
+        book_id: &str,
+        audio: &[&SourceFileImport],
+        all_files: &[SourceFileImport],
+    ) -> Result<TorrentMatchPreview> {
+        let (book, _, facts, reference) = self.book_reference(book_id).await?;
+        if audio.is_empty() {
+            let names: Vec<String> = all_files
+                .iter()
+                .map(|file| file.relative_path.clone())
+                .collect();
+            return Ok(TorrentMatchPreview {
+                status: "review",
+                summary: release_match::payload_mismatch(true, false, &names)
+                    .map(|text| text.replace(" Nothing was downloaded.", "")),
+                ..Default::default()
+            });
+        }
+        let release_files = self.release_facts_for(audio).await;
+        let plan = self
+            .plan_book_release(&book.id, &release_files, &facts, &reference)
+            .await;
+        Ok(Self::describe_book_plan(
+            &plan,
+            &release_files,
+            &facts,
+            &book.id,
+            &book.title,
+        ))
+    }
+
+    fn describe_book_plan(
+        plan: &release_match::ReleasePlan,
+        files: &[release_match::ReleaseFile],
+        facts: &release_match::BookFacts,
+        book_id: &str,
+        book_title: &str,
+    ) -> TorrentMatchPreview {
+        let (layout, reason) = match &plan.outcome {
+            release_match::BookOutcome::Ready(layout) => (Some(layout), None),
+            release_match::BookOutcome::Review(review) => {
+                (review.fallback.as_ref(), Some(review.reason.clone()))
+            }
+        };
+        let groups = plan
+            .groups
+            .iter()
+            .enumerate()
+            .map(|(index, group)| PreviewGroup {
+                key: group.key.clone(),
+                label: group.label.clone(),
+                file_count: group.files.len() as i32,
+                seconds: group
+                    .files
+                    .iter()
+                    .map(|file| files[*file].duration)
+                    .sum::<Option<f64>>(),
+                is_target: Some(index) == plan.chosen,
+                book_id: (Some(index) == plan.chosen).then(|| book_id.to_string()),
+                book_title: (Some(index) == plan.chosen).then(|| book_title.to_string()),
+                author: group.files.first().and_then(|file| {
+                    let tags = &files[*file].tags;
+                    tags.album_artist.clone().or_else(|| tags.artist.clone())
+                }),
+            })
+            .collect();
+        let mut previews = Vec::with_capacity(files.len());
+        for (index, group) in plan.groups.iter().enumerate() {
+            let chosen = Some(index) == plan.chosen;
+            let held = layout
+                .filter(|_| chosen)
+                .map(|layout| release_match::chapter_of_each_file(layout, group.files.len()));
+            for (position, file) in group.files.iter().enumerate() {
+                let (status, target, detail) = if chosen {
+                    let detail = layout.map(|layout| match layout.shape {
+                        release_match::FileShape::WholeBook => {
+                            format!("Holds all {} chapters", layout.chapters.len())
+                        }
+                        release_match::FileShape::PerChapter => held
+                            .as_ref()
+                            .and_then(|held| held[position])
+                            .and_then(|chapter| layout.chapters.get(chapter))
+                            .map(|chapter| chapter.title.clone())
+                            .unwrap_or_default(),
+                        release_match::FileShape::Parts => {
+                            let starting: Vec<&str> = layout
+                                .chapters
+                                .iter()
+                                .filter(|chapter| chapter.file == Some(position))
+                                .map(|chapter| chapter.title.as_str())
+                                .collect();
+                            let part = format!("Part {} of {}", position + 1, group.files.len());
+                            match starting.as_slice() {
+                                [] => format!("{part}, inside a longer chapter"),
+                                [only] => format!("{part}, starts {only}"),
+                                [first, .., last] => format!("{part}, starts {first} to {last}"),
+                            }
+                        }
+                    });
+                    (
+                        if reason.is_some() { "review" } else { "match" },
+                        Some(book_title.to_string()),
+                        detail,
+                    )
+                } else {
+                    (
+                        "other",
+                        Some(group.label.clone()),
+                        Some("Another book in this release".to_string()),
+                    )
+                };
+                previews.push(PreviewFile {
+                    path: files[*file].key.clone(),
+                    group_key: Some(group.key.clone()),
+                    status,
+                    target,
+                    detail,
+                    warning: None,
+                });
+            }
+        }
+        TorrentMatchPreview {
+            status: if reason.is_some() { "review" } else { "ready" },
+            summary: Some(release_match::describe(plan, facts)),
+            reason,
+            can_accept: matches!(&plan.outcome, release_match::BookOutcome::Review(review) if review.fallback.is_some()),
+            chapter_source: layout.map(|layout| layout.source.as_str().to_string()),
+            file_shape: layout.map(|layout| layout.shape.as_str().to_string()),
+            evidence: plan
+                .evidence
+                .iter()
+                .chain(layout.iter().flat_map(|layout| layout.evidence.iter()))
+                .cloned()
+                .collect(),
+            complete_facts: plan.complete_facts,
+            groups,
+            files: previews,
+        }
+    }
+
+    async fn unlinked_audio_preview(
+        &self,
+        owner_id: &str,
+        audio: &[&SourceFileImport],
+        all_files: &[SourceFileImport],
+    ) -> Result<TorrentMatchPreview> {
+        use crate::graphql::entities::{Audiobook, AudiobookWhereInput};
+        let database = self.database().await?;
+        let books = Audiobook::query(database.pool().pool())
+            .filter(AudiobookWhereInput {
+                user_id: Some(StringFilter {
+                    eq: Some(owner_id.to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await?;
+        let release_files = self.release_facts_for(audio).await;
+        let groups = release_match::group_files(&release_files);
+        if groups.is_empty() {
+            return Ok(TorrentMatchPreview {
+                status: "none",
+                ..Default::default()
+            });
+        }
+        // The first book it looks like gets the full plan. The others are named on their groups.
+        let mut known: HashMap<usize, (&Audiobook, f64)> = HashMap::new();
+        for (index, group) in groups.iter().enumerate() {
+            for book in &books {
+                let facts = release_match::BookFacts {
+                    title: book.title.clone(),
+                    author: book.author_name.clone(),
+                    ..Default::default()
+                };
+                let album = group
+                    .files
+                    .first()
+                    .and_then(|file| release_files[*file].tags.album.as_deref())
+                    .unwrap_or(group.label.as_str());
+                let score = release_match::title_score(&group.label, &facts)
+                    .max(release_match::title_score(album, &facts));
+                if score >= 0.75 && known.get(&index).is_none_or(|(_, best)| score > *best) {
+                    known.insert(index, (book, score));
+                }
+            }
+        }
+        let mut preview = match known.iter().min_by_key(|(index, _)| **index) {
+            Some((_, (book, _))) => {
+                let mut preview = self.book_preview(&book.id, audio, all_files).await?;
+                preview.status = "unlinked";
+                preview
+            }
+            None => TorrentMatchPreview {
+                status: "unlinked",
+                summary: Some(format!(
+                    "{} {} not in the library.",
+                    groups.len(),
+                    if groups.len() == 1 { "book" } else { "books" }
+                )),
+                complete_facts: release_files.iter().all(|file| file.duration.is_some()),
+                groups: groups
+                    .iter()
+                    .map(|group| PreviewGroup {
+                        key: group.key.clone(),
+                        label: group.label.clone(),
+                        file_count: group.files.len() as i32,
+                        ..Default::default()
+                    })
+                    .collect(),
+                files: Vec::new(),
+                ..Default::default()
+            },
+        };
+        for group in &mut preview.groups {
+            let index = groups
+                .iter()
+                .position(|known_group| known_group.key == group.key);
+            if let Some((book, _)) = index.and_then(|index| known.get(&index)) {
+                group.book_id = Some(book.id.clone());
+                group.book_title = Some(book.title.clone());
+            }
+            if group.author.is_none()
+                && let Some(found) = index.map(|index| &groups[index])
+            {
+                let tags = found.files.first().map(|file| &release_files[*file].tags);
+                group.author =
+                    tags.and_then(|tags| tags.album_artist.clone().or_else(|| tags.artist.clone()));
+            }
+        }
+        if preview.files.is_empty() {
+            for group in &groups {
+                for file in &group.files {
+                    preview.files.push(PreviewFile {
+                        path: release_files[*file].key.clone(),
+                        group_key: Some(group.key.clone()),
+                        status: "other",
+                        target: Some(group.label.clone()),
+                        detail: None,
+                        warning: None,
+                    });
+                }
+            }
+        }
+        Ok(preview)
+    }
+
+    /// Put the provider's chapters back after a release's own replaced them, placed on the book's
+    /// files by time where those files allow it.
+    pub async fn restore_provider_chapters(&self, audiobook_id: &str) -> Result<()> {
+        let owner = AuthUser::system_admin();
+        let (book, chapters, facts, reference) = self.book_reference(audiobook_id).await?;
+        anyhow::ensure!(
+            !reference.is_empty(),
+            "This book has no provider chapters to restore"
+        );
+        let files = self.book_files_in_order(&chapters).await?;
+        let durations: Vec<f64> = files
+            .iter()
+            .map(|file| file.duration.map_or(0.0, f64::from))
+            .collect();
+        let layout = release_match::provider_layout(&durations, &reference, facts.seconds);
+        let new_ids = self
+            .rewrite_book_chapters(&owner, &book, &chapters, &reference, &layout, true)
+            .await?;
+        self.relink_book_files(&files, &layout, &new_ids).await?;
+        let placements = layout
+            .chapters
+            .iter()
+            .enumerate()
+            .filter_map(|(index, chapter)| {
+                Some((
+                    new_ids.get(index)?.clone(),
+                    files.get(chapter.file?)?.id.clone(),
+                    chapter.offset,
+                ))
+            })
+            .collect();
+        let imported: HashMap<String, String> = files
+            .iter()
+            .map(|file| (file.id.clone(), file.id.clone()))
+            .collect();
+        self.write_book_chapters(
+            &owner,
+            &BookWrites {
+                audiobook_id: book.id.clone(),
+                placements,
+                source: "provider",
+                shape: layout.shape.as_str(),
+            },
+            &imported,
+        )
+        .await?;
+        self.update_audiobook_fields(
+            &owner,
+            &book.id,
+            serde_json::json!({
+                "providerChapters": serde_json::Value::Null,
+                "chapterCheckState": serde_json::Value::Null,
+                "chapterCheck": serde_json::Value::Null,
+            }),
+        )
+        .await
+    }
+
     async fn try_provider_create_and_match_chapter(
         &self,
         library: &LibraryRow,
@@ -6252,7 +7145,19 @@ impl LibraryScanService {
         media_path: &str,
         match_source: &str,
     ) -> Result<Option<MatchResult>> {
-        let hint = Self::parse_chapter_hint(match_source);
+        let mut hint = Self::parse_chapter_hint(match_source);
+        // What a file says about itself beats what its folders suggest.
+        let tags = self.stored_media_tags(media_file_id).await;
+        if let Some(album) = tags
+            .album
+            .as_deref()
+            .filter(|album| !album.trim().is_empty())
+        {
+            hint.audiobook_title = Some(album.to_string());
+        }
+        if let Some(author) = tags.album_artist.as_deref().or(tags.artist.as_deref()) {
+            hint.author_name = Some(author.to_string());
+        }
         let query = hint
             .audiobook_title
             .clone()
@@ -8371,8 +9276,15 @@ impl LibraryScanService {
 
         validate_relative_library_path(&relative_path)?;
         let mut target = PathBuf::from(&library.path).join(relative_path);
-        if target_type == "Chapter" && self.chapter_shares_a_file(target_id).await? {
-            target = self.named_after_book(target_id, target).await?;
+        if target_type == "Chapter" {
+            if self.book_is_in_parts(target_id).await? {
+                // Parts don't line up with chapters, so a chapter's name would be wrong on them.
+                if let Some(name) = source_path.file_name() {
+                    target = target.with_file_name(name);
+                }
+            } else if self.chapter_shares_a_file(target_id).await? {
+                target = self.named_after_book(target_id, target).await?;
+            }
         }
         checked_library_path(Path::new(&library.path), &target)?;
         Ok(target)
@@ -8447,6 +9359,18 @@ impl LibraryScanService {
         Ok(file_covers_book(file_seconds, book_seconds))
     }
 
+    async fn book_is_in_parts(&self, chapter_id: &str) -> Result<bool> {
+        use crate::graphql::entities::{Audiobook, Chapter};
+        let database = self.database().await?;
+        let pool = database.pool().pool();
+        let Some(chapter) = Chapter::get(pool, &chapter_id.to_string()).await? else {
+            return Ok(false);
+        };
+        Ok(Audiobook::get(pool, &chapter.audiobook_id)
+            .await?
+            .is_some_and(|book| book.file_shape.as_deref() == Some("parts")))
+    }
+
     async fn chapter_shares_a_file(&self, chapter_id: &str) -> Result<bool> {
         use crate::graphql::entities::Chapter;
         let database = self.database().await?;
@@ -8502,75 +9426,6 @@ impl LibraryScanService {
             );
         }
         Ok(())
-    }
-
-    /// Chapters from the file itself, for a book whose provider has none. A file with no chapters
-    /// of its own becomes a single chapter, so it still has somewhere to belong.
-    async fn create_chapters_from_file(
-        &self,
-        auth_user: &AuthUser,
-        audiobook_id: &str,
-        title: &str,
-        path: &str,
-    ) -> Result<Vec<LinkedChapterRow>> {
-        let embedded = ffprobe_analyze(path)
-            .await
-            .map(|analysis| analysis.chapters)
-            .unwrap_or_default();
-        let mut rows: Vec<(String, f64, Option<f64>)> = embedded
-            .iter()
-            .enumerate()
-            .map(|(index, chapter)| {
-                (
-                    chapter
-                        .title
-                        .as_deref()
-                        .map(|name| name.replace('\u{a0}', " ").trim().to_string())
-                        .filter(|name| !name.is_empty())
-                        .unwrap_or_else(|| format!("Chapter {}", index + 1)),
-                    chapter.start_secs,
-                    Some(chapter.end_secs),
-                )
-            })
-            .collect();
-        if rows.is_empty() {
-            rows.push((title.to_string(), 0.0, None));
-        }
-        let mut created = Vec::with_capacity(rows.len());
-        for (index, (name, start, end)) in rows.into_iter().enumerate() {
-            let number = index as i32 + 1;
-            let data = self
-                .execute_mutation(
-                    auth_user,
-                    r#"mutation ChapterFromFile($input: CreateChapterInput!) {
-                        CreateChapter: createChapter(input: $input) {
-                            Success: success
-                            Error: error
-                            Chapter: chapter { Id: id }
-                        }
-                    }"#,
-                    serde_json::json!({ "input": {
-                        "audiobookId": audiobook_id,
-                        "chapterNumber": number,
-                        "title": name,
-                        "startTimeSecs": start,
-                        "endTimeSecs": end,
-                        "durationSecs": end.map(|end: f64| (end - start).round() as i32),
-                        "wanted": false,
-                    }}),
-                )
-                .await?;
-            let id = data
-                .pointer("/CreateChapter/Chapter/Id")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| anyhow::anyhow!("Could not create a chapter from the file"))?;
-            created.push(LinkedChapterRow {
-                id: id.to_string(),
-                number,
-                title: Some(name),
-            });
-        }
-        Ok(created)
     }
 
     /// Books already imported with one file linked to their first chapter only: link the rest,
@@ -8904,7 +9759,48 @@ impl LibraryScanService {
         library_override: Option<String>,
         files: Vec<SourceFileImport>,
     ) -> SourceProcessSummary {
-        self.run_torrent_import(auth_user, info_hash, library_override, files, None)
+        self.run_torrent_import(
+            auth_user,
+            info_hash,
+            library_override,
+            files,
+            None,
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// Import a release, or one book of a pack, as a person decided after seeing its plan.
+    pub async fn import_torrent_as_book(
+        &self,
+        auth_user: &AuthUser,
+        info_hash: &str,
+        audiobook_id: Option<&str>,
+        files: Vec<SourceFileImport>,
+        choice: BookImportChoice,
+    ) -> SourceProcessSummary {
+        self.run_torrent_import(
+            auth_user,
+            info_hash,
+            None,
+            files,
+            None,
+            Some((audiobook_id, &choice)),
+            None,
+        )
+        .await
+    }
+
+    /// Import some of a download's files as a library item a person or identification chose.
+    pub(self) async fn import_torrent_with_link(
+        &self,
+        auth_user: &AuthUser,
+        info_hash: &str,
+        files: Vec<SourceFileImport>,
+        patch: ImportLinkPatch,
+    ) -> SourceProcessSummary {
+        self.run_torrent_import(auth_user, info_hash, None, files, None, None, Some(&patch))
             .await
     }
 
@@ -8933,6 +9829,8 @@ impl LibraryScanService {
             Some(target.library_id.clone()),
             vec![file],
             Some(&target),
+            None,
+            None,
         )
         .await
     }
@@ -9037,6 +9935,7 @@ impl LibraryScanService {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_torrent_import(
         &self,
         auth_user: &AuthUser,
@@ -9044,7 +9943,17 @@ impl LibraryScanService {
         library_override: Option<String>,
         files: Vec<SourceFileImport>,
         manual: Option<&ManualFileTarget>,
+        book_choice: Option<(Option<&str>, &BookImportChoice)>,
+        patch: Option<&ImportLinkPatch>,
     ) -> SourceProcessSummary {
+        let lock = self
+            .torrent_import_locks
+            .lock()
+            .await
+            .entry(info_hash.to_string())
+            .or_default()
+            .clone();
+        let _one_at_a_time = lock.lock().await;
         let admission = async {
             let database = self.database().await?;
             Self::authorize_torrent_import(
@@ -9061,7 +9970,14 @@ impl LibraryScanService {
             Err(error) => return Self::failed_source_summary(error),
         };
         match self
-            .process_torrent_source_files_inner(&import, library_override, files, manual)
+            .process_torrent_source_files_inner(
+                &import,
+                library_override,
+                files,
+                manual,
+                book_choice,
+                patch,
+            )
             .await
         {
             Ok(summary) => summary,
@@ -9165,6 +10081,8 @@ impl LibraryScanService {
         library_override: Option<String>,
         files: Vec<SourceFileImport>,
         manual: Option<&ManualFileTarget>,
+        book_choice: Option<(Option<&str>, &BookImportChoice)>,
+        patch: Option<&ImportLinkPatch>,
     ) -> Result<SourceProcessSummary> {
         let info_hash = import.info_hash.as_str();
         let link = &import.link;
@@ -9317,9 +10235,43 @@ impl LibraryScanService {
         // the grab was for; use it instead of re-deriving the target from the
         // filename (design.md Q53).
         // ------------------------------------------------------------------
+        let chosen_link;
+        let link = match (
+            book_choice.and_then(|(audiobook_id, _)| audiobook_id),
+            patch,
+        ) {
+            (Some(audiobook_id), _) => {
+                let mut changed = link.clone();
+                changed.audiobook_id = Some(audiobook_id.to_string());
+                changed.chapter_id = None;
+                chosen_link = changed;
+                &chosen_link
+            }
+            (None, Some(patch)) => {
+                // What was chosen replaces whatever the grab was for.
+                chosen_link = TorrentImportLink {
+                    movie_id: patch.movie_id.clone(),
+                    show_id: patch.show_id.clone(),
+                    season: patch.season,
+                    album_id: patch.album_id.clone(),
+                    episode_id: None,
+                    track_id: None,
+                    chapter_id: None,
+                    audiobook_id: None,
+                    ..link.clone()
+                };
+                &chosen_link
+            }
+            (None, None) => link,
+        };
         let linked = if link.has_target() {
             match self
-                .plan_linked_import_targets(auth_user, link, &import_files)
+                .plan_linked_import_targets(
+                    auth_user,
+                    link,
+                    &import_files,
+                    book_choice.map(|(_, choice)| choice),
+                )
                 .await
             {
                 Ok(plan) => plan,
@@ -9337,18 +10289,40 @@ impl LibraryScanService {
         } else {
             LinkedImportPlan::default()
         };
+        let mut linked = linked;
+        if !link.has_target()
+            && manual.is_none()
+            && book_choice.is_none()
+            && let Some(name) = link.name.as_deref()
+            && self
+                .looks_like_audiobooks(&owner_id, name, &import_files)
+                .await
+        {
+            for import in &import_files {
+                if Self::is_audio_import_path(&import.file.source_path) {
+                    linked.unmatched_reasons.insert(
+                        import.file.source_path.clone(),
+                        "Identification will work out which book this is.".to_string(),
+                    );
+                }
+            }
+        }
         diagnostics.notes.extend(linked.notes.iter().cloned());
         diagnostics.target_label = linked.target_label.clone();
 
         let mut library_cache: HashMap<String, LibraryRow> = HashMap::new();
+        let mut imported_files: HashMap<String, String> = HashMap::new();
 
         for import in &import_files {
             let file = &import.file;
             if file.file_size <= 0 || file.downloaded_bytes < file.file_size {
                 continue;
             }
+            if linked.left_alone.contains(&file.source_path) {
+                continue;
+            }
 
-            let media_file_id = match self
+            let mut media_file_id = match self
                 .ensure_source_media_file(auth_user, &owner_id, info_hash, file)
                 .await
             {
@@ -9572,6 +10546,50 @@ impl LibraryScanService {
                 }
                 other => other,
             };
+            let planned_path = match (
+                planned_path,
+                linked
+                    .targets
+                    .get(&file.source_path)
+                    .and_then(|target| target.file_stem.as_deref()),
+            ) {
+                (Ok(path), Some(stem)) if manual.is_none() => {
+                    let extension = source_path
+                        .extension()
+                        .and_then(|extension| extension.to_str())
+                        .unwrap_or("mp3");
+                    Ok(path.with_file_name(format!("{stem}.{extension}")))
+                }
+                (other, _) => other,
+            };
+            // A pattern like `{author}/{title}.{ext}` names every file of a book the same.
+            let planned_path = match (planned_path, linked.book_title.as_deref()) {
+                (Ok(path), Some(title))
+                    if manual.is_none()
+                        && path.file_stem().and_then(|stem| stem.to_str()).is_some_and(
+                            |stem| {
+                                release_match::normalize_words(stem)
+                                    == release_match::normalize_words(title)
+                            },
+                        ) =>
+                {
+                    match linked.book_file_numbers.get(&file.source_path) {
+                        Some(number) => {
+                            let extension = path
+                                .extension()
+                                .and_then(|extension| extension.to_str())
+                                .unwrap_or("mp3")
+                                .to_string();
+                            Ok(path.with_file_name(format!(
+                                "{} - Part {number:02}.{extension}",
+                                sanitize_for_filename(title)
+                            )))
+                        }
+                        None => Ok(path),
+                    }
+                }
+                (other, _) => other,
+            };
             let target_path = match planned_path {
                 Ok(path) => path,
                 Err(error) => {
@@ -9595,6 +10613,25 @@ impl LibraryScanService {
                     continue;
                 }
             };
+
+            // A first import moves its record from the download's path to the library's, so importing
+            // again finds nothing at the download's path and starts a new record. If the library
+            // already has a record for this file, that is the one: without this, every re-import
+            // of a download added another record for the same file.
+            match self
+                .settle_on_library_record(
+                    &owner_actor,
+                    &media_file_id,
+                    &selected.library.id,
+                    &target_path,
+                )
+                .await
+            {
+                Ok(existing) => media_file_id = existing,
+                Err(error) => {
+                    warn!(media_file_id = %media_file_id, error = %error, "Could not check for an existing library record");
+                }
+            }
 
             // Keep the complete extraction intact until the batch succeeds.
             // A conflict can create an approval referencing a staged source,
@@ -9706,6 +10743,7 @@ impl LibraryScanService {
             {
                 warn!(media_file_id = %media_file_id, error = %error, "Could not link every chapter of a whole-book file");
             }
+            imported_files.insert(file.source_path.clone(), media_file_id.clone());
 
             self.upsert_pending_file_match(
                 auth_user,
@@ -9729,6 +10767,17 @@ impl LibraryScanService {
             ));
         }
 
+        if let Some(writes) = linked.book_writes.as_ref()
+            && !imported_files.is_empty()
+            && let Err(error) = self
+                .write_book_chapters(auth_user, writes, &imported_files)
+                .await
+        {
+            failed += 1;
+            warn!(info_hash = %info_hash, error = %error, "Could not place chapters on imported files");
+            messages.push(format!("Could not place chapters on the files: {error}"));
+        }
+
         // Pending approvals/retries still need the verified extracted files.
         // Only discard our temporary copies after the whole batch succeeds;
         // the original archives and torrent payloads are always preserved.
@@ -9746,7 +10795,41 @@ impl LibraryScanService {
             "unmatched"
         };
         let mut error = Self::summarize_import_outcome(&diagnostics, processed, failed);
+        // A count of failures doesn't help anyone fix them.
+        if failed > 0
+            && let Some(first) = messages
+                .iter()
+                .find(|message| !message.starts_with("Imported"))
+                .cloned()
+                .or_else(|| {
+                    diagnostics
+                        .unmatched
+                        .first()
+                        .map(|file| format!("{}: {}", file.source_path, file.reason))
+                })
+        {
+            warn!(info_hash = %info_hash, failed, first = %first, "Some files could not be imported");
+            error = error.map(|summary| format!("{summary}. The first: {first}"));
+        }
         let mut status = status;
+        if let Some(reason) = linked.hard_failure.as_ref() {
+            status = "failed";
+            error = Some(reason.clone());
+        } else if let Some(reason) = linked.review.as_ref() {
+            status = "needs_review";
+            error = Some(reason.clone());
+        } else if let Some(summary) = linked.summary.as_ref()
+            && processed > 0
+        {
+            // A book that landed in full is done, however many other books came with it, but the
+            // others are still worth saying.
+            if failed == 0 && diagnostics.unmatched.is_empty() {
+                error = None;
+            } else {
+                status = "partial";
+                error = Some(summary.clone());
+            }
+        }
         if manual.is_some() {
             if processed == 0 {
                 // One file not landing says nothing about the rest of the download.
@@ -10142,6 +11225,7 @@ impl LibraryScanService {
         auth_user: &AuthUser,
         link: &TorrentImportLink,
         files: &[ImportFile],
+        book_choice: Option<&BookImportChoice>,
     ) -> Result<LinkedImportPlan> {
         let mut plan = LinkedImportPlan::default();
         let mut video: Vec<&ImportFile> = files
@@ -10171,7 +11255,7 @@ impl LibraryScanService {
             self.plan_linked_album(auth_user, album_id, &audio, &mut plan)
                 .await?;
         } else if let Some(audiobook_id) = link.audiobook_id.as_deref() {
-            self.plan_linked_audiobook(auth_user, audiobook_id, &audio, &mut plan)
+            self.plan_linked_audiobook(auth_user, audiobook_id, &audio, &mut plan, book_choice)
                 .await?;
         } else if let Some(track_id) = link.track_id.as_deref() {
             // Single-track grab with no album context.
@@ -10247,6 +11331,7 @@ impl LibraryScanService {
                 target_type: "Movie".to_string(),
                 target_id: movie_id.to_string(),
                 target_name: Some(title.to_string()),
+                file_stem: None,
                 match_type: TORRENT_LINK_MATCH_TYPE,
                 reason: format!(
                     "{TORRENT_LINK_MATCH_TYPE}: torrent was grabbed for movie '{title}'"
@@ -10401,6 +11486,7 @@ impl LibraryScanService {
                     target_type: "Episode".to_string(),
                     target_id: episode.id.clone(),
                     target_name: Some(label.clone()),
+                    file_stem: None,
                     match_type: TORRENT_LINK_MATCH_TYPE,
                     reason: format!("{TORRENT_LINK_MATCH_TYPE}: torrent was grabbed for {label}"),
                 },
@@ -10459,6 +11545,7 @@ impl LibraryScanService {
                     target_type: "Episode".to_string(),
                     target_id: episode.id.clone(),
                     target_name: Some(label.clone()),
+                    file_stem: None,
                     match_type: TORRENT_LINK_PARSED_MATCH_TYPE,
                     reason: format!(
                         "{TORRENT_LINK_PARSED_MATCH_TYPE}: torrent is linked to '{show_name}' and the filename parsed as S{season:02}E{episode_number:02}"
@@ -10513,6 +11600,7 @@ impl LibraryScanService {
                                     Title: title
                                     TrackNumber: trackNumber
                                     DiscNumber: discNumber
+                                    DurationSecs: durationSecs
                                 }
                             }
                         }
@@ -10563,6 +11651,7 @@ impl LibraryScanService {
                         .get("DiscNumber")
                         .and_then(|v| v.as_i64())
                         .map(|v| v as i32),
+                    seconds: node.get("DurationSecs").and_then(|v| v.as_f64()),
                 });
             }
         }
@@ -10579,25 +11668,97 @@ impl LibraryScanService {
             )
         });
 
-        let mut used: HashSet<String> = HashSet::new();
-        let positional = audio.len() == tracks.len();
+        let release_files = self
+            .release_file_facts(
+                audio
+                    .iter()
+                    .map(|item| {
+                        (
+                            item.file.source_path.clone(),
+                            item.file.relative_path.clone(),
+                            item.file.file_size,
+                            item.file.downloaded_bytes >= item.file.file_size,
+                        )
+                    })
+                    .collect(),
+            )
+            .await;
+        let names: Vec<Option<String>> = audio
+            .iter()
+            .map(|item| Self::parse_track_hint(&item.file.source_path).title)
+            .collect();
+        let track_facts: Vec<release_match::TrackFacts> = tracks
+            .iter()
+            .map(|track| release_match::TrackFacts {
+                title: track.title.clone(),
+                number: track.track_number,
+                disc: track.disc_number,
+                seconds: track.seconds,
+            })
+            .collect();
+        // Tags, names and lengths together first, so a clear match isn't taken by a guess.
+        let matched = release_match::match_tracks(&release_files, &names, &track_facts);
+        let mut matched = matched;
+        Self::ask_jev_about_tracks(
+            &self.manager,
+            &mut matched,
+            &release_files,
+            &track_facts,
+            album_name,
+        )
+        .await;
+        let mut used: HashSet<String> = matched
+            .iter()
+            .flatten()
+            .filter_map(|(track, _)| tracks.get(*track).map(|track| track.id.clone()))
+            .collect();
+        let wanted_album = release_match::normalize_words(album_name);
+        let positional = audio.len() == tracks.len()
+            && release_files.iter().zip(&tracks).all(|(file, track)| {
+                match (file.duration, track.seconds) {
+                    (Some(found), Some(wanted)) => (found - wanted).abs() <= 15.0,
+                    _ => true,
+                }
+            });
         for (index, item) in audio.iter().enumerate() {
+            let facts = &release_files[index];
+            // A file tagged as some other album doesn't belong, whatever its number says.
+            if matched[index].is_none()
+                && let Some(album) = facts.tags.album.as_deref()
+                && !wanted_album.is_empty()
+                && jaro_winkler(&release_match::normalize_words(album), &wanted_album) < 0.8
+            {
+                plan.unmatched_reasons.insert(
+                    item.file.source_path.clone(),
+                    format!("tagged as album '{album}', not '{album_name}'"),
+                );
+                continue;
+            }
             let hint = Self::parse_track_hint(&item.file.source_path);
-            let chosen =
-                Self::choose_album_track(&tracks, &used, hint.track_number, hint.title.as_deref())
-                    .or_else(|| {
-                        // Tags and filenames were ambiguous. Audio fingerprinting
-                        // (services/fingerprint.rs) would be the ideal tiebreaker
-                        // but it needs the Chromaprint `fpcalc` binary plus an
-                        // AcoustID key and is not wired into the service graph, so
-                        // fall back to release order when the counts line up
-                        // exactly (design.md Q53).
-                        if positional {
-                            tracks.get(index).filter(|track| !used.contains(&track.id))
-                        } else {
-                            None
-                        }
-                    });
+            let title_hint = facts.tags.title.clone().or(hint.title);
+            let chosen = matched[index]
+                .and_then(|(track, _)| tracks.get(track))
+                .or_else(|| {
+                    Self::choose_album_track(
+                        &tracks,
+                        &used,
+                        facts.tags.track.or(hint.track_number),
+                        title_hint.as_deref(),
+                    )
+                })
+                .or_else(|| {
+                    // Tags and filenames were ambiguous. Audio fingerprinting
+                    // (services/fingerprint.rs) would be the ideal tiebreaker
+                    // but it needs the Chromaprint `fpcalc` binary plus an
+                    // AcoustID key and is not wired into the service graph, so
+                    // fall back to release order when the counts line up
+                    // exactly and no length disagrees (design.md Q53).
+                    if positional {
+                        tracks.get(index).filter(|track| !used.contains(&track.id))
+                    } else {
+                        None
+                    }
+                });
             let Some(track) = chosen else {
                 plan.unmatched_reasons.insert(
                     item.file.source_path.clone(),
@@ -10615,6 +11776,7 @@ impl LibraryScanService {
                     target_id: track.id.clone(),
                     target_name: Some(label.clone()),
                     match_type: TORRENT_LINK_PARSED_MATCH_TYPE,
+                    file_stem: None,
                     reason: format!(
                         "{TORRENT_LINK_PARSED_MATCH_TYPE}: torrent is linked to album '{album_name}' and this file matched track '{}'",
                         track.title
@@ -10624,6 +11786,92 @@ impl LibraryScanService {
         }
 
         Ok(())
+    }
+
+    /// For files the rules couldn't place, ask Jev which of the album's unclaimed tracks each is. An
+    /// answer only counts if Jev is sure and no length contradicts it.
+    async fn ask_jev_about_tracks(
+        manager: &ServicesManager,
+        matched: &mut [Option<(usize, f64)>],
+        files: &[release_match::ReleaseFile],
+        tracks: &[release_match::TrackFacts],
+        album: &str,
+    ) {
+        const ENOUGH: f64 = 0.8;
+        let waiting: Vec<usize> = (0..matched.len())
+            .filter(|index| matched[*index].is_none())
+            .collect();
+        if waiting.is_empty() || files.iter().any(|file| file.duration.is_none()) {
+            return;
+        }
+        let Some(jev) = crate::services::jev::Jev::configured(manager).await else {
+            return;
+        };
+        let taken: HashSet<usize> = matched.iter().flatten().map(|(track, _)| *track).collect();
+        let open: Vec<usize> = (0..tracks.len())
+            .filter(|index| !taken.contains(index))
+            .collect();
+        if open.is_empty() {
+            return;
+        }
+        let choices: Vec<String> = open
+            .iter()
+            .map(|index| tracks[*index].title.clone())
+            .collect();
+        let items: Vec<String> = waiting
+            .iter()
+            .map(|index| {
+                let file = &files[*index];
+                format!(
+                    "{} (tagged title: {}, track: {})",
+                    file.path.rsplit('/').next().unwrap_or_default(),
+                    file.tags.title.as_deref().unwrap_or("none"),
+                    file.tags
+                        .track
+                        .map_or("none".to_string(), |number| number.to_string()),
+                )
+            })
+            .collect();
+        let state = serde_json::json!({ "album": album, "tracks": choices });
+        let answers = match jev
+            .choose(
+                state,
+                "Which track of this album is this file?",
+                &choices,
+                &items,
+            )
+            .await
+        {
+            Ok(answers) => answers,
+            Err(error) => {
+                warn!(error = %error, "Jev could not help with an album");
+                return;
+            }
+        };
+        let mut claimed = taken;
+        for (position, index) in waiting.iter().enumerate() {
+            let Some((choice, confidence)) = answers.get(&items[position]) else {
+                continue;
+            };
+            if *confidence < ENOUGH {
+                continue;
+            }
+            let Some(track) = open
+                .iter()
+                .copied()
+                .find(|track| tracks[*track].title == *choice && !claimed.contains(track))
+            else {
+                continue;
+            };
+            let fits = match (files[*index].duration, tracks[track].seconds) {
+                (Some(found), Some(wanted)) => (found - wanted).abs() <= 15.0,
+                _ => true,
+            };
+            if fits {
+                claimed.insert(track);
+                matched[*index] = Some((track, *confidence));
+            }
+        }
     }
 
     /// Pick the best still-unused track for a file: exact track number first,
@@ -10662,152 +11910,634 @@ impl LibraryScanService {
             .map(|(track, _)| track)
     }
 
+    /// Read what files say about themselves: length, tags and chapter markers. Only finished files
+    /// can be read. Results are kept, because previews ask again and a pack can be hundreds of files.
+    async fn release_file_facts(
+        &self,
+        files: Vec<(String, String, i64, bool)>,
+    ) -> Vec<release_match::ReleaseFile> {
+        use futures::stream::StreamExt;
+        const PROBES_AT_ONCE: usize = 6;
+        futures::stream::iter(files)
+            .map(|(key, path, size, complete)| async move {
+                let mut facts = release_match::ReleaseFile {
+                    key: key.clone(),
+                    path,
+                    size,
+                    ..Default::default()
+                };
+                if !complete {
+                    return facts;
+                }
+                let cached = self
+                    .release_probe_cache
+                    .lock()
+                    .await
+                    .get(&(key.clone(), size))
+                    .cloned();
+                let probed = match cached {
+                    Some(probed) => Some(probed),
+                    None => match ffprobe_analyze(&key).await {
+                        Ok(analysis) => {
+                            let probed = (
+                                analysis.duration_secs,
+                                analysis.tags,
+                                analysis
+                                    .chapters
+                                    .iter()
+                                    .map(|chapter| release_match::EmbeddedChapter {
+                                        title: chapter.title.clone(),
+                                        start: chapter.start_secs,
+                                        end: chapter.end_secs,
+                                    })
+                                    .collect::<Vec<_>>(),
+                            );
+                            let mut cache = self.release_probe_cache.lock().await;
+                            if cache.len() >= 4096 {
+                                cache.clear();
+                            }
+                            cache.insert((key.clone(), size), probed.clone());
+                            Some(probed)
+                        }
+                        Err(error) => {
+                            debug!(path = %key, error = %error, "Could not read a release file's tags");
+                            None
+                        }
+                    },
+                };
+                if let Some((duration, tags, embedded)) = probed {
+                    facts.duration = duration;
+                    facts.tags = tags;
+                    facts.embedded = embedded;
+                }
+                facts
+            })
+            .buffered(PROBES_AT_ONCE)
+            .collect()
+            .await
+    }
+
+    /// The book as a release is compared with it. The reference list is the provider's, even when a
+    /// previous release's chapters have replaced it on the book.
+    async fn book_reference(
+        &self,
+        audiobook_id: &str,
+    ) -> Result<(
+        crate::graphql::entities::Audiobook,
+        Vec<crate::graphql::entities::Chapter>,
+        release_match::BookFacts,
+        Vec<release_match::ReferenceChapter>,
+    )> {
+        use crate::graphql::entities::Audiobook;
+        let database = self.database().await?;
+        let book = Audiobook::get(database.pool().pool(), &audiobook_id.to_string())
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("That audiobook no longer exists"))?;
+        let mut chapters = self.book_chapters(audiobook_id).await?;
+        chapters.sort_by_key(|chapter| chapter.chapter_number);
+        let reference: Vec<release_match::ReferenceChapter> = book
+            .provider_chapters
+            .as_deref()
+            .and_then(|saved| serde_json::from_str(saved).ok())
+            .unwrap_or_else(|| {
+                chapters
+                    .iter()
+                    .map(|chapter| release_match::ReferenceChapter {
+                        title: chapter.title.clone(),
+                        start: chapter.start_time_secs,
+                        seconds: chapter.duration_secs.map(f64::from),
+                    })
+                    .collect()
+            });
+        let facts = release_match::BookFacts {
+            title: book.title.clone(),
+            author: book.author_name.clone(),
+            narrator: book.narrator_name.clone(),
+            asin: book.asin.clone().or_else(|| book.audible_id.clone()),
+            seconds: book.total_duration_secs.map(f64::from),
+            series: book.series_name.clone(),
+        };
+        Ok((book, chapters, facts, reference))
+    }
+
+    /// The rules' answer for a release, with Jev asked to settle which book it is if they can't and
+    /// a key is configured. Lengths still decide whether the files fit.
+    async fn plan_book_release(
+        &self,
+        book_id: &str,
+        files: &[release_match::ReleaseFile],
+        facts: &release_match::BookFacts,
+        reference: &[release_match::ReferenceChapter],
+    ) -> release_match::ReleasePlan {
+        let mut plan = release_match::plan_release(files, facts, reference);
+        let undecided = plan.chosen.is_none() || plan.evidence.is_empty();
+        let unsettled = matches!(plan.outcome, release_match::BookOutcome::Review(_));
+        if !(undecided && unsettled && plan.complete_facts) || plan.groups.is_empty() {
+            return plan;
+        }
+        let Some(jev) = crate::services::jev::Jev::configured(&self.manager).await else {
+            return plan;
+        };
+        const ENOUGH: f64 = 0.85;
+        let key = format!(
+            "{book_id}|{}|{}",
+            facts.title,
+            plan.groups
+                .iter()
+                .map(|group| format!("{}:{}", group.key, group.files.len()))
+                .collect::<Vec<_>>()
+                .join("|")
+        );
+        let cached = self.jev_group_cache.lock().await.get(&key).cloned();
+        let answer = match cached {
+            Some(answer) => answer,
+            None => {
+                let answer = Self::ask_jev_which_group(&jev, &plan.groups, files, facts).await;
+                let mut cache = self.jev_group_cache.lock().await;
+                if cache.len() >= 512 {
+                    cache.clear();
+                }
+                cache.insert(key, answer);
+                answer
+            }
+        };
+        if let Some((index, probability)) = answer
+            && probability >= ENOUGH
+            && let Some(group) = plan.groups.get(index)
+        {
+            plan.chosen = Some(index);
+            plan.outcome = release_match::layout_book(files, group, facts, reference);
+            plan.evidence.push(format!(
+                "Jev is {:.0}% sure these files are this book",
+                probability * 100.0
+            ));
+        }
+        plan
+    }
+
+    /// The group Jev thinks most likely to be this book, and how likely. `None` if it can't say.
+    async fn ask_jev_which_group(
+        jev: &crate::services::jev::Jev,
+        groups: &[release_match::BookGroup],
+        files: &[release_match::ReleaseFile],
+        facts: &release_match::BookFacts,
+    ) -> Option<(usize, f64)> {
+        const SAMPLE_FILES: usize = 5;
+        const MAX_GROUPS: usize = 20;
+        let described: Vec<serde_json::Value> = groups
+            .iter()
+            .take(MAX_GROUPS)
+            .map(|group| {
+                let tags = group.files.first().map(|file| &files[*file].tags);
+                serde_json::json!({
+                    "name": group.label,
+                    "album_tag": tags.and_then(|tags| tags.album.clone()),
+                    "artist_tag": tags.and_then(|tags| tags.artist.clone()),
+                    "file_count": group.files.len(),
+                    "example_files": group.files.iter().take(SAMPLE_FILES)
+                        .map(|file| files[*file].path.rsplit('/').next().unwrap_or_default())
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        let state = serde_json::json!({
+            "wanted_book": {
+                "title": facts.title,
+                "author": facts.author,
+                "narrator": facts.narrator,
+                "series": facts.series,
+            },
+            "groups_of_files": described,
+        });
+        let questions = (0..described.len())
+            .map(|index| {
+                (
+                    format!("group_{index}"),
+                    format!(
+                        "Is the group of files at position {index} in groups_of_files the wanted book, and not a different book by the same author?"
+                    ),
+                )
+            })
+            .collect();
+        match jev.yes_no(state, &questions).await {
+            Ok(answers) => {
+                // Sibling books score surprisingly close, so the winner has to stand clear of them.
+                const CLEAR_GAP: f64 = 0.1;
+                let mut ranked: Vec<(usize, f64)> = answers
+                    .into_iter()
+                    .filter_map(|(name, probability)| {
+                        Some((
+                            name.strip_prefix("group_")?.parse::<usize>().ok()?,
+                            probability,
+                        ))
+                    })
+                    .collect();
+                ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                let best = *ranked.first()?;
+                let clear = ranked
+                    .get(1)
+                    .is_none_or(|second| best.1 - second.1 >= CLEAR_GAP);
+                clear.then_some(best)
+            }
+            Err(error) => {
+                warn!(error = %error, "Jev could not help with a release");
+                None
+            }
+        }
+    }
+
+    /// Make a book's chapter rows say what a release's plan says, reusing existing rows so anything
+    /// pointing at them survives. The provider's list is kept, once, so this can be undone.
+    async fn rewrite_book_chapters(
+        &self,
+        auth_user: &AuthUser,
+        book: &crate::graphql::entities::Audiobook,
+        existing: &[crate::graphql::entities::Chapter],
+        reference: &[release_match::ReferenceChapter],
+        layout: &release_match::BookLayout,
+        always: bool,
+    ) -> Result<Vec<String>> {
+        let keep_rows = !always
+            && layout.source == release_match::ChapterSource::Provider
+            && book
+                .chapter_source
+                .as_deref()
+                .is_none_or(|source| source == "provider")
+            && existing.len() == layout.chapters.len();
+        if keep_rows {
+            return Ok(existing.iter().map(|chapter| chapter.id.clone()).collect());
+        }
+        if book.provider_chapters.is_none() && !reference.is_empty() {
+            let saved = serde_json::to_string(reference)?;
+            self.update_audiobook_fields(
+                auth_user,
+                &book.id,
+                serde_json::json!({ "providerChapters": saved }),
+            )
+            .await?;
+        }
+        let mut ids = Vec::with_capacity(layout.chapters.len());
+        for (index, planned) in layout.chapters.iter().enumerate() {
+            let number = index as i32 + 1;
+            let duration = planned
+                .end
+                .map(|end| (end - planned.start).max(0.0).round() as i32);
+            if let Some(row) = existing.get(index) {
+                let data = self
+                    .execute_mutation(
+                        auth_user,
+                        r#"mutation RewriteChapter($id: String!, $input: UpdateChapterInput!) {
+                            UpdateChapter: updateChapter(id: $id, input: $input) { Success: success Error: error }
+                        }"#,
+                        serde_json::json!({ "id": row.id, "input": {
+                            "chapterNumber": number,
+                            "title": planned.title,
+                            "startTimeSecs": planned.start,
+                            "endTimeSecs": planned.end,
+                            "durationSecs": duration,
+                            "fileOffsetSecs": serde_json::Value::Null,
+                        }}),
+                    )
+                    .await?;
+                if data
+                    .pointer("/UpdateChapter/Success")
+                    .and_then(serde_json::Value::as_bool)
+                    != Some(true)
+                {
+                    anyhow::bail!("Could not update a chapter from this release");
+                }
+                ids.push(row.id.clone());
+            } else {
+                let data = self
+                    .execute_mutation(
+                        auth_user,
+                        r#"mutation AddChapter($input: CreateChapterInput!) {
+                            CreateChapter: createChapter(input: $input) {
+                                Success: success
+                                Error: error
+                                Chapter: chapter { Id: id }
+                            }
+                        }"#,
+                        serde_json::json!({ "input": {
+                            "audiobookId": book.id,
+                            "chapterNumber": number,
+                            "title": planned.title,
+                            "startTimeSecs": planned.start,
+                            "endTimeSecs": planned.end,
+                            "durationSecs": duration,
+                            "wanted": planned.file.is_none(),
+                        }}),
+                    )
+                    .await?;
+                let id = data
+                    .pointer("/CreateChapter/Chapter/Id")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("Could not add a chapter from this release"))?;
+                ids.push(id.to_string());
+            }
+        }
+        for extra in existing.iter().skip(layout.chapters.len()) {
+            let data = self
+                .execute_mutation(
+                    auth_user,
+                    r#"mutation RemoveChapter($id: String!) {
+                        DeleteChapter: deleteChapter(id: $id) { Success: success Error: error }
+                    }"#,
+                    serde_json::json!({ "id": extra.id }),
+                )
+                .await?;
+            if data
+                .pointer("/DeleteChapter/Success")
+                .and_then(serde_json::Value::as_bool)
+                != Some(true)
+            {
+                anyhow::bail!("Could not remove a chapter this release doesn't have");
+            }
+        }
+        Ok(ids)
+    }
+
+    async fn update_audiobook_fields(
+        &self,
+        auth_user: &AuthUser,
+        audiobook_id: &str,
+        input: serde_json::Value,
+    ) -> Result<()> {
+        let data = self
+            .execute_mutation(
+                auth_user,
+                r#"mutation SetBookFields($id: String!, $input: UpdateAudiobookInput!) {
+                    UpdateAudiobook: updateAudiobook(id: $id, input: $input) { Success: success Error: error }
+                }"#,
+                serde_json::json!({ "id": audiobook_id, "input": input }),
+            )
+            .await?;
+        if data
+            .pointer("/UpdateAudiobook/Success")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+        {
+            anyhow::bail!("Could not update the audiobook");
+        }
+        Ok(())
+    }
+
+    /// Point chapters at the files that landed, with where each starts in its file.
+    async fn write_book_chapters(
+        &self,
+        auth_user: &AuthUser,
+        writes: &BookWrites,
+        imported: &HashMap<String, String>,
+    ) -> Result<()> {
+        for (chapter_id, source_path, offset) in &writes.placements {
+            let Some(media_file_id) = imported.get(source_path) else {
+                continue;
+            };
+            let data = self
+                .execute_mutation(
+                    auth_user,
+                    r#"mutation PlaceChapter($id: String!, $input: UpdateChapterInput!) {
+                        UpdateChapter: updateChapter(id: $id, input: $input) { Success: success Error: error }
+                    }"#,
+                    serde_json::json!({ "id": chapter_id, "input": {
+                        "mediaFileId": media_file_id,
+                        "fileOffsetSecs": offset,
+                        "wanted": false,
+                    }}),
+                )
+                .await?;
+            if data
+                .pointer("/UpdateChapter/Success")
+                .and_then(serde_json::Value::as_bool)
+                != Some(true)
+            {
+                anyhow::bail!("Could not point a chapter at its file");
+            }
+        }
+        self.update_audiobook_fields(
+            auth_user,
+            &writes.audiobook_id,
+            serde_json::json!({ "chapterSource": writes.source, "fileShape": writes.shape }),
+        )
+        .await
+    }
+
+    /// Decide what a release is for a book, and get the chapters ready to receive it.
+    ///
+    /// Rules are in `release_match`. No chapter is ever filled by position alone: a release that
+    /// doesn't fit asks a person, and other books in a pack are left where they are.
     async fn plan_linked_audiobook(
         &self,
         auth_user: &AuthUser,
         audiobook_id: &str,
         audio: &[&ImportFile],
         plan: &mut LinkedImportPlan,
+        choice: Option<&BookImportChoice>,
     ) -> Result<()> {
-        let data = self
-            .execute_graphql(
-                auth_user,
-                r#"query ImportLinkAudiobook($id: String!) {
-                    Audiobook: audiobook(id: $id) {
-                        Id: id
-                        Title: title
-                        LibraryId: libraryId
-                        Chapters: chapters(page: { limit: 2000 }) {
-                            Edges: edges {
-                                Node: node {
-                                    Id: id
-                                    Title: title
-                                    ChapterNumber: chapterNumber
-                                }
-                            }
-                        }
-                    }
-                }"#,
-                serde_json::json!({ "id": audiobook_id }),
-            )
-            .await?;
-        let audiobook = data.get("Audiobook");
-        let (Some(title), Some(library_id)) = (
-            audiobook
-                .and_then(|a| a.get("Title"))
-                .and_then(|v| v.as_str()),
-            audiobook
-                .and_then(|a| a.get("LibraryId"))
-                .and_then(|v| v.as_str()),
-        ) else {
+        let Ok((book, chapters, facts, reference)) = self.book_reference(audiobook_id).await else {
             plan.notes.push(format!(
                 "torrent is linked to audiobook {audiobook_id} but that audiobook no longer exists"
             ));
             return Ok(());
         };
+        let title = book.title.clone();
         plan.target_label = Some(format!("'{title}'"));
 
-        let mut chapters: Vec<LinkedChapterRow> = Vec::new();
-        if let Some(edges) = audiobook
-            .and_then(|a| a.get("Chapters"))
-            .and_then(|c| c.get("Edges"))
-            .and_then(|v| v.as_array())
+        if audio.is_empty() {
+            let reason = format!(
+                "This release has no audio files, so it can't be \u{201c}{title}\u{201d}. It may be an ebook."
+            );
+            plan.notes.push(reason.clone());
+            plan.hard_failure = Some(reason);
+            return Ok(());
+        }
+
+        let release_files = self
+            .release_file_facts(
+                audio
+                    .iter()
+                    .map(|item| {
+                        (
+                            item.file.source_path.clone(),
+                            item.file.relative_path.clone(),
+                            item.file.file_size,
+                            item.file.downloaded_bytes >= item.file.file_size,
+                        )
+                    })
+                    .collect(),
+            )
+            .await;
+        let mut release = self
+            .plan_book_release(&book.id, &release_files, &facts, &reference)
+            .await;
+        // Sizes are only good enough to preview with. Nothing moves on an estimate.
+        if !release.complete_facts && !choice.is_some_and(|choice| choice.accept_review) {
+            let reason = "Couldn't read the lengths of these files, so they can't be placed yet.";
+            release.outcome = release_match::BookOutcome::Review(release_match::ReviewNeeded {
+                reason: reason.to_string(),
+                fallback: match release.outcome {
+                    release_match::BookOutcome::Ready(layout) => Some(layout),
+                    release_match::BookOutcome::Review(review) => review.fallback,
+                },
+            });
+        }
+
+        // A person pointing at one book of a pack settles which files it is.
+        if let Some(key) = choice.and_then(|choice| choice.group_key.as_deref())
+            && let Some(index) = release.groups.iter().position(|group| group.key == key)
         {
-            for edge in edges {
-                let Some(node) = edge.get("Node") else {
-                    continue;
-                };
-                let Some(id) = node.get("Id").and_then(|v| v.as_str()) else {
-                    continue;
-                };
-                chapters.push(LinkedChapterRow {
-                    id: id.to_string(),
-                    number: node
-                        .get("ChapterNumber")
-                        .and_then(|v| v.as_i64())
-                        .map(|v| v as i32)
-                        .unwrap_or(0),
-                    title: node
-                        .get("Title")
-                        .and_then(|v| v.as_str())
-                        .map(|v| v.to_string()),
-                });
+            release.chosen = Some(index);
+            release.outcome = release_match::layout_book(
+                &release_files,
+                &release.groups[index],
+                &facts,
+                &reference,
+            );
+        }
+        let accept = choice.is_some_and(|choice| choice.accept_review);
+        let layout = match release.outcome.clone() {
+            release_match::BookOutcome::Ready(layout) => layout,
+            release_match::BookOutcome::Review(review) => match review.fallback {
+                Some(layout) if accept => layout,
+                _ => {
+                    // A book's problem is its own: other books in a pack keep what they have.
+                    let own: HashSet<&String> = release
+                        .chosen
+                        .and_then(|index| release.groups.get(index))
+                        .map(|group| {
+                            group
+                                .files
+                                .iter()
+                                .map(|file| &release_files[*file].key)
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    for item in audio {
+                        let path = &item.file.source_path;
+                        if own.is_empty() || own.contains(path) {
+                            plan.unmatched_reasons
+                                .insert(path.clone(), review.reason.clone());
+                        } else {
+                            plan.left_alone.insert(path.clone());
+                        }
+                    }
+                    plan.review = Some(release_match::describe(&release, &facts));
+                    return Ok(());
+                }
+            },
+        };
+        let group = &release.groups[release.chosen.unwrap_or(0)];
+
+        // Other books in the pack stay out of this one. A later choice imports them.
+        for (index, other) in release.groups.iter().enumerate() {
+            if Some(index) == release.chosen {
+                continue;
+            }
+            for file in &other.files {
+                let path = &release_files[*file].key;
+                if choice.is_some() {
+                    plan.left_alone.insert(path.clone());
+                } else {
+                    plan.unmatched_reasons.insert(
+                        path.clone(),
+                        format!(
+                            "Belongs to \u{201c}{}\u{201d}, another book in this release",
+                            other.label
+                        ),
+                    );
+                }
             }
         }
-        if chapters.is_empty() {
-            plan.notes.push(format!(
-                "audiobook '{title}' has no chapter rows to import files into; add chapters before importing"
-            ));
-            return Ok(());
-        }
-        chapters.sort_by_key(|chapter| chapter.number);
 
-        if audio.is_empty() {
-            plan.notes
-                .push(format!("no audio files found for audiobook '{title}'"));
-            return Ok(());
-        }
-
-        // A provider with no chapter list leaves a book with none. One file can supply them.
-        if let ([only], true) = (audio, chapters.is_empty()) {
-            chapters = self
-                .create_chapters_from_file(auth_user, audiobook_id, title, &only.file.source_path)
-                .await?;
-        }
-        let whole_book = audio.len() == 1 && chapters.len() > 1;
-
-        // Q52: audiobook releases are whole-book, not per-chapter, so files map
-        // onto chapters in release (filename) order. `audio` is already sorted
-        // naturally by the caller.
-        for (index, item) in audio.iter().enumerate() {
-            let Some(chapter) = chapters.get(index) else {
-                plan.unmatched_reasons.insert(
-                    item.file.source_path.clone(),
-                    format!(
-                        "audiobook '{title}' only has {} chapter(s); this file is number {} in the release",
-                        chapters.len(),
-                        index + 1
-                    ),
-                );
+        let ids = self
+            .rewrite_book_chapters(auth_user, &book, &chapters, &reference, &layout, false)
+            .await?;
+        let library_id = book.library_id.clone();
+        let file_paths: Vec<String> = group
+            .files
+            .iter()
+            .map(|index| release_files[*index].key.clone())
+            .collect();
+        let holder_of_file = release_match::chapter_of_each_file(&layout, file_paths.len());
+        let width = file_paths.len().to_string().len().max(2);
+        for (position, path) in file_paths.iter().enumerate() {
+            let chapter_index = holder_of_file[position].unwrap_or(0);
+            let Some(chapter_id) = ids.get(chapter_index) else {
                 continue;
             };
-            let label = match chapter.title.as_deref() {
-                Some(chapter_title) if !chapter_title.is_empty() => {
-                    format!("{title} - {chapter_title}")
-                }
-                _ => format!("{title} - chapter {}", chapter.number),
+            let chapter_title = layout
+                .chapters
+                .get(chapter_index)
+                .map_or("", |chapter| chapter.title.as_str());
+            let (reason, file_stem) = match layout.shape {
+                release_match::FileShape::WholeBook => (
+                    format!(
+                        "{TORRENT_LINK_PARSED_MATCH_TYPE}: holds the whole of '{title}'; {WHOLE_BOOK_REASON}"
+                    ),
+                    None,
+                ),
+                release_match::FileShape::PerChapter => (
+                    format!(
+                        "{TORRENT_LINK_PARSED_MATCH_TYPE}: chapter '{chapter_title}' of '{title}'"
+                    ),
+                    None,
+                ),
+                release_match::FileShape::Parts => (
+                    format!(
+                        "{TORRENT_LINK_PARSED_MATCH_TYPE}: part {} of {} of '{title}'",
+                        position + 1,
+                        file_paths.len()
+                    ),
+                    Some(format!(
+                        "{} - Part {:0width$}",
+                        sanitize_for_filename(&title),
+                        position + 1
+                    )),
+                ),
             };
             plan.targets.insert(
-                item.file.source_path.clone(),
+                path.clone(),
                 LinkedImportTarget {
-                    library_id: library_id.to_string(),
+                    library_id: library_id.clone(),
                     target_type: "Chapter".to_string(),
-                    target_id: chapter.id.clone(),
-                    target_name: Some(label),
+                    target_id: chapter_id.clone(),
+                    target_name: Some(if layout.shape == release_match::FileShape::Parts {
+                        format!("{title} - part {}", position + 1)
+                    } else {
+                        format!("{title} - {chapter_title}")
+                    }),
                     match_type: TORRENT_LINK_PARSED_MATCH_TYPE,
-                    reason: {
-                        let reason = format!(
-                        "{TORRENT_LINK_PARSED_MATCH_TYPE}: torrent is linked to audiobook '{title}' and this is file {} of the release",
-                        index + 1
-                    );
-                        if whole_book {
-                            format!("{reason}; {WHOLE_BOOK_REASON}")
-                        } else {
-                            reason
-                        }
-                    },
+                    reason,
+                    file_stem,
                 },
             );
         }
-
-        if audio.len() < chapters.len() && !whole_book {
-            plan.notes.push(format!(
-                "audiobook '{title}': {} of {} chapters have a file from this release",
-                audio.len(),
-                chapters.len()
-            ));
+        plan.book_writes = Some(BookWrites {
+            audiobook_id: book.id.clone(),
+            placements: layout
+                .chapters
+                .iter()
+                .enumerate()
+                .filter_map(|(index, chapter)| {
+                    Some((
+                        ids.get(index)?.clone(),
+                        file_paths.get(chapter.file?)?.clone(),
+                        chapter.offset,
+                    ))
+                })
+                .collect(),
+            source: layout.source.as_str(),
+            shape: layout.shape.as_str(),
+        });
+        plan.summary = Some(release_match::describe(&release, &facts));
+        if file_paths.len() > 1 {
+            plan.book_title = Some(title.clone());
+            plan.book_file_numbers = file_paths
+                .iter()
+                .enumerate()
+                .map(|(position, path)| (path.clone(), position + 1))
+                .collect();
         }
-
         Ok(())
     }
 
@@ -10863,6 +12593,7 @@ impl LibraryScanService {
                 target_type: target_type.to_string(),
                 target_id: target_id.to_string(),
                 target_name: name.clone(),
+                file_stem: None,
                 match_type: TORRENT_LINK_MATCH_TYPE,
                 reason: format!(
                     "{TORRENT_LINK_MATCH_TYPE}: torrent was grabbed for {} '{}'",
@@ -11419,6 +13150,21 @@ impl LibraryScanService {
                 &file.source_path,
             )
             .await?;
+
+        // A file that reached the library stays recorded as having done so. A later look at the same
+        // download, for another book in it, has nothing to say about this one.
+        if candidate.is_none()
+            && copied_at.is_none()
+            && let Some((id, _, _)) = existing.as_ref()
+        {
+            let database = self.database().await?;
+            if crate::graphql::entities::PendingFileMatch::get(database.pool().pool(), id)
+                .await?
+                .is_some_and(|row| row.copied_at.is_some())
+            {
+                return Ok(());
+            }
+        }
 
         let input = serde_json::json!({
             "userId": owner_id,
@@ -12248,6 +13994,13 @@ impl Service for LibraryScanService {
             .await
             .ok_or_else(|| anyhow::anyhow!("library_scan service handle not registered"))?;
 
+        this.clear_interrupted_chapter_checks().await;
+
+        // Also before any scan: earlier versions could add a new record for a file on every scan.
+        if let Err(error) = this.collapse_duplicate_media_files().await {
+            warn!(error = %error, "Could not collapse duplicate media file records");
+        }
+
         // Before any scan can start: it may rename a file, and a scan that sees the new name before
         // the database does takes it for a new file and drops the old record.
         if let Err(error) = this.repair_whole_file_audiobooks().await {
@@ -12356,6 +14109,8 @@ struct FfprobeFormat {
     format_name: Option<String>,
     duration: Option<String>,
     bit_rate: Option<String>,
+    #[serde(default)]
+    tags: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -12504,6 +14259,10 @@ struct ProbeAnalysis {
     audio_streams: Vec<AudioStreamAnalysis>,
     subtitles: Vec<SubtitleAnalysis>,
     chapters: Vec<ChapterAnalysis>,
+    /// Exact length, since `duration` is rounded.
+    duration_secs: Option<f64>,
+    /// Tags from the container, then the first audio stream. Ogg and Opus keep theirs on the stream.
+    tags: crate::services::release_match::FileTags,
 }
 
 /// Private proof of the authorized target before ffprobe. Recheck it on the pinned
@@ -12873,13 +14632,27 @@ fn parse_ffprobe_output(stdout: &[u8]) -> Result<ProbeAnalysis> {
         ..Default::default()
     };
 
+    let stream_tags = parsed
+        .streams
+        .iter()
+        .find(|stream| stream.codec_type.as_deref() == Some("audio"))
+        .and_then(|stream| stream.tags.clone())
+        .unwrap_or_default();
     if let Some(format) = parsed.format {
         analysis.container = format.format_name;
-        analysis.duration = format
+        analysis.duration_secs = format
             .duration
             .as_deref()
-            .and_then(|d| d.parse::<f64>().ok())
-            .map(|d| d.round() as i32);
+            .and_then(|d| d.parse::<f64>().ok());
+        analysis.duration = analysis.duration_secs.map(|d| d.round() as i32);
+        analysis.tags = crate::services::release_match::tags_from_pairs(
+            format
+                .tags
+                .iter()
+                .flatten()
+                .chain(stream_tags.iter())
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+        );
         analysis.bitrate = format
             .bit_rate
             .as_deref()
@@ -13645,12 +15418,14 @@ mod tests {
     fn album_track_choice_prefers_track_number_then_title() {
         let tracks = vec![
             LinkedTrackRow {
+                seconds: None,
                 id: "t1".to_string(),
                 title: "Welcome to the Jungle".to_string(),
                 track_number: Some(1),
                 disc_number: Some(1),
             },
             LinkedTrackRow {
+                seconds: None,
                 id: "t2".to_string(),
                 title: "It's So Easy".to_string(),
                 track_number: Some(2),
@@ -15720,6 +17495,9 @@ mod atomic_analysis_tests {
             source_feed_id: None,
             source_indexer_id: None,
             library_id: None,
+            identification_kind: None,
+            identification_status: None,
+            identification_summary: None,
             post_process_status: None,
             post_process_error: None,
             processed_at: None,
@@ -16141,6 +17919,19 @@ mod library_path_safety_tests {
             b"preserve source"
         );
         assert_eq!(std::fs::read(&source).unwrap(), b"preserve source");
+    }
+}
+
+#[cfg(test)]
+mod entity_paging_tests {
+    use super::LibraryScanService;
+    use graphql_orm::graphql::orm::PaginationConfig;
+
+    /// A page size above the ORM's maximum reads one short page and stops, silently losing the rest.
+    #[test]
+    fn page_size_fits_what_a_query_returns() {
+        let maximum = PaginationConfig::default().max_limit.expect("a maximum");
+        assert!(LibraryScanService::ENTITY_PAGE_SIZE <= maximum);
     }
 }
 

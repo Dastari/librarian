@@ -2,6 +2,7 @@ import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, DataTable, RelativeTime, TextCell, type DataTableSearch, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
 import { useMemo } from "react";
 
+import { TableToolbar } from "@/components/ui/TableToolbar";
 import { EntityChip } from "@/components/entities/EntityChip";
 import { ErrorState, GlassSegmented } from "@/components/ui";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
@@ -39,9 +40,13 @@ const columns = column.columns([
 ]);
 
 /** Every media file the scanner knows about, with the unmatched ones one filter away. */
-export function FilesBrowser({ libraryId }: { libraryId: string }) {
+export function FilesBrowser({ libraryId, filterPrefix }: {
+  libraryId: string;
+  /** Keeps this list's filters in the URL apart from those of a page behind it. */
+  filterPrefix?: string;
+}) {
   const { user } = useSession();
-  const filters = useBrowserFilters();
+  const filters = useBrowserFilters(filterPrefix);
   const table = useServerTable<MediaFileOrderByInput>({ persistKey: `files.${libraryId}`, defaultSorting: [{ id: "addedAt", desc: true }] });
 
   const where = useMemo<MediaFileWhereInput>(() => {
@@ -90,13 +95,13 @@ export function FilesBrowser({ libraryId }: { libraryId: string }) {
           noun={noun}
           search={search}
           toolbar={
-            <GlassSegmented<AvailabilityFilter>
+            <TableToolbar filter={<GlassSegmented<AvailabilityFilter>
               ariaLabel="File filter"
               size="sm"
               value={filters.availability === "wanted" ? "missing" : filters.availability}
               onChange={filters.setAvailability}
               items={(["all", "missing", "available"] as AvailabilityFilter[]).map((option) => ({ key: option, label: availabilityLabels[option] }))}
-            />
+            />} />
           }
           onRowOpen={(row) => openFileDialog(row.id)}
           rowOpen="click"

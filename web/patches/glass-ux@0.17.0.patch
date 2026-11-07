@@ -1,0 +1,188 @@
+--- a/dist/ui/data-table/data-table.js
++++ b/dist/ui/data-table/data-table.js
+@@ -2126,7 +2126,7 @@
+                                                     : totalRows + 1, "aria-colcount": colCount, "aria-multiselectable": selectable || undefined, "aria-busy": loading ||
+                                                 refetching ||
+                                                 Boolean(infinite?.loadingMore) ||
+-                                                undefined, tabIndex: -1, onKeyDown: onGridKeyDown, children: [mode === "table" ? (_jsx("div", { role: "rowgroup", ref: headRef, className: "glass-inset fa-dt-head", children: _jsx(DataTableHeader, { columns: visibleColumns, sorting: sorting, sized: sized, selectable: selectable, pageSelection: pageSelection(selection, selectOrder), pageRowCount: selectOrder.length, loadedRows: Boolean(infinite), hiddenCount: hiddenColumns.length, expandedAll: expandAll, columnMenu: columnMenu, controller: headerController, filtered: filtered, settings: settingsMenu, reorderable: reorderable, expanderColumn: expanderColumn, expandControl: expandAllControl }) })) : null, _jsx("div", { className: "fa-dt-body", children: _jsx("div", { ref: scrollRef, className: "fa-dt-scroll", "data-scroll-container": "", onScroll: onScroll, children: body }) })] }), _jsx("div", { className: "fa-dt-progress", "aria-hidden": true }), liveRows.pending > 0 ? (_jsx("div", { className: "fa-dt-new", children: _jsx(Button, { size: "sm", variant: "primary", shape: "circle", icon: _jsx(IconArrowUp, {}), onClick: applyPending, children: m.newRows(liveRows.pending) }) })) : null] }), _jsx(DataTableFooter, { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, pageRows: data.length, rowCount: rowCount, pageSizes: pageSizes, cursor: cursor, onPageChange: (pageIndex) => setPagination((current) => ({ ...current, pageIndex })), onPageSizeChange: (pageSize) => setPagination({ pageIndex: 0, pageSize }), compact: compactFooter, disabled: showSkeleton, loading: showSkeleton, updatedAt: updatedAt, status: status, label: label, countLabel: countLabelText, counted: Boolean(grouping) || Boolean(infinite), bulk: {
++                                                undefined, tabIndex: -1, onFocusCapture: (event) => { const hit = lineFromEvent(event.target); if (hit) setActiveIndex(hit.index); }, onKeyDown: onGridKeyDown, children: [mode === "table" ? (_jsx("div", { role: "rowgroup", ref: headRef, className: "glass-inset fa-dt-head", children: _jsx(DataTableHeader, { columns: visibleColumns, sorting: sorting, sized: sized, selectable: selectable, pageSelection: pageSelection(selection, selectOrder), pageRowCount: selectOrder.length, loadedRows: Boolean(infinite), hiddenCount: hiddenColumns.length, expandedAll: expandAll, columnMenu: columnMenu, controller: headerController, filtered: filtered, settings: settingsMenu, reorderable: reorderable, expanderColumn: expanderColumn, expandControl: expandAllControl }) })) : null, _jsx("div", { className: "fa-dt-body", children: _jsx("div", { ref: scrollRef, className: "fa-dt-scroll", "data-scroll-container": "", onScroll: onScroll, children: body }) })] }), _jsx("div", { className: "fa-dt-progress", "aria-hidden": true }), liveRows.pending > 0 ? (_jsx("div", { className: "fa-dt-new", children: _jsx(Button, { size: "sm", variant: "primary", shape: "circle", icon: _jsx(IconArrowUp, {}), onClick: applyPending, children: m.newRows(liveRows.pending) }) })) : null] }), _jsx(DataTableFooter, { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, pageRows: data.length, rowCount: rowCount, pageSizes: pageSizes, cursor: cursor, onPageChange: (pageIndex) => setPagination((current) => ({ ...current, pageIndex })), onPageSizeChange: (pageSize) => setPagination({ pageIndex: 0, pageSize }), compact: compactFooter, disabled: showSkeleton, loading: showSkeleton, updatedAt: updatedAt, status: status, label: label, countLabel: countLabelText, counted: Boolean(grouping) || Boolean(infinite), bulk: {
+                                         count: selected,
+                                         targets: selectedTargets,
+                                         groups: bulkGroups,
+--- a/dist/ui/data-table/infinite.js
++++ b/dist/ui/data-table/infinite.js
+@@ -5,7 +5,7 @@
+ import { RetryButton, SkeletonRow } from "./body.js";
+ import { SkeletonCards } from "./cards.js";
+ export function useLoadMore({ infinite, resultKey, loaded, refetching, failedMessage, }) {
+-    const batch = `${resultKey}\u0000${loaded}`;
++    const batch = `${resultKey}\u0000${infinite?.revision ?? ""}\u0000${loaded}`;
+     const latest = useRef({ infinite, batch, refetching });
+     latest.current = { infinite, batch, refetching };
+     const inFlight = useRef(false);
+--- a/dist/ui/data-table/types.d.ts
++++ b/dist/ui/data-table/types.d.ts
+@@ -71,6 +71,8 @@
+  * the top, as it returns a paged table to page 1.
+  */
+ export interface DataTableInfinite {
++    /** Host snapshot generation. Rearm continuation without resetting scroll, focus or selection. */
++    revision?: string | number;
+     /** The server has rows after the last one in `rows`. */
+     hasMore: boolean;
+     /**
+--- a/dist/ui/media-player/controller.js
++++ b/dist/ui/media-player/controller.js
+@@ -69,6 +69,12 @@
+     let handle = null;
+     let cleanupAttach = null;
+     let reattach = 0;
++    /** The stream engine's length for a playlist still growing; the element under-reports it. */
++    let reportedDuration = 0;
++    const fullDuration = (media) => {
++        const own = Number.isFinite(media.duration) || media.duration === Infinity ? media.duration : 0;
++        return own === Infinity ? own : Math.max(own, reportedDuration);
++    };
+     let cleanupCast = null;
+     let adapter;
+     let casting = false;
+@@ -102,7 +108,7 @@
+             return;
+         const seekable = media.seekable;
+         const last = seekable?.length ? seekable.length - 1 : -1;
+-        const duration = Number.isFinite(media.duration) || media.duration === Infinity ? media.duration : 0;
++        const duration = fullDuration(media);
+         updateTime({
+             currentTime: media.currentTime,
+             duration,
+@@ -210,6 +216,12 @@
+             setQualities: (levels) => live(() => update({ qualities: levels })),
+             setActiveQuality: (id) => live(() => update({ activeQuality: id })),
+             setLive: (value) => live(() => update({ live: value })),
++            setDuration: (seconds) => live(() => {
++                reportedDuration = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
++                if (element)
++                    update({ chapters: normaliseChapters(state.item?.chapters, fullDuration(element)) });
++                readTime();
++            }),
+             fail: () => live(() => fail("stream")),
+         });
+         if (typeof result === "function")
+@@ -226,6 +238,7 @@
+             return;
+         const item = state.item;
+         loaded = signature(item);
++        reportedDuration = 0;
+         clearStall();
+         update({ ready: false, loading: true, ended: false, error: null, buffered: [], qualities: [], activeQuality: null, quality: null, live: Boolean(item?.live), chapters: normaliseChapters(item?.chapters, 0) });
+         updateTime({ currentTime: resumeAt ?? 0, duration: 0, seekableStart: 0, seekableEnd: 0 });
+@@ -263,7 +276,7 @@
+                 resumeAt = null;
+             }
+             const live = state.live || media.duration === Infinity;
+-            update({ ready: true, loading: false, live, chapters: normaliseChapters(state.item?.chapters, media.duration) });
++            update({ ready: true, loading: false, live, chapters: normaliseChapters(state.item?.chapters, fullDuration(media)) });
+             readTime();
+             if (playWhenReady) {
+                 playWhenReady = false;
+@@ -282,7 +295,7 @@
+         on(media, "webkitendfullscreen", () => showNatively(false));
+         on(media, "webkitpresentationmodechanged", () => showNatively(media.webkitPresentationMode === "picture-in-picture"));
+         on(media, "durationchange", () => {
+-            update({ chapters: normaliseChapters(state.item?.chapters, media.duration) });
++            update({ chapters: normaliseChapters(state.item?.chapters, fullDuration(media)) });
+             readTime();
+         });
+         // Some browsers fill `seekable` only after metadata, and nothing else fires while paused.
+--- a/dist/ui/media-player/types.d.ts
++++ b/dist/ui/media-player/types.d.ts
+@@ -128,6 +128,8 @@
+     setActiveQuality(id: string | null): void;
+     /** Report that the stream is live, once the manifest says so. */
+     setLive(live: boolean): void;
++    /** Report the full length when the element under-reports it: a playlist still growing. */
++    setDuration(seconds: number): void;
+     /** Report a fatal stream error. The player shows its error state with Retry. */
+     fail(): void;
+ }
+diff --git a/dist/ui/entity/entity-identity.js b/dist/ui/entity/entity-identity.js
+index 4a37e12..b104993 100644
+--- a/dist/ui/entity/entity-identity.js
++++ b/dist/ui/entity/entity-identity.js
+@@ -202,7 +202,7 @@ function HeaderTier({ parts, dom }) {
+     // first. Buttons give way before the metric, so once the metric has gone the bar is ⋯.
+     const actionsNode = slots?.actions !== undefined ? (slots.actions) : actions && targets.length ? (_jsx(ActionBar, { set: actions, targets: targets, label: name, maxButtons: metric && !metricFits ? 0 : maxActions, available: fit.available })) : null;
+     const stateNode = slots?.state !== undefined ? slots.state : state ? _jsx(EntityStateBadge, { state: state }) : null;
+-    return (_jsxs("header", { ...dom, ...stateData(state), className: cx("fa-entity", dom.className), "data-tier": "header", "data-metric": metric && !metricFits ? "hidden" : undefined, children: [_jsx(WithContextMenu, { actions: actions, targets: targets, name: name, children: _jsxs("div", { ref: rowRef, className: "fa-entity-row", children: [icon || image || portrait ? _jsx(EntityTile, { icon: icon, image: image, portrait: portrait, state: state, count: count, labelled: false, badge: slots?.badge }) : null, _jsxs("div", { className: "fa-entity-heading", children: [_jsxs("div", { className: "fa-entity-titleline", children: [_jsx(Heading, { className: "fa-entity-title", children: _jsx(TitleText, { name: name, title: title, href: href, onOpen: onOpen }) }), stateNode ? _jsx("span", { className: "fa-entity-state", children: stateNode }) : null] }), factsNode ? _jsx("p", { className: "fa-entity-facts", children: factsNode }) : null] }), metric ? _jsx("div", { className: "fa-entity-metric", children: metric }) : null, actionsNode ? _jsx("div", { className: "fa-entity-actions", children: actionsNode }) : null] }) }), tabs ? _jsx("div", { className: "fa-entity-tabs", children: tabs }) : null] }));
++    return (_jsxs("header", { ...dom, ...stateData(state), className: cx("fa-entity", dom.className), "data-tier": "header", "data-metric": metric && !metricFits ? "hidden" : undefined, children: [_jsx(WithContextMenu, { actions: actions, targets: targets, name: name, children: _jsxs("div", { ref: rowRef, className: "fa-entity-row", children: [icon || image || portrait ? _jsx(EntityTile, { icon: icon, image: image, portrait: portrait, state: state, count: count, labelled: false, badge: slots?.badge }) : null, _jsxs("div", { className: "fa-entity-heading", children: [_jsxs("div", { className: "fa-entity-titleline", children: [_jsx(Heading, { className: "fa-entity-title", children: _jsx(TitleText, { name: name, title: title, href: href, onOpen: onOpen }) }), stateNode ? _jsx("span", { className: "fa-entity-state", children: stateNode }) : null] }), factsNode ? _jsx(typeof factsNode === "string" ? "p" : "div", { className: "fa-entity-facts", children: factsNode }) : null] }), metric ? _jsx("div", { className: "fa-entity-metric", children: metric }) : null, actionsNode ? _jsx("div", { className: "fa-entity-actions", children: actionsNode }) : null] }) }), tabs ? _jsx("div", { className: "fa-entity-tabs", children: tabs }) : null] }));
+ }
+ function CompactTier({ parts, dom }) {
+     const { name, title, kind, icon, image, portrait, state, count, facts, actions, targets, href, onOpen, heading = "h2", slots } = parts;
+diff --git a/dist/ui/entity-settings/entity-settings-dialog.js b/dist/ui/entity-settings/entity-settings-dialog.js
+index 142a6bf..e803570 100644
+--- a/dist/ui/entity-settings/entity-settings-dialog.js
++++ b/dist/ui/entity-settings/entity-settings-dialog.js
+@@ -4,7 +4,7 @@ import { useMessages } from "../../lib/i18n/index.js";
+ import { entitySettingsMessages } from "./messages.js";
+ import { useStore } from "@tanstack/react-form";
+ import { useCallback, useEffect, useRef, useState } from "react";
+-import { IconLock, IconRefresh, IconWarning } from "../../icons/generated/icons.js";
++import { IconClose, IconLock, IconRefresh, IconWarning } from "../../icons/generated/icons.js";
+ import { ActionButton, Button } from "../button/index.js";
+ import { feedbackHold } from "../../lib/motion.js";
+ import { Dialog, SettingsSections, useDialogGuard } from "../dialog/index.js";
+@@ -56,7 +56,7 @@ function focusFirstInvalidIn(panel) {
+  *   `confirmOnCancel` asks first too.
+  * - On phones it is a bottom sheet; the rail becomes chips, or a picker past six tabs.
+  */
+-export function EntitySettingsDialog({ open, onOpenChange, confirmOnCancel = false, form, tabs, tab, defaultTab, onTabChange, media, title: titleProp, subtitle, entityName, onSaveError, onSaved, footerStart, size = "lg", preview = false, loading = false, saveDisabledReason, privileged = [], onVerify, onReload, }) {
++export function EntitySettingsDialog({ identity, open, onOpenChange, confirmOnCancel = false, form, tabs, tab, defaultTab, onTabChange, media, title: titleProp, subtitle, entityName, onSaveError, onSaved, footerStart, size = "lg", preview = false, loading = false, saveDisabledReason, privileged = [], onVerify, onReload, }) {
+     const messages = useMessages(entitySettingsMessages);
+     const title = titleProp ?? messages.settings;
+     const [innerTab, setInnerTab] = useState(defaultTab ?? tabs[0]?.value ?? "");
+@@ -199,6 +199,7 @@ export function EntitySettingsDialog({ open, onOpenChange, confirmOnCancel = fal
+         value: entry.value,
+         label: entry.label,
+         icon: entry.icon,
++        count: entry.count,
+         marker: markers[entry.value],
+         content: loading ? (_jsx(TabSkeleton, {})) : (_jsx("div", { className: "fa-form-stack fa-entity-settings-tab", "data-settings-tab": entry.value, children: entry.content })),
+     }));
+@@ -212,7 +213,7 @@ export function EntitySettingsDialog({ open, onOpenChange, confirmOnCancel = fal
+                 event.preventDefault();
+                 event.stopPropagation();
+                 void save();
+-            }, children: [_jsx("div", { ref: rootRef, hidden: true }), _jsx(Dialog.Header, { media: media, title: title, subtitle: subtitle }), _jsx(SettingsSections, { sections: sections, section: current, onSectionChange: select, label: entityName ? messages.entitySettings(entityName) : messages.settingsSections, keepMounted: true }), _jsxs(Dialog.Footer, { start: conflictNotice ?? footerStart, children: [_jsxs(Button, { type: "button", onClick: () => {
++            }, children: [_jsx("div", { ref: rootRef, hidden: true }), identity ? _jsxs("header", { className: "fa-dialog-header", children: [_jsx("div", { style: { flex: "1 1 auto", minWidth: 0 }, children: identity }), _jsx(Dialog.Close, { render: _jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconClose, {}), "aria-label": messages.cancel }) })] }) : _jsx(Dialog.Header, { media: media, title: title, subtitle: subtitle }), _jsx(SettingsSections, { sections: sections, section: current, onSectionChange: select, label: entityName ? messages.entitySettings(entityName) : messages.settingsSections, keepMounted: true }), _jsxs(Dialog.Footer, { start: conflictNotice ?? footerStart, children: [_jsxs(Button, { type: "button", onClick: () => {
+                                 // Through the guard: a dirty form asks first, and discarding resets it.
+                                 if (confirmOnCancel)
+                                     return guard.rootProps.onOpenChange(false);
+@@ -222,5 +223,5 @@ export function EntitySettingsDialog({ open, onOpenChange, confirmOnCancel = fal
+     if (preview) {
+         return (_jsxs(Dialog.Preview, { size: size, kind: "settings", children: [body, guard.confirm] }));
+     }
+-    return (_jsx(Dialog.Root, { ...guard.rootProps, children: _jsxs(Dialog.Popup, { size: size, kind: "settings", initialFocus: () => rootRef.current?.closest(".fa-dialog")?.querySelector('[role="tab"][aria-selected="true"]') ?? true, children: [body, guard.confirm] }) }));
++    return (_jsx(Dialog.Root, { ...guard.rootProps, children: _jsxs(Dialog.Popup, { "aria-label": identity ? entityName : undefined, size: size, kind: "settings", initialFocus: () => rootRef.current?.closest(".fa-dialog")?.querySelector('[role="tab"][aria-selected="true"]') ?? true, children: [body, guard.confirm] }) }));
+ }
+diff --git a/dist/ui/entity-settings/entity-settings-dialog.d.ts b/dist/ui/entity-settings/entity-settings-dialog.d.ts
+index 9fcc932..1b6f58e 100644
+--- a/dist/ui/entity-settings/entity-settings-dialog.d.ts
++++ b/dist/ui/entity-settings/entity-settings-dialog.d.ts
+@@ -32,6 +32,8 @@ export interface EntitySettingsTab {
+     label: string;
+     /** Pass the icon without a size. */
+     icon?: ReactNode;
++    /** A count at the end of the tab: issues, files. */
++    count?: number;
+     /**
+      * The form fields the tab edits, as names or prefixes ("snmp" covers "snmp.port"). They
+      * drive the tab's dots: unsaved changes, and errors after a failed save. A tab that acts
+@@ -61,6 +63,8 @@ export interface EntitySettingsDialogProps {
+     /** Called with the `value` of the tab the person selects. Pair with `tab` to control it; without `tab` the dialog tracks the tab itself. */
+     onTabChange?: (tab: string) => void;
+     /** The entity's identity tile: its glyph or photo with the state dot. */
++    /** The entity's own identity, with its actions, in place of `media`, `title` and `subtitle`. Name the dialog with `entityName`. */
++    identity?: ReactNode;
+     media?: ReactNode;
+     /** Default "Settings". */
+     title?: ReactNode;

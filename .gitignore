@@ -58,3 +58,6 @@ coverage/
 tmp/
 temp/
 *.tmp
+
+# Personal API key
+.typesafe_jev_key

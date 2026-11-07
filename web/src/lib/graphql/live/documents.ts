@@ -21,6 +21,8 @@ const entityDocuments = {
   Chapter: G.EntityChapterChangedDocument,
   Collection: G.EntityCollectionChangedDocument,
   Episode: G.EntityEpisodeChangedDocument,
+  IdentificationEvent: G.EntityIdentificationEventChangedDocument,
+  IdentifiedItem: G.EntityIdentifiedItemChangedDocument,
   InviteToken: G.EntityInviteTokenChangedDocument,
   LibraryScanIssue: G.EntityLibraryScanIssueChangedDocument,
   LibraryScanRun: G.EntityLibraryScanRunChangedDocument,
@@ -102,6 +104,8 @@ const extraRoots: Record<string, readonly LiveTopic[]> = {
   hasEnabledSources: ["EnabledSources"],
   resumeShelf: ["PlaybackProgress", "PlaybackSession", "MediaFile", "Movie", "Show", "Episode", "Album", "Artist", "Track", "Audiobook", "Chapter", "Library"],
   liveTorrents: runtimeTopics, liveTorrent: runtimeTopics,
+  // Stored progress changes every few seconds, which is also when more files finish.
+  torrentMatchPreview: ["Torrent", "TorrentAdded", "TorrentCompleted", "TorrentRemoved"],
   movieCollectionDetails: ["Collection", "Movie", "MediaFile"],
   backupCapabilities: ["Backup"], backupSnapshots: ["Backup"],
   availableSourceDefinitions: ["Source"], sourceSettingDefinitions: ["Source"],

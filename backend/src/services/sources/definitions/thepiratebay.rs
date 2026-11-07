@@ -294,14 +294,10 @@ impl Source for ThePirateBaySource {
             release.upload_volume_factor = 1.0;
 
             // TPB search endpoint does broad matching, so do lightweight client-side title filtering.
-            if let Some(ref term) = query.search_term {
-                let t = term.trim().to_lowercase();
-                if !t.is_empty() {
-                    let title = release.title.to_lowercase();
-                    if !t.split_whitespace().all(|w| title.contains(w)) {
-                        continue;
-                    }
-                }
+            if let Some(ref term) = query.search_term
+                && !crate::services::release_match::title_has_all_words(term, &release.title)
+            {
+                continue;
             }
 
             releases.push(release);

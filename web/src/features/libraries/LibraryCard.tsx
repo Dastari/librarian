@@ -80,7 +80,7 @@ export function LibraryCard({ library, className, size = "md" }: LibraryCardProp
       <div className={cn("glass-panel absolute inset-x-0 bottom-0 -z-10 rounded-b-card border-x-0 border-b-0 shadow-none", size === "lg" ? "h-[6.5rem]" : "h-[46%]")} />
       <div className="absolute inset-0 -z-10 bg-gradient-to-t from-background/70 via-transparent to-background/20" />
       <div className="relative flex items-start justify-between p-4">
-        <span className={cn("glass-control grid size-11 place-items-center rounded-xl", meta.tint)}>
+        <span className={"glass-control grid size-11 place-items-center rounded-xl text-foreground"}>
           <meta.icon size={24} stroke={1.75} />
         </span>
         {library.scanning ? (

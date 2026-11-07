@@ -633,6 +633,31 @@ impl LibraryScanMutations {
         }
     }
 
+    /// Check a Jev key, the one given or the saved one, without saving anything.
+    #[graphql(name = "testJevConnection")]
+    async fn test_jev_connection(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "apiKey")] api_key: Option<String>,
+    ) -> async_graphql::Result<OllamaConnectionResult> {
+        ctx.require_admin()?;
+        let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
+        Ok(
+            match crate::services::jev::Jev::test(services, api_key).await {
+                Ok(models) => OllamaConnectionResult {
+                    success: true,
+                    models,
+                    error: None,
+                },
+                Err(error) => OllamaConnectionResult {
+                    success: false,
+                    models: Vec::new(),
+                    error: Some(error.to_string()),
+                },
+            },
+        )
+    }
+
     #[graphql(name = "testOllamaConnection")]
     async fn test_ollama_connection(
         &self,

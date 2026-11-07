@@ -16,6 +16,12 @@ interface MediaActionsProps {
   settings?: () => void;
   refresh?: { pending: boolean; run: () => Promise<void> };
   remove?: () => void;
+  /** Puts back the provider's chapters after a release's own replaced them. */
+  restoreChapters?: () => void;
+  /** Checks a book's chapter times by listening for them being announced. */
+  checkChapters?: { pending: boolean; run: () => void };
+  /** Makes a book a different listing, keeping its files. */
+  changeEdition?: () => void;
 }
 
 /**
@@ -24,7 +30,7 @@ interface MediaActionsProps {
  * the same action set. The bar after Play is told how much room is left so it folds into
  * More instead of wrapping, and stays left-aligned beside the button.
  */
-export function MediaActions({ id, label, personal, play, wanted, enqueue, find, settings, refresh, remove }: MediaActionsProps) {
+export function MediaActions({ id, label, personal, play, wanted, enqueue, find, settings, refresh, remove, restoreChapters, checkChapters, changeEdition }: MediaActionsProps) {
   const [saving, setSaving] = useState(false);
   const targets = useMemo(() => [id], [id]);
   const set = useMemo(() => {
@@ -36,10 +42,13 @@ export function MediaActions({ id, label, personal, play, wanted, enqueue, find,
     if (find) actions.push({ id: "find", label: "Find releases", icon: IconDownload, group: "manage", priority: 2, primary: !play, run: find });
     if (settings) actions.push({ id: "settings", label: "Download settings", icon: IconSettings, group: "manage", run: settings });
     if (refresh) actions.push({ id: "refresh", label: "Refresh metadata", icon: IconRefresh, group: "manage", disabledReason: () => refresh.pending ? "Metadata refresh is in progress" : false, run: refresh.run, successMessage: () => "Metadata refreshed" });
+    if (changeEdition) actions.push({ id: "change-edition", label: "Change edition", icon: IconRefresh, group: "manage", run: changeEdition });
+    if (checkChapters) actions.push({ id: "check-chapters", label: "Check chapters by listening", icon: IconRefresh, group: "manage", disabledReason: () => checkChapters.pending ? "Already listening." : undefined, run: checkChapters.run });
+    if (restoreChapters) actions.push({ id: "restore-chapters", label: "Use the listed chapters", icon: IconRefresh, group: "manage", run: restoreChapters });
     // Existing page confirmation owns removal and pending state.
     if (remove) actions.push({ id: "remove", label: "Remove from library", icon: IconTrash, group: "danger", run: remove });
     return defineActions("media", actions);
-  }, [play, wanted, personal, enqueue, find, settings, refresh, remove]);
+  }, [play, wanted, personal, enqueue, find, settings, refresh, remove, restoreChapters, checkChapters, changeEdition]);
   usePaletteActions(set, targets, label);
 
   const row = useRef<HTMLDivElement>(null);

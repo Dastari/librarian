@@ -44,6 +44,7 @@ const IMPORT: Record<string, { label: string; tone: BadgeTone }> = {
   completed: { label: "Imported", tone: "success" },
   failed: { label: "Import failed", tone: "danger" },
   unmatched: { label: "No match", tone: "warning" },
+  needs_review: { label: "Needs review", tone: "warning" },
 };
 
 /** Post-processing outcome. Null means not attempted yet (still downloading, or waiting). */

@@ -776,6 +776,28 @@ type Audiobook {
 	goodreadsId: String
 	totalDurationSecs: Int
 	chapterCount: Int
+	seriesName: String
+	seriesPosition: String
+	"""
+	Where the chapters came from: `provider`, `embedded`, `files` or `parts`.
+	"""
+	chapterSource: String
+	"""
+	How the book's files are cut: `whole_book`, `per_chapter` or `parts`.
+	"""
+	fileShape: String
+	"""
+	Whether chapters are being checked by listening: `listening`, `done` or `failed`.
+	"""
+	chapterCheckState: String
+	"""
+	What listening found, in plain words.
+	"""
+	chapterCheck: String
+	"""
+	The provider's chapter list, kept while the release's own chapters replace it. JSON.
+	"""
+	providerChapters: String
 	coverUrl: String
 	autoDownload: Boolean!
 	autoDownloadMode: AutoDownloadMode!
@@ -900,6 +922,7 @@ input AudiobookWhereInput {
 	goodreadsId: StringFilter
 	totalDurationSecs: IntFilter
 	chapterCount: IntFilter
+	seriesName: StringFilter
 	autoDownload: BoolFilter
 	qualityProfileId: StringFilter
 	hasFiles: BoolFilter
@@ -1482,6 +1505,11 @@ type Chapter {
 	startTimeSecs: Float!
 	endTimeSecs: Float
 	durationSecs: Int
+	"""
+	Where this chapter starts in its file, when files don't line up with chapters. `None` means
+	the file starts with it, or holds the whole book and `startTimeSecs` is the position.
+	"""
+	fileOffsetSecs: Float
 	wanted: Boolean!
 	"""
 	Explicit user opt-out. `None` is the legacy/default false value.
@@ -1590,6 +1618,10 @@ type Collection {
 	userId: String!
 	tmdbCollectionId: Int!
 	name: String!
+	"""
+	How it sorts: its name without a leading "The", "A" or "An".
+	"""
+	sortName: String
 	overview: String
 	posterUrl: String
 	backdropUrl: String
@@ -1650,6 +1682,7 @@ type CollectionEdge {
 
 input CollectionOrderByInput {
 	name: OrderDirection
+	sortName: OrderDirection
 	movieCount: OrderDirection
 	lastSyncedAt: OrderDirection
 	createdAt: OrderDirection
@@ -1671,6 +1704,7 @@ input CollectionWhereInput {
 	userId: StringFilter
 	tmdbCollectionId: IntFilter
 	name: StringFilter
+	sortName: StringFilter
 	movieCount: IntFilter
 	lastSyncedAt: DateFilter
 	createdAt: DateFilter
@@ -1864,6 +1898,13 @@ input CreateAudiobookInput {
 	goodreadsId: String
 	totalDurationSecs: Int
 	chapterCount: Int
+	seriesName: String
+	seriesPosition: String
+	chapterSource: String
+	fileShape: String
+	chapterCheckState: String
+	chapterCheck: String
+	providerChapters: String
 	coverUrl: String
 	autoDownload: Boolean!
 	autoDownloadMode: AutoDownloadMode!
@@ -1929,6 +1970,7 @@ input CreateChapterInput {
 	startTimeSecs: Float!
 	endTimeSecs: Float
 	durationSecs: Int
+	fileOffsetSecs: Float
 	wanted: Boolean!
 	ignored: Boolean
 	mediaFileId: String
@@ -1939,6 +1981,7 @@ input CreateCollectionInput {
 	userId: String!
 	tmdbCollectionId: Int!
 	name: String!
+	sortName: String
 	overview: String
 	posterUrl: String
 	backdropUrl: String
@@ -1982,6 +2025,46 @@ input CreateHomeShelfInput {
 	visible: Boolean!
 	listId: String
 	libraryId: String
+}
+
+input CreateIdentificationEventInput {
+	userId: String!
+	infoHash: String!
+	runId: String!
+	trigger: String!
+	sequence: Int!
+	status: String!
+	message: String!
+	detail: String
+	durationMs: Int
+}
+
+input CreateIdentifiedItemInput {
+	userId: String!
+	infoHash: String!
+	itemKey: String!
+	kind: String!
+	status: String!
+	label: String!
+	title: String
+	creator: String
+	year: Int
+	coverUrl: String
+	fileCount: Int!
+	finishedFiles: Int!
+	seconds: Float
+	confidence: Float!
+	summary: String
+	evidence: String!
+	candidates: String!
+	filePaths: String!
+	identity: String!
+	providerId: String
+	libraryItemType: String
+	libraryItemId: String
+	libraryId: String
+	season: Int
+	canAccept: Boolean!
 }
 
 input CreateInviteTokenInput {
@@ -2047,6 +2130,13 @@ input CreateListEntryInput {
 	albumId: String
 	audiobookId: String
 	trackId: String
+}
+
+input CreateMatchingAssistantInput {
+	enabled: Boolean!
+	model: String!
+	apiKey: String!
+	hasApiKey: Boolean!
 }
 
 input CreateMediaFileInput {
@@ -2410,6 +2500,9 @@ input CreateTorrentInput {
 	sourceIndexerId: String
 	libraryId: String
 	postProcessStatus: String
+	identificationStatus: String
+	identificationKind: String
+	identificationSummary: String
 	postProcessError: String
 	processedAt: String
 	episodeId: String
@@ -2610,6 +2703,24 @@ type DeleteHomeShelvesResult {
 """
 Result of bulk delete by Where filter
 """
+type DeleteIdentificationEventsResult {
+	success: Boolean!
+	error: String
+	deletedCount: Int!
+}
+
+"""
+Result of bulk delete by Where filter
+"""
+type DeleteIdentifiedItemsResult {
+	success: Boolean!
+	error: String
+	deletedCount: Int!
+}
+
+"""
+Result of bulk delete by Where filter
+"""
 type DeleteInviteTokensResult {
 	success: Boolean!
 	error: String
@@ -2647,6 +2758,15 @@ type DeleteLibraryScanIssuesResult {
 Result of bulk delete by Where filter
 """
 type DeleteListEntriesResult {
+	success: Boolean!
+	error: String
+	deletedCount: Int!
+}
+
+"""
+Result of bulk delete by Where filter
+"""
+type DeleteMatchingAssistantsResult {
 	success: Boolean!
 	error: String
 	deletedCount: Int!
@@ -3152,6 +3272,382 @@ input HomeShelfWhereInput {
 	Logical NOT of condition
 	"""
 	not: HomeShelfWhereInput
+}
+
+"""
+Something a download could be.
+"""
+type IdentificationCandidate {
+	source: String!
+	provider: String
+	providerId: String
+	libraryItemType: String
+	libraryItemId: String
+	libraryId: String
+	title: String!
+	creator: String
+	narrator: String
+	year: Int
+	coverUrl: String
+	seconds: Float
+	chapters: Int
+	lengthPercent: Float
+	fit: String
+	score: Float!
+	reasons: [String!]!
+}
+
+"""
+One step of working out what a download is: what was tried, what it found and how long it took. Steps are grouped by run, and a download keeps only its last few runs.
+"""
+type IdentificationEvent {
+	"""
+	Id
+	"""
+	id: String!
+	"""
+	User Id
+	"""
+	userId: String!
+	"""
+	Info Hash
+	"""
+	infoHash: String!
+	"""
+	Which run this step belongs to. Sorting by it keeps a run's steps together.
+	"""
+	runId: String!
+	"""
+	What started the run, shown on its first step.
+	"""
+	trigger: String!
+	"""
+	Sequence
+	"""
+	sequence: Int!
+	"""
+	`running`, `done`, `found`, `warning`, `skipped` or `failed`.
+	"""
+	status: String!
+	"""
+	Message
+	"""
+	message: String!
+	"""
+	Detail
+	"""
+	detail: String
+	"""
+	Duration Ms
+	"""
+	durationMs: Int
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type IdentificationEventChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	identificationEvent: IdentificationEvent
+}
+
+"""
+Connection containing edges and page info
+"""
+type IdentificationEventConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [IdentificationEventEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type IdentificationEventEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: IdentificationEvent!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input IdentificationEventOrderByInput {
+	runId: OrderDirection
+	sequence: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+"""
+Result type for #struct_name mutations
+"""
+type IdentificationEventResult {
+	success: Boolean!
+	error: String
+	identificationEvent: IdentificationEvent
+}
+
+input IdentificationEventWhereInput {
+	id: StringFilter
+	userId: StringFilter
+	infoHash: StringFilter
+	runId: StringFilter
+	sequence: IntFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [IdentificationEventWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [IdentificationEventWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: IdentificationEventWhereInput
+}
+
+"""
+Something found in a download: a book, an album, a season, a movie. It says what it most likely is, what else it could be, and whether it has reached the library.
+"""
+type IdentifiedItem {
+	"""
+	Id
+	"""
+	id: String!
+	"""
+	User Id
+	"""
+	userId: String!
+	"""
+	Info Hash
+	"""
+	infoHash: String!
+	"""
+	Identifies it within the download across runs, such as a book's group of files.
+	"""
+	itemKey: String!
+	"""
+	`audiobook`, `music`, `tv`, `movie`, `ebook` or `unknown`.
+	"""
+	kind: String!
+	"""
+	`imported`, `wanted`, `in_library`, `identified`, `needs_choice` or `unknown`.
+	"""
+	status: String!
+	"""
+	What its files say it is.
+	"""
+	label: String!
+	"""
+	What it was identified as, once it has been.
+	"""
+	title: String
+	"""
+	The author, artist or show.
+	"""
+	creator: String
+	"""
+	Year
+	"""
+	year: Int
+	"""
+	Cover Url
+	"""
+	coverUrl: String
+	"""
+	File Count
+	"""
+	fileCount: Int!
+	"""
+	How many of its files have finished downloading.
+	"""
+	finishedFiles: Int!
+	"""
+	Seconds
+	"""
+	seconds: Float
+	"""
+	Zero to one.
+	"""
+	confidence: Float!
+	"""
+	One line on what it is or what's needed.
+	"""
+	summary: String
+	"""
+	Why it's thought to be this. JSON list of strings.
+	"""
+	evidence: String!
+	"""
+	What else it could be, best first. JSON list of candidates.
+	"""
+	candidates: String!
+	"""
+	Its files' paths. JSON list of strings.
+	"""
+	filePaths: String!
+	"""
+	What its files say about themselves, to compare listings with. JSON.
+	"""
+	identity: String!
+	"""
+	The provider listing it matched.
+	"""
+	providerId: String
+	"""
+	`Audiobook`, `Album`, `Show` or `Movie`: what it matched in the library.
+	"""
+	libraryItemType: String
+	"""
+	Library Item Id
+	"""
+	libraryItemId: String
+	"""
+	Library Id
+	"""
+	libraryId: String
+	"""
+	Season number for a TV item.
+	"""
+	season: Int
+	"""
+	A person can import it despite what the plan says.
+	"""
+	canAccept: Boolean!
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type IdentifiedItemChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	identifiedItem: IdentifiedItem
+}
+
+"""
+Connection containing edges and page info
+"""
+type IdentifiedItemConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [IdentifiedItemEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type IdentifiedItemEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: IdentifiedItem!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input IdentifiedItemOrderByInput {
+	title: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+"""
+Result type for #struct_name mutations
+"""
+type IdentifiedItemResult {
+	success: Boolean!
+	error: String
+	identifiedItem: IdentifiedItem
+}
+
+input IdentifiedItemWhereInput {
+	id: StringFilter
+	userId: StringFilter
+	infoHash: StringFilter
+	itemKey: StringFilter
+	kind: StringFilter
+	status: StringFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [IdentifiedItemWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [IdentifiedItemWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: IdentifiedItemWhereInput
+}
+
+"""
+What a person decided a result is.
+"""
+input ImportIdentifiedItemInput {
+	itemId: String!
+	"""
+	A listing to add to the library first.
+	"""
+	providerId: String
+	"""
+	Something already in the library.
+	"""
+	libraryItemId: String
+	"""
+	Which library to add it to, when there's a choice.
+	"""
+	libraryId: String
+	"""
+	Import even though the plan asks for review.
+	"""
+	acceptReview: Boolean
 }
 
 input IntFilter {
@@ -3978,6 +4474,14 @@ input ListEntryWhereInput {
 }
 
 """
+Whether listening to recordings is possible here.
+"""
+type ListeningStatus {
+	available: Boolean!
+	detail: String!
+}
+
+"""
 Live torrent (from torrent client, not DB)
 """
 type LiveTorrent {
@@ -4103,6 +4607,110 @@ enum MatchWantedPolicy {
 	PREFER_WANTED
 	WANTED_ONLY
 	ALL
+}
+
+"""
+The optional service asked to settle release matches that names, tags and lengths can't. There is one row at most.
+"""
+type MatchingAssistant {
+	"""
+	Id
+	"""
+	id: String!
+	"""
+	Enabled
+	"""
+	enabled: Boolean!
+	"""
+	Model
+	"""
+	model: String!
+	"""
+	Whether a key is stored, since the key itself can't be read. Set by the write transform.
+	"""
+	hasApiKey: Boolean!
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type MatchingAssistantChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	matchingAssistant: MatchingAssistant
+}
+
+"""
+Connection containing edges and page info
+"""
+type MatchingAssistantConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [MatchingAssistantEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type MatchingAssistantEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: MatchingAssistant!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input MatchingAssistantOrderByInput {
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+"""
+Result type for #struct_name mutations
+"""
+type MatchingAssistantResult {
+	success: Boolean!
+	error: String
+	matchingAssistant: MatchingAssistant
+}
+
+input MatchingAssistantWhereInput {
+	id: StringFilter
+	enabled: BoolFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [MatchingAssistantWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [MatchingAssistantWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: MatchingAssistantWhereInput
 }
 
 """
@@ -4899,6 +5507,10 @@ type Mutation {
 	takes an administrator, whoever owns the library.
 	"""
 	deleteMediaFileFromDisk(mediaFileId: String!): DeleteMediaFileFromDiskResult!
+	"""
+	Check a Jev key, the one given or the saved one, without saving anything.
+	"""
+	testJevConnection(apiKey: String): OllamaConnectionResult!
 	testOllamaConnection(input: TestOllamaConnectionInput!): OllamaConnectionResult!
 	testLlmParser(input: TestLlmParserInput!): LlmParserTestResult!
 	"""
@@ -4923,6 +5535,31 @@ type Mutation {
 	Say what one file of a download is, and import it as that.
 	"""
 	matchTorrentFile(input: MatchTorrentFileInput!): RematchSourceResult!
+	"""
+	Work out what a download is again.
+	"""
+	identifyTorrent(		infoHash: String!,
+		"""
+		Treat it as this kind: audiobook, music, tv or movie. `auto` goes back to working it out.
+		"""
+		kind: String
+	): RematchSourceResult!
+	"""
+	Bring in something identification found, as what a person says it is.
+	"""
+	importIdentifiedItem(input: ImportIdentifiedItemInput!): RematchSourceResult!
+	"""
+	Make a book a different listing, keeping its files.
+	"""
+	changeAudiobookEdition(audiobookId: String!, providerId: String!): RematchSourceResult!
+	"""
+	Check a book's chapters by listening for them, in the background.
+	"""
+	listenToAudiobookChapters(audiobookId: String!): RematchSourceResult!
+	"""
+	Put a book's provider chapters back after a release's own replaced them.
+	"""
+	restoreAudiobookChapters(audiobookId: String!): RematchSourceResult!
 	"""
 	Re-run matching for files from a source.
 	"""
@@ -7065,6 +7702,180 @@ type Mutation {
 	): DeleteCastSettingsResult!
 	"""
 	Create a new #struct_name_str
+	Create one MatchingAssistant records
+	"""
+	createMatchingAssistant(
+		"""
+		Input
+		"""
+		input: CreateMatchingAssistantInput!
+	): MatchingAssistantResult!
+	"""
+	Update an existing #struct_name_str
+	Update one MatchingAssistant records
+	"""
+	updateMatchingAssistant(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdateMatchingAssistantInput!
+	): MatchingAssistantResult!
+	"""
+	Delete a #struct_name_str
+	Delete one MatchingAssistant records
+	"""
+	deleteMatchingAssistant(
+		"""
+		Id
+		"""
+		id: String!
+	): MatchingAssistantResult!
+	"""
+	Update multiple #plural_name matching the given Where filter
+	Update matching MatchingAssistant records
+	"""
+	updateMatchingAssistants(
+		"""
+		Where
+		"""
+		where: MatchingAssistantWhereInput,
+		"""
+		Input
+		"""
+		input: UpdateMatchingAssistantInput!
+	): UpdateMatchingAssistantsResult!
+	"""
+	Delete multiple #plural_name matching the given Where filter
+	Delete matching MatchingAssistant records
+	"""
+	deleteMatchingAssistants(
+		"""
+		Where
+		"""
+		where: MatchingAssistantWhereInput
+	): DeleteMatchingAssistantsResult!
+	"""
+	Create a new #struct_name_str
+	Create one IdentificationEvent records
+	"""
+	createIdentificationEvent(
+		"""
+		Input
+		"""
+		input: CreateIdentificationEventInput!
+	): IdentificationEventResult!
+	"""
+	Update an existing #struct_name_str
+	Update one IdentificationEvent records
+	"""
+	updateIdentificationEvent(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdateIdentificationEventInput!
+	): IdentificationEventResult!
+	"""
+	Delete a #struct_name_str
+	Delete one IdentificationEvent records
+	"""
+	deleteIdentificationEvent(
+		"""
+		Id
+		"""
+		id: String!
+	): IdentificationEventResult!
+	"""
+	Update multiple #plural_name matching the given Where filter
+	Update matching IdentificationEvent records
+	"""
+	updateIdentificationEvents(
+		"""
+		Where
+		"""
+		where: IdentificationEventWhereInput,
+		"""
+		Input
+		"""
+		input: UpdateIdentificationEventInput!
+	): UpdateIdentificationEventsResult!
+	"""
+	Delete multiple #plural_name matching the given Where filter
+	Delete matching IdentificationEvent records
+	"""
+	deleteIdentificationEvents(
+		"""
+		Where
+		"""
+		where: IdentificationEventWhereInput
+	): DeleteIdentificationEventsResult!
+	"""
+	Create a new #struct_name_str
+	Create one IdentifiedItem records
+	"""
+	createIdentifiedItem(
+		"""
+		Input
+		"""
+		input: CreateIdentifiedItemInput!
+	): IdentifiedItemResult!
+	"""
+	Update an existing #struct_name_str
+	Update one IdentifiedItem records
+	"""
+	updateIdentifiedItem(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdateIdentifiedItemInput!
+	): IdentifiedItemResult!
+	"""
+	Delete a #struct_name_str
+	Delete one IdentifiedItem records
+	"""
+	deleteIdentifiedItem(
+		"""
+		Id
+		"""
+		id: String!
+	): IdentifiedItemResult!
+	"""
+	Update multiple #plural_name matching the given Where filter
+	Update matching IdentifiedItem records
+	"""
+	updateIdentifiedItems(
+		"""
+		Where
+		"""
+		where: IdentifiedItemWhereInput,
+		"""
+		Input
+		"""
+		input: UpdateIdentifiedItemInput!
+	): UpdateIdentifiedItemsResult!
+	"""
+	Delete multiple #plural_name matching the given Where filter
+	Delete matching IdentifiedItem records
+	"""
+	deleteIdentifiedItems(
+		"""
+		Where
+		"""
+		where: IdentifiedItemWhereInput
+	): DeleteIdentifiedItemsResult!
+	"""
+	Create a new #struct_name_str
 	Create one ScheduleCache records
 	"""
 	createScheduleCache(
@@ -8703,6 +9514,23 @@ type Query {
 	"""
 	torrentFileCandidates(infoHash: String!, fileIndex: Int!, libraryId: String!): [TorrentFileCandidate!]!
 	"""
+	What a result of identifying a download could be: a person's own search, or the first one.
+	"""
+	identificationCandidates(itemId: String!, query: String): [IdentificationCandidate!]!
+	"""
+	Other listings of a book, compared with its files.
+	"""
+	audiobookEditions(audiobookId: String!, query: String): [IdentificationCandidate!]!
+	"""
+	Whether this server can listen to recordings.
+	"""
+	listeningStatus: ListeningStatus!
+	"""
+	What matching makes of a download's files, from names and sizes until they have downloaded
+	and from their tags and lengths after. Changes nothing.
+	"""
+	torrentMatchPreview(infoHash: String!): TorrentMatchPreview!
+	"""
 	Get all torrents with live state from the torrent client
 	"""
 	liveTorrents: [LiveTorrent!]!
@@ -9988,6 +10816,90 @@ type Query {
 	): UsenetServer
 	"""
 	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List MatchingAssistant records
+	"""
+	matchingAssistants(
+		"""
+		Where
+		"""
+		where: MatchingAssistantWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [MatchingAssistantOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): MatchingAssistantConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one MatchingAssistant records
+	"""
+	matchingAssistant(
+		"""
+		Id
+		"""
+		id: String!
+	): MatchingAssistant
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List IdentificationEvent records
+	"""
+	identificationEvents(
+		"""
+		Where
+		"""
+		where: IdentificationEventWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [IdentificationEventOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): IdentificationEventConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one IdentificationEvent records
+	"""
+	identificationEvent(
+		"""
+		Id
+		"""
+		id: String!
+	): IdentificationEvent
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List IdentifiedItem records
+	"""
+	identifiedItems(
+		"""
+		Where
+		"""
+		where: IdentifiedItemWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [IdentifiedItemOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): IdentifiedItemConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one IdentifiedItem records
+	"""
+	identifiedItem(
+		"""
+		Id
+		"""
+		id: String!
+	): IdentifiedItem
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
 	List UsenetDownload records
 	"""
 	usenetDownloads(
@@ -11258,6 +12170,11 @@ input SearchSourcesInput {
 	A movie can return multiple torrent variants; all are preserved.
 	"""
 	limit: Int
+	"""
+	If nothing is found, try wider terms built from the target's title and author. For a default
+	search: a term someone typed is searched as they typed it.
+	"""
+	autoWiden: Boolean
 }
 
 type Season {
@@ -11809,6 +12726,23 @@ type SourceReleaseInfo {
 	Source-scoped hash/GUID identity for deduplicating continued pages.
 	"""
 	stableId: String!
+	"""
+	For book searches: `audio`, `ebook` or `unknown`.
+	"""
+	format: String
+	formatReason: String
+	"""
+	For book searches: how many books the release's name says it holds, like `5 books`.
+	"""
+	packHint: String
+	"""
+	For a search for one book: how well the name fits it, from 0 to 1.
+	"""
+	relevance: Float
+	"""
+	For a search for one book: the other book of the series this release names.
+	"""
+	otherBookNumber: Int
 	title: String!
 	guid: String!
 	link: String
@@ -11921,6 +12855,14 @@ type SourceSearchResultSet {
 	Number of per-source result entries, including failed/unavailable sources.
 	"""
 	sourcesSearched: Int!
+	"""
+	What was actually searched for, which differs from the request after cleaning or widening.
+	"""
+	searchedTerm: String!
+	"""
+	True when the requested term found nothing and a wider one was used instead.
+	"""
+	widened: Boolean!
 }
 
 """
@@ -12786,6 +13728,60 @@ type Subscription {
 	): UsenetServerChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
+	Observe changes to MatchingAssistant records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	matchingAssistantChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): MatchingAssistantChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
+	Observe changes to IdentificationEvent records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	identificationEventChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): IdentificationEventChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
+	Observe changes to IdentifiedItem records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	identifiedItemChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): IdentifiedItemChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
 	Observe changes to UsenetDownload records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
 	"""
 	usenetDownloadChanged(
@@ -13133,6 +14129,18 @@ type Torrent {
 	sourceIndexerId: String
 	libraryId: String
 	postProcessStatus: String
+	"""
+	How identifying this download is going: `running`, `done` or `failed`.
+	"""
+	identificationStatus: String
+	"""
+	What a person said this download is, when identification got it wrong.
+	"""
+	identificationKind: String
+	"""
+	One line on what it was found to be.
+	"""
+	identificationSummary: String
 	postProcessError: String
 	processedAt: String
 	episodeId: String
@@ -13416,6 +14424,58 @@ input TorrentFileWhereInput {
 	not: TorrentFileWhereInput
 }
 
+type TorrentMatchFile {
+	fileIndex: Int!
+	groupKey: String
+	"""
+	`match`, `review`, `other` or `none`.
+	"""
+	status: String!
+	target: String
+	detail: String
+	warning: String
+}
+
+"""
+One book, or what looks like one, in a download.
+"""
+type TorrentMatchGroup {
+	key: String!
+	label: String!
+	fileCount: Int!
+	seconds: Float
+	isTarget: Boolean!
+	bookId: String
+	bookTitle: String
+	author: String
+}
+
+"""
+What matching makes of a download. Shown while it downloads and after, and based on the same plan
+the import uses, so a wrong match can be seen before anything moves.
+"""
+type TorrentMatchPreview {
+	"""
+	`ready`, `review`, `unlinked` or `none`.
+	"""
+	status: String!
+	summary: String
+	"""
+	Why it needs a person.
+	"""
+	reason: String
+	canAccept: Boolean!
+	chapterSource: String
+	fileShape: String
+	evidence: [String!]!
+	"""
+	False while the plan rests only on names and sizes.
+	"""
+	completeFacts: Boolean!
+	groups: [TorrentMatchGroup!]!
+	files: [TorrentMatchFile!]!
+}
+
 input TorrentOrderByInput {
 	name: OrderDirection
 	state: OrderDirection
@@ -13466,6 +14526,7 @@ input TorrentWhereInput {
 	sourceIndexerId: StringFilter
 	libraryId: StringFilter
 	postProcessStatus: StringFilter
+	identificationStatus: StringFilter
 	processedAt: DateFilter
 	episodeId: StringFilter
 	movieId: StringFilter
@@ -13882,6 +14943,13 @@ input UpdateAudiobookInput {
 	goodreadsId: String
 	totalDurationSecs: Int
 	chapterCount: Int
+	seriesName: String
+	seriesPosition: String
+	chapterSource: String
+	fileShape: String
+	chapterCheckState: String
+	chapterCheck: String
+	providerChapters: String
 	coverUrl: String
 	autoDownload: Boolean
 	autoDownloadMode: AutoDownloadMode
@@ -13983,6 +15051,7 @@ input UpdateChapterInput {
 	startTimeSecs: Float
 	endTimeSecs: Float
 	durationSecs: Int
+	fileOffsetSecs: Float
 	wanted: Boolean
 	ignored: Boolean
 	mediaFileId: String
@@ -14002,6 +15071,7 @@ input UpdateCollectionInput {
 	userId: String
 	tmdbCollectionId: Int
 	name: String
+	sortName: String
 	overview: String
 	posterUrl: String
 	backdropUrl: String
@@ -14059,6 +15129,64 @@ input UpdateHomeShelfInput {
 Result of bulk update by Where filter
 """
 type UpdateHomeShelvesResult {
+	success: Boolean!
+	error: String
+	affectedCount: Int!
+}
+
+input UpdateIdentificationEventInput {
+	userId: String
+	infoHash: String
+	runId: String
+	trigger: String
+	sequence: Int
+	status: String
+	message: String
+	detail: String
+	durationMs: Int
+}
+
+"""
+Result of bulk update by Where filter
+"""
+type UpdateIdentificationEventsResult {
+	success: Boolean!
+	error: String
+	affectedCount: Int!
+}
+
+input UpdateIdentifiedItemInput {
+	userId: String
+	infoHash: String
+	itemKey: String
+	kind: String
+	status: String
+	label: String
+	title: String
+	creator: String
+	year: Int
+	coverUrl: String
+	fileCount: Int
+	finishedFiles: Int
+	seconds: Float
+	confidence: Float
+	summary: String
+	evidence: String
+	candidates: String
+	filePaths: String
+	identity: String
+	providerId: String
+	libraryItemType: String
+	libraryItemId: String
+	libraryId: String
+	season: Int
+	canAccept: Boolean
+}
+
+"""
+Result of bulk update by Where filter
+"""
+type UpdateIdentifiedItemsResult {
 	success: Boolean!
 	error: String
 	affectedCount: Int!
@@ -14172,6 +15300,22 @@ input UpdateListEntryInput {
 	albumId: String
 	audiobookId: String
 	trackId: String
+}
+
+input UpdateMatchingAssistantInput {
+	enabled: Boolean
+	model: String
+	apiKey: String
+	hasApiKey: Boolean
+}
+
+"""
+Result of bulk update by Where filter
+"""
+type UpdateMatchingAssistantsResult {
+	success: Boolean!
+	error: String
+	affectedCount: Int!
 }
 
 input UpdateMediaFileInput {
@@ -14734,6 +15878,9 @@ input UpdateTorrentInput {
 	sourceIndexerId: String
 	libraryId: String
 	postProcessStatus: String
+	identificationStatus: String
+	identificationKind: String
+	identificationSummary: String
 	postProcessError: String
 	processedAt: String
 	episodeId: String

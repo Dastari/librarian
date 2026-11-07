@@ -22,6 +22,10 @@ export interface PlayItem {
   /** Open paused: a mini player that was paused when the page was refreshed. */
   startPaused?: boolean;
   duration?: number;
+  /** Chapters that start in this file, by where in it. */
+  chapters?: Array<{ start: number; title: string }>;
+  /** The chapter already playing when this file begins, when a chapter spans files. */
+  runningChapter?: string;
 }
 
 export interface AudioTransport {
@@ -105,7 +109,15 @@ export const playerStore = {
   skip(direction: 1 | -1) {
     const next = state.index + direction;
     if (next < 0 || next >= state.queue.length) return;
+    // A file reached by playing on starts at its beginning, wherever a chapter skip once left it.
+    if (state.queue[next]!.chapters) set((previous) => ({ queue: previous.queue.map((item, index) => index === next ? { ...item, startPosition: 0 } : item) }));
     playerStore.jumpTo(next);
+  },
+  /** Moves to another queue item and starts it at a chapter. */
+  jumpToChapter(index: number, position: number) {
+    if (index < 0 || index >= state.queue.length) return;
+    set((previous) => ({ queue: previous.queue.map((item, at) => at === index ? { ...item, startPosition: position } : item) }));
+    playerStore.jumpTo(index);
   },
   jumpTo(index: number) {
     if (index < 0 || index >= state.queue.length || index === state.index) return;

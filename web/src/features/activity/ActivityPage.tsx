@@ -6,6 +6,7 @@ import { Segmented } from "glass-ux/segmented";
 import { parseAsStringEnum, useQueryState } from "nuqs";
 import { useCallback, useMemo, useState } from "react";
 
+import { TableToolbar } from "@/components/ui/TableToolbar";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { useTableSelection } from "@/hooks/useTableSelection";
 import { EntityChip } from "@/components/entities/EntityChip";
@@ -170,17 +171,16 @@ export function ActivityPage() {
             onRetry={refresh}
             emptyMessage={preset === "unread" ? "You're all caught up." : preset === "action" ? "Nothing needs a decision." : "No activity yet."}
             toolbar={
-              <div className="flex min-w-0 items-center gap-2">
-                <Segmented<ActivityPreset>
+              <TableToolbar filter={<Segmented<ActivityPreset>
                   aria-label="Show activity"
                   size="sm"
                   value={preset}
                   onValueChange={(value) => void setPreset(value === "unread" ? null : value)}
                   options={ACTIVITY_PRESETS.map((value) => ({ value, label: activity.counts[value] !== undefined ? `${PRESET_LABEL[value]} ${activity.counts[value]}` : PRESET_LABEL[value] }))}
-                />
+                />}>
                 <Button size="sm" variant="secondary" isDisabled={!activity.counts.unread || markingAllRead} onPress={() => void markAllRead()}><IconCheck /> Mark all read</Button>
                 <Button size="sm" variant="ghost" isIconOnly aria-label="Refresh activity" isPending={activity.list.fetching} onPress={refresh}><IconRefresh /></Button>
-              </div>
+              </TableToolbar>
             }
           />
         </div>

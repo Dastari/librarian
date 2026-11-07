@@ -3,6 +3,75 @@
 Upgrade steps between releases. Each section lists the changes that need code edits first,
 then behaviour changes to review. The [changelog](../CHANGELOG.md) lists everything else.
 
+## 0.16.2 → 0.17.0
+
+Baked glass rendering has been removed. It had to return to the live blur whenever a scroller moved
+its panels, and swapping panels to the blur and back made scrolling slower than the live blur alone
+([Blur and scrolling](performance.md#blur-and-scrolling)). `glassRendering: "none"`, which draws no
+blur at all, takes its place.
+
+Code edits, where a project uses these:
+
+- Replace or remove `glassRendering: "baked"`. It no longer type-checks, and at runtime it blurs live.
+
+  ```ts
+  // Before
+  configureAppearance({ glassRendering: "baked" });
+
+  // Keep the live blur: leave the setting out
+  configureAppearance({});
+
+  // Or draw no blur, for the smoothest scrolling
+  configureAppearance({ glassRendering: "none" });
+  ```
+
+  With `"none"`, every backdrop filter is gone and Glass takes Frosted's fills, so review the look.
+  A stored or exported theme that says `"baked"` still imports, and blurs live.
+- Remove calls to `installBakedFrost`, and uses of `FROST_LIVE_ATTRIBUTE`, `FROST_READY_ATTRIBUTE`
+  and `FROST_CANVAS_ATTRIBUTE`. `AppearanceProvider` no longer installs anything for this.
+- CSS that reads `data-frost`, `data-frost-live`, `data-frost-canvas`, `--glass-frost-panel`,
+  `--glass-frost-chrome` or `--glass-baked-*` no longer matches anything. Delete it.
+- If you use selective stylesheets, run `glass-ux styles --scan` again.
+
+Behaviour to review:
+
+- Removable chips: `EntityIdentity` and `EntityChip` with `onRemove` now keep their link, `onOpen`,
+  actions and preview. `Composer` context chips are links with a preview. Pass `preview={false}` to
+  leave the preview out. Inside the chip's group, the part that opens is now its own element
+  (`.fa-entity-chip-main`, `.fa-ai-chip-main`), so tests should find the link or button by role.
+- `AlertDialog` and `confirm()`: an `onConfirm` that returns or resolves to exactly `false` now
+  keeps the dialog open. Check any that return a boolean for another reason.
+- `Toast`: tests or tools that find a toast with `getByRole("dialog")` or `getByRole("alertdialog")`
+  need `getByRole("group", { name })`.
+- `Autocomplete`: with nothing to show, the popup stays shut and `aria-expanded` is `false`. While
+  suggestions are showing, Base UI still hides the rest of the page from assistive technology, as
+  it does for every combobox popup.
+- `Composer`: a rejecting `onSend` keeps the draft and is no longer an unhandled rejection, so a
+  global rejection handler no longer sees it. Report the failure in `onSend`.
+- `ReferenceInput`: the kind filter no longer wraps. It scrolls in one row, and Alt ←/→ brings the
+  chosen kind into view.
+- `WindowFrame.AppBar`: a `subtitle` that is an element, rather than a string or number, is no longer
+  wrapped in a truncating paragraph. It is drawn as given, so give it its own truncation.
+- `DataTable`: on a narrow toolbar, an active search can move the table's own tools to a second
+  line. In cards, a value holding a one-line element gives way before the field's label.
+- `AiStatusStrip`: below 26rem the state can take two lines.
+
+## 0.16.1 → 0.16.2
+
+No code edits are needed.
+
+Behaviour to review:
+
+- `Rail`: items that do not fit its height move into a More menu instead of scrolling, and the
+  current section stays visible. Set `overflow="scroll"` on `Rail.Root` to keep the scrolling
+  column.
+- `TabBar`: the bar shows at most five tabs, More included, and fewer when a tab would be too
+  narrow to read. The rest move into a More sheet. Bars with six or more `TabBar.Item`s now fold
+  even on wider phones; raise `maxItems` to keep more in the bar. A `TabBar.More` you wrote lists
+  the folded tabs before its own rows, and counts as one of the tabs.
+- Sheet rows for folded tabs are buttons that click the tab, so they do not offer a browser's
+  link actions. Tabs that need them can be written as `TabBar.MoreItem` links.
+
 ## 0.16.0 → 0.16.1
 
 Code edits, where a project uses these:

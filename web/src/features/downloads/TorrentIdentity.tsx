@@ -1,5 +1,6 @@
 import type { ActionSet } from "glass-ux/actions";
 import { EntityIdentity } from "glass-ux/entity";
+import type { ReactNode } from "react";
 
 import { ENTITY_KINDS } from "@/lib/entities/kinds";
 import { torrentStatus } from "@/lib/entities/torrent";
@@ -10,10 +11,12 @@ import type { DownloadRow } from "./useDownloads";
 const TorrentGlyph = ENTITY_KINDS.torrent.icon;
 
 /** One identity for a download: a row in the table, the header of its dialog. */
-export function TorrentIdentity({ row, actions, tier = "row", className }: {
+export function TorrentIdentity({ row, actions, tier = "row", facts, className }: {
   row: DownloadRow;
   actions?: ActionSet<DownloadRow>;
   tier?: "row" | "header";
+  /** Replaces the usual facts under the name. */
+  facts?: ReactNode;
   className?: string;
 }) {
   const rawState = (row.live?.state ?? row.record.state).toLowerCase();
@@ -27,7 +30,7 @@ export function TorrentIdentity({ row, actions, tier = "row", className }: {
       name={row.record.name}
       icon={<TorrentGlyph />}
       state={{ id: rawState, label: state.label, tone: rawState === "error" ? "danger" : rawState === "seeding" || rawState === "completed" ? "success" : rawState === "downloading" || rawState === "checking" || rawState === "initializing" ? "info" : "neutral", paused: rawState === "paused" }}
-      facts={[...(tier === "row" ? [state.label] : []), formatBytes(row.record.totalBytes), row.record.library?.name ?? "No library"]}
+      facts={facts ?? [...(tier === "row" ? [state.label] : []), formatBytes(row.record.totalBytes), row.record.library?.name ?? "No library"]}
       target={row}
       actions={actions}
     />

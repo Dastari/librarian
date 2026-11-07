@@ -35,7 +35,7 @@ export function ArtistsBrowser({ libraryId }: { libraryId: string }) {
   const jump = useLetterJump({
     rows: list.rows,
     getRowId,
-    getTitle: (row) => row.name,
+    getTitle: (row) => row.sortName || row.name,
     hasMore: list.hasMore,
     loading: list.fetching || list.loadingMore,
     queryKey: JSON.stringify(where),

@@ -6,6 +6,7 @@ fragment CollectionFields on Collection {
   userId
   tmdbCollectionId
   name
+  sortName
   overview
   posterUrl
   backdropUrl

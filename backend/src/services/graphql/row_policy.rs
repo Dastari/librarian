@@ -89,6 +89,8 @@ impl OwnershipRowPolicy {
             "Album" => direct!(AlbumWhereInput),
             "Audiobook" => direct!(AudiobookWhereInput),
             "PendingFileMatch" => direct!(PendingFileMatchWhereInput),
+            "IdentificationEvent" => direct!(IdentificationEventWhereInput),
+            "IdentifiedItem" => direct!(IdentifiedItemWhereInput),
             "PlaybackProgress" => direct!(PlaybackProgressWhereInput),
             "PlaybackSession" => direct!(PlaybackSessionWhereInput),
             "Notification" => direct!(NotificationWhereInput),
@@ -153,17 +155,36 @@ impl OwnershipRowPolicy {
             return Some(ScopeClass::Owner);
         }
         Some(match entity_name {
-            "Library" | "LibraryScanRun" | "LibraryScanIssue" | "Movie" | "Collection" | "Show"
-            | "Artist" | "Album" | "Audiobook" | "PendingFileMatch" | "PlaybackProgress"
-            | "PlaybackSession" | "Notification" | "RssFeed" | "Torrent" | "UsenetDownload"
-            | "NamingPattern" | "SourcePriorityRule" | "CastSession" => ScopeClass::Owner,
+            "Library"
+            | "LibraryScanRun"
+            | "LibraryScanIssue"
+            | "Movie"
+            | "Collection"
+            | "Show"
+            | "Artist"
+            | "Album"
+            | "Audiobook"
+            | "PendingFileMatch"
+            | "PlaybackProgress"
+            | "PlaybackSession"
+            | "Notification"
+            | "RssFeed"
+            | "Torrent"
+            | "UsenetDownload"
+            | "NamingPattern"
+            | "SourcePriorityRule"
+            | "CastSession"
+            | "IdentificationEvent"
+            | "IdentifiedItem" => ScopeClass::Owner,
             "MovieCastCredit" | "Episode" | "Season" | "MediaFile" | "Track" | "Chapter"
             | "TorrentFile" | "RssFeedItem" | "VideoStream" | "AudioStream" | "Subtitle"
             | "MediaChapter" => ScopeClass::Derived,
             "Person" | "CastDevice" | "CastSetting" | "ScheduleCache" | "TorznabCategory"
             | "QualityProfile" | "ReleaseBlocklist" => ScopeClass::Shared,
             "Source" | "User" | "InviteToken" | "RefreshToken" | "AppSetting" | "AppLog"
-            | "UsenetServer" | "ScheduleSyncState" | "MetadataCache" => ScopeClass::Admin,
+            | "UsenetServer" | "ScheduleSyncState" | "MetadataCache" | "MatchingAssistant" => {
+                ScopeClass::Admin
+            }
             _ => return None,
         })
     }
@@ -189,6 +210,8 @@ impl OwnershipRowPolicy {
             "Album" => required!(Album),
             "Audiobook" => required!(Audiobook),
             "PendingFileMatch" => required!(PendingFileMatch),
+            "IdentificationEvent" => required!(IdentificationEvent),
+            "IdentifiedItem" => required!(IdentifiedItem),
             "PlaybackProgress" => required!(PlaybackProgress),
             "PlaybackSession" => required!(PlaybackSession),
             "Notification" => required!(Notification),

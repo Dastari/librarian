@@ -433,6 +433,9 @@ pub(super) async fn source_torrent(db: &Database, owner: &User) -> Torrent {
             source_feed_id: None,
             source_indexer_id: None,
             library_id: None,
+            identification_kind: None,
+            identification_status: None,
+            identification_summary: None,
             post_process_status: None,
             post_process_error: None,
             processed_at: None,
@@ -654,6 +657,9 @@ async fn torrent_lifecycle_invalidates_old_new_typed_targets_without_changing_su
             source_feed_id: None,
             source_indexer_id: None,
             library_id: Some(lib.id.clone()),
+            identification_kind: None,
+            identification_status: None,
+            identification_summary: None,
             post_process_status: None,
             post_process_error: None,
             processed_at: None,
@@ -794,6 +800,7 @@ pub(super) async fn collection(db: &Database, lib: &Library, key: i32) -> Collec
     Collection::insert(
         db,
         CreateCollectionInput {
+            sort_name: None,
             library_id: lib.id.clone(),
             user_id: lib.user_id.clone(),
             tmdb_collection_id: key,

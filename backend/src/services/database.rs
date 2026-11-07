@@ -181,6 +181,9 @@ pub(crate) fn entity_metadata() -> Vec<&'static graphql_orm::graphql::orm::Entit
         <CastSession as Entity>::metadata(),
         <CastSetting as Entity>::metadata(),
         <UsenetServer as Entity>::metadata(),
+        <MatchingAssistant as Entity>::metadata(),
+        <IdentificationEvent as Entity>::metadata(),
+        <IdentifiedItem as Entity>::metadata(),
         <UsenetDownload as Entity>::metadata(),
         <ScheduleCache as Entity>::metadata(),
         <ScheduleSyncState as Entity>::metadata(),
@@ -880,12 +883,29 @@ impl AppWriteInputTransform {
         input: &mut (dyn std::any::Any + Send + Sync),
     ) -> async_graphql::Result<()> {
         use crate::services::write_rules;
-        match entity_name {
-            "User" => input
-                .downcast_mut::<CreateUserInput>()
-                .map_or(Ok(()), write_rules::prepare_user_create),
-            _ => Ok(()),
+        // Everything with a title sorts the same way, however it was added.
+        macro_rules! sort_key {
+            ($ty:ty, $title:ident, $key:ident) => {
+                if let Some(input) = input.downcast_mut::<$ty>() {
+                    input.$key = write_rules::sort_key_for_new(&input.$title, input.$key.take());
+                }
+            };
         }
+        match entity_name {
+            "User" => {
+                return input
+                    .downcast_mut::<CreateUserInput>()
+                    .map_or(Ok(()), write_rules::prepare_user_create);
+            }
+            "Movie" => sort_key!(CreateMovieInput, title, sort_title),
+            "Audiobook" => sort_key!(CreateAudiobookInput, title, sort_title),
+            "Show" => sort_key!(CreateShowInput, name, sort_name),
+            "Album" => sort_key!(CreateAlbumInput, name, sort_name),
+            "Artist" => sort_key!(CreateArtistInput, name, sort_name),
+            "Collection" => sort_key!(CreateCollectionInput, name, sort_name),
+            _ => {}
+        }
+        Ok(())
     }
 
     fn prepare_content_update(
@@ -895,6 +915,33 @@ impl AppWriteInputTransform {
         input: &mut (dyn std::any::Any + Send + Sync),
     ) -> async_graphql::Result<()> {
         use crate::services::write_rules;
+        // A rename moves the sort key along, unless someone set their own or is setting it now.
+        macro_rules! sort_key {
+            ($input:ty, $row:ty, $title:ident, $key:ident) => {
+                if let (Some(input), Some(row)) = (
+                    input.downcast_mut::<$input>(),
+                    existing_row.and_then(|row| row.downcast_ref::<$row>()),
+                ) && input.$key.is_none()
+                    && let Some(new_title) = input.$title.as_deref()
+                {
+                    input.$key = write_rules::sort_key_after_rename(
+                        &row.$title,
+                        row.$key.as_deref(),
+                        new_title,
+                    )
+                    .map(Some);
+                }
+            };
+        }
+        match entity_name {
+            "Movie" => sort_key!(UpdateMovieInput, Movie, title, sort_title),
+            "Audiobook" => sort_key!(UpdateAudiobookInput, Audiobook, title, sort_title),
+            "Show" => sort_key!(UpdateShowInput, Show, name, sort_name),
+            "Album" => sort_key!(UpdateAlbumInput, Album, name, sort_name),
+            "Artist" => sort_key!(UpdateArtistInput, Artist, name, sort_name),
+            "Collection" => sort_key!(UpdateCollectionInput, Collection, name, sort_name),
+            _ => {}
+        }
         match entity_name {
             "User" => input
                 .downcast_mut::<UpdateUserInput>()
@@ -1020,6 +1067,14 @@ impl WriteInputTransform for AppWriteInputTransform {
                     .encrypt_source_credentials(ctx, input.credentials.clone())
                     .await?;
             }
+            if entity_name == "MatchingAssistant"
+                && let Some(input) = input.downcast_mut::<CreateMatchingAssistantInput>()
+            {
+                input.has_api_key = !input.api_key.is_empty();
+                input.api_key = self
+                    .encrypt_source_credentials(ctx, std::mem::take(&mut input.api_key))
+                    .await?;
+            }
             Ok(())
         })
     }
@@ -1049,6 +1104,16 @@ impl WriteInputTransform for AppWriteInputTransform {
                 && let Some(credentials) = input.credentials.take()
             {
                 input.credentials = Some(self.encrypt_source_credentials(ctx, credentials).await?);
+            }
+            if entity_name == "MatchingAssistant"
+                && let Some(input) = input.downcast_mut::<UpdateMatchingAssistantInput>()
+            {
+                // Whether a key is stored follows the key itself, and nothing else can claim it.
+                input.has_api_key = None;
+                if let Some(key) = input.api_key.take() {
+                    input.has_api_key = Some(!key.is_empty());
+                    input.api_key = Some(self.encrypt_source_credentials(ctx, key).await?);
+                }
             }
             Ok(())
         })
@@ -2801,9 +2866,15 @@ impl AppMutationHook {
         }
         // A file that held a whole book leaves every chapter it was shared with.
         if old.is_some() && old != active_chapter {
+            // The chapter it is moving to keeps it: clearing that too would undo the move and start
+            // these hooks over.
             tx.update_where::<Chapter>(
                 ChapterWhereInput {
                     media_file_id: Some(Self::string_eq(&after.id)),
+                    id: active_chapter.map(|id| graphql_orm::graphql::filters::StringFilter {
+                        ne: Some(id.to_string()),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 },
                 UpdateChapterInput {
@@ -2974,11 +3045,19 @@ impl AppMutationHook {
         if old == after.media_file_id.as_deref() {
             return Ok(());
         }
-        if let Some(file_id) = old {
+        // A book in parts has several files naming chapters they don't start: moving a chapter
+        // between two files of its own book takes neither file out of the book.
+        let same_book = match after.media_file_id.as_deref() {
+            Some(file_id) => Self::file_belongs_to_chapters_book(tx, file_id, &after).await?,
+            None => false,
+        };
+        if let Some(file_id) = old
+            && !same_book
+        {
             Self::clear_media_file_target_if_matches(tx, file_id, "Chapter", &after.id).await?;
         }
         if let Some(file_id) = after.media_file_id.as_deref()
-            && !Self::file_belongs_to_chapters_book(tx, file_id, &after).await?
+            && !same_book
         {
             Self::set_media_file_target(tx, file_id, None, None, None, Some(&after.id)).await?;
         }
@@ -3010,8 +3089,9 @@ impl AppMutationHook {
         else {
             return Ok(false);
         };
-        Ok(other.audiobook_id == chapter.audiobook_id
-            && other.media_file_id.as_deref() == Some(file_id))
+        // Only the book matters. In a book cut into parts, the chapter a file names can already
+        // point at a later part, and insisting it point back made these hooks chase each other.
+        Ok(other.audiobook_id == chapter.audiobook_id)
     }
 
     fn defer_storage_object_delete(
@@ -4407,6 +4487,9 @@ mod lifecycle_tests {
                 source_feed_id: None,
                 source_indexer_id: None,
                 library_id: None,
+                identification_kind: None,
+                identification_status: None,
+                identification_summary: None,
                 post_process_status: None,
                 post_process_error: None,
                 processed_at: None,

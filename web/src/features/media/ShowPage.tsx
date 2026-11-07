@@ -29,7 +29,13 @@ import { EpisodeList } from "./EpisodeList";
 
 export type EpisodeRow = ShowEpisodesQuery["episodes"]["edges"][number]["node"];
 
-export function ShowPage({ showId }: { showId: string }) {
+export function ShowPage({ showId, initialSeason, focusEpisodeId }: {
+  showId: string;
+  /** The season to open on, when a link asks for one. */
+  initialSeason?: number;
+  /** An episode to bring into view and mark. */
+  focusEpisodeId?: string;
+}) {
   const navigate = useNavigate();
   const player = usePlayer();
   const isAdmin = useIsAdmin();
@@ -45,7 +51,8 @@ export function ShowPage({ showId }: { showId: string }) {
   const seasons = useMemo(() => [...new Set(list.map((episode) => episode.season))].sort((a, b) => a - b), [list]);
   const [season, setSeason] = useState<{ showId: string; value: number } | null>(null);
   const chosenSeason = season?.showId === showId && seasons.includes(season.value) ? season.value : null;
-  const activeSeason = chosenSeason ?? seasons.find((value) => value > 0) ?? seasons[0] ?? 1;
+  const linkedSeason = initialSeason !== undefined && seasons.includes(initialSeason) ? initialSeason : null;
+  const activeSeason = chosenSeason ?? linkedSeason ?? seasons.find((value) => value > 0) ?? seasons[0] ?? 1;
   const seasonEpisodes = useMemo(() => list.filter((episode) => episode.season === activeSeason), [list, activeSeason]);
 
   const ids = useMemo(() => seasonEpisodes.map((episode) => episode.id), [seasonEpisodes]);
@@ -151,7 +158,7 @@ export function ShowPage({ showId }: { showId: string }) {
         ) : null}
 
         <section className="flex flex-col gap-4" aria-label="Episodes">
-          <EpisodeList view={episodeView === "card" ? "row" : "table"} tint={LIBRARY_TYPES.tv.tintVar}
+          <EpisodeList focusEpisodeId={focusEpisodeId} view={episodeView === "card" ? "row" : "table"} tint={LIBRARY_TYPES.tv.tintVar}
             headerExtra={<ViewToggle value={episodeView} onChange={setEpisodeView} className="shrink-0" />}
             complete={episodes.complete} episodes={seasonEpisodes} statuses={statuses} progressByFile={progressByFile} loading={episodes.loading && list.length === 0} playbackUnavailable={progress.loading ? "Loading watch progress" : progress.error ? "Retry watch progress" : undefined}
             status={episodes.error || progress.error ? <span role="status">Could not load {episodes.error ? "all episodes" : "watch progress"}. <Button size="sm" onPress={() => { void episodes.refetch().catch(() => {}); void progress.refetch().catch(() => {}); }}>Retry</Button></span> : !episodes.complete || progress.loading ? "Loading episodes and watch progress…" : undefined}

@@ -63,6 +63,8 @@ dst.execute("update app_settings set value='\"/tmp/librarian-sandbox/data/downlo
 dst.execute("update app_settings set value='\"/tmp/librarian-sandbox/data/session\"' where key='torrent.session_dir'")
 dst.execute("update app_settings set value='false' where key='torrent.enable_dht'")
 dst.execute("update app_settings set value='6899' where key='torrent.listen_port'")
+# The reconciliation sweep re-adds a torrent it can't find from these, which would download it again.
+dst.execute("update torrents set magnet_uri=null, source_url=null")
 dst.commit()
 print("sandbox database ready; complete setup at http://127.0.0.1:3003/register then run: e2e/sandbox.sh adopt")
 PY

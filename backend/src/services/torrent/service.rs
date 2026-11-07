@@ -29,6 +29,7 @@ use crate::db::Database;
 use crate::graphql::entities::Torrent;
 use crate::services::graphql::AuthUser;
 use crate::services::graphql::LibrarianSchema;
+use crate::services::library_scan::IdentifyTrigger;
 use crate::services::library_scan::{LibraryScanService, SourceFileImport, SourceProcessSummary};
 use crate::services::manager::{Service, ServiceHealth};
 use crate::services::torrent::client::{
@@ -156,6 +157,26 @@ fn wanted_linkage(metadata: &TorrentAddMetadata) -> database::WantedLinkage<'_> 
         album_id: metadata.album_id.as_deref(),
         audiobook_id: metadata.audiobook_id.as_deref(),
     }
+}
+
+/// Why a just-added torrent can't be what it was grabbed for, from its file list.
+fn wrong_payload_reason(
+    handle: &librqbit::ManagedTorrent,
+    metadata: &TorrentAddMetadata,
+) -> Option<String> {
+    let wants_audio = metadata.audiobook_id.is_some()
+        || metadata.album_id.is_some()
+        || metadata.track_id.is_some()
+        || metadata.chapter_id.is_some();
+    let wants_video =
+        metadata.movie_id.is_some() || metadata.show_id.is_some() || metadata.episode_id.is_some();
+    let info = handle.metadata.load_full()?;
+    let names: Vec<String> = info
+        .file_infos
+        .iter()
+        .map(|file| file.relative_filename.to_string_lossy().to_string())
+        .collect();
+    crate::services::release_match::payload_mismatch(wants_audio, wants_video, &names)
 }
 
 fn authorize_existing_add(
@@ -394,6 +415,18 @@ impl TorrentService {
             AddTorrentResponse::Added(id, handle) => {
                 let info_hash = get_info_hash_hex(&handle);
                 let name = handle.name().unwrap_or_else(|| "Unknown".to_string());
+                // Still paused, so nothing has downloaded. A release with no usable files for what
+                // it was grabbed for stops here, not after a download and a failed import.
+                if let Some(reason) = wrong_payload_reason(&handle, &metadata) {
+                    if let Err(cleanup) = r.session.delete(TorrentIdOrHash::Id(id), false).await {
+                        error!(info_hash, error = %cleanup, "Failed to remove a refused torrent");
+                    }
+                    warn!(
+                        info_hash,
+                        name, reason, "Refused a release with no usable files"
+                    );
+                    anyhow::bail!(reason);
+                }
                 let result: Result<bool> = async {
                     let actor = current_add_actor(&r.db, &actor).await?;
                     let current_scope = database::resolve_torrent_create_owner(
@@ -533,6 +566,67 @@ impl TorrentService {
                 })
             }
         }
+    }
+
+    /// Every file of a download with how far it has got, finished or not.
+    pub async fn release_files(&self, info_hash: &str) -> Result<Vec<SourceFileImport>> {
+        use crate::graphql::entities::{
+            Torrent, TorrentFile, TorrentFileWhereInput, TorrentWhereInput,
+        };
+        use graphql_orm::graphql::filters::StringFilter;
+        let r = self
+            .runtime()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("torrent service not started"))?;
+        if let Ok(Some(rows)) =
+            database::completed_torrent_file_rows(&r.session, &r.db, info_hash).await
+        {
+            return Ok(rows
+                .into_iter()
+                .map(|row| SourceFileImport {
+                    source_path: row.file_path,
+                    relative_path: row.relative_path,
+                    file_size: row.file_size,
+                    downloaded_bytes: row.downloaded_bytes,
+                    file_index: Some(row.file_index),
+                })
+                .collect());
+        }
+        // Not loaded in the client: what was last stored is still worth showing.
+        let torrent = Torrent::query(r.db.pool())
+            .filter(TorrentWhereInput {
+                info_hash: Some(StringFilter {
+                    eq: Some(info_hash.to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .limit(1)
+            .fetch_all()
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("Torrent not found or access denied"))?;
+        let rows = TorrentFile::query(r.db.pool())
+            .filter(TorrentFileWhereInput {
+                torrent_id: Some(StringFilter {
+                    eq: Some(torrent.id),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| SourceFileImport {
+                source_path: row.file_path,
+                relative_path: row.relative_path,
+                file_size: row.file_size,
+                downloaded_bytes: row.downloaded_bytes,
+                file_index: Some(row.file_index),
+            })
+            .collect())
     }
 
     /// One completed file of a loaded download, ready to import or match by hand.
@@ -1028,32 +1122,15 @@ impl Service for TorrentService {
             }
         }
 
-        // Seed already-completed torrents so startup doesn't emit Completed
-        // events for torrents that were complete before this process started.
+        // Seed already-processed torrents so startup doesn't emit Completed events for them.
         //
-        // The session alone is not enough: a restored torrent is still
-        // `Initializing` (hash-checking) when `Session::new_with_opts` returns,
-        // so its `progress_bytes` reads 0 and it looks unfinished. A second
-        // later the progress loop saw it hit 100% and emitted a fresh
-        // `Completed` event — re-running the whole import pipeline for every
-        // finished torrent on every restart and overwriting its
-        // `post_process_status`. So the database is the authority: any row that
-        // already reached 100% *and* has a post-process status has been through
-        // the pipeline. Rows that finished but never got a status are
-        // deliberately left out, so the reconciliation sweep still retries them.
+        // The database is the authority: any row that already reached 100% *and* has a
+        // post-process status has been through the pipeline. The session can't say. A restored
+        // torrent reads as 0% while it's hash-checked, then 100%, and a small one may already
+        // read 100% here whether or not it was ever processed. So it isn't consulted, and a
+        // torrent that finished without being processed gets its Completed event now.
         let mut completed_hashes: std::collections::HashSet<String> =
-            session.with_torrents(|iter| {
-                iter.filter_map(|(_, handle)| {
-                    let stats = handle.stats();
-                    let progress = progress_ratio(stats.progress_bytes, stats.total_bytes);
-                    if progress >= 1.0 {
-                        Some(get_info_hash_hex(handle))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-            });
+            std::collections::HashSet::new();
         match database::find_completed_torrents(&db).await {
             Ok(rows) => completed_hashes.extend(
                 rows.into_iter()
@@ -1370,6 +1447,9 @@ async fn completion_handler_loop(
     cancel: CancellationToken,
 ) {
     let auth_user = database::system_auth_user();
+    // How many files of each torrent have finished, to notice when another one does.
+    let mut finished_files: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
 
     loop {
         tokio::select! {
@@ -1390,6 +1470,24 @@ async fn completion_handler_loop(
 
                 let (info_hash, name) = match event {
                     TorrentEvent::Completed { info_hash, name, .. } => (info_hash, name),
+                    TorrentEvent::Progress { info_hash, .. } => {
+                        if let Some(finished) = finished_file_count(&session, &info_hash) {
+                            match finished_files.insert(info_hash.clone(), finished) {
+                                None => scan_service
+                                    .request_identification(&info_hash, IdentifyTrigger::Observed),
+                                Some(before) if finished > before => scan_service
+                                    .request_identification(&info_hash, IdentifyTrigger::FileFinished),
+                                Some(_) => {}
+                            }
+                        }
+                        continue;
+                    }
+                    TorrentEvent::Removed { info_hash, .. } => {
+                        finished_files.remove(&info_hash);
+                        let scan = scan_service.clone();
+                        tokio::spawn(async move { scan.forget_identification(&info_hash).await });
+                        continue;
+                    }
                     _ => continue,
                 };
 
@@ -1436,6 +1534,22 @@ async fn completion_handler_loop(
     }
 }
 
+/// How many of a torrent's files have finished. `None` until its file list is known.
+fn finished_file_count(session: &Arc<Session>, info_hash: &str) -> Option<usize> {
+    let hash = database::hex_to_info_hash(info_hash).ok()?;
+    let handle = session.get(TorrentIdOrHash::Hash(hash))?;
+    let metadata = handle.metadata.load_full()?;
+    let stats = handle.stats();
+    Some(
+        metadata
+            .file_infos
+            .iter()
+            .zip(&stats.file_progress)
+            .filter(|(file, progress)| file.len > 0 && **progress >= file.len)
+            .count(),
+    )
+}
+
 /// Core processing for a single completed torrent: reads file rows from the
 /// active session and imports them via the library scan service.
 ///
@@ -1469,11 +1583,12 @@ async fn process_completed_torrent_core(
         })
         .collect::<Vec<_>>();
 
-    Ok(Some(
-        scan_service
-            .process_torrent_source_files(auth_user, info_hash, library_override, files)
-            .await,
-    ))
+    let summary = scan_service
+        .process_torrent_source_files(auth_user, info_hash, library_override, files)
+        .await;
+    // What it was grabbed for has had its turn. Now work out everything else in it.
+    scan_service.request_identification(info_hash, IdentifyTrigger::Finished);
+    Ok(Some(summary))
 }
 
 fn log_completed_torrent_outcome(
@@ -2269,6 +2384,9 @@ mod admission_tests {
             source_feed_id: None,
             source_indexer_id: None,
             library_id: None,
+            identification_kind: None,
+            identification_status: None,
+            identification_summary: None,
             post_process_status: None,
             post_process_error: None,
             processed_at: None,

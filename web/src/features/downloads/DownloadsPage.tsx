@@ -1,14 +1,14 @@
 import { Badge } from "glass-ux/badge";
 import { Tooltip } from "glass-ux/tooltip";
 import { createDataTableColumns, DataTable, filters, NumericCell, RelativeTime, SparklineCell, TextCell, type DataTableSearch, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
-import { IconPlus, IconRefresh } from "glass-ux/icons";
+import { IconPlus, IconArrowDown, IconArrowUp, IconRefresh } from "glass-ux/icons";
 import { LevelGauge, type GaugeLevel } from "glass-ux/level-gauge";
 import { MeterCell } from "glass-ux/meter-cell";
-import { Metric } from "glass-ux/metric";
 import { Segmented } from "glass-ux/segmented";
 import { parseAsStringEnum, useQueryState } from "nuqs";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
+import { TableToolbar } from "@/components/ui/TableToolbar";
 import { EntityChip } from "@/components/entities/EntityChip";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { Button } from "@/components/ui";
@@ -25,6 +25,7 @@ import { LinkTorrentDialog } from "./LinkTorrentDialog";
 import { useDialogReturnFocus } from "@/components/ui/Dialog";
 import { TorrentIdentity } from "./TorrentIdentity";
 import { TorrentDetail } from "./TorrentDetail";
+import { LiveStat } from "./TransferStat";
 import { DOWNLOAD_PRESETS, useDownloads, type DownloadPreset, type DownloadRow } from "./useDownloads";
 import { useRateHistory, type RateSample } from "./useRateHistory";
 import { useTorrentActions } from "./useTorrentActions";
@@ -210,16 +211,26 @@ export function DownloadsPage() {
             onRetry={refetch}
             emptyMessage={preset === "all" ? "No downloads. Add a torrent or magnet link, or find a release from a movie or show page." : `Nothing ${PRESET_LABEL[preset].toLowerCase()}`}
             toolbar={
-              <div className="flex min-w-0 items-center gap-2">
-                <Segmented<DownloadPreset>
-                  aria-label="Show downloads"
-                  size="sm"
-                  value={preset}
-                  onValueChange={(value) => void setPreset(value === "all" ? null : value)}
-                  options={DOWNLOAD_PRESETS.map((value) => ({ value, label: downloads.counts[value] !== undefined ? `${PRESET_LABEL[value]} ${downloads.counts[value]}` : PRESET_LABEL[value] }))}
-                />
+              <TableToolbar
+                before={
+                  <div role="group" aria-label="Total transfer" className="me-1 flex shrink-0 items-center gap-3 text-body-sm text-foreground max-xl:hidden">
+                    <LiveStat width="w-28" icon={<IconArrowDown size="sm" />} label="Download" value={totals.down} data={rates.total.down} format={formatSpeed} tone="info" />
+                    <LiveStat width="w-28" icon={<IconArrowUp size="sm" />} label="Upload" value={totals.up} data={rates.total.up} format={formatSpeed} tone="success" />
+                  </div>
+                }
+                filter={
+                  <Segmented<DownloadPreset>
+                    aria-label="Show downloads"
+                    size="sm"
+                    value={preset}
+                    onValueChange={(value) => void setPreset(value === "all" ? null : value)}
+                    options={DOWNLOAD_PRESETS.map((value) => ({ value, label: downloads.counts[value] !== undefined ? `${PRESET_LABEL[value]} ${downloads.counts[value]}` : PRESET_LABEL[value] }))}
+                  />
+                }
+              >
                 <Button size="sm" variant="ghost" isIconOnly aria-label="Refresh downloads" isPending={downloads.list.fetching} onPress={refetch}><IconRefresh /></Button>
-              </div>
+                {isAdmin ? <Button size="sm" variant="primary" className="shrink-0" onPress={() => setAdding(true)}><IconPlus /> <span className="max-sm:sr-only">Add torrent</span></Button> : null}
+              </TableToolbar>
             }
           />
       </RateContext.Provider>
@@ -229,13 +240,6 @@ export function DownloadsPage() {
   return (
     <div data-print-flow className="page-gutter flex min-h-0 flex-1 flex-col gap-4 overflow-hidden py-4 md:py-6 [@media(max-height:35rem)]:gap-2 [@media(max-height:35rem)]:py-2">
       <h1 className="sr-only">Downloads</h1>
-      <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-6 gap-y-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="h-12 w-60 max-lg:hidden"><Metric label="Download" value={totals.down} data={rates.total.down} format={formatSpeed} range="Last two minutes" tone="info" better="none" /></div>
-          <div className="h-12 w-60 max-lg:hidden"><Metric label="Upload" value={totals.up} data={rates.total.up} format={formatSpeed} range="Last two minutes" tone="success" better="none" /></div>
-          {isAdmin ? <Button variant="primary" onPress={() => setAdding(true)}><IconPlus /> Add torrent</Button> : null}
-        </div>
-      </div>
       <div data-print-flow className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{table}</div>
       {selected ? <TorrentDetail key={selected.id} open row={selected} rates={rates.byHash.get(selected.record.infoHash.toLowerCase())} actions={actions} onClose={() => setSelectedId(null)} finalFocus={finalFocus} /> : null}
 

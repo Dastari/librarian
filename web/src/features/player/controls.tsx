@@ -7,12 +7,15 @@ import { useCallback, useRef, useState, type KeyboardEvent, type PointerEvent } 
 import { formatClock } from "@/lib/format";
 import { clamp, cn } from "@/lib/utils";
 
+const SNAP_PIXELS = 6;
+
 interface SeekBarProps {
   position: number;
   duration: number;
   buffered?: number;
   onSeek: (position: number) => void;
-  chapters?: Array<{ start: number; title?: string | null }>;
+  /** Breaks to show. Hovering names the chapter, and a click close to a break lands on it. */
+  chapters?: ReadonlyArray<{ start: number; title?: string | null }>;
   className?: string;
   /** Compact variant for the dock. */
   thin?: boolean;
@@ -34,9 +37,13 @@ export function SeekBar({ position, duration, buffered = 0, onSeek, chapters, cl
     (event: PointerEvent<HTMLDivElement>) => {
       const rect = track.current?.getBoundingClientRect();
       if (!rect || !safeDuration) return 0;
-      return clamp((event.clientX - rect.left) / rect.width, 0, 1) * safeDuration;
+      const at = clamp((event.clientX - rect.left) / rect.width, 0, 1) * safeDuration;
+      // Within a few pixels of a break, it's the break that's meant.
+      const reach = (SNAP_PIXELS / Math.max(rect.width, 1)) * safeDuration;
+      const near = chapters?.find((chapter) => Math.abs(chapter.start - at) <= reach);
+      return near ? near.start : at;
     },
-    [safeDuration],
+    [safeDuration, chapters],
   );
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -51,6 +58,7 @@ export function SeekBar({ position, duration, buffered = 0, onSeek, chapters, cl
   };
 
   const shown = preview ?? position;
+  const shownChapter = preview !== null ? chapters?.filter((chapter) => chapter.start <= preview).at(-1)?.title : undefined;
 
   return (
     <div
@@ -87,7 +95,7 @@ export function SeekBar({ position, duration, buffered = 0, onSeek, chapters, cl
         <div className="absolute inset-y-0 left-0 bg-white/30" style={{ width: `${bufferedFraction * 100}%` }} />
         <div className="absolute inset-y-0 left-0 bg-brand" style={{ width: `${(safeDuration ? (preview ?? position) / safeDuration : 0) * 100}%` }} />
         {chapters?.map((chapter) =>
-          chapter.start > 0 && safeDuration ? <span key={chapter.start} className="absolute inset-y-0 w-0.5 bg-black/50" style={{ left: `${(chapter.start / safeDuration) * 100}%` }} /> : null,
+          chapter.start > 0 && safeDuration ? <span key={chapter.start} data-chapter-break className="absolute inset-y-0 z-10 w-0.5 bg-fg" style={{ left: `${(chapter.start / safeDuration) * 100}%` }} /> : null,
         )}
       </div>
       <div
@@ -95,8 +103,8 @@ export function SeekBar({ position, duration, buffered = 0, onSeek, chapters, cl
         style={{ left: `${(safeDuration ? (preview ?? position) / safeDuration : fraction) * 100}%` }}
       />
       {preview !== null ? (
-        <span className="pointer-events-none absolute -top-8 -translate-x-1/2 rounded-md bg-scrim px-2 py-1 text-label-sm text-foreground" style={{ left: `${(safeDuration ? shown / safeDuration : 0) * 100}%` }}>
-          {formatClock(shown)}
+        <span className="pointer-events-none absolute -top-8 -translate-x-1/2 whitespace-nowrap rounded-md bg-scrim px-2 py-1 text-label-sm text-foreground" style={{ left: `${(safeDuration ? shown / safeDuration : 0) * 100}%` }}>
+          {shownChapter ? `${shownChapter} · ` : ""}{formatClock(shown)}
         </span>
       ) : null}
     </div>
