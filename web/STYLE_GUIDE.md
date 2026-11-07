@@ -11,7 +11,10 @@ implemented components and the remaining compatibility boundary.
 
 - The frame is Glass `AppShell` with its `Rail`, `TopBar` and phone `TabBar`, all on the canvas:
   the bar has no material, so artwork shows through it. Use `page-gutter` for page content;
-  preserve safe areas and dock offsets.
+  preserve safe areas and dock offsets. Installed on iOS the app draws under the status bar
+  (`black-translucent`): anything at an edge pads with `--safe-top`, `--safe-bottom` and the
+  inline `--safe-inline-start`/`--safe-inline-end` (a landscape notch), and full-screen
+  layers use `dvh`, never `vh`. Check portrait and landscape with emulated insets.
 - The document never scrolls and neither does the frame. Each page has one `PageScroller`. Routed
   tabs sit outside it, so they stay put while the view under them scrolls. A bounded pane clips
   (`overflow: clip`); `overflow: hidden` can still be scrolled from code by a focus or a reveal.
@@ -25,9 +28,13 @@ implemented components and the remaining compatibility boundary.
 ## Tokens, materials and typography
 
 Import `glass-ux/styles.css` once through `src/styles/app.css`. Glass owns mode,
-palette, fonts, density, glass amount, motion and geometry. Register host palette
-parameters in `palettes.css`; do not reproduce complete themes. Device choices
-persist under `librarian.appearance.v1`, migrated once from `librarian.theme`.
+palette, fonts, density, glass amount, motion and geometry. Librarian's appearance is
+fixed (`lib/glass/appearance.ts` locks it): the Cinema palette (`palettes.css`, the only
+one), full glass, comfortable density, system motion and the default radius, line weight
+and interface size. Two choices remain. Dark or Light (Dark by default, never following
+the system) persists under `librarian.appearance.v1`; anything else stored there is
+dropped. Blur is a device setting under `librarian.blur.v1`, for everyone on that browser:
+off, Glass renders with `glassRendering: "none"`. Do not add palettes or appearance knobs.
 
 Use `Surface` material/radius/padding props and `PanelHeader`, `PanelBody` and
 `PanelFooter` slots. Raw material classes supply neither content insets nor the

@@ -1,10 +1,12 @@
+import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath, URL } from "node:url";
 
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { glassUx } from "glass-ux/vite";
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
 /**
@@ -24,6 +26,46 @@ function vendorChunk(id: string): string | undefined {
   return "vendor";
 }
 
+/** Cinema's dark canvas and brand amber, written by scripts/generate-pwa-assets.mjs. */
+const pwaColors = JSON.parse(readFileSync(new URL("./src/assets/brand/pwa-colors.json", import.meta.url), "utf8")) as { brand: string; canvasDark: string };
+const THEME_COLOR = pwaColors.canvasDark;
+const BRAND_COLOR = pwaColors.brand;
+
+/** A new id for every build: the package version, the commit when there is one, and the time. */
+function buildId(version: string, time: string): string {
+  let commit = "";
+  try {
+    commit = execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {
+    // Not a git checkout (a release tarball): the timestamp alone is unique.
+  }
+  return [version, commit, time.replace(/[^0-9]/g, "").slice(0, 14)].filter(Boolean).join("-");
+}
+
+/**
+ * Fills the head's placeholders and, in production builds, writes `version.json`, which open tabs
+ * poll to notice a new deployment even where no service worker runs.
+ */
+function librarianHtml({ publicUrl, version, id, time }: { publicUrl: string; version: string; id: string; time: string }): Plugin {
+  return {
+    name: "librarian-html",
+    transformIndexHtml: {
+      order: "pre",
+      handler(html) {
+        // Without a known public origin og:url means nothing, and the image paths stay relative.
+        const withUrl = publicUrl ? html : html.replace(/^\s*<meta property="og:url"[^>]*>\n/m, "");
+        return withUrl
+          .replaceAll("%LIBRARIAN_PUBLIC_URL%", publicUrl)
+          .replaceAll("%LIBRARIAN_THEME_COLOR%", THEME_COLOR)
+          .replaceAll("%LIBRARIAN_BRAND_COLOR%", BRAND_COLOR);
+      },
+    },
+    generateBundle() {
+      this.emitFile({ type: "asset", fileName: "version.json", source: `${JSON.stringify({ version, buildId: id, builtAt: time })}\n` });
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const backendTarget = env.BACKEND_PROXY_TARGET || "http://127.0.0.1:3001";
@@ -37,11 +79,17 @@ export default defineConfig(({ mode }) => {
     "/graphql": { target: backendTarget, ws: true },
   };
   const allowedHosts = publicDevUrl ? [publicDevUrl.hostname] : undefined;
+  // Absolute Open Graph links need the site's public origin; the dev server's serves the live site.
+  const publicUrl = (env.LIBRARIAN_PUBLIC_URL || env.DEV_SERVER_PUBLIC_URL || "").replace(/\/+$/, "");
+  const version = (JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string }).version;
+  const builtAt = new Date().toISOString();
+  const id = buildId(version, builtAt);
 
   return {
     define: {
-      __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? "0.0.0"),
-      __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+      __APP_VERSION__: JSON.stringify(version),
+      __BUILD_TIME__: JSON.stringify(builtAt),
+      __BUILD_ID__: JSON.stringify(id),
     },
     server: {
       host: "0.0.0.0",
@@ -71,52 +119,53 @@ export default defineConfig(({ mode }) => {
       react(),
       tailwindcss(),
       glassUx(),
+      librarianHtml({ publicUrl, version, id, time: builtAt }),
+      // Production builds only: the dev server gets no worker, manifest link or caching.
       VitePWA({
         registerType: "prompt",
         injectRegister: false,
-        includeAssets: ["favicon.ico", "apple-touch-icon.png", "icons/*.png", "icons/*.svg"],
+        includeAssets: ["favicon.ico", "favicon.svg", "apple-touch-icon.png"],
+        includeManifestIcons: false,
         manifest: {
           id: "/",
           name: "Librarian",
           short_name: "Librarian",
           description: "Your media library, beautifully organised.",
+          lang: "en",
+          dir: "ltr",
           start_url: "/",
           scope: "/",
           display: "standalone",
-          display_override: ["window-controls-overlay", "standalone", "fullscreen"],
+          display_override: ["window-controls-overlay", "standalone"],
           orientation: "any",
-          background_color: "#0a0a0f",
-          theme_color: "#0a0a0f",
-          categories: ["entertainment", "video", "music"],
+          background_color: THEME_COLOR,
+          theme_color: THEME_COLOR,
+          categories: ["entertainment", "video", "music", "books"],
+          prefer_related_applications: false,
+          // "any" icons are rounded tiles (Android draws its launch splash from one, centred on
+          // background_color); maskable ones are full bleed with the mark inside the safe zone.
           icons: [
-            { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
-            { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
-            { src: "/icons/icon-maskable-192.png", sizes: "192x192", type: "image/png", purpose: "maskable" },
-            { src: "/icons/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
-            { src: "/icons/icon.svg", sizes: "any", type: "image/svg+xml" },
+            ...[48, 72, 96, 128, 144, 192, 256, 384, 512].map((size) => ({ src: `/icons/icon-${size}.png`, sizes: `${size}x${size}`, type: "image/png", purpose: "any" })),
+            { src: "/favicon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
+            ...[192, 512].map((size) => ({ src: `/icons/icon-maskable-${size}.png`, sizes: `${size}x${size}`, type: "image/png", purpose: "maskable" })),
+            ...[192, 512].map((size) => ({ src: `/icons/icon-monochrome-${size}.png`, sizes: `${size}x${size}`, type: "image/png", purpose: "monochrome" })),
           ],
           shortcuts: [
-            { name: "Search", url: "/search", icons: [{ src: "/icons/shortcut-search.png", sizes: "192x192" }] },
-            { name: "Downloads", url: "/downloads", icons: [{ src: "/icons/shortcut-downloads.png", sizes: "192x192" }] },
+            { name: "Search", short_name: "Search", description: "Find something to watch, read or hear", url: "/search", icons: [{ src: "/icons/shortcut-search.png", sizes: "192x192", type: "image/png" }] },
+            { name: "Downloads", short_name: "Downloads", description: "What is downloading now", url: "/downloads", icons: [{ src: "/icons/shortcut-downloads.png", sizes: "192x192", type: "image/png" }] },
           ],
         },
         workbox: {
-          globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
+          // The app shell only. Splash screens, the social card and the other icons load on demand.
+          // (includeAssets adds the favicons and the iOS icon.)
+          globPatterns: ["**/*.{js,css,html,woff2}", "icons/icon-{192,512}.png", "icons/favicon-*.png"],
+          globIgnores: ["splash/**", "og-image.png", "version.json"],
+          cleanupOutdatedCaches: true,
           navigateFallback: "/index.html",
-          navigateFallbackDenylist: [/^\/api\//, /^\/graphql/],
+          // No runtime caching: the API, GraphQL and its websocket, media streams and artwork
+          // always go to the network. Offline gets the app shell, nothing more.
+          navigateFallbackDenylist: [/^\/api(\/|$)/, /^\/graphql(\/|$)/, /^\/version\.json$/],
           maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
-          runtimeCaching: [
-            {
-              // Artwork is immutable per entity/artwork key; cache it aggressively.
-              urlPattern: /\/api\/artwork\//,
-              handler: "CacheFirst",
-              options: {
-                cacheName: "artwork",
-                expiration: { maxEntries: 800, maxAgeSeconds: 60 * 60 * 24 * 30 },
-                cacheableResponse: { statuses: [0, 200] },
-              },
-            },
-          ],
         },
         devOptions: { enabled: false },
       }),

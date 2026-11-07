@@ -8,8 +8,11 @@ import { AppProviders } from "@/app/providers";
 import { router } from "@/app/router";
 import { session } from "@/lib/auth/session";
 import { bootAppearance } from "@/lib/glass/appearance";
+import { startPwa } from "@/lib/pwa";
 
 bootAppearance();
+// Production builds register the service worker and watch for new deployments; dev does neither.
+startPwa();
 // Start rebuilding the session from cookies immediately; route guards await it.
 void session.boot();
 

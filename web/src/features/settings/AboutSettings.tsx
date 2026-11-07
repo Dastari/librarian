@@ -1,24 +1,41 @@
 import { useEffect, useState } from "react";
 
-import { KeyValueList, Panel } from "@/components/ui";
+import { Button, KeyValueList, Panel } from "@/components/ui";
 import { useInputMode } from "@/lib/input-mode";
-import { usePwaUpdate } from "@/lib/pwa";
+import { applyUpdate, checkForUpdate, usePwa } from "@/lib/pwa";
 
 export function AboutSettings() {
   const { mode } = useInputMode();
-  const { offlineReady } = usePwaUpdate();
+  const { offlineReady, updateAvailable } = usePwa();
+  const [checking, setChecking] = useState(false);
   const [installed, setInstalled] = useState(false);
   useEffect(() => {
     setInstalled(window.matchMedia("(display-mode: standalone)").matches || ("standalone" in navigator && Boolean((navigator as Navigator & { standalone?: boolean }).standalone)));
   }, []);
 
+  const update = !import.meta.env.PROD
+    ? "Development server (updates load live)"
+    : updateAvailable ? "A new version is ready" : "Up to date";
+
   return (
     <div className="flex flex-col gap-6">
-      <Panel title="Librarian">
+      <Panel
+        title="Librarian"
+        actions={import.meta.env.PROD ? (updateAvailable ? (
+          <Button size="sm" variant="primary" onPress={() => void applyUpdate()}>Refresh to update</Button>
+        ) : (
+          <Button size="sm" variant="secondary" isPending={checking} onPress={() => {
+            setChecking(true);
+            void checkForUpdate().finally(() => setChecking(false));
+          }}>Check for updates</Button>
+        )) : undefined}
+      >
         <KeyValueList
           items={[
             { label: "Web app version", value: __APP_VERSION__ },
-            { label: "Build", value: __BUILD_TIME__ },
+            { label: "Build", value: __BUILD_ID__, mono: true },
+            { label: "Built", value: __BUILD_TIME__ },
+            { label: "Updates", value: update },
             { label: "Installed as app", value: installed ? "Yes" : "No, open in a browser" },
             { label: "Offline ready", value: offlineReady ? "Yes" : "Caches after first load" },
             { label: "Input mode", value: mode },
