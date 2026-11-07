@@ -15,7 +15,7 @@ use super::*;
 use crate::graphql::entities::{
     Album, AlbumWhereInput, Artist, Audiobook, AudiobookWhereInput, Episode, EpisodeWhereInput,
     IdentificationEvent, IdentificationEventWhereInput, IdentifiedItem, IdentifiedItemWhereInput,
-    Library, LibraryWhereInput, Movie, MovieWhereInput, PendingFileMatch,
+    Library, LibraryWhereInput, MediaFile, Movie, MovieWhereInput, PendingFileMatch,
     PendingFileMatchWhereInput, Show, ShowWhereInput, Torrent, TorrentWhereInput, Track,
     TrackWhereInput,
 };
@@ -39,6 +39,8 @@ const CHAPTER_LOOKUPS: usize = 4;
 const MAX_SEARCHES_PER_ITEM: usize = 4;
 /// A release of many albums or singles shouldn't send hundreds of requests to a rate-limited provider.
 const MAX_PROVIDER_ITEMS: usize = 40;
+/// How long a re-check waits after a library changes, for the rest of the change to land.
+const LIBRARY_CHANGED_PAUSE: Duration = Duration::from_secs(10);
 const MAX_TEXT_BYTES: u64 = 256 * 1024;
 /// Jev is asked only among listings the rules can't separate, and has to be this sure, and clear of
 /// the next one. Sibling books score close together.
@@ -61,6 +63,9 @@ pub enum IdentifyTrigger {
     FileFinished,
     Finished,
     Asked,
+    /// A library it compares with changed. Looks again at what's held, and never imports or
+    /// searches online: what the download is was settled before.
+    LibraryChanged,
 }
 
 impl IdentifyTrigger {
@@ -70,28 +75,37 @@ impl IdentifyTrigger {
             Self::FileFinished => "More files finished",
             Self::Finished => "Download finished",
             Self::Asked => "Run by hand",
+            Self::LibraryChanged => "Library changed",
         }
     }
 
     fn rank(self) -> u8 {
         match self {
-            Self::Observed => 0,
-            Self::FileFinished => 1,
-            Self::Finished => 2,
-            Self::Asked => 3,
+            Self::LibraryChanged => 0,
+            Self::Observed => 1,
+            Self::FileFinished => 2,
+            Self::Finished => 3,
+            Self::Asked => 4,
         }
+    }
+
+    /// Only something new about the download itself may bring it into a library.
+    fn may_import(self) -> bool {
+        !matches!(self, Self::Observed | Self::LibraryChanged)
     }
 
     fn pause(self) -> Duration {
         match self {
             Self::FileFinished => FILE_FINISHED_PAUSE,
+            // A scan or a removal changes many things at once; one look afterwards is enough.
+            Self::LibraryChanged => LIBRARY_CHANGED_PAUSE,
             Self::Observed | Self::Finished | Self::Asked => Duration::ZERO,
         }
     }
 }
 
 /// Where a piece of evidence came from, so it can be shown with others like it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Source {
     /// The download itself: names, tags, text files.
@@ -107,7 +121,7 @@ enum Source {
 }
 
 /// One thing identification found out about an item.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Finding {
     source: Source,
     text: String,
@@ -151,6 +165,8 @@ pub struct IdentifiedChoice {
     pub library_item_id: Option<String>,
     pub library_id: Option<String>,
     pub accept_review: bool,
+    /// Put this download's better copies on tracks the library already has files for.
+    pub better_copies: bool,
 }
 
 /// A result being put together.
@@ -180,6 +196,11 @@ struct ItemDraft {
     can_accept: bool,
     /// Taken from a group in the plan: which group of files a book import should use.
     group_key: Option<String>,
+    /// How many tracks, episodes or chapters its files would add to what the library holds, or
+    /// how many would replace worse copies when it's an upgrade.
+    adds: Option<usize>,
+    /// A re-check didn't look this up: what was found before stands.
+    kept: bool,
 }
 
 impl ItemDraft {
@@ -344,6 +365,9 @@ struct RunContext<'a> {
     /// A run from seeing a torrent again, such as after a restart, only looks. Nothing old should
     /// land in a library because the server restarted.
     may_import: bool,
+    /// Looking again because a library changed: compare with what's held, and leave whatever
+    /// needs an online search or listening as it was found before.
+    recheck: bool,
 }
 
 impl RunContext<'_> {
@@ -428,6 +452,8 @@ fn settled_trigger(
 ) -> Option<IdentifyTrigger> {
     match trigger {
         IdentifyTrigger::Observed if identified => None,
+        // Nothing was settled yet, so there's nothing to compare again.
+        IdentifyTrigger::LibraryChanged if !identified => None,
         IdentifyTrigger::FileFinished if post_processed && identified => None,
         IdentifyTrigger::FileFinished if post_processed => Some(IdentifyTrigger::Observed),
         _ => Some(trigger),
@@ -496,6 +522,40 @@ impl LibraryScanService {
                 let _ = this
                     .set_identification_status(&hash, "failed", Some(&error.to_string()))
                     .await;
+            }
+        });
+    }
+
+    /// Look again at an owner's downloads of a library's kind, after that library changed: what's
+    /// now in it, or has left it, or has gaps a download could fill. Only compares; never imports.
+    pub fn recheck_identified(self: &Arc<Self>, owner: &str, library_type: &str) {
+        let Some(kind) = kind_for_library_type(library_type) else {
+            return;
+        };
+        let this = self.clone();
+        let owner = owner.to_string();
+        tokio::spawn(async move {
+            let items = match this.database().await {
+                Ok(database) => IdentifiedItem::query(database.pool().pool())
+                    .filter(IdentifiedItemWhereInput {
+                        user_id: Some(StringFilter {
+                            eq: Some(owner.clone()),
+                            ..Default::default()
+                        }),
+                        kind: Some(StringFilter {
+                            eq: Some(kind.to_string()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    })
+                    .fetch_all()
+                    .await
+                    .unwrap_or_default(),
+                Err(_) => return,
+            };
+            let hashes: BTreeSet<String> = items.into_iter().map(|item| item.info_hash).collect();
+            for hash in hashes {
+                this.request_identification(&hash, IdentifyTrigger::LibraryChanged);
             }
         });
     }
@@ -635,6 +695,7 @@ impl LibraryScanService {
         }
 
         let owner = row.user_id.clone();
+        let recheck = trigger == IdentifyTrigger::LibraryChanged;
         self.forget_old_identification_runs(info_hash).await;
         self.set_identification_status(info_hash, "running", None)
             .await?;
@@ -655,9 +716,18 @@ impl LibraryScanService {
             text: TextFacts::default(),
             libraries: self.owned_libraries(&row.user_id).await.unwrap_or_default(),
             copied: self.copied_files(info_hash).await.unwrap_or_default(),
-            jev: Jev::configured(&self.manager).await,
-            listening: self.available_listener().await,
-            may_import: trigger != IdentifyTrigger::Observed,
+            jev: if recheck {
+                None
+            } else {
+                Jev::configured(&self.manager).await
+            },
+            listening: if recheck {
+                None
+            } else {
+                self.available_listener().await
+            },
+            may_import: trigger.may_import(),
+            recheck,
         };
 
         self.note_request(&row, &mut run).await;
@@ -1328,6 +1398,8 @@ impl LibraryScanService {
         if let Some(matched) = self.book_in_library(run, &identity, books, only_group) {
             self.fill_from_library_book(run, group, audio, matched, &mut draft)
                 .await;
+        } else if run.recheck {
+            draft.kept = true;
         } else {
             self.fill_from_book_listings(
                 run,
@@ -1353,6 +1425,7 @@ impl LibraryScanService {
             (Some(title), "imported") => format!("{}: imported as {title}", group.label),
             (Some(title), "wanted") => format!("{}: wanted, and it's {title}", group.label),
             (Some(title), "in_library") => format!("{}: {title}, in your library", group.label),
+            (Some(title), "adds") => format!("{}: {title}, adding to your library", group.label),
             (Some(title), "identified") => format!(
                 "{}: {title}{}",
                 group.label,
@@ -1473,7 +1546,9 @@ impl LibraryScanService {
                 } else if wanted {
                     "wanted"
                 } else {
-                    "in_library"
+                    // Listed in the library with no files yet: this is the book for it.
+                    draft.adds = Some(layout.chapters.len());
+                    "adds"
                 };
                 if has_files {
                     draft.summary =
@@ -1892,6 +1967,18 @@ impl LibraryScanService {
             matched as f64 / members.len().max(1) as f64
         };
 
+        let covers = |tracks: &[TrackFacts]| -> f64 {
+            if tracks.is_empty() {
+                return 0.0;
+            }
+            let held: HashSet<usize> = release_match::match_tracks(&members, &names, tracks)
+                .iter()
+                .flatten()
+                .map(|(track, _)| *track)
+                .collect();
+            held.len() as f64 / tracks.len() as f64
+        };
+
         // In the library first: an album it's already known about needs no searching.
         let mut best_library: Option<(&Album, f64, f64, Vec<Track>)> = None;
         for album in albums {
@@ -1913,7 +2000,11 @@ impl LibraryScanService {
             let tracks = self.album_tracks(&album.id).await.unwrap_or_default();
             let facts: Vec<TrackFacts> = tracks.iter().map(track_facts).collect();
             let lined_up = line_up(&facts);
-            if lined_up < ENOUGH_TRACKS && !requested {
+            // A bigger edition of an album the library has (a deluxe set over the standard album)
+            // lines up only partly, but it holds nearly all the album's tracks: it's this album,
+            // with more to add.
+            let covered = covers(&facts);
+            if lined_up < ENOUGH_TRACKS && covered < ENOUGH_TRACKS && !requested {
                 continue;
             }
             if best_library
@@ -1940,17 +2031,19 @@ impl LibraryScanService {
                     lined_up * 100.0
                 ),
             );
-            let wanted = tracks
-                .iter()
-                .any(|track| track.wanted && track.media_file_id.is_none());
             let requested = run.hint.item_id.as_deref() == Some(album.id.as_str());
             draft.status = if draft.paths.iter().all(|path| run.copied.contains(path)) {
                 "imported"
-            } else if wanted || requested {
-                "wanted"
             } else {
-                "in_library"
+                let holding = self.album_holding(&members, &names, &tracks).await;
+                let (status, adds, line) = holding.verdict(requested, "track", "tracks");
+                draft.note(Source::Library, line.clone());
+                draft.adds = adds;
+                draft.summary = Some(line);
+                status
             };
+        } else if run.recheck {
+            draft.kept = true;
         } else if search_providers {
             draft.candidates = self
                 .album_candidates(&album_title, artist.as_deref(), Some(&line_up))
@@ -2008,6 +2101,129 @@ impl LibraryScanService {
             .finish(step, status, &message, Some(draft.evidence_text()))
             .await;
         draft
+    }
+
+    /// The files the library holds, by id, while they're still on disk.
+    async fn held_files(&self, ids: Vec<String>) -> HashMap<String, MediaFile> {
+        let mut held = HashMap::new();
+        let Ok(database) = self.database().await else {
+            return held;
+        };
+        for id in ids {
+            if let Ok(Some(file)) = MediaFile::get(database.pool().pool(), &id).await
+                && tokio::fs::try_exists(&file.path).await.unwrap_or(true)
+            {
+                held.insert(id, file);
+            }
+        }
+        held
+    }
+
+    /// Where an album's files would go, by the same rules a scan places them by, against what's
+    /// on those tracks now.
+    async fn album_holding(
+        &self,
+        members: &[ReleaseFile],
+        names: &[Option<String>],
+        tracks: &[Track],
+    ) -> Holding {
+        let facts: Vec<TrackFacts> = tracks.iter().map(track_facts).collect();
+        let matched = release_match::match_tracks(members, names, &facts);
+        let held = self
+            .held_files(
+                tracks
+                    .iter()
+                    .filter_map(|track| track.media_file_id.clone())
+                    .collect(),
+            )
+            .await;
+        let mut holding = Holding::default();
+        let mut filled: HashSet<usize> = HashSet::new();
+        for (index, file) in members.iter().enumerate() {
+            let title = file.tags.title.clone().or_else(|| names[index].clone());
+            let place = matched[index].map(|(track, _)| track).or_else(|| {
+                title
+                    .as_deref()
+                    .and_then(|title| music_rules::track_with_title(title, file.duration, &facts))
+            });
+            let Some(place) = place else {
+                // On no listed track: an import adds it to the album.
+                holding.adds += 1;
+                continue;
+            };
+            let track = &tracks[place];
+            let Some(have) = track.media_file_id.as_ref().and_then(|id| held.get(id)) else {
+                if filled.insert(place) {
+                    holding.adds += 1;
+                    holding.wanted += usize::from(track.wanted);
+                } else {
+                    holding.other += 1;
+                }
+                continue;
+            };
+            if have.size == file.size {
+                holding.same += 1;
+                continue;
+            }
+            let (new_format, old_format) = (format_of(&file.path), held_format(have));
+            let seconds = have
+                .duration
+                .map(f64::from)
+                .or(track.duration_secs.map(f64::from));
+            let better = music_rules::better_copy(
+                music_rules::Copy {
+                    format: &new_format,
+                    kbps: music_rules::kbps(file.size, file.duration),
+                },
+                music_rules::Copy {
+                    format: &old_format,
+                    kbps: music_rules::kbps(have.size, seconds),
+                },
+            );
+            if better {
+                holding.better += 1;
+                if holding.better_because.is_none() && new_format != old_format {
+                    holding.better_because = Some(format!(
+                        "{} where your library has {}",
+                        new_format.to_uppercase(),
+                        old_format.to_uppercase()
+                    ));
+                }
+            } else {
+                holding.other += 1;
+            }
+        }
+        holding
+    }
+
+    /// A video file against what an episode or film holds now.
+    fn video_holding(
+        holding: &mut Holding,
+        file: &ReleaseFile,
+        have: Option<&MediaFile>,
+        wanted: bool,
+    ) {
+        let Some(have) = have else {
+            holding.adds += 1;
+            holding.wanted += usize::from(wanted);
+            return;
+        };
+        if have.size == file.size {
+            holding.same += 1;
+            return;
+        }
+        let name = Path::new(&file.path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&file.path);
+        if scoring::is_upgrade(
+            &scoring::parse_release(name),
+            Some(&profile::parsed_release_for_media_file(have)),
+        ) {
+            holding.better += 1;
+        } else {
+            holding.other += 1;
+        }
     }
 
     async fn album_tracks(&self, album_id: &str) -> Result<Vec<Track>> {
@@ -2215,14 +2431,32 @@ impl LibraryScanService {
                     .iter()
                     .filter(|episode| numbers.contains(&episode.episode))
                     .count();
-                let wanted = episodes
-                    .iter()
-                    .filter(|episode| {
-                        numbers.contains(&episode.episode)
-                            && episode.wanted
-                            && episode.media_file_id.is_none()
-                    })
-                    .count();
+                let held = self
+                    .held_files(
+                        episodes
+                            .iter()
+                            .filter(|episode| numbers.contains(&episode.episode))
+                            .filter_map(|episode| episode.media_file_id.clone())
+                            .collect(),
+                    )
+                    .await;
+                let mut holding = Holding::default();
+                let mut seen: HashSet<i32> = HashSet::new();
+                for file in &files {
+                    let Some(number) = Self::parse_episode_hint(&file.path).episode else {
+                        continue;
+                    };
+                    let Some(episode) = episodes.iter().find(|episode| episode.episode == number)
+                    else {
+                        continue;
+                    };
+                    if !seen.insert(number) {
+                        holding.other += 1;
+                        continue;
+                    }
+                    let have = episode.media_file_id.as_ref().and_then(|id| held.get(id));
+                    Self::video_holding(&mut holding, file, have, episode.wanted);
+                }
                 draft.note(
                     Source::Library,
                     format!(
@@ -2232,13 +2466,14 @@ impl LibraryScanService {
                 );
                 draft.status = if draft.paths.iter().all(|path| run.copied.contains(path)) {
                     "imported"
-                } else if wanted > 0 {
-                    draft.summary =
-                        Some(format!("{} wanted", plural(wanted, "episode", "episodes")));
-                    "wanted"
                 } else {
-                    "in_library"
+                    let (status, adds, line) = holding.verdict(false, "episode", "episodes");
+                    draft.adds = adds;
+                    draft.summary = Some(line);
+                    status
                 };
+            } else if run.recheck {
+                draft.kept = true;
             } else {
                 draft.candidates = self.show_candidates(&show_name).await;
                 let contest = draft.candidates.get(1).map_or(0.0, |other| other.score);
@@ -2414,11 +2649,24 @@ impl LibraryScanService {
                 draft.confidence = score;
                 draft.status = if run.copied.contains(&file.key) {
                     "imported"
-                } else if (movie.wanted || requested(movie)) && movie.media_file_id.is_none() {
-                    "wanted"
                 } else {
-                    "in_library"
+                    let held = self
+                        .held_files(movie.media_file_id.iter().cloned().collect())
+                        .await;
+                    let have = movie.media_file_id.as_ref().and_then(|id| held.get(id));
+                    let mut holding = Holding::default();
+                    Self::video_holding(&mut holding, file, have, movie.wanted);
+                    let asked = requested(movie) && have.is_none();
+                    let (status, adds, line) = holding.verdict(asked, "film", "films");
+                    draft.adds = adds;
+                    draft.summary = Some(match status {
+                        "adds" => "Your library lists this film, without a file".to_string(),
+                        _ => line,
+                    });
+                    status
                 };
+            } else if run.recheck {
+                draft.kept = true;
             } else if index < MAX_PROVIDER_ITEMS {
                 draft.candidates = self
                     .movie_candidates(&title, parsed.year, file.duration)
@@ -2550,10 +2798,50 @@ impl LibraryScanService {
         mut drafts: Vec<ItemDraft>,
     ) -> String {
         let existing = self.identified_items(&run.hash).await.unwrap_or_default();
-        // What's imported stays imported, even if a later look at the files would say otherwise.
+        // Whether what a result was matched to is still in the library.
+        let mut present: HashMap<String, bool> = HashMap::new();
+        if let Ok(database) = self.database().await {
+            for item in &existing {
+                if item.library_item_id.is_some() {
+                    let there = Self::library_item_if_present(database.pool(), item)
+                        .await
+                        .map(|found| found.is_some())
+                        .unwrap_or(true);
+                    present.insert(item.id.clone(), there);
+                }
+            }
+        }
+        let mut unchanged: HashSet<String> = HashSet::new();
         for draft in &mut drafts {
-            if let Some(previous) = existing.iter().find(|item| item.item_key == draft.key)
-                && previous.status == "imported"
+            let Some(previous) = existing.iter().find(|item| item.item_key == draft.key) else {
+                if draft.kept {
+                    draft.status = "needs_choice";
+                    draft.summary = Some("Run identification again to look this up.".to_string());
+                }
+                continue;
+            };
+            // A re-check that didn't look this up leaves it as it was, except for a match that
+            // has since left the library.
+            if draft.kept {
+                let library_now = draft.library_id.clone();
+                if previous.library_item_id.is_none()
+                    || present.get(&previous.id).copied().unwrap_or(false)
+                {
+                    keep_previous(draft, previous);
+                    // A library made since gives it somewhere to go.
+                    if draft.library_id.is_none() && library_now.is_some() {
+                        draft.library_id = library_now;
+                    } else {
+                        unchanged.insert(previous.id.clone());
+                    }
+                } else {
+                    forget_library_match(draft, previous);
+                }
+                continue;
+            }
+            // What's imported stays imported while it's still in the library, even if a later look
+            // at the files would say otherwise.
+            if previous.status == "imported" && present.get(&previous.id).copied().unwrap_or(false)
             {
                 draft.status = "imported";
                 draft.title = previous.title.clone().or(draft.title.take());
@@ -2574,7 +2862,12 @@ impl LibraryScanService {
             }
         }
         for draft in &drafts {
-            self.save_identified_item(run, draft, &existing).await;
+            let same = existing
+                .iter()
+                .any(|item| item.item_key == draft.key && unchanged.contains(&item.id));
+            if !same {
+                self.save_identified_item(run, draft, &existing).await;
+            }
         }
         let mut changed = false;
         for draft in &mut drafts {
@@ -2653,6 +2946,7 @@ impl LibraryScanService {
             "libraryId": draft.library_id,
             "season": draft.season,
             "canAccept": draft.can_accept,
+            "addsCount": draft.adds.map(|count| count as i32),
         });
         let result = match existing.iter().find(|item| item.item_key == draft.key) {
             Some(item) => {
@@ -2722,6 +3016,7 @@ impl LibraryScanService {
                 draft.group_key.as_deref(),
                 draft.season,
                 files,
+                false,
                 false,
             )
             .await;
@@ -3004,6 +3299,7 @@ impl LibraryScanService {
         season: Option<i32>,
         files: Vec<SourceFileImport>,
         accept_review: bool,
+        better_copies: bool,
     ) -> SourceProcessSummary {
         if kind == "audiobook" {
             return self
@@ -3031,6 +3327,7 @@ impl LibraryScanService {
             },
             "music" => ImportLinkPatch {
                 album_id: Some(item_id.to_string()),
+                better_copies,
                 ..Default::default()
             },
             other => {
@@ -3245,9 +3542,11 @@ impl LibraryScanService {
                 item.season,
                 files,
                 choice.accept_review,
+                choice.better_copies,
             )
             .await;
-        if summary.success {
+        // Nothing added leaves the result as it was: the library already had all of it.
+        if summary.success && summary.files_processed > 0 {
             if let Err(error) = self.mark_item_imported(&item, &target).await {
                 warn!(error = %error, "Could not record an imported result");
             }
@@ -3256,6 +3555,10 @@ impl LibraryScanService {
             }
         }
         self.request_identification(&item.info_hash, IdentifyTrigger::Asked);
+        // Other downloads of the same thing now compare with more.
+        if let Some(library_type) = library_type_for(&item.kind) {
+            self.recheck_identified(&item.user_id, library_type);
+        }
         summary
     }
 
@@ -3392,6 +3695,17 @@ impl LibraryScanService {
 }
 
 /// The kind of library an identified result belongs in.
+/// What a library of this type holds, as results name it.
+fn kind_for_library_type(library_type: &str) -> Option<&'static str> {
+    match library_type.to_ascii_lowercase().as_str() {
+        "music" => Some("music"),
+        "audiobooks" | "audiobook" => Some("audiobook"),
+        "tv" | "shows" => Some("tv"),
+        "movies" | "movie" => Some("movie"),
+        _ => None,
+    }
+}
+
 fn library_type_for(kind: &str) -> Option<&'static str> {
     match kind {
         "music" => Some("music"),
@@ -3632,12 +3946,151 @@ fn candidate_from_book(book: &Audiobook, verdict: &EditionVerdict) -> IdentifyCa
     }
 }
 
+/// How a download's files compare with what the library holds in the places they'd go.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct Holding {
+    /// Files for places with no file, or for no place yet: what importing would add.
+    adds: usize,
+    /// Of those, places someone asked for.
+    wanted: usize,
+    /// The library's own files, the same size.
+    same: usize,
+    /// Better copies of what the library holds.
+    better: usize,
+    /// Other copies, no better.
+    other: usize,
+    /// What makes the better copies better, such as "FLAC where your library has MP3".
+    better_because: Option<String>,
+}
+
+impl Holding {
+    /// The status this makes a result, how many it counts, and a line saying why. `one` and
+    /// `many` name a place: track, episode.
+    fn verdict(
+        &self,
+        requested: bool,
+        one: &str,
+        many: &str,
+    ) -> (&'static str, Option<usize>, String) {
+        let held = self.same + self.better + self.other;
+        if self.wanted > 0 || requested {
+            let line = if self.adds == 0 {
+                "Asked for, though your library already has these".to_string()
+            } else {
+                format!(
+                    "Adds {} you asked for",
+                    plural(self.adds.max(self.wanted), one, many)
+                )
+            };
+            return ("wanted", Some(self.adds), line);
+        }
+        if self.adds > 0 {
+            let line = if held == 0 {
+                format!("Adds {}", plural(self.adds, one, many))
+            } else {
+                format!(
+                    "Adds {}; your library has the other {held}",
+                    plural(self.adds, one, many)
+                )
+            };
+            return ("adds", Some(self.adds), line);
+        }
+        if self.better > 0 {
+            let mut line = format!(
+                "Better copies of {} your library has",
+                plural(self.better, one, many)
+            );
+            if let Some(because) = &self.better_because {
+                line.push_str(": ");
+                line.push_str(because);
+            }
+            return ("upgrade", Some(self.better), line);
+        }
+        let line = if self.other == 0 {
+            "Your library already has these files"
+        } else {
+            "Your library already has these, in copies as good"
+        };
+        ("in_library", None, line.to_string())
+    }
+}
+
+/// A file's extension, lowercased, as the format to compare copies by.
+fn format_of(path: &str) -> String {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+/// How a held audio file reads as a copy: its codec when that says more than its extension does.
+fn held_format(file: &MediaFile) -> String {
+    match file.audio_codec.as_deref() {
+        Some(codec) if codec.eq_ignore_ascii_case("alac") => "alac".to_string(),
+        _ => format_of(&file.path),
+    }
+}
+
 fn track_facts(track: &Track) -> TrackFacts {
     TrackFacts {
         title: track.title.clone(),
         number: Some(track.track_number),
         disc: track.disc_number,
         seconds: track.duration_secs.map(f64::from),
+    }
+}
+
+/// A result's stored status, as a draft holds it.
+fn static_status(status: &str) -> &'static str {
+    match status {
+        "imported" => "imported",
+        "wanted" => "wanted",
+        "adds" => "adds",
+        "upgrade" => "upgrade",
+        "in_library" => "in_library",
+        "identified" => "identified",
+        "needs_choice" => "needs_choice",
+        _ => "unknown",
+    }
+}
+
+/// Carry a result forward as it was found before.
+fn keep_previous(draft: &mut ItemDraft, previous: &IdentifiedItem) {
+    draft.status = static_status(&previous.status);
+    draft.title = previous.title.clone();
+    draft.creator = previous.creator.clone();
+    draft.year = previous.year;
+    draft.cover_url = previous.cover_url.clone();
+    draft.summary = previous.summary.clone();
+    draft.provider_id = previous.provider_id.clone();
+    draft.library_item_type = previous
+        .library_item_type
+        .as_deref()
+        .and_then(static_item_type);
+    draft.library_item_id = previous.library_item_id.clone();
+    draft.library_id = previous.library_id.clone();
+    draft.confidence = previous.confidence;
+    draft.can_accept = previous.can_accept;
+    draft.adds = previous.adds_count.map(|count| count.max(0) as usize);
+    draft.candidates = serde_json::from_str(&previous.candidates).unwrap_or_default();
+    draft.evidence = serde_json::from_str(&previous.evidence).unwrap_or_default();
+}
+
+/// What a result matched has left the library: it goes back to the listing it was found as, or to
+/// a person when there wasn't one.
+fn forget_library_match(draft: &mut ItemDraft, previous: &IdentifiedItem) {
+    keep_previous(draft, previous);
+    draft.library_item_type = None;
+    draft.library_item_id = None;
+    draft.adds = None;
+    if previous.provider_id.is_some() {
+        draft.status = "identified";
+        draft.summary = None;
+    } else {
+        draft.status = "needs_choice";
+        draft.summary =
+            Some("What this matched has left your library. Choose what it is.".to_string());
     }
 }
 
@@ -3785,6 +4238,8 @@ fn summarize_items(items: &[ItemDraft]) -> String {
     for (status, word) in [
         ("imported", "imported"),
         ("wanted", "wanted"),
+        ("adds", "adding to what you have"),
+        ("upgrade", "better than what you have"),
         ("in_library", "in your library"),
         ("identified", "ready to add"),
         ("needs_choice", "need a choice"),
@@ -3833,6 +4288,75 @@ mod library_type_tests {
 #[cfg(test)]
 mod trigger_tests {
     use super::*;
+
+    #[test]
+    fn a_library_change_only_looks_again_at_downloads_already_identified_and_never_imports() {
+        assert_eq!(
+            settled_trigger(IdentifyTrigger::LibraryChanged, false, false),
+            None
+        );
+        assert_eq!(
+            settled_trigger(IdentifyTrigger::LibraryChanged, true, true),
+            Some(IdentifyTrigger::LibraryChanged)
+        );
+        assert!(!IdentifyTrigger::LibraryChanged.may_import());
+        assert!(!IdentifyTrigger::Observed.may_import());
+        assert!(IdentifyTrigger::Finished.may_import());
+        assert!(IdentifyTrigger::Asked.rank() > IdentifyTrigger::LibraryChanged.rank());
+    }
+
+    #[test]
+    fn what_a_download_holds_against_the_library_decides_its_status() {
+        let holding = |adds, wanted, same, better, other| Holding {
+            adds,
+            wanted,
+            same,
+            better,
+            other,
+            better_because: None,
+        };
+        let (status, count, line) = holding(2, 0, 16, 0, 0).verdict(false, "track", "tracks");
+        assert_eq!((status, count), ("adds", Some(2)));
+        assert_eq!(line, "Adds 2 tracks; your library has the other 16");
+        assert_eq!(
+            holding(1, 1, 3, 0, 0).verdict(false, "track", "tracks").0,
+            "wanted"
+        );
+        assert_eq!(
+            holding(0, 0, 4, 0, 0).verdict(true, "track", "tracks").0,
+            "wanted"
+        );
+        let mut better = holding(0, 0, 1, 3, 0);
+        better.better_because = Some("FLAC where your library has MP3".to_string());
+        let (status, count, line) = better.verdict(false, "track", "tracks");
+        assert_eq!((status, count), ("upgrade", Some(3)));
+        assert!(
+            line.ends_with(": FLAC where your library has MP3"),
+            "{line}"
+        );
+        assert_eq!(
+            holding(0, 0, 10, 0, 0).verdict(false, "track", "tracks"),
+            (
+                "in_library",
+                None,
+                "Your library already has these files".to_string()
+            )
+        );
+        assert_eq!(
+            holding(0, 0, 8, 0, 2).verdict(false, "track", "tracks").0,
+            "in_library"
+        );
+    }
+
+    #[test]
+    fn evidence_read_back_from_a_saved_result_round_trips() {
+        let mut draft = ItemDraft::default();
+        draft.note(Source::Library, "In your library");
+        let saved = serde_json::to_string(&draft.evidence).unwrap();
+        let read: Vec<Finding> = serde_json::from_str(&saved).unwrap();
+        assert_eq!(read.len(), 1);
+        assert_eq!(read[0].source, Source::Library);
+    }
 
     #[test]
     fn evidence_says_where_it_came_from() {

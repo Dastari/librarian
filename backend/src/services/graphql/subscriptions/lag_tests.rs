@@ -28,6 +28,7 @@ async fn generated_subscription_reports_lag_then_reconciles_and_delivers_again()
             color: None,
             auto_scan: false,
             auto_organize: false,
+            auto_resolve_duplicates: None,
             naming_pattern: String::new(),
             scan_interval_minutes: 60,
             watch_for_changes: false,

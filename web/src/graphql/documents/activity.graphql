@@ -191,3 +191,14 @@ query ScanCounts($libraryId: String!) {
     }
   }
 }
+
+# The other copy of a duplicate pair, by its path, to show what plays it.
+query DuplicateCopy($libraryId: String!, $path: String!) {
+  mediaFiles(where: { libraryId: { eq: $libraryId }, path: { eq: $path } }, page: { limit: 1, offset: 0 }) {
+    edges {
+      node {
+        ...LinkedMediaFile
+      }
+    }
+  }
+}

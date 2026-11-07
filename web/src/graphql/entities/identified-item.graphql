@@ -27,6 +27,7 @@ fragment IdentifiedItemFields on IdentifiedItem {
   libraryId
   season
   canAccept
+  addsCount
   createdAt
   updatedAt
 }

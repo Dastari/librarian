@@ -289,6 +289,8 @@ struct TorrentImportLink {
     album_id: Option<String>,
     audiobook_id: Option<String>,
     season: Option<i32>,
+    /// A person chose to put better copies on tracks that already have files.
+    better_copies: bool,
 }
 
 impl TorrentImportLink {
@@ -305,6 +307,7 @@ impl TorrentImportLink {
             album_id: row.album_id.clone(),
             audiobook_id: row.audiobook_id.clone(),
             season: row.season,
+            better_copies: false,
         }
     }
     fn has_target(&self) -> bool {
@@ -425,6 +428,8 @@ struct ImportLinkPatch {
     show_id: Option<String>,
     season: Option<i32>,
     album_id: Option<String>,
+    /// Better copies replace the files tracks have now, which stay on disk.
+    better_copies: bool,
 }
 
 /// How a person told an import to treat a release.
@@ -446,6 +451,13 @@ struct LinkedEpisodeRow {
 
 /// How an import says a file is one the library already has.
 const ALREADY_IN_LIBRARY: &str = "Already in the library";
+/// How an import says the library has another copy of a file's track, and keeps it.
+const KEEPS_OWN_COPY: &str = "The library keeps its own copy";
+
+/// A file the import left alone because the library already holds its place.
+fn held_by_library(reason: &str) -> bool {
+    reason.starts_with(ALREADY_IN_LIBRARY) || reason.starts_with(KEEPS_OWN_COPY)
+}
 
 #[derive(Debug, Clone)]
 struct LinkedTrackRow {
@@ -521,6 +533,29 @@ pub struct DuplicateTrashResult {
     pub old_path: String,
     pub trash_path: String,
 }
+
+/// Which of a duplicate pair to keep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DuplicateKeep {
+    /// The copy the scan chose.
+    Keeper,
+    /// The copy the issue is about.
+    Duplicate,
+    /// Whichever a title plays.
+    Best,
+}
+
+/// When an issue was first recorded, in seconds; rows store Unix seconds or RFC 3339.
+fn issue_seen_at(issue: &LibraryScanIssue) -> i64 {
+    issue.created_at.parse::<i64>().unwrap_or_else(|_| {
+        DateTime::parse_from_rfc3339(&issue.created_at)
+            .map(|date| date.timestamp())
+            .unwrap_or_default()
+    })
+}
+
+/// Why keeping the better copy needs a person.
+pub const BOTH_COPIES_IN_USE: &str = "Both copies are played by titles, so choose which to keep";
 
 #[derive(Debug, Clone)]
 struct PendingProviderFallback {
@@ -2218,6 +2253,63 @@ impl LibraryScanService {
         .context("Duplicate hash worker failed")?
     }
 
+    /// Whether a title plays this file: it's the file a movie, episode, track or chapter points at,
+    /// not a second copy beside it.
+    async fn file_in_use(&self, file: &MediaFile) -> bool {
+        let Ok(database) = self.database().await else {
+            return true;
+        };
+        let pool = database.pool().pool();
+        let points_here = |held: Option<String>| held.as_deref() == Some(file.id.as_str());
+        if let Some(id) = &file.track_id {
+            return Track::get(pool, id)
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|row| points_here(row.media_file_id));
+        }
+        if let Some(id) = &file.episode_id {
+            return Episode::get(pool, id)
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|row| points_here(row.media_file_id));
+        }
+        if let Some(id) = &file.movie_id {
+            return crate::graphql::entities::Movie::get(pool, id)
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|row| points_here(row.media_file_id));
+        }
+        file.chapter_id.is_some()
+    }
+
+    /// Best copy to keep first: one a title plays, then one analysis found optimal, then the
+    /// shorter path, then by name, so the choice is the same every time.
+    async fn order_for_keeping(&self, copies: &mut [DuplicateCandidate]) {
+        let mut in_use: HashMap<String, bool> = HashMap::new();
+        if let Ok(database) = self.database().await {
+            for copy in copies.iter() {
+                if let Ok(Some(file)) =
+                    MediaFile::get(database.pool().pool(), &copy.media_file_id).await
+                {
+                    in_use.insert(copy.media_file_id.clone(), self.file_in_use(&file).await);
+                }
+            }
+        }
+        copies.sort_by(|a, b| {
+            let rank = |copy: &DuplicateCandidate| {
+                (
+                    !in_use.get(&copy.media_file_id).copied().unwrap_or(false),
+                    copy.quality_status.as_deref() != Some("optimal"),
+                    copy.path.len(),
+                )
+            };
+            rank(a).cmp(&rank(b)).then_with(|| a.path.cmp(&b.path))
+        });
+    }
+
     /// Confirm same-size candidates with a full SHA-256 before reporting.
     /// This is deliberately review-only: scans never delete either path.
     async fn detect_duplicate_files(
@@ -2272,7 +2364,10 @@ impl LibraryScanService {
                 }
             }
 
-            for (digest, identical) in by_hash.into_iter().filter(|(_, group)| group.len() > 1) {
+            for (digest, mut identical) in by_hash.into_iter().filter(|(_, group)| group.len() > 1)
+            {
+                // The same copy has to be the keeper every scan, or each scan reports the pair anew.
+                self.order_for_keeping(&mut identical).await;
                 let keeper = &identical[0];
                 for duplicate in identical.iter().skip(1) {
                     let storage_relationship = if same_file::is_same_file(
@@ -3244,7 +3339,151 @@ impl LibraryScanService {
         Ok(())
     }
 
+    /// Settle a duplicate by keeping the better copy: the one a title plays. Neither being played
+    /// keeps the one the scan chose; both being played is a person's call.
+    pub async fn trash_duplicate_issue_keeping(
+        &self,
+        issue_id: &str,
+        keep: DuplicateKeep,
+    ) -> Result<DuplicateTrashResult> {
+        let database = self.database().await?;
+        let issue = LibraryScanIssue::get(database.pool().pool(), &issue_id.to_string())
+            .await?
+            .context("Duplicate issue not found")?;
+        let keep = match keep {
+            DuplicateKeep::Best => {
+                let details: DuplicateIssueDetails = serde_json::from_str(
+                    issue
+                        .details_json
+                        .as_deref()
+                        .context("Duplicate issue has no verification context")?,
+                )?;
+                let duplicate = match issue.media_file_id.as_deref() {
+                    Some(id) => MediaFile::get(database.pool().pool(), &id.to_string()).await?,
+                    None => None,
+                };
+                let keeper = self
+                    .library_file_at(&issue.library_id, &details.keeper_path)
+                    .await?;
+                let keeper_used = match &keeper {
+                    Some(file) => self.file_in_use(file).await,
+                    None => false,
+                };
+                let duplicate_used = match &duplicate {
+                    Some(file) => self.file_in_use(file).await,
+                    None => false,
+                };
+                match (keeper_used, duplicate_used) {
+                    (true, true) => anyhow::bail!(BOTH_COPIES_IN_USE),
+                    (false, true) => DuplicateKeep::Duplicate,
+                    _ => DuplicateKeep::Keeper,
+                }
+            }
+            other => other,
+        };
+        self.trash_duplicate_copy(issue_id, keep == DuplicateKeep::Duplicate)
+            .await
+    }
+
+    /// For a library set to settle duplicates itself: keep the copy each pair's title plays and
+    /// move the other to the recoverable trash. Pairs it can't decide stay open for a person.
+    async fn settle_duplicates_if_asked(&self, library: &LibraryRow) {
+        let Ok(database) = self.database().await else {
+            return;
+        };
+        let asked = crate::graphql::entities::Library::get(database.pool().pool(), &library.id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|row| row.auto_resolve_duplicates)
+            .unwrap_or(false);
+        if !asked {
+            return;
+        }
+        if let Ok((settled, left)) = self.settle_duplicates(&library.id).await
+            && settled + left > 0
+        {
+            info!(
+                library_id = %library.id,
+                settled,
+                left,
+                "Settled duplicates after a scan: library_id={}, settled={}, left={}",
+                library.id,
+                settled,
+                left
+            );
+        }
+    }
+
+    /// Settle every open duplicate in a library by keeping the copy its title plays. Returns how
+    /// many were settled and how many need a person.
+    pub async fn settle_duplicates(&self, library_id: &str) -> Result<(usize, usize)> {
+        let database = self.database().await?;
+        let open = LibraryScanIssue::query(database.pool().pool())
+            .filter(LibraryScanIssueWhereInput {
+                library_id: Some(StringFilter {
+                    eq: Some(library_id.to_string()),
+                    ..Default::default()
+                }),
+                issue_code: Some(StringFilter {
+                    eq: Some("BYTE_IDENTICAL_DUPLICATE".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|issue| issue.resolved_at.is_none());
+        let (mut settled, mut left) = (0_usize, 0_usize);
+        for issue in open {
+            match self
+                .trash_duplicate_issue_keeping(&issue.id, DuplicateKeep::Best)
+                .await
+            {
+                Ok(_) => settled += 1,
+                Err(error) => {
+                    left += 1;
+                    debug!(issue_id = %issue.id, error = %error, "Left a duplicate for a person to settle");
+                }
+            }
+        }
+        Ok((settled, left))
+    }
+
+    /// The library's record of the file at a path.
+    async fn library_file_at(&self, library_id: &str, path: &str) -> Result<Option<MediaFile>> {
+        let database = self.database().await?;
+        Ok(MediaFile::query(database.pool().pool())
+            .filter(MediaFileWhereInput {
+                library_id: Some(StringFilter {
+                    eq: Some(library_id.to_string()),
+                    ..Default::default()
+                }),
+                path: Some(StringFilter {
+                    eq: Some(path.to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await?
+            .into_iter()
+            .next())
+    }
+
     pub async fn trash_duplicate_issue(&self, issue_id: &str) -> Result<DuplicateTrashResult> {
+        self.trash_duplicate_copy(issue_id, false).await
+    }
+
+    /// Move one of a verified duplicate pair to the library's trash: the duplicate, or with
+    /// `remove_keeper` the copy the scan chose to keep.
+    async fn trash_duplicate_copy(
+        &self,
+        issue_id: &str,
+        remove_keeper: bool,
+    ) -> Result<DuplicateTrashResult> {
         let database = self.database().await?;
         let issue = LibraryScanIssue::get(database.pool().pool(), &issue_id.to_string())
             .await
@@ -3266,20 +3505,41 @@ impl LibraryScanService {
         if details.kind != "byte-identical-duplicate" {
             anyhow::bail!("Duplicate verification context has an unexpected kind");
         }
-        let media_file_id = issue
+        let issue_file_id = issue
             .media_file_id
             .as_deref()
             .context("Duplicate issue is not linked to a media file")?;
-        let media_file = MediaFile::get(database.pool().pool(), &media_file_id.to_string())
+        let issue_file = MediaFile::get(database.pool().pool(), &issue_file_id.to_string())
             .await
             .context("Failed to read duplicate media file")?
             .context("Duplicate media file no longer exists")?;
-        if media_file.library_id.as_deref() != Some(issue.library_id.as_str())
-            || media_file.path != details.duplicate_path
-            || media_file.size != details.size
+        if issue_file.library_id.as_deref() != Some(issue.library_id.as_str())
+            || issue_file.path != details.duplicate_path
+            || issue_file.size != details.size
         {
             anyhow::bail!("Duplicate file changed since it was verified; rescan before removal");
         }
+        // Removing the keeper swaps the two: the issue's own file stays.
+        let details = if remove_keeper {
+            DuplicateIssueDetails {
+                duplicate_path: details.keeper_path.clone(),
+                keeper_path: details.duplicate_path.clone(),
+                ..details
+            }
+        } else {
+            details
+        };
+        let media_file = if remove_keeper {
+            self.library_file_at(&issue.library_id, &details.duplicate_path)
+                .await?
+                .context("The kept copy is no longer in the library; rescan before removal")?
+        } else {
+            issue_file
+        };
+        if media_file.size != details.size {
+            anyhow::bail!("Duplicate file changed since it was verified; rescan before removal");
+        }
+        let media_file_id = media_file.id.as_str();
         let library = self.get_library(&issue.library_id).await?;
         let root = tokio::fs::canonicalize(&library.path)
             .await
@@ -3684,9 +3944,10 @@ impl LibraryScanService {
             return Ok(());
         }
 
-        // Keep each scan's audit record, but do not re-alert an acknowledged,
-        // unchanged problem merely because another scheduled scan found it.
-        let previous = LibraryScanIssue::query(database.pool().pool())
+        // A later scan finding the same problem is the same issue, seen once more: it moves to
+        // this scan and counts up, rather than becoming another row to deal with. Copies left by
+        // older scans fold into it.
+        let earlier: Vec<LibraryScanIssue> = LibraryScanIssue::query(database.pool().pool())
             .filter(LibraryScanIssueWhereInput {
                 user_id: Some(StringFilter {
                     eq: Some(library.user_id.clone()),
@@ -3706,19 +3967,51 @@ impl LibraryScanService {
             .await?
             .into_iter()
             .filter(|issue| issue.media_file_id.as_deref() == media_file_id)
-            .max_by_key(|issue| {
-                issue.created_at.parse::<i64>().unwrap_or_else(|_| {
-                    DateTime::parse_from_rfc3339(&issue.created_at)
-                        .map(|date| date.timestamp())
-                        .unwrap_or_default()
-                })
-            });
-        let read_at = previous
-            .filter(|issue| {
-                issue.resolved_at.is_none()
-                    && issue.message == Self::bounded_issue_text(message, 1_000)
-            })
-            .and_then(|issue| issue.read_at);
+            .collect();
+        let mut open: Vec<&LibraryScanIssue> = earlier
+            .iter()
+            .filter(|issue| issue.resolved_at.is_none())
+            .collect();
+        open.sort_by_key(|issue| std::cmp::Reverse(issue_seen_at(issue)));
+        if let Some((current, older)) = open.split_first() {
+            let folded: i32 = older.iter().map(|issue| issue.occurrence_count).sum();
+            self.update_scan_issue(
+                &current.id,
+                UpdateLibraryScanIssueInput {
+                    scan_run_id: Some(scan_run_id.to_string()),
+                    severity: Some(severity.to_string()),
+                    message: Some(Self::bounded_issue_text(message, 1_000)),
+                    remediation: Some(
+                        remediation.map(|value| Self::bounded_issue_text(value, 1_000)),
+                    ),
+                    details_json: Some(
+                        details_json.map(|value| Self::bounded_issue_text(&value, 8_000)),
+                    ),
+                    occurrence_count: Some(
+                        current
+                            .occurrence_count
+                            .saturating_add(folded)
+                            .saturating_add(1),
+                    ),
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("Failed to carry a scan issue forward")?;
+            for issue in older {
+                self.delete_scan_issue(&issue.id).await?;
+            }
+            return Ok(());
+        }
+        // Someone settled this already, as it still is: finding it again doesn't reopen it.
+        let bounded_message = Self::bounded_issue_text(message, 1_000);
+        if earlier
+            .iter()
+            .any(|issue| issue.resolved_at.is_some() && issue.message == bounded_message)
+        {
+            return Ok(());
+        }
+        let read_at = None;
 
         let input = CreateLibraryScanIssueInput {
             user_id: library.user_id.clone(),
@@ -4285,7 +4578,8 @@ impl LibraryScanService {
             },
         )
         .await?;
-        self.reconcile_missing_media_files(&auth_user, &discovered_paths, &reconciliation_rows)
+        let removed_count = self
+            .reconcile_missing_media_files(&auth_user, &discovered_paths, &reconciliation_rows)
             .await?;
 
         self.reconcile_movie_collections_for_library(&library).await;
@@ -4451,6 +4745,13 @@ impl LibraryScanService {
         }
 
         self.clear_candidate_caches_for_library(library_id).await;
+
+        self.settle_duplicates_if_asked(&library).await;
+
+        // Downloads compared with this library before may now be in it, or have more to add.
+        if scanned_count > unchanged_skipped_count || removed_count > 0 {
+            self.recheck_identified(&library.user_id, &library.library_type);
+        }
 
         Ok(())
     }
@@ -10078,6 +10379,7 @@ impl LibraryScanService {
                     show_id: patch.show_id.clone(),
                     season: patch.season,
                     album_id: patch.album_id.clone(),
+                    better_copies: patch.better_copies,
                     episode_id: None,
                     track_id: None,
                     chapter_id: None,
@@ -10654,6 +10956,25 @@ impl LibraryScanService {
                 error = Some(summary.clone());
             }
         }
+        // Everything here is already held: nothing to add isn't a failure.
+        let all_held = processed == 0
+            && failed == 0
+            && !diagnostics.unmatched.is_empty()
+            && diagnostics
+                .unmatched
+                .iter()
+                .all(|file| held_by_library(&file.reason))
+            && linked.hard_failure.is_none()
+            && linked.review.is_none();
+        let mut messages = messages;
+        if all_held {
+            status = "completed";
+            error = None;
+            messages.push(format!(
+                "Nothing to add: the library already has all {} of these",
+                diagnostics.unmatched.len()
+            ));
+        }
         if manual.is_some() {
             if processed == 0 {
                 // One file not landing says nothing about the rest of the download.
@@ -10677,7 +10998,7 @@ impl LibraryScanService {
         .await?;
 
         Ok(SourceProcessSummary {
-            success: failed == 0 && processed > 0,
+            success: all_held || (failed == 0 && processed > 0),
             files_processed: processed,
             files_failed: failed,
             messages,
@@ -10954,9 +11275,19 @@ impl LibraryScanService {
         let (held, unmatched): (Vec<&UnmatchedImportFile>, Vec<&UnmatchedImportFile>) = diagnostics
             .unmatched
             .iter()
-            .partition(|item| item.reason.starts_with(ALREADY_IN_LIBRARY));
-        if !held.is_empty() {
-            parts.push(format!("{} file(s) already in the library", held.len()));
+            .partition(|item| held_by_library(&item.reason));
+        let same = held
+            .iter()
+            .filter(|item| item.reason.starts_with(ALREADY_IN_LIBRARY))
+            .count();
+        if same > 0 {
+            parts.push(format!("{same} file(s) already in the library"));
+        }
+        if held.len() > same {
+            parts.push(format!(
+                "{} file(s) left alone: the library keeps its own copies",
+                held.len() - same
+            ));
         }
         if !unmatched.is_empty() {
             let names = unmatched
@@ -11083,7 +11414,7 @@ impl LibraryScanService {
             self.plan_linked_episodes(auth_user, link, &video, &mut plan)
                 .await?;
         } else if let Some(album_id) = link.album_id.as_deref() {
-            self.plan_linked_album(auth_user, album_id, &audio, &mut plan)
+            self.plan_linked_album(auth_user, album_id, &audio, &mut plan, link.better_copies)
                 .await?;
         } else if let Some(audiobook_id) = link.audiobook_id.as_deref() {
             self.plan_linked_audiobook(auth_user, audiobook_id, &audio, &mut plan, book_choice)
@@ -11415,6 +11746,7 @@ impl LibraryScanService {
         album_id: &str,
         audio: &[&ImportFile],
         plan: &mut LinkedImportPlan,
+        better_copies: bool,
     ) -> Result<()> {
         let data = self
             .execute_graphql(
@@ -11686,14 +12018,37 @@ impl LibraryScanService {
                 Some(path) => tokio::fs::try_exists(path).await.unwrap_or(true),
                 None => track.held_size.is_some(),
             };
-            if held_on_disk {
+            // Unless a person chose this download's better copies: then a better one takes the
+            // track, and the file it had stays on disk as a second copy.
+            let replaces = better_copies
+                && track.held_size != Some(item.file.file_size)
+                && track.held_path.as_deref().is_some_and(|held| {
+                    let format = |path: &str| {
+                        Path::new(path)
+                            .extension()
+                            .and_then(|extension| extension.to_str())
+                            .unwrap_or_default()
+                            .to_ascii_lowercase()
+                    };
+                    let (new_format, old_format) = (format(&item.file.source_path), format(held));
+                    music_rules::better_copy(
+                        music_rules::Copy {
+                            format: &new_format,
+                            kbps: music_rules::kbps(item.file.file_size, facts.duration),
+                        },
+                        music_rules::Copy {
+                            format: &old_format,
+                            kbps: track
+                                .held_size
+                                .and_then(|size| music_rules::kbps(size, track.seconds)),
+                        },
+                    )
+                });
+            if held_on_disk && !replaces {
                 let reason = if track.held_size == Some(item.file.file_size) {
                     format!("{ALREADY_IN_LIBRARY} as '{}'", track.title)
                 } else {
-                    format!(
-                        "'{album_name}' already has another copy of '{}'",
-                        track.title
-                    )
+                    format!("{KEEPS_OWN_COPY} of '{}' on '{album_name}'", track.title)
                 };
                 plan.unmatched_reasons
                     .insert(item.file.source_path.clone(), reason);
@@ -13345,12 +13700,13 @@ impl LibraryScanService {
         auth_user: &AuthUser,
         discovered_paths: &HashSet<String>,
         rows: &[ExistingMediaFileRow],
-    ) -> Result<()> {
+    ) -> Result<usize> {
+        let mut removed = 0;
         for row in rows {
             if discovered_paths.contains(&row.path) || Path::new(&row.path).exists() {
                 continue;
             }
-
+            removed += 1;
             let _ = self
                 .execute_mutation(
                     auth_user,
@@ -13362,7 +13718,7 @@ impl LibraryScanService {
                 .await;
         }
 
-        Ok(())
+        Ok(removed)
     }
 
     async fn get_tv_shows_for_library(
@@ -16151,6 +16507,7 @@ mod tests {
                 color: None,
                 auto_scan: false,
                 auto_organize: false,
+                auto_resolve_duplicates: None,
                 naming_pattern: String::new(),
                 scan_interval_minutes: 60,
                 watch_for_changes: false,
@@ -16473,6 +16830,7 @@ mod tests {
                 color: None,
                 auto_scan: false,
                 auto_organize: false,
+                auto_resolve_duplicates: None,
                 naming_pattern: String::new(),
                 scan_interval_minutes: 60,
                 watch_for_changes: false,
@@ -17059,6 +17417,7 @@ mod atomic_analysis_tests {
                 color: None,
                 auto_scan: false,
                 auto_organize: false,
+                auto_resolve_duplicates: None,
                 naming_pattern: "fixture naming_pattern".to_string(),
                 scan_interval_minutes: 0,
                 watch_for_changes: false,

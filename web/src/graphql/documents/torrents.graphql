@@ -320,6 +320,7 @@ query TorrentIdentification($infoHash: String!) {
         libraryId
         season
         canAccept
+        addsCount
       }
     }
   }

@@ -41,6 +41,7 @@ const schema = z.object({
   scanIntervalMinutes: z.number().int().min(5, "At least 5 minutes").max(10080, "At most a week"),
   watchForChanges: z.boolean(),
   autoOrganize: z.boolean(),
+  autoResolveDuplicates: z.boolean(),
   namingPattern: z.string(),
   qualityProfileId: z.string(),
 });
@@ -52,6 +53,7 @@ const valuesOf = (library: LibraryFieldsFragment) => ({
   scanIntervalMinutes: library.scanIntervalMinutes,
   watchForChanges: library.watchForChanges,
   autoOrganize: library.autoOrganize,
+  autoResolveDuplicates: Boolean(library.autoResolveDuplicates),
   namingPattern: library.namingPattern || "",
   qualityProfileId: library.qualityProfileId ?? "",
 });
@@ -131,10 +133,11 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosen
       ),
     },
     {
-      value: "organization", label: "Organization", icon: <IconFolder />, fields: ["autoOrganize", "namingPattern"],
+      value: "organization", label: "Organization", icon: <IconFolder />, fields: ["autoOrganize", "autoResolveDuplicates", "namingPattern"],
       content: (
         <div className="flex flex-col gap-3">
           <form.AppField name="autoOrganize">{(field) => <field.SwitchRow label="Organize files" description="Rename and move matched files into the naming pattern." />}</form.AppField>
+          <form.AppField name="autoResolveDuplicates">{(field) => <field.SwitchRow label="Settle duplicates" description="After each scan, keep the copy a title plays and move identical copies to the library's trash, where they can be restored." />}</form.AppField>
           <form.AppField name="namingPattern">{(field) => <field.SelectField label="Naming pattern" options={patternOptions} />}</form.AppField>
           <form.Subscribe selector={(state) => state.values.namingPattern}>{(pattern) => (
             <Surface material="inset" padding="tile" radius="tile" className="flex min-w-0 flex-col gap-1">

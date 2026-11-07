@@ -5,6 +5,8 @@ import { createDataTableColumns, DataTable, filters, IdentityCell, NumericCell, 
 import { IconClose, IconCopy, IconFilter, IconHistory, IconRefresh } from "glass-ux/icons";
 import { MeterCell } from "glass-ux/meter-cell";
 import { Segmented } from "glass-ux/segmented";
+import { useMutation } from "@apollo/client/react";
+import { toast } from "glass-ux/toast";
 import { useCallback, useMemo, useState } from "react";
 
 import { TableToolbar } from "@/components/ui/TableToolbar";
@@ -12,7 +14,8 @@ import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { useTableSelection } from "@/hooks/useTableSelection";
 import { EntityChip } from "@/components/entities/EntityChip";
 import { refCellEntity } from "@/lib/entities/resolver";
-import { Button, Dialog } from "@/components/ui";
+import { Button, ConfirmDialog, Dialog } from "@/components/ui";
+import { SettleDuplicateScanIssuesDocument } from "@/graphql/generated/graphql";
 import { usePrintMode } from "@/hooks/usePrintMode";
 import { tableUrlFilters, useTableUrlState } from "@/hooks/useTableUrlState";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
@@ -180,7 +183,7 @@ export function ScansPanel({ libraryId, section, scanRunId, onScanRunChange, onS
   const close = () => setSelectedId(null);
   const filteredRun = scanRunId ? runs.list.rows.find((row) => row.id === scanRunId) : null;
 
-  const detail = selectedIssue ? <ScanIssueDetail row={selectedIssue} actions={issueActions} />
+  const detail = selectedIssue ? <ScanIssueDetail row={selectedIssue} actions={issueActions} onChanged={refetch} />
     : selectedRun ? <ScanRunDetail row={selectedRun} actions={runActions} /> : null;
   const refresh = <Button size="sm" variant="ghost" isIconOnly aria-label="Refresh scans" isPending={history ? runs.list.fetching : issues.list.fetching} onPress={refetch}><IconRefresh /></Button>;
   // What the table shows belongs to the table: both of them carry these in their toolbar.
@@ -202,6 +205,7 @@ export function ScansPanel({ libraryId, section, scanRunId, onScanRunChange, onS
         />
       )}
     >
+      {!history && isAdmin && issueView === "open" ? <SettleDuplicates libraryId={libraryId} onDone={refetch} /> : null}
       {refresh}
     </TableToolbar>
   );
@@ -274,5 +278,31 @@ export function ScansPanel({ libraryId, section, scanRunId, onScanRunChange, onS
         {detail}
       </Dialog>
     </div>
+  );
+}
+
+/** Every open duplicate in the library at once: keep the copy each title plays. */
+function SettleDuplicates({ libraryId, onDone }: { libraryId: string; onDone: () => void }) {
+  const [settle, { loading }] = useMutation(SettleDuplicateScanIssuesDocument);
+  const [asking, setAsking] = useState(false);
+  return (
+    <>
+      <Button size="sm" variant="secondary" isPending={loading} onPress={() => setAsking(true)}>Keep better copies</Button>
+      <ConfirmDialog
+        isOpen={asking}
+        onOpenChange={setAsking}
+        title="Settle every duplicate in this library?"
+        confirmLabel="Keep better copies"
+        onConfirm={async () => {
+          const result = (await settle({ variables: { libraryId } })).data?.settleDuplicateScanIssues;
+          if (!result?.success) throw new Error(result?.message ?? "Could not settle the duplicates");
+          toast.success(result.message);
+          setAsking(false);
+          onDone();
+        }}
+      >
+        <p className="text-body-sm text-muted">For each identical pair, the copy a title plays stays and the other moves to the library&apos;s .librarian-trash folder, where it can be restored. Pairs where both copies are played are left for you to choose.</p>
+      </ConfirmDialog>
+    </>
   );
 }

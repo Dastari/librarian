@@ -12,7 +12,7 @@ import { Link } from "@tanstack/react-router";
 import { toast } from "glass-ux/toast";
 import { createContext, useContext, useMemo, useState } from "react";
 
-import { Artwork, Button, EmptyState, Spinner } from "@/components/ui";
+import { Artwork, Button, ConfirmDialog, EmptyState, Spinner } from "@/components/ui";
 import {
   IdentificationCandidatesDocument,
   IdentifyTorrentDocument,
@@ -35,11 +35,27 @@ type Event = TorrentIdentificationQuery["identificationEvents"]["edges"][number]
 export const IDENTIFIED_STATUS: Record<string, { label: string; tone: "success" | "info" | "warning" | "neutral"; order: number }> = {
   needs_choice: { label: "Needs a choice", tone: "warning", order: 0 },
   wanted: { label: "Wanted", tone: "info", order: 1 },
-  identified: { label: "Ready to add", tone: "info", order: 2 },
-  in_library: { label: "In your library", tone: "neutral", order: 3 },
-  unknown: { label: "Not identified", tone: "warning", order: 4 },
-  imported: { label: "Imported", tone: "success", order: 5 },
+  adds: { label: "Adds to library", tone: "info", order: 2 },
+  upgrade: { label: "Upgrade available", tone: "success", order: 3 },
+  identified: { label: "Ready to add", tone: "info", order: 4 },
+  in_library: { label: "In library", tone: "neutral", order: 5 },
+  unknown: { label: "Not identified", tone: "warning", order: 6 },
+  imported: { label: "Imported", tone: "success", order: 7 },
 };
+
+/** What one place in a title is called, by kind. */
+const PLACE: Record<string, [string, string]> = { music: ["track", "tracks"], tv: ["episode", "episodes"] };
+
+/** A result's status in words, counting what it adds where that's countable. */
+export function statusLabel(item: Pick<Item, "status" | "kind" | "addsCount">): string {
+  const place = PLACE[item.kind];
+  const count = item.addsCount ?? 0;
+  if (item.status === "adds") {
+    if (place && count > 0) return `Adds ${count} ${count === 1 ? place[0] : place[1]}`;
+    return item.kind === "movie" ? "Adds the film" : item.kind === "audiobook" ? "Adds the book" : IDENTIFIED_STATUS.adds!.label;
+  }
+  return (IDENTIFIED_STATUS[item.status] ?? IDENTIFIED_STATUS.unknown!).label;
+}
 
 const KIND: Record<string, string> = { audiobook: "Audiobook", music: "Music", tv: "TV", movie: "Movie", ebook: "Ebook", unknown: "Unknown" };
 const ENTITY: Record<string, "audiobook" | "album" | "show" | "movie"> = { Audiobook: "audiobook", Album: "album", Show: "show", Movie: "movie" };
@@ -147,11 +163,19 @@ function TreatAs({ infoHash, kind, onDone }: { infoHash: string; kind: string | 
 export interface ResultsActions {
   canImport: boolean;
   busy: string | null;
-  importIt: (item: Item, acceptReview?: boolean) => void;
+  importIt: (item: Item, options?: { acceptReview?: boolean; betterCopies?: boolean }) => void;
   choose: (item: Item) => void;
+  reviewUpgrade: (item: Item) => void;
 }
 
-export const ResultsContext = createContext<ResultsActions>({ canImport: false, busy: null, importIt: () => {}, choose: () => {} });
+export const ResultsContext = createContext<ResultsActions>({ canImport: false, busy: null, importIt: () => {}, choose: () => {}, reviewUpgrade: () => {} });
+
+/** The button for adding what a result fills in. */
+function addLabel(item: Item) {
+  if (item.kind === "music") return "Add missing tracks";
+  if (item.kind === "tv") return "Add episodes";
+  return "Add to library";
+}
 
 const finished = (item: Item) => item.finishedFiles >= item.fileCount;
 const entityOf = (item: Item) => item.libraryItemType && item.libraryItemId ? ENTITY[item.libraryItemType] : undefined;
@@ -185,7 +209,7 @@ export function StatusCell({ item }: { item: Item }) {
   const warnings = [...new Set(parseFindings(item.evidence).flatMap((finding) => finding.short ? [finding.short] : []))];
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-      <Badge size="sm" marker="dot" tone={status.tone}>{status.label}</Badge>
+      <Badge size="sm" marker="dot" tone={status.tone}>{statusLabel(item)}</Badge>
       {warnings.map((warning) => <Badge key={warning} size="sm" tone="warning">{warning}</Badge>)}
     </div>
   );
@@ -193,16 +217,18 @@ export function StatusCell({ item }: { item: Item }) {
 
 /** The one thing to do next with a result. Anything else is in its row's menu. */
 export function ItemAction({ item }: { item: Item }) {
-  const { canImport, busy, importIt, choose } = useContext(ResultsContext);
+  const { canImport, busy, importIt, choose, reviewUpgrade } = useContext(ResultsContext);
   const entity = entityOf(item);
-  if (item.status === "imported" && entity && item.libraryItemId) {
+  // Everything here is already held: there's nothing to do but look at it.
+  if ((item.status === "imported" || item.status === "in_library") && entity && item.libraryItemId) {
     return <ButtonLink size="sm" variant="ghost" render={<Link to={entityPath(entity, item.libraryItemId)} />}>Open</ButtonLink>;
   }
   if (!canImport || !finished(item)) return null;
   const pending = busy === item.id;
   if (item.status === "identified") return <Button size="sm" variant="primary" isPending={pending} onPress={() => importIt(item)}>Add to library</Button>;
+  if (item.status === "adds") return <Button size="sm" variant="primary" isPending={pending} onPress={() => importIt(item)}>{addLabel(item)}</Button>;
+  if (item.status === "upgrade") return <Button size="sm" variant="secondary" isPending={pending} onPress={() => reviewUpgrade(item)}>Review upgrade</Button>;
   if (item.status === "wanted") return <Button size="sm" variant="primary" isPending={pending} onPress={() => importIt(item)}>Import</Button>;
-  if (item.status === "in_library" && item.libraryItemId) return <Button size="sm" variant="secondary" isPending={pending} onPress={() => importIt(item)}>Import</Button>;
   if (item.status === "needs_choice" || item.status === "unknown") return <Button size="sm" variant="primary" onPress={() => choose(item)}>Choose</Button>;
   return null;
 }
@@ -240,7 +266,7 @@ export function ItemFindings({ item }: { item: Item }) {
           ))}
         </div>
       ) : null}
-      {canImport && item.canAccept && finished(item) ? <div><Button size="sm" variant="secondary" isPending={busy === item.id} onPress={() => importIt(item, true)}>Import anyway</Button></div> : null}
+      {canImport && item.canAccept && finished(item) ? <div><Button size="sm" variant="secondary" isPending={busy === item.id} onPress={() => importIt(item, { acceptReview: true })}>Import anyway</Button></div> : null}
     </div>
   );
 }
@@ -267,6 +293,7 @@ const renderItemFindings = (item: Item) => <ItemFindings item={item} />;
 export function IdentifiedResults({ infoHash, kind, state, onChanged }: { infoHash: string; kind?: string | null; state: TorrentIdentificationState; onChanged?: () => void }) {
   const isAdmin = useIsAdmin();
   const [choosing, setChoosing] = useState<Item | null>(null);
+  const [upgrading, setUpgrading] = useState<Item | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [search, candidates] = useLazyQuery(IdentificationCandidatesDocument, { fetchPolicy: "network-only" });
   const [importItem] = useMutation(ImportIdentifiedItemDocument);
@@ -275,11 +302,13 @@ export function IdentifiedResults({ infoHash, kind, state, onChanged }: { infoHa
     canImport: isAdmin,
     busy,
     choose: setChoosing,
-    importIt: (item, acceptReview = false) => {
+    reviewUpgrade: setUpgrading,
+    importIt: (item, { acceptReview = false, betterCopies = false } = {}) => {
       setBusy(item.id);
-      void importItem({ variables: { input: { itemId: item.id, acceptReview } } }).then(({ data }) => {
+      void importItem({ variables: { input: { itemId: item.id, acceptReview, ...(betterCopies ? { betterCopies } : {}) } } }).then(({ data }) => {
         const result = assertSuccess(data?.importIdentifiedItem, "Could not import this");
-        toast.success(`Imported ${result.matchCount} ${result.matchCount === 1 ? "file" : "files"}`);
+        if (result.matchCount === 0) toast.info("Nothing to add: your library already has these");
+        else toast.success(`Imported ${result.matchCount} ${result.matchCount === 1 ? "file" : "files"}`);
         void state.refetch();
         onChanged?.();
       }).catch((error: unknown) => toast.danger(errorMessage(error))).finally(() => setBusy(null));
@@ -337,6 +366,19 @@ export function IdentifiedResults({ infoHash, kind, state, onChanged }: { infoHa
           />
         </ResultsContext.Provider>
       )}
+      <ConfirmDialog
+        isOpen={upgrading !== null}
+        onOpenChange={(open) => { if (!open) setUpgrading(null); }}
+        title={`Use the better copies of ${upgrading?.title ?? upgrading?.label ?? "this"}?`}
+        description={upgrading?.summary ?? undefined}
+        confirmLabel="Use better copies"
+        onConfirm={() => {
+          if (upgrading) results.importIt(upgrading, { betterCopies: true });
+          setUpgrading(null);
+        }}
+      >
+        <p className="text-body-sm text-muted">The files your library has now stay on disk as second copies, so nothing is lost. You can remove them from the album&apos;s Files tab.</p>
+      </ConfirmDialog>
       <ChooseListingDialog
         isOpen={choosing !== null}
         onOpenChange={(open) => { if (!open) setChoosing(null); }}

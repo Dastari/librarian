@@ -207,11 +207,19 @@ mutation RetryScanIssue($issueId: String!) {
   }
 }
 
-mutation TrashDuplicateScanIssue($issueId: String!) {
-  trashDuplicateScanIssue(issueId: $issueId) {
+mutation TrashDuplicateScanIssue($issueId: String!, $keep: String) {
+  trashDuplicateScanIssue(issueId: $issueId, keep: $keep) {
     success
     message
     oldPath
     trashPath
+  }
+}
+
+mutation SettleDuplicateScanIssues($libraryId: String!) {
+  settleDuplicateScanIssues(libraryId: $libraryId) {
+    success
+    queued
+    message
   }
 }

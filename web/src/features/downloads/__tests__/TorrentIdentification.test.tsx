@@ -25,7 +25,7 @@ function item(overrides: Partial<Item>): Item {
     __typename: "IdentifiedItem", id: "item-1", itemKey: "key", kind: "audiobook", status: "identified", label: "The Last Colony (Unabridged)",
     title: "The Last Colony: Old Man's War Book 3", creator: "John Scalzi", year: 2025, coverUrl: null, fileCount: 52, finishedFiles: 52,
     seconds: 35596, confidence: 1, summary: "17 chapters from the listing, placed by time.", evidence: JSON.stringify(["Author matches", "Narrator matches"]),
-    providerId: "B0DSQ3SWTY", libraryItemType: null, libraryItemId: null, libraryId: "library-1", season: null, canAccept: false,
+    providerId: "B0DSQ3SWTY", libraryItemType: null, libraryItemId: null, libraryId: "library-1", season: null, canAccept: false, addsCount: null,
     ...overrides,
   } as Item;
 }
@@ -37,7 +37,7 @@ function state(items: Item[], events: Event[] = []): TorrentIdentificationState 
 const wrap = (children: ReactNode) => render(<TooltipProvider>{children}</TooltipProvider>);
 
 const finding = (source: string, text: string, extra: object = {}) => ({ source, text, warning: false, ...extra });
-const actions = (overrides: Partial<ResultsActions> = {}): ResultsActions => ({ canImport: true, busy: null, importIt: vi.fn(), choose: vi.fn(), ...overrides });
+const actions = (overrides: Partial<ResultsActions> = {}): ResultsActions => ({ canImport: true, busy: null, importIt: vi.fn(), choose: vi.fn(), reviewUpgrade: vi.fn(), ...overrides });
 const cells = (children: ReactNode, value = actions()) => wrap(<ResultsContext.Provider value={value}>{children}</ResultsContext.Provider>);
 
 // jsdom has no layout, so the table's rows are checked through the cells it renders.
@@ -70,7 +70,7 @@ describe("identified results", () => {
     await userEvent.click(screen.getByRole("button", { name: "Choose" }));
     expect(value.choose).toHaveBeenCalledWith(doubted);
     await userEvent.click(screen.getByRole("button", { name: "Import anyway" }));
-    expect(value.importIt).toHaveBeenCalledWith(doubted, true);
+    expect(value.importIt).toHaveBeenCalledWith(doubted, { acceptReview: true });
     expect(screen.getByText(/Its tags say something else/)).toBeTruthy();
     expect(canChooseAnother(doubted)).toBe(false);
   });
@@ -86,6 +86,33 @@ describe("identified results", () => {
     expect(screen.getByRole("link", { name: "Open" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Add to library" })).toBeNull();
     expect(canChooseAnother(imported)).toBe(false);
+  });
+
+  it("says what a result adds to an album the library has, and offers to add just that", async () => {
+    const value = actions();
+    const adds = item({ kind: "music", status: "adds", addsCount: 2, libraryItemType: "Album", libraryItemId: "album-1" });
+    cells(<><StatusCell item={adds} /><ItemAction item={adds} /></>, value);
+    expect(screen.getByText("Adds 2 tracks")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Add missing tracks" }));
+    expect(value.importIt).toHaveBeenCalledWith(adds);
+  });
+
+  it("opens what the library already holds in full, with nothing to import", () => {
+    const held = item({ kind: "music", status: "in_library", libraryItemType: "Album", libraryItemId: "album-1" });
+    cells(<><StatusCell item={held} /><ItemAction item={held} /></>);
+    expect(screen.getByText("In library")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Import" })).toBeNull();
+  });
+
+  it("asks before putting better copies in place of what the library has", async () => {
+    const value = actions();
+    const better = item({ kind: "music", status: "upgrade", addsCount: 3, libraryItemType: "Album", libraryItemId: "album-1" });
+    cells(<><StatusCell item={better} /><ItemAction item={better} /></>, value);
+    expect(screen.getByText("Upgrade available")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Review upgrade" }));
+    expect(value.reviewUpgrade).toHaveBeenCalledWith(better);
+    expect(value.importIt).not.toHaveBeenCalled();
   });
 
   it("offers nothing to someone who can't import", () => {

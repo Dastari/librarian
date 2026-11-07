@@ -75,6 +75,11 @@ pub struct Library {
     #[filterable(type = "boolean")]
     pub auto_organize: bool,
 
+    /// After each scan, settle byte-identical duplicates by moving the copy no title plays to the
+    /// library's recoverable trash. Pairs both played by titles are left for a person.
+    #[graphql(name = "autoResolveDuplicates")]
+    pub auto_resolve_duplicates: Option<bool>,
+
     #[graphql(name = "namingPattern")]
     #[filterable(type = "string")]
     pub naming_pattern: String,

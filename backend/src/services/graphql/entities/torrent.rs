@@ -926,6 +926,8 @@ pub struct ImportIdentifiedItemInput {
     pub library_id: Option<String>,
     /// Import even though the plan asks for review.
     pub accept_review: Option<bool>,
+    /// Put better copies on tracks that already have files, keeping those files on disk.
+    pub better_copies: Option<bool>,
 }
 
 /// Whether listening to recordings is possible here.
@@ -1669,6 +1671,7 @@ impl TorrentClientMutations {
                     library_item_id: input.library_item_id,
                     library_id: input.library_id,
                     accept_review: input.accept_review.unwrap_or(false),
+                    better_copies: input.better_copies.unwrap_or(false),
                 },
             )
             .await;

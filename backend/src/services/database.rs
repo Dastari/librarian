@@ -3800,6 +3800,56 @@ impl AppMutationHook {
         Ok(())
     }
 
+    /// After a title leaves a library, or a library is made, downloads compared with it are
+    /// looked at again: what they matched may be gone, or they may now have somewhere to go.
+    fn defer_identified_recheck(
+        &self,
+        ctx: Option<&async_graphql::Context<'_>>,
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) {
+        let owner_and_type = match event.entity_name {
+            "Album" => event
+                .before::<Album>()
+                .ok()
+                .flatten()
+                .map(|row| (row.user_id.clone(), "music")),
+            "Movie" => event
+                .before::<Movie>()
+                .ok()
+                .flatten()
+                .map(|row| (row.user_id.clone(), "movies")),
+            "Show" => event
+                .before::<Show>()
+                .ok()
+                .flatten()
+                .map(|row| (row.user_id.clone(), "tv")),
+            "Audiobook" => event
+                .before::<Audiobook>()
+                .ok()
+                .flatten()
+                .map(|row| (row.user_id.clone(), "audiobooks")),
+            "Library" => event
+                .after::<Library>()
+                .ok()
+                .flatten()
+                .map(|row| (row.user_id.clone(), row.library_type.as_str())),
+            _ => None,
+        };
+        let (Some((owner, library_type)), Some(services)) =
+            (owner_and_type, self.services_from_ctx(ctx))
+        else {
+            return;
+        };
+        let library_type = library_type.to_string();
+        hook_ctx.defer(move |_db| async move {
+            if let Some(scan) = services.get_library_scan().await {
+                scan.recheck_identified(&owner, &library_type);
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+    }
+
     async fn torrent_service(
         &self,
         ctx: Option<&async_graphql::Context<'_>>,
@@ -3919,6 +3969,14 @@ impl MutationHook for AppMutationHook {
                 }
                 (MutationPhase::After, ChangeAction::Deleted, "Torrent") => {
                     self.defer_torrent_runtime_removal(ctx, hook_ctx, event)?;
+                }
+                (
+                    MutationPhase::After,
+                    ChangeAction::Deleted,
+                    "Album" | "Movie" | "Show" | "Audiobook",
+                )
+                | (MutationPhase::After, ChangeAction::Created, "Library") => {
+                    self.defer_identified_recheck(ctx, hook_ctx, event);
                 }
                 _ => {}
             }
@@ -4258,6 +4316,7 @@ mod lifecycle_tests {
                 color: None,
                 auto_scan: false,
                 auto_organize: false,
+                auto_resolve_duplicates: None,
                 naming_pattern: "default".to_string(),
                 scan_interval_minutes: 60,
                 watch_for_changes: false,

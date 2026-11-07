@@ -390,6 +390,46 @@ pub fn track_with_title(title: &str, seconds: Option<f64>, tracks: &[TrackFacts]
     })
 }
 
+/// Formats that keep the whole recording.
+const LOSSLESS: &[&str] = &[
+    "flac", "alac", "wav", "aiff", "aif", "ape", "wv", "dsf", "dff",
+];
+
+/// A lossy copy has to be this much richer to count as better: 192 kbps over 128, not 256 over 245.
+const RICHER: f64 = 1.25;
+
+/// One copy of a track: its format (a codec or a file extension) and its bitrate, if known.
+#[derive(Debug, Clone, Copy)]
+pub struct Copy<'a> {
+    pub format: &'a str,
+    pub kbps: Option<f64>,
+}
+
+impl Copy<'_> {
+    fn lossless(&self) -> bool {
+        LOSSLESS.contains(&self.format.to_ascii_lowercase().as_str())
+    }
+}
+
+/// The bitrate of a file of `size` bytes lasting `seconds`.
+pub fn kbps(size: i64, seconds: Option<f64>) -> Option<f64> {
+    seconds
+        .filter(|seconds| *seconds > 1.0)
+        .map(|seconds| size as f64 * 8.0 / seconds / 1000.0)
+}
+
+/// Whether a download's copy of a track is better than the library's: lossless over lossy, or a
+/// lossy copy at a clearly higher bitrate. Two lossless copies are as good as each other.
+pub fn better_copy(new: Copy<'_>, held: Copy<'_>) -> bool {
+    match (new.lossless(), held.lossless()) {
+        (true, false) => true,
+        (false, true) | (true, true) => false,
+        (false, false) => {
+            matches!((new.kbps, held.kbps), (Some(new), Some(held)) if new >= held * RICHER)
+        }
+    }
+}
+
 /// A track number for a file that's on no listing, in a free place on its disc. Its own number
 /// when that's free, otherwise after the last track on the disc.
 pub fn free_track_number(taken: &[(i32, i32)], disc: i32, wanted: Option<i32>) -> i32 {
@@ -419,6 +459,28 @@ pub fn pattern_for_discs(pattern: &str, discs: i32) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_lossless_copy_is_better_than_a_lossy_one_and_a_lossy_one_needs_a_clearly_higher_bitrate() {
+        let copy = |format, kbps| Copy {
+            format,
+            kbps: Some(kbps),
+        };
+        assert!(better_copy(copy("flac", 900.0), copy("mp3", 320.0)));
+        assert!(!better_copy(copy("mp3", 320.0), copy("FLAC", 900.0)));
+        assert!(!better_copy(copy("flac", 1400.0), copy("flac", 900.0)));
+        assert!(better_copy(copy("mp3", 192.0), copy("mp3", 128.0)));
+        assert!(!better_copy(copy("mp3", 256.0), copy("aac", 245.0)));
+        assert!(!better_copy(
+            Copy {
+                format: "mp3",
+                kbps: None
+            },
+            copy("mp3", 128.0)
+        ));
+        assert_eq!(kbps(4_000_000, Some(100.0)).map(f64::round), Some(320.0));
+        assert_eq!(kbps(4_000_000, None), None);
+    }
     use super::*;
     use crate::services::release_match::FileTags;
 

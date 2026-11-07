@@ -17,7 +17,7 @@ import { formatBytes } from "@/lib/format";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 
 import { MatchFileDialog, type MatchableFile } from "./MatchFileDialog";
-import { IDENTIFIED_STATUS, type IdentifiedItem } from "./TorrentIdentification";
+import { IDENTIFIED_STATUS, statusLabel, type IdentifiedItem } from "./TorrentIdentification";
 import type { DownloadRow } from "./useDownloads";
 
 type Match = NonNullable<TorrentFilesDetailQuery["torrent"]>["pendingMatches"]["edges"][number]["node"];
@@ -113,7 +113,7 @@ const PLAN_BADGE = {
 function MatchCell({ file }: { file: TorrentFileRow }) {
   if (file.group) {
     const status = file.group.item ? IDENTIFIED_STATUS[file.group.item.status] : null;
-    return status ? <Badge size="sm" marker="dot" tone={status.tone}>{status.label}</Badge> : null;
+    return status && file.group.item ? <Badge size="sm" marker="dot" tone={status.tone}>{statusLabel(file.group.item)}</Badge> : null;
   }
   const plans = useContext(FilePlanContext);
   const plan = plans.get(file.index);

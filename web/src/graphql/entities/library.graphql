@@ -10,6 +10,7 @@ fragment LibraryFields on Library {
   color
   autoScan
   autoOrganize
+  autoResolveDuplicates
   namingPattern
   scanIntervalMinutes
   watchForChanges

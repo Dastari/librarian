@@ -109,7 +109,8 @@ pub struct IdentifiedItem {
     #[filterable(type = "string")]
     pub kind: String,
 
-    /// `imported`, `wanted`, `in_library`, `identified`, `needs_choice` or `unknown`.
+    /// `imported`, `wanted`, `adds` (fills gaps in what the library holds), `upgrade` (better
+    /// copies of what it holds), `in_library`, `identified`, `needs_choice` or `unknown`.
     #[graphql(name = "status")]
     #[filterable(type = "string")]
     pub status: String,
@@ -189,6 +190,11 @@ pub struct IdentifiedItem {
     #[graphql(name = "canAccept")]
     #[boolean_field]
     pub can_accept: bool,
+
+    /// How many tracks, episodes or chapters its files would add to what the library holds, or for
+    /// an upgrade how many would replace worse copies.
+    #[graphql(name = "addsCount")]
+    pub adds_count: Option<i32>,
 
     #[graphql(name = "createdAt")]
     #[filterable(type = "date")]

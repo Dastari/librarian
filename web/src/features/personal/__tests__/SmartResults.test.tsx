@@ -31,7 +31,7 @@ function expectValidWhere(name: string, value: unknown) {
 }
 const library = (id: string): LibraryFieldsFragment => ({
   id, userId: OWNER, name: id, path: `/media/${id}`, libraryType: "movies", icon: null, color: null,
-  autoScan: false, autoOrganize: false, namingPattern: "", scanIntervalMinutes: 60,
+  autoScan: false, autoOrganize: false, autoResolveDuplicates: null, namingPattern: "", scanIntervalMinutes: 60,
   watchForChanges: false, scanning: false, lastScannedAt: null, qualityProfileId: null, createdAt: STAMP, updatedAt: STAMP,
 });
 

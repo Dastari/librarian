@@ -271,6 +271,7 @@ async fn add_targets_require_actual_library_ownership_before_runtime_work() {
             color: None,
             auto_scan: false,
             auto_organize: false,
+            auto_resolve_duplicates: None,
             naming_pattern: "".into(),
             scan_interval_minutes: 60,
             watch_for_changes: false,

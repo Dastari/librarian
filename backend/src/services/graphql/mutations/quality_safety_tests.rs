@@ -49,6 +49,7 @@ async fn library(db: &Database, user: &User, root: &Path) -> Library {
             color: None,
             auto_scan: false,
             auto_organize: false,
+            auto_resolve_duplicates: None,
             naming_pattern: "fixture naming_pattern".to_string(),
             scan_interval_minutes: 0,
             watch_for_changes: false,
