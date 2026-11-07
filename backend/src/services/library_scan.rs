@@ -44,12 +44,14 @@ use crate::services::metadata::providers::{
     AddAlbumOptions, AddAudiobookOptions, AddMovieOptions, AddTvShowOptions, MetadataProvider,
     MetadataService,
 };
+use crate::services::music_rules;
 use crate::services::ollama::{OllamaClient, OllamaParsedHint, OllamaParserSettings};
 use crate::services::quality::{profile, scoring};
 use crate::services::release_match;
 
 mod identify;
 mod listen;
+mod music;
 
 pub use identify::{IdentifiedChoice, IdentifyCandidate, IdentifyTrigger};
 
@@ -449,6 +451,8 @@ struct LinkedTrackRow {
     track_number: Option<i32>,
     disc_number: Option<i32>,
     seconds: Option<f64>,
+    /// The size of the file already on this track, if there is one.
+    held_size: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -4009,6 +4013,20 @@ impl LibraryScanService {
                 continue;
             }
 
+            // Music is worked out a release at a time, once every file has been seen. A track's name
+            // alone could match any album in the library.
+            if Self::normalize_library_type(&library.library_type) == "music"
+                && was_unmatched_media_file
+            {
+                pending_provider_fallback.push(PendingProviderFallback {
+                    media_file_id: media_file_id.clone(),
+                    media_path: abs_path.clone(),
+                    match_source: match_source.clone(),
+                });
+                scanned_count += 1;
+                continue;
+            }
+
             let match_started = Instant::now();
             let match_result = self
                 .match_media_file(MatchRequest {
@@ -5961,35 +5979,23 @@ impl LibraryScanService {
                     summary.merge_outcome(outcome);
                 }
             }
-            "music" | "audiobooks" => {
-                let fallback_kind = normalized_library_type.clone();
+            "music" => {
+                summary.merge_outcome(self.link_music_files(library, auth_user, &pending).await);
+            }
+            "audiobooks" => {
                 let outcomes = stream::iter(pending)
                     .map(|item| {
-                        let fallback_kind = fallback_kind.clone();
                         async move {
                             let mut outcome = ProviderFallbackSummary::default();
-                            let result = match fallback_kind.as_str() {
-                                "music" => {
-                                    self.try_provider_create_and_match_track(
-                                        library,
-                                        auth_user,
-                                        &item.media_file_id,
-                                        &item.media_path,
-                                        &item.match_source,
-                                    )
-                                    .await
-                                }
-                                _ => {
-                                    self.try_provider_create_and_match_chapter(
-                                        library,
-                                        auth_user,
-                                        &item.media_file_id,
-                                        &item.media_path,
-                                        &item.match_source,
-                                    )
-                                    .await
-                                }
-                            };
+                            let result = self
+                                .try_provider_create_and_match_chapter(
+                                    library,
+                                    auth_user,
+                                    &item.media_file_id,
+                                    &item.media_path,
+                                    &item.match_source,
+                                )
+                                .await;
                             match result {
                                 Ok(Some(match_result)) => {
                                     if match_result.success {
@@ -6413,60 +6419,6 @@ impl LibraryScanService {
         Ok(None)
     }
 
-    async fn create_minimal_track_for_album(
-        &self,
-        auth_user: &AuthUser,
-        library_id: &str,
-        album_id: &str,
-        hint: &ParsedTrackHint,
-    ) -> Result<String> {
-        let track_number = hint.track_number.unwrap_or(1).max(1);
-        let title = hint
-            .title
-            .clone()
-            .unwrap_or_else(|| format!("Track: track {}", track_number));
-        let data = self
-            .execute_mutation(
-                auth_user,
-                r#"mutation CreateTrackFromScan($input: CreateTrackInput!) {
-                    CreateTrack: createTrack(input: $input) { Success: success Error: error Track: track { Id: id } }
-                }"#,
-                serde_json::json!({
-                    "input": {
-                        "albumId": album_id,
-                        "libraryId": library_id,
-                        "title": title,
-                        "trackNumber": track_number,
-                        "discNumber": 1,
-                        "explicit": false,
-                        "wanted": true
-                    }
-                }),
-            )
-            .await?;
-
-        let success = data
-            .get("CreateTrack")
-            .and_then(|v| v.get("Success"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if !success {
-            let err = data
-                .get("CreateTrack")
-                .and_then(|v| v.get("Error"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("failed to create fallback track");
-            anyhow::bail!(err.to_string());
-        }
-
-        data.get("CreateTrack")
-            .and_then(|v| v.get("Track"))
-            .and_then(|v| v.get("Id"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| anyhow::anyhow!("CreateTrack did not return Track.Id"))
-    }
-
     async fn create_minimal_chapter_for_audiobook(
         &self,
         auth_user: &AuthUser,
@@ -6522,175 +6474,10 @@ impl LibraryScanService {
         media_path: &str,
         match_source: &str,
     ) -> Result<Option<MatchResult>> {
-        let mut hint = Self::parse_track_hint(match_source);
-        // What a file says about itself beats what its folders suggest.
-        let tags = self.stored_media_tags(media_file_id).await;
-        if let Some(album) = tags
-            .album
-            .as_deref()
-            .filter(|album| !album.trim().is_empty())
-        {
-            hint.album_name = Some(album.to_string());
-        }
-        if let Some(artist) = tags.album_artist.as_deref().or(tags.artist.as_deref()) {
-            hint.artist_name = Some(artist.to_string());
-        }
-        if let Some(title) = tags
-            .title
-            .as_deref()
-            .filter(|title| !title.trim().is_empty())
-        {
-            hint.title = Some(title.to_string());
-        }
-        if tags.track.is_some() {
-            hint.track_number = tags.track;
-        }
-        let query = hint
-            .album_name
-            .clone()
-            .or_else(|| hint.title.clone())
-            .filter(|q| q.len() >= 2);
-        let Some(query) = query else {
-            return Ok(None);
-        };
-
-        let metadata = self.metadata_service().await?;
-        let candidates = metadata
-            .search_albums(&query, true, true, true, true, true)
+        self.link_one_music_file(library, auth_user, media_file_id, media_path, match_source)
             .await
-            .unwrap_or_default();
-        let wanted_album_norm = hint
-            .album_name
-            .as_deref()
-            .map(Self::normalize_for_match)
-            .unwrap_or_else(|| Self::normalize_for_match(&query));
-        let wanted_artist_norm = hint.artist_name.as_deref().map(Self::normalize_for_match);
-
-        let score_candidate = |title: &str, artist: Option<&str>| -> f64 {
-            let mut s = jaro_winkler(&wanted_album_norm, &Self::normalize_for_match(title));
-            if let (Some(wanted_artist), Some(candidate_artist)) =
-                (wanted_artist_norm.as_deref(), artist)
-            {
-                s += (jaro_winkler(wanted_artist, &Self::normalize_for_match(candidate_artist))
-                    * 0.25)
-                    .min(0.25);
-            }
-            s
-        };
-        let best = candidates
-            .into_iter()
-            .map(|candidate| {
-                let score = score_candidate(&candidate.title, candidate.artist_name.as_deref());
-                (candidate, score)
-            })
-            .max_by(|(_, a_score), (_, b_score)| {
-                a_score
-                    .partial_cmp(b_score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-
-        let Some((candidate, candidate_score)) = best else {
-            return Ok(None);
-        };
-
-        if candidate_score < 0.78 {
-            debug!(
-                media_file_id = %media_file_id,
-                library_id = %library.id,
-                media_path = %media_path,
-                provider_id = candidate.provider_id,
-                provider_title = %candidate.title,
-                candidate_score = candidate_score,
-                "Album provider candidate rejected due to low confidence: media_file_id={}, library_id={}, path={}, provider_id={}, provider_title={}, candidate_score={:.3}",
-                media_file_id,
-                library.id,
-                media_path,
-                candidate.provider_id,
-                candidate.title,
-                candidate_score
-            );
-            return Ok(None);
-        }
-
-        let library_uuid = Uuid::parse_str(&library.id)?;
-        let user_uuid = Uuid::parse_str(&library.user_id)?;
-        let album = metadata
-            .add_album_from_provider(AddAlbumOptions {
-                provider: MetadataProvider::Musicbrainz,
-                provider_id: candidate.provider_id,
-                library_id: library_uuid,
-                user_id: user_uuid,
-                // Scanner-discovered albums are not monitored: the files are
-                // already on disk, there is nothing to hunt for.
-                monitor_type: AutoDownloadMode::None,
-            })
-            .await?;
-
-        if let Some((track_id, score)) = self.find_track_match(&library.id, media_path).await? {
-            self.link_track(
-                auth_user,
-                media_file_id,
-                &library.id,
-                &track_id,
-                "auto",
-                None,
-            )
-            .await?;
-            return Ok(Some(MatchResult {
-                success: true,
-                auto_matched: true,
-                already_matched: false,
-                matched_type: Some("Track".to_string()),
-                matched_id: Some(track_id),
-                confidence: score,
-                reason: Some("Created album from metadata provider and matched track".to_string()),
-                candidates: Vec::new(),
-            }));
-        }
-
-        let track_id = self
-            .create_minimal_track_for_album(auth_user, &library.id, &album.id, &hint)
-            .await?;
-        self.link_track(
-            auth_user,
-            media_file_id,
-            &library.id,
-            &track_id,
-            "auto",
-            None,
-        )
-        .await?;
-        let confidence = 0.7;
-        info!(
-            media_file_id = %media_file_id,
-            library_id = %library.id,
-            media_path = %media_path,
-            album_id = %album.id,
-            album_name = %album.name,
-            track_id = %track_id,
-            confidence,
-            "Scan fallback created album and fallback track link: media_file_id={}, library_id={}, path={}, album_id={}, album_name={}, track_id={}, confidence={:.3}",
-            media_file_id,
-            library.id,
-            media_path,
-            album.id,
-            album.name,
-            track_id,
-            confidence
-        );
-        Ok(Some(MatchResult {
-            success: true,
-            auto_matched: true,
-            already_matched: false,
-            matched_type: Some("Track".to_string()),
-            matched_id: Some(track_id),
-            confidence,
-            reason: Some("Created album and fallback track during scan".to_string()),
-            candidates: Vec::new(),
-        }))
     }
 
-    /// Tags a media file was analyzed with, read back from its stored probe output.
     async fn stored_media_tags(&self, media_file_id: &str) -> release_match::FileTags {
         use crate::graphql::entities::MediaFile;
         let Ok(database) = self.database().await else {
@@ -7332,95 +7119,6 @@ impl LibraryScanService {
             reason: Some("Created audiobook and fallback chapter during scan".to_string()),
             candidates: Vec::new(),
         }))
-    }
-
-    async fn find_track_match(
-        &self,
-        library_id: &str,
-        path: &str,
-    ) -> Result<Option<(String, f64)>> {
-        let auth_user = self.system_auth_user(None).await?;
-
-        let file_name = Path::new(path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(path);
-
-        let normalized = Self::normalize_for_match(file_name);
-
-        let data = self
-            .execute_graphql_paged(
-                &auth_user,
-                r#"query FindTrackMatch($libraryId: String!, $page: PageInput) {
-                    Albums: albums(
-                        where: { libraryId: { eq: $libraryId } }
-                        page: $page
-                    ) {
-                        Edges: edges {
-                            Node: node {
-                                Name: name
-                                Tracks: tracks(page: { limit: 1000 }) {
-                                    Edges: edges { Node: node { Id: id Title: title } }
-                                }
-                            }
-                        }
-                    }
-                }"#,
-                serde_json::json!({ "libraryId": library_id }),
-                "Albums",
-            )
-            .await?;
-        let rows: Vec<(String, String, Option<String>)> = data
-            .get("Albums")
-            .and_then(|v| v.get("Edges"))
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .flat_map(|edge| {
-                let node = edge.get("Node")?;
-                let album_name = node
-                    .get("Name")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-                let tracks = node
-                    .get("Tracks")
-                    .and_then(|v| v.get("Edges"))
-                    .and_then(|v| v.as_array())?;
-                Some(
-                    tracks
-                        .iter()
-                        .filter_map(move |track_edge| {
-                            let track = track_edge.get("Node")?;
-                            Some((
-                                track.get("Id")?.as_str()?.to_string(),
-                                track.get("Title")?.as_str()?.to_string(),
-                                album_name.clone(),
-                            ))
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .flatten()
-            .collect();
-
-        let mut best: Option<(String, f64)> = None;
-        for (id, title, album) in rows {
-            let title_norm = Self::normalize_for_match(&title);
-            let album_norm = album
-                .as_deref()
-                .map(Self::normalize_for_match)
-                .unwrap_or_default();
-            let mut score = jaro_winkler(&normalized, &title_norm);
-            if !album_norm.is_empty() && normalized.contains(&album_norm) {
-                score += 0.1;
-            }
-            if score > best.as_ref().map(|(_, s)| *s).unwrap_or(0.0) {
-                best = Some((id, score.min(1.0)));
-            }
-        }
-
-        Ok(best.filter(|(_, s)| *s >= 0.7))
     }
 
     async fn find_chapter_match(
@@ -9173,7 +8871,14 @@ impl LibraryScanService {
                     self.execute_graphql(
                         auth_user,
                         r#"query OrganizeTrackAlbumInfo($id: String!) {
-                            Album: album(id: $id) { Name: name Year: year }
+                            Album: album(id: $id) {
+                                Name: name
+                                Year: year
+                                Artist: artist { Name: name }
+                                Tracks: tracks(page: { limit: 1000 }) {
+                                    Edges: edges { Node: node { DiscNumber: discNumber } }
+                                }
+                            }
                         }"#,
                         serde_json::json!({ "id": album_id }),
                     )
@@ -9199,11 +8904,21 @@ impl LibraryScanService {
                     .and_then(|t| t.get("DiscNumber"))
                     .and_then(|v| v.as_i64())
                     .map(|v| v as i32);
-                let artist_name = track
-                    .and_then(|t| t.get("ArtistName"))
+                // An album stays in one folder, whoever guests on each track.
+                let artist_name = album
+                    .and_then(|a| a.pointer("/Artist/Name"))
+                    .or_else(|| track.and_then(|t| t.get("ArtistName")))
                     .and_then(|v| v.as_str());
+                let discs = album
+                    .and_then(|a| a.pointer("/Tracks/Edges"))
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|edge| edge.pointer("/Node/DiscNumber")?.as_i64())
+                    .max()
+                    .unwrap_or(1) as i32;
                 apply_music_naming_pattern(
-                    &naming_pattern,
+                    &music_rules::pattern_for_discs(&naming_pattern, discs),
                     artist_name.unwrap_or("Unknown Artist"),
                     album_name,
                     album_year,
@@ -11601,6 +11316,7 @@ impl LibraryScanService {
                                     TrackNumber: trackNumber
                                     DiscNumber: discNumber
                                     DurationSecs: durationSecs
+                                    MediaFile: mediaFile { Size: size }
                                 }
                             }
                         }
@@ -11652,6 +11368,10 @@ impl LibraryScanService {
                         .and_then(|v| v.as_i64())
                         .map(|v| v as i32),
                     seconds: node.get("DurationSecs").and_then(|v| v.as_f64()),
+                    held_size: node
+                        .get("MediaFile")
+                        .and_then(|file| file.get("Size"))
+                        .and_then(|v| v.as_i64()),
                 });
             }
         }
@@ -11683,10 +11403,76 @@ impl LibraryScanService {
                     .collect(),
             )
             .await;
+        let mut release_files = release_files;
+        music_rules::fill_in_discs(&mut release_files);
         let names: Vec<Option<String>> = audio
             .iter()
             .map(|item| Self::parse_track_hint(&item.file.source_path).title)
             .collect();
+        // Before planning, let the album take in what a bigger edition of it holds. Only for files
+        // tagged as this album: a pack's other albums aren't bonus tracks.
+        let belongs: Vec<usize> = (0..release_files.len())
+            .filter(|index| {
+                release_files[*index]
+                    .tags
+                    .album
+                    .as_deref()
+                    .is_some_and(|album| music_rules::same_album_title(album, album_name))
+            })
+            .collect();
+        if !belongs.is_empty()
+            && let Ok(database) = self.database().await
+            && let Ok(Some(row)) =
+                crate::graphql::entities::Album::get(database.pool().pool(), &album_id.to_string())
+                    .await
+        {
+            let members: Vec<_> = belongs
+                .iter()
+                .map(|index| release_files[*index].clone())
+                .collect();
+            let member_names: Vec<_> = belongs.iter().map(|index| names[*index].clone()).collect();
+            match self
+                .place_on_album(auth_user, &row, &members, &member_names)
+                .await
+            {
+                Ok(placed) => {
+                    let held: HashMap<String, Option<i64>> = tracks
+                        .iter()
+                        .map(|track| (track.id.clone(), track.held_size))
+                        .collect();
+                    tracks = placed
+                        .into_iter()
+                        .flatten()
+                        .map(|track| LinkedTrackRow {
+                            id: track.id,
+                            title: track.title,
+                            track_number: Some(track.track_number),
+                            disc_number: track.disc_number,
+                            seconds: track.duration_secs.map(f64::from),
+                            held_size: None,
+                        })
+                        .chain(tracks.drain(..))
+                        .fold(Vec::new(), |mut rows: Vec<LinkedTrackRow>, track| {
+                            if rows.iter().all(|row| row.id != track.id) {
+                                rows.push(track);
+                            }
+                            rows
+                        });
+                    for track in &mut tracks {
+                        track.held_size = held.get(&track.id).copied().flatten();
+                    }
+                    tracks.sort_by_key(|track| {
+                        (
+                            track.disc_number.unwrap_or(1),
+                            track.track_number.unwrap_or(0),
+                        )
+                    });
+                }
+                Err(error) => {
+                    warn!(album_id = %album_id, error = %error, "Could not extend an album for its files: {}", error)
+                }
+            }
+        }
         let track_facts: Vec<release_match::TrackFacts> = tracks
             .iter()
             .map(|track| release_match::TrackFacts {
@@ -11712,7 +11498,7 @@ impl LibraryScanService {
             .flatten()
             .filter_map(|(track, _)| tracks.get(*track).map(|track| track.id.clone()))
             .collect();
-        let wanted_album = release_match::normalize_words(album_name);
+        let wanted_album = release_match::normalize_words(&music_rules::album_title(album_name));
         let positional = audio.len() == tracks.len()
             && release_files.iter().zip(&tracks).all(|(file, track)| {
                 match (file.duration, track.seconds) {
@@ -11726,6 +11512,7 @@ impl LibraryScanService {
             if matched[index].is_none()
                 && let Some(album) = facts.tags.album.as_deref()
                 && !wanted_album.is_empty()
+                && !music_rules::same_album_title(album, album_name)
                 && jaro_winkler(&release_match::normalize_words(album), &wanted_album) < 0.8
             {
                 plan.unmatched_reasons.insert(
@@ -11767,6 +11554,18 @@ impl LibraryScanService {
                 continue;
             };
             used.insert(track.id.clone());
+            // Another copy already holds this track, and which to keep is a person's call. The same
+            // size is this file being imported again, which is fine.
+            if track
+                .held_size
+                .is_some_and(|size| size != item.file.file_size)
+            {
+                plan.unmatched_reasons.insert(
+                    item.file.source_path.clone(),
+                    format!("'{album_name}' already has a file for '{}'", track.title),
+                );
+                continue;
+            }
             let label = format!("{album_name} - {}", track.title);
             plan.targets.insert(
                 item.file.source_path.clone(),
@@ -12738,10 +12537,9 @@ impl LibraryScanService {
             .and_then(serde_json::Value::as_str)
             .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok());
         let owned_unassigned_source = node.get("LibraryId").is_none_or(serde_json::Value::is_null)
-            && source.as_ref().is_some_and(|source| {
-                source["sourceOwnerId"].as_str() == Some(owner_id)
-                    && source["sourceId"].as_str() == Some(info_hash)
-            });
+            && source
+                .as_ref()
+                .is_some_and(|source| source_row_is_this_import(source, owner_id, info_hash));
         if assigned_owner != Some(owner_id) && !owned_unassigned_source {
             anyhow::bail!(
                 "Existing source media file ownership is unknown or belongs to another user"
@@ -13758,6 +13556,7 @@ impl LibraryScanService {
                                 Id: id
                                 Name: name
                                 Year: year
+                                Artist: artist { Name: name }
                             }
                         }
                     }
@@ -13769,6 +13568,19 @@ impl LibraryScanService {
             )
             .await?;
 
+        let artists: HashMap<String, String> = data
+            .pointer("/Albums/Edges")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|edge| {
+                let node = edge.get("Node")?;
+                Some((
+                    node.get("Id")?.as_str()?.to_string(),
+                    node.pointer("/Artist/Name")?.as_str()?.to_string(),
+                ))
+            })
+            .collect();
         let albums = data
             .get("Albums")
             .and_then(|v| v.get("Edges"))
@@ -13795,7 +13607,13 @@ impl LibraryScanService {
             .into_values()
             .map(|file| (file.id, file.path))
             .collect::<HashMap<_, _>>();
-        for track in self.load_tracks_for_library(&library.id).await? {
+        let tracks = self.load_tracks_for_library(&library.id).await?;
+        let mut album_discs: HashMap<String, i32> = HashMap::new();
+        for track in &tracks {
+            let discs = album_discs.entry(track.album_id.clone()).or_insert(1);
+            *discs = (*discs).max(track.disc_number.unwrap_or(1));
+        }
+        for track in tracks {
             let Some((album_name, album_year)) = albums.get(&track.album_id) else {
                 continue;
             };
@@ -13810,8 +13628,15 @@ impl LibraryScanService {
                 .and_then(|name| name.to_str())
                 .unwrap_or("track.mp3");
             let rel = apply_music_naming_pattern(
-                &naming_pattern,
-                track.artist_name.as_deref().unwrap_or("Unknown Artist"),
+                &music_rules::pattern_for_discs(
+                    &naming_pattern,
+                    album_discs.get(&track.album_id).copied().unwrap_or(1),
+                ),
+                artists
+                    .get(&track.album_id)
+                    .map(String::as_str)
+                    .or(track.artist_name.as_deref())
+                    .unwrap_or("Unknown Artist"),
                 album_name,
                 *album_year,
                 track.track_number,
@@ -14931,6 +14756,20 @@ fn apply_movie_naming_pattern(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Whether a library-less source row belongs to this download and its owner. Rows from before
+/// sources were recorded only say they came from a torrent. The path being imported is on this
+/// download's own file list and its owner has been checked, so such a row is theirs to take. A row
+/// naming another download or another owner never is.
+fn source_row_is_this_import(source: &serde_json::Value, owner_id: &str, info_hash: &str) -> bool {
+    match (
+        source["sourceId"].as_str(),
+        source["sourceOwnerId"].as_str(),
+    ) {
+        (None, None) => source["sourceType"].as_str() == Some("torrent"),
+        (id, owner) => id == Some(info_hash) && owner.is_none_or(|owner| owner == owner_id),
+    }
+}
+
 fn apply_music_naming_pattern(
     pattern: &str,
     artist_name: &str,
@@ -15423,6 +15262,7 @@ mod tests {
                 title: "Welcome to the Jungle".to_string(),
                 track_number: Some(1),
                 disc_number: Some(1),
+                held_size: None,
             },
             LinkedTrackRow {
                 seconds: None,
@@ -15430,6 +15270,7 @@ mod tests {
                 title: "It's So Easy".to_string(),
                 track_number: Some(2),
                 disc_number: Some(1),
+                held_size: None,
             },
         ];
         let used = HashSet::new();
@@ -17431,6 +17272,30 @@ mod atomic_analysis_tests {
                 .to_string()
                 .contains("ownership is unknown")
         );
+    }
+
+    #[test]
+    fn a_source_row_is_only_adopted_by_its_own_download_and_owner() {
+        let row = serde_json::json!({ "sourceId": "hash", "sourceOwnerId": "me" });
+        assert!(source_row_is_this_import(&row, "me", "hash"));
+        assert!(!source_row_is_this_import(&row, "them", "hash"));
+        assert!(!source_row_is_this_import(&row, "me", "other"));
+        // From before sources were recorded.
+        let legacy = serde_json::json!({ "sourceType": "torrent", "unmatchedReason": "waiting" });
+        assert!(source_row_is_this_import(&legacy, "me", "hash"));
+        assert!(!source_row_is_this_import(
+            &serde_json::json!({ "sourceType": "scan" }),
+            "me",
+            "hash"
+        ));
+        let no_owner = serde_json::json!({ "sourceType": "torrent", "sourceId": "hash" });
+        assert!(source_row_is_this_import(&no_owner, "me", "hash"));
+        assert!(!source_row_is_this_import(&no_owner, "me", "other"));
+        assert!(!source_row_is_this_import(
+            &serde_json::json!({}),
+            "me",
+            "hash"
+        ));
     }
 
     #[test]

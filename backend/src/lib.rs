@@ -76,7 +76,9 @@ pub fn run() -> anyhow::Result<()> {
         .max_blocking_threads(max_blocking_threads)
         .thread_name("librarian-runtime")
         .enable_all()
-        .thread_stack_size(8 * 1024 * 1024)
+        // Linking a file nests update hooks several levels deep (file, track, the file it replaces),
+        // and an unoptimized build's frames for those are huge. Only pages in use take memory.
+        .thread_stack_size(32 * 1024 * 1024)
         .build()
         .context("failed to build Tokio runtime")?
         .block_on(async_main())

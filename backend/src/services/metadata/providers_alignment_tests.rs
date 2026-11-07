@@ -169,6 +169,7 @@ async fn all_import_entrypoints_reject_foreign_and_missing_libraries_before_prov
                 library_id: target,
                 user_id: requester,
                 monitor_type: AutoDownloadMode::None,
+                listing: None,
             })
             .await
             .unwrap_err();

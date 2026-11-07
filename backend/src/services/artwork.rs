@@ -42,6 +42,9 @@ const DEFAULT_ARTWORK_HOSTS: &[&str] = &[
     "coverartarchive.org",
     "archive.org",
 ];
+/// Hosts whose servers have changing names. Cover Art Archive sends images to `archive.org`, which
+/// sends them on to whichever storage server has them, like `dn721606.ca.archive.org`.
+const ARTWORK_HOST_FAMILIES: &[&str] = &[".archive.org"];
 const ARTWORK_ALLOWED_HOSTS_SETTING: &str = "artwork_allowed_hosts";
 const MAX_REDIRECTS: usize = 3;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1095,6 +1098,13 @@ fn resize_artwork(bytes: &[u8], width: u32) -> Result<(Vec<u8>, String, i32, i32
     ))
 }
 
+fn artwork_host_allowed(allowed: &BTreeSet<String>, host: &str) -> bool {
+    allowed.contains(host)
+        || ARTWORK_HOST_FAMILIES
+            .iter()
+            .any(|family| host.ends_with(family) && host.len() > family.len())
+}
+
 fn normalize_allowed_host(input: &str) -> Option<String> {
     let candidate = input
         .trim()
@@ -1130,7 +1140,7 @@ async fn resolve_artwork_destination(
         .to_string()
         .trim_matches(['[', ']'])
         .to_ascii_lowercase();
-    if !allowed_hosts.contains(&normalized_host) {
+    if !artwork_host_allowed(allowed_hosts, &normalized_host) {
         return Err(ArtworkFetchError::DestinationDenied);
     }
 
@@ -1382,5 +1392,20 @@ mod tests {
         );
         let (_, mime, width, height) = resize_artwork(&logo, 500).expect("resize logo");
         assert_eq!((mime.as_str(), width, height), ("image/png", 500, 250));
+    }
+}
+
+#[cfg(test)]
+mod artwork_host_tests {
+    use super::*;
+
+    #[test]
+    fn storage_servers_of_a_known_family_are_allowed_and_lookalikes_are_not() {
+        let allowed: BTreeSet<String> = ["archive.org".to_string()].into();
+        assert!(artwork_host_allowed(&allowed, "archive.org"));
+        assert!(artwork_host_allowed(&allowed, "dn721606.ca.archive.org"));
+        assert!(!artwork_host_allowed(&allowed, "evilarchive.org"));
+        assert!(!artwork_host_allowed(&allowed, "archive.org.evil.test"));
+        assert!(!artwork_host_allowed(&allowed, ".archive.org"));
     }
 }

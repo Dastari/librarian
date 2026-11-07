@@ -47,6 +47,7 @@ pub mod logging;
 pub mod login_rate_limit;
 pub mod manager;
 pub mod metadata;
+pub mod music_rules;
 pub mod ollama;
 pub mod quality;
 pub mod rate_limiter;

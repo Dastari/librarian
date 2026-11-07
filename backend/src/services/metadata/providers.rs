@@ -716,6 +716,9 @@ pub struct AddAlbumOptions {
     /// Auto-download policy for the new album. `None` (the default) means the
     /// album is created unmonitored, exactly as before.
     pub monitor_type: AutoDownloadMode,
+    /// The edition's tracks, when it's been chosen to fit some files. Otherwise the first official
+    /// release's are used.
+    pub listing: Option<Vec<crate::services::metadata::musicbrainz::MusicBrainzTrack>>,
 }
 
 /// Options for adding an audiobook from a metadata provider
@@ -3609,9 +3612,59 @@ impl MetadataService {
     }
 
     /// Add an album from MusicBrainz to a library.
+    /// The edition of an album that best fits some files, with how well they fit. Each edition read
+    /// is a request to a rate-limited service, so only the likeliest few are.
+    pub async fn album_listing_for_files(
+        &self,
+        release_group_id: Uuid,
+        files: &[crate::services::release_match::ReleaseFile],
+        names: &[Option<String>],
+    ) -> Result<
+        Option<(
+            Vec<crate::services::metadata::musicbrainz::MusicBrainzTrack>,
+            crate::services::music_rules::ListingFit,
+        )>,
+    > {
+        use crate::services::music_rules;
+        const EDITIONS_READ: usize = 4;
+        let musicbrainz = self.get_musicbrainz_client().await?;
+        let editions = musicbrainz
+            .get_release_group_editions(release_group_id)
+            .await?;
+        let counts: Vec<(usize, bool)> = editions
+            .iter()
+            .map(|edition| (edition.track_count, edition.official))
+            .collect();
+        let mut listings = Vec::new();
+        let mut fits = Vec::new();
+        for index in music_rules::editions_to_read(&counts, files.len(), EDITIONS_READ) {
+            let tracks = musicbrainz.get_release_tracks(&editions[index].id).await?;
+            fits.push(music_rules::fit_listing(
+                files,
+                names,
+                &tracks.iter().map(listing_track_facts).collect::<Vec<_>>(),
+            ));
+            listings.push(tracks);
+        }
+        Ok(music_rules::best_listing(&fits).map(|best| {
+            let tracks = listings.swap_remove(best);
+            let fit = fits.swap_remove(best);
+            let discs: Vec<i32> = tracks.iter().map(|track| track.disc_number).collect();
+            let keep = music_rules::tracks_on_held_discs(&fit, &discs);
+            let tracks = keep
+                .into_iter()
+                .map(|index| tracks[index].clone())
+                .collect();
+            (tracks, fit)
+        }))
+    }
+
     pub async fn add_album_from_provider(&self, options: AddAlbumOptions) -> Result<Album> {
         self.require_import_owner(options.library_id, options.user_id)
             .await?;
+        // One at a time: two callers checking at once would both find nothing and both create it.
+        static ADDING_ALBUM: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        let _adding = ADDING_ALBUM.lock().await;
         if options.provider != MetadataProvider::Musicbrainz {
             anyhow::bail!("Only MusicBrainz is supported for album metadata");
         }
@@ -3678,10 +3731,17 @@ impl MetadataService {
                         Edges: edges { Node: node { Id: id } }
                     }
                 }"#,
+                // MusicBrainz credits one artist with different spellings, so its id comes first.
                 serde_json::json!({
-                    "where": {
-                        "libraryId": { "eq": options.library_id.to_string() },
-                        "name": { "eq": artist_name.clone() }
+                    "where": match artist_mbid.as_deref() {
+                        Some(id) => serde_json::json!({
+                            "libraryId": { "eq": options.library_id.to_string() },
+                            "musicbrainzId": { "eq": id }
+                        }),
+                        None => serde_json::json!({
+                            "libraryId": { "eq": options.library_id.to_string() },
+                            "name": { "eq": artist_name.clone() }
+                        }),
                     },
                     "page": { "limit": 1, "offset": 0 }
                 }),
@@ -3805,7 +3865,11 @@ impl MetadataService {
         // for the import matcher to link files to, so create the track list
         // from the provider. Tracks start `wanted = false`; the hunt job
         // promotes them according to the album's auto-download mode.
-        match musicbrainz.get_release_group_tracks(release_group_id).await {
+        let listing = match options.listing.clone() {
+            Some(listing) => Ok(listing),
+            None => musicbrainz.get_release_group_tracks(release_group_id).await,
+        };
+        match listing {
             Ok(tracks) if !tracks.is_empty() => {
                 let created = self
                     .create_album_tracks(&auth_user, &options, &album, &artist_name, &tracks)
@@ -4751,6 +4815,18 @@ impl MetadataService {
         }
 
         Ok(show)
+    }
+}
+
+/// A listed track in the terms the matching rules use.
+pub fn listing_track_facts(
+    track: &crate::services::metadata::musicbrainz::MusicBrainzTrack,
+) -> crate::services::release_match::TrackFacts {
+    crate::services::release_match::TrackFacts {
+        title: track.title.clone(),
+        number: Some(track.position),
+        disc: Some(track.disc_number),
+        seconds: track.duration_secs.map(f64::from),
     }
 }
 

@@ -88,8 +88,10 @@ pub struct CoverArtArchiveResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoverArtImage {
-    /// Image ID - Cover Art Archive returns this as a string
-    pub id: String,
+    /// Image ID. Cover Art Archive sends a number or a string, depending on the image, and nothing
+    /// here reads it, so it mustn't be able to fail the whole response.
+    #[serde(default)]
+    pub id: serde_json::Value,
     pub image: String,
     pub thumbnails: CoverArtThumbnails,
     pub front: bool,
@@ -455,53 +457,7 @@ impl MusicBrainzClient {
             "Fetching track listing for MusicBrainz release group {}",
             mbid
         );
-
-        let browse_url = format!("{}/release", self.base_url);
-        let client = self.client.clone();
-        let user_agent = self.user_agent.clone();
-        let retry_config = self.retry_config.clone();
-        let mbid_string = mbid.to_string();
-
-        let releases: Vec<ReleaseSummary> = retry_async(
-            || {
-                let url = browse_url.clone();
-                let client = client.clone();
-                let ua = user_agent.clone();
-                let mbid_string = mbid_string.clone();
-                async move {
-                    let query_params = [
-                        ("fmt", "json".to_string()),
-                        ("release-group", mbid_string),
-                        ("inc", "media".to_string()),
-                        ("limit", "25".to_string()),
-                    ];
-                    let response = client
-                        .get_with_headers_and_query(&url, &[("User-Agent", &ua)], &query_params)
-                        .await?;
-                    if response.status().as_u16() == 503 {
-                        anyhow::bail!("Rate limited (503)");
-                    }
-                    if !response.status().is_success() {
-                        anyhow::bail!(
-                            "MusicBrainz release browse failed with status: {}",
-                            response.status()
-                        );
-                    }
-                    let parsed: ReleaseBrowseResponse =
-                        crate::services::http_client::response_json_limited(
-                            response,
-                            crate::services::http_client::METADATA_RESPONSE_LIMIT,
-                        )
-                        .await
-                        .context("Failed to parse MusicBrainz release browse")?;
-                    Ok(parsed.releases)
-                }
-            },
-            &retry_config,
-            "musicbrainz_browse_releases",
-        )
-        .await?;
-
+        let releases = self.browse_release_group(mbid).await?;
         let Some(best) = releases.into_iter().max_by_key(|release| {
             let official = i32::from(
                 release
@@ -528,7 +484,81 @@ impl MusicBrainzClient {
             return Ok(Vec::new());
         };
 
-        let detail_url = format!("{}/release/{}", self.base_url, best.id);
+        self.get_release_tracks(&best.id).await
+    }
+
+    /// A release group's editions, and how many tracks each has.
+    pub async fn get_release_group_editions(&self, mbid: Uuid) -> Result<Vec<MusicBrainzEdition>> {
+        Ok(self
+            .browse_release_group(mbid)
+            .await?
+            .into_iter()
+            .map(|release| MusicBrainzEdition {
+                official: release
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.eq_ignore_ascii_case("official")),
+                track_count: release
+                    .media
+                    .iter()
+                    .map(|medium| medium.track_count.max(0) as usize)
+                    .sum(),
+                id: release.id,
+            })
+            .collect())
+    }
+
+    async fn browse_release_group(&self, mbid: Uuid) -> Result<Vec<ReleaseSummary>> {
+        let browse_url = format!("{}/release", self.base_url);
+        let client = self.client.clone();
+        let user_agent = self.user_agent.clone();
+        let retry_config = self.retry_config.clone();
+        let mbid_string = mbid.to_string();
+
+        retry_async(
+            || {
+                let url = browse_url.clone();
+                let client = client.clone();
+                let ua = user_agent.clone();
+                let mbid_string = mbid_string.clone();
+                async move {
+                    let query_params = [
+                        ("fmt", "json".to_string()),
+                        ("release-group", mbid_string),
+                        ("inc", "media".to_string()),
+                        ("limit", "100".to_string()),
+                    ];
+                    let response = client
+                        .get_with_headers_and_query(&url, &[("User-Agent", &ua)], &query_params)
+                        .await?;
+                    if response.status().as_u16() == 503 {
+                        anyhow::bail!("Rate limited (503)");
+                    }
+                    if !response.status().is_success() {
+                        anyhow::bail!(
+                            "MusicBrainz release browse failed with status: {}",
+                            response.status()
+                        );
+                    }
+                    let parsed: ReleaseBrowseResponse =
+                        crate::services::http_client::response_json_limited(
+                            response,
+                            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                        )
+                        .await
+                        .context("Failed to parse MusicBrainz release browse")?;
+                    Ok(parsed.releases)
+                }
+            },
+            &retry_config,
+            "musicbrainz_browse_releases",
+        )
+        .await
+    }
+
+    /// One edition's tracks.
+    pub async fn get_release_tracks(&self, release_id: &str) -> Result<Vec<MusicBrainzTrack>> {
+        let detail_url = format!("{}/release/{}", self.base_url, release_id);
         let client = self.client.clone();
         let user_agent = self.user_agent.clone();
         let retry_config = self.retry_config.clone();
@@ -622,6 +652,14 @@ pub struct MusicBrainzTrack {
 struct ReleaseBrowseResponse {
     #[serde(default)]
     releases: Vec<ReleaseSummary>,
+}
+
+/// One edition of an album: a pressing, a reissue, a box set.
+#[derive(Debug, Clone)]
+pub struct MusicBrainzEdition {
+    pub id: String,
+    pub official: bool,
+    pub track_count: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -758,5 +796,22 @@ mod tests {
     fn tracks_from_release_handles_empty_media() {
         let detail: ReleaseDetail = serde_json::from_str(r#"{"media": []}"#).unwrap();
         assert!(MusicBrainzClient::tracks_from_release(&detail).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod cover_art_tests {
+    use super::*;
+
+    #[test]
+    fn cover_art_ids_can_be_numbers_or_strings() {
+        // A real response's shape: this album had no artwork for as long as the id had to be text.
+        let body = r#"{"images":[
+            {"id":32868884113,"image":"https://example.test/a.jpg","thumbnails":{"1200":"https://example.test/a-1200.jpg"},"front":true,"back":false,"comment":""},
+            {"id":"32868884114","image":"https://example.test/b.jpg","thumbnails":{},"front":false,"back":true}
+        ]}"#;
+        let parsed: CoverArtArchiveResult = serde_json::from_str(body).unwrap();
+        assert_eq!(parsed.images.len(), 2);
+        assert!(parsed.images[0].front);
     }
 }

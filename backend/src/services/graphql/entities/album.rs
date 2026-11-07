@@ -329,6 +329,7 @@ impl AlbumMetadataMutations {
                 library_id,
                 user_id,
                 monitor_type,
+                listing: None,
             })
             .await
         {

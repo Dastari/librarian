@@ -25,6 +25,7 @@ use crate::services::identify_rules::{
 };
 use crate::services::jev::Jev;
 use crate::services::metadata::settings::MetadataSettings;
+use crate::services::music_rules;
 use crate::services::release_match::{BookFacts, BookGroup, BookOutcome, ReleaseFile, TrackFacts};
 use crate::services::whisper::{self, Whisper};
 use crate::services::write_rules;
@@ -1825,14 +1826,15 @@ impl LibraryScanService {
             .feed
             .start(&format!("Identifying {}", group.label))
             .await;
-        let members: Vec<ReleaseFile> = group
+        let mut members: Vec<ReleaseFile> = group
             .files
             .iter()
             .map(|index| audio[*index].clone())
             .collect();
+        music_rules::fill_in_discs(&mut members);
         let tags = members.first().map(|file| &file.tags);
         let album_title = tags
-            .and_then(|tags| tags.album.as_deref().map(rules::tidy_title))
+            .and_then(|tags| tags.album.as_deref().map(music_rules::album_title))
             .unwrap_or_else(|| rules::title_from_label(&group.label));
         let artist = tags
             .and_then(|tags| tags.album_artist.clone().or_else(|| tags.artist.clone()))
@@ -1900,11 +1902,12 @@ impl LibraryScanService {
             };
             let title = release_match::title_score(&album_title, &facts);
             let artist_differs = match (&artist, &facts.author) {
-                (Some(a), Some(b)) => !rules::same_person(a, b),
+                (Some(a), Some(b)) => !music_rules::same_artist(a, b),
                 _ => false,
             };
             let requested = run.hint.item_id.as_deref() == Some(album.id.as_str());
-            if (title < POSSIBLE_TITLE && !requested) || artist_differs {
+            let other_album = !music_rules::same_album_title(&album_title, &album.name);
+            if ((title < POSSIBLE_TITLE || other_album) && !requested) || artist_differs {
                 continue;
             }
             let tracks = self.album_tracks(&album.id).await.unwrap_or_default();
@@ -2047,9 +2050,13 @@ impl LibraryScanService {
             };
             let title_part = release_match::title_score(title, &facts);
             let artist_same = match (artist, result.artist_name.as_deref()) {
-                (Some(a), Some(b)) => Some(rules::same_person(a, b)),
+                (Some(a), Some(b)) => Some(music_rules::same_artist(a, b)),
                 _ => None,
             };
+            // `Use Your Illusion II` isn't a weaker match for `Use Your Illusion I`. It's another album.
+            if !music_rules::same_album_title(title, &result.title) {
+                continue;
+            }
             let mut reasons = Vec::new();
             match artist_same {
                 Some(true) => reasons.push("Artist matches".to_string()),
@@ -3335,6 +3342,7 @@ impl LibraryScanService {
                     library_id: library,
                     user_id: owner,
                     monitor_type: AutoDownloadMode::None,
+                    listing: None,
                 })
                 .await?
                 .id
