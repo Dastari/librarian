@@ -97,10 +97,11 @@ export function GuidePoster<T>({ name, image, size, badge, tooltip, ariaLabel, t
 }
 
 /** The line above both guide views: which period this is, what changes it, and the view switch. */
-export function GuideToolbar({ title, noun, onPrevious, onNext, previousDisabled, nextDisabled, meta, children, switcher }: {
+export function GuideToolbar({ title, noun, onPrevious, onToday, onNext, previousDisabled, nextDisabled, meta, children, switcher }: {
   title: string;
   noun: string;
   onPrevious: () => void;
+  onToday: () => void;
   onNext: () => void;
   previousDisabled?: boolean;
   nextDisabled?: boolean;
@@ -111,6 +112,7 @@ export function GuideToolbar({ title, noun, onPrevious, onNext, previousDisabled
   return (
     <div data-nav-section className="page-gutter flex min-w-0 shrink-0 flex-wrap items-center gap-2">
       <Button variant="ghost" shape="circle" size="sm" icon={<IconChevronLeft className="rtl:rotate-180" />} aria-label={`Previous ${noun}`} onClick={onPrevious} disabled={previousDisabled} data-focusable />
+      <Button variant="ghost" size="sm" onClick={onToday} data-focusable>Today</Button>
       <Button variant="ghost" shape="circle" size="sm" icon={<IconChevronRight className="rtl:rotate-180" />} aria-label={`Next ${noun}`} onClick={onNext} disabled={nextDisabled} data-focusable />
       <h2 className="ms-1 me-2 truncate text-title-lg text-foreground" aria-live="polite">{title}</h2>
       {meta}

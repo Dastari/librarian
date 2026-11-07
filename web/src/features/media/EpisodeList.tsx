@@ -8,7 +8,7 @@ import { MeterCell } from "glass-ux/meter-cell";
 import { Progress } from "glass-ux/progress";
 import { Surface } from "glass-ux/surface";
 import { toast } from "glass-ux/toast";
-import { createContext, useContext, useCallback, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { Artwork } from "@/components/ui/Artwork";
 import { MediaRow } from "@/components/ui/MediaRow";
@@ -29,6 +29,8 @@ import type { EpisodeRow } from "./ShowPage";
 import { noRowMenu, RowActions, type RowPlayState } from "./RowPlayAction";
 
 interface EpisodeListProps {
+  /** An episode to bring into view and mark. */
+  focusEpisodeId?: string;
   episodes: EpisodeRow[];
   statuses: ContentStatusMap;
   progressByFile: Map<string | null | undefined, PlaybackProgressFieldsFragment>;
@@ -150,10 +152,24 @@ function createEpisodeColumns() {
 const episodeColumns = createEpisodeColumns();
 
 /** Season tables over the parent-owned episode query, playback and acquisition handlers. */
-export function EpisodeList({ episodes, statuses, progressByFile, loading, complete = true, status, playbackUnavailable, onPlay, showId, showName, libraryId, onChanged, view = "table", tint, headerExtra }: EpisodeListProps) {
+export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile, loading, complete = true, status, playbackUnavailable, onPlay, showId, showName, libraryId, onChanged, view = "table", tint, headerExtra }: EpisodeListProps) {
   const client = useApolloClient();
   const isAdmin = useIsAdmin();
   const { user } = useSession();
+  // A link to an episode lands on it: its row scrolls into view and stays marked for a moment.
+  const focusLoaded = Boolean(focusEpisodeId) && episodes.some((episode) => episode.id === focusEpisodeId);
+  useEffect(() => {
+    if (!focusEpisodeId || !focusLoaded) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const frame = requestAnimationFrame(() => {
+      const row = document.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(focusEpisodeId)}"]`);
+      if (!row) return;
+      row.scrollIntoView({ block: "center" });
+      row.classList.add("episode-focus");
+      timer = setTimeout(() => row.classList.remove("episode-focus"), 4000);
+    });
+    return () => { cancelAnimationFrame(frame); if (timer) clearTimeout(timer); };
+  }, [focusEpisodeId, focusLoaded]);
   const [updateEpisode] = useMutation(EntityEpisodeUpdateDocument, { refetchQueries: () => activeContentStatusQueries(client) });
   const [updateEpisodes] = useMutation(EntityEpisodeUpdateManyDocument, { refetchQueries: () => activeContentStatusQueries(client) });
   const [searching, setSearching] = useState<EpisodeRow | null>(null);

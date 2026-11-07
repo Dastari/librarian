@@ -5,12 +5,10 @@ import { CopyButton } from "glass-ux/copy-button";
 import { Dialog } from "glass-ux/dialog";
 import { FactList } from "glass-ux/fact-list";
 import { IconActivity, IconArrowDown, IconArrowUp, IconClose, IconDisk, IconFile, IconInfo, IconPercent, IconSearch, IconUsers } from "glass-ux/icons";
-import { Metric } from "glass-ux/metric";
 import { Notice } from "glass-ux/notice";
 import { Progress } from "glass-ux/progress";
 import { ScrollArea } from "glass-ux/scroll-area";
 import { Surface } from "glass-ux/surface";
-import { Tooltip } from "glass-ux/tooltip";
 import { TruncatedText } from "glass-ux/truncated-text";
 import { VerticalTabs } from "glass-ux/vertical-tabs";
 import type { ComponentProps, ReactNode } from "react";
@@ -19,6 +17,7 @@ import { EntityChip } from "@/components/entities/EntityChip";
 import { torrentImport, torrentTarget } from "@/lib/entities/torrent";
 import { formatBytes, formatDateTime, formatSpeed } from "@/lib/format";
 
+import { LiveStat, Stat } from "./TransferStat";
 import { TorrentFiles, useTorrentFiles } from "./TorrentFiles";
 import { IdentificationActivity, IdentifiedResults, useTorrentIdentification } from "./TorrentIdentification";
 import { TorrentIdentity } from "./TorrentIdentity";
@@ -28,7 +27,6 @@ import type { RateHistory } from "./useRateHistory";
 type Rates = RateHistory["byHash"] extends ReadonlyMap<string, infer Series> ? Series : never;
 
 const fraction = (value: number) => Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
-const RANGE = "Last two minutes";
 
 /** With the files listed below, the notice needn't list them too: "19 file(s) did not match any library item". */
 function noticeText(error: string, filesListed: boolean) {
@@ -84,20 +82,6 @@ function TorrentFacts({ row, ratio }: { row: DownloadRow; ratio: number }) {
       </div>
     </ScrollArea>
   );
-}
-
-function Stat({ icon, label, children }: { icon: ReactNode; label: string; children: ReactNode }) {
-  return (
-    <div className="inline-flex min-w-0 items-center gap-1.5">
-      <Tooltip content={label}><span className="inline-flex shrink-0 text-muted" role="img" aria-label={label}>{icon}</span></Tooltip>
-      {children}
-    </div>
-  );
-}
-
-/** Metric hides its own label at this width, leaving the value and a small trend beside the icon. */
-function LiveStat({ icon, ...metric }: { icon: ReactNode; label: string } & ComponentProps<typeof Metric>) {
-  return <Stat icon={icon} label={metric.label}><div className="h-6 w-36 min-w-0 max-sm:w-[5.25rem]"><Metric better="none" range={RANGE} sparklineFill {...metric} /></div></Stat>;
 }
 
 /**

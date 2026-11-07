@@ -1,5 +1,4 @@
 import { Link } from "@tanstack/react-router";
-import { Button } from "glass-ux/button";
 import { Tooltip } from "glass-ux/tooltip";
 import { useMemo, useState, type ReactNode } from "react";
 
@@ -62,12 +61,11 @@ export function GuideCalendar({ switcher }: { switcher: ReactNode }) {
         noun="month"
         title={month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
         onPrevious={() => step(-1)}
+        onToday={() => { setChosenMonth(monthOf(today)); setChosenDay(todayIso); }}
         onNext={() => step(1)}
         meta={<span className="text-label-sm text-muted">{total ? `${total} episode${total === 1 ? "" : "s"} this month` : "Nothing from your shows this month"}</span>}
         switcher={switcher}
-      >
-        <Button variant="ghost" size="sm" onClick={() => { setChosenMonth(monthOf(today)); setChosenDay(todayIso); }} data-focusable>Today</Button>
-      </GuideToolbar>
+      />
       <PageScroller className="page-gutter flex-1">
     <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
       <section aria-label="Calendar" data-nav-section className="flex min-w-0 flex-col lg:min-h-[calc(var(--view-h,100svh)-1.5rem)] lg:self-start">
@@ -140,12 +138,14 @@ function DayPanel({ day, episodes, loading, upcoming, today, actions }: { day: s
           </div>
           <ol className="flex flex-col gap-1.5">
             {group.episodes.map((episode) => (
-              <li key={episode.id} className="grid grid-cols-[2.75rem_minmax(0,1fr)] gap-2 rounded-xl border border-white/5 bg-white/[0.04] px-3 py-2">
-                <span className="text-label-sm font-semibold text-brand">E{String(episode.episode).padStart(2, "0")}</span>
-                <span className="min-w-0 text-label">
-                  <span className="block truncate text-foreground">{episode.title && episode.title !== "TBA" ? episode.title : "Title to be announced"}</span>
-                  {episode.mediaFileId ? <span className="text-label-sm text-success">In your library</span> : null}
-                </span>
+              <li key={episode.id}>
+                <Link to="/shows/$showId" params={{ showId: group.show.id }} search={{ season: episode.season, episode: episode.id }} data-focusable className="nav-focus grid grid-cols-[2.75rem_minmax(0,1fr)] gap-2 rounded-xl border border-white/5 bg-white/[0.04] px-3 py-2 hover-capable:hover:bg-white/[0.08]">
+                  <span className="text-label-sm font-semibold text-brand">E{String(episode.episode).padStart(2, "0")}</span>
+                  <span className="min-w-0 text-label">
+                    <span className="block truncate text-foreground">{episode.title && episode.title !== "TBA" ? episode.title : "Title to be announced"}</span>
+                    {episode.mediaFileId ? <span className="text-label-sm text-success">In your library</span> : null}
+                  </span>
+                </Link>
               </li>
             ))}
           </ol>

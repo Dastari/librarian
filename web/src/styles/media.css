@@ -449,3 +449,6 @@
 }
 
 .guide-grid-service.guide-grid-yours { background-color: color-mix(in oklab, var(--accent) 12%, color-mix(in oklab, var(--canvas) 72%, transparent)); }
+
+/* An episode someone followed a link to. */
+.episode-focus { background-color: var(--fill-selected, color-mix(in oklab, var(--accent) 22%, transparent)); border-radius: var(--radius-control); }

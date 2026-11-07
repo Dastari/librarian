@@ -80,6 +80,7 @@ export function StreamingGrid({ switcher }: { switcher: ReactNode }) {
         noun="week"
         title={weekLabel}
         onPrevious={() => setWeekOffset((value) => value - 1)}
+        onToday={() => setWeekOffset(0)}
         onNext={() => setWeekOffset((value) => value + 1)}
         previousDisabled={weekOffset <= -2}
         nextDisabled={weekOffset >= 2}
