@@ -43,7 +43,7 @@ function SortSelect({ options, value, onChange }: BrowserSort) {
     <Select<string>
       aria-label="Sort by"
       size="sm"
-      className="w-48 shrink-0"
+      className="w-40 shrink-0 lg:w-48"
       value={current}
       onValueChange={(next) => {
         const option = options.find((item) => sortKey(item) === next);
@@ -59,23 +59,25 @@ export function BrowserToolbar({ query, onQueryChange, letter, onLetterChange, a
   const desktop = useIsDesktop();
   return (
     <div className="flex shrink-0 flex-col gap-2 sm:gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <SearchField aria-label={placeholder} value={query} onValueChange={onQueryChange} placeholder={placeholder} className="w-full sm:w-64" />
-        {onAvailabilityChange ? (
-          <GlassSegmented<AvailabilityFilter>
-            ariaLabel="Availability"
-            size="sm"
-            value={availability ?? "all"}
-            onChange={onAvailabilityChange}
-            items={[
-              { key: "all", label: "All" },
-              { key: "available", label: "Available" },
-              { key: "wanted", label: "Wanted" },
-              { key: "missing", label: "Missing" },
-            ]}
-          />
-        ) : null}
-        <div className="flex-1" />
+      {/* One line from small screens up: this filter folds to a menu rather than pushing others down. */}
+      <div className="flex items-center gap-2 max-sm:flex-wrap">
+        <SearchField aria-label={placeholder} value={query} onValueChange={onQueryChange} placeholder={placeholder} className="w-full sm:w-64 sm:min-w-40 sm:shrink" />
+        <div className="min-w-0 flex-1">
+          {onAvailabilityChange ? (
+            <GlassSegmented<AvailabilityFilter>
+              ariaLabel="Availability"
+              size="sm"
+              value={availability ?? "all"}
+              onChange={onAvailabilityChange}
+              items={[
+                { key: "all", label: "All" },
+                { key: "available", label: "Available" },
+                { key: "wanted", label: "Wanted" },
+                { key: "missing", label: "Missing" },
+              ]}
+            />
+          ) : null}
+        </div>
         {sort ? <SortSelect {...sort} /> : null}
         {trailing}
       </div>
