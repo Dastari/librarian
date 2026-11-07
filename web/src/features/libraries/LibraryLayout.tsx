@@ -78,8 +78,9 @@ export function LibraryLayout({ library }: { library: LibraryDetail }) {
     <LibraryArtContext value={setArt}>
     <div data-print-flow className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       {flow && art ? <MediaBackdrop src={art.src} fallback={art.fallback} tint={art.tint} /> : null}
-      {/* The identity never scrolls away; only the view under it does. */}
-      <div className={cn("page-gutter flex min-w-0 shrink-0 flex-col gap-2 pb-3 sm:pb-4 [@media(max-height:35rem)]:pb-2", flow && "over-imagery")}>
+      {/* The identity never scrolls away; only the view under it does. Its top padding is room for
+          the issue count, which sits over the corner of the tile and would otherwise be clipped. */}
+      <div className={cn("page-gutter flex min-w-0 shrink-0 flex-col gap-2 pt-2 pb-3 sm:pb-4 [@media(max-height:35rem)]:pb-2", flow && "over-imagery")}>
         {/* A narrow page collapses the identity to one line, with its actions behind its menu. */}
         <LibraryIdentity
           tier={narrow ? "compact" : "header"}
@@ -96,7 +97,8 @@ export function LibraryLayout({ library }: { library: LibraryDetail }) {
             </span>
           )}
         />
-        {narrow ? viewSwitch : null}
+        {/* On its own line it keeps its own width rather than stretching across the page. */}
+        {narrow && viewSwitch ? <div className="max-w-full self-start">{viewSwitch}</div> : null}
       </div>
       <PageScroller data-print-flow scrolling={flow} className={cn("page-gutter flex min-h-0 flex-1 flex-col", !flow && "fa-focus-room", !flow && "pb-[calc(var(--space-3)+var(--focus-reach))] sm:pb-[calc(var(--space-4)+var(--focus-reach))]")}>
         <Outlet />
