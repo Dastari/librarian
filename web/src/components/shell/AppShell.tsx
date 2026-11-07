@@ -16,7 +16,6 @@ import { PageScroller } from "./PageScroller";
 import { SHELL_ART_ID } from "./shellArt";
 import { ShellCommands } from "./ShellCommands";
 import { TopBar } from "./TopBar";
-import { UpdatePrompt } from "./UpdatePrompt";
 
 const hasAudio = () => Boolean(currentAudioItem(playerStore.getSnapshot()));
 
@@ -84,7 +83,6 @@ export function AppShell() {
         </div>
       </GlassAppShell>
       <FileDialogHost />
-      <div className="contents" data-print="hide"><UpdatePrompt /></div>
     </div>
   );
 }

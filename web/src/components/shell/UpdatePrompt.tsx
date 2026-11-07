@@ -1,23 +1,24 @@
+import { toast } from "glass-ux/toast";
+import { useEffect } from "react";
 
-import { Button } from "@/components/ui";
-import { IconClose, IconRefresh } from "glass-ux/icons";
+import { applyUpdate, usePwa } from "@/lib/pwa";
 
-import { usePwaUpdate } from "@/lib/pwa";
+const TOAST_ID = "app-update";
 
-/** Shown when a new build is ready. One tap reloads into it. */
+/**
+ * When a newer build is deployed, one toast offers to load it. It stays until it is used or
+ * closed; Settings › About keeps the same action for later.
+ */
 export function UpdatePrompt() {
-  const { needRefresh, applyUpdate, dismiss } = usePwaUpdate();
-  if (!needRefresh) return null;
-  return (
-    <div role="status" className="glass-float fixed bottom-[calc(var(--tabbar-height)+var(--safe-bottom)+0.75rem)] right-4 z-40 flex items-center gap-3 rounded-card border border-glass-border px-4 py-3 shadow-overlay md:bottom-6">
-      <IconRefresh size="lg" className="text-brand" />
-      <span className="text-body-sm text-foreground">A new version is ready.</span>
-      <Button size="sm" variant="primary" onPress={() => void applyUpdate()}>
-        Reload
-      </Button>
-      <Button size="sm" variant="ghost" isIconOnly aria-label="Dismiss" onPress={dismiss}>
-        <IconClose size="md" />
-      </Button>
-    </div>
-  );
+  const { updateAvailable } = usePwa();
+  useEffect(() => {
+    if (!updateAvailable) return;
+    toast.info("A new version of Librarian is available", {
+      id: TOAST_ID,
+      description: "Refresh to load it. Anything playing will stop.",
+      timeout: 0,
+      action: { label: "Refresh", onClick: () => void applyUpdate() },
+    });
+  }, [updateAvailable]);
+  return null;
 }
