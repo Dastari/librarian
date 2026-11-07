@@ -84,7 +84,7 @@ export function WatchPage({ mediaFileId, onBack, mini = false, userId, onMinimis
   }, [mini, navigate, nextEpisode, resolved]);
 
   if (!resolved) {
-    return <div className="h-svh w-full bg-black" aria-busy />;
+    return <div className="h-dvh w-full bg-black" aria-busy />;
   }
 
   return (

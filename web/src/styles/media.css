@@ -407,12 +407,17 @@
   padding-block-end: 0;
 }
 
-.app-top { padding-inline-end: var(--page-gutter); }
+/* The top bar keeps clear of a landscape iPhone's notch and rounded corners; the page runs under
+ * the home indicator but its scroll ends above it. */
+.app-top { padding-inline-end: max(var(--page-gutter), var(--safe-inline-end)); }
+.app-shell-scroll { padding-block-end: var(--safe-bottom); }
 .app-rail-divider { flex: none; align-self: stretch; inline-size: auto; padding-block: var(--space-2); padding-inline: var(--space-2); list-style: none; }
 
 @media (width < 48rem) {
   .app-frame { padding-inline: 0; }
-  .app-top { padding-inline: var(--page-gutter); }
+  .app-top { padding-inline: max(var(--page-gutter), var(--safe-inline-start)) max(var(--page-gutter), var(--safe-inline-end)); }
+  /* The tab bar's reserved space already covers the home indicator. */
+  .app-shell-scroll { padding-block-end: 0; }
 }
 
 /* ---- Streaming grid ---------------------------------------------------------------------- */
