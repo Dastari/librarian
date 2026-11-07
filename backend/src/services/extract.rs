@@ -870,7 +870,7 @@ fn extract_7z(
     staging_dir: &Path,
     limits: ExtractionLimits,
 ) -> Result<Vec<ExtractedFile>, ExtractError> {
-    use sevenz_rust2::{ArchiveReader, Error as SevenZError, Password};
+    use sevenz_rust2::{ArchiveReader, EntryDecision, Error as SevenZError, Password};
 
     let archive_name = file_name_of(archive);
     let mut reader = ArchiveReader::open(archive, Password::empty())
@@ -923,7 +923,9 @@ fn extract_7z(
     let mut files: Vec<ExtractedFile> = Vec::new();
     let mut failure: Option<ExtractError> = None;
     let archive_name_cb = archive_name.clone();
-    let result = reader.for_each_entries(|entry, entry_reader| {
+    // `Stop` ends the whole walk on the first failure. A plain `false` from
+    // `for_each_entries` only skips the rest of the current block since sevenz-rust2 0.25.
+    let result = reader.for_each_entries_with_decision(|entry, entry_reader| {
         if entry.is_directory {
             let destination = staging_dir.join(entry.name.replace('\\', "/"));
             if let Err(error) = std::fs::create_dir_all(&destination) {
@@ -932,9 +934,9 @@ fn extract_7z(
                     path: destination.display().to_string(),
                     reason: error.to_string(),
                 });
-                return Ok(false);
+                return Ok(EntryDecision::Stop);
             }
-            return Ok(true);
+            return Ok(EntryDecision::Continue);
         }
         let destination = match safe_destination(staging_dir, &entry.name) {
             Ok(path) => path,
@@ -944,7 +946,7 @@ fn extract_7z(
                     entry: entry.name.clone(),
                     reason,
                 });
-                return Ok(false);
+                return Ok(EntryDecision::Stop);
             }
         };
         match write_entry(
@@ -960,11 +962,11 @@ fn extract_7z(
                     path: destination,
                     size,
                 });
-                Ok(true)
+                Ok(EntryDecision::Continue)
             }
             Err(error) => {
                 failure = Some(error);
-                Ok(false)
+                Ok(EntryDecision::Stop)
             }
         }
     });
