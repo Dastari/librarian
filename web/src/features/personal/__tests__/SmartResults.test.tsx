@@ -1,6 +1,6 @@
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { coerceInputValue, isInputType } from "graphql";
+import { isInputType, validateInputValue } from "graphql";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -26,7 +26,7 @@ function expectValidWhere(name: string, value: unknown) {
   const type = personalSchema().getType(name);
   if (!isInputType(type)) throw new Error(`${name} is not a server input type`);
   const errors: string[] = [];
-  coerceInputValue(value, type, (_path, _invalid, error) => errors.push(error.message));
+  validateInputValue(value, type, (error) => errors.push(error.message));
   expect(errors).toEqual([]);
 }
 const library = (id: string): LibraryFieldsFragment => ({

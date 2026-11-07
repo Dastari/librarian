@@ -37,7 +37,7 @@
     "@tanstack/react-router": "1.170.43",
     "clsx": "^2.1.1",
     "glass-ux": "https://github.com/Dastari/glass-ux/releases/download/v0.19.1/glass-ux-0.19.1.tgz",
-    "graphql": "^16.15.0",
+    "graphql": "^17.1.0",
     "graphql-ws": "^6.4.1",
     "hls.js": "^1.7.4",
     "motion": "^14.10.1",
