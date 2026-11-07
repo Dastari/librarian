@@ -10,6 +10,7 @@ import { SettingsLayout } from "@/features/settings/SettingsLayout";
 const route = vi.hoisted(() => ({ pathname: "/settings/general", routeId: "" }));
 vi.mock("@tanstack/react-router", () => ({
   Outlet: () => <button>Outlet action</button>,
+  useNavigate: () => vi.fn(),
   Link: ({ children }: { children: ReactNode }) => <a>{children}</a>,
   useRouterState: ({ select }: { select: (state: unknown) => unknown }) => select({
     location: { pathname: route.pathname }, matches: [{ routeId: route.routeId }],
