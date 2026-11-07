@@ -54,7 +54,8 @@ pub fn normalize_words(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut space = false;
     for ch in text.chars().flat_map(char::to_lowercase) {
-        if matches!(ch, '\'' | '\u{2019}' | '\u{2018}' | '`') {
+        // U+FFFD is what a mis-decoded apostrophe usually became ("Don\u{FFFD}t Cry").
+        if matches!(ch, '\'' | '\u{2019}' | '\u{2018}' | '`' | '\u{FFFD}') {
             continue;
         }
         if ch.is_alphanumeric() {
@@ -1850,6 +1851,20 @@ pub struct TrackFacts {
     pub seconds: Option<f64>,
 }
 
+/// Below this, a file's title and a track's are different songs.
+const TITLES_DIFFER: f64 = 0.7;
+
+/// Whether a normalized title names something, rather than only numbering it ("Track 03", "03").
+fn names_a_song(title: &str) -> bool {
+    title.split_whitespace().any(|word| {
+        word.chars().any(char::is_alphabetic)
+            && !matches!(
+                word,
+                "track" | "piste" | "titel" | "audiotrack" | "untitled" | "cd" | "disc" | "disk"
+            )
+    })
+}
+
 /// How well one file fits one album track, from 0 to 1, or `None` if something rules it out.
 fn track_fit(file: &ReleaseFile, name: Option<&str>, track: &TrackFacts) -> Option<f64> {
     let mut score = 0.0;
@@ -1863,13 +1878,18 @@ fn track_fit(file: &ReleaseFile, name: Option<&str>, track: &TrackFacts) -> Opti
         score += (1.0 - (difference / 12.0).min(1.0)) * 2.0;
         weight += 2.0;
     }
-    if let Some(name) = name.map(normalize_words).filter(|name| !name.is_empty()) {
+    // A name that only numbers the file ("Track 03") says nothing about which song it is.
+    if let Some(name) = name.map(normalize_words).filter(|name| names_a_song(name)) {
         let wanted = normalize_words(&track.title);
-        let similar = if name.contains(&wanted) && !wanted.is_empty() {
+        let similar = if !wanted.is_empty() && (name.contains(&wanted) || wanted.contains(&name)) {
             1.0
         } else {
             jaro_winkler(&name, &wanted)
         };
+        // Two real titles that disagree are two songs, whatever number and length they share.
+        if similar < TITLES_DIFFER && names_a_song(&wanted) {
+            return None;
+        }
         score += similar * 3.0;
         weight += 3.0;
     }

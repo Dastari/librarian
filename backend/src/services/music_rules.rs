@@ -279,10 +279,9 @@ pub fn fit_listing(
         let Some(title) = file.tags.title.as_deref().or(names[index].as_deref()) else {
             continue;
         };
-        let wanted = normalize_words(title);
         let found = listing.iter().enumerate().find(|(track_index, track)| {
             !placed.contains(&Some(*track_index))
-                && normalize_words(&track.title) == wanted
+                && same_song_title(title, &track.title)
                 && match (file.duration, track.seconds) {
                     (Some(have), Some(listed)) => (have - listed).abs() <= 3.0,
                     _ => true,
@@ -332,12 +331,23 @@ pub fn tracks_on_held_discs(fit: &ListingFit, discs: &[i32]) -> Vec<usize> {
         .collect()
 }
 
-/// The biggest edition not yet read, for files the nearest editions didn't fit: a deluxe edition's
-/// bonus disc on its own is closer in count to the standard album than to the deluxe one.
-pub fn biggest_unread_edition(counts: &[(usize, bool)], read: &[usize]) -> Option<usize> {
+/// Below this share of files, the nearest editions didn't fit and a bigger one is read.
+pub const NEAREST_FIT_BADLY: f64 = 0.5;
+
+/// The next bigger edition, for files the nearest editions fit badly: a deluxe edition's bonus disc
+/// on its own is closer in count to the standard album than to the deluxe one. It's the smallest
+/// unread edition bigger than every one read and than `at_least` (the files, and the tracks the
+/// album already has), so a two-disc deluxe is tried before a box set.
+pub fn next_bigger_edition(
+    counts: &[(usize, bool)],
+    read: &[usize],
+    at_least: usize,
+) -> Option<usize> {
+    let biggest_read = read.iter().map(|index| counts[*index].0).max().unwrap_or(0);
     (0..counts.len())
         .filter(|index| !read.contains(index))
-        .max_by_key(|index| (counts[*index].0, counts[*index].1))
+        .filter(|index| counts[*index].0 > biggest_read && counts[*index].0 >= at_least)
+        .min_by_key(|index| (counts[*index].0, !counts[*index].1, *index))
 }
 
 /// Which editions are worth a request, likeliest first. Each one is a call to a rate-limited
@@ -351,6 +361,33 @@ pub fn editions_to_read(counts: &[(usize, bool)], files: usize, at_most: usize) 
     });
     order.truncate(at_most);
     order
+}
+
+/// Whether two song titles are the same, allowing a misspelt word ("Rio de Janiero") but not a
+/// different one: the same words in the same order, each equal or, past three letters, nearly so.
+/// A whole-title similarity would call "live in London" and "live in Tokyo" the same.
+pub fn same_song_title(a: &str, b: &str) -> bool {
+    let (a, b) = (normalize_words(a), normalize_words(b));
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    let (a, b): (Vec<&str>, Vec<&str>) = (a.split(' ').collect(), b.split(' ').collect());
+    a.len() == b.len()
+        && a.iter().zip(&b).all(|(x, y)| {
+            x == y || (x.chars().count() > 3 && y.chars().count() > 3 && jaro_winkler(x, y) >= 0.9)
+        })
+}
+
+/// The track with a file's title, on any disc, when its length agrees: where a file goes that
+/// fit no numbered place, because its tags leave out the disc or another copy took the place.
+pub fn track_with_title(title: &str, seconds: Option<f64>, tracks: &[TrackFacts]) -> Option<usize> {
+    tracks.iter().position(|track| {
+        same_song_title(title, &track.title)
+            && match (seconds, track.seconds) {
+                (Some(have), Some(listed)) => (have - listed).abs() <= 12.0,
+                _ => true,
+            }
+    })
 }
 
 /// A track number for a file that's on no listing, in a free place on its disc. Its own number
@@ -413,6 +450,81 @@ mod tests {
             disc: Some(disc),
             seconds: Some(secs),
         }
+    }
+
+    #[test]
+    fn a_different_title_never_takes_a_track_by_its_number() {
+        // Use Your Illusion I's live disc, tagged without a disc number, against a disc-one album
+        // whose track 3 has no file: same number, close length, a different song.
+        let files = vec![file(
+            "UYI/03 - Right Next Door To Hell (Live In New York).flac",
+            "Right Next Door To Hell (Live In New York)",
+            Some(3),
+            None,
+            190.0,
+        )];
+        let listing = vec![
+            listed("Right Next Door to Hell", 1, 1, 182.0),
+            listed("Live and Let Die", 1, 3, 184.0),
+        ];
+        assert_eq!(fit_listing(&files, &[None], &listing).placed, vec![None]);
+    }
+
+    #[test]
+    fn a_numbered_name_still_fits_by_number_and_length() {
+        let files = vec![file("CD1/03.flac", "Track 03", Some(3), Some(1), 184.0)];
+        let listing = vec![listed("Live and Let Die", 1, 3, 184.0)];
+        assert_eq!(fit_listing(&files, &[None], &listing).placed, vec![Some(0)]);
+    }
+
+    #[test]
+    fn a_misspelt_or_misdecoded_title_is_the_same_song_but_another_place_is_not() {
+        assert!(same_song_title(
+            "Bad Apples (Live In Rio De Janeiro)",
+            "Bad Apples (live in Rio de Janiero)"
+        ));
+        assert!(same_song_title(
+            "It\u{FFFD}s Alright  November Rain (Live In Paris)",
+            "It\u{2019}s Alright / November Rain (live in Paris)"
+        ));
+        assert!(!same_song_title(
+            "Perfect Crime (live in London)",
+            "Perfect Crime (live in Tokyo)"
+        ));
+        assert!(!same_song_title(
+            "Perfect Crime",
+            "Perfect Crime (live in London)"
+        ));
+        assert!(!same_song_title(
+            "Live and Let Die",
+            "Live and Let Die (live in New York)"
+        ));
+    }
+
+    #[test]
+    fn a_leftover_file_finds_its_title_on_another_disc_or_a_taken_track() {
+        let tracks = vec![
+            listed("Perfect Crime", 1, 5, 143.0),
+            listed("Perfect Crime (live in London)", 2, 1, 170.0),
+            listed("For All the Cows (live)", 2, 9, 255.0),
+        ];
+        assert_eq!(
+            track_with_title("Perfect Crime (Live In London)", Some(171.0), &tracks),
+            Some(1)
+        );
+        assert_eq!(
+            track_with_title("For All The Cows (Live)", Some(255.0), &tracks),
+            Some(2)
+        );
+        // A live recording is not the studio track, and a title alone isn't enough past its length.
+        assert_eq!(
+            track_with_title("Perfect Crime (live in Tokyo)", Some(170.0), &tracks),
+            None
+        );
+        assert_eq!(
+            track_with_title("Perfect Crime", Some(400.0), &tracks),
+            None
+        );
     }
 
     #[test]
@@ -748,10 +860,14 @@ mod tests {
     }
 
     #[test]
-    fn the_biggest_edition_is_tried_when_the_nearest_did_not_fit() {
-        let counts = [(16, true), (29, true), (16, false), (14, true)];
-        assert_eq!(biggest_unread_edition(&counts, &[0, 2, 3]), Some(1));
-        assert_eq!(biggest_unread_edition(&counts, &[0, 1, 2, 3]), None);
+    fn the_next_bigger_edition_is_tried_when_the_nearest_did_not_fit() {
+        // Standard editions, the two-disc deluxe, and a box set.
+        let counts = [(16, true), (29, true), (16, false), (14, true), (97, true)];
+        assert_eq!(next_bigger_edition(&counts, &[0, 2, 3], 11), Some(1));
+        // The album already has 16 tracks and 11 more files came: the deluxe still holds them.
+        assert_eq!(next_bigger_edition(&counts, &[0, 2, 3], 27), Some(1));
+        assert_eq!(next_bigger_edition(&counts, &[0, 1, 2, 3], 11), Some(4));
+        assert_eq!(next_bigger_edition(&counts, &[0, 1, 2, 3, 4], 11), None);
     }
 
     #[test]

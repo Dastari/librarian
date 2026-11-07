@@ -100,6 +100,8 @@ impl LibraryScanService {
                     continue;
                 }
             };
+            // Tracks a file of this release took just now: their rows were read before it did.
+            let mut taken_now: HashSet<String> = HashSet::new();
             for (item, track) in sources.iter().zip(placed) {
                 let Some(track) = track else {
                     summary.unmatched_files += 1;
@@ -109,6 +111,7 @@ impl LibraryScanService {
                     .media_file_id
                     .as_deref()
                     .is_some_and(|held| held != item.media_file_id)
+                    || !taken_now.insert(track.id.clone())
                 {
                     // Another copy of this track already holds it. Which to keep is a person's call.
                     summary.unmatched_files += 1;
@@ -310,8 +313,9 @@ impl LibraryScanService {
             let Ok(id) = Uuid::parse_str(&candidate.provider_id) else {
                 continue;
             };
-            let listing: Option<(Vec<MusicBrainzTrack>, ListingFit)> =
-                metadata.album_listing_for_files(id, members, names).await?;
+            let listing: Option<(Vec<MusicBrainzTrack>, ListingFit)> = metadata
+                .album_listing_for_files(id, members, names, 0)
+                .await?;
             let share = listing.as_ref().map_or(0.0, |(_, fit)| fit.share);
             if artist.is_none() && share < FIT_WITHOUT_ARTIST {
                 continue;
@@ -474,7 +478,9 @@ impl LibraryScanService {
                 .and_then(|id| Uuid::parse_str(id).ok())
         {
             let metadata = self.metadata_service().await?;
-            if let Some((listing, _)) = metadata.album_listing_for_files(id, members, names).await?
+            if let Some((listing, _)) = metadata
+                .album_listing_for_files(id, members, names, tracks.len())
+                .await?
             {
                 for listed in listing
                     .iter()
@@ -510,13 +516,28 @@ impl LibraryScanService {
                 );
             }
         }
+        // A file left over that has a track's title is that track: on a disc its tags don't name,
+        // or a second copy of a song another file already took. It never gets a track of its own.
+        let copies: Vec<Option<String>> = members
+            .iter()
+            .enumerate()
+            .map(|(index, file)| {
+                if fit.placed[index].is_some() {
+                    return None;
+                }
+                let title = file.tags.title.as_deref().or(names[index].as_deref())?;
+                let facts: Vec<TrackFacts> = tracks.iter().map(track_facts).collect();
+                music_rules::track_with_title(title, file.duration, &facts)
+                    .map(|found| tracks[found].id.clone())
+            })
+            .collect();
         if fit.share < 1.0 {
             let mut taken: Vec<(i32, i32)> = tracks
                 .iter()
                 .map(|row| (row.disc_number.unwrap_or(1), row.track_number))
                 .collect();
             for (index, file) in members.iter().enumerate() {
-                if fit.placed[index].is_some() {
+                if fit.placed[index].is_some() || copies[index].is_some() {
                     continue;
                 }
                 let disc = file.tags.disc.unwrap_or(1);
@@ -551,7 +572,12 @@ impl LibraryScanService {
         Ok(fit
             .placed
             .iter()
-            .map(|place| place.and_then(|index| tracks.get(index).cloned()))
+            .zip(&copies)
+            .map(|(place, copy)| match (place, copy) {
+                (Some(index), _) => tracks.get(*index).cloned(),
+                (None, Some(id)) => tracks.iter().find(|track| &track.id == id).cloned(),
+                (None, None) => None,
+            })
             .collect())
     }
 

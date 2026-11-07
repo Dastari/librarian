@@ -3619,6 +3619,7 @@ impl MetadataService {
         release_group_id: Uuid,
         files: &[crate::services::release_match::ReleaseFile],
         names: &[Option<String>],
+        held_tracks: usize,
     ) -> Result<
         Option<(
             Vec<crate::services::metadata::musicbrainz::MusicBrainzTrack>,
@@ -3637,7 +3638,24 @@ impl MetadataService {
             .collect();
         let mut listings = Vec::new();
         let mut fits = Vec::new();
-        for index in music_rules::editions_to_read(&counts, files.len(), EDITIONS_READ) {
+        let read = music_rules::editions_to_read(&counts, files.len(), EDITIONS_READ);
+        for index in read.iter().copied() {
+            let tracks = musicbrainz.get_release_tracks(&editions[index].id).await?;
+            fits.push(music_rules::fit_listing(
+                files,
+                names,
+                &tracks.iter().map(listing_track_facts).collect::<Vec<_>>(),
+            ));
+            listings.push(tracks);
+        }
+        // A deluxe edition's bonus disc on its own is nearer in count to the standard album, so
+        // when the nearest editions fit badly, the next bigger one is read too.
+        if fits
+            .iter()
+            .all(|fit| fit.share < music_rules::NEAREST_FIT_BADLY)
+            && let Some(index) =
+                music_rules::next_bigger_edition(&counts, &read, files.len() + held_tracks)
+        {
             let tracks = musicbrainz.get_release_tracks(&editions[index].id).await?;
             fits.push(music_rules::fit_listing(
                 files,

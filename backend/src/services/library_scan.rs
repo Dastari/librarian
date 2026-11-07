@@ -444,6 +444,9 @@ struct LinkedEpisodeRow {
     title: Option<String>,
 }
 
+/// How an import says a file is one the library already has.
+const ALREADY_IN_LIBRARY: &str = "Already in the library";
+
 #[derive(Debug, Clone)]
 struct LinkedTrackRow {
     id: String,
@@ -453,6 +456,8 @@ struct LinkedTrackRow {
     seconds: Option<f64>,
     /// The size of the file already on this track, if there is one.
     held_size: Option<i64>,
+    /// Where that file is.
+    held_path: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -4518,8 +4523,8 @@ impl LibraryScanService {
                 error!(
                     library_id = %job.library_id,
                     scan_run_id = %job.scan_run_id,
-                    error = %e,
-                    "Library scan failed: library_id={}, error={}",
+                    error = %format!("{e:#}"),
+                    "Library scan failed: library_id={}, error={:#}",
                     job.library_id,
                     e
                 );
@@ -10945,29 +10950,36 @@ impl LibraryScanService {
             ));
         }
 
-        if !diagnostics.unmatched.is_empty() {
-            let names = diagnostics
-                .unmatched
+        // Files the library already has aren't failures: say how many, apart from the rest.
+        let (held, unmatched): (Vec<&UnmatchedImportFile>, Vec<&UnmatchedImportFile>) = diagnostics
+            .unmatched
+            .iter()
+            .partition(|item| item.reason.starts_with(ALREADY_IN_LIBRARY));
+        if !held.is_empty() {
+            parts.push(format!("{} file(s) already in the library", held.len()));
+        }
+        if !unmatched.is_empty() {
+            let names = unmatched
                 .iter()
                 .take(5)
                 .map(|item| Self::display_file_name(&item.source_path))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let overflow = diagnostics.unmatched.len().saturating_sub(5);
+            let overflow = unmatched.len().saturating_sub(5);
             let target = diagnostics
                 .target_label
                 .as_deref()
                 .map(|label| format!(" any item of {label}"))
                 .unwrap_or_else(|| " any library item".to_string());
             let mut reasons: Vec<String> = Vec::new();
-            for item in &diagnostics.unmatched {
+            for item in &unmatched {
                 if !reasons.contains(&item.reason) {
                     reasons.push(item.reason.clone());
                 }
             }
             parts.push(format!(
                 "{} file(s) did not match{}: {}{} ({})",
-                diagnostics.unmatched.len(),
+                unmatched.len(),
                 target,
                 names,
                 if overflow > 0 {
@@ -11420,7 +11432,7 @@ impl LibraryScanService {
                                     TrackNumber: trackNumber
                                     DiscNumber: discNumber
                                     DurationSecs: durationSecs
-                                    MediaFile: mediaFile { Size: size }
+                                    MediaFile: mediaFile { Size: size Path: path }
                                 }
                             }
                         }
@@ -11476,6 +11488,11 @@ impl LibraryScanService {
                         .get("MediaFile")
                         .and_then(|file| file.get("Size"))
                         .and_then(|v| v.as_i64()),
+                    held_path: node
+                        .get("MediaFile")
+                        .and_then(|file| file.get("Path"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string),
                 });
             }
         }
@@ -11540,9 +11557,9 @@ impl LibraryScanService {
                 .await
             {
                 Ok(placed) => {
-                    let held: HashMap<String, Option<i64>> = tracks
+                    let held: HashMap<String, (Option<i64>, Option<String>)> = tracks
                         .iter()
-                        .map(|track| (track.id.clone(), track.held_size))
+                        .map(|track| (track.id.clone(), (track.held_size, track.held_path.clone())))
                         .collect();
                     tracks = placed
                         .into_iter()
@@ -11554,6 +11571,7 @@ impl LibraryScanService {
                             disc_number: track.disc_number,
                             seconds: track.duration_secs.map(f64::from),
                             held_size: None,
+                            held_path: None,
                         })
                         .chain(tracks.drain(..))
                         .fold(Vec::new(), |mut rows: Vec<LinkedTrackRow>, track| {
@@ -11563,7 +11581,10 @@ impl LibraryScanService {
                             rows
                         });
                     for track in &mut tracks {
-                        track.held_size = held.get(&track.id).copied().flatten();
+                        if let Some((size, path)) = held.get(&track.id) {
+                            track.held_size = *size;
+                            track.held_path = path.clone();
+                        }
                     }
                     tracks.sort_by_key(|track| {
                         (
@@ -11658,16 +11679,24 @@ impl LibraryScanService {
                 continue;
             };
             used.insert(track.id.clone());
-            // Another copy already holds this track, and which to keep is a person's call. The same
-            // size is this file being imported again, which is fine.
-            if track
-                .held_size
-                .is_some_and(|size| size != item.file.file_size)
-            {
-                plan.unmatched_reasons.insert(
-                    item.file.source_path.clone(),
-                    format!("'{album_name}' already has a file for '{}'", track.title),
-                );
+            // A track whose file is still on disk is already in the library: the same size is this
+            // file imported before, another size is a second copy, and which to keep is a person's
+            // call. Only a file that has gone from disk is imported again.
+            let held_on_disk = match track.held_path.as_deref() {
+                Some(path) => tokio::fs::try_exists(path).await.unwrap_or(true),
+                None => track.held_size.is_some(),
+            };
+            if held_on_disk {
+                let reason = if track.held_size == Some(item.file.file_size) {
+                    format!("{ALREADY_IN_LIBRARY} as '{}'", track.title)
+                } else {
+                    format!(
+                        "'{album_name}' already has another copy of '{}'",
+                        track.title
+                    )
+                };
+                plan.unmatched_reasons
+                    .insert(item.file.source_path.clone(), reason);
                 continue;
             }
             let label = format!("{album_name} - {}", track.title);
@@ -15367,6 +15396,7 @@ mod tests {
                 track_number: Some(1),
                 disc_number: Some(1),
                 held_size: None,
+                held_path: None,
             },
             LinkedTrackRow {
                 seconds: None,
@@ -15375,6 +15405,7 @@ mod tests {
                 track_number: Some(2),
                 disc_number: Some(1),
                 held_size: None,
+                held_path: None,
             },
         ];
         let used = HashSet::new();
