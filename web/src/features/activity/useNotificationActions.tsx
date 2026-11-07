@@ -22,7 +22,7 @@ const pendingUpgrade = (row: ActivityRow) => row.actionType === "quality_upgrade
  * A notification's actions, defined once for its row menu, right-click, the bulk bar and the
  * detail pane (docs/entity-tables.md).
  */
-export function useNotificationActions(onChanged: () => void, isAdmin: boolean): ActionSet<ActivityRow> {
+export function useNotificationActions(onChanged: () => void, isAdmin: boolean, reviewUpgrade?: (row: ActivityRow) => void): ActionSet<ActivityRow> {
   const [update] = useMutation(EntityNotificationUpdateDocument);
   const [updateMany] = useMutation(EntityNotificationUpdateManyDocument);
   const [removeMany] = useMutation(EntityNotificationDeleteManyDocument);
@@ -47,9 +47,15 @@ export function useNotificationActions(onChanged: () => void, isAdmin: boolean):
         run: async (rows) => { try { assertSuccess((await updateMany({ variables: { where: ids(rows.filter((row) => row.readAt)), input: { readAt: null } } })).data?.updateNotifications, "Could not mark unread"); } finally { onChanged(); } },
         successMessage: () => "Marked unread",
       },
+      // One upgrade is decided in its own dialog; several at once only need a confirmation.
+      ...(reviewUpgrade ? [{
+        id: "review", label: "Approve upgrade", icon: UpgradeIcon, group: "manage" as const, priority: 1,
+        visible: (rows: readonly ActivityRow[]) => isAdmin && rows.length === 1 && rows.every(pendingUpgrade),
+        run: (rows: readonly ActivityRow[]) => reviewUpgrade(rows[0]!),
+      }] : []),
       {
         id: "approve", label: (rows) => plural(rows, "Approve upgrade", "Approve {n} upgrades"), icon: UpgradeIcon, group: "manage", priority: 1, bulk: true,
-        visible: (rows) => isAdmin && rows.length > 0 && rows.every(pendingUpgrade),
+        visible: (rows) => isAdmin && rows.length > (reviewUpgrade ? 1 : 0) && rows.every(pendingUpgrade),
         confirm: (rows) => ({ title: plural(rows, "Replace the file with the upgrade?", "Replace {n} files with their upgrades?"), body: "A copy of the download replaces the current library file, which is overwritten. The download stays where it is, so seeding continues. This cannot be undone.", confirmLabel: "Replace file", tone: "warning" }),
         run: (rows) => runSelectionAction(rows, "Approve upgrade", (row) => row.title, async (row) => assertSuccess((await approve({ variables: { notificationId: row.id } })).data?.approveQualityUpgrade, "Could not approve the upgrade"), onChanged),
         successMessage: (rows) => plural(rows, "Upgrade approved", "{n} upgrades approved"),
@@ -68,5 +74,5 @@ export function useNotificationActions(onChanged: () => void, isAdmin: boolean):
       },
     ];
     return defineActions("notification", actions);
-  }, [approve, isAdmin, onChanged, removeMany, update, updateMany]);
+  }, [approve, isAdmin, onChanged, removeMany, reviewUpgrade, update, updateMany]);
 }

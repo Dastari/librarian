@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { ActivityDetail } from "./ActivityDetail";
 import { ACTIVITY_CATEGORIES, ACTIVITY_PRESETS, useActivity, type ActivityPreset, type ActivityRow } from "./useActivity";
 import { useMarkAllRead } from "./useMarkAllRead";
+import { UpgradeDialog } from "./UpgradeDialog";
 import { useNotificationActions } from "./useNotificationActions";
 
 const PRESET_LABEL: Record<ActivityPreset, string> = { unread: "Unread", action: "Needs action", all: "Everything" };
@@ -120,14 +121,17 @@ export function ActivityPage() {
   const onStateChange = (next: DataTableState, change: DataTableStateChange) => change === "selection" ? selectedRows.onSelectionChange(next.selection) : url.onStateChange(next, change);
   const refetch = activity.refetch;
   const onChanged = useCallback(() => refetch(), [refetch]);
-  const actions = useNotificationActions(onChanged, isAdmin);
+  const [reviewing, setReviewing] = useState<ActivityRow | null>(null);
+  const actions = useNotificationActions(onChanged, isAdmin, setReviewing);
   const [update] = useMutation(EntityNotificationUpdateDocument);
   const { markAllRead, loading: markingAllRead } = useMarkAllRead(onChanged);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = rows.find((row) => row.id === selectedId) ?? null;
   const open = (row: ActivityRow) => {
-    setSelectedId(row.id);
+    // An upgrade waiting on a decision opens as that decision, not as a notification to read.
+    if (isAdmin && row.actionType === "quality_upgrade" && !row.resolvedAt) setReviewing(row);
+    else setSelectedId(row.id);
     if (row.readAt) return;
     const readAt = new Date().toISOString();
     setOpened((current) => new Map(current).set(row.id, { row: { ...row, readAt }, index: rows.findIndex((candidate) => candidate.id === row.id) }));
@@ -187,8 +191,9 @@ export function ActivityPage() {
         {selected && wide ? <div data-print-flow className="scrollbar-thin min-h-0 overflow-y-auto"><ActivityDetail row={selected} actions={actions} onClose={() => setSelectedId(null)} /></div> : null}
       </div>
       <Dialog isOpen={Boolean(selected) && !wide} onOpenChange={(value) => !value && setSelectedId(null)} title="Notification" size="md">
-        {selected ? <ActivityDetail row={selected} actions={actions} onClose={() => setSelectedId(null)} /> : null}
+        {selected ? <ActivityDetail bare row={selected} actions={actions} onClose={() => setSelectedId(null)} /> : null}
       </Dialog>
+      {reviewing ? <UpgradeDialog row={reviewing} onClose={() => setReviewing(null)} onChanged={onChanged} /> : null}
     </div>
   );
 }

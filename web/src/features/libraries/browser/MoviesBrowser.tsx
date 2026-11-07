@@ -1,16 +1,18 @@
 
 import { useNavigate } from "@tanstack/react-router";
+import { ActionContextMenu } from "glass-ux/actions";
 import { IconPlus } from "glass-ux/icons";
 import { IconMovie } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
 import { Button, EmptyState, ErrorState, PosterCard, PosterGallery } from "@/components/ui";
+import { useMovieEntity } from "@/features/media/useMovieEntity";
 import { ProviderSearchDialog } from "@/features/library-add/ProviderSearchDialog";
 import { usePlayer } from "@/features/player/usePlayer";
 import { LibraryMoviesDocument, type LibraryMoviesQuery, type MovieOrderByInput, type MovieWhereInput } from "@/graphql/generated/graphql";
 import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
 import { useServerTable } from "@/hooks/useServerTable";
-import { moviePoster } from "@/lib/artwork";
+import { movieBackdrop, moviePoster } from "@/lib/artwork";
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { formatRuntime } from "@/lib/format";
 import { LIBRARY_TYPES } from "@/lib/library-types";
@@ -70,10 +72,11 @@ export function MoviesBrowser({ libraryId }: { libraryId: string }) {
   });
   const ids = useMemo(() => list.rows.map((row) => row.id), [list.rows]);
   const statuses = useContentStatuses("MOVIE", ids);
+  const { actions, dialogs } = useMovieEntity<MovieRow>();
 
   const play = (row: MovieRow) => {
     if (!row.mediaFileId) return;
-    player.playVideo({ mediaFileId: row.mediaFileId, title: row.title, subtitle: row.year ? String(row.year) : undefined, artwork: moviePoster(row.id), entity: { kind: "movie", id: row.id }, href: `/movies/${row.id}` });
+    player.playVideo({ mediaFileId: row.mediaFileId, title: row.title, subtitle: row.year ? String(row.year) : undefined, artwork: moviePoster(row.id), backdrop: movieBackdrop(row.id), entity: { kind: "movie", id: row.id }, href: `/movies/${row.id}` });
     void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: row.mediaFileId } });
   };
 
@@ -115,20 +118,25 @@ export function MoviesBrowser({ libraryId }: { libraryId: string }) {
           error={list.error && list.rows.length === 0 ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : undefined}
           emptyState={emptyState}
           renderCard={(row) => (
-            <PosterCard
-              title={row.title}
-              meta={[row.year, row.runtime ? formatRuntime(row.runtime, "minutes") : null].filter(Boolean).join(" · ")}
-              image={moviePoster(row.id)}
-              tint={LIBRARY_TYPES.movies.tintVar}
-              to="/movies/$movieId"
-              params={{ movieId: row.id }}
-              status={contentStatusMeta(statuses, row.id)}
-              onPlay={row.mediaFileId ? () => play(row) : undefined}
-            />
+            <ActionContextMenu set={actions} targets={[row]} label={`Actions for ${row.title}`}>
+              <div className="min-w-0">
+                <PosterCard
+                  title={row.title}
+                  meta={[row.year, row.runtime ? formatRuntime(row.runtime, "minutes") : null].filter(Boolean).join(" · ")}
+                  image={moviePoster(row.id)}
+                  tint={LIBRARY_TYPES.movies.tintVar}
+                  to="/movies/$movieId"
+                  params={{ movieId: row.id }}
+                  status={contentStatusMeta(statuses, row.id)}
+                  onPlay={row.mediaFileId ? () => play(row) : undefined}
+                />
+              </div>
+            </ActionContextMenu>
           )}
         />
         <BrowserLetterRail letter={jump.active} onLetterChange={jump.jump} />
       </div>
+      {dialogs}
       <ProviderSearchDialog kind="movie" libraryId={libraryId} isOpen={adding} onOpenChange={setAdding} onAdded={() => void list.refetch()} />
     </div>
   );

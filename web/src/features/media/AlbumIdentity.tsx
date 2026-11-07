@@ -1,0 +1,58 @@
+import type { ActionSet } from "glass-ux/actions";
+import { EntityIdentity, type EntityState, type EntityTierProp } from "glass-ux/entity";
+import type { ReactNode } from "react";
+
+import { autoDownloadMeta } from "@/features/acquisition/mode";
+import type { AutoDownloadMode } from "@/graphql/generated/graphql";
+import { albumCover } from "@/lib/artwork";
+import { sizedArtwork } from "@/lib/api/urls";
+import { ENTITY_KINDS } from "@/lib/entities/kinds";
+import { pluralize } from "@/lib/format";
+
+export interface AlbumEntity {
+  id: string;
+  name: string;
+  libraryId: string;
+  userId: string;
+  year?: number | null;
+  albumType?: string | null;
+  trackCount?: number | null;
+  hasFiles: boolean;
+  autoDownloadMode: AutoDownloadMode;
+}
+
+/** Whether its files are here, or else whether they're being fetched. */
+export function albumState(album: AlbumEntity): EntityState {
+  if (album.hasFiles) return { id: "available", label: "Available", tone: "success" };
+  const mode = autoDownloadMeta(album.autoDownloadMode);
+  return album.autoDownloadMode === "NONE" ? { id: "missing", label: "No files yet", tone: "neutral" } : { id: "fetching", label: mode.label, tone: "info" };
+}
+
+/** An album wherever it's named in a list or a heading: its cover or glyph, year, type and tracks. */
+export function AlbumIdentity<T extends AlbumEntity>({ album, tier = "row", actions, headerActions, heading, className, onOpen }: {
+  album: T;
+  tier?: EntityTierProp;
+  actions?: ActionSet<T>;
+  headerActions?: ReactNode;
+  heading?: "h1" | "h2" | "h3" | "h4" | "p";
+  className?: string;
+  onOpen?: () => void;
+}) {
+  return (
+    <EntityIdentity
+      tier={tier}
+      heading={heading}
+      className={className}
+      kind={ENTITY_KINDS.album.noun}
+      name={album.name}
+      icon={<ENTITY_KINDS.album.icon />}
+      image={<img src={sizedArtwork(albumCover(album), 120)} alt="" />}
+      state={albumState(album)}
+      facts={[album.year ? String(album.year) : "", album.albumType ?? "", album.trackCount ? pluralize(album.trackCount, "track") : ""]}
+      target={album}
+      actions={actions}
+      slots={headerActions ? { actions: headerActions } : undefined}
+      onOpen={onOpen}
+    />
+  );
+}

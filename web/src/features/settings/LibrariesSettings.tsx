@@ -1,40 +1,25 @@
 import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
-import { useMutation } from "@apollo/client/react";
-import { toast } from "glass-ux/toast";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, RelativeTime, TextCell } from "glass-ux/data-table";
-import { IconFolder, IconPlus } from "glass-ux/icons";
+import { IconPlus } from "glass-ux/icons";
 import { useCallback, useState } from "react";
-import { useForm } from "react-hook-form";
-import { z } from "zod";
 
-import { Button, Dialog, FieldGroup, FormSelectField, FormSwitchField, FormTextField } from "@/components/ui";
-import { FolderPickerDialog } from "@/features/files/FolderPickerDialog";
+import { Button } from "@/components/ui";
+import { AddLibraryDialog } from "@/features/libraries/AddLibraryDialog";
 import { libraryItemCount, type LibraryOverview } from "@/features/libraries/LibraryCard";
 import { LibraryIdentity } from "@/features/libraries/LibraryIdentity";
 import { LibrarySettingsDialog, type LibrarySettingsTab } from "@/features/libraries/LibrarySettingsDialog";
 import { useLibraryActions } from "@/features/libraries/useLibraryActions";
-import { EntityLibraryCreateDocument, LibrariesOverviewDocument } from "@/graphql/generated/graphql";
+import { LibrariesOverviewDocument } from "@/graphql/generated/graphql";
 import { useSession } from "@/lib/auth/useSession";
 import { parseTimestamp, pluralize } from "@/lib/format";
-import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
-import { LIBRARY_TYPE_OPTIONS, libraryType } from "@/lib/library-types";
+import { libraryType } from "@/lib/library-types";
 
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 
 import { SettingsLoadError } from "./SettingsLoadError";
 import { SettingsSection } from "./SettingsSection";
 import { useSettingsConnection } from "./useSettingsConnection";
-
-const schema = z.object({
-  name: z.string().trim().min(1, "Give the library a name").max(80),
-  libraryType: z.string().min(1, "Choose a type"),
-  path: z.string().trim().min(1, "Choose the folder"),
-  autoScan: z.boolean(),
-  autoOrganize: z.boolean(),
-});
-type Values = z.infer<typeof schema>;
 
 const column = createDataTableColumns<LibraryOverview>();
 const columns = column.columns([
@@ -54,26 +39,6 @@ export function LibrariesSettings() {
   const list = useSettingsConnection(LibrariesOverviewDocument, {}, (data) => data.libraries);
   const { rows: libraries, loading, refetch } = list;
   const [creating, setCreating] = useState(false);
-  const [pickingFolder, setPickingFolder] = useState(false);
-  const [create, { loading: saving }] = useMutation(EntityLibraryCreateDocument);
-  const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: { name: "", libraryType: "movies", path: "", autoScan: true, autoOrganize: false } });
-
-  const submit = form.handleSubmit(async (values) => {
-    if (!user) return;
-    try {
-      const { data: result } = await create({
-        variables: { input: { userId: user.id, name: values.name, path: values.path, libraryType: values.libraryType, autoScan: values.autoScan, autoOrganize: values.autoOrganize, namingPattern: "", scanIntervalMinutes: 60, watchForChanges: false, scanning: false } },
-      });
-      assertSuccess(result?.createLibrary, "Could not create the library");
-      toast.success(`${values.name} created. Run a scan to import existing files.`);
-      form.reset();
-      setCreating(false);
-      void refetch();
-    } catch (error) {
-      toast.danger(errorMessage(error));
-    }
-  });
-
   const [settings, setSettings] = useState<{ library: LibraryOverview; tab: LibrarySettingsTab } | null>(null);
   const openSettings = useCallback((library: LibraryOverview, tab: LibrarySettingsTab = "general") => setSettings({ library, tab }), []);
   const actions = useLibraryActions<LibraryOverview>({ settings: openSettings, onChanged: refetch });
@@ -100,38 +65,7 @@ export function LibrariesSettings() {
       </SettingsSection>
       {settings ? <LibrarySettingsDialog library={libraries.find((row) => row.id === settings.library.id) ?? settings.library} open onOpenChange={(open) => { if (!open) setSettings(null); }} tab={settings.tab} onTabChange={(tab) => setSettings({ ...settings, tab })} items={libraryItemCount(settings.library).count} /> : null}
 
-      <Dialog
-        isOpen={creating}
-        onOpenChange={setCreating}
-        title="Add library"
-        size="md"
-        footer={
-          <>
-            <Button variant="ghost" onPress={() => setCreating(false)}>
-              Cancel
-            </Button>
-            <Button variant="primary" onPress={() => void submit()} isPending={saving}>
-              Create
-            </Button>
-          </>
-        }
-      >
-        <form onSubmit={submit} noValidate>
-          <FieldGroup>
-            <FormTextField control={form.control} name="name" label="Name" placeholder="Movies" autoFocus isRequired />
-            <FormSelectField control={form.control} name="libraryType" label="Type" options={LIBRARY_TYPE_OPTIONS.map((option) => ({ key: option.type, label: option.label }))} isRequired />
-            <div className="flex items-end gap-2">
-              <FormTextField control={form.control} name="path" label="Folder" mono isRequired className="min-w-0 flex-1" placeholder="/data/media/Movies" />
-              <Button variant="secondary" isIconOnly aria-label="Browse folders" onPress={() => setPickingFolder(true)} className="mb-px">
-                <IconFolder size="lg" />
-              </Button>
-            </div>
-            <FormSwitchField control={form.control} name="autoScan" label="Scan on a schedule" />
-            <FormSwitchField control={form.control} name="autoOrganize" label="Organize files into the naming pattern" />
-          </FieldGroup>
-        </form>
-      </Dialog>
-      <FolderPickerDialog isOpen={pickingFolder} onOpenChange={setPickingFolder} initialPath={form.getValues("path")} onPick={(path) => form.setValue("path", path, { shouldDirty: true, shouldValidate: true })} />
+      <AddLibraryDialog open={creating} onOpenChange={setCreating} onCreated={() => void refetch()} />
     </div>
   );
 }

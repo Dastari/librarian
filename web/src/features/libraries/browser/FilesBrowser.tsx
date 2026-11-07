@@ -40,8 +40,10 @@ const columns = column.columns([
 ]);
 
 /** Every media file the scanner knows about, with the unmatched ones one filter away. */
-export function FilesBrowser({ libraryId, filterPrefix }: {
+export function FilesBrowser({ libraryId, scope, filterPrefix }: {
   libraryId: string;
+  /** Only these files, such as one title's. */
+  scope?: MediaFileWhereInput;
   /** Keeps this list's filters in the URL apart from those of a page behind it. */
   filterPrefix?: string;
 }) {
@@ -59,8 +61,8 @@ export function FilesBrowser({ libraryId, filterPrefix }: {
       clause.chapterId = { isNull: true };
     }
     if (filters.availability === "available") clause.qualityStatus = { eq: "suboptimal" };
-    return clause;
-  }, [libraryId, filters.debouncedQuery, filters.availability]);
+    return scope ? { and: [clause, scope] } : clause;
+  }, [libraryId, scope, filters.debouncedQuery, filters.availability]);
 
   const list = useInfiniteConnection(LibraryMediaFilesDocument, { where, orderBy: table.orderBy }, (data) => data.mediaFiles);
 

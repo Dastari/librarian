@@ -7,7 +7,6 @@ import { createDataTableColumns, DataTable, TextCell } from "glass-ux/data-table
 import { IconCheck, IconClock, IconInfo, IconRefresh, IconSearch } from "glass-ux/icons";
 import { ScrollArea } from "glass-ux/scroll-area";
 import { Select } from "glass-ux/select";
-import { Surface } from "glass-ux/surface";
 import { TruncatedText } from "glass-ux/truncated-text";
 import { Link } from "@tanstack/react-router";
 import { toast } from "glass-ux/toast";
@@ -229,15 +228,15 @@ export function ItemFindings({ item }: { item: Item }) {
   const named = item.title && item.title !== item.label ? `Files say: ${item.label}` : null;
   const summary = item.status === "imported" ? null : item.summary;
   return (
-    <div className="flex min-w-0 flex-col gap-3 p-3">
+    <div className="flex min-w-0 flex-col gap-3">
       {named || summary ? <p className="text-label-sm text-muted [overflow-wrap:anywhere]">{[named, summary].filter(Boolean).join(" · ")}</p> : null}
       {groups.length ? (
-        <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(15rem,1fr))] gap-3">
+        <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(15rem,1fr))] gap-x-8 gap-y-4">
           {groups.map((group) => (
-            <Surface key={group.source} material="inset" padding="tile" radius="tile" className="flex min-w-0 flex-col gap-2">
-              <p className="text-label-sm font-medium text-muted">{group.title}</p>
+            <section key={group.source} className="flex min-w-0 flex-col gap-2">
+              <h4 className="text-label-sm font-medium text-muted">{group.title}</h4>
               {group.lines.map((finding) => <Finding key={finding.text} finding={finding} />)}
-            </Surface>
+            </section>
           ))}
         </div>
       ) : null}
@@ -255,6 +254,7 @@ const COLUMNS = column.columns([
   column.display({ id: "status", header: "Status", width: 16, priority: 1, cell: ({ row }) => <StatusCell item={row.original} /> }),
   column.accessor((item) => item.seconds ?? 0, { id: "length", header: "Length", width: 7, priority: 3, align: "end", cell: ({ row }) => <TextCell muted>{row.original.seconds ? formatRuntime(Math.round(row.original.seconds)) : ""}</TextCell> }),
   column.accessor((item) => item.fileCount, { id: "files", header: "Files", width: 6, priority: 4, align: "end", cell: ({ row }) => <TextCell muted>{finished(row.original) ? row.original.fileCount : `${row.original.finishedFiles} of ${row.original.fileCount}`}</TextCell> }),
+  column.display({ id: "details", header: "", width: 3, priority: 1, cell: () => null }),
   column.display({ id: "next", header: "", width: 10, priority: 1, align: "end", cell: ({ row }) => <ItemAction item={row.original} /> }),
 ]);
 
@@ -329,6 +329,8 @@ export function IdentifiedResults({ infoHash, kind, state, onChanged }: { infoHa
             actions={isAdmin ? actions : undefined}
             noun={NOUN}
             renderRowDetail={renderItemFindings}
+            expanderColumn="details"
+            expandAll={false}
             rowDetailHeight={11}
             defaultState={{ expanded: opened }}
             toolbar={isAdmin ? <div className="flex items-center gap-2"><TreatAs infoHash={infoHash} kind={kind} onDone={refresh} /><RunAgain infoHash={infoHash} onDone={refresh} /></div> : undefined}

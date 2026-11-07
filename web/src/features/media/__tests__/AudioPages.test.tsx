@@ -26,7 +26,6 @@ vi.mock("@/features/player/usePlayer", async (importOriginal) => {
 });
 vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => admin, useSession: () => ({ user: { id: "audio-user", role: admin ? "admin" : "member" } }) }));
 vi.mock("@/hooks/useContentStatuses", async (original) => ({ ...(await original<typeof import("@/hooks/useContentStatuses")>()), useContentStatuses: () => new Map() }));
-vi.mock("@/features/acquisition/AcquisitionDialog", () => ({ AcquisitionDialog: () => null }));
 vi.mock("@/features/downloads/ReleaseSearchDialog", () => ({ ReleaseSearchDialog: () => null }));
 
 type Track = NonNullable<AlbumDetailQuery["album"]>["tracks"]["edges"][number]["node"] & { __typename: "Track" };
@@ -55,7 +54,7 @@ const album = (rows: Track[], total = rows.length, hasMore = false): NonNullable
   library: null, tracks: connection(rows, total, hasMore),
 });
 const book = (rows: Chapter[], total = rows.length, hasMore = false): NonNullable<AudiobookDetailQuery["audiobook"]> & { __typename: "Audiobook" } => ({
-  __typename: "Audiobook", id: "book", libraryId: "books", userId: "audio-user", title: "Long book", sortTitle: null, authorName: "Author", seriesName: null, seriesPosition: null, chapterCheckState: null, chapterCheck: null, chapterSource: null, fileShape: null, providerChapters: null,
+  __typename: "Audiobook", id: "book", lockedFields: null, libraryId: "books", userId: "audio-user", title: "Long book", sortTitle: null, authorName: "Author", seriesName: null, seriesPosition: null, chapterCheckState: null, chapterCheck: null, chapterSource: null, fileShape: null, providerChapters: null,
   narratorName: null, narrators: [], description: null, publisher: null, publishedDate: null, language: null,
   isbn: null, asin: null, audibleId: null, goodreadsId: null, totalDurationSecs: null, chapterCount: total,
   coverUrl: null, autoDownload: false, autoDownloadMode: "NONE", qualityProfileId: null, hasFiles: true,

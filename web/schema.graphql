@@ -766,6 +766,10 @@ type Audiobook {
 	authorName: String
 	narratorName: String
 	narrators: [String!]!
+	"""
+	Fields a metadata refresh must leave alone, by their GraphQL names.
+	"""
+	lockedFields: [String!]
 	description: String
 	publisher: String
 	publishedDate: String
@@ -1888,6 +1892,7 @@ input CreateAudiobookInput {
 	authorName: String
 	narratorName: String
 	narrators: JSON!
+	lockedFields: JSON
 	description: String
 	publisher: String
 	publishedDate: String
@@ -2200,6 +2205,7 @@ input CreateMovieInput {
 	tagline: String
 	runtime: Int
 	genres: JSON!
+	lockedFields: JSON
 	director: String
 	castNames: JSON!
 	productionCountries: JSON!
@@ -2422,6 +2428,7 @@ input CreateShowInput {
 	network: String
 	runtime: Int
 	genres: JSON!
+	lockedFields: JSON
 	posterUrl: String
 	backdropUrl: String
 	contentRating: String
@@ -5143,6 +5150,10 @@ type Movie {
 	tagline: String
 	runtime: Int
 	genres: [String!]!
+	"""
+	Fields a metadata refresh must leave alone, by their GraphQL names.
+	"""
+	lockedFields: [String!]
 	director: String
 	castNames: [String!]!
 	productionCountries: [String!]!
@@ -12329,6 +12340,10 @@ type Show {
 	network: String
 	runtime: Int
 	genres: [String!]!
+	"""
+	Fields a metadata refresh must leave alone, by their GraphQL names.
+	"""
+	lockedFields: [String!]
 	posterUrl: String
 	backdropUrl: String
 	contentRating: String
@@ -14933,6 +14948,7 @@ input UpdateAudiobookInput {
 	authorName: String
 	narratorName: String
 	narrators: JSON
+	lockedFields: JSON
 	description: String
 	publisher: String
 	publishedDate: String
@@ -15406,6 +15422,7 @@ input UpdateMovieInput {
 	tagline: String
 	runtime: Int
 	genres: JSON
+	lockedFields: JSON
 	director: String
 	castNames: JSON
 	productionCountries: JSON
@@ -15754,6 +15771,7 @@ input UpdateShowInput {
 	network: String
 	runtime: Int
 	genres: JSON
+	lockedFields: JSON
 	posterUrl: String
 	backdropUrl: String
 	contentRating: String

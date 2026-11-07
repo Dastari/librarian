@@ -143,7 +143,7 @@
 
 /* Remote focus: the focused tile grows like on a TV home screen. Transform only, so
  * neighbours never move (R9.6, R18.1). */
-:root[data-input-mode="tv"] .poster-card:focus-within .poster-art,
+:root[data-input-mode="tv"] .poster-card:is(:focus-within, :hover) .poster-art,
 :root[data-input-mode="tv"] .tv-lift:focus-within > .tv-lift-target,
 :root[data-input-mode="tv"] .tv-lift:is(:focus-visible, [data-focus-visible="true"]) {
   transform: scale(1.05);
@@ -154,6 +154,25 @@
 :root[data-input-mode="tv"] .tv-lift,
 :root[data-input-mode="tv"] .tv-lift > .tv-lift-target {
   transition: transform calc(var(--duration-base) * var(--motion-scale)) var(--ease-spring);
+}
+
+/* TV mode has one pointer, wherever it came from: the tile it's on carries the ring, even after a
+ * mouse click, which :focus-visible alone would hide. */
+:root[data-input-mode="tv"] .poster-card:is(:focus-within, :hover) .poster-art {
+  outline: var(--nav-focus-width) solid var(--focus);
+  outline-offset: var(--nav-focus-offset);
+}
+
+/* The chosen tile is marked inside its artwork, apart from the ring and the shadows that focus and
+ * hover change, so it stays marked whatever the pointer is doing. */
+.poster-card[data-selected="true"] .poster-art::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: 3px solid var(--brand);
+  border-radius: inherit;
+  pointer-events: none;
 }
 
 /* Posters grow upwards from their bottom edge so the title underneath stays readable. */

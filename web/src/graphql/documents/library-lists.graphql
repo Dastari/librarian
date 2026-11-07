@@ -209,3 +209,35 @@ query LibraryGenreShelves($libraryId: String!, $maxGenres: Int, $perGenre: Int) 
     }
   }
 }
+
+query TitleFileOwners($showId: String!, $albumId: String!, $audiobookId: String!, $isShow: Boolean!, $isAlbum: Boolean!, $isBook: Boolean!) {
+  episodes(where: { showId: { eq: $showId } }, page: { limit: 2000, offset: 0 }) @include(if: $isShow) {
+    edges {
+      node {
+        id
+      }
+    }
+  }
+  tracks(where: { albumId: { eq: $albumId } }, page: { limit: 2000, offset: 0 }) @include(if: $isAlbum) {
+    edges {
+      node {
+        id
+      }
+    }
+  }
+  chapters(where: { audiobookId: { eq: $audiobookId } }, page: { limit: 2000, offset: 0 }) @include(if: $isBook) {
+    edges {
+      node {
+        id
+      }
+    }
+  }
+}
+
+query TitleFileCount($where: MediaFileWhereInput!) {
+  mediaFiles(where: $where, page: { limit: 1, offset: 0 }) {
+    pageInfo {
+      totalCount
+    }
+  }
+}

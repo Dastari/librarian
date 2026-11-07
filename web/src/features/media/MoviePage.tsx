@@ -1,40 +1,30 @@
 import { IconImage, IconInfo } from "glass-ux/icons";
-import { useApolloClient, useMutation } from "@apollo/client/react";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
-import { toast } from "glass-ux/toast";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useCallback } from "react";
 
-import { Artwork, ConfirmDialog, EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, Panel, PosterCard, Section, SkeletonHero, StatusChip } from "@/components/ui";
+import { Artwork, EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, Panel, PosterCard, Section, SkeletonHero, StatusChip } from "@/components/ui";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
-import { AcquisitionDialog } from "@/features/acquisition/AcquisitionDialog";
 import { movieAcquisitionMeta } from "@/features/acquisition/mode";
 import { usePlayer } from "@/features/player/usePlayer";
-import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import {
-  EntityMovieDeleteDocument,
-  EntityMovieUpdateDocument,
   MovieCastCreditsDocument,
   MovieCollectionDetailsDocument,
   MovieDetailDocument,
   PlaybackProgressForFileDocument,
-  RecacheMovieArtworkDocument,
-  RefreshMovieDocument,
 } from "@/graphql/generated/graphql";
 import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
 import { movieBackdrop, moviePoster, personProfile } from "@/lib/artwork";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { formatClock, formatRuntime } from "@/lib/format";
-import { activeContentStatusQueries } from "@/lib/graphql/content-status";
-import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { LIBRARY_TYPES } from "@/lib/library-types";
 
 import { MediaActions } from "./MediaActions";
 import { DetailShell } from "./DetailShell";
 import { FileDetails } from "./FileDetails";
+import { useMovieEntity } from "./useMovieEntity";
 
 export function MoviePage({ movieId }: { movieId: string }) {
-  const client = useApolloClient();
   const navigate = useNavigate();
   const player = usePlayer();
   const isAdmin = useIsAdmin();
@@ -47,48 +37,20 @@ export function MoviePage({ movieId }: { movieId: string }) {
   const progress = useQuery(PlaybackProgressForFileDocument, { variables: { userId: user?.id ?? "", mediaFileId: movie?.mediaFileId ?? "" }, skip: !user || !movie?.mediaFileId });
   const statuses = useContentStatuses("MOVIE", movie ? [movie.id] : []);
 
-  const [updateMovie] = useMutation(EntityMovieUpdateDocument, { refetchQueries: () => activeContentStatusQueries(client) });
-  const [deleteMovie, { loading: deleting }] = useMutation(EntityMovieDeleteDocument);
-  const [refreshMovie, { loading: refreshing }] = useMutation(RefreshMovieDocument);
-  const [recache] = useMutation(RecacheMovieArtworkDocument);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [searching, setSearching] = useState(false);
-  const [acquisition, setAcquisition] = useState(false);
+  const resume = progress.data?.playbackProgresses.edges[0]?.node;
+  const resumeAt = resume && !resume.isWatched && resume.currentPosition > 5 ? resume.currentPosition : undefined;
+  const play = useCallback((target: { id: string; title: string; year?: number | null; mediaFileId?: string | null }) => {
+    if (!target.mediaFileId) return;
+    player.playVideo({ mediaFileId: target.mediaFileId, title: target.title, subtitle: target.year ? String(target.year) : undefined, artwork: moviePoster(target.id), backdrop: movieBackdrop(target.id), entity: { kind: "movie", id: target.id }, href: `/movies/${target.id}`, startPosition: resumeAt });
+    void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: target.mediaFileId } });
+  }, [navigate, player, resumeAt]);
+  const playLabel = resumeAt ? `Resume · ${formatClock(resumeAt)}` : "Play";
+  const { actions, dialogs, openSettings } = useMovieEntity<NonNullable<typeof movie>>({ open: false, play, playLabel });
 
   if (error && !movie) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!movie) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Movie not found" description="This item may have been removed from the library." className="page-gutter my-8" />;
 
-  const resume = progress.data?.playbackProgresses.edges[0]?.node;
-  const resumeAt = resume && !resume.isWatched && resume.currentPosition > 5 ? resume.currentPosition : undefined;
   const status = contentStatusMeta(statuses, movie.id);
-
-  const play = () => {
-    if (!movie.mediaFileId) return;
-    player.playVideo({ mediaFileId: movie.mediaFileId, title: movie.title, subtitle: movie.year ? String(movie.year) : undefined, artwork: moviePoster(movie.id), entity: { kind: "movie", id: movie.id }, href: `/movies/${movie.id}`, startPosition: resumeAt });
-    void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: movie.mediaFileId } });
-  };
-
-  const toggleWanted = async () => {
-    const { data: result } = await updateMovie({ variables: { id: movie.id, input: { wanted: !movie.wanted, monitored: !movie.wanted } } });
-    assertSuccess(result?.updateMovie, "Could not update movie");
-  };
-
-  const refresh = async () => {
-    const { data: result } = await refreshMovie({ variables: { id: movie.id } });
-    assertSuccess(result?.refreshMovie, "Could not refresh metadata");
-    await recache({ variables: { movieId: movie.id } });
-  };
-
-  const remove = async () => {
-    try {
-      const { data: result } = await deleteMovie({ variables: { id: movie.id } });
-      assertSuccess(result?.deleteMovie, "Could not remove movie");
-      toast.success("Movie removed from the library");
-      await navigate({ to: "/libraries/$libraryId/movies", params: { libraryId: movie.libraryId } });
-    } catch (mutationError) {
-      toast.danger(errorMessage(mutationError));
-    }
-  };
 
   const castList = cast.data?.movieCastCredits.edges.map((edge) => edge.node) ?? [];
   const collectionMovies = collection.data?.movieCollectionDetails.movies ?? [];
@@ -109,20 +71,15 @@ export function MoviePage({ movieId }: { movieId: string }) {
           <>
             <MetaLine items={[movie.year, movie.runtime ? formatRuntime(movie.runtime, "minutes") : null, movie.certification, movie.tmdbRating ? `★ ${Number(movie.tmdbRating).toFixed(1)}` : null]} />
             <StatusChip status={status} />
-            <AcquisitionChip status={movieAcquisitionMeta(movie)} onPress={isAdmin ? () => setAcquisition(true) : undefined} />
+            <AcquisitionChip status={movieAcquisitionMeta(movie)} onPress={isAdmin ? () => openSettings(movie, "downloads") : undefined} />
           </>
         ),
         actions: (
           <MediaActions
-            personal={movie.userId === user?.id ? { kind: "movie", id: movie.id } : undefined}
-            id={movie.id}
+            target={movie}
             label={movie.title}
-            play={movie.mediaFileId ? { label: resumeAt ? `Resume · ${formatClock(resumeAt)}` : "Play", run: play } : undefined}
-            wanted={isAdmin ? { value: movie.wanted, run: toggleWanted } : undefined}
-            find={isAdmin && !movie.hasFile ? () => setSearching(true) : undefined}
-            settings={isAdmin ? () => setAcquisition(true) : undefined}
-            refresh={isAdmin ? { pending: refreshing, run: refresh } : undefined}
-            remove={isAdmin ? () => setConfirmDelete(true) : undefined}
+            actions={actions}
+            play={movie.mediaFileId ? { label: playLabel, run: () => play(movie) } : undefined}
           />
         ),
         tagline: movie.tagline,
@@ -180,9 +137,7 @@ export function MoviePage({ movieId }: { movieId: string }) {
         )}
       </div>
 
-      <ConfirmDialog isOpen={confirmDelete} onOpenChange={setConfirmDelete} title={`Remove ${movie.title}?`} description="The movie leaves the catalogue. Its file stays on disk and will show up as unmatched on the next scan." confirmLabel="Remove" destructive isPending={deleting} onConfirm={remove} />
-      <AcquisitionDialog isOpen={acquisition} onOpenChange={setAcquisition} target={{ kind: "movie", id: movie.id, title: movie.title, libraryId: movie.libraryId, monitored: movie.monitored, wanted: movie.wanted, qualityProfileId: movie.qualityProfileId }} onSaved={() => void refetch()} />
-      <ReleaseSearchDialog isOpen={searching} onOpenChange={setSearching} query={movie.title} year={movie.year} imdbId={movie.imdbId} libraryId={movie.libraryId} target={{ movieId: movie.id }} />
+      {dialogs}
     </DetailShell>
   );
 }

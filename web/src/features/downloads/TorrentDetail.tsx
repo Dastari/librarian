@@ -8,13 +8,11 @@ import { IconActivity, IconArrowDown, IconArrowUp, IconClose, IconDisk, IconFile
 import { Notice } from "glass-ux/notice";
 import { Progress } from "glass-ux/progress";
 import { ScrollArea } from "glass-ux/scroll-area";
-import { Surface } from "glass-ux/surface";
 import { TruncatedText } from "glass-ux/truncated-text";
 import { VerticalTabs } from "glass-ux/vertical-tabs";
 import type { ComponentProps, ReactNode } from "react";
 
-import { EntityChip } from "@/components/entities/EntityChip";
-import { torrentImport, torrentTarget } from "@/lib/entities/torrent";
+import { torrentImport } from "@/lib/entities/torrent";
 import { formatBytes, formatDateTime, formatSpeed } from "@/lib/format";
 
 import { LiveStat, Stat } from "./TransferStat";
@@ -45,10 +43,10 @@ function Copyable({ value, label }: { value: string; label: string }) {
 
 function FactGroup({ title, children, className }: { title: string; children: ReactNode; className?: string }) {
   return (
-    <Surface material="inset" padding="tile" radius="tile" className={`flex min-w-0 flex-col gap-2 ${className ?? ""}`}>
-      <p className="text-label-sm font-medium text-muted">{title}</p>
+    <section className={`torrent-facts flex min-w-0 flex-col gap-2 ${className ?? ""}`}>
+      <h3 className="text-title-sm text-foreground">{title}</h3>
       {children}
-    </Surface>
+    </section>
   );
 }
 
@@ -69,7 +67,7 @@ function TorrentFacts({ row, ratio }: { row: DownloadRow; ratio: number }) {
   ];
   return (
     <ScrollArea aria-label="Details" className="h-full min-h-0">
-      <div className="grid max-w-4xl grid-cols-[repeat(auto-fit,minmax(16rem,1fr))] gap-3">
+      <div className="grid max-w-4xl grid-cols-[repeat(auto-fit,minmax(18rem,1fr))] gap-x-10 gap-y-6">
         <FactGroup title="History"><FactList facts={history} /></FactGroup>
         <FactGroup title="Sharing"><FactList facts={sharing} /></FactGroup>
         <FactGroup title="On disk" className="col-span-full">
@@ -113,7 +111,6 @@ export function TorrentDetail({ row, rates, actions, open, onClose, finalFocus }
 }) {
   const { record, live } = row;
   const imported = torrentImport(record.postProcessStatus);
-  const target = torrentTarget(record);
   const progress = fraction(live?.progress ?? record.progress);
   const downloaded = live?.downloaded ?? record.downloadedBytes;
   const ratio = downloaded > 0 ? record.uploadedBytesTotal / downloaded : 0;
@@ -141,12 +138,7 @@ export function TorrentDetail({ row, rates, actions, open, onClose, finalFocus }
           <Dialog.Close render={<Button variant="ghost" shape="circle" size="sm" icon={<IconClose />} aria-label="Close" className="shrink-0" />} />
         </div>
         <Dialog.Body flush className="flex min-h-0 flex-1 flex-col gap-3 px-(--inset-panel) pb-(--inset-panel)">
-          {showStatus || target ? (
-            <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2">
-              {showStatus ? <Badge size="sm" marker="dot" tone={imported.tone}>{imported.label}</Badge> : null}
-              {target ? <EntityChip entity={target} /> : null}
-            </div>
-          ) : null}
+          {showStatus ? <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2"><Badge size="sm" marker="dot" tone={imported.tone}>{imported.label}</Badge></div> : null}
           {needsChoice > 0 ? (
             <Notice tone="warning" title="Needs a decision" className="min-w-0 shrink-0">
               <p>{needsChoice} {needsChoice === 1 ? "thing" : "things"} in this download could be more than one title. See Identified.</p>

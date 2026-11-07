@@ -15,6 +15,7 @@ fragment ShowFields on Show {
   network
   runtime
   genres
+  lockedFields
   posterUrl
   backdropUrl
   contentRating

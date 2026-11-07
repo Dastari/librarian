@@ -13,6 +13,8 @@ export interface PlayItem {
   title: string;
   subtitle?: string;
   artwork?: string;
+  /** The widescreen picture a video shows before it plays. */
+  backdrop?: string;
   entity: { kind: PlayEntityKind; id: string };
   /** Explicit parent identity for chapter sessions; never inferred from href. */
   audiobookId?: string;

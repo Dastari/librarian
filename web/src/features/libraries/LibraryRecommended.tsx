@@ -9,7 +9,7 @@ import { useContinueWatching } from "@/features/home/useContinueWatching";
 import { useMediaProgress } from "@/features/media/useMediaProgress";
 import { usePlayer } from "@/features/player/usePlayer";
 import { LibraryCollectionsDocument, LibraryGenreShelvesDocument, LibraryMoviesDocument, LibraryShowsDocument, type LibraryGenreShelvesQuery, type LibraryMoviesQuery } from "@/graphql/generated/graphql";
-import { collectionPoster, moviePoster, showPoster } from "@/lib/artwork";
+import { collectionPoster, movieBackdrop, moviePoster, showPoster } from "@/lib/artwork";
 import { useSession } from "@/lib/auth/useSession";
 import { formatClock, formatRuntime } from "@/lib/format";
 import { LIBRARY_TYPES, libraryType } from "@/lib/library-types";
@@ -62,7 +62,7 @@ function MoviesRecommended({ library }: { library: LibraryDetail }) {
 
   const play = (movie: Omit<MovieTile, "runtime">) => {
     if (!movie.mediaFileId) return;
-    player.playVideo({ mediaFileId: movie.mediaFileId, title: movie.title, subtitle: movie.year ? String(movie.year) : undefined, artwork: moviePoster(movie.id), entity: { kind: "movie", id: movie.id }, href: `/movies/${movie.id}` });
+    player.playVideo({ mediaFileId: movie.mediaFileId, title: movie.title, subtitle: movie.year ? String(movie.year) : undefined, artwork: moviePoster(movie.id), backdrop: movieBackdrop(movie.id), entity: { kind: "movie", id: movie.id }, href: `/movies/${movie.id}` });
     void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: movie.mediaFileId } });
   };
   const browse = <Link to="/libraries/$libraryId/movies" params={{ libraryId }} className="nav-focus rounded hover:text-foreground">See all</Link>;

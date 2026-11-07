@@ -186,3 +186,29 @@ index 9fcc932..1b6f58e 100644
      media?: ReactNode;
      /** Default "Settings". */
      title?: ReactNode;
+diff --git a/dist/ui/data-table/data-table.js b/dist/ui/data-table/data-table.js
+index 38c14b0..dedb1e0 100644
+--- a/dist/ui/data-table/data-table.js
++++ b/dist/ui/data-table/data-table.js
+@@ -1324,7 +1324,7 @@ export function DataTable(props) {
+     const offerExpandAll = expandable && props.expandAll !== false && expandTargets.length > 0;
+     const expandAllControl = useMemo(() => offerExpandAll ? (_jsx(ExpandAllButton, { open: allOpen, label: expandAllLabel, onToggle: () => setAllOpen(!allOpen) })) : undefined, [offerExpandAll, allOpen, expandAllLabel, setAllOpen]);
+     const expanderColumn = expandable
+-        ? (visibleColumns.find((column) => column.id === tree?.column) ??
++        ? (visibleColumns.find((column) => column.id === (tree?.column ?? props.expanderColumn)) ??
+             visibleColumns[0])?.id
+         : undefined;
+     const commitWidth = useCallback((columnId, width) => {
+diff --git a/dist/ui/data-table/types.d.ts b/dist/ui/data-table/types.d.ts
+index b07b5f2..9d34f09 100644
+--- a/dist/ui/data-table/types.d.ts
++++ b/dist/ui/data-table/types.d.ts
+@@ -307,6 +307,8 @@ export interface DataTableProps<T extends RowData> {
+      * function stable: a new one redraws the panels on screen.
+      */
+     renderRowDetail?: (row: T) => ReactNode;
++    /** The column that holds the expander (default: the first visible). */
++    expanderColumn?: string;
+     /** Rows that have a panel (default: all). */
+     canExpandRow?: (row: T) => boolean;
+     /**

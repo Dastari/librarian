@@ -10,7 +10,6 @@ import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { Button, ConfirmDialog } from "@/components/ui";
-import { FolderPickerDialog } from "@/features/files/FolderPickerDialog";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import {
   EntityLibraryDeleteDocument,
@@ -24,6 +23,7 @@ import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 
 import { FilesBrowser } from "./browser/FilesBrowser";
+import { FolderField } from "./FolderField";
 import { LibraryIdentity } from "./LibraryIdentity";
 import { previewNamingPattern } from "./namingPreview";
 import { ScansPanel } from "./ScansPanel";
@@ -77,7 +77,6 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosen
   const patterns = useQuery(NamingPatternsForTypeDocument, { variables: { libraryType: library.libraryType.toLowerCase() } });
   const profiles = useQuery(QualityProfilesListDocument);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [pickingFolder, setPickingFolder] = useState(false);
   const [scanRunId, setScanRunId] = useState<string | null>(null);
 
   const form = useAppForm({
@@ -117,10 +116,7 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosen
       content: (
         <div className="flex flex-col gap-3">
           <form.AppField name="name">{(field) => <field.TextField label="Name" required />}</form.AppField>
-          <div className="flex items-start gap-2">
-            <div className="min-w-0 flex-1"><form.AppField name="path">{(field) => <field.TextField label="Folder" required />}</form.AppField></div>
-            <Button variant="secondary" onPress={() => setPickingFolder(true)} aria-label="Browse folders" isIconOnly className="mt-6"><IconFolder size="lg" /></Button>
-          </div>
+          <form.AppField name="path">{() => <FolderField required />}</form.AppField>
           <form.AppField name="qualityProfileId">{(field) => <field.SelectField label="Quality profile" options={profileOptions} />}</form.AppField>
         </div>
       ),
@@ -152,7 +148,7 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosen
     },
     {
       value: "files", label: "Files", icon: <IconFile />, count: fileCount ?? undefined,
-      content: tab === "files" ? <div className="flex h-[min(32rem,70svh)] min-h-0 flex-col overflow-hidden"><FilesBrowser libraryId={library.id} filterPrefix="file" /></div> : null,
+      content: tab === "files" ? <div className="entity-tab-table flex min-h-0 flex-1 flex-col overflow-hidden"><FilesBrowser libraryId={library.id} filterPrefix="file" /></div> : null,
     },
     {
       value: "issues", label: "Issues", icon: <IconWarning />, count: issues > 0 ? issues : undefined,
@@ -208,7 +204,6 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosen
         isPending={deleting}
         onConfirm={onDelete}
       />
-      <FolderPickerDialog isOpen={pickingFolder} onOpenChange={setPickingFolder} initialPath={form.getFieldValue("path")} onPick={(path) => form.setFieldValue("path", path)} />
     </>
   );
 }

@@ -1,9 +1,11 @@
 
+import { ActionContextMenu } from "glass-ux/actions";
 import { IconPlus } from "glass-ux/icons";
 import { IconMusic } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
 import { Button, EmptyState, ErrorState, PosterCard, PosterGallery } from "@/components/ui";
+import { useAlbumEntity } from "@/features/media/useAlbumEntity";
 import { ProviderSearchDialog } from "@/features/library-add/ProviderSearchDialog";
 import { LibraryAlbumsDocument, type AlbumOrderByInput, type AlbumWhereInput, type LibraryAlbumsQuery } from "@/graphql/generated/graphql";
 import { useServerTable } from "@/hooks/useServerTable";
@@ -30,6 +32,7 @@ const SORTS: readonly BrowserSortOption[] = [
 export function AlbumsBrowser({ libraryId }: { libraryId: string }) {
   const isAdmin = useIsAdmin();
   const filters = useBrowserFilters();
+  const { actions, dialogs } = useAlbumEntity<AlbumRow>();
   const table = useServerTable<AlbumOrderByInput>({ persistKey: `albums.${libraryId}`, defaultSorting: [{ id: "name", desc: false }], sortMap: { name: "sortName" } });
   const [adding, setAdding] = useState(false);
 
@@ -82,20 +85,25 @@ export function AlbumsBrowser({ libraryId }: { libraryId: string }) {
           error={list.error && list.rows.length === 0 ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : undefined}
           emptyState={<EmptyState icon={IconMusic} title="No albums yet" description="Scan the library folder or add an album from MusicBrainz." action={isAdmin ? <Button variant="primary" onPress={() => setAdding(true)}><IconPlus size="md" /> Add album</Button> : undefined} />}
           renderCard={(row) => (
-            <PosterCard
-              aspect="square"
-              title={row.name}
-              meta={[formatYear(row.releaseDate) || row.year, row.albumType].filter(Boolean).join(" · ")}
-              image={albumCover(row)}
-              tint={LIBRARY_TYPES.music.tintVar}
-              to="/albums/$albumId"
-              params={{ albumId: row.id }}
-              badge={row.trackCount ? <ProgressBadge have={row.downloaded.pageInfo.totalCount ?? 0} total={row.trackCount} className="text-foreground" /> : undefined}
-            />
+            <ActionContextMenu set={actions} targets={[row]} label={`Actions for ${row.name}`}>
+              <div className="min-w-0">
+                <PosterCard
+                  aspect="square"
+                  title={row.name}
+                  meta={[formatYear(row.releaseDate) || row.year, row.albumType].filter(Boolean).join(" · ")}
+                  image={albumCover(row)}
+                  tint={LIBRARY_TYPES.music.tintVar}
+                  to="/albums/$albumId"
+                  params={{ albumId: row.id }}
+                  badge={row.trackCount ? <ProgressBadge have={row.downloaded.pageInfo.totalCount ?? 0} total={row.trackCount} className="text-foreground" /> : undefined}
+                />
+              </div>
+            </ActionContextMenu>
           )}
         />
         <BrowserLetterRail letter={jump.active} onLetterChange={jump.jump} />
       </div>
+      {dialogs}
       <ProviderSearchDialog kind="album" libraryId={libraryId} isOpen={adding} onOpenChange={setAdding} onAdded={() => void list.refetch()} />
     </div>
   );

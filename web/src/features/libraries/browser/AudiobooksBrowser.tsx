@@ -1,9 +1,11 @@
 
+import { ActionContextMenu } from "glass-ux/actions";
 import { IconPlus } from "glass-ux/icons";
 import { IconBooks } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
 import { Button, EmptyState, ErrorState, PosterCard, PosterGallery } from "@/components/ui";
+import { useAudiobookEntity } from "@/features/media/useAudiobookEntity";
 import { ProviderSearchDialog } from "@/features/library-add/ProviderSearchDialog";
 import { LibraryAudiobooksDocument, type AudiobookOrderByInput, type AudiobookWhereInput, type LibraryAudiobooksQuery } from "@/graphql/generated/graphql";
 import { useServerTable } from "@/hooks/useServerTable";
@@ -29,6 +31,7 @@ const SORTS: readonly BrowserSortOption[] = [
 export function AudiobooksBrowser({ libraryId }: { libraryId: string }) {
   const isAdmin = useIsAdmin();
   const filters = useBrowserFilters();
+  const { actions, dialogs } = useAudiobookEntity<BookRow>();
   const table = useServerTable<AudiobookOrderByInput>({ persistKey: `audiobooks.${libraryId}`, defaultSorting: [{ id: "title", desc: false }], sortMap: { title: "sortTitle" } });
   const [adding, setAdding] = useState(false);
 
@@ -81,19 +84,24 @@ export function AudiobooksBrowser({ libraryId }: { libraryId: string }) {
           error={list.error && list.rows.length === 0 ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : undefined}
           emptyState={<EmptyState icon={IconBooks} title="No audiobooks yet" description="Scan the library folder or add a book from Open Library." action={isAdmin ? <Button variant="primary" onPress={() => setAdding(true)}><IconPlus size="md" /> Add audiobook</Button> : undefined} />}
           renderCard={(row) => (
-            <PosterCard
-              title={row.title}
-              meta={row.authorName ?? undefined}
-              image={audiobookCover(row)}
-              tint={LIBRARY_TYPES.audiobooks.tintVar}
-              to="/audiobooks/$audiobookId"
-              params={{ audiobookId: row.id }}
-              badge={row.chapterCount ? <ProgressBadge have={row.downloaded.pageInfo.totalCount ?? 0} total={row.chapterCount} className="text-foreground" /> : undefined}
-            />
+            <ActionContextMenu set={actions} targets={[row]} label={`Actions for ${row.title}`}>
+              <div className="min-w-0">
+                <PosterCard
+                  title={row.title}
+                  meta={row.authorName ?? undefined}
+                  image={audiobookCover(row)}
+                  tint={LIBRARY_TYPES.audiobooks.tintVar}
+                  to="/audiobooks/$audiobookId"
+                  params={{ audiobookId: row.id }}
+                  badge={row.chapterCount ? <ProgressBadge have={row.downloaded.pageInfo.totalCount ?? 0} total={row.chapterCount} className="text-foreground" /> : undefined}
+                />
+              </div>
+            </ActionContextMenu>
           )}
         />
         <BrowserLetterRail letter={jump.active} onLetterChange={jump.jump} />
       </div>
+      {dialogs}
       <ProviderSearchDialog kind="audiobook" libraryId={libraryId} isOpen={adding} onOpenChange={setAdding} onAdded={() => void list.refetch()} />
     </div>
   );

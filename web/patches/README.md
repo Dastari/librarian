@@ -28,3 +28,5 @@ by application code, and no table geometry or material recipes are overridden.
 On upgrade, inspect upstream for all five, regenerate the patch from the published
 archive if needed, and run the real Glass table/Logs/URL-history regressions plus a
 populated browser scroll/focus check before removing it.
+
+`DataTable` also takes `expanderColumn`, the column that holds a row detail's expander (default: the first visible). The Identified table puts it near the end of the row. To ask upstream for.

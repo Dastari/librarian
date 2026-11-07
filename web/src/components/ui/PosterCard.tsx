@@ -67,7 +67,7 @@ export function PosterCard({ title, meta, image, aspect = "poster", tint, to, pa
       className={cn("poster-card group relative flex min-w-0 flex-col", width === "row" && "w-(--poster-min) shrink-0 sm:w-[calc(var(--poster-min)*1.15)] xl:w-(--poster-max)", width === "compact" && "w-[calc(var(--poster-min)*0.72)] shrink-0 xl:w-[calc(var(--poster-max)*0.62)]", className)}>
       {navigation}
       <Surface material="card" radius="tile" padding="none"
-        className={cn("poster-art pointer-events-none relative overflow-clip", selected && "ring-2 ring-brand ring-offset-2 ring-offset-background")}>
+        className="poster-art pointer-events-none relative overflow-clip">
         <Artwork src={image} alt="" aspect={aspect} tint={tint} priority={priority} fallback={fallbackIcon} displayWidth={width === "compact" ? 180 : 300} />
         {badge ? <Surface as="span" material="control" radius="control" padding="none" className="over-imagery absolute start-2 top-2 px-2 py-1 text-caption">{badge}</Surface> : null}
         {status ? <ToneDot overlay label={status.label} tone={status.tone === "default" ? "neutral" : status.tone} className="absolute end-2 top-2" /> : null}

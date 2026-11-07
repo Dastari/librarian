@@ -2,10 +2,9 @@ import { ActionBar, type ActionSet } from "glass-ux/actions";
 import { Tooltip } from "glass-ux/tooltip";
 import { Badge } from "glass-ux/badge";
 import { EntityIdentity } from "glass-ux/entity";
-import { IconClose } from "glass-ux/icons";
 
 import { EntityChip } from "@/components/entities/EntityChip";
-import { Button, KeyValueList, Panel } from "@/components/ui";
+import { KeyValueList } from "@/components/ui";
 import { ENTITY_KINDS } from "@/lib/entities/kinds";
 import { fileName, linkedItem, mediaFileRef } from "@/lib/entities/linked";
 import { issueDetails, issueLabel, scanSeverity, scanStage } from "@/lib/entities/scan";
@@ -36,18 +35,17 @@ function DuplicateComparison({ details }: { details: Record<string, string | num
 }
 
 /** One scan issue in full: what the scanner found, where, and what to do about it. */
-export function ScanIssueDetail({ row, actions, onClose }: { row: IssueRow; actions: ActionSet<IssueRow>; onClose: () => void }) {
+export function ScanIssueDetail({ row, actions }: { row: IssueRow; actions: ActionSet<IssueRow> }) {
   const severity = scanSeverity(row.severity);
   const details = issueDetails(row.detailsJson);
   const item = row.mediaFile ? linkedItem(row.mediaFile) : null;
   const file = row.mediaFile ? mediaFileRef(row.mediaFile) : null;
   return (
-    <Panel className="self-start xl:sticky xl:top-0">
+    <div className="flex min-w-0 flex-col">
       <div className="flex items-start gap-2">
         <EntityIdentity className="min-w-0 flex-1" tier="compact" heading="h2" kind={ENTITY_KINDS.scanIssue.noun} name={issueLabel(row.issueCode)} icon={<IssueGlyph />} facts={[severity.label, scanStage(row.stage), formatRelative(row.updatedAt)]} />
-        <Button variant="ghost" size="sm" isIconOnly aria-label="Close issue details" onPress={onClose}><IconClose /></Button>
+        <ActionBar set={actions} targets={[row]} label={issueLabel(row.issueCode)} maxButtons={3} />
       </div>
-      <ActionBar className="mt-3 justify-start" set={actions} targets={[row]} label={issueLabel(row.issueCode)} maxButtons={3} />
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Badge size="sm" marker="dot" tone={severity.tone}>{severity.label}</Badge>
         <Badge size="sm" tone="neutral">{scanStage(row.stage)}</Badge>
@@ -77,6 +75,6 @@ export function ScanIssueDetail({ row, actions, onClose }: { row: IssueRow; acti
           { label: "Path", value: row.mediaFile?.path, mono: true },
         ]}
       />
-    </Panel>
+    </div>
   );
 }

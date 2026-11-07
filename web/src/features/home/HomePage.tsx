@@ -13,7 +13,7 @@ import { BackdropCard, Button, EmptyState, ErrorState, MediaRow, PosterCard, Sec
 import { LibraryCard } from "@/features/libraries/LibraryCard";
 import { usePlayer } from "@/features/player/usePlayer";
 import { LibrariesOverviewDocument, RecentAlbumsDocument, RecentAudiobooksDocument, RecentMoviesDocument, RecentShowsDocument } from "@/graphql/generated/graphql";
-import { albumCover, audiobookCover, moviePoster, showPoster } from "@/lib/artwork";
+import { albumCover, audiobookCover, movieBackdrop, moviePoster, showPoster } from "@/lib/artwork";
 import { formatClock, formatRuntime, formatYear } from "@/lib/format";
 import { LIBRARY_TYPES } from "@/lib/library-types";
 
@@ -113,7 +113,7 @@ export function HomePage() {
                 to="/movies/$movieId"
                 params={{ movieId: movie.id }}
                 onPlay={movie.mediaFileId ? () => {
-                  player.playVideo({ mediaFileId: movie.mediaFileId!, title: movie.title, subtitle: movie.year ? String(movie.year) : undefined, artwork: moviePoster(movie.id), entity: { kind: "movie", id: movie.id } });
+                  player.playVideo({ mediaFileId: movie.mediaFileId!, title: movie.title, subtitle: movie.year ? String(movie.year) : undefined, artwork: moviePoster(movie.id), backdrop: movieBackdrop(movie.id), entity: { kind: "movie", id: movie.id } });
                   void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: movie.mediaFileId! } });
                 } : undefined}
               />

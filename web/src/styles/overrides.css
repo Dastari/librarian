@@ -10,6 +10,20 @@ video:focus, audio:focus { outline: none; }
 
 /* A settings dialog's table takes the whole pane; its fields keep the form's reading width. */
 .fa-entity-settings-tab:has(.fa-dt) { max-width: none; }
+/* A table in a settings tab fills what the dialog leaves it and is the only thing that scrolls, so
+ * its last row and its selection footer are always within reach. */
+.fa-vtabs-content:has(> .fa-vtabs-panel:not([hidden]) .entity-tab-table) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.fa-vtabs-panel:not([hidden]):has(.entity-tab-table),
+.fa-vtabs-panel:not([hidden]) .fa-entity-settings-tab:has(.entity-tab-table) {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 0;
+}
 .fa-entity-settings-tab .fa-dt { --_hairline: transparent; }
 
 /* A table's toolbar wraps its end section to fit it. With a filter that can fold, it should fold. */
@@ -18,3 +32,15 @@ video:focus, audio:focus { outline: none; }
 @container fa-dt (inline-size < 36rem) {
   .fa-dt-toolbar-end:has(> .table-toolbar) { flex-basis: 100%; }
 }
+
+/* A download's details read as aligned columns of label and value, with no boxes around them. */
+.torrent-facts .fa-fact-list > div {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  gap: var(--space-3);
+}
+.torrent-facts .fa-fact-list dt { max-width: none; }
+
+/* A settings form's lock sits in the input, quiet until it's on. */
+.metadata-lock { color: var(--fg-muted); }
+.metadata-lock[data-locked] { color: var(--fg); }

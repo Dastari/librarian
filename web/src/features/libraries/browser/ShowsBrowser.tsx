@@ -1,9 +1,11 @@
 
+import { ActionContextMenu } from "glass-ux/actions";
 import { IconPlus } from "glass-ux/icons";
 import { IconDeviceTv } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
 import { Button, EmptyState, ErrorState, PosterCard, PosterGallery } from "@/components/ui";
+import { useShowEntity } from "@/features/media/useShowEntity";
 import { ProviderSearchDialog } from "@/features/library-add/ProviderSearchDialog";
 import { LibraryShowsDocument, type LibraryShowsQuery, type ShowOrderByInput, type ShowWhereInput } from "@/graphql/generated/graphql";
 import { useServerTable } from "@/hooks/useServerTable";
@@ -38,6 +40,7 @@ export function ProgressBadge({ have, total, className }: { have: number; total:
 export function ShowsBrowser({ libraryId }: { libraryId: string }) {
   const isAdmin = useIsAdmin();
   const filters = useBrowserFilters();
+  const { actions, dialogs } = useShowEntity<ShowRow>();
   const table = useServerTable<ShowOrderByInput>({ persistKey: `shows.${libraryId}`, defaultSorting: [{ id: "name", desc: false }], sortMap: { name: "sortName" } });
   const [adding, setAdding] = useState(false);
 
@@ -97,20 +100,25 @@ export function ShowsBrowser({ libraryId }: { libraryId: string }) {
           renderCard={(row) => {
             const { have, total } = counts(row);
             return (
-              <PosterCard
-                title={row.name}
-                meta={[row.year, row.network].filter(Boolean).join(" · ")}
-                image={showPoster(row)}
-                tint={LIBRARY_TYPES.tv.tintVar}
-                to="/shows/$showId"
-                params={{ showId: row.id }}
-                badge={total > 0 ? <ProgressBadge have={have} total={total} className="text-foreground" /> : undefined}
-              />
+              <ActionContextMenu set={actions} targets={[row]} label={`Actions for ${row.name}`}>
+                <div className="min-w-0">
+                  <PosterCard
+                    title={row.name}
+                    meta={[row.year, row.network].filter(Boolean).join(" · ")}
+                    image={showPoster(row)}
+                    tint={LIBRARY_TYPES.tv.tintVar}
+                    to="/shows/$showId"
+                    params={{ showId: row.id }}
+                    badge={total > 0 ? <ProgressBadge have={have} total={total} className="text-foreground" /> : undefined}
+                  />
+                </div>
+              </ActionContextMenu>
             );
           }}
         />
         <BrowserLetterRail letter={jump.active} onLetterChange={jump.jump} />
       </div>
+      {dialogs}
       <ProviderSearchDialog kind="show" libraryId={libraryId} isOpen={adding} onOpenChange={setAdding} onAdded={() => void list.refetch()} />
     </div>
   );

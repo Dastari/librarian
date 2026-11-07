@@ -1,36 +1,33 @@
 import { copyText } from "glass-ux/copy-button";
-import { useApolloClient, useLazyQuery, useMutation } from "@apollo/client/react";
+import { useApolloClient, useMutation } from "@apollo/client/react";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
-import { toast } from "glass-ux/toast";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { defineActions, type ActionSet } from "glass-ux/actions";
 import { Button } from "glass-ux/button";
 import { createDataTableColumns, filters, NumericCell, TextCell } from "glass-ux/data-table";
 import { IconBookmark, IconCopy, IconInfo, IconPlay, IconPlus } from "glass-ux/icons";
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useMemo } from "react";
 
-import { ConfirmDialog, EmptyState, ErrorState, MetaLine, SkeletonHero, StatusChip } from "@/components/ui";
+import { EmptyState, ErrorState, MetaLine, SkeletonHero, StatusChip } from "@/components/ui";
 import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
-import { AcquisitionDialog } from "@/features/acquisition/AcquisitionDialog";
 import { autoDownloadMeta } from "@/features/acquisition/mode";
-import { ChooseListingDialog, type Listing } from "@/features/downloads/ChooseListingDialog";
-import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { usePlayer } from "@/features/player/usePlayer";
 import { playerStore, type PlayItem } from "@/features/player/store";
-import { AudiobookDetailDocument, AudiobookChaptersPageDocument, AudiobookPartsDocument, RestoreAudiobookChaptersDocument, ListenToAudiobookChaptersDocument, ChangeAudiobookEditionDocument, AudiobookEditionsDocument, EntityAudiobookDeleteDocument, EntityChapterUpdateDocument, EntityChapterUpdateManyDocument, type AudiobookDetailQuery } from "@/graphql/generated/graphql";
+import { AudiobookDetailDocument, AudiobookChaptersPageDocument, AudiobookPartsDocument, EntityChapterUpdateDocument, EntityChapterUpdateManyDocument, type AudiobookDetailQuery } from "@/graphql/generated/graphql";
 import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
 import { audiobookCover } from "@/lib/artwork";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { formatClock, formatRuntime } from "@/lib/format";
 import { activeContentStatusQueries } from "@/lib/graphql/content-status";
-import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
+import { assertSuccess } from "@/lib/graphql/errors";
 import { LIBRARY_TYPES } from "@/lib/library-types";
 import { statusMeta } from "@/lib/status";
 
 import { FINISHED_AT, heardFraction, heardPosition, type FileLength } from "./chapterProgress";
 import { MediaActions } from "./MediaActions";
+import { useAudiobookEntity } from "./useAudiobookEntity";
 import { noRowMenu, PlayProgressCell, RowActions, type RowPlayState } from "./RowPlayAction";
 import { DetailShell } from "./DetailShell";
 import { useAudioPages } from "./useAudioPages";
@@ -111,7 +108,6 @@ const chapterColumns = chapterColumn.columns([
 ]);
 
 export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
-  const navigate = useNavigate();
   const client = useApolloClient();
   const player = usePlayer();
   const isAdmin = useIsAdmin();
@@ -131,17 +127,8 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
   const fileIds = useMemo(() => chapters.map((chapter) => chapter.mediaFileId).filter((id): id is string => Boolean(id)), [chapters]);
   const progress = useMediaProgress(fileIds, user?.id);
   const { progressByFile } = progress;
-  const [deleteBook, { loading: deleting }] = useMutation(EntityAudiobookDeleteDocument);
-  const [restoreChapters] = useMutation(RestoreAudiobookChaptersDocument);
-  const [listenForChapters] = useMutation(ListenToAudiobookChaptersDocument);
-  const [changeEdition] = useMutation(ChangeAudiobookEditionDocument);
-  const [searchEditions, editions] = useLazyQuery(AudiobookEditionsDocument, { fetchPolicy: "network-only" });
-  const [choosingEdition, setChoosingEdition] = useState(false);
   const [updateChapter] = useMutation(EntityChapterUpdateDocument, { refetchQueries: () => activeContentStatusQueries(client) });
   const [updateChapters] = useMutation(EntityChapterUpdateManyDocument, { refetchQueries: () => activeContentStatusQueries(client) });
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [searching, setSearching] = useState(false);
-  const [acquisition, setAcquisition] = useState(false);
 
   const toggleWanted = useCallback(async (chapter: ChapterRow) => {
     if (!isAdmin) return;
@@ -330,47 +317,11 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
     else playFrom(chapter);
   };
 
+  const playBook = queue.length > 0 ? { label: resumeLabel, run: () => playFrom(), disabledReason: !pages.complete ? "Load all chapters to listen to the book" : progressUnavailable } : undefined;
+  const { actions: bookActions, dialogs: bookDialogs, openSettings } = useAudiobookEntity<NonNullable<typeof book>>({ open: false, play: playBook, onChanged: () => void refetch() });
+
   if (error && !book) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!book) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Audiobook not found" description="This item may have been removed from the library." className="page-gutter my-8" />;
-
-  const restoreListedChapters = async () => {
-    try {
-      const { data: restored } = await restoreChapters({ variables: { audiobookId: book.id } });
-      assertSuccess(restored?.restoreAudiobookChapters, "Could not restore the chapters");
-      toast.success("Chapters restored");
-      await refetch();
-    } catch (mutationError) { toast.danger(errorMessage(mutationError)); }
-  };
-
-  const checkChapters = async () => {
-    try {
-      const { data: started } = await listenForChapters({ variables: { audiobookId: book.id } });
-      assertSuccess(started?.listenToAudiobookChapters, "Could not start listening");
-      toast.success("Listening for chapters. This takes a few minutes.");
-    } catch (mutationError) { toast.danger(errorMessage(mutationError)); }
-  };
-
-  const useEdition = async (listing: Listing) => {
-    if (!listing.providerId) return;
-    try {
-      const { data: changed } = await changeEdition({ variables: { audiobookId: book.id, providerId: listing.providerId } });
-      assertSuccess(changed?.changeAudiobookEdition, "Could not change the edition");
-      toast.success("Edition changed");
-      setChoosingEdition(false);
-      await refetch();
-    } catch (mutationError) { toast.danger(errorMessage(mutationError)); }
-  };
-
-  const remove = async () => {
-    try {
-      const { data: result } = await deleteBook({ variables: { id: book.id } });
-      assertSuccess(result?.deleteAudiobook, "Could not remove audiobook");
-      toast.success("Audiobook removed");
-      await navigate({ to: "/libraries/$libraryId/audiobooks", params: { libraryId: book.libraryId } });
-    } catch (mutationError) {
-      toast.danger(errorMessage(mutationError));
-    }
-  };
 
   return (
     <DetailShell
@@ -387,23 +338,12 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
         meta: (
           <>
             <MetaLine items={[book.authorName, book.narratorName ? `read by ${book.narratorName}` : null, book.seriesName ? [book.seriesName, book.seriesPosition && `#${book.seriesPosition}`].filter(Boolean).join(" ") : null, formatRuntime(book.totalDurationSecs), `${book.chapters.pageInfo.totalCount ?? book.chapterCount ?? chapters.length} chapters`]} />
-            <AcquisitionChip status={autoDownloadMeta(book.autoDownloadMode)} onPress={isAdmin ? () => setAcquisition(true) : undefined} />
+            <AcquisitionChip status={autoDownloadMeta(book.autoDownloadMode)} onPress={isAdmin ? () => openSettings(book, "downloads") : undefined} />
           </>
         ),
         description: book.description,
         actions: (
-          <MediaActions
-            personal={book.userId === user?.id ? { kind: "audiobook", id: book.id } : undefined}
-            id={book.id}
-            label={book.title}
-            play={queue.length > 0 ? { label: resumeLabel, run: () => playFrom(), disabledReason: !pages.complete ? "Load all chapters to listen to the book" : progressUnavailable } : undefined}
-            find={isAdmin ? () => setSearching(true) : undefined}
-            settings={isAdmin ? () => setAcquisition(true) : undefined}
-            remove={isAdmin ? () => setConfirmDelete(true) : undefined}
-            restoreChapters={isAdmin && book.providerChapters ? () => void restoreListedChapters() : undefined}
-            changeEdition={isAdmin ? () => setChoosingEdition(true) : undefined}
-            checkChapters={isAdmin ? { pending: book.chapterCheckState === "listening", run: () => void checkChapters() } : undefined}
-          />
+          <MediaActions target={book} label={book.title} actions={bookActions} play={playBook} />
         ),
       }}
     >
@@ -422,21 +362,7 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
           emptyMessage="No chapters" onRowOpen={(chapter) => { if (chapter.mediaFileId) playFrom(chapter); }}
         />
       </AudiobookTableContext.Provider>
-      <AcquisitionDialog isOpen={acquisition} onOpenChange={setAcquisition} target={{ kind: "audiobook", id: book.id, title: book.title, libraryId: book.libraryId, autoDownloadMode: book.autoDownloadMode, qualityProfileId: book.qualityProfileId }} onSaved={() => void refetch()} />
-      <ChooseListingDialog
-        isOpen={choosingEdition}
-        onOpenChange={setChoosingEdition}
-        title="Change edition"
-        initialQuery={[book.title.split(":")[0], book.authorName].filter(Boolean).join(" ")}
-        listings={editions.data?.audiobookEditions ?? []}
-        loading={editions.loading}
-        error={editions.error ? errorMessage(editions.error) : null}
-        search={(query) => void searchEditions({ variables: { audiobookId: book.id, query } })}
-        choose={useEdition}
-        currentProviderId={book.audibleId}
-      />
-      <ReleaseSearchDialog isOpen={searching} onOpenChange={setSearching} query={[book.authorName, book.title].filter(Boolean).join(" ")} libraryId={book.libraryId} author={book.authorName} target={{ audiobookId: book.id }} />
-      <ConfirmDialog isOpen={confirmDelete} onOpenChange={setConfirmDelete} title={`Remove ${book.title}?`} description="The audiobook and its chapters leave the catalogue. Files stay on disk." confirmLabel="Remove" destructive isPending={deleting} onConfirm={remove} />
+      {bookDialogs}
     </DetailShell>
   );
 }

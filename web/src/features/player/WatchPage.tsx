@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo } from "react";
 
 import { EntityMediaFileGetDocument, EpisodeDetailDocument, MovieDetailDocument } from "@/graphql/generated/graphql";
 import { useShowEpisodes } from "@/features/media/useShowEpisodes";
-import { moviePoster, showPoster } from "@/lib/artwork";
+import { movieBackdrop, moviePoster, showBackdrop, showPoster } from "@/lib/artwork";
 
 import { playerStore, usePlayerState, type PlayItem } from "./store";
 import { VideoPlayer } from "./VideoPlayer";
@@ -38,7 +38,7 @@ export function WatchPage({ mediaFileId, onBack, mini = false, userId, onMinimis
     if (known) return known;
     if (movie.data?.movie) {
       const item = movie.data.movie;
-      return { mediaFileId, title: item.title, subtitle: item.year ? String(item.year) : undefined, artwork: moviePoster(item.id), entity: { kind: "movie", id: item.id }, href: `/movies/${item.id}` };
+      return { mediaFileId, title: item.title, subtitle: item.year ? String(item.year) : undefined, artwork: moviePoster(item.id), backdrop: movieBackdrop(item.id), entity: { kind: "movie", id: item.id }, href: `/movies/${item.id}` };
     }
     if (episode.data?.episode) {
       const item = episode.data.episode;
@@ -48,6 +48,7 @@ export function WatchPage({ mediaFileId, onBack, mini = false, userId, onMinimis
         title: item.show?.name ?? item.title ?? "Episode",
         subtitle: [code, item.title].filter(Boolean).join("  "),
         artwork: item.show ? showPoster(item.show) : undefined,
+        backdrop: item.show ? showBackdrop(item.show) : undefined,
         entity: { kind: "episode", id: item.id },
         href: `/shows/${item.showId}`,
       };

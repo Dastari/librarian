@@ -178,8 +178,8 @@ export function ScansPanel({ libraryId, section, scanRunId, onScanRunChange, onS
   const close = () => setSelectedId(null);
   const filteredRun = scanRunId ? runs.list.rows.find((row) => row.id === scanRunId) : null;
 
-  const detail = selectedIssue ? <ScanIssueDetail row={selectedIssue} actions={issueActions} onClose={close} />
-    : selectedRun ? <ScanRunDetail row={selectedRun} actions={runActions} onClose={close} /> : null;
+  const detail = selectedIssue ? <ScanIssueDetail row={selectedIssue} actions={issueActions} />
+    : selectedRun ? <ScanRunDetail row={selectedRun} actions={runActions} /> : null;
   const refresh = <Button size="sm" variant="ghost" isIconOnly aria-label="Refresh scans" isPending={history ? runs.list.fetching : issues.list.fetching} onPress={refetch}><IconRefresh /></Button>;
   // What the table shows belongs to the table: both of them carry these in their toolbar.
   const controls = (
@@ -205,7 +205,7 @@ export function ScansPanel({ libraryId, section, scanRunId, onScanRunChange, onS
   );
 
   return (
-    <div data-print-flow className="flex h-[min(32rem,70svh)] min-h-0 flex-col overflow-hidden">
+    <div data-print-flow className="entity-tab-table flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {history ? (
             <DataTable<RunRow>
