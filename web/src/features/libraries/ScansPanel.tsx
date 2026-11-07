@@ -7,6 +7,7 @@ import { MeterCell } from "glass-ux/meter-cell";
 import { Segmented } from "glass-ux/segmented";
 import { useCallback, useMemo, useState } from "react";
 
+import { TableToolbar } from "@/components/ui/TableToolbar";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { useTableSelection } from "@/hooks/useTableSelection";
 import { EntityChip } from "@/components/entities/EntityChip";
@@ -182,14 +183,14 @@ export function ScansPanel({ libraryId, section, scanRunId, onScanRunChange, onS
   const refresh = <Button size="sm" variant="ghost" isIconOnly aria-label="Refresh scans" isPending={history ? runs.list.fetching : issues.list.fetching} onPress={refetch}><IconRefresh /></Button>;
   // What the table shows belongs to the table: both of them carry these in their toolbar.
   const controls = (
-    <div className="flex min-w-0 items-center gap-2">
-      {scanRunId && !history ? (
+    <TableToolbar
+      before={scanRunId && !history ? (
         <Badge tone="info" size="md">
           From the scan of {filteredRun ? formatDateTime(filteredRun.startedAt ?? filteredRun.createdAt) : "the selected run"}
           <button type="button" aria-label="Show issues from every scan" className="nav-focus -me-1 ms-1 rounded-full" onClick={() => onScanRunChange(null)}><IconClose size="xs" /></button>
         </Badge>
       ) : null}
-      {history ? null : (
+      filter={history ? null : (
         <Segmented<IssueView>
           aria-label="Show"
           size="sm"
@@ -198,8 +199,9 @@ export function ScansPanel({ libraryId, section, scanRunId, onScanRunChange, onS
           options={ISSUE_VIEWS.map(({ value, label }) => ({ value, label: counts.views[value] !== undefined ? `${label} ${counts.views[value]}` : label }))}
         />
       )}
+    >
       {refresh}
-    </div>
+    </TableToolbar>
   );
 
   return (

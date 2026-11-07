@@ -13,6 +13,6 @@ export function Stat({ icon, label, children }: { icon: ReactNode; label: string
 }
 
 /** Metric hides its own label at this width, leaving the value and a small trend beside the icon. */
-export function LiveStat({ icon, ...metric }: { icon: ReactNode; label: string } & ComponentProps<typeof Metric>) {
-  return <Stat icon={icon} label={metric.label}><div className="h-6 w-36 min-w-0 max-sm:w-[5.25rem]"><Metric better="none" range="Last two minutes" sparklineFill {...metric} /></div></Stat>;
+export function LiveStat({ icon, width = "w-36", ...metric }: { icon: ReactNode; label: string; width?: string } & ComponentProps<typeof Metric>) {
+  return <Stat icon={icon} label={metric.label}><div className={`h-6 min-w-0 max-sm:w-[5.25rem] ${width}`}><Metric better="none" range="Last two minutes" sparklineFill {...metric} /></div></Stat>;
 }

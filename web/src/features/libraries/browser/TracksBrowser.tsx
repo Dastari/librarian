@@ -4,6 +4,7 @@ import { createDataTableColumns, DataTable, IdentityCell, TextCell, type DataTab
 import { IconExternalLink, IconPlay, IconPlus } from "glass-ux/icons";
 import { createContext, useContext, useMemo, useState } from "react";
 
+import { TableToolbar } from "@/components/ui/TableToolbar";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { useTableSelection } from "@/hooks/useTableSelection";
 import { EntityChip } from "@/components/entities/EntityChip";
@@ -145,13 +146,13 @@ export function TracksBrowser({ libraryId }: { libraryId: string }) {
           noun={{ one: "track", other: "tracks" }}
           search={search}
           toolbar={
-            <GlassSegmented<AvailabilityFilter>
+            <TableToolbar filter={<GlassSegmented<AvailabilityFilter>
               ariaLabel="Availability"
               size="sm"
               value={filters.availability}
               onChange={filters.setAvailability}
               items={[{ key: "all", label: "All" }, { key: "available", label: "Available" }, { key: "wanted", label: "Wanted" }, { key: "missing", label: "Missing" }]}
-            />
+            />} />
           }
           onRowOpen={(row) => { if (row.mediaFileId) playFrom(row); }}
           rowOpen="click"

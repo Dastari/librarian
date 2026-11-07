@@ -11,3 +11,10 @@ video:focus, audio:focus { outline: none; }
 /* A settings dialog's table takes the whole pane; its fields keep the form's reading width. */
 .fa-entity-settings-tab:has(.fa-dt) { max-width: none; }
 .fa-entity-settings-tab .fa-dt { --_hairline: transparent; }
+
+/* A table's toolbar wraps its end section to fit it. With a filter that can fold, it should fold. */
+.fa-dt-toolbar-end:has(> .table-toolbar) { flex: 999 1 0; min-width: 0; }
+/* Too narrow for both: the filter and buttons take their own line under the search. */
+@container fa-dt (inline-size < 36rem) {
+  .fa-dt-toolbar-end:has(> .table-toolbar) { flex-basis: 100%; }
+}

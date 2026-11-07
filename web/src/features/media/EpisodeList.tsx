@@ -160,15 +160,19 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
   const focusLoaded = Boolean(focusEpisodeId) && episodes.some((episode) => episode.id === focusEpisodeId);
   useEffect(() => {
     if (!focusEpisodeId || !focusLoaded) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const frame = requestAnimationFrame(() => {
+    // The table draws its rows a moment after the episodes arrive.
+    let tries = 0;
+    let clear: ReturnType<typeof setTimeout> | undefined;
+    const look = setInterval(() => {
       const row = document.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(focusEpisodeId)}"]`);
+      if (!row && ++tries < 40) return;
+      clearInterval(look);
       if (!row) return;
-      row.scrollIntoView({ block: "center" });
+      row.scrollIntoView({ block: "center", inline: "center" });
       row.classList.add("episode-focus");
-      timer = setTimeout(() => row.classList.remove("episode-focus"), 4000);
-    });
-    return () => { cancelAnimationFrame(frame); if (timer) clearTimeout(timer); };
+      clear = setTimeout(() => row.classList.remove("episode-focus"), 4000);
+    }, 100);
+    return () => { clearInterval(look); if (clear) clearTimeout(clear); };
   }, [focusEpisodeId, focusLoaded]);
   const [updateEpisode] = useMutation(EntityEpisodeUpdateDocument, { refetchQueries: () => activeContentStatusQueries(client) });
   const [updateEpisodes] = useMutation(EntityEpisodeUpdateManyDocument, { refetchQueries: () => activeContentStatusQueries(client) });
@@ -273,7 +277,7 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
       <EpisodePresentationContext.Provider value={presentation}>
         <div className="flex min-w-0 flex-col gap-3">
           {loading ? <EpisodeRowSkeleton /> : episodes.length === 0 ? <p className="text-body-sm text-muted">No episodes in this season</p> : groups.map((group) => (
-            <EpisodeShelf key={group.season} group={group} isAdmin={isAdmin} onBulk={bulk} onPlay={onPlay} tint={tint} headerExtra={headerExtra} />
+            <EpisodeShelf key={`${group.season}:${focusEpisodeId ?? ""}`} focusEpisodeId={focusEpisodeId} group={group} isAdmin={isAdmin} onBulk={bulk} onPlay={onPlay} tint={tint} headerExtra={headerExtra} />
           ))}
           {status ? <div className="text-label-sm text-muted">{status}</div> : null}
           <ReleaseSearchDialog isOpen={Boolean(searching)} onOpenChange={(open) => !open && setSearching(null)} query={showName} season={searching?.season} episode={searching?.episode} libraryId={libraryId} target={{ showId, episodeId: searching?.id }} />
@@ -358,11 +362,11 @@ function SeasonHeader({ group, isAdmin, onBulk, extra }: SeasonHeaderProps) {
 }
 
 /** A season's episodes as a row of stills with the focused episode's summary underneath. */
-function EpisodeShelf({ group, isAdmin, onBulk, onPlay, tint, headerExtra }: { group: SeasonGroup<EpisodeRow>; isAdmin: boolean; onBulk: SeasonHeaderProps["onBulk"]; onPlay: (episode: EpisodeRow) => void; tint?: string; headerExtra?: ReactNode }) {
+function EpisodeShelf({ focusEpisodeId, group, isAdmin, onBulk, onPlay, tint, headerExtra }: { focusEpisodeId?: string; group: SeasonGroup<EpisodeRow>; isAdmin: boolean; onBulk: SeasonHeaderProps["onBulk"]; onPlay: (episode: EpisodeRow) => void; tint?: string; headerExtra?: ReactNode }) {
   const { progressByFile } = useEpisodePresentation();
   // Start on the next episode to watch; the summary follows remote focus and the pointer.
   const nextUp = group.episodes.find((episode) => episode.mediaFileId && !progressByFile.get(episode.mediaFileId)?.isWatched) ?? group.episodes[0];
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(focusEpisodeId ?? null);
   const active = group.episodes.find((episode) => episode.id === activeId) ?? nextUp;
   return (
     <section aria-label={`${group.label} episodes`} className="flex min-w-0 flex-col gap-3">
@@ -394,7 +398,7 @@ function EpisodeTile({ episode, onPlay, tint, active, nextUp, onActive }: { epis
   const targetClass = "poster-navigation absolute inset-0 z-10 rounded-tile outline-none";
   const focus = { onFocus: () => onActive(episode.id), onMouseEnter: () => onActive(episode.id) };
   return (
-    <article data-active={active ? "true" : undefined} className="poster-card episode-tile relative flex w-[calc(var(--poster-min)*1.75)] shrink-0 flex-col xl:w-[calc(var(--poster-max)*1.6)]" {...focus}>
+    <article data-row-id={episode.id} data-active={active ? "true" : undefined} className="poster-card episode-tile relative flex w-[calc(var(--poster-min)*1.75)] shrink-0 flex-col xl:w-[calc(var(--poster-max)*1.6)]" {...focus}>
       {playable ? (
         <button type="button" data-focusable data-nav-default={nextUp ? "" : undefined} className={targetClass} aria-label={`Play ${label}`} aria-disabled={playbackUnavailable ? true : undefined} aria-description={playbackUnavailable}
           onClick={() => { if (!playbackUnavailable) onPlay(episode); }} />

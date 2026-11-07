@@ -8,6 +8,7 @@ import { Segmented } from "glass-ux/segmented";
 import { parseAsStringEnum, useQueryState } from "nuqs";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
+import { TableToolbar } from "@/components/ui/TableToolbar";
 import { EntityChip } from "@/components/entities/EntityChip";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { Button } from "@/components/ui";
@@ -210,12 +211,14 @@ export function DownloadsPage() {
             onRetry={refetch}
             emptyMessage={preset === "all" ? "No downloads. Add a torrent or magnet link, or find a release from a movie or show page." : `Nothing ${PRESET_LABEL[preset].toLowerCase()}`}
             toolbar={
-              <div className="flex min-w-0 flex-1 items-center justify-end gap-3">
-                <div role="group" aria-label="Total transfer" className="flex shrink-0 items-center gap-3 text-body-sm text-foreground max-lg:hidden">
-                  <LiveStat icon={<IconArrowDown size="sm" />} label="Download" value={totals.down} data={rates.total.down} format={formatSpeed} tone="info" />
-                  <LiveStat icon={<IconArrowUp size="sm" />} label="Upload" value={totals.up} data={rates.total.up} format={formatSpeed} tone="success" />
-                </div>
-                <div className="flex min-w-0 flex-1 justify-end">
+              <TableToolbar
+                before={
+                  <div role="group" aria-label="Total transfer" className="me-1 flex shrink-0 items-center gap-3 text-body-sm text-foreground max-xl:hidden">
+                    <LiveStat width="w-28" icon={<IconArrowDown size="sm" />} label="Download" value={totals.down} data={rates.total.down} format={formatSpeed} tone="info" />
+                    <LiveStat width="w-28" icon={<IconArrowUp size="sm" />} label="Upload" value={totals.up} data={rates.total.up} format={formatSpeed} tone="success" />
+                  </div>
+                }
+                filter={
                   <Segmented<DownloadPreset>
                     aria-label="Show downloads"
                     size="sm"
@@ -223,10 +226,11 @@ export function DownloadsPage() {
                     onValueChange={(value) => void setPreset(value === "all" ? null : value)}
                     options={DOWNLOAD_PRESETS.map((value) => ({ value, label: downloads.counts[value] !== undefined ? `${PRESET_LABEL[value]} ${downloads.counts[value]}` : PRESET_LABEL[value] }))}
                   />
-                </div>
+                }
+              >
                 <Button size="sm" variant="ghost" isIconOnly aria-label="Refresh downloads" isPending={downloads.list.fetching} onPress={refetch}><IconRefresh /></Button>
                 {isAdmin ? <Button size="sm" variant="primary" className="shrink-0" onPress={() => setAdding(true)}><IconPlus /> <span className="max-sm:sr-only">Add torrent</span></Button> : null}
-              </div>
+              </TableToolbar>
             }
           />
       </RateContext.Provider>
