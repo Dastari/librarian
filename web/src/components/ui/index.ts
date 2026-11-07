@@ -19,7 +19,7 @@ export { MediaRow } from "./MediaRow";
 export { MetaLine } from "./MetaDot";
 export { PageHeader } from "./PageHeader";
 export { Panel } from "./Panel";
-export { PosterCard, type PosterCardProps } from "./PosterCard";
+export { PosterCard, PosterInTable, type PosterCardProps } from "./PosterCard";
 export { Section } from "./Section";
 export { SkeletonBlock, SkeletonCard, SkeletonGrid, SkeletonHero, SkeletonRow, SkeletonText } from "./Skeletons";
 export { StatusChip } from "./StatusChip";

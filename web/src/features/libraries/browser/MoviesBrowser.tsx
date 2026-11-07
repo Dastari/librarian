@@ -1,11 +1,12 @@
+import { createDataTableColumns, RelativeTime, TextCell } from "glass-ux/data-table";
 
 import { useNavigate } from "@tanstack/react-router";
-import { ActionContextMenu } from "glass-ux/actions";
 import { IconPlus } from "glass-ux/icons";
-import { IconMovie } from "@tabler/icons-react";
-import { useMemo, useState } from "react";
 
-import { Button, EmptyState, ErrorState, PosterCard, PosterGallery } from "@/components/ui";
+import { useCallback, useMemo, useState } from "react";
+
+import { Button, PosterCard } from "@/components/ui";
+import { MovieIdentity } from "@/features/media/MovieIdentity";
 import { useMovieEntity } from "@/features/media/useMovieEntity";
 import { ProviderSearchDialog } from "@/features/library-add/ProviderSearchDialog";
 import { usePlayer } from "@/features/player/usePlayer";
@@ -14,25 +15,19 @@ import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuse
 import { useServerTable } from "@/hooks/useServerTable";
 import { movieBackdrop, moviePoster } from "@/lib/artwork";
 import { useIsAdmin } from "@/lib/auth/useSession";
-import { formatRuntime } from "@/lib/format";
+import { formatRuntime, parseTimestamp } from "@/lib/format";
 import { LIBRARY_TYPES } from "@/lib/library-types";
 
-import { BrowserLetterRail, BrowserToolbar, type BrowserSortOption } from "./BrowserToolbar";
 import { useBrowserFilters, titleFilter } from "./useBrowserFilters";
+import { MediaBrowserTable } from "./MediaBrowserTable";
 import { useInfiniteConnection } from "./useInfiniteConnection";
 import { useLetterJump } from "./useLetterJump";
 
 type MovieRow = LibraryMoviesQuery["movies"]["edges"][number]["node"];
 
 const getRowId = (row: MovieRow) => row.id;
-const SORTS: readonly BrowserSortOption[] = [
-  { id: "title", desc: false, label: "Title" },
-  { id: "createdAt", desc: true, label: "Recently added" },
-  { id: "year", desc: true, label: "Newest releases" },
-  { id: "year", desc: false, label: "Oldest releases" },
-  { id: "runtime", desc: false, label: "Shortest" },
-  { id: "runtime", desc: true, label: "Longest" },
-];
+
+const column = createDataTableColumns<MovieRow>();
 
 export function MoviesBrowser({ libraryId }: { libraryId: string }) {
   const navigate = useNavigate();
@@ -73,6 +68,14 @@ export function MoviesBrowser({ libraryId }: { libraryId: string }) {
   const ids = useMemo(() => list.rows.map((row) => row.id), [list.rows]);
   const statuses = useContentStatuses("MOVIE", ids);
   const { actions, dialogs } = useMovieEntity<MovieRow>();
+  const columns = useMemo(() => column.columns([
+    column.accessor("title", { header: "Movie", width: 30, priority: 1, cardRole: "title", sortable: true, cell: ({ row }) => <MovieIdentity movie={row.original} status={contentStatusMeta(statuses, row.original.id)} /> }),
+    column.accessor("year", { header: "Year", width: 6, priority: 2, grow: false, sortable: true, sortDescFirst: true, cell: ({ row }) => <TextCell muted>{row.original.year ?? ""}</TextCell> }),
+    column.accessor("runtime", { header: "Length", width: 7, priority: 2, align: "end", grow: false, sortable: true, cell: ({ row }) => <TextCell muted>{row.original.runtime ? formatRuntime(row.original.runtime, "minutes") : ""}</TextCell> }),
+    column.display({ id: "certification", header: "Rating", width: 6, priority: 3, grow: false, cell: ({ row }) => <TextCell muted>{row.original.certification ?? ""}</TextCell> }),
+    column.display({ id: "quality", header: "Quality", width: 9, priority: 3, cell: ({ row }) => <TextCell muted>{row.original.mediaFile?.resolution ?? ""}</TextCell> }),
+    column.accessor("createdAt", { header: "Added", width: 8, priority: 3, sortable: true, sortDescFirst: true, cell: ({ row }) => <RelativeTime value={parseTimestamp(row.original.createdAt)} /> }),
+  ]), [statuses]);
 
   const play = (row: MovieRow) => {
     if (!row.mediaFileId) return;
@@ -80,64 +83,47 @@ export function MoviesBrowser({ libraryId }: { libraryId: string }) {
     void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: row.mediaFileId } });
   };
 
-  const filtered = Boolean(filters.debouncedQuery) || filters.availability !== "all";
-  const emptyState = (
-    <EmptyState
-      icon={IconMovie}
-      title={filtered ? "No movies match" : "No movies yet"}
-      description={filtered ? "Try clearing the filters." : "Scan the library folder or add a movie from TMDB."}
-      action={isAdmin && !filtered ? <Button variant="primary" onPress={() => setAdding(true)}><IconPlus size="md" /> Add movie</Button> : undefined}
-    />
-  );
+
+  const renderPoster = useCallback((row: MovieRow) => (
+      <PosterCard
+      title={row.title}
+      meta={[row.year, row.runtime ? formatRuntime(row.runtime, "minutes") : null].filter(Boolean).join(" · ")}
+      image={moviePoster(row.id)}
+      tint={LIBRARY_TYPES.movies.tintVar}
+      to="/movies/$movieId"
+      params={{ movieId: row.id }}
+      status={contentStatusMeta(statuses, row.id)}
+      onPlay={row.mediaFileId ? () => play(row) : undefined}
+      />
+  ), [statuses, play]);
 
   return (
-    <div ref={jump.containerRef} className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 sm:gap-4">
-      <BrowserToolbar
-        query={filters.query}
-        onQueryChange={filters.setQuery}
-        letter={jump.active}
-        onLetterChange={jump.jump}
-        availability={filters.availability}
-        onAvailabilityChange={filters.setAvailability}
-        sort={{ options: SORTS, value: table.sorting, onChange: table.setSorting }}
-        total={list.totalCount}
-        placeholder="Filter movies"
-        trailing={isAdmin ? <Button variant="primary" size="sm" onPress={() => setAdding(true)}><IconPlus size="md" /> Add</Button> : null}
-      />
-      <div className="flex min-h-0 min-w-0 flex-1 gap-3 sm:gap-4">
-        <PosterGallery<MovieRow>
-          label="Movies"
-          noun="movies"
-          rows={list.rows}
-          getRowId={getRowId}
-          loading={list.loading}
-          refetching={list.fetching}
-          queryKey={list.queryKey}
-          totalCount={list.totalCount}
-          infinite={{ hasMore: list.hasMore, loadMore: list.loadMore, loadingMore: list.loadingMore }}
-          error={list.error && list.rows.length === 0 ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : undefined}
-          emptyState={emptyState}
-          renderCard={(row) => (
-            <ActionContextMenu set={actions} targets={[row]} label={`Actions for ${row.title}`}>
-              <div className="min-w-0">
-                <PosterCard
-                  title={row.title}
-                  meta={[row.year, row.runtime ? formatRuntime(row.runtime, "minutes") : null].filter(Boolean).join(" · ")}
-                  image={moviePoster(row.id)}
-                  tint={LIBRARY_TYPES.movies.tintVar}
-                  to="/movies/$movieId"
-                  params={{ movieId: row.id }}
-                  status={contentStatusMeta(statuses, row.id)}
-                  onPlay={row.mediaFileId ? () => play(row) : undefined}
-                />
-              </div>
-            </ActionContextMenu>
-          )}
-        />
-        <BrowserLetterRail letter={jump.active} onLetterChange={jump.jump} />
-      </div>
+    <>
+    <MediaBrowserTable<MovieRow>
+      persistKey="movies"
+      label="Movies"
+      noun={{ one: "movie", other: "movies" }}
+      placeholder="Filter movies"
+      columns={columns}
+      list={list}
+      sorting={table.sorting}
+      onSortingChange={table.setSorting}
+      query={filters.query}
+      onQueryChange={filters.setQuery}
+      availability={filters.availability}
+      onAvailabilityChange={filters.setAvailability}
+      getRowId={getRowId}
+      getRowLabel={(row) => row.title}
+      renderPoster={renderPoster}
+      actions={actions}
+      onRowOpen={(row) => void navigate({ to: "/movies/$movieId", params: { movieId: row.id } })}
+      emptyMessage="No movies yet. Scan the library folder or add a movie from TMDB."
+      emptyAction={isAdmin ? <Button variant="primary" onPress={() => setAdding(true)}><IconPlus size="md" /> Add movie</Button> : undefined}
+      trailing={isAdmin ? <Button variant="primary" size="sm" onPress={() => setAdding(true)}><IconPlus size="md" /> Add</Button> : null}
+      letter={{ active: jump.active, jump: jump.jump, containerRef: jump.containerRef }}
+    />
       {dialogs}
       <ProviderSearchDialog kind="movie" libraryId={libraryId} isOpen={adding} onOpenChange={setAdding} onAdded={() => void list.refetch()} />
-    </div>
+    </>
   );
 }

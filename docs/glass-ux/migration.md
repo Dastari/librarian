@@ -3,6 +3,75 @@
 Upgrade steps between releases. Each section lists the changes that need code edits first,
 then behaviour changes to review. The [changelog](../CHANGELOG.md) lists everything else.
 
+## 0.18.0 → 0.19.0
+
+No code edits are needed.
+
+Behaviour to review:
+
+- `DataTable`: a table with a sortable column now shows a sort menu in the toolbar while cards show,
+  including on phones. If you already offer your own sort control there, pass `cardSort={false}`.
+- `DataTable`: while cards show, the columns menu moves ahead of Export and `toolbar`. A test that finds
+  these by position needs updating.
+- Flat style: an off `Switch` and a `Slider`'s thumb now show on every surface. Remove any override you
+  added for this. Screenshot tests of these controls in Flat will change.
+
+New props:
+
+- `DataTable.view` holds `"table"` or `"cards"` at any width. The default `"auto"` keeps today's
+  behaviour. If you force a view with `cardBreakpoint={Infinity}` or `{0}`, use this instead.
+- `DataTable.cardMinWidth`, `cardMaxWidth`, `renderCard` and `renderCardSkeleton`: a grid of cards and
+  your own card design. See [Choose a card view](data-filters.md#choose-a-card-view).
+- `DataTable.cardSort` turns the sort menu off.
+- `FileDialog`: `mode="folder"` with `onChoose`, and `places` for shortcuts to common folders in every
+  mode.
+- `TopologyCanvas.listFlush` removes the list view's inset. If you override `.fa-topology-list` to do
+  this, pass the prop and delete the override.
+
+## 0.17.1 → 0.18.0
+
+Breaking:
+
+- `addressField.lookupStatusError` is gone. If you override it through `configureMessages` or a language
+  pack, remove the override; `addressLookupFailed` is the message for that error.
+
+```ts
+// Before
+configureMessages({ addressField: { lookupStatusError: (status) => `Lookup failed: ${status}` } })
+// After
+configureMessages({ addressField: { addressLookupFailed: (status) => `Lookup failed: ${status}` } })
+```
+
+Behaviour to review:
+
+- `Toolbar.Group` with a choice folds tool by tool, not as a whole, so part of it can show beside More.
+- `Menu`: rows with no icon line up with rows that have one, so such a row starts further in. A menu with
+  no icons or ticks is unchanged.
+- `AddressInput` and `AddressField`: a failed lookup shows new wording, and a line under the field. Tests
+  that look for "Search failed" there need the new text.
+- `loadMessagePack` now runs its loader even if a pack for the language is already registered, and the
+  packs merge. To avoid the download, do not call it for a language you register yourself.
+- Language packs: wording changed in all eleven. Update tests that assert translated strings.
+- `formatRelative` from `glass-ux/data-table`: up to 20 seconds ahead now reads "just now".
+
+New props: `Histogram.series` and `blend`; `BarChart.layout="overlay"`, `blend` and `BarSeries.color`;
+`Autocomplete.errorText`; `OptionStatus.errorText`.
+
+## 0.17.0 → 0.17.1
+
+No code edits are needed.
+
+Behaviour to review:
+
+- `DataTable`: with rows selected on a table with pages, the pager stays in the Tab order after the
+  bar's actions, and the status text next to it hides. On a narrow table the footer takes two lines.
+- `registerMessagePack`: packs for one language merge instead of replacing. If you relied on a later
+  pack removing an earlier pack's messages, that no longer happens.
+- `SearchTrigger`: a custom `placeholder` now also becomes its accessible name, so tests that find it
+  by the default name need that placeholder or their own `aria-label`.
+- A link inside a `ContextMenu.Trigger`: the click that follows a long press which opened the menu no
+  longer reaches the link's `onClick`.
+
 ## 0.16.2 → 0.17.0
 
 Baked glass rendering has been removed. It had to return to the live blur whenever a scroller moved
