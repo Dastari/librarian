@@ -29,7 +29,7 @@ const SORTS: readonly BrowserSortOption[] = [
 export function AudiobooksBrowser({ libraryId }: { libraryId: string }) {
   const isAdmin = useIsAdmin();
   const filters = useBrowserFilters();
-  const table = useServerTable<AudiobookOrderByInput>({ persistKey: `audiobooks.${libraryId}`, defaultSorting: [{ id: "title", desc: false }], sortMap: { title: "sortTitle" } });
+  const table = useServerTable<AudiobookOrderByInput>({ persistKey: `audiobooks.${libraryId}`, defaultSorting: [{ id: "title", desc: false }], sortMap: { title: "title" } });
   const [adding, setAdding] = useState(false);
 
   const where = useMemo<AudiobookWhereInput>(() => {

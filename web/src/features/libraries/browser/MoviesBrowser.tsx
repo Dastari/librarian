@@ -37,7 +37,7 @@ export function MoviesBrowser({ libraryId }: { libraryId: string }) {
   const player = usePlayer();
   const isAdmin = useIsAdmin();
   const filters = useBrowserFilters();
-  const table = useServerTable<MovieOrderByInput>({ persistKey: `movies.${libraryId}`, defaultSorting: [{ id: "title", desc: false }], sortMap: { title: "sortTitle" } });
+  const table = useServerTable<MovieOrderByInput>({ persistKey: `movies.${libraryId}`, defaultSorting: [{ id: "title", desc: false }], sortMap: { title: "title" } });
   const [adding, setAdding] = useState(false);
 
   const where = useMemo<MovieWhereInput>(() => {
