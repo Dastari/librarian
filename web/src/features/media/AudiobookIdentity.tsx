@@ -1,5 +1,5 @@
 import type { ActionSet } from "glass-ux/actions";
-import { EntityIdentity, type EntityState, type EntityTierProp } from "glass-ux/entity";
+import { EntityIdentity, type EntityIdentityProps, type EntityState, type EntityTierProp } from "glass-ux/entity";
 import type { ReactNode } from "react";
 
 import { autoDownloadMeta } from "@/features/acquisition/mode";
@@ -33,6 +33,22 @@ export function audiobookState(book: AudiobookEntity): EntityState {
   return book.autoDownloadMode === "NONE" ? { id: "missing", label: "No files yet", tone: "neutral" } : { id: "fetching", label: mode.label, tone: "info" };
 }
 
+/** What AudiobookIdentity draws, for surfaces that take an identity's props (a settings dialog's header). */
+export function audiobookIdentityProps<T extends AudiobookEntity>(book: T, { actions }: {
+  actions?: ActionSet<T>;
+} = {}): EntityIdentityProps<T> {
+  return {
+    kind: ENTITY_KINDS.audiobook.noun,
+    name: book.title,
+    icon: <ENTITY_KINDS.audiobook.icon />,
+    image: <img src={sizedArtwork(audiobookCover(book), 120)} alt="" />,
+    state: audiobookState(book),
+    facts: [book.authorName ?? "", book.narratorName ? `read by ${book.narratorName}` : "", book.totalDurationSecs ? formatRuntime(book.totalDurationSecs) : ""],
+    target: book,
+    actions,
+  };
+}
+
 /** A book wherever it's named in a list or a heading: its cover or glyph, who wrote and read it, how long. */
 export function AudiobookIdentity<T extends AudiobookEntity>({ book, tier = "row", actions, headerActions, heading, className, onOpen }: {
   book: T;
@@ -45,17 +61,10 @@ export function AudiobookIdentity<T extends AudiobookEntity>({ book, tier = "row
 }) {
   return (
     <EntityIdentity
+      {...audiobookIdentityProps(book, { actions })}
       tier={tier}
       heading={heading}
       className={className}
-      kind={ENTITY_KINDS.audiobook.noun}
-      name={book.title}
-      icon={<ENTITY_KINDS.audiobook.icon />}
-      image={<img src={sizedArtwork(audiobookCover(book), 120)} alt="" />}
-      state={audiobookState(book)}
-      facts={[book.authorName ?? "", book.narratorName ? `read by ${book.narratorName}` : "", book.totalDurationSecs ? formatRuntime(book.totalDurationSecs) : ""]}
-      target={book}
-      actions={actions}
       slots={headerActions ? { actions: headerActions } : undefined}
       onOpen={onOpen}
     />

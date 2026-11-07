@@ -11,6 +11,7 @@ import { TableToolbar } from "@/components/ui/TableToolbar";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { useTableSelection } from "@/hooks/useTableSelection";
 import { EntityChip } from "@/components/entities/EntityChip";
+import { refCellEntity } from "@/lib/entities/resolver";
 import { Button, Dialog } from "@/components/ui";
 import { usePrintMode } from "@/hooks/usePrintMode";
 import { tableUrlFilters, useTableUrlState } from "@/hooks/useTableUrlState";
@@ -56,6 +57,7 @@ function issueColumns() {
     }),
     column.display({
       id: "file", header: "File", width: 18, priority: 2, cardRole: "subtitle",
+      entity: (row) => refCellEntity(row.mediaFile ? mediaFileRef(row.mediaFile) : null),
       cell: ({ row }) => (row.original.mediaFile ? <EntityChip entity={mediaFileRef(row.original.mediaFile)} /> : <TextCell muted>—</TextCell>),
     }),
     column.accessor((row) => row.message, { id: "message", header: "Details", width: 26, priority: 4, cardRole: "hidden", cell: ({ row }) => <TextCell muted>{row.original.message}</TextCell> }),

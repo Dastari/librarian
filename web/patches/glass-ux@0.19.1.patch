@@ -1,8 +1,8 @@
 diff --git a/dist/ui/data-table/data-table.js b/dist/ui/data-table/data-table.js
-index 9d48d37..55d2bd1 100644
+index bb9b65e..9ca6a1c 100644
 --- a/dist/ui/data-table/data-table.js
 +++ b/dist/ui/data-table/data-table.js
-@@ -1343,7 +1343,7 @@ export function DataTable(props) {
+@@ -1349,7 +1349,7 @@ export function DataTable(props) {
      const offerExpandAll = expandable && props.expandAll !== false && expandTargets.length > 0;
      const expandAllControl = useMemo(() => offerExpandAll ? (_jsx(ExpandAllButton, { open: allOpen, label: expandAllLabel, onToggle: () => setAllOpen(!allOpen) })) : undefined, [offerExpandAll, allOpen, expandAllLabel, setAllOpen]);
      const expanderColumn = expandable
@@ -11,7 +11,7 @@ index 9d48d37..55d2bd1 100644
              visibleColumns[0])?.id
          : undefined;
      const commitWidth = useCallback((columnId, width) => {
-@@ -2188,7 +2188,7 @@ export function DataTable(props) {
+@@ -2226,7 +2226,7 @@ export function DataTable(props) {
                                                      : totalRows + 1, "aria-colcount": colCount, "aria-multiselectable": selectable || undefined, "aria-busy": loading ||
                                                  refetching ||
                                                  Boolean(infinite?.loadingMore) ||
@@ -34,7 +34,7 @@ index e2f0e69..f9ac317 100644
      latest.current = { infinite, batch, refetching };
      const inFlight = useRef(false);
 diff --git a/dist/ui/data-table/types.d.ts b/dist/ui/data-table/types.d.ts
-index e8905c1..a80d2bc 100644
+index 67d1c8d..71aa8a7 100644
 --- a/dist/ui/data-table/types.d.ts
 +++ b/dist/ui/data-table/types.d.ts
 @@ -71,6 +71,8 @@ export interface CursorPagination {
@@ -69,10 +69,10 @@ index 4a37e12..b104993 100644
  function CompactTier({ parts, dom }) {
      const { name, title, kind, icon, image, portrait, state, count, facts, actions, targets, href, onOpen, heading = "h2", slots } = parts;
 diff --git a/dist/ui/entity-settings/entity-settings-dialog.d.ts b/dist/ui/entity-settings/entity-settings-dialog.d.ts
-index 9fcc932..1b6f58e 100644
+index d65e3e1..e4d31a1 100644
 --- a/dist/ui/entity-settings/entity-settings-dialog.d.ts
 +++ b/dist/ui/entity-settings/entity-settings-dialog.d.ts
-@@ -32,6 +32,8 @@ export interface EntitySettingsTab {
+@@ -33,6 +33,8 @@ export interface EntitySettingsTab {
      label: string;
      /** Pass the icon without a size. */
      icon?: ReactNode;
@@ -81,38 +81,11 @@ index 9fcc932..1b6f58e 100644
      /**
       * The form fields the tab edits, as names or prefixes ("snmp" covers "snmp.port"). They
       * drive the tab's dots: unsaved changes, and errors after a failed save. A tab that acts
-@@ -61,6 +63,8 @@ export interface EntitySettingsDialogProps {
-     /** Called with the `value` of the tab the person selects. Pair with `tab` to control it; without `tab` the dialog tracks the tab itself. */
-     onTabChange?: (tab: string) => void;
-     /** The entity's identity tile: its glyph or photo with the state dot. */
-+    /** The entity's own identity, with its actions, in place of `media`, `title` and `subtitle`. Name the dialog with `entityName`. */
-+    identity?: ReactNode;
-     media?: ReactNode;
-     /** Default "Settings". */
-     title?: ReactNode;
 diff --git a/dist/ui/entity-settings/entity-settings-dialog.js b/dist/ui/entity-settings/entity-settings-dialog.js
-index 142a6bf..e803570 100644
+index 1de874d..e6ab32b 100644
 --- a/dist/ui/entity-settings/entity-settings-dialog.js
 +++ b/dist/ui/entity-settings/entity-settings-dialog.js
-@@ -4,7 +4,7 @@ import { useMessages } from "../../lib/i18n/index.js";
- import { entitySettingsMessages } from "./messages.js";
- import { useStore } from "@tanstack/react-form";
- import { useCallback, useEffect, useRef, useState } from "react";
--import { IconLock, IconRefresh, IconWarning } from "../../icons/generated/icons.js";
-+import { IconClose, IconLock, IconRefresh, IconWarning } from "../../icons/generated/icons.js";
- import { ActionButton, Button } from "../button/index.js";
- import { feedbackHold } from "../../lib/motion.js";
- import { Dialog, SettingsSections, useDialogGuard } from "../dialog/index.js";
-@@ -56,7 +56,7 @@ function focusFirstInvalidIn(panel) {
-  *   `confirmOnCancel` asks first too.
-  * - On phones it is a bottom sheet; the rail becomes chips, or a picker past six tabs.
-  */
--export function EntitySettingsDialog({ open, onOpenChange, confirmOnCancel = false, form, tabs, tab, defaultTab, onTabChange, media, title: titleProp, subtitle, entityName, onSaveError, onSaved, footerStart, size = "lg", preview = false, loading = false, saveDisabledReason, privileged = [], onVerify, onReload, }) {
-+export function EntitySettingsDialog({ identity, open, onOpenChange, confirmOnCancel = false, form, tabs, tab, defaultTab, onTabChange, media, title: titleProp, subtitle, entityName, onSaveError, onSaved, footerStart, size = "lg", preview = false, loading = false, saveDisabledReason, privileged = [], onVerify, onReload, }) {
-     const messages = useMessages(entitySettingsMessages);
-     const title = titleProp ?? messages.settings;
-     const [innerTab, setInnerTab] = useState(defaultTab ?? tabs[0]?.value ?? "");
-@@ -199,6 +199,7 @@ export function EntitySettingsDialog({ open, onOpenChange, confirmOnCancel = fal
+@@ -201,6 +201,7 @@ export function EntitySettingsDialog({ open, onOpenChange, confirmOnCancel = fal
          value: entry.value,
          label: entry.label,
          icon: entry.icon,
@@ -120,22 +93,6 @@ index 142a6bf..e803570 100644
          marker: markers[entry.value],
          content: loading ? (_jsx(TabSkeleton, {})) : (_jsx("div", { className: "fa-form-stack fa-entity-settings-tab", "data-settings-tab": entry.value, children: entry.content })),
      }));
-@@ -212,7 +213,7 @@ export function EntitySettingsDialog({ open, onOpenChange, confirmOnCancel = fal
-                 event.preventDefault();
-                 event.stopPropagation();
-                 void save();
--            }, children: [_jsx("div", { ref: rootRef, hidden: true }), _jsx(Dialog.Header, { media: media, title: title, subtitle: subtitle }), _jsx(SettingsSections, { sections: sections, section: current, onSectionChange: select, label: entityName ? messages.entitySettings(entityName) : messages.settingsSections, keepMounted: true }), _jsxs(Dialog.Footer, { start: conflictNotice ?? footerStart, children: [_jsxs(Button, { type: "button", onClick: () => {
-+            }, children: [_jsx("div", { ref: rootRef, hidden: true }), identity ? _jsxs("header", { className: "fa-dialog-header", children: [_jsx("div", { style: { flex: "1 1 auto", minWidth: 0 }, children: identity }), _jsx(Dialog.Close, { render: _jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconClose, {}), "aria-label": messages.cancel }) })] }) : _jsx(Dialog.Header, { media: media, title: title, subtitle: subtitle }), _jsx(SettingsSections, { sections: sections, section: current, onSectionChange: select, label: entityName ? messages.entitySettings(entityName) : messages.settingsSections, keepMounted: true }), _jsxs(Dialog.Footer, { start: conflictNotice ?? footerStart, children: [_jsxs(Button, { type: "button", onClick: () => {
-                                 // Through the guard: a dirty form asks first, and discarding resets it.
-                                 if (confirmOnCancel)
-                                     return guard.rootProps.onOpenChange(false);
-@@ -222,5 +223,5 @@ export function EntitySettingsDialog({ open, onOpenChange, confirmOnCancel = fal
-     if (preview) {
-         return (_jsxs(Dialog.Preview, { size: size, kind: "settings", children: [body, guard.confirm] }));
-     }
--    return (_jsx(Dialog.Root, { ...guard.rootProps, children: _jsxs(Dialog.Popup, { size: size, kind: "settings", initialFocus: () => rootRef.current?.closest(".fa-dialog")?.querySelector('[role="tab"][aria-selected="true"]') ?? true, children: [body, guard.confirm] }) }));
-+    return (_jsx(Dialog.Root, { ...guard.rootProps, children: _jsxs(Dialog.Popup, { "aria-label": identity ? entityName : undefined, size: size, kind: "settings", initialFocus: () => rootRef.current?.closest(".fa-dialog")?.querySelector('[role="tab"][aria-selected="true"]') ?? true, children: [body, guard.confirm] }) }));
- }
 diff --git a/dist/ui/media-player/controller.js b/dist/ui/media-player/controller.js
 index 5e1266d..2591c5f 100644
 --- a/dist/ui/media-player/controller.js

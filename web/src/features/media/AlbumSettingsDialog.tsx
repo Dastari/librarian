@@ -1,24 +1,23 @@
 import { useMutation } from "@apollo/client/react";
 import { useNavigate } from "@tanstack/react-router";
-import { ActionBar } from "glass-ux/actions";
 import { EntitySettingsDialog, type EntitySettingsTab } from "glass-ux/entity-settings";
 import { formBehaviour, useAppForm } from "glass-ux/form";
 import { IconClock, IconDownload, IconFile, IconInfo, IconSettings, IconTrash } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { DetailGrid, DetailTile } from "@/components/entities/EntityDetailDialog";
 import { Button, ConfirmDialog } from "@/components/ui";
 import { FilesBrowser } from "@/features/libraries/browser/FilesBrowser";
 import { AlbumDetailDocument, EntityAlbumDeleteDocument, EntityAlbumUpdateDocument, type AlbumDetailQuery } from "@/graphql/generated/graphql";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { formatBytes, formatDateTime, formatRuntime } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+import { withoutAction } from "@/lib/actions/withoutAction";
 
-import { AlbumIdentity } from "./AlbumIdentity";
+import { albumIdentityProps } from "./AlbumIdentity";
 import { AutoDownloadField, DownloadSettingsFields } from "./entity/DownloadSettings";
 import { changedFields, yearValue } from "./entity/metadataInput";
 import { MetadataTagsField, MetadataTextField } from "./entity/MetadataFields";
@@ -74,7 +73,6 @@ function LoadedAlbumSettings({ album, open, onOpenChange, chosenTab, onTabChange
 }) {
   const navigate = useNavigate();
   const isAdmin = useIsAdmin();
-  const narrow = useMediaQuery("(max-width: 39.99rem)");
   const tab = isAdmin || READ_ONLY_TABS.includes(chosenTab) ? chosenTab : READ_ONLY_TABS[0]!;
   const files = useTitleFiles("album", album.id, !open);
   const [update] = useMutation(EntityAlbumUpdateDocument);
@@ -104,6 +102,7 @@ function LoadedAlbumSettings({ album, open, onOpenChange, chosenTab, onTabChange
   useEffect(() => { if (open) form.reset(valuesOf(album)); }, [open, album.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { actions, dialogs } = useAlbumActions<Album>({ settings: (_, next) => onTabChange(next ?? "general"), open: false });
+  const headerActions = useMemo(() => withoutAction(actions, "settings", "remove"), [actions]);
   const onRemove = async () => {
     try {
       assertSuccess((await remove({ variables: { id: album.id } })).data?.deleteAlbum, "Could not remove the album");
@@ -181,16 +180,7 @@ function LoadedAlbumSettings({ album, open, onOpenChange, chosenTab, onTabChange
         onOpenChange={onOpenChange}
         form={form}
         size="xl"
-        entityName={album.name}
-        identity={(
-          <AlbumIdentity
-            tier={narrow ? "compact" : "header"}
-            heading="h2"
-            album={album}
-            actions={actions}
-            headerActions={narrow ? undefined : <ActionBar set={actions} targets={[album]} label={`Actions for ${album.name}`} maxButtons={1} />}
-          />
-        )}
+        identity={albumIdentityProps(album, { actions: headerActions })}
         tabs={tabs}
         tab={tab}
         onTabChange={(next) => onTabChange(next as AlbumSettingsTab)}

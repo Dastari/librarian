@@ -10,6 +10,7 @@ import { TableToolbar } from "@/components/ui/TableToolbar";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { useTableSelection } from "@/hooks/useTableSelection";
 import { EntityChip } from "@/components/entities/EntityChip";
+import { refCellEntity } from "@/lib/entities/resolver";
 import { Button, Dialog } from "@/components/ui";
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
 import { EntityLibraryListDocument, EntityNotificationUpdateDocument } from "@/graphql/generated/graphql";
@@ -18,7 +19,7 @@ import { usePrintMode } from "@/hooks/usePrintMode";
 import { tableUrlFilters, useTableUrlState } from "@/hooks/useTableUrlState";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { ENTITY_KINDS, type EntityKindName } from "@/lib/entities/kinds";
-import { humanize } from "@/lib/entities/linked";
+import { humanize, libraryRef } from "@/lib/entities/linked";
 import { notificationDecision, notificationLevel, notificationSubjects, NOTIFICATION_LEVELS } from "@/lib/entities/notification";
 import { parseTimestamp } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -55,6 +56,7 @@ function columnsFor(libraries: Array<{ id: string; name: string }>) {
     }),
     column.display({
       id: "subject", header: "About", width: 16, priority: 2, cardRole: "subtitle",
+      entity: (row) => refCellEntity(notificationSubjects(row)[0]),
       cell: ({ row }) => { const subject = notificationSubjects(row.original)[0]; return subject ? <EntityChip entity={subject} /> : <TextCell muted>—</TextCell>; },
     }),
     column.accessor((row) => row.message, { id: "message", header: "Details", width: 26, priority: 5, cardRole: "hidden", cell: ({ row }) => <TextCell muted>{row.original.message}</TextCell> }),
@@ -65,6 +67,7 @@ function columnsFor(libraries: Array<{ id: string; name: string }>) {
     }),
     column.accessor((row) => row.libraryId ?? "", {
       id: "library", header: "Library", width: 9, priority: 5, cardRole: "hidden",
+      entity: (row) => refCellEntity(row.library ? libraryRef(row.library) : null),
       filter: filters.options({ field: "libraryId", nullable: false, operators: ["in"], options: libraries.map((library) => ({ value: library.id, label: library.name })) }),
       cell: ({ row }) => <TextCell muted>{row.original.library?.name ?? "—"}</TextCell>,
     }),

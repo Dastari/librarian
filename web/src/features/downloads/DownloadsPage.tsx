@@ -10,6 +10,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { TableToolbar } from "@/components/ui/TableToolbar";
 import { EntityChip } from "@/components/entities/EntityChip";
+import { refCellEntity } from "@/lib/entities/resolver";
+import { libraryRef } from "@/lib/entities/linked";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { Button } from "@/components/ui";
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
@@ -95,6 +97,7 @@ function columnsFor(libraries: Array<{ id: string; name: string }>) {
     }),
     column.display({
       id: "target", header: "For", width: 14, priority: 2, cardRole: "subtitle",
+      entity: (row) => refCellEntity(torrentTarget(row.record)),
       cell: ({ row }) => {
         const target = torrentTarget(row.original.record);
         if (!target) return <TextCell muted>Not linked</TextCell>;
@@ -108,6 +111,7 @@ function columnsFor(libraries: Array<{ id: string; name: string }>) {
     }),
     column.accessor((row) => row.record.libraryId ?? "none", {
       id: "library", header: "Library", width: 9, priority: 5, cardRole: "hidden",
+      entity: (row) => refCellEntity(row.record.library ? libraryRef(row.record.library) : null),
       filter: filters.options({ field: "libraryId", nullable: false, operators: ["in"], options: [{ value: "none", label: "Not linked" }, ...libraries.map((library) => ({ value: library.id, label: library.name }))] }),
       cell: ({ row }) => <TextCell muted>{row.original.record.library?.name ?? "Not linked"}</TextCell>,
     }),

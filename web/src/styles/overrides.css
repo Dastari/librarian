@@ -8,6 +8,13 @@ video:focus, audio:focus { outline: none; }
 .torrent-detail .fa-dt-frame::before { display: none; }
 .torrent-detail .fa-dt[data-scrolled-bottom] .fa-dt-footer { box-shadow: none; }
 
+/* On a phone a record's actions take their own line under its identity and the close button. */
+@media (max-width: 39.99rem) {
+  .entity-detail-header { flex-wrap: wrap; }
+  .entity-detail-header .fa-dialog-identity { flex-basis: calc(100% - 3rem); }
+  .entity-detail-header .fa-dialog-header-actions { order: 1; width: 100%; }
+}
+
 /* A settings dialog's table takes the whole pane; its fields keep the form's reading width. */
 .fa-entity-settings-tab:has(.fa-dt) { max-width: none; }
 /* A table in a settings tab fills what the dialog leaves it and is the only thing that scrolls, so

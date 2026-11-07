@@ -1,6 +1,5 @@
 import { useMutation } from "@apollo/client/react";
 import { useNavigate } from "@tanstack/react-router";
-import { ActionBar } from "glass-ux/actions";
 import { EntitySettingsDialog, type EntitySettingsTab } from "glass-ux/entity-settings";
 import { formBehaviour, useAppForm } from "glass-ux/form";
 import { IconClock, IconFile, IconFolder, IconHistory, IconSettings, IconTrash, IconWarning } from "glass-ux/icons";
@@ -10,7 +9,6 @@ import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { Button, ConfirmDialog } from "@/components/ui";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
 import {
   EntityLibraryDeleteDocument,
   EntityLibraryUpdateDocument,
@@ -21,10 +19,11 @@ import {
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+import { withoutAction } from "@/lib/actions/withoutAction";
 
 import { FilesBrowser } from "./browser/FilesBrowser";
 import { FolderField } from "./FolderField";
-import { LibraryIdentity } from "./LibraryIdentity";
+import { libraryIdentityProps } from "./LibraryIdentity";
 import { previewNamingPattern } from "./namingPreview";
 import { ScansPanel } from "./ScansPanel";
 import { useLibraryActions } from "./useLibraryActions";
@@ -70,7 +69,6 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosen
 }) {
   const navigate = useNavigate();
   const isAdmin = useIsAdmin();
-  const narrow = useMediaQuery("(max-width: 39.99rem)");
   const tab = isAdmin || READ_ONLY_TABS.includes(chosenTab) ? chosenTab : READ_ONLY_TABS[0]!;
   const [update] = useMutation(EntityLibraryUpdateDocument);
   const [remove, { loading: deleting }] = useMutation(EntityLibraryDeleteDocument);
@@ -93,6 +91,7 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosen
   useEffect(() => { if (open) form.reset(valuesOf(library)); }, [open, library.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const actions = useLibraryActions<LibraryFieldsFragment>({ settings: (_, next) => onTabChange(next ?? "general"), open: false });
+  const headerActions = useMemo(() => withoutAction(actions, "settings", "remove"), [actions]);
   const onDelete = async () => {
     try {
       const { data } = await remove({ variables: { id: library.id } });
@@ -177,18 +176,7 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosen
         onOpenChange={onOpenChange}
         form={form}
         size="xl"
-        entityName={library.name}
-        identity={(
-          <LibraryIdentity
-            tier={narrow ? "compact" : "header"}
-            heading="h2"
-            library={library}
-            items={items}
-            issues={issues}
-            actions={actions}
-            headerActions={narrow ? undefined : <ActionBar set={actions} targets={[library]} label={`Actions for ${library.name}`} maxButtons={1} />}
-          />
-        )}
+        identity={libraryIdentityProps(library, { items, issues, actions: headerActions })}
         tabs={tabs}
         tab={tab}
         onTabChange={(next) => onTabChange(next as LibrarySettingsTab)}

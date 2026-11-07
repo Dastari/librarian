@@ -1,28 +1,27 @@
 import { useMutation } from "@apollo/client/react";
 import { useNavigate } from "@tanstack/react-router";
-import { ActionBar } from "glass-ux/actions";
 import { EntitySettingsDialog, type EntitySettingsTab } from "glass-ux/entity-settings";
 import { formBehaviour, useAppForm } from "glass-ux/form";
 import { IconClock, IconDownload, IconFile, IconInfo, IconSettings, IconTag, IconTrash } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { DetailGrid, DetailTile } from "@/components/entities/EntityDetailDialog";
 import { Button, ConfirmDialog, EmptyState } from "@/components/ui";
 import { EntityMovieDeleteDocument, EntityMovieUpdateDocument, MovieDetailDocument, type MovieDetailQuery } from "@/graphql/generated/graphql";
 import { contentStatusMeta, useContentStatuses } from "@/hooks/useContentStatuses";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { formatDateTime, formatRuntime } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+import { withoutAction } from "@/lib/actions/withoutAction";
 
 import { DownloadSettingsFields } from "./entity/DownloadSettings";
 import { changedFields, yearValue } from "./entity/metadataInput";
 import { MetadataTagsField, MetadataTextareaField, MetadataTextField } from "./entity/MetadataFields";
 import { FileDetails } from "./FileDetails";
-import { MovieIdentity } from "./MovieIdentity";
+import { movieIdentityProps } from "./MovieIdentity";
 import { useMovieActions, type MovieSettingsTab } from "./useMovieActions";
 
 type Movie = NonNullable<MovieDetailQuery["movie"]>;
@@ -80,7 +79,6 @@ function LoadedMovieSettings({ movie, open, onOpenChange, chosenTab, onTabChange
 }) {
   const navigate = useNavigate();
   const isAdmin = useIsAdmin();
-  const narrow = useMediaQuery("(max-width: 39.99rem)");
   const tab = isAdmin || READ_ONLY_TABS.includes(chosenTab) ? chosenTab : READ_ONLY_TABS[0]!;
   const statuses = useContentStatuses("MOVIE", [movie.id]);
   const [update] = useMutation(EntityMovieUpdateDocument);
@@ -111,6 +109,7 @@ function LoadedMovieSettings({ movie, open, onOpenChange, chosenTab, onTabChange
   useEffect(() => { if (open) form.reset(valuesOf(movie)); }, [open, movie.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { actions, dialogs } = useMovieActions<Movie>({ settings: (_, next) => onTabChange(next ?? "general"), open: false });
+  const headerActions = useMemo(() => withoutAction(actions, "settings", "remove"), [actions]);
   const onRemove = async () => {
     try {
       assertSuccess((await remove({ variables: { id: movie.id } })).data?.deleteMovie, "Could not remove the movie");
@@ -206,17 +205,7 @@ function LoadedMovieSettings({ movie, open, onOpenChange, chosenTab, onTabChange
         onOpenChange={onOpenChange}
         form={form}
         size="xl"
-        entityName={movie.title}
-        identity={(
-          <MovieIdentity
-            tier={narrow ? "compact" : "header"}
-            heading="h2"
-            movie={movie}
-            status={contentStatusMeta(statuses, movie.id)}
-            actions={actions}
-            headerActions={narrow ? undefined : <ActionBar set={actions} targets={[movie]} label={`Actions for ${movie.title}`} maxButtons={1} />}
-          />
-        )}
+        identity={movieIdentityProps(movie, { status: contentStatusMeta(statuses, movie.id), actions: headerActions })}
         tabs={tabs}
         tab={tab}
         onTabChange={(next) => onTabChange(next as MovieSettingsTab)}

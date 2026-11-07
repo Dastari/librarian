@@ -8,6 +8,7 @@ import { TruncatedText } from "glass-ux/truncated-text";
 import { createContext, useContext, useMemo, useState } from "react";
 
 import { EntityChip } from "@/components/entities/EntityChip";
+import { refCellEntity } from "@/lib/entities/resolver";
 import { Artwork } from "@/components/ui";
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { TorrentFilesDetailDocument, TorrentMatchPreviewDocument, type TorrentFilesDetailQuery, type TorrentMatchPreviewQuery } from "@/graphql/generated/graphql";
@@ -147,7 +148,7 @@ const COLUMNS = column.columns([
       </div>
     ),
   }),
-  column.display({ id: "match", header: "Library match", width: 20, priority: 1, cell: ({ row }) => <MatchCell file={row.original} /> }),
+  column.display({ id: "match", header: "Library match", width: 20, priority: 1, entity: (row) => refCellEntity(row.match ? matchTarget(row.match) : null), cell: ({ row }) => <MatchCell file={row.original} /> }),
   column.accessor((row) => row.size, {
     id: "size", header: "Size", width: 7, priority: 2, align: "end",
     cell: ({ row }) => <TextCell muted>{formatBytes(row.original.size)}</TextCell>,

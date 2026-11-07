@@ -1,7 +1,9 @@
 # Glass UX patch
 
-`glass-ux@0.19.0.patch` is registered in `pnpm-workspace.yaml` and the lockfile.
-It contains three bounded DataTable additions, one media player addition, one EntityIdentity correction and one EntitySettingsDialog addition. None were adopted upstream by 0.19.0, so all carried forward:
+`glass-ux@0.19.1.patch` is registered in `pnpm-workspace.yaml` and the lockfile.
+It contains three bounded DataTable additions, one media player addition, one EntityIdentity
+correction and one EntitySettingsDialog addition. 0.19.1 adopted the settings dialog's `identity`
+header upstream, so that part was dropped; the rest carried forward:
 
 - Native focus inside a grid synchronizes its active row, so virtualization retains
   the focused alphabet-jump target or row control. Portaled controls are excluded by
@@ -22,10 +24,9 @@ by application code, and no table geometry or material recipes are overridden.
 - `EntityIdentity` wraps its facts in a `<div>` instead of a `<p>` when they are more than text, because `facts`
   accepts a node and a Metric or Sparkline can't validly sit inside a paragraph. The download dialog's stats need it.
 
-- The additive `EntitySettingsDialog.identity` puts an entity's `EntityIdentity`, with its actions, in the header
-  in place of a tile and title. Every entity's settings dialog uses it.
+- `EntitySettingsTab.count` puts a count at the end of a settings tab (Files 29). To ask upstream for.
 
-On upgrade, inspect upstream for all six, regenerate the patch from the published
+On upgrade, inspect upstream for each of these, regenerate the patch from the published
 archive if needed, and run the real Glass table/Logs/URL-history regressions plus a
 populated browser scroll/focus check before removing it.
 

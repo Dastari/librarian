@@ -1,28 +1,27 @@
 import { useMutation } from "@apollo/client/react";
 import { useNavigate } from "@tanstack/react-router";
-import { ActionBar } from "glass-ux/actions";
 import { EntitySettingsDialog, type EntitySettingsTab } from "glass-ux/entity-settings";
 import { formBehaviour, useAppForm } from "glass-ux/form";
 import { IconClock, IconDownload, IconFile, IconInfo, IconSettings, IconTrash } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { DetailGrid, DetailTile } from "@/components/entities/EntityDetailDialog";
 import { Button, ConfirmDialog } from "@/components/ui";
 import { FilesBrowser } from "@/features/libraries/browser/FilesBrowser";
 import { EntityShowDeleteDocument, EntityShowUpdateDocument, ShowDetailDocument, type ShowDetailQuery } from "@/graphql/generated/graphql";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { formatDateTime, formatRuntime } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+import { withoutAction } from "@/lib/actions/withoutAction";
 
 import { AutoDownloadField, DownloadSettingsFields } from "./entity/DownloadSettings";
 import { changedFields, yearValue } from "./entity/metadataInput";
 import { MetadataTagsField, MetadataTextareaField, MetadataTextField } from "./entity/MetadataFields";
 import { useTitleFiles } from "./entity/useTitleFiles";
-import { ShowIdentity } from "./ShowIdentity";
+import { showIdentityProps } from "./ShowIdentity";
 import { useShowActions, type ShowSettingsTab } from "./useShowActions";
 
 type Show = NonNullable<ShowDetailQuery["show"]>;
@@ -72,7 +71,6 @@ function LoadedShowSettings({ show, open, onOpenChange, chosenTab, onTabChange, 
 }) {
   const navigate = useNavigate();
   const isAdmin = useIsAdmin();
-  const narrow = useMediaQuery("(max-width: 39.99rem)");
   const tab = isAdmin || READ_ONLY_TABS.includes(chosenTab) ? chosenTab : READ_ONLY_TABS[0]!;
   const files = useTitleFiles("show", show.id, !open);
   const [update] = useMutation(EntityShowUpdateDocument);
@@ -102,6 +100,7 @@ function LoadedShowSettings({ show, open, onOpenChange, chosenTab, onTabChange, 
   useEffect(() => { if (open) form.reset(valuesOf(show)); }, [open, show.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { actions, dialogs } = useShowActions<Show>({ settings: (_, next) => onTabChange(next ?? "general"), open: false });
+  const headerActions = useMemo(() => withoutAction(actions, "settings", "remove"), [actions]);
   const onRemove = async () => {
     try {
       assertSuccess((await remove({ variables: { id: show.id } })).data?.deleteShow, "Could not remove the show");
@@ -176,16 +175,7 @@ function LoadedShowSettings({ show, open, onOpenChange, chosenTab, onTabChange, 
         onOpenChange={onOpenChange}
         form={form}
         size="xl"
-        entityName={show.name}
-        identity={(
-          <ShowIdentity
-            tier={narrow ? "compact" : "header"}
-            heading="h2"
-            show={show}
-            actions={actions}
-            headerActions={narrow ? undefined : <ActionBar set={actions} targets={[show]} label={`Actions for ${show.name}`} maxButtons={1} />}
-          />
-        )}
+        identity={showIdentityProps(show, { actions: headerActions })}
         tabs={tabs}
         tab={tab}
         onTabChange={(next) => onTabChange(next as ShowSettingsTab)}

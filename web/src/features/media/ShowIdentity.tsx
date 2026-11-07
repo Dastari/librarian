@@ -1,5 +1,5 @@
 import type { ActionSet } from "glass-ux/actions";
-import { EntityIdentity, type EntityState, type EntityTierProp } from "glass-ux/entity";
+import { EntityIdentity, type EntityIdentityProps, type EntityState, type EntityTierProp } from "glass-ux/entity";
 import type { ReactNode } from "react";
 
 import { autoDownloadMeta } from "@/features/acquisition/mode";
@@ -30,6 +30,24 @@ export function showState(show: ShowEntity, have?: number, total?: number): Enti
   return show.autoDownloadMode === "NONE" ? { id: "manual", label: "Not fetched automatically", tone: "neutral" } : { id: "fetching", label: mode.label, tone: "info" };
 }
 
+/** What ShowIdentity draws, for surfaces that take an identity's props (a settings dialog's header). */
+export function showIdentityProps<T extends ShowEntity>(show: T, { actions, have, total }: {
+  have?: number;
+  total?: number;
+  actions?: ActionSet<T>;
+} = {}): EntityIdentityProps<T> {
+  return {
+    kind: ENTITY_KINDS.show.noun,
+    name: show.name,
+    icon: <ENTITY_KINDS.show.icon />,
+    image: <img src={sizedArtwork(showPoster(show), 120)} alt="" />,
+    state: showState(show, have, total),
+    facts: [show.year ? String(show.year) : "", show.network ?? "", show.status ?? ""],
+    target: show,
+    actions,
+  };
+}
+
 /** A show wherever it's named in a list or a heading, with how much of it is here. */
 export function ShowIdentity<T extends ShowEntity>({ show, tier = "row", have, total, actions, headerActions, heading, className, onOpen }: {
   show: T;
@@ -44,17 +62,10 @@ export function ShowIdentity<T extends ShowEntity>({ show, tier = "row", have, t
 }) {
   return (
     <EntityIdentity
+      {...showIdentityProps(show, { actions, have, total })}
       tier={tier}
       heading={heading}
       className={className}
-      kind={ENTITY_KINDS.show.noun}
-      name={show.name}
-      icon={<ENTITY_KINDS.show.icon />}
-      image={<img src={sizedArtwork(showPoster(show), 120)} alt="" />}
-      state={showState(show, have, total)}
-      facts={[show.year ? String(show.year) : "", show.network ?? "", show.status ?? ""]}
-      target={show}
-      actions={actions}
       slots={headerActions ? { actions: headerActions } : undefined}
       onOpen={onOpen}
     />

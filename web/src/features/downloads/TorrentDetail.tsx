@@ -1,10 +1,9 @@
 import { ActionBar, type ActionSet } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
-import { Button } from "glass-ux/button";
 import { CopyButton } from "glass-ux/copy-button";
 import { Dialog } from "glass-ux/dialog";
 import { FactList } from "glass-ux/fact-list";
-import { IconActivity, IconArrowDown, IconArrowUp, IconClose, IconDisk, IconFile, IconInfo, IconPercent, IconSearch, IconUsers } from "glass-ux/icons";
+import { IconActivity, IconArrowDown, IconArrowUp, IconDisk, IconFile, IconInfo, IconPercent, IconSearch, IconUsers } from "glass-ux/icons";
 import { Notice } from "glass-ux/notice";
 import { Progress } from "glass-ux/progress";
 import { ScrollArea } from "glass-ux/scroll-area";
@@ -132,11 +131,9 @@ export function TorrentDetail({ row, rates, actions, open, onClose, finalFocus }
   return (
     <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <Dialog.Popup size="full" kind="settings" aria-label="Download details" finalFocus={finalFocus} className="torrent-detail mx-auto max-w-[88rem]">
-        <div className="flex min-w-0 shrink-0 items-center gap-3 px-(--inset-panel) pb-4 pt-(--inset-panel) max-sm:flex-wrap">
-          <div className="min-w-0 flex-1 max-sm:order-last max-sm:basis-full"><TorrentIdentity tier="header" row={row} facts={<TorrentStats row={row} rates={rates} ratio={ratio} />} className="min-w-0" /></div>
-          <div className="shrink-0 max-sm:ms-auto"><ActionBar set={actions} targets={[row]} label={`Actions for ${record.name}`} maxButtons={0} /></div>
-          <Dialog.Close render={<Button variant="ghost" shape="circle" size="sm" icon={<IconClose />} aria-label="Close" className="shrink-0" />} />
-        </div>
+        <Dialog.Header identity={<TorrentIdentity tier="header" row={row} facts={<TorrentStats row={row} rates={rates} ratio={ratio} />} className="min-w-0" />} className="entity-detail-header">
+          <ActionBar set={actions} targets={[row]} label={`Actions for ${record.name}`} maxButtons={0} />
+        </Dialog.Header>
         <Dialog.Body flush className="flex min-h-0 flex-1 flex-col gap-3 px-(--inset-panel) pb-(--inset-panel)">
           {showStatus ? <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2"><Badge size="sm" marker="dot" tone={imported.tone}>{imported.label}</Badge></div> : null}
           {needsChoice > 0 ? (

@@ -8,6 +8,7 @@ import { TableToolbar } from "@/components/ui/TableToolbar";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { useTableSelection } from "@/hooks/useTableSelection";
 import { EntityChip } from "@/components/entities/EntityChip";
+import { refCellEntity } from "@/lib/entities/resolver";
 import { ErrorState, GlassSegmented } from "@/components/ui";
 import { SaveToListDialog } from "@/features/personal/SaveToListDialog";
 import type { PlayItem } from "@/features/player/store";
@@ -44,7 +45,7 @@ function columnsFor() {
       cell: ({ row }) => <IdentityCell icon={<TrackGlyph />} title={row.original.title} subtitle={row.original.artistName ?? undefined} status={row.original.mediaFileId ? "online" : "offline"} statusLabel={row.original.mediaFileId ? "Playable" : "No file"} />,
     }),
     column.accessor("trackNumber", { header: "#", width: 4, priority: 3, align: "end", grow: false, sortable: true, cell: ({ row }) => <TextCell muted>{row.original.discNumber && row.original.discNumber > 1 ? `${row.original.discNumber}-${row.original.trackNumber}` : String(row.original.trackNumber ?? "")}</TextCell> }),
-    column.display({ id: "album", header: "Album", width: 16, priority: 2, cardRole: "subtitle", cell: ({ row }) => (row.original.album ? <EntityChip entity={{ kind: "album", id: row.original.album.id, label: row.original.album.name, href: entityPath("album", row.original.album.id) }} /> : <TextCell muted>—</TextCell>) }),
+    column.display({ id: "album", header: "Album", width: 16, priority: 2, cardRole: "subtitle", entity: (row) => refCellEntity(row.album ? { kind: "album", id: row.album.id, label: row.album.name, href: entityPath("album", row.album.id) } : null), cell: ({ row }) => (row.original.album ? <EntityChip entity={{ kind: "album", id: row.original.album.id, label: row.original.album.name, href: entityPath("album", row.original.album.id) }} /> : <TextCell muted>—</TextCell>) }),
     column.display({ id: "status", header: "Status", width: 9, priority: 2, cardRole: "status", cell: ({ row }) => <TrackStatusCell row={row.original} /> }),
     column.accessor("durationSecs", { header: "Length", width: 6, priority: 2, align: "end", grow: false, sortable: true, cell: ({ row }) => <TextCell muted>{formatClock(row.original.durationSecs)}</TextCell> }),
     column.display({ id: "codec", header: "Format", width: 10, priority: 4, cell: ({ row }) => <TextCell muted>{row.original.mediaFile ? [row.original.mediaFile.audioCodec?.toUpperCase(), formatBytes(row.original.mediaFile.size)].filter(Boolean).join(" · ") : "—"}</TextCell> }),

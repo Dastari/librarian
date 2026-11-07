@@ -1,24 +1,23 @@
 import { useMutation } from "@apollo/client/react";
 import { useNavigate } from "@tanstack/react-router";
-import { ActionBar } from "glass-ux/actions";
 import { EntitySettingsDialog, type EntitySettingsTab } from "glass-ux/entity-settings";
 import { formBehaviour, useAppForm } from "glass-ux/form";
 import { IconClock, IconDownload, IconFile, IconInfo, IconSettings, IconTrash } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { DetailGrid, DetailTile } from "@/components/entities/EntityDetailDialog";
 import { Button, ConfirmDialog } from "@/components/ui";
 import { FilesBrowser } from "@/features/libraries/browser/FilesBrowser";
 import { AudiobookDetailDocument, EntityAudiobookDeleteDocument, EntityAudiobookUpdateDocument, type AudiobookDetailQuery } from "@/graphql/generated/graphql";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { formatBytes, formatDateTime, formatRuntime } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+import { withoutAction } from "@/lib/actions/withoutAction";
 
-import { AudiobookIdentity } from "./AudiobookIdentity";
+import { audiobookIdentityProps } from "./AudiobookIdentity";
 import { AutoDownloadField, DownloadSettingsFields } from "./entity/DownloadSettings";
 import { changedFields } from "./entity/metadataInput";
 import { MetadataTagsField, MetadataTextareaField, MetadataTextField } from "./entity/MetadataFields";
@@ -76,7 +75,6 @@ function LoadedAudiobookSettings({ book, open, onOpenChange, chosenTab, onTabCha
 }) {
   const navigate = useNavigate();
   const isAdmin = useIsAdmin();
-  const narrow = useMediaQuery("(max-width: 39.99rem)");
   const tab = isAdmin || READ_ONLY_TABS.includes(chosenTab) ? chosenTab : READ_ONLY_TABS[0]!;
   const files = useTitleFiles("audiobook", book.id, !open);
   const [update] = useMutation(EntityAudiobookUpdateDocument);
@@ -106,6 +104,7 @@ function LoadedAudiobookSettings({ book, open, onOpenChange, chosenTab, onTabCha
   useEffect(() => { if (open) form.reset(valuesOf(book)); }, [open, book.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { actions, dialogs } = useAudiobookActions<Book>({ settings: (_, next) => onTabChange(next ?? "general"), open: false, onChanged });
+  const headerActions = useMemo(() => withoutAction(actions, "settings", "remove"), [actions]);
   const onRemove = async () => {
     try {
       assertSuccess((await remove({ variables: { id: book.id } })).data?.deleteAudiobook, "Could not remove the audiobook");
@@ -186,16 +185,7 @@ function LoadedAudiobookSettings({ book, open, onOpenChange, chosenTab, onTabCha
         onOpenChange={onOpenChange}
         form={form}
         size="xl"
-        entityName={book.title}
-        identity={(
-          <AudiobookIdentity
-            tier={narrow ? "compact" : "header"}
-            heading="h2"
-            book={book}
-            actions={actions}
-            headerActions={narrow ? undefined : <ActionBar set={actions} targets={[book]} label={`Actions for ${book.title}`} maxButtons={1} />}
-          />
-        )}
+        identity={audiobookIdentityProps(book, { actions: headerActions })}
         tabs={tabs}
         tab={tab}
         onTabChange={(next) => onTabChange(next as AudiobookSettingsTab)}

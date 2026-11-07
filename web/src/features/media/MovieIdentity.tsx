@@ -1,5 +1,5 @@
 import type { ActionSet } from "glass-ux/actions";
-import { EntityIdentity, type EntityTierProp } from "glass-ux/entity";
+import { EntityIdentity, type EntityIdentityProps, type EntityTierProp } from "glass-ux/entity";
 import type { ReactNode } from "react";
 
 import { moviePoster } from "@/lib/artwork";
@@ -32,6 +32,24 @@ const statusOf = (movie: MovieEntity): StatusMeta => statusMeta(movie.hasFile ? 
  * A movie wherever it's named in a list or a heading: its poster or glyph with a state dot, then
  * its year, length and rating. Poster grids draw posters instead, with the same state and actions.
  */
+/** What MovieIdentity draws, for surfaces that take an identity's props (a settings dialog's header). */
+export function movieIdentityProps<T extends MovieEntity>(movie: T, { actions, status }: {
+  /** Its live status, where it's loaded. */
+  status?: StatusMeta;
+  actions?: ActionSet<T>;
+} = {}): EntityIdentityProps<T> {
+  return {
+    kind: ENTITY_KINDS.movie.noun,
+    name: movie.title,
+    icon: <ENTITY_KINDS.movie.icon />,
+    image: <img src={sizedArtwork(moviePoster(movie.id), 120)} alt="" />,
+    state: mediaEntityState(status ?? statusOf(movie)),
+    facts: [movie.year ? String(movie.year) : "", movie.runtime ? formatRuntime(movie.runtime, "minutes") : "", movie.certification ?? ""],
+    target: movie,
+    actions,
+  };
+}
+
 export function MovieIdentity<T extends MovieEntity>({ movie, tier = "row", status, actions, headerActions, heading, className, onOpen }: {
   movie: T;
   tier?: EntityTierProp;
@@ -46,17 +64,10 @@ export function MovieIdentity<T extends MovieEntity>({ movie, tier = "row", stat
 }) {
   return (
     <EntityIdentity
+      {...movieIdentityProps(movie, { actions, status })}
       tier={tier}
       heading={heading}
       className={className}
-      kind={ENTITY_KINDS.movie.noun}
-      name={movie.title}
-      icon={<ENTITY_KINDS.movie.icon />}
-      image={<img src={sizedArtwork(moviePoster(movie.id), 120)} alt="" />}
-      state={mediaEntityState(status ?? statusOf(movie))}
-      facts={[movie.year ? String(movie.year) : "", movie.runtime ? formatRuntime(movie.runtime, "minutes") : "", movie.certification ?? ""]}
-      target={movie}
-      actions={actions}
       slots={headerActions ? { actions: headerActions } : undefined}
       onOpen={onOpen}
     />

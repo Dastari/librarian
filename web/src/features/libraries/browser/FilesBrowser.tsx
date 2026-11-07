@@ -4,6 +4,7 @@ import { useMemo } from "react";
 
 import { TableToolbar } from "@/components/ui/TableToolbar";
 import { EntityChip } from "@/components/entities/EntityChip";
+import { refCellEntity } from "@/lib/entities/resolver";
 import { ErrorState, GlassSegmented } from "@/components/ui";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { openFileDialog } from "@/features/files/fileDialog";
@@ -30,6 +31,7 @@ const columns = column.columns([
   column.accessor("path", { header: "File", width: 28, priority: 1, cardRole: "title", sortable: true, cell: ({ row }) => <FileIdentity file={row.original} /> }),
   column.display({
     id: "linked", header: "Linked to", width: 16, priority: 2, cardRole: "subtitle",
+    entity: (row) => refCellEntity(linkedItem(row)),
     cell: ({ row }) => { const item = linkedItem(row.original); return item ? <EntityChip entity={item} /> : isFileLinked(row.original) ? <Badge size="sm" tone="success">Linked</Badge> : <Badge size="sm" marker="dot" tone="warning">Unmatched</Badge>; },
   }),
   column.display({ id: "quality", header: "Quality", width: 13, priority: 3, cell: ({ row }) => <TextCell muted>{fileFormat(row.original) || "—"}</TextCell> }),

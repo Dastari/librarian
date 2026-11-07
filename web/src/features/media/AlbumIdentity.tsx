@@ -1,5 +1,5 @@
 import type { ActionSet } from "glass-ux/actions";
-import { EntityIdentity, type EntityState, type EntityTierProp } from "glass-ux/entity";
+import { EntityIdentity, type EntityIdentityProps, type EntityState, type EntityTierProp } from "glass-ux/entity";
 import type { ReactNode } from "react";
 
 import { autoDownloadMeta } from "@/features/acquisition/mode";
@@ -28,6 +28,22 @@ export function albumState(album: AlbumEntity): EntityState {
   return album.autoDownloadMode === "NONE" ? { id: "missing", label: "No files yet", tone: "neutral" } : { id: "fetching", label: mode.label, tone: "info" };
 }
 
+/** What AlbumIdentity draws, for surfaces that take an identity's props (a settings dialog's header). */
+export function albumIdentityProps<T extends AlbumEntity>(album: T, { actions }: {
+  actions?: ActionSet<T>;
+} = {}): EntityIdentityProps<T> {
+  return {
+    kind: ENTITY_KINDS.album.noun,
+    name: album.name,
+    icon: <ENTITY_KINDS.album.icon />,
+    image: <img src={sizedArtwork(albumCover(album), 120)} alt="" />,
+    state: albumState(album),
+    facts: [album.year ? String(album.year) : "", album.albumType ?? "", album.trackCount ? pluralize(album.trackCount, "track") : ""],
+    target: album,
+    actions,
+  };
+}
+
 /** An album wherever it's named in a list or a heading: its cover or glyph, year, type and tracks. */
 export function AlbumIdentity<T extends AlbumEntity>({ album, tier = "row", actions, headerActions, heading, className, onOpen }: {
   album: T;
@@ -40,17 +56,10 @@ export function AlbumIdentity<T extends AlbumEntity>({ album, tier = "row", acti
 }) {
   return (
     <EntityIdentity
+      {...albumIdentityProps(album, { actions })}
       tier={tier}
       heading={heading}
       className={className}
-      kind={ENTITY_KINDS.album.noun}
-      name={album.name}
-      icon={<ENTITY_KINDS.album.icon />}
-      image={<img src={sizedArtwork(albumCover(album), 120)} alt="" />}
-      state={albumState(album)}
-      facts={[album.year ? String(album.year) : "", album.albumType ?? "", album.trackCount ? pluralize(album.trackCount, "track") : ""]}
-      target={album}
-      actions={actions}
       slots={headerActions ? { actions: headerActions } : undefined}
       onOpen={onOpen}
     />

@@ -1,7 +1,5 @@
-import { Button } from "glass-ux/button";
 import { Dialog } from "glass-ux/dialog";
 import { DetailTile } from "glass-ux/detail-tile";
-import { IconClose } from "glass-ux/icons";
 import { ScrollArea } from "glass-ux/scroll-area";
 import { Tabs } from "glass-ux/tabs";
 import type { ReactNode } from "react";
@@ -41,11 +39,7 @@ export function EntityDetailDialog({ open, onOpenChange, label, identity, action
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Popup size="xl" kind="settings" aria-label={label} finalFocus={finalFocus}>
-        <div className="flex min-w-0 shrink-0 items-center gap-3 px-(--inset-panel) pb-3 pt-(--inset-panel) max-sm:flex-wrap">
-          <div className="min-w-0 flex-1 max-sm:basis-[calc(100%-3rem)]">{identity}</div>
-          {actions ? <div className="shrink-0 max-sm:order-last max-sm:w-full">{actions}</div> : null}
-          <Dialog.Close render={<Button variant="ghost" shape="circle" size="sm" icon={<IconClose />} aria-label="Close" className="shrink-0" />} />
-        </div>
+        <Dialog.Header identity={identity} className="entity-detail-header">{actions}</Dialog.Header>
         <Dialog.Body flush className="entity-detail flex min-h-0 flex-1 flex-col">
           <div className="flex shrink-0 flex-col gap-4 px-(--inset-panel) pb-4">
             {badges ? <div className="flex min-w-0 flex-wrap items-center gap-2">{badges}</div> : null}
