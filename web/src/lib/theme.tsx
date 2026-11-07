@@ -1,64 +1,65 @@
 import { AppearanceProvider, useAppearance } from "glass-ux/appearance";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 
-import { bootAppearance, LEGACY_THEME_KEY } from "@/lib/glass/appearance";
+import { blurStore, bootAppearance, LEGACY_THEME_KEY, setBlur, type ColorMode } from "@/lib/glass/appearance";
 
-/** Selectable themes. `system` follows the OS between Cinema and Daylight. */
-export type ThemeId = "dark" | "light" | "midnight" | "ember" | "forest";
-export type ThemePreference = ThemeId | "system";
+/**
+ * The palette is always Cinema; the one choice left is Dark (the default) or Light. Everything
+ * else about appearance is fixed in `lib/glass/appearance.ts`.
+ */
+export type ThemePreference = ColorMode;
 
 export interface ThemeMeta {
-  id: ThemeId;
+  id: ColorMode;
   label: string;
-  scheme: "dark" | "light";
 }
 
 export const THEMES: ThemeMeta[] = [
-  { id: "dark", label: "Cinema", scheme: "dark" },
-  { id: "midnight", label: "Midnight", scheme: "dark" },
-  { id: "ember", label: "Ember", scheme: "dark" },
-  { id: "forest", label: "Forest", scheme: "dark" },
-  { id: "light", label: "Daylight", scheme: "light" },
+  { id: "dark", label: "Dark" },
+  { id: "light", label: "Light" },
 ];
+
+/** Cinema's canvas, for the browser and status bar colour (`theme-color`). */
+export const THEME_COLORS: Record<ColorMode, string> = { dark: "#0e0e19", light: "#eaeaf6" };
 
 interface ThemeContextValue {
   preference: ThemePreference;
-  resolved: ThemeId;
-  scheme: "dark" | "light";
+  scheme: ColorMode;
   setPreference: (preference: ThemePreference) => void;
+  /** Glass blurs what is behind it (device-wide, see BLUR_KEY). */
+  blur: boolean;
+  setBlur: (on: boolean) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-/** Compatibility facade for unmigrated consumers. Glass UX owns all appearance state. */
-function LegacyThemeBridge({ children }: { children: ReactNode }) {
-  const { appearance, resolvedMode, update } = useAppearance();
-  const named = appearance.palette === "midnight" || appearance.palette === "ember" || appearance.palette === "forest" ? appearance.palette : null;
-  const preference: ThemePreference = appearance.mode === "system" ? "system" : named ?? (appearance.mode === "light" ? "light" : "dark");
-  const resolved: ThemeId = resolvedMode === "light" ? "light" : named ?? "dark";
+function ThemeBridge({ children }: { children: ReactNode }) {
+  const { resolvedMode, update } = useAppearance();
+  const scheme: ColorMode = resolvedMode === "light" ? "light" : "dark";
+  const blur = useSyncExternalStore(blurStore.subscribe, blurStore.getSnapshot, blurStore.getSnapshot);
 
   useEffect(() => {
-    // Derived legacy attributes are read by old route/tests; they do not drive Glass UX.
+    // Derived attributes for older selectors; Glass's own data-mode drives the styles.
     const root = document.documentElement;
-    root.dataset.theme = resolved;
-    root.classList.toggle("dark", resolvedMode === "dark");
-    root.classList.toggle("light", resolvedMode === "light");
-    root.style.colorScheme = resolvedMode;
-  }, [resolved, resolvedMode]);
+    root.dataset.theme = scheme;
+    root.classList.toggle("dark", scheme === "dark");
+    root.classList.toggle("light", scheme === "light");
+    root.style.colorScheme = scheme;
+    for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) meta.content = THEME_COLORS[scheme];
+  }, [scheme]);
 
   const setPreference = useCallback((next: ThemePreference) => {
-    const palette = next === "midnight" || next === "ember" || next === "forest" ? next : "cinema";
-    update({ palette, mode: next === "system" ? "system" : next === "light" ? "light" : "dark" });
+    update({ mode: next === "light" ? "light" : "dark" });
     // Retained for rollback and existing device tools, never read over the new preference.
     window.localStorage.setItem(LEGACY_THEME_KEY, next);
   }, [update]);
-  const value = useMemo(() => ({ preference, resolved, scheme: resolvedMode, setPreference }), [preference, resolved, resolvedMode, setPreference]);
+  const value = useMemo(() => ({ preference: scheme, scheme, setPreference, blur, setBlur }), [scheme, setPreference, blur]);
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   useState(() => { bootAppearance(); return true; });
-  return <AppearanceProvider><LegacyThemeBridge>{children}</LegacyThemeBridge></AppearanceProvider>;
+  return <AppearanceProvider><ThemeBridge>{children}</ThemeBridge></AppearanceProvider>;
 }
 
 export function useTheme(): ThemeContextValue {

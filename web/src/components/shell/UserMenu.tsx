@@ -31,7 +31,6 @@ export function UserMenu() {
         <Menu.Submenu icon={<IconPalette />} label="Theme">
           <Menu.RadioGroup value={preference} onValueChange={(value) => setPreference(value as ThemePreference)}>
             {THEMES.map((theme) => <Menu.RadioItem key={theme.id} value={theme.id}>{theme.label}</Menu.RadioItem>)}
-            <Menu.RadioItem value="system">Match system</Menu.RadioItem>
           </Menu.RadioGroup>
         </Menu.Submenu>
         <Menu.CheckboxItem checked={forced === "tv"} onCheckedChange={(checked) => setForced(checked ? "tv" : null)}><span className="flex items-center gap-2"><IconDisplays size="sm" />TV mode</span></Menu.CheckboxItem>
