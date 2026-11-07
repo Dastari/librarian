@@ -266,10 +266,32 @@ pub fn fit_listing(
     listing: &[TrackFacts],
 ) -> ListingFit {
     let chosen = match_tracks(files, names, listing);
-    let placed: Vec<Option<usize>> = chosen
+    let mut placed: Vec<Option<usize>> = chosen
         .iter()
         .map(|choice| choice.map(|(track, _)| track))
         .collect();
+    // A track with the file's own title and length is that file, whatever number it has. Bonus
+    // tracks on one disc can't keep the number their files carry, and that alone mustn't lose them.
+    for (index, file) in files.iter().enumerate() {
+        if placed[index].is_some() {
+            continue;
+        }
+        let Some(title) = file.tags.title.as_deref().or(names[index].as_deref()) else {
+            continue;
+        };
+        let wanted = normalize_words(title);
+        let found = listing.iter().enumerate().find(|(track_index, track)| {
+            !placed.contains(&Some(*track_index))
+                && normalize_words(&track.title) == wanted
+                && match (file.duration, track.seconds) {
+                    (Some(have), Some(listed)) => (have - listed).abs() <= 3.0,
+                    _ => true,
+                }
+        });
+        if let Some((track_index, _)) = found {
+            placed[index] = Some(track_index);
+        }
+    }
     let found = placed.iter().filter(|choice| choice.is_some()).count();
     ListingFit {
         placed,
@@ -308,6 +330,14 @@ pub fn tracks_on_held_discs(fit: &ListingFit, discs: &[i32]) -> Vec<usize> {
     (0..discs.len())
         .filter(|index| held.is_empty() || held.contains(&discs[*index]))
         .collect()
+}
+
+/// The biggest edition not yet read, for files the nearest editions didn't fit: a deluxe edition's
+/// bonus disc on its own is closer in count to the standard album than to the deluxe one.
+pub fn biggest_unread_edition(counts: &[(usize, bool)], read: &[usize]) -> Option<usize> {
+    (0..counts.len())
+        .filter(|index| !read.contains(index))
+        .max_by_key(|index| (counts[*index].0, counts[*index].1))
 }
 
 /// Which editions are worth a request, likeliest first. Each one is a call to a rate-limited
@@ -690,6 +720,38 @@ mod tests {
             missing: 2,
         };
         assert_eq!(tracks_on_held_discs(&none, &[1, 2]), vec![0, 1]);
+    }
+
+    #[test]
+    fn a_bonus_track_numbered_after_the_listing_still_takes_its_file() {
+        // The file says track 5, but track 5 is the studio version, so its row became 18.
+        let listing = vec![
+            listed("Dust N' Bones", 1, 5, 298.0),
+            listed("Dust N' Bones (Live In London)", 1, 18, 311.0),
+        ];
+        let files = vec![file(
+            "05.flac",
+            "Dust N’ Bones (Live In London)",
+            Some(5),
+            None,
+            311.0,
+        )];
+        let fit = fit_listing(&files, &[None], &listing);
+        assert_eq!(fit.placed, vec![Some(1)]);
+    }
+
+    #[test]
+    fn a_title_match_of_another_length_is_not_the_same_recording() {
+        let listing = vec![listed("Coma", 1, 9, 613.0)];
+        let files = vec![file("01.flac", "Coma", Some(1), None, 540.0)];
+        assert_eq!(fit_listing(&files, &[None], &listing).placed, vec![None]);
+    }
+
+    #[test]
+    fn the_biggest_edition_is_tried_when_the_nearest_did_not_fit() {
+        let counts = [(16, true), (29, true), (16, false), (14, true)];
+        assert_eq!(biggest_unread_edition(&counts, &[0, 2, 3]), Some(1));
+        assert_eq!(biggest_unread_edition(&counts, &[0, 1, 2, 3]), None);
     }
 
     #[test]
