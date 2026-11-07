@@ -1,18 +1,18 @@
-import { Tooltip } from "glass-ux/tooltip";
-import { Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { createContext, useState } from "react";
-import { IconWarning, IconSpinner, IconRefresh, IconSettings } from "glass-ux/icons";
+import { ActionBar } from "glass-ux/actions";
+import { Outlet, useRouterState } from "@tanstack/react-router";
+import { createContext, useMemo, useState } from "react";
 
 import { PageScroller } from "@/components/shell/PageScroller";
-import { Button, MediaBackdrop, PageHeader, SegmentTabs, type TabItem } from "@/components/ui";
+import { MediaBackdrop, PageHeader, SegmentTabs, type TabItem } from "@/components/ui";
 import type { SpotlightArt } from "@/features/home/HomeSpotlight";
 import { LibraryFileCountDocument, type LibraryDetailQuery } from "@/graphql/generated/graphql";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
-import { useIsAdmin } from "@/lib/auth/useSession";
-import { formatRelative, pluralize } from "@/lib/format";
 import { libraryType, type LibraryType } from "@/lib/library-types";
 import { cn } from "@/lib/utils";
 
+import { LibraryIdentity } from "./LibraryIdentity";
+import { LibrarySettingsDialog } from "./LibrarySettingsDialog";
+import { useLibraryActions, useLibrarySettingsParam } from "./useLibraryActions";
 import { useLibraryScan } from "./useLibraryScan";
 
 export type LibraryDetail = NonNullable<LibraryDetailQuery["library"]>;
@@ -45,24 +45,20 @@ export function libraryTabs(library: LibraryDetail, fileCount?: number | null): 
   return [
     ...byType[type],
     { key: "files", label: "Files", href: `${base}/files`, count: fileCount ?? undefined },
-    { key: "scans", label: "Scans", href: `${base}/scans` },
   ];
 }
 
 export function LibraryLayout({ library }: { library: LibraryDetail }) {
-  const meta = libraryType(library.libraryType);
-  const isAdmin = useIsAdmin();
   const scan = useLibraryScan(library.id);
   const files = useQuery(LibraryFileCountDocument, { variables: { libraryId: library.id } });
   const tabs = libraryTabs(library, files.data?.mediaFiles.pageInfo.totalCount);
   const primaryCount = tabs.find((tab) => tab.count !== undefined)?.count ?? 0;
-  // Browsers own their result scrolling; forms and scan history need a scrolling pane;
-  // Recommended is a page of artwork and shelves that scrolls as a whole.
-  const scrollOutlet = useRouterState({
-    select: (state) => state.matches.some((match) => match.routeId === "/_app/libraries/$libraryId/settings" || match.routeId === "/_app/libraries/$libraryId/scans"),
-  });
+  // Browsers own their result scrolling; Recommended is a page of artwork and shelves that scrolls as a whole.
   const flow = useRouterState({ select: (state) => state.matches.some((match) => match.routeId === "/_app/libraries/$libraryId/recommended") });
   const [art, setArt] = useState<SpotlightArt | null>(null);
+  const settings = useLibrarySettingsParam();
+  const scanningLibrary = useMemo(() => ({ ...library, scanning: library.scanning || scan.running }), [library, scan.running]);
+  const actions = useLibraryActions<typeof scanningLibrary>({ settings: settings.open, open: false });
 
   return (
     <LibraryArtContext value={setArt}>
@@ -73,34 +69,15 @@ export function LibraryLayout({ library }: { library: LibraryDetail }) {
       {/* The tabs never scroll away; only the view under them does. */}
       <div className={cn("page-gutter flex min-w-0 shrink-0 items-center gap-x-4 gap-y-2 pb-3 max-sm:flex-wrap sm:pb-4 [@media(max-height:35rem)]:pb-2", flow && "over-imagery")}>
         <SegmentTabs items={tabs} ariaLabel="Library sections" className="min-w-0 flex-1" />
-        <div className="flex min-w-0 shrink-0 items-center gap-3 text-label-sm text-muted max-sm:w-full max-sm:justify-between">
-          <span className="inline-flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-            <span className={`inline-flex items-center gap-1.5 ${meta.tint}`}><meta.icon size={14} /> <span className="text-muted">{pluralize(primaryCount, meta.singular.toLowerCase())}</span></span>
-            {library.lastScannedAt ? <span className="max-md:hidden">Scanned {formatRelative(library.lastScannedAt)}</span> : null}
-            {scan.unresolvedIssues > 0 ? (
-              <Link to="/libraries/$libraryId/scans" params={{ libraryId: library.id }} className="nav-focus inline-flex items-center gap-1 rounded text-warning">
-                <IconWarning size="sm" /> {pluralize(scan.unresolvedIssues, "issue")}
-              </Link>
-            ) : null}
-          </span>
-          {isAdmin ? (
-            <span data-print="hide" className="flex items-center gap-1">
-              <Tooltip content={scan.running || library.scanning ? "A library scan is already running" : "Look for new, changed and missing files"}>
-                <Button variant="ghost" size="sm" onPress={() => void scan.scan()} isDisabled={scan.running || library.scanning} isPending={scan.scanning} focusableWhenDisabled>
-                  {scan.running || library.scanning ? <IconSpinner className="animate-spin" /> : <IconRefresh />}
-                  {scan.running || library.scanning ? "Scanning" : "Scan"}
-                </Button>
-              </Tooltip>
-              <Button variant="ghost" size="sm" isIconOnly aria-label="Library settings" nativeButton={false} render={<Link to="/libraries/$libraryId/settings" params={{ libraryId: library.id }} />}>
-                <IconSettings />
-              </Button>
-            </span>
-          ) : null}
+        <div className="flex min-w-0 shrink-0 items-center gap-2 max-sm:w-full max-sm:justify-between">
+          <LibraryIdentity tier="row" className="w-60 min-w-0 max-md:w-44" library={scanningLibrary} items={primaryCount} issues={scan.unresolvedIssues} onOpen={() => settings.open(library, scan.unresolvedIssues > 0 ? "issues" : undefined)} />
+          <span data-print="hide"><ActionBar set={actions} targets={[scanningLibrary]} label={`Actions for ${library.name}`} maxButtons={1} /></span>
         </div>
       </div>
-      <PageScroller data-print-flow scrolling={flow || scrollOutlet} className={cn("page-gutter flex min-h-0 flex-1 flex-col", !flow && "fa-focus-room", scrollOutlet && "pb-[calc(var(--space-8)+var(--focus-reach))]", !flow && !scrollOutlet && "pb-[calc(var(--space-3)+var(--focus-reach))] sm:pb-[calc(var(--space-4)+var(--focus-reach))]")}>
+      <PageScroller data-print-flow scrolling={flow} className={cn("page-gutter flex min-h-0 flex-1 flex-col", !flow && "fa-focus-room", !flow && "pb-[calc(var(--space-3)+var(--focus-reach))] sm:pb-[calc(var(--space-4)+var(--focus-reach))]")}>
         <Outlet />
       </PageScroller>
+      <LibrarySettingsDialog library={scanningLibrary} open={settings.tab !== null} onOpenChange={(next) => { if (!next) settings.close(); }} tab={settings.tab ?? "general"} onTabChange={(tab) => settings.open(library, tab)} items={primaryCount} issues={scan.unresolvedIssues} />
     </div>
     </LibraryArtContext>
   );

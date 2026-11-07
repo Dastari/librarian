@@ -2,26 +2,26 @@ import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
 import { useMutation } from "@apollo/client/react";
 import { toast } from "glass-ux/toast";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
-import { createDataTableColumns, IdentityCell, RelativeTime, TextCell } from "glass-ux/data-table";
-import { IconExternalLink, IconFolder, IconPlus, IconRefresh, IconSettings } from "glass-ux/icons";
-import { useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { createDataTableColumns, RelativeTime, TextCell } from "glass-ux/data-table";
+import { IconFolder, IconPlus } from "glass-ux/icons";
+import { useCallback, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { Button, Dialog, FieldGroup, FormSelectField, FormSwitchField, FormTextField } from "@/components/ui";
 import { FolderPickerDialog } from "@/features/files/FolderPickerDialog";
 import { libraryItemCount, type LibraryOverview } from "@/features/libraries/LibraryCard";
-import { EntityLibraryCreateDocument, LibrariesOverviewDocument, ScanLibraryDocument } from "@/graphql/generated/graphql";
+import { LibraryIdentity } from "@/features/libraries/LibraryIdentity";
+import { LibrarySettingsDialog, type LibrarySettingsTab } from "@/features/libraries/LibrarySettingsDialog";
+import { useLibraryActions } from "@/features/libraries/useLibraryActions";
+import { EntityLibraryCreateDocument, LibrariesOverviewDocument } from "@/graphql/generated/graphql";
 import { useSession } from "@/lib/auth/useSession";
 import { parseTimestamp, pluralize } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { LIBRARY_TYPE_OPTIONS, libraryType } from "@/lib/library-types";
 
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
-import { runSettingsSelection } from "./runSettingsSelection";
 
 import { SettingsLoadError } from "./SettingsLoadError";
 import { SettingsSection } from "./SettingsSection";
@@ -40,7 +40,7 @@ const column = createDataTableColumns<LibraryOverview>();
 const columns = column.columns([
   column.accessor("name", {
     header: "Library", width: 26, priority: 1, cardRole: "title", sortable: true,
-    cell: ({ row }) => { const meta = libraryType(row.original.libraryType); return <IdentityCell icon={<meta.icon className={meta.tint} />} title={row.original.name} subtitle={row.original.path} status={row.original.scanning ? "installing" : "online"} statusLabel={row.original.scanning ? "Scanning" : "Idle"} />; },
+    cell: ({ row }) => <LibraryIdentity library={row.original} items={libraryItemCount(row.original).count} />,
   }),
   column.accessor((row) => libraryType(row.libraryType).label, { id: "type", header: "Type", width: 8, priority: 2, sortable: true, cell: ({ row }) => <Badge size="sm" tone="neutral">{libraryType(row.original.libraryType).label}</Badge> }),
   column.accessor((row) => libraryItemCount(row).count, { id: "items", header: "Items", width: 8, priority: 2, align: "end", sortable: true, sortDescFirst: true, cell: ({ row }) => { const { count, noun } = libraryItemCount(row.original); return <TextCell muted={count === null}>{count === null ? "Files" : pluralize(count, noun)}</TextCell>; } }),
@@ -51,13 +51,11 @@ const columns = column.columns([
 
 export function LibrariesSettings() {
   const { user } = useSession();
-  const navigate = useNavigate();
   const list = useSettingsConnection(LibrariesOverviewDocument, {}, (data) => data.libraries);
   const { rows: libraries, loading, refetch } = list;
   const [creating, setCreating] = useState(false);
   const [pickingFolder, setPickingFolder] = useState(false);
   const [create, { loading: saving }] = useMutation(EntityLibraryCreateDocument);
-  const [scan] = useMutation(ScanLibraryDocument);
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: { name: "", libraryType: "movies", path: "", autoScan: true, autoOrganize: false } });
 
   const submit = form.handleSubmit(async (values) => {
@@ -76,19 +74,9 @@ export function LibrariesSettings() {
     }
   });
 
-  const actions = defineActions<LibraryOverview>("library", [
-    { id: "open", bulk: true, label: "Open library", icon: IconExternalLink, group: "open", priority: 1, visible: (rows) => rows.length === 1, run: (rows, context) => context.navigate(`/libraries/${rows[0]!.id}`) },
-    { id: "settings", bulk: true, label: "Library settings", icon: IconSettings, group: "open", priority: 2, visible: (rows) => rows.length === 1, run: (rows, context) => context.navigate(`/libraries/${rows[0]!.id}/settings`) },
-    {
-      id: "scan", label: (rows) => (rows.length === 1 ? "Scan now" : `Scan ${rows.length} libraries`), icon: IconRefresh, group: "manage", priority: 1, bulk: true,
-      disabledReason: (rows) => (rows.every((row) => row.scanning) ? "Already scanning" : false),
-      run: (rows) => runSettingsSelection(rows.filter((item) => !item.scanning), "Scan", (row) => row.name, async (row) => {
-          const result = (await scan({ variables: { id: row.id } })).data?.scanLibrary;
-          if (!result?.success) throw new Error(result?.message ?? `${row.name}: the scan could not start`);
-      }, refetch),
-      successMessage: (rows) => (rows.filter((row) => !row.scanning).length === 1 ? "Scan started" : `Started ${rows.filter((row) => !row.scanning).length} scans`),
-    },
-  ]);
+  const [settings, setSettings] = useState<{ library: LibraryOverview; tab: LibrarySettingsTab } | null>(null);
+  const openSettings = useCallback((library: LibraryOverview, tab: LibrarySettingsTab = "general") => setSettings({ library, tab }), []);
+  const actions = useLibraryActions<LibraryOverview>({ settings: openSettings, onChanged: refetch });
 
   return (
     <div className="flex flex-col gap-6">
@@ -103,13 +91,14 @@ export function LibrariesSettings() {
           getRowLabel={(row) => row.name}
           loading={loading && libraries.length === 0}
           actions={actions} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "library", other: "libraries" }} />}
-          onRowOpen={(row) => void navigate({ to: "/libraries/$libraryId/settings", params: { libraryId: row.id } })}
+          onRowOpen={(row) => openSettings(row)}
           rowOpen="click"
           noun={{ one: "library", other: "libraries" }}
           emptyMessage="No libraries yet."
           emptyAction={<Button variant="primary" onPress={() => setCreating(true)}><IconPlus /> Add library</Button>}
         />
       </SettingsSection>
+      {settings ? <LibrarySettingsDialog library={libraries.find((row) => row.id === settings.library.id) ?? settings.library} open onOpenChange={(open) => { if (!open) setSettings(null); }} tab={settings.tab} onTabChange={(tab) => setSettings({ ...settings, tab })} items={libraryItemCount(settings.library).count} /> : null}
 
       <Dialog
         isOpen={creating}

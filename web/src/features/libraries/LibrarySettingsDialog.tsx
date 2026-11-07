@@ -1,0 +1,190 @@
+import { useMutation } from "@apollo/client/react";
+import { useNavigate } from "@tanstack/react-router";
+import { ActionBar } from "glass-ux/actions";
+import { EntitySettingsDialog, type EntitySettingsTab } from "glass-ux/entity-settings";
+import { formBehaviour, useAppForm } from "glass-ux/form";
+import { IconClock, IconFolder, IconHistory, IconSettings, IconTrash, IconWarning } from "glass-ux/icons";
+import { toast } from "glass-ux/toast";
+import { useEffect, useMemo, useState } from "react";
+import { z } from "zod";
+
+import { Button, ConfirmDialog } from "@/components/ui";
+import { FolderPickerDialog } from "@/features/files/FolderPickerDialog";
+import {
+  EntityLibraryDeleteDocument,
+  EntityLibraryUpdateDocument,
+  NamingPatternsForTypeDocument,
+  QualityProfilesListDocument,
+  type LibraryFieldsFragment,
+} from "@/graphql/generated/graphql";
+import { useIsAdmin } from "@/lib/auth/useSession";
+import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
+import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+
+import { LibraryIdentity } from "./LibraryIdentity";
+import { ScansPanel } from "./ScansPanel";
+import { useLibraryActions } from "./useLibraryActions";
+
+export const LIBRARY_SETTINGS_TABS = ["general", "scanning", "organization", "issues", "history", "remove"] as const;
+export type LibrarySettingsTab = (typeof LIBRARY_SETTINGS_TABS)[number];
+export const isLibrarySettingsTab = (value: string | null): value is LibrarySettingsTab => LIBRARY_SETTINGS_TABS.includes(value as LibrarySettingsTab);
+/** What someone who can't change a library can still look at. */
+const READ_ONLY_TABS: readonly LibrarySettingsTab[] = ["issues", "history"];
+
+const schema = z.object({
+  name: z.string().trim().min(1, "Give the library a name").max(80),
+  path: z.string().trim().min(1, "Choose the folder that holds the media"),
+  autoScan: z.boolean(),
+  scanIntervalMinutes: z.number().int().min(5, "At least 5 minutes").max(10080, "At most a week"),
+  watchForChanges: z.boolean(),
+  autoOrganize: z.boolean(),
+  namingPattern: z.string(),
+  qualityProfileId: z.string(),
+});
+
+const valuesOf = (library: LibraryFieldsFragment) => ({
+  name: library.name,
+  path: library.path,
+  autoScan: library.autoScan,
+  scanIntervalMinutes: library.scanIntervalMinutes,
+  watchForChanges: library.watchForChanges,
+  autoOrganize: library.autoOrganize,
+  namingPattern: library.namingPattern || "",
+  qualityProfileId: library.qualityProfileId ?? "",
+});
+
+/** A library's settings and its scanning record, with its identity and actions in the header. */
+export function LibrarySettingsDialog({ library, open, onOpenChange, tab, onTabChange, items, issues = 0 }: {
+  library: LibraryFieldsFragment;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  tab: LibrarySettingsTab;
+  onTabChange: (tab: LibrarySettingsTab) => void;
+  items?: number | null;
+  issues?: number;
+}) {
+  const navigate = useNavigate();
+  const isAdmin = useIsAdmin();
+  const [update] = useMutation(EntityLibraryUpdateDocument);
+  const [remove, { loading: deleting }] = useMutation(EntityLibraryDeleteDocument);
+  const patterns = useQuery(NamingPatternsForTypeDocument, { variables: { libraryType: library.libraryType.toLowerCase() } });
+  const profiles = useQuery(QualityProfilesListDocument);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [pickingFolder, setPickingFolder] = useState(false);
+  const [scanRunId, setScanRunId] = useState<string | null>(null);
+
+  const form = useAppForm({
+    ...formBehaviour,
+    defaultValues: valuesOf(library),
+    validators: { onDynamic: schema },
+    onSubmit: async ({ value, formApi }) => {
+      const { data } = await update({ variables: { id: library.id, input: { ...value, qualityProfileId: value.qualityProfileId || null } } });
+      assertSuccess(data?.updateLibrary, "Could not save the library");
+      formApi.reset(value);
+    },
+  });
+  // Another library, or this one reopened: start from what's saved.
+  useEffect(() => { if (open) form.reset(valuesOf(library)); }, [open, library.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const actions = useLibraryActions<LibraryFieldsFragment>({ settings: (_, next) => onTabChange(next ?? "general"), open: false });
+  const onDelete = async () => {
+    try {
+      const { data } = await remove({ variables: { id: library.id } });
+      assertSuccess(data?.deleteLibrary, "Could not delete the library");
+      toast.success("Library removed. Files on disk were left untouched.");
+      onOpenChange(false);
+      await navigate({ to: "/libraries" });
+    } catch (error) {
+      toast.danger(errorMessage(error));
+    }
+  };
+
+  const patternOptions = useMemo(() => [{ value: "", label: "Librarian default" }, ...(patterns.data?.namingPatterns.edges ?? []).map(({ node }) => ({ value: node.pattern, label: node.name, description: node.pattern }))], [patterns.data]);
+  const profileOptions = useMemo(() => [{ value: "", label: "Use the default profile" }, ...(profiles.data?.qualityProfiles.edges ?? []).map(({ node }) => ({ value: node.id, label: node.name, description: node.isDefault ? "Default" : undefined }))], [profiles.data]);
+
+  const allTabs: EntitySettingsTab[] = [
+    {
+      value: "general", label: "General", icon: <IconSettings />, fields: ["name", "path", "qualityProfileId"],
+      content: (
+        <div className="flex flex-col gap-3">
+          <form.AppField name="name">{(field) => <field.TextField label="Name" required />}</form.AppField>
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1"><form.AppField name="path">{(field) => <field.TextField label="Folder" required />}</form.AppField></div>
+            <Button variant="secondary" onPress={() => setPickingFolder(true)} aria-label="Browse folders" isIconOnly className="mt-6"><IconFolder size="lg" /></Button>
+          </div>
+          <form.AppField name="qualityProfileId">{(field) => <field.SelectField label="Quality profile" options={profileOptions} />}</form.AppField>
+        </div>
+      ),
+    },
+    {
+      value: "scanning", label: "Scanning", icon: <IconClock />, fields: ["autoScan", "scanIntervalMinutes", "watchForChanges"],
+      content: (
+        <div className="flex flex-col gap-3">
+          <form.AppField name="autoScan">{(field) => <field.SwitchRow label="Scan on a schedule" description="Look for new, changed and missing files automatically." />}</form.AppField>
+          <form.AppField name="scanIntervalMinutes">{(field) => <field.NumberField label="Scan every (minutes)" min={5} max={10080} step={5} />}</form.AppField>
+          <form.AppField name="watchForChanges">{(field) => <field.SwitchRow label="Watch the folder" description="React to file changes between scans." />}</form.AppField>
+        </div>
+      ),
+    },
+    {
+      value: "organization", label: "Organization", icon: <IconFolder />, fields: ["autoOrganize", "namingPattern"],
+      content: (
+        <div className="flex flex-col gap-3">
+          <form.AppField name="autoOrganize">{(field) => <field.SwitchRow label="Organize files" description="Rename and move matched files into the naming pattern." />}</form.AppField>
+          <form.AppField name="namingPattern">{(field) => <field.SelectField label="Naming pattern" options={patternOptions} />}</form.AppField>
+        </div>
+      ),
+    },
+    {
+      value: "issues", label: issues > 0 ? `Issues ${issues}` : "Issues", icon: <IconWarning />,
+      content: tab === "issues" ? <ScansPanel libraryId={library.id} section="issues" scanRunId={scanRunId} onScanRunChange={setScanRunId} onShowIssues={setScanRunId} /> : null,
+    },
+    {
+      value: "history", label: "Scan history", icon: <IconHistory />,
+      content: tab === "history" ? <ScansPanel libraryId={library.id} section="history" scanRunId={null} onScanRunChange={setScanRunId} onShowIssues={(id) => { setScanRunId(id); onTabChange("issues"); }} /> : null,
+    },
+    {
+      value: "remove", label: "Remove", icon: <IconTrash />,
+      content: (
+        <div className="flex flex-col items-start gap-3">
+          <p className="text-body-sm text-muted">Removing the library deletes its catalogue from Librarian. Files on disk are never touched.</p>
+          <Button variant="danger-soft" onPress={() => setConfirmDelete(true)}><IconTrash size="md" /> Remove library</Button>
+        </div>
+      ),
+    },
+  ];
+  const tabs = isAdmin ? allTabs : allTabs.filter((item) => READ_ONLY_TABS.includes(item.value as LibrarySettingsTab));
+
+  return (
+    <>
+      <EntitySettingsDialog
+        open={open}
+        onOpenChange={onOpenChange}
+        form={form}
+        size="xl"
+        entityName={library.name}
+        identity={(
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="min-w-0 flex-1"><LibraryIdentity tier="header" heading="h2" library={library} items={items} issues={issues} /></div>
+            <ActionBar set={actions} targets={[library]} label={`Actions for ${library.name}`} maxButtons={1} />
+          </div>
+        )}
+        tabs={tabs}
+        tab={tab}
+        onTabChange={(next) => onTabChange(next as LibrarySettingsTab)}
+        saveDisabledReason={isAdmin ? undefined : "Only an admin can change a library"}
+      />
+      <ConfirmDialog
+        isOpen={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title={`Remove ${library.name}?`}
+        description="The catalogue, playback history and match records for this library are deleted. Media files stay where they are."
+        confirmLabel="Remove library"
+        destructive
+        isPending={deleting}
+        onConfirm={onDelete}
+      />
+      <FolderPickerDialog isOpen={pickingFolder} onOpenChange={setPickingFolder} initialPath={form.getFieldValue("path")} onPick={(path) => form.setFieldValue("path", path)} />
+    </>
+  );
+}

@@ -7,3 +7,7 @@ video:focus, audio:focus { outline: none; }
 .torrent-detail .fa-dt { --_hairline: transparent; }
 .torrent-detail .fa-dt-frame::before { display: none; }
 .torrent-detail .fa-dt[data-scrolled-bottom] .fa-dt-footer { box-shadow: none; }
+
+/* A settings dialog's table takes the whole pane; its fields keep the form's reading width. */
+.fa-entity-settings-tab:has(.fa-dt) { max-width: none; }
+.fa-entity-settings-tab .fa-dt { --_hairline: transparent; }

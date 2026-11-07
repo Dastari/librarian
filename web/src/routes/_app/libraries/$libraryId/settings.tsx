@@ -1,14 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { getRouteApi } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { LibrarySettingsForm } from "@/features/libraries/LibrarySettingsForm";
-
-const parent = getRouteApi("/_app/libraries/$libraryId");
-
+/** A library's settings live in its dialog; this keeps old links working. */
 export const Route = createFileRoute("/_app/libraries/$libraryId/settings")({
-  staticData: { crumb: "Settings", fixedHeight: true },
-  component: () => {
-    const { library } = parent.useLoaderData();
-    return <LibrarySettingsForm library={library} />;
+  beforeLoad: ({ params }) => {
+    throw redirect({ href: `/libraries/${params.libraryId}/files?settings=general`, replace: true });
   },
 });

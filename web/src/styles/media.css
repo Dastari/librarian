@@ -389,7 +389,7 @@
 }
 
 .app-top { padding-inline-end: var(--page-gutter); }
-.app-rail-gap { flex: none; block-size: var(--space-4); }
+.app-rail-divider { flex: none; padding-block: var(--space-2); padding-inline: var(--space-2); list-style: none; }
 
 @media (width < 48rem) {
   .app-frame { padding-inline: 0; }

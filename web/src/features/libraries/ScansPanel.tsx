@@ -4,16 +4,13 @@ import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, DataTable, filters, IdentityCell, NumericCell, RelativeTime, TextCell, type DataTableSearch, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
 import { IconClose, IconCopy, IconFilter, IconHistory, IconRefresh } from "glass-ux/icons";
 import { MeterCell } from "glass-ux/meter-cell";
-import { Metric } from "glass-ux/metric";
 import { Segmented } from "glass-ux/segmented";
-import { parseAsString, parseAsStringEnum, useQueryState } from "nuqs";
 import { useCallback, useMemo, useState } from "react";
 
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { useTableSelection } from "@/hooks/useTableSelection";
 import { EntityChip } from "@/components/entities/EntityChip";
 import { Button, Dialog } from "@/components/ui";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { usePrintMode } from "@/hooks/usePrintMode";
 import { tableUrlFilters, useTableUrlState } from "@/hooks/useTableUrlState";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
@@ -21,14 +18,14 @@ import { ENTITY_KINDS, type EntityKindName } from "@/lib/entities/kinds";
 import { linkedItem, mediaFileRef } from "@/lib/entities/linked";
 import { issueLabel, scanDuration, scanRunStatus, scanSeverity, scanStage, SCAN_RUN_STATUSES, SCAN_SEVERITIES, SCAN_STAGES } from "@/lib/entities/scan";
 import { formatDateTime, parseTimestamp } from "@/lib/format";
-import { cn } from "@/lib/utils";
 
 import { ScanIssueDetail } from "./scans/ScanIssueDetail";
 import { ScanRunDetail } from "./scans/ScanRunDetail";
-import { SCAN_VIEWS, useScanCounts, useScanIssues, useScanRuns, type IssueRow, type RunRow, type ScanView } from "./scans/useScans";
+import { useScanCounts, useScanIssues, useScanRuns, type IssueRow, type RunRow, type ScanView } from "./scans/useScans";
 import { useScanIssueActions } from "./scans/useScanIssueActions";
 
-const VIEW_LABEL: Record<ScanView, string> = { open: "Open issues", resolved: "Resolved", history: "Scan history" };
+const ISSUE_VIEWS = [{ value: "open", label: "Open" }, { value: "resolved", label: "Resolved" }] as const;
+type IssueView = (typeof ISSUE_VIEWS)[number]["value"];
 /** Issue codes the scanner writes (library_scan.rs); the filter lists them by name. */
 const ISSUE_CODES = [
   "BYTE_IDENTICAL_DUPLICATE", "DUPLICATE_HASH_FAILED", "NOT_ANALYZED", "FFPROBE_UNAVAILABLE", "FFPROBE_TIMEOUT", "FFPROBE_MALFORMED_OUTPUT", "FFPROBE_OUTPUT_TOO_LARGE",
@@ -123,18 +120,24 @@ const runUrl = {
 const tableState = (state: Partial<DataTableState>): DataTableState => ({ pagination: { pageIndex: 0, pageSize: 50 }, selection: {}, sorting: [], filters: [], ...state }) as DataTableState;
 
 /**
- * A library's scans: open issues, resolved issues and the scan history as one bounded table
- * at a time. Issues link the file and the item it belongs to; runs open a pipeline breakdown
- * and lead to the issues they found. The header trends the last scans' totals instead of a
- * strip of status cards (docs/entity-tables.md).
+ * One section of a library's settings: the problems its scans hit, open or resolved, or the record
+ * of each scan. Issues link the file and the item it belongs to; runs open a pipeline breakdown and
+ * lead to the issues they found.
  */
-export function ScansPanel({ libraryId }: { libraryId: string }) {
+export function ScansPanel({ libraryId, section, scanRunId, onScanRunChange, onShowIssues }: {
+  libraryId: string;
+  section: "issues" | "history";
+  /** Show only the issues this scan found. */
+  scanRunId: string | null;
+  onScanRunChange: (id: string | null) => void;
+  onShowIssues: (id: string) => void;
+}) {
   const isAdmin = useIsAdmin();
   const { user } = useSession();
   const printing = usePrintMode();
-  const wide = useMediaQuery("(min-width: 1280px)");
-  const [view, setView] = useQueryState("view", parseAsStringEnum<ScanView>([...SCAN_VIEWS]).withDefault("open").withOptions({ history: "push" }));
-  const [scanRunId, setScanRunId] = useQueryState("scan", parseAsString.withOptions({ history: "push" }));
+  const [issueView, setIssueView] = useState<IssueView>("open");
+  const history = section === "history";
+  const view: ScanView = history ? "history" : issueView;
   const counts = useScanCounts(libraryId);
 
   const issueCols = useMemo(() => issueColumns(), []);
@@ -159,22 +162,19 @@ export function ScansPanel({ libraryId }: { libraryId: string }) {
     {
       id: "show-issues", bulk: true, label: "Show issues from this scan", icon: IconFilter, group: "open", priority: 1,
       visible: (rows) => rows.length === 1 && (rows[0]!.issues.pageInfo.totalCount ?? 0) > 0,
-      run: (rows) => { void setScanRunId(rows[0]!.id); void setView("open"); },
+      run: (rows) => onShowIssues(rows[0]!.id),
     },
     {
       id: "copy-summary", label: "Copy scan summaries", icon: IconCopy, group: "open", bulk: true,
       run: async (rows) => copyText(rows.map((row) => `${formatDateTime(row.startedAt ?? row.createdAt)} · ${scanRunStatus(row.status).label} · ${row.discoveredCount} files · ${row.matchedCount} matched · ${row.unmatchedCount} unmatched${row.summary ? ` · ${row.summary}` : ""}`).join("\n")),
       successMessage: () => "Scan summaries copied",
     },
-  ]), [setScanRunId, setView]);
+  ]), [onShowIssues]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const history = view === "history";
   const selectedIssue = !history ? issues.list.rows.find((row) => row.id === selectedId) ?? null : null;
   const selectedRun = history ? runs.list.rows.find((row) => row.id === selectedId) ?? null : null;
-  const selected = selectedIssue ?? selectedRun;
   const close = () => setSelectedId(null);
-  const latest = counts.recent.at(-1);
   const filteredRun = scanRunId ? runs.list.rows.find((row) => row.id === scanRunId) : null;
 
   const detail = selectedIssue ? <ScanIssueDetail row={selectedIssue} actions={issueActions} onClose={close} />
@@ -184,34 +184,27 @@ export function ScansPanel({ libraryId }: { libraryId: string }) {
   const controls = (
     <div className="flex min-w-0 items-center gap-2">
       {scanRunId && !history ? (
-          <Badge tone="info" size="md">
-            From the scan of {filteredRun ? formatDateTime(filteredRun.startedAt ?? filteredRun.createdAt) : "the selected run"}
-            <button type="button" aria-label="Show issues from every scan" className="nav-focus -me-1 ms-1 rounded-full" onClick={() => void setScanRunId(null)}><IconClose size="xs" /></button>
-          </Badge>
-        ) : null}
-        <Segmented<ScanView>
+        <Badge tone="info" size="md">
+          From the scan of {filteredRun ? formatDateTime(filteredRun.startedAt ?? filteredRun.createdAt) : "the selected run"}
+          <button type="button" aria-label="Show issues from every scan" className="nav-focus -me-1 ms-1 rounded-full" onClick={() => onScanRunChange(null)}><IconClose size="xs" /></button>
+        </Badge>
+      ) : null}
+      {history ? null : (
+        <Segmented<IssueView>
           aria-label="Show"
           size="sm"
-          value={view}
-          onValueChange={(value) => { setSelectedId(null); void setView(value === "open" ? null : value); }}
-          options={SCAN_VIEWS.map((value) => ({ value, label: counts.views[value] !== undefined ? `${VIEW_LABEL[value]} ${counts.views[value]}` : VIEW_LABEL[value] }))}
+          value={issueView}
+          onValueChange={(value) => { setSelectedId(null); setIssueView(value); }}
+          options={ISSUE_VIEWS.map(({ value, label }) => ({ value, label: counts.views[value] !== undefined ? `${label} ${counts.views[value]}` : label }))}
         />
+      )}
       {refresh}
     </div>
   );
 
   return (
-    <div data-print-flow className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
-      <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-6 gap-y-3">
-        {latest ? (
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="h-12 w-60 max-lg:hidden"><Metric label="Files found" value={latest.discoveredCount} data={counts.recent.map((run) => run.discoveredCount)} range={`Last ${counts.recent.length} scans`} tone="info" better="none" /></div>
-            <div className="h-12 w-60 max-lg:hidden"><Metric label="Unmatched" value={latest.unmatchedCount} data={counts.recent.map((run) => run.unmatchedCount)} range={`Last ${counts.recent.length} scans`} tone="warning" better="down" /></div>
-          </div>
-        ) : null}
-      </div>
-      <div data-print-flow className={cn("grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-6 overflow-hidden", selected && wide && "xl:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]")}>
-        <div className="flex min-h-0 min-w-0 flex-col">
+    <div data-print-flow className="flex h-[min(32rem,70svh)] min-h-0 flex-col overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {history ? (
             <DataTable<RunRow>
               id={`librarian.${user?.id ?? "session"}.scan-runs`}
@@ -272,10 +265,8 @@ export function ScansPanel({ libraryId }: { libraryId: string }) {
               toolbar={controls}
             />
           )}
-        </div>
-        {detail && wide ? <div data-print-flow className="scrollbar-thin min-h-0 overflow-y-auto">{detail}</div> : null}
       </div>
-      <Dialog isOpen={Boolean(detail) && !wide} onOpenChange={(open) => !open && close()} title={history ? "Scan" : "Scan issue"} size="md">
+      <Dialog isOpen={Boolean(detail)} onOpenChange={(open) => !open && close()} title={history ? "Scan" : "Scan issue"} size="md">
         {detail}
       </Dialog>
     </div>

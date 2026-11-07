@@ -1,8 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { ScansPanel } from "@/features/libraries/ScansPanel";
-
+/** A library's settings live in its dialog; this keeps old links working. */
 export const Route = createFileRoute("/_app/libraries/$libraryId/scans")({
-  staticData: { crumb: "Scans", fixedHeight: true },
-  component: () => <ScansPanel libraryId={Route.useParams().libraryId} />,
+  beforeLoad: ({ params }) => {
+    throw redirect({ href: `/libraries/${params.libraryId}/files?settings=issues`, replace: true });
+  },
 });
