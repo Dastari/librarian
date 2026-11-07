@@ -2718,6 +2718,7 @@ impl LibraryScanService {
                 &run.hash,
                 draft.kind,
                 &item_id,
+                draft.library_id.clone(),
                 draft.group_key.as_deref(),
                 draft.season,
                 files,
@@ -2998,6 +2999,7 @@ impl LibraryScanService {
         info_hash: &str,
         kind: &str,
         item_id: &str,
+        library_id: Option<String>,
         group_key: Option<&str>,
         season: Option<i32>,
         files: Vec<SourceFileImport>,
@@ -3037,8 +3039,27 @@ impl LibraryScanService {
                 ));
             }
         };
-        self.import_torrent_with_link(actor, info_hash, files, patch)
+        self.import_torrent_with_link(actor, info_hash, library_id, files, patch)
             .await
+    }
+
+    /// The library item a result was matched to, while it still exists.
+    async fn library_item_if_present(
+        db: &crate::db::Database,
+        item: &IdentifiedItem,
+    ) -> Result<Option<String>> {
+        let pool = db.pool();
+        let Some(id) = item.library_item_id.clone() else {
+            return Ok(None);
+        };
+        let present = match item.kind.as_str() {
+            "audiobook" => Audiobook::get(pool, &id).await?.is_some(),
+            "movie" => Movie::get(pool, &id).await?.is_some(),
+            "tv" => Show::get(pool, &id).await?.is_some(),
+            "music" => Album::get(pool, &id).await?.is_some(),
+            _ => true,
+        };
+        Ok(present.then_some(id))
     }
 
     /// What a result could be, for a person to choose from: their own search, or the original one.
@@ -3123,10 +3144,23 @@ impl LibraryScanService {
             let item = IdentifiedItem::get(database.pool().pool(), &choice.item_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("That result no longer exists"))?;
-            let library_id = choice
+            let mut library_id = choice
                 .library_id
                 .clone()
                 .or_else(|| item.library_id.clone());
+            // Worked out before its kind of library existed: the owner's library of that kind now.
+            if library_id.is_none()
+                && let Some(kind) = library_type_for(item.kind.as_str())
+                && let Ok(Some(torrent)) = self.torrent_row(&item.info_hash).await
+            {
+                library_id = self
+                    .owned_libraries(&torrent.user_id)
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .find(|library| library.library_type.eq_ignore_ascii_case(kind))
+                    .map(|library| library.id);
+            }
             let import = Self::authorize_torrent_import(
                 database.pool(),
                 actor,
@@ -3145,8 +3179,12 @@ impl LibraryScanService {
                     )
                     .await?
                 }
-                (None, None) => match (&item.library_item_id, &item.provider_id) {
-                    (Some(id), _) => id.clone(),
+                // What it was matched to may have been deleted since: then it's added again.
+                (None, None) => match (
+                    Self::library_item_if_present(database.pool(), &item).await?,
+                    &item.provider_id,
+                ) {
+                    (Some(id), _) => id,
                     (None, Some(provider_id)) => {
                         self.add_from_provider(
                             &item,
@@ -3159,10 +3197,10 @@ impl LibraryScanService {
                     (None, None) => anyhow::bail!("Choose what this is first"),
                 },
             };
-            anyhow::Ok((item, target))
+            anyhow::Ok((item, target, library_id))
         }
         .await;
-        let (item, target) = match prepared {
+        let (item, target, library_id) = match prepared {
             Ok(prepared) => prepared,
             Err(error) => return Self::failed_source_summary(error),
         };
@@ -3202,6 +3240,7 @@ impl LibraryScanService {
                 &item.info_hash,
                 &item.kind,
                 &target,
+                library_id,
                 (item.kind == "audiobook").then_some(item.item_key.as_str()),
                 item.season,
                 files,
@@ -3349,6 +3388,17 @@ impl LibraryScanService {
                 .to_string(),
             other => anyhow::bail!("A {other} result can't be added"),
         })
+    }
+}
+
+/// The kind of library an identified result belongs in.
+fn library_type_for(kind: &str) -> Option<&'static str> {
+    match kind {
+        "music" => Some("music"),
+        "audiobook" => Some("audiobooks"),
+        "tv" => Some("tv"),
+        "movie" => Some("movies"),
+        _ => None,
     }
 }
 
@@ -3765,6 +3815,18 @@ mod erased_json {
         fn to_json(&self) -> String {
             serde_json::to_string(self).unwrap_or_else(|_| "[]".to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod library_type_tests {
+    use super::library_type_for;
+
+    #[test]
+    fn each_kind_of_result_has_its_kind_of_library() {
+        assert_eq!(library_type_for("music"), Some("music"));
+        assert_eq!(library_type_for("audiobook"), Some("audiobooks"));
+        assert_eq!(library_type_for("ebook"), None);
     }
 }
 

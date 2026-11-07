@@ -9607,11 +9607,20 @@ impl LibraryScanService {
         &self,
         auth_user: &AuthUser,
         info_hash: &str,
+        library_id: Option<String>,
         files: Vec<SourceFileImport>,
         patch: ImportLinkPatch,
     ) -> SourceProcessSummary {
-        self.run_torrent_import(auth_user, info_hash, None, files, None, None, Some(&patch))
-            .await
+        self.run_torrent_import(
+            auth_user,
+            info_hash,
+            library_id,
+            files,
+            None,
+            None,
+            Some(&patch),
+        )
+        .await
     }
 
     /// Import one file of a download as what a person says it is. The target must be in the
