@@ -13,8 +13,10 @@ test.describe("Theme", () => {
     const original = (await html.getAttribute("data-theme")) ?? "dark";
 
     await page.getByRole("button", { name: "Account" }).click();
-    await page.getByRole("menuitem", { name: "Daylight" }).click();
+    await page.getByRole("menuitem", { name: "Theme" }).click();
+    await page.getByRole("menuitemradio", { name: "Light" }).click();
     await expect(html).toHaveAttribute("data-theme", "light");
+    await expect(html).toHaveAttribute("data-palette", "cinema");
     await expect(html).not.toHaveClass(/dark/);
 
     await page.reload();
@@ -22,17 +24,26 @@ test.describe("Theme", () => {
 
     // Put the browser back on the theme it arrived with.
     await page.getByRole("button", { name: "Account" }).click();
-    await page.getByRole("menuitem", { name: "Cinema" }).click();
+    await page.getByRole("menuitem", { name: "Theme" }).click();
+    await page.getByRole("menuitemradio", { name: original === "light" ? "Light" : "Dark" }).click();
     await expect(html).toHaveAttribute("data-theme", original);
   });
 
-  test("switches theme from the settings picker", async ({ page }) => {
+  test("offers only colour mode and blur in the settings picker", async ({ page }) => {
     await gotoPage(page, "/settings/general", "Settings");
-    const themes = page.getByRole("radiogroup", { name: "Theme" });
-    await themes.getByRole("radio", { name: "Midnight" }).click();
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "midnight");
-    await themes.getByRole("radio", { name: "Cinema" }).click();
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    const html = page.locator("html");
+    await page.getByRole("button", { name: "Light", exact: true }).click();
+    await expect(html).toHaveAttribute("data-mode", "light");
+    await page.getByRole("button", { name: "Dark", exact: true }).click();
+    await expect(html).toHaveAttribute("data-mode", "dark");
+    await expect(html).toHaveAttribute("data-palette", "cinema");
+
+    const blur = page.getByRole("switch", { name: "Blur" });
+    await blur.click();
+    await expect(html).toHaveAttribute("data-glass-rendering", "none");
+    await blur.click();
+    await expect(html).not.toHaveAttribute("data-glass-rendering", /.+/);
+    await expect(page.getByText(/corner radius|interface size|density/i)).toHaveCount(0);
   });
 });
 

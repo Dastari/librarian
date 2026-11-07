@@ -42,7 +42,7 @@ pnpm test          # vitest
 pnpm test:coverage # vitest + v8 coverage report in coverage/
 pnpm test:e2e      # playwright against the sandbox stack on :3003
 pnpm build         # codegen + typecheck + production bundle in dist/
-pnpm icons         # regenerate PWA/favicon assets from src/assets/brand
+pnpm pwa-assets    # redraw icons, iOS splash screens and the social card (committed; see PWA below)
 pnpm film-graph    # rebuild the sign-in constellation dataset (Wikidata + Wikipedia; needs network)
 node e2e/shoot.mjs <name> <path> [--login] [--viewport=phone|tablet|tv|1440x900]
 e2e/sandbox.sh reset|start|stop   # disposable copy of the real backend on :3011 + dev server on :3003
@@ -144,6 +144,23 @@ Installable LG webOS, Samsung Tizen, and Android TV / Google TV applications are
 mode is a starting point; native packages and device compatibility are not yet qualified.
 An [Android TV / Google TV debug prototype](../apps/android-tv/README.md) now builds and can be
 installed directly on a TV for testing; it loads this frontend from the user's selected server.
+
+## PWA
+
+`scripts/generate-pwa-assets.mjs` (`pnpm pwa-assets`) draws every installable-app asset from the
+sign-in art (the Cinema canvas, a film constellation and the mark) in Playwright's Chromium and
+compresses them with sharp. It writes favicons (ICO, SVG, PNG), Android "any", maskable and
+monochrome icons, iOS touch icons, Windows tiles and `browserconfig.xml`, shortcut icons, the
+1200 × 630 `og-image.png`, and JPEG startup images for every current iPhone and iPad in portrait
+and landscape, whose `<link>` tags it rewrites in `index.html`. The output is committed; rerun the
+script after changing the mark, the palette or the device list in it.
+
+Only production builds have a service worker (prompt style, app shell only: no runtime caching,
+and `/api` and `/graphql` always reach the network). Each build writes `version.json` with a
+unique build id. `lib/pwa.ts` polls it and watches the worker; a new deployment shows one toast
+whose Refresh activates the new worker and reloads. The dev server registers nothing and
+unregisters any worker a production preview left on its origin. `LIBRARIAN_PUBLIC_URL` at build
+time (or `DEV_SERVER_PUBLIC_URL`) makes the Open Graph and Twitter links absolute.
 
 ## Auth
 

@@ -8,9 +8,10 @@ for primitives, fields/tabs, the Logs pilot, CSS integration, tests and review.
 ## Implemented
 
 - One root appearance runtime: the Glass Vite plugin, shared CSS, bundled fonts,
-  registered Cinema/Midnight/Ember/Forest palettes and existing Librarian mark.
-  `librarian.theme` migrates once to `librarian.appearance.v1`; an existing Glass
-  preference wins. The legacy key remains available for rollback.
+  the Cinema palette (the only one; Midnight, Ember and Forest were removed in
+  November 2026) and existing Librarian mark. Every appearance knob except Dark/Light
+  is locked; Blur is a device setting (`librarian.blur.v1`). `librarian.theme`
+  migrates once to `librarian.appearance.v1`, which keeps only the colour mode.
 - Appearance, tooltip, action and command-palette providers. ActionProvider mounts
   the single Toaster and ConfirmHost. All application toast producers now use the
   public Glass API. The palette supplies authenticated navigation commands.
