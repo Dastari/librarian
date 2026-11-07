@@ -15,8 +15,6 @@ export interface LibraryTypeMeta {
   label: string;
   singular: string;
   icon: TablerIcon;
-  /** Tailwind text colour class using the media tint tokens. */
-  tint: string;
   /** CSS variable used by placeholder gradients. */
   tintVar: string;
   /** Poster aspect used by cards for the primary item type. */
@@ -29,7 +27,6 @@ export const LIBRARY_TYPES: Record<LibraryType, LibraryTypeMeta> = {
     label: "Movies",
     singular: "Movie",
     icon: IconMovie,
-    tint: "text-media-movies",
     tintVar: "var(--media-movies)",
     aspect: "poster",
   },
@@ -38,7 +35,6 @@ export const LIBRARY_TYPES: Record<LibraryType, LibraryTypeMeta> = {
     label: "TV Shows",
     singular: "Show",
     icon: IconDeviceTv,
-    tint: "text-media-tv",
     tintVar: "var(--media-tv)",
     aspect: "poster",
   },
@@ -47,7 +43,6 @@ export const LIBRARY_TYPES: Record<LibraryType, LibraryTypeMeta> = {
     label: "Music",
     singular: "Album",
     icon: IconMusic,
-    tint: "text-media-music",
     tintVar: "var(--media-music)",
     aspect: "square",
   },
@@ -56,7 +51,6 @@ export const LIBRARY_TYPES: Record<LibraryType, LibraryTypeMeta> = {
     label: "Audiobooks",
     singular: "Audiobook",
     icon: IconBooks,
-    tint: "text-media-audiobooks",
     tintVar: "var(--media-audiobooks)",
     aspect: "poster",
   },
@@ -65,7 +59,6 @@ export const LIBRARY_TYPES: Record<LibraryType, LibraryTypeMeta> = {
     label: "Files",
     singular: "File",
     icon: IconFolder,
-    tint: "text-media-other",
     tintVar: "var(--media-other)",
     aspect: "square",
   },

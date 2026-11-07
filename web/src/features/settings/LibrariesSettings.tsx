@@ -40,7 +40,7 @@ const column = createDataTableColumns<LibraryOverview>();
 const columns = column.columns([
   column.accessor("name", {
     header: "Library", width: 26, priority: 1, cardRole: "title", sortable: true,
-    cell: ({ row }) => { const meta = libraryType(row.original.libraryType); return <IdentityCell icon={<meta.icon className={meta.tint} />} title={row.original.name} subtitle={row.original.path} status={row.original.scanning ? "installing" : "online"} statusLabel={row.original.scanning ? "Scanning" : "Idle"} />; },
+    cell: ({ row }) => { const meta = libraryType(row.original.libraryType); return <IdentityCell icon={<meta.icon />} title={row.original.name} subtitle={row.original.path} status={row.original.scanning ? "installing" : "online"} statusLabel={row.original.scanning ? "Scanning" : "Idle"} />; },
   }),
   column.accessor((row) => libraryType(row.libraryType).label, { id: "type", header: "Type", width: 8, priority: 2, sortable: true, cell: ({ row }) => <Badge size="sm" tone="neutral">{libraryType(row.original.libraryType).label}</Badge> }),
   column.accessor((row) => libraryItemCount(row).count, { id: "items", header: "Items", width: 8, priority: 2, align: "end", sortable: true, sortDescFirst: true, cell: ({ row }) => { const { count, noun } = libraryItemCount(row.original); return <TextCell muted={count === null}>{count === null ? "Files" : pluralize(count, noun)}</TextCell>; } }),

@@ -75,7 +75,7 @@ export function LibraryLayout({ library }: { library: LibraryDetail }) {
         <SegmentTabs items={tabs} ariaLabel="Library sections" className="min-w-0 flex-1" />
         <div className="flex min-w-0 shrink-0 items-center gap-3 text-label-sm text-muted max-sm:w-full max-sm:justify-between">
           <span className="inline-flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-            <span className={`inline-flex items-center gap-1.5 ${meta.tint}`}><meta.icon size={14} /> <span className="text-muted">{pluralize(primaryCount, meta.singular.toLowerCase())}</span></span>
+            <span className="inline-flex items-center gap-1.5 text-foreground"><meta.icon size={14} /> <span className="text-muted">{pluralize(primaryCount, meta.singular.toLowerCase())}</span></span>
             {library.lastScannedAt ? <span className="max-md:hidden">Scanned {formatRelative(library.lastScannedAt)}</span> : null}
             {scan.unresolvedIssues > 0 ? (
               <Link to="/libraries/$libraryId/scans" params={{ libraryId: library.id }} className="nav-focus inline-flex items-center gap-1 rounded text-warning">
