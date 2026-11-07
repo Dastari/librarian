@@ -606,9 +606,9 @@ async fn read_upgrade_plan(
         media_file_id: notification
             .media_file_id
             .context("Upgrade notification has no target")?,
-        pending_match_id: notification
-            .pending_match_id
-            .context("Upgrade notification has no pending source")?,
+        pending_match_id: notification.pending_match_id.context(
+            "This upgrade was found by an older version of Librarian and can't be applied safely. Keep the current file to dismiss it.",
+        )?,
     };
     verify_upgrade_plan(
         db,

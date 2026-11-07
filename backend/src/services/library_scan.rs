@@ -1894,8 +1894,103 @@ impl LibraryScanService {
         );
 
         self.backfill_sort_keys().await;
+        self.retire_stale_upgrade_notices().await;
 
         Ok(())
+    }
+
+    /// Upgrade decisions that can't or shouldn't be taken: ones from before upgrades carried what
+    /// they need to be applied safely, and ones that aren't upgrades by today's rules (a film
+    /// cropped to 1920x800 is as 1080p as the download that was offered in its place).
+    async fn retire_stale_upgrade_notices(&self) {
+        use crate::graphql::entities::{MediaFile, Notification, NotificationWhereInput};
+        use crate::services::quality::{profile, scoring};
+        use graphql_orm::graphql::filters::DateFilter;
+        let Ok(database) = self.database().await else {
+            return;
+        };
+        let pool = database.pool().pool();
+        let rows = match Notification::query(pool)
+            .filter(NotificationWhereInput {
+                action_type: Some(StringFilter {
+                    eq: Some("quality_upgrade".to_string()),
+                    ..Default::default()
+                }),
+                resolved_at: Some(DateFilter {
+                    is_null: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await
+        {
+            Ok(rows) => rows,
+            Err(error) => {
+                warn!(error = %error, "Could not read pending upgrade decisions: {}", error);
+                return;
+            }
+        };
+        let mut retired = 0usize;
+        for row in rows {
+            let action: serde_json::Value = row
+                .action_data
+                .as_deref()
+                .and_then(|text| serde_json::from_str(text).ok())
+                .unwrap_or_default();
+            let stale = if row.pending_match_id.is_none() {
+                true
+            } else {
+                let source = action["sourcePath"].as_str().unwrap_or_default();
+                let target = match row.media_file_id.as_deref() {
+                    Some(id) => MediaFile::get(pool, &id.to_string()).await.ok().flatten(),
+                    None => None,
+                };
+                match target {
+                    Some(target) => {
+                        let name = std::path::Path::new(source)
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or(source);
+                        !scoring::is_upgrade(
+                            &scoring::parse_release(name),
+                            Some(&profile::parsed_release_for_media_file(&target)),
+                        )
+                    }
+                    None => true,
+                }
+            };
+            if !stale {
+                continue;
+            }
+            let Ok(auth_user) = self.system_auth_user(Some(&row.user_id)).await else {
+                continue;
+            };
+            let done = self
+                .execute_mutation(
+                    &auth_user,
+                    r#"mutation RetireUpgrade($id: String!, $input: UpdateNotificationInput!) {
+                        UpdateNotification: updateNotification(id: $id, input: $input) { Success: success Error: error }
+                    }"#,
+                    serde_json::json!({
+                        "id": row.id,
+                        "input": { "resolvedAt": chrono::Utc::now().to_rfc3339() },
+                    }),
+                )
+                .await;
+            match done {
+                Ok(_) => retired += 1,
+                Err(error) => {
+                    warn!(notification_id = %row.id, error = %error, "Could not retire a stale upgrade decision: {}", error)
+                }
+            }
+        }
+        if retired > 0 {
+            info!(
+                retired,
+                "Retired {} upgrade decision(s) that were stale or not upgrades", retired
+            );
+        }
     }
 
     /// Records from before sort keys were written get them here. Anyone's own choice stays.
