@@ -10,6 +10,7 @@ import { z } from "zod";
 
 import { Button, ConfirmDialog } from "@/components/ui";
 import { FolderPickerDialog } from "@/features/files/FolderPickerDialog";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import {
   EntityLibraryDeleteDocument,
   EntityLibraryUpdateDocument,
@@ -67,6 +68,7 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosen
 }) {
   const navigate = useNavigate();
   const isAdmin = useIsAdmin();
+  const narrow = useMediaQuery("(max-width: 39.99rem)");
   const tab = isAdmin || READ_ONLY_TABS.includes(chosenTab) ? chosenTab : READ_ONLY_TABS[0]!;
   const [update] = useMutation(EntityLibraryUpdateDocument);
   const [remove, { loading: deleting }] = useMutation(EntityLibraryDeleteDocument);
@@ -171,10 +173,15 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosen
         size="xl"
         entityName={library.name}
         identity={(
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="min-w-0 flex-1"><LibraryIdentity tier="header" heading="h2" library={library} items={items} issues={issues} /></div>
-            <ActionBar set={actions} targets={[library]} label={`Actions for ${library.name}`} maxButtons={1} />
-          </div>
+          <LibraryIdentity
+            tier={narrow ? "compact" : "header"}
+            heading="h2"
+            library={library}
+            items={items}
+            issues={issues}
+            actions={actions}
+            headerActions={narrow ? undefined : <ActionBar set={actions} targets={[library]} label={`Actions for ${library.name}`} maxButtons={1} />}
+          />
         )}
         tabs={tabs}
         tab={tab}

@@ -1,5 +1,6 @@
 import type { ActionSet } from "glass-ux/actions";
 import { EntityIdentity, type EntityState } from "glass-ux/entity";
+import type { ReactNode } from "react";
 
 import { ENTITY_KINDS } from "@/lib/entities/kinds";
 import { formatRelative, pluralize } from "@/lib/format";
@@ -24,7 +25,7 @@ export function libraryState(library: LibraryEntity, issues = 0): EntityState {
  * A library wherever it is named: its type's glyph with a state dot, an issue count on the corner
  * of the glyph, then what it holds and when it was last scanned. Every size shows the same state.
  */
-export function LibraryIdentity<T extends LibraryEntity>({ library, tier = "row", items, issues = 0, actions, heading, className, onOpen }: {
+export function LibraryIdentity<T extends LibraryEntity>({ library, tier = "row", items, issues = 0, actions, headerActions, heading, className, onOpen }: {
   library: T;
   tier?: "header" | "compact" | "row" | "chip" | "icon" | "auto";
   /** How many titles it holds, where that's known. */
@@ -32,6 +33,8 @@ export function LibraryIdentity<T extends LibraryEntity>({ library, tier = "row"
   /** Open scan issues, where they're known. */
   issues?: number;
   actions?: ActionSet<T>;
+  /** What sits at the end of the header, in place of its own action buttons. */
+  headerActions?: ReactNode;
   heading?: "h1" | "h2" | "h3" | "h4" | "p";
   className?: string;
   onOpen?: () => void;
@@ -53,6 +56,7 @@ export function LibraryIdentity<T extends LibraryEntity>({ library, tier = "row"
       ]}
       target={library}
       actions={actions}
+      slots={headerActions ? { actions: headerActions } : undefined}
       onOpen={onOpen}
     />
   );

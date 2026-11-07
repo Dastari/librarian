@@ -6,6 +6,7 @@ import { createContext, useMemo, useState } from "react";
 import { PageScroller } from "@/components/shell/PageScroller";
 import { MediaBackdrop, type TabItem } from "@/components/ui";
 import type { SpotlightArt } from "@/features/home/HomeSpotlight";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { LibraryFileCountDocument, type LibraryDetailQuery } from "@/graphql/generated/graphql";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { libraryType, type LibraryType } from "@/lib/library-types";
@@ -54,6 +55,8 @@ export function LibraryLayout({ library }: { library: LibraryDetail }) {
   const primaryCount = views.find((view) => view.count !== undefined)?.count ?? fileCount ?? 0;
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const navigate = useNavigate();
+  // A view switch needs the row's room as well, so a library with one collapses sooner.
+  const narrow = useMediaQuery(views.length > 1 ? "(max-width: 79.99rem)" : "(max-width: 39.99rem)");
   // Browsers own their result scrolling; Recommended is a page of artwork and shelves that scrolls as a whole.
   const flow = useRouterState({ select: (state) => state.matches.some((match) => match.routeId === "/_app/libraries/$libraryId/recommended") });
   const [art, setArt] = useState<SpotlightArt | null>(null);
@@ -61,23 +64,39 @@ export function LibraryLayout({ library }: { library: LibraryDetail }) {
   const scanningLibrary = useMemo(() => ({ ...library, scanning: library.scanning || scan.running }), [library, scan.running]);
   const actions = useLibraryActions<typeof scanningLibrary>({ settings: settings.open, open: false });
 
+  const viewSwitch = views.length > 1 ? (
+    <Segmented
+      aria-label="Library views"
+      size="sm"
+      value={views.find((view) => view.href && pathname.startsWith(view.href))?.key ?? views[0]!.key}
+      onValueChange={(key) => { const href = views.find((view) => view.key === key)?.href; if (href) void navigate({ href }); }}
+      options={views.map((view) => ({ value: view.key, label: view.count !== undefined ? `${view.label} ${view.count}` : view.label }))}
+    />
+  ) : null;
+
   return (
     <LibraryArtContext value={setArt}>
     <div data-print-flow className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       {flow && art ? <MediaBackdrop src={art.src} fallback={art.fallback} tint={art.tint} /> : null}
       {/* The identity never scrolls away; only the view under it does. */}
-      <div className={cn("page-gutter flex min-w-0 shrink-0 items-center gap-x-4 gap-y-2 pb-3 max-sm:flex-wrap sm:pb-4 [@media(max-height:35rem)]:pb-2", flow && "over-imagery")}>
-        <LibraryIdentity tier="header" heading="h1" className="min-w-0 flex-1 max-sm:basis-full" library={scanningLibrary} items={primaryCount} issues={scan.unresolvedIssues} />
-        {views.length > 1 ? (
-          <Segmented
-            aria-label="Library views"
-            size="sm"
-            value={views.find((view) => view.href && pathname.startsWith(view.href))?.key ?? views[0]!.key}
-            onValueChange={(key) => { const href = views.find((view) => view.key === key)?.href; if (href) void navigate({ href }); }}
-            options={views.map((view) => ({ value: view.key, label: view.count !== undefined ? `${view.label} ${view.count}` : view.label }))}
-          />
-        ) : null}
-        <span data-print="hide" className="shrink-0"><ActionBar set={actions} targets={[scanningLibrary]} label={`Actions for ${library.name}`} maxButtons={1} /></span>
+      <div className={cn("page-gutter flex min-w-0 shrink-0 flex-col gap-2 pb-3 sm:pb-4 [@media(max-height:35rem)]:pb-2", flow && "over-imagery")}>
+        {/* A narrow page collapses the identity to one line, with its actions behind its menu. */}
+        <LibraryIdentity
+          tier={narrow ? "compact" : "header"}
+          heading="h1"
+          className="min-w-0"
+          library={scanningLibrary}
+          items={primaryCount}
+          issues={scan.unresolvedIssues}
+          actions={actions}
+          headerActions={narrow ? undefined : (
+            <span data-print="hide" className="flex min-w-0 items-center gap-3">
+              {viewSwitch}
+              <ActionBar set={actions} targets={[scanningLibrary]} label={`Actions for ${library.name}`} maxButtons={1} />
+            </span>
+          )}
+        />
+        {narrow ? viewSwitch : null}
       </div>
       <PageScroller data-print-flow scrolling={flow} className={cn("page-gutter flex min-h-0 flex-1 flex-col", !flow && "fa-focus-room", !flow && "pb-[calc(var(--space-3)+var(--focus-reach))] sm:pb-[calc(var(--space-4)+var(--focus-reach))]")}>
         <Outlet />
