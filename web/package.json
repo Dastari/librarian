@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "pnpm run generate && pnpm run icons && tsc --noEmit -p tsconfig.build.json && vite build",
+    "build": "pnpm run generate && tsc --noEmit -p tsconfig.build.json && vite build",
     "preview": "vite preview",
     "generate": "pnpm run codegen && node scripts/generate-route-tree.mjs",
     "codegen": "node scripts/generate-entity-documents.mjs && graphql-codegen --config codegen.ts",
@@ -21,7 +21,7 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "schema:pull": "node scripts/pull-schema.mjs",
-    "icons": "node scripts/generate-icons.mjs",
+    "pwa-assets": "node scripts/generate-pwa-assets.mjs",
     "film-graph": "node scripts/generate-film-graph.mjs",
     "audit:ci": "pnpm audit --audit-level=high"
   },
