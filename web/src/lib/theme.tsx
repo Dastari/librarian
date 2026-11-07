@@ -1,6 +1,7 @@
 import { AppearanceProvider, useAppearance } from "glass-ux/appearance";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 
+import pwaColors from "@/assets/brand/pwa-colors.json";
 import { blurStore, bootAppearance, LEGACY_THEME_KEY, setBlur, type ColorMode } from "@/lib/glass/appearance";
 
 /**
@@ -19,8 +20,8 @@ export const THEMES: ThemeMeta[] = [
   { id: "light", label: "Light" },
 ];
 
-/** Cinema's canvas, for the browser and status bar colour (`theme-color`). */
-export const THEME_COLORS: Record<ColorMode, string> = { dark: "#0e0e19", light: "#eaeaf6" };
+/** Cinema's canvas, for the browser and status bar colour (`theme-color`); see generate-pwa-assets. */
+export const THEME_COLORS: Record<ColorMode, string> = { dark: pwaColors.canvasDark, light: pwaColors.canvasLight };
 
 interface ThemeContextValue {
   preference: ThemePreference;

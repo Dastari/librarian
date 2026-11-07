@@ -26,9 +26,10 @@ function vendorChunk(id: string): string | undefined {
   return "vendor";
 }
 
-/** Cinema's dark canvas and brand amber, as scripts/generate-pwa-assets.mjs prints them. */
-const THEME_COLOR = "#0e0e19";
-const BRAND_COLOR = "#f6ad3b";
+/** Cinema's dark canvas and brand amber, written by scripts/generate-pwa-assets.mjs. */
+const pwaColors = JSON.parse(readFileSync(new URL("./src/assets/brand/pwa-colors.json", import.meta.url), "utf8")) as { brand: string; canvasDark: string };
+const THEME_COLOR = pwaColors.canvasDark;
+const BRAND_COLOR = pwaColors.brand;
 
 /** A new id for every build: the package version, the commit when there is one, and the time. */
 function buildId(version: string, time: string): string {

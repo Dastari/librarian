@@ -10,11 +10,15 @@
  *   public/favicon.ico, public/favicon.svg, public/apple-touch-icon.png, public/og-image.png,
  *   public/browserconfig.xml, public/icons/* (favicons, Android, maskable, monochrome, iOS,
  *   Windows tiles, shortcuts, Safari pinned tab), public/splash/* (iOS startup images for every
- *   current iPhone and iPad, portrait and landscape, as JPEG).
+ *   current iPhone and iPad, portrait and landscape, as JPEG), and src/assets/brand/pwa-colors.json
+ *   (the brand and canvas colours as hex, read by vite.config.ts and lib/theme.tsx).
+ *
+ * The mark is drawn in the brand colour, Cinema's accent, read from src/styles/palettes.css.
  *
  * Chromium (Playwright's, as the e2e tests use) draws the art, so the gradients, oklch colours and
  * the Outfit wordmark match the app exactly; sharp compresses the PNGs and packs the ICO. The
- * output is deterministic: the constellation comes from a seeded generator.
+ * layout is stable between runs (the constellation comes from a seeded generator); a rerun may
+ * still change a few bytes of a JPEG where Chromium antialiases text differently.
  */
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -28,15 +32,34 @@ const pub = resolve(web, "public");
 const iconsDir = resolve(pub, "icons");
 const splashDir = resolve(pub, "splash");
 
-/* ── Cinema, dark: the values Glass derives from palettes.css (data-palette="cinema", data-mode="dark") ── */
+/* ── Cinema, dark ─────────────────────────────────────────────────────────────────────────────────
+ * Hues and the accent come from the palette parameters in src/styles/palettes.css; lightness and
+ * chroma of the canvas, glows and text are the ones Glass derives from them in dark mode. */
+const palettes = readFileSync(resolve(web, "src/styles/palettes.css"), "utf8");
+function paletteParam(selector, name) {
+  const block = palettes.match(new RegExp(`${selector.replace(/[[\]"=]/g, "\\$&")}[^{]*\\{([^}]*)\\}`))?.[1] ?? "";
+  const value = block.match(new RegExp(`${name}:\\s*([\\d.]+)`))?.[1];
+  if (value === undefined) throw new Error(`palettes.css has no ${name} for ${selector}`);
+  return Number(value);
+}
+const cinema = (name) => paletteParam('[data-palette="cinema"]', name);
+const neutralH = cinema("--neutral-h");
+
+/**
+ * The brand colour: Cinema's accent in dark mode (--accent, --brand-primary), the amber of the
+ * mark, the active navigation item and the start of the primary button's gradient.
+ */
+const BRAND_COLOR = `oklch(${paletteParam('[data-mode="dark"][data-palette="cinema"]', "--accent-l")} ${cinema("--accent-c")} ${cinema("--accent-h")})`;
+
 const CINEMA = {
-  canvas: "oklch(0.17 0.022 285)",
-  ambient1: "oklch(0.42 0.13 290)",
-  ambient2: "oklch(0.36 0.11 230)",
-  ambient3: "oklch(0.38 0.1 60)",
-  brand: "oklch(0.8 0.15 74)",
-  foreground: "oklch(0.965 0.006 285)",
-  muted: "oklch(0.77 0.016 285)",
+  canvas: `oklch(0.17 0.022 ${neutralH})`,
+  canvasLight: `oklch(0.94 0.016 ${neutralH})`,
+  ambient1: `oklch(0.42 0.13 ${cinema("--ambient-1-h")})`,
+  ambient2: `oklch(0.36 0.11 ${cinema("--ambient-2-h")})`,
+  ambient3: `oklch(0.38 0.1 ${cinema("--ambient-3-h")})`,
+  brand: BRAND_COLOR,
+  foreground: `oklch(0.965 0.006 ${neutralH})`,
+  muted: `oklch(0.77 0.016 ${neutralH})`,
   rim: "oklch(1 0 0 / 0.17)",
 };
 
@@ -129,7 +152,7 @@ function constellation({ width, height, scale, clear, seed }) {
  * @param {number} options.width CSS px
  * @param {number} options.height CSS px
  * @param {number} options.mark mark width as a fraction of the shorter side
- * @param {"art"|"mono"} [options.style] mono: a white mark on transparency, nothing else
+ * @param {"art"|"mono"} [options.style] mono: the brand-coloured mark on transparency, nothing else
  * @param {number} [options.radius] corner radius as a fraction of the shorter side (transparent corners)
  * @param {boolean} [options.stars] draw the constellation (off for tiny favicons)
  * @param {number} [options.starScale] constellation size relative to the sign-in screen
@@ -143,7 +166,7 @@ function artHtml({ width, height, mark, style = "art", radius = 0, stars = true,
   const markSvg = (fill) => `<svg class="mark" width="${markW}" height="${markH}" viewBox="0 0 ${MARK_VIEWBOX.join(" ")}" xmlns="http://www.w3.org/2000/svg"><path transform="${MARK_TRANSFORM}" fill="${fill}" d="${MARK_PATH}"/></svg>`;
 
   if (style === "mono") {
-    return page(`<div class="center">${markSvg("#fff")}</div>`, "");
+    return page(`<div class="center">${markSvg(CINEMA.brand)}</div>`, "");
   }
 
   const wordSize = wordmark === "beside" ? markH * 0.62 : short * 0.075;
@@ -275,7 +298,7 @@ for (const size of [48, 72, 96, 128, 144, 192, 256, 384, 512]) {
 // Maskable: full bleed; the mark stays inside the 80 % safe circle with room to spare.
 for (const size of [192, 512]) await save(resolve(iconsDir, `icon-maskable-${size}.png`), await icon(size, { mark: 0.46 }));
 
-// Monochrome (Android themed icons): only the alpha channel counts.
+// Monochrome (Android themed icons): only the alpha channel counts; the mark is drawn in the brand colour anyway.
 for (const size of [192, 512]) {
   const html = artHtml({ width: size, height: size, mark: 0.46, style: "mono" });
   await save(resolve(iconsDir, `icon-monochrome-${size}.png`), await render(html, { width: size, height: size, transparent: true }));
@@ -359,7 +382,10 @@ const indent = index.slice(index.lastIndexOf("\n", from) + 1, from);
 writeFileSync(indexPath, `${index.slice(0, from + start.length)}\n${splashLinks.map((link) => indent + link).join("\n")}\n${indent}${index.slice(to)}`);
 
 console.log(`Wrote ${written.length} assets to public/ and ${splashLinks.length} splash links to index.html.`);
-console.log(`Theme colour (Cinema canvas): ${colours.canvas}; brand: ${colours.brand}`);
+// The same colours for the manifest, index.html and the runtime theme-color (vite.config.ts, lib/theme.tsx).
+const brandColours = { brand: colours.brand, canvasDark: colours.canvas, canvasLight: colours.canvasLight, brandOklch: BRAND_COLOR };
+writeFileSync(resolve(web, "src/assets/brand/pwa-colors.json"), `${JSON.stringify(brandColours, null, 2)}\n`);
+console.log(`Brand (Cinema accent): ${BRAND_COLOR} = ${colours.brand}; canvas ${colours.canvas} (dark), ${colours.canvasLight} (light)`);
 
 /* ── Helpers ─────────────────────────────────────────────────────────────────────────────────── */
 
