@@ -89,7 +89,7 @@ ratatui = "0.30.2"
 crossterm = "0.29.0"
 
 # System metrics
-sysinfo = "0.39.6"
+sysinfo = "0.40.1"
 
 # Config
 dotenvy = "0.15.7"
