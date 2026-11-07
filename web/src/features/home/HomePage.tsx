@@ -9,16 +9,17 @@ import { IconPlus } from "glass-ux/icons";
 import { IconStack2 } from "@tabler/icons-react";
 
 import { SceneBackdrop } from "@/components/three/SceneBackdrop";
-import { BackdropCard, Button, EmptyState, ErrorState, MediaRow, PosterCard, Section, SkeletonBlock } from "@/components/ui";
+import { Button, EmptyState, ErrorState, MediaRow, PosterCard, Section, SkeletonBlock } from "@/components/ui";
 import { LibraryCard } from "@/features/libraries/LibraryCard";
 import { usePlayer } from "@/features/player/usePlayer";
 import { LibrariesOverviewDocument, RecentAlbumsDocument, RecentAudiobooksDocument, RecentMoviesDocument, RecentShowsDocument } from "@/graphql/generated/graphql";
 import { albumCover, audiobookCover, movieBackdrop, moviePoster, showPoster } from "@/lib/artwork";
-import { formatClock, formatRuntime, formatYear } from "@/lib/format";
+import { formatRuntime, formatYear } from "@/lib/format";
 import { LIBRARY_TYPES } from "@/lib/library-types";
 
 import { GuideSpotlight } from "@/features/guide/GuideSpotlight";
 import { MovieReleases } from "./MovieReleases";
+import { ResumeCard } from "./ResumeCard";
 import { useContinueWatching } from "./useContinueWatching";
 
 const ROW_LIMIT = 20;
@@ -71,23 +72,7 @@ export function HomePage() {
         <Section title="Continue watching" bleed>
           <MediaRow ariaLabel="Continue watching">
             {resume.items.map((item) => (
-              <BackdropCard
-                key={item.key}
-                width="row"
-                title={item.title}
-                subtitle={item.subtitle}
-                image={item.image}
-                progress={item.progress}
-                corner={item.duration ? `${formatClock(Math.max(0, item.duration - item.position))} left` : undefined}
-                onPress={() => {
-                  if (item.kind === "movie" || item.kind === "episode") {
-                    player.playVideo({ mediaFileId: item.mediaFileId, title: item.title, subtitle: item.subtitle, artwork: item.image, entity: item.entity, href: item.href, startPosition: item.position });
-                    void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: item.mediaFileId } });
-                  } else {
-                    void navigate({ href: item.href });
-                  }
-                }}
-              />
+              <ResumeCard key={item.key} item={item} />
             ))}
           </MediaRow>
         </Section>

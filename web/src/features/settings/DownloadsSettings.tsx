@@ -41,7 +41,7 @@ export function DownloadsSettings() {
   const torrent = useAppSettings("torrent");
   const auto = useAppSettings("auto_download");
   const [trigger, { loading: triggering }] = useMutation(TriggerAutoDownloadDocument);
-  const defaults = useRef<Values>({ downloadDir: "", sessionDir: "", listenPort: 6881, enableDht: true, maxConcurrent: 5, downloadLimit: 0, uploadLimit: 0, autoEnabled: true, autoInterval: 60, retryAfter: 240, seedRatioLimit: 1, seedTimeMinutes: 0, removeAfterImport: false });
+  const defaults = useRef<Values>({ downloadDir: "", sessionDir: "", listenPort: 6881, enableDht: true, maxConcurrent: 5, downloadLimit: 0, uploadLimit: 0, autoEnabled: false, autoInterval: 60, retryAfter: 240, seedRatioLimit: 1, seedTimeMinutes: 0, removeAfterImport: false });
   const form = useAppForm({ ...formBehaviour, validators: { onDynamic: schema }, defaultValues: defaults.current, onSubmit: async ({ value }) => {
     const values = schema.parse(value);
     await torrent.save({ "torrent.download_dir": values.downloadDir, "torrent.session_dir": values.sessionDir, "torrent.listen_port": values.listenPort, "torrent.enable_dht": values.enableDht, "torrent.max_concurrent": values.maxConcurrent, "torrent.download_limit": values.downloadLimit, "torrent.upload_limit": values.uploadLimit, "torrent.seed_ratio_limit": values.seedRatioLimit, "torrent.seed_time_minutes": values.seedTimeMinutes, "torrent.remove_after_import": values.removeAfterImport });
@@ -66,7 +66,8 @@ export function DownloadsSettings() {
       seedRatioLimit: asNumber(t.get("torrent.seed_ratio_limit"), 1),
       seedTimeMinutes: asNumber(t.get("torrent.seed_time_minutes"), 0),
       removeAfterImport: asBool(t.get("torrent.remove_after_import"), false),
-      autoEnabled: asBool(a.get("auto_download.enabled"), true),
+      // Off until someone turns it on, as the server has it (download_monitor.rs).
+      autoEnabled: asBool(a.get("auto_download.enabled"), false),
       autoInterval: asNumber(a.get("auto_download.interval_minutes"), 60),
       retryAfter: asNumber(a.get("auto_download.retry_after_minutes"), 240),
     };
@@ -98,7 +99,7 @@ export function DownloadsSettings() {
           actions={<Button size="sm" variant="ghost" onPress={() => void runNow()} isPending={triggering}><IconPlay size="md" /> Run now</Button>}
         >
           <div className="flex flex-col gap-4">
-            <form.AppField name="autoEnabled">{(field) => <field.SwitchRow label="Search and download automatically" description="Turn this off to keep every grab manual." />}</form.AppField>
+            <form.AppField name="autoEnabled">{(field) => <field.SwitchRow label="Search and download automatically" description="Search for what you want and grab the best release on a schedule. Off keeps every grab manual." />}</form.AppField>
             <FieldGroup columns={2}>
               <form.AppField name="autoInterval">{(field) => <field.NumberField label="Check every (minutes)" min={5} max={1440} step={5} />}</form.AppField>
               <form.AppField name="retryAfter">{(field) => <field.NumberField label="Retry failed searches after (minutes)" min={5} max={10080} step={5} />}</form.AppField>

@@ -4,7 +4,8 @@ import { useMemo } from "react";
 import type { PlayItem } from "@/features/player/store";
 
 import { ResumeShelfDocument, type ResumeShelfQuery } from "@/graphql/generated/graphql";
-import { albumCover, audiobookCover, movieBackdrop, showBackdrop } from "@/lib/artwork";
+import type { ArtworkAspect } from "@/components/ui/Artwork";
+import { albumCover, audiobookCover, movieBackdrop, moviePoster, showBackdrop, showPoster } from "@/lib/artwork";
 import { useSession } from "@/lib/auth/useSession";
 import { isPresent } from "@/lib/utils";
 
@@ -18,7 +19,11 @@ export interface ResumeItem {
   audiobookId?: string;
   title: string;
   subtitle?: string;
+  /** Wide art for the player. */
   image: string | undefined;
+  /** The title's own cover, for a shelf of posters like every other. */
+  poster: string | undefined;
+  posterAspect: ArtworkAspect;
   progress: number;
   position: number;
   duration: number | undefined;
@@ -40,20 +45,20 @@ export function resumeItems(rows: ResumeShelfQuery["resumeShelf"]["items"]): Res
     };
     if (file.movie) {
       const movie = file.movie;
-      return { ...base, kind: "movie", entity: { kind: "movie", id: movie.id }, title: movie.title, subtitle: movie.year ? String(movie.year) : undefined, image: movieBackdrop(movie.id), href: `/movies/${movie.id}` };
+      return { ...base, kind: "movie", entity: { kind: "movie", id: movie.id }, title: movie.title, subtitle: movie.year ? String(movie.year) : undefined, image: movieBackdrop(movie.id), poster: moviePoster(movie.id), posterAspect: "poster", href: `/movies/${movie.id}` };
     }
     if (file.episode) {
       const episode = file.episode;
       const code = `S${String(episode.season).padStart(2, "0")} · E${String(episode.episode).padStart(2, "0")}`;
-      return { ...base, kind: "episode", entity: { kind: "episode", id: episode.id }, title: episode.show?.name ?? episode.title ?? "Episode", subtitle: [code, episode.title].filter(Boolean).join("  "), image: episode.show ? showBackdrop(episode.show) : undefined, href: `/shows/${episode.showId}` };
+      return { ...base, kind: "episode", entity: { kind: "episode", id: episode.id }, title: episode.show?.name ?? episode.title ?? "Episode", subtitle: [code, episode.title].filter(Boolean).join("  "), image: episode.show ? showBackdrop(episode.show) : undefined, poster: episode.show ? showPoster(episode.show) : undefined, posterAspect: "poster", href: `/shows/${episode.showId}` };
     }
     if (file.track) {
       const track = file.track;
-      return { ...base, kind: "track", entity: { kind: "track", id: track.id }, title: track.title, subtitle: track.album?.name ?? track.artistName ?? undefined, image: track.album ? albumCover(track.album) : undefined, href: `/albums/${track.albumId}` };
+      return { ...base, kind: "track", entity: { kind: "track", id: track.id }, title: track.title, subtitle: track.album?.name ?? track.artistName ?? undefined, image: track.album ? albumCover(track.album) : undefined, poster: track.album ? albumCover(track.album) : undefined, posterAspect: "square", href: `/albums/${track.albumId}` };
     }
     if (file.chapter) {
       const chapter = file.chapter;
-      return { ...base, kind: "chapter", entity: { kind: "chapter", id: chapter.id }, audiobookId: chapter.audiobookId, title: chapter.audiobook?.title ?? chapter.title ?? "Audiobook", subtitle: chapter.title ?? `Chapter ${chapter.chapterNumber}`, image: chapter.audiobook ? audiobookCover(chapter.audiobook) : undefined, href: `/audiobooks/${chapter.audiobookId}` };
+      return { ...base, kind: "chapter", entity: { kind: "chapter", id: chapter.id }, audiobookId: chapter.audiobookId, title: chapter.audiobook?.title ?? chapter.title ?? "Audiobook", subtitle: chapter.title ?? `Chapter ${chapter.chapterNumber}`, image: chapter.audiobook ? audiobookCover(chapter.audiobook) : undefined, poster: chapter.audiobook ? audiobookCover(chapter.audiobook) : undefined, posterAspect: "poster", href: `/audiobooks/${chapter.audiobookId}` };
     }
     return null;
   }).filter(isPresent);

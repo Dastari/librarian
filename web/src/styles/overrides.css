@@ -77,3 +77,31 @@ video:focus, audio:focus { outline: none; }
   box-shadow: var(--shadow-3);
 }
 :root[data-input-mode="tv"] .media-browser .fa-dt-cards { padding: 1.5rem 1.25rem; }
+
+/* A title's artwork in an identity's glyph slot (ArtGlyph): rows and table cells grow the slot
+   to a thumbnail so the cover reads; chips keep their small glyph size. Glass draws only glyphs
+   in rows, so the slot is sized here. */
+.fa-entity-glyph:has(> .entity-art) {
+  width: 2.5rem;
+  height: 2.5rem;
+}
+.fa-entity[data-tier="chip"] .fa-entity-glyph:has(> .entity-art) {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+}
+.entity-art {
+  display: block;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-mark, 0.375rem);
+  background-color: var(--surface-2);
+  box-shadow: 0 0 0 var(--border-width, 1px) var(--line);
+}
+.entity-art[data-shape="poster"] { width: 66.667%; justify-self: center; }
+.entity-art > img {
+  display: block;
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+}

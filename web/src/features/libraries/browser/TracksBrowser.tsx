@@ -7,6 +7,7 @@ import { createContext, useContext, useMemo, useState } from "react";
 import { TableToolbar } from "@/components/ui/TableToolbar";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { useTableSelection } from "@/hooks/useTableSelection";
+import { ArtGlyph } from "@/components/entities/ArtGlyph";
 import { EntityChip } from "@/components/entities/EntityChip";
 import { refCellEntity } from "@/lib/entities/resolver";
 import { ErrorState, GlassSegmented } from "@/components/ui";
@@ -17,6 +18,7 @@ import { EntityLibraryGetDocument, LibraryTracksDocument, type ContentStatus, ty
 import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
 import { useServerTable } from "@/hooks/useServerTable";
 import { useSession } from "@/lib/auth/useSession";
+import { sizedArtwork } from "@/lib/api/urls";
 import { albumCover } from "@/lib/artwork";
 import { ENTITY_KINDS, entityPath } from "@/lib/entities/kinds";
 import { badgeTone } from "@/lib/entities/linked";
@@ -42,7 +44,7 @@ function columnsFor() {
   return column.columns([
     column.accessor("title", {
       header: "Track", width: 26, priority: 1, cardRole: "title", sortable: true,
-      cell: ({ row }) => <IdentityCell icon={<TrackGlyph />} title={row.original.title} subtitle={row.original.artistName ?? undefined} status={row.original.mediaFileId ? "online" : "offline"} statusLabel={row.original.mediaFileId ? "Playable" : "No file"} />,
+      cell: ({ row }) => <IdentityCell icon={<ArtGlyph src={row.original.album ? sizedArtwork(albumCover(row.original.album), 96) : null} fallback={<TrackGlyph />} />} title={row.original.title} subtitle={row.original.artistName ?? undefined} status={row.original.mediaFileId ? "online" : "offline"} statusLabel={row.original.mediaFileId ? "Playable" : "No file"} />,
     }),
     column.accessor("trackNumber", { header: "#", width: 4, priority: 3, align: "end", grow: false, sortable: true, cell: ({ row }) => <TextCell muted>{row.original.discNumber && row.original.discNumber > 1 ? `${row.original.discNumber}-${row.original.trackNumber}` : String(row.original.trackNumber ?? "")}</TextCell> }),
     column.display({ id: "album", header: "Album", width: 16, priority: 2, cardRole: "subtitle", entity: (row) => refCellEntity(row.album ? { kind: "album", id: row.album.id, label: row.album.name, href: entityPath("album", row.album.id) } : null), cell: ({ row }) => (row.original.album ? <EntityChip entity={{ kind: "album", id: row.original.album.id, label: row.original.album.name, href: entityPath("album", row.original.album.id) }} /> : <TextCell muted>—</TextCell>) }),

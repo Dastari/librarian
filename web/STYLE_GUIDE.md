@@ -210,7 +210,9 @@ results that are not in the library keep their remote URLs.
   left with Left/Right only; leaving returns to the content control left behind.
   The top bar is a zone reached by Up when content has nothing further up.
 - `data-tv-autofocus` names a page's starting control; `data-tv-skip` marks pointer
-  shortcuts (a tile's play button, "See all") that a remote reaches another way. The
+  shortcuts (a tile's play button, "See all") that a remote reaches another way. `data-nav-skip`
+  marks pointer-only controls (a row's scroll arrows) that arrow keys never stop on, in any
+  input mode; give them `tabIndex={-1}` too. The
   remote's Play key plays a focused tile.
 - In TV mode single-line fields, ⋯ menu buttons and horizontal tab strips never trap
   the remote; Backspace/Escape and the webOS/Tizen Back keys go back through in-app

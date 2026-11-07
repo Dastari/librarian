@@ -2,16 +2,17 @@ import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useContext, useLayoutEffect, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 
-import { BackdropCard, MediaRow, PosterCard, Section } from "@/components/ui";
+import { MediaRow, PosterCard, Section } from "@/components/ui";
 import { HomeSpotlight, movieSpotlight, showSpotlight, spotlightItems, type SpotlightItem } from "@/features/home/HomeSpotlight";
 import { useFocusPreview } from "@/features/home/useFocusPreview";
+import { ResumeCard } from "@/features/home/ResumeCard";
 import { useContinueWatching } from "@/features/home/useContinueWatching";
 import { useMediaProgress } from "@/features/media/useMediaProgress";
 import { usePlayer } from "@/features/player/usePlayer";
 import { LibraryCollectionsDocument, LibraryGenreShelvesDocument, LibraryMoviesDocument, LibraryShowsDocument, type LibraryGenreShelvesQuery, type LibraryMoviesQuery } from "@/graphql/generated/graphql";
 import { collectionPoster, movieBackdrop, moviePoster, showPoster } from "@/lib/artwork";
 import { useSession } from "@/lib/auth/useSession";
-import { formatClock, formatRuntime } from "@/lib/format";
+import { formatRuntime } from "@/lib/format";
 import { LIBRARY_TYPES, libraryType } from "@/lib/library-types";
 
 import { LibraryArtContext, type LibraryDetail } from "./LibraryLayout";
@@ -189,20 +190,11 @@ function RecommendedPage({ spotlight, shelves, loading, onPlay, preview, onBrows
 }
 
 function ResumeShelf({ items }: { items: ReturnType<typeof useContinueWatching>["items"] }) {
-  const navigate = useNavigate();
-  const player = usePlayer();
   return (
     <Section title="Continue watching" bleed>
       <MediaRow ariaLabel="Continue watching">
         {items.map((item) => (
-          <BackdropCard key={item.key} width="row" title={item.title} subtitle={item.subtitle} image={item.image} progress={item.progress}
-            corner={item.duration ? `${formatClock(Math.max(0, item.duration - item.position))} left` : undefined}
-            onPress={() => {
-              if (item.kind === "movie" || item.kind === "episode") {
-                player.playVideo({ mediaFileId: item.mediaFileId, title: item.title, subtitle: item.subtitle, artwork: item.image, entity: item.entity, href: item.href, startPosition: item.position });
-                void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: item.mediaFileId } });
-              } else void navigate({ href: item.href });
-            }} />
+          <ResumeCard key={item.key} item={item} />
         ))}
       </MediaRow>
     </Section>

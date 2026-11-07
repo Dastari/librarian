@@ -169,6 +169,9 @@ export function findNext(current: HTMLElement, direction: Direction, scope: Pare
     if (vertical && candidateZone !== zone && (isSide(candidateZone) || isSide(zone))) continue;
     // Secondary overlay targets (a tile's play button) are reached by the remote's keys instead.
     if (tv && candidate.closest("[data-tv-skip]")) continue;
+    // Pointer-only controls (a row's scroll arrows) are never arrow-key stops: the arrows move
+    // to the next card, and the row scrolls to show it.
+    if (candidate.closest("[data-nav-skip]")) continue;
     // Focus lands on controls, not on scrollable regions that contain them.
     if (!candidate.matches("a[href], button, input, select, textarea") && candidate.querySelector(FOCUSABLE_SELECTOR)) continue;
     const rect = candidate.getBoundingClientRect();

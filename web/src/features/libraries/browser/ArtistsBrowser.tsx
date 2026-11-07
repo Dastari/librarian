@@ -1,12 +1,15 @@
-import { createDataTableColumns, TextCell } from "glass-ux/data-table";
+import { createDataTableColumns, IdentityCell, TextCell } from "glass-ux/data-table";
 import { useNavigate } from "@tanstack/react-router";
 
 import { useCallback, useMemo } from "react";
 
+import { ArtGlyph } from "@/components/entities/ArtGlyph";
 import { PosterCard } from "@/components/ui";
 import { LibraryArtistsDocument, type ArtistOrderByInput, type ArtistWhereInput, type LibraryArtistsQuery } from "@/graphql/generated/graphql";
 import { useServerTable } from "@/hooks/useServerTable";
+import { sizedArtwork } from "@/lib/api/urls";
 import { artistImage } from "@/lib/artwork";
+import { ENTITY_KINDS } from "@/lib/entities/kinds";
 import { pluralize } from "@/lib/format";
 import { LIBRARY_TYPES } from "@/lib/library-types";
 
@@ -20,7 +23,7 @@ const getRowId = (row: ArtistRow) => row.id;
 
 const column = createDataTableColumns<ArtistRow>();
 const columns = column.columns([
-  column.accessor("name", { header: "Artist", width: 32, priority: 1, cardRole: "title", sortable: true, cell: ({ row }) => <TextCell>{row.original.name}</TextCell> }),
+  column.accessor("name", { header: "Artist", width: 32, priority: 1, cardRole: "title", sortable: true, cell: ({ row }) => <IdentityCell icon={<ArtGlyph src={sizedArtwork(artistImage(row.original), 96)} fallback={<ENTITY_KINDS.artist.icon />} />} title={row.original.name} /> }),
   column.accessor("albumCount", { header: "Albums", width: 7, priority: 2, align: "end", grow: false, sortable: true, sortDescFirst: true, cell: ({ row }) => <TextCell muted>{row.original.albumCount ?? 0}</TextCell> }),
 ]);
 

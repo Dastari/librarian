@@ -65,6 +65,8 @@ function RowArrow({ side, visible, onPress }: { side: "start" | "end"; visible: 
     <Button
       variant="secondary" shape="circle" icon={<Icon className="rtl:rotate-180" />} aria-label={side === "start" ? "Previous items" : "Next items"}
       onClick={onPress} disabled={!visible} data-print="hide"
+      // For pointers only: the keyboard and a remote move card to card, and the row follows.
+      tabIndex={-1} data-nav-skip
       className={cn("absolute top-1/2 z-10 -translate-y-1/2", !visible && "invisible", side === "start" ? "start-2" : "end-2")}
     />
   );

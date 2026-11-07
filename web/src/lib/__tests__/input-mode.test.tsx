@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GlassSegmented } from "@/components/ui/GlassControls";
 
-import { InputModeProvider, useInputMode, useSpatialNavigation, type InputMode } from "../input-mode";
+import { findNext, InputModeProvider, useInputMode, useSpatialNavigation, type InputMode } from "../input-mode";
 
 const realMatchMedia = window.matchMedia;
 
@@ -237,6 +237,25 @@ describe("spatial navigation", () => {
 
     fireEvent.keyDown(window, { key: "ArrowUp" });
     expect(document.activeElement).toBe(left);
+  });
+
+  it("moves to the next card in a row past the row's scroll arrow, even off screen", () => {
+    render(
+      <div role="list" data-nav-group>
+        <a href="/a" data-testid="card-a">A</a>
+        <a href="/b" data-testid="card-b">B</a>
+        <button type="button" tabIndex={-1} data-nav-skip data-testid="row-next">Next items</button>
+      </div>,
+    );
+    const box = (testId: string, x: number, width: number) => {
+      const element = screen.getByTestId(testId);
+      element.getBoundingClientRect = () => ({ x, y: 0, left: x, top: 0, right: x + width, bottom: 300, width, height: 300, toJSON: () => ({}) }) as DOMRect;
+      return element;
+    };
+    const a = box("card-a", 0, 200);
+    const b = box("card-b", 1300, 200);
+    box("row-next", 1100, 40);
+    expect(findNext(a, "ArrowRight")).toBe(b);
   });
 
   it("leaves text fields, modified keys and ignored regions alone", () => {

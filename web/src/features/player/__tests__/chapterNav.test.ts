@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { chapterTarget, currentChapterTitle } from "../chapterNav";
+import { chapterTarget, currentChapterTitle, seekSpan } from "../chapterNav";
 import type { PlayItem } from "../store";
 
 const item = (id: string, chapters: Array<[number, string]>, runningChapter?: string): PlayItem => ({
@@ -35,5 +35,18 @@ describe("currentChapterTitle", () => {
     expect(currentChapterTitle(parts[1], 10)).toBe("Two");
     expect(currentChapterTitle(parts[2], 10)).toBe("Two");
     expect(currentChapterTitle(parts[2], 40)).toBe("Three");
+  });
+});
+
+describe("the seek bar's span", () => {
+  it("covers the playing chapter of a book, not the whole file", () => {
+    const book = item("a", [[0, "One"], [600, "Two"], [1500, "Three"]]);
+    expect(seekSpan(book, 700, 2000)).toEqual({ start: 600, end: 1500, chapter: 1, chapters: 3 });
+    expect(seekSpan(book, 1800, 2000)).toEqual({ start: 1500, end: 2000, chapter: 2, chapters: 3 });
+  });
+
+  it("covers the whole item without chapters to divide it", () => {
+    expect(seekSpan(item("b", []), 30, 200)).toEqual({ start: 0, end: 200, chapter: null, chapters: 0 });
+    expect(seekSpan(item("c", [[30, "Only"]]), 40, 200)).toEqual({ start: 0, end: 200, chapter: null, chapters: 0 });
   });
 });

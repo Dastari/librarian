@@ -89,7 +89,8 @@ export function LibraryCard({ library, className, size = "md" }: LibraryCardProp
           </span>
         ) : null}
       </div>
-      <div className="relative p-4 pt-0">
+      {/* Room on the right for the favourite star the libraries page puts on large cards. */}
+      <div className={cn("relative p-4 pt-0", size === "lg" && "pr-16")}>
         <p className="truncate text-title-lg text-foreground text-shadow-hero">{library.name}</p>
         <p className="text-label-sm text-foreground/75">
           {count === null ? <FileCount libraryId={library.id} /> : pluralize(count, noun)}

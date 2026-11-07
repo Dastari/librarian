@@ -3,15 +3,16 @@ import { Button } from "glass-ux/button";
 import { ListRow } from "glass-ux/list-row";
 import { Notice } from "glass-ux/notice";
 import { IconChevronUp, IconList, IconClose } from "glass-ux/icons";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Artwork } from "@/components/ui";
+import { useIsDesktop } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 
 import { PlayPauseButton, SeekBar, SkipButton, VolumeControl } from "./controls";
-import { NowPlayingSheet } from "./NowPlayingSheet";
+import { NowPlayingDrawer, NowPlayingSheet } from "./NowPlayingSheet";
 import { CastButton } from "./CastButton";
-import { currentChapterTitle } from "./chapterNav";
+import { currentChapterTitle, seekSpan } from "./chapterNav";
 import { audioCommands, canSkipAudio, skipAudio } from "./usePlayer";
 import { currentAudioItem, playerStore, usePlayerState } from "./store";
 import { useMediaSource } from "./useMediaSource";
@@ -178,29 +179,41 @@ export function PlayerDock() {
     if ("mediaSession" in navigator) navigator.mediaSession.playbackState = transport.playing ? "playing" : "paused";
   }, [transport.playing]);
 
+  const desktop = useIsDesktop();
+  const bodyHeight = useShellBodyHeight(desktop && state.sheetOpen);
   const audioElement = <audio ref={audioRef} preload="metadata" crossOrigin="use-credentials" className="hidden" />;
   if (!item) return audioElement;
+  const drawerOpen = desktop && state.sheetOpen;
+  const span = seekSpan(item, transport.position, transport.duration);
 
   return (
     <>
       {audioElement}
+      {/* On larger screens the dock floats in the content area with the same gap on every side, and
+          keeps its place in the layout so nothing scrolls under it. Opening now playing grows the
+          same panel upward, gaps kept, into a drawer above the controls. */}
+      <div className="relative shrink-0 max-md:contents md:h-[calc(var(--dock-height)+var(--space-3))]">
       <div
         className={cn(
-          "glass-chrome relative z-30 flex shrink-0 items-center gap-3 rounded-none border-0 border-t px-3",
-          "h-dock md:px-4",
-          "max-md:fixed max-md:inset-x-0 max-md:bottom-[calc(var(--tabbar-height)+max(var(--space-3),var(--safe-bottom))+var(--space-2))] max-md:h-16",
+          "glass-chrome z-30 flex flex-col rounded-card border shadow-dock",
+          "max-md:fixed max-md:inset-x-3 max-md:bottom-[calc(var(--tabbar-height)+max(var(--space-3),var(--safe-bottom))+var(--space-2))]",
+          "md:absolute md:inset-x-3 md:bottom-3 md:transition-[height] md:duration-base md:ease-fluid",
         )}
+        style={desktop ? { height: drawerOpen && bodyHeight > 0 ? `calc(${bodyHeight}px - 2 * var(--space-3))` : "var(--dock-height)" } : undefined}
         role="region"
         aria-label="Now playing"
       >
+        {desktop ? <NowPlayingDrawer open={drawerOpen} onClose={() => playerStore.setSheetOpen(false)} onOpenEntity={(href) => { playerStore.setSheetOpen(false); void navigate({ href }); }} /> : null}
+      <div className={cn("relative flex shrink-0 items-center gap-3 px-3 h-dock md:px-4", "max-md:h-16")}>
         {transport.error ? (
-          <Notice tone="danger" compact role="alert" className="absolute inset-x-0 bottom-full" action={<Button size="sm" onClick={() => audioCommands.retry?.()}>Retry</Button>}>
+          <Notice tone="danger" compact role="alert" className="absolute inset-x-0 bottom-full mb-2" action={<Button size="sm" onClick={() => audioCommands.retry?.()}>Retry</Button>}>
             {transport.error}
           </Notice>
         ) : null}
         <ListRow
-          onClick={() => playerStore.setSheetOpen(true)}
-          aria-label="Open now playing"
+          onClick={() => playerStore.setSheetOpen(!drawerOpen)}
+          aria-label={drawerOpen ? "Close now playing" : "Open now playing"}
+          aria-expanded={desktop ? drawerOpen : undefined}
           title={item.title}
           meta={currentChapterTitle(item, transport.position) ?? item.subtitle}
           icon={<Artwork src={item.artwork} alt="" aspect="square" className="size-11 shrink-0 rounded-md md:size-12" />}
@@ -216,9 +229,9 @@ export function PlayerDock() {
             <SkipButton direction="forward" onPress={() => skipAudio(1)} disabled={!canSkipAudio(state.queue, state.index, transport.position, 1)} />
           </div>
           <div className="flex w-full max-w-2xl items-center gap-3 text-label-sm text-muted">
-            <span className="text-numeric w-10 text-right">{formatTime(transport.position)}</span>
-            <SeekBar thin position={transport.position} duration={transport.duration} buffered={transport.buffered} onSeek={(position) => audioCommands.seek?.(position)} chapters={item.chapters} />
-            <span className="text-numeric w-10">{formatTime(transport.duration)}</span>
+            <span className="text-numeric w-10 text-right">{formatTime(transport.position - span.start)}</span>
+            <SeekBar thin position={transport.position - span.start} duration={span.end - span.start} buffered={Math.max(0, transport.buffered - span.start)} onSeek={(position) => audioCommands.seek?.(span.start + position)} />
+            <span className="text-numeric w-10">{formatTime(span.end - span.start)}</span>
           </div>
         </div>
 
@@ -228,14 +241,16 @@ export function PlayerDock() {
           <CastButton item={item} activationKey={activationKey} position={transport.position} onStarted={() => {
             if (playerStore.getSnapshot().audioActivation === activationKey) playerStore.updateTransport({ playing: false });
           }} />
-          <Button variant="ghost" shape="circle" aria-label="Queue" onClick={() => playerStore.setSheetOpen(true)} icon={<IconList />} className="hidden md:inline-flex" data-focusable />
+          <Button variant="ghost" shape="circle" aria-label="Queue" aria-expanded={desktop ? drawerOpen : undefined} onClick={() => playerStore.setSheetOpen(!drawerOpen)} icon={<IconList />} className="hidden md:inline-flex" data-focusable />
           <Button variant="ghost" shape="circle" aria-label="Stop" onClick={() => playerStore.stopAudio()} icon={<IconClose />} data-focusable />
         </div>
-        <div className="absolute inset-x-0 top-0 h-0.5 bg-white/10 md:hidden">
+        <div className="absolute inset-x-3 top-0 h-0.5 overflow-hidden rounded-full bg-white/10 md:hidden">
           <div className="h-full bg-brand" style={{ width: `${transport.duration ? (transport.position / transport.duration) * 100 : 0}%` }} />
         </div>
       </div>
-      <NowPlayingSheet open={state.sheetOpen} onClose={() => playerStore.setSheetOpen(false)} onOpenEntity={(href) => void navigate({ href })} />
+      </div>
+      </div>
+      {desktop ? null : <NowPlayingSheet open={state.sheetOpen} onClose={() => playerStore.setSheetOpen(false)} onOpenEntity={(href) => void navigate({ href })} />}
     </>
   );
 }
@@ -246,4 +261,23 @@ function formatTime(seconds: number): string {
   const s = total % 60;
   const h = Math.floor(m / 60);
   return h > 0 ? `${h}:${String(m % 60).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/**
+ * The height of the shell body the dock sits in, while the drawer is open: the drawer fills it
+ * less the gaps. Measured rather than a percentage so the height can transition.
+ */
+function useShellBodyHeight(active: boolean): number {
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const body = document.querySelector<HTMLElement>(".app-shell-body");
+    if (!body) return;
+    const measure = () => setHeight(body.clientHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(body);
+    return () => observer.disconnect();
+  }, [active]);
+  return height;
 }
