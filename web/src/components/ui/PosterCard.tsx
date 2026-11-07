@@ -4,7 +4,7 @@ import { IconPlay } from "glass-ux/icons";
 import { Progress } from "glass-ux/progress";
 import { Surface } from "glass-ux/surface";
 import { ToneDot } from "glass-ux/tone-dot";
-import { useId, type CSSProperties, type FocusEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { createContext, useContext, useId, type CSSProperties, type FocusEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 
 import type { StatusMeta } from "@/lib/status";
 import { cn } from "@/lib/utils";
@@ -45,9 +45,20 @@ export interface PosterCardProps {
  * playback and extra actions are separate targets over the artwork and never hide on hover.
  * Watched progress runs along the poster's bottom edge.
  */
+/**
+ * Set by a table whose cards are posters. The table's card takes focus and owns the arrow keys, so
+ * the poster's own link and play button stop being stops of their own.
+ */
+export const PosterInTable = createContext(false);
+
 export function PosterCard({ title, meta, image, aspect = "poster", tint, to, params, onPress, progress, status, badge, actions, onPlay, className, style, fallbackIcon, selected, width = "fill", priority, onFocus, wrapTitle }: PosterCardProps) {
   const labelId = useId();
   const navigationClass = "poster-navigation absolute inset-0 z-10 rounded-tile outline-none";
+  const inTable = useContext(PosterInTable);
+  // A click still focuses the link, so hand that on to the card for the arrow keys to carry on from.
+  const stops = inTable
+    ? { tabIndex: -1, onFocus: (event: FocusEvent<HTMLElement>) => { event.currentTarget.closest<HTMLElement>(".fa-dt-card")?.focus({ preventScroll: true }); onFocus?.(event); } }
+    : { onFocus, "data-focusable": true };
   const morph = (event: MouseEvent<HTMLElement>) => claimMorph(event.currentTarget.nextElementSibling);
   // A remote's Play key plays the focused tile; its on-screen play button is for pointers.
   const playKey = onPlay ? (event: KeyboardEvent<HTMLElement>) => {
@@ -57,8 +68,8 @@ export function PosterCard({ title, meta, image, aspect = "poster", tint, to, pa
   } : undefined;
   // The selected tile is where a remote enters its row (the current season).
   const entry = selected ? "" : undefined;
-  const navigation = to ? <Link to={to} params={params} aria-labelledby={labelId} className={navigationClass} data-focusable data-nav-default={entry} draggable={false} onClick={morph} onKeyDown={playKey} onFocus={onFocus} />
-    : onPress ? <button type="button" aria-labelledby={labelId} aria-pressed={selected === undefined ? undefined : selected} onClick={onPress} onKeyDown={playKey} onFocus={onFocus} className={navigationClass} data-focusable data-nav-default={entry} />
+  const navigation = to ? <Link to={to} params={params} aria-labelledby={labelId} className={navigationClass} data-nav-default={entry} draggable={false} onClick={morph} onKeyDown={playKey} {...stops} />
+    : onPress ? <button type="button" aria-labelledby={labelId} aria-pressed={selected === undefined ? undefined : selected} onClick={onPress} onKeyDown={playKey} className={navigationClass} data-nav-default={entry} {...stops} />
     : null;
   const watched = typeof progress === "number" && progress > 0 ? Math.max(0, Math.min(1, progress)) : null;
 
@@ -74,7 +85,7 @@ export function PosterCard({ title, meta, image, aspect = "poster", tint, to, pa
         {onPlay || actions ? (
           <div data-print="hide" className="over-imagery absolute inset-0 z-20 flex items-end justify-end gap-1 p-[max(var(--space-2),var(--focus-reach))]">
             {actions ? <div className="pointer-events-auto flex gap-1">{actions}</div> : null}
-            {onPlay ? <Button variant="primary" shape="circle" icon={<IconPlay />} aria-label={`Play ${title}`} onClick={onPlay} className="pointer-events-auto" data-focusable data-tv-skip /> : null}
+            {onPlay ? <Button variant="primary" shape="circle" icon={<IconPlay />} aria-label={`Play ${title}`} onClick={onPlay} className="pointer-events-auto" tabIndex={inTable ? -1 : undefined} data-focusable={inTable ? undefined : true} data-tv-skip /> : null}
           </div>
         ) : null}
         {watched !== null ? (

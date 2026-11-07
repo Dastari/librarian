@@ -36,7 +36,7 @@
     "@tabler/icons-react": "^3.46.0",
     "@tanstack/react-router": "^1.170.43",
     "clsx": "^2.1.1",
-    "glass-ux": "https://github.com/Dastari/glass-ux/releases/download/v0.17.0/glass-ux-0.17.0.tgz",
+    "glass-ux": "https://github.com/Dastari/glass-ux/releases/download/v0.19.0/glass-ux-0.19.0.tgz",
     "graphql": "^16.14.2",
     "graphql-ws": "^6.2.1",
     "hls.js": "^1.7.2",

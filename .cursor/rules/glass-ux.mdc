@@ -7,7 +7,7 @@ alwaysApply: false
 
 # Glass UX integration contract
 
-The installed release is `glass-ux` 0.17.0. Its authoritative guides and API pages
+The installed release is `glass-ux` 0.19.0. Its authoritative guides and API pages
 are under `web/node_modules/glass-ux/docs/`. Read `docs/glass-ux/README.md` for
 provenance, offline documentation, skills, and refresh instructions.
 

@@ -1,9 +1,9 @@
 # Glass UX reference installation
 
-Reviewed on 2026-11-06 against **0.17.0**; see the
+Reviewed on 2026-11-07 against **0.19.0**; see the
 [upgrade audit](upgrade-audit-2026-11-05.md) for where each new component fits.
 
-- [Release and assets](https://github.com/Dastari/glass-ux/releases/tag/v0.17.0)
+- [Release and assets](https://github.com/Dastari/glass-ux/releases/tag/v0.19.0)
 - [Documentation site](https://dastari.github.io/glass-ux/)
 - [Migration plan](../glass-ux-migration-plan.md)
 - [Complete library catalogue](component-catalogue.md)

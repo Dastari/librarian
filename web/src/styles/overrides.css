@@ -44,3 +44,29 @@ video:focus, audio:focus { outline: none; }
 /* A settings form's lock sits in the input, quiet until it's on. */
 .metadata-lock { color: var(--fg-muted); }
 .metadata-lock[data-locked] { color: var(--fg); }
+
+/* A poster is its own card, so the table's card frame stands back. Focus and the selected mark are
+ * drawn on the artwork, as they are everywhere else posters show. */
+.media-browser[data-view="card"] .fa-dt-card,
+.media-browser .fa-dt-cards .fa-dt-card {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+}
+.media-browser .fa-dt-card-slot { overflow: visible; }
+.media-browser .fa-dt { --_hairline: transparent; }
+/* The card holds focus, so the artwork shows it: the same ring and lift as any poster, with room
+ * around the grid so neither is cut off. */
+.media-browser .fa-dt-cards { padding: var(--focus-reach); }
+.media-browser .fa-dt-card:focus-visible { outline: none; }
+.media-browser .fa-dt-card:focus-visible .poster-art {
+  outline: var(--nav-focus-width) solid var(--focus);
+  outline-offset: var(--nav-focus-offset);
+}
+:root[data-input-mode="tv"] .media-browser .fa-dt-card:is(:focus, :focus-visible) .poster-art {
+  outline: var(--nav-focus-width) solid var(--focus);
+  outline-offset: var(--nav-focus-offset);
+  transform: scale(1.05);
+  box-shadow: var(--shadow-3);
+}
+:root[data-input-mode="tv"] .media-browser .fa-dt-cards { padding: 1.5rem 1.25rem; }

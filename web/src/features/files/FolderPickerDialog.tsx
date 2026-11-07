@@ -1,11 +1,18 @@
+import { useApolloClient } from "@apollo/client/react";
+import { FileDialog, type FileDialogPlace } from "glass-ux/file-dialog";
+import type { DirectoryPage, FileEntry, FileProvider, FileStat, FileUri } from "glass-ux/file-provider";
+import { useMemo } from "react";
+
+import { BrowseDirectoryDocument } from "@/graphql/generated/graphql";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 
-import { IconArrowUp, IconFolder, IconFolderOpen, IconLock } from "glass-ux/icons";
-import { ListRow } from "glass-ux/list-row";
-import { useEffect, useState } from "react";
+const ROOT: FileUri = "server:///";
 
-import { Button, Dialog, EmptyState, Spinner } from "@/components/ui";
-import { BrowseDirectoryDocument } from "@/graphql/generated/graphql";
+export const folderUri = (path: string): FileUri =>
+  `server://${path.startsWith("/") ? "" : "/"}${path.split("/").map(encodeURIComponent).join("/")}`;
+
+export const folderPath = (uri: FileUri): string =>
+  decodeURIComponent(uri.replace(/^server:\/\//, "")) || "/";
 
 interface FolderPickerDialogProps {
   isOpen: boolean;
@@ -14,90 +21,70 @@ interface FolderPickerDialogProps {
   onPick: (path: string) => void;
 }
 
-/** Server-side folder browser used when choosing a library root or a destination. */
+/** The server's folders as a Glass file location: it lists them, and the dialog does the rest. */
+function useServerFolders(): FileProvider {
+  const client = useApolloClient();
+  return useMemo(() => {
+    const browse = async (uri: FileUri) => {
+      const { data, error } = await client.query({
+        query: BrowseDirectoryDocument,
+        variables: { input: { path: folderPath(uri), dirsOnly: false, showHidden: false } },
+        fetchPolicy: "network-only",
+      });
+      if (!data) throw Object.assign(error ?? new Error("Can't read this folder"), { code: "unavailable" });
+      return data.browseDirectory;
+    };
+    return {
+      scheme: "server",
+      label: "Server",
+      root: ROOT,
+      stat: async (uri): Promise<FileStat> => {
+        const listing = await browse(uri);
+        const path = listing.currentPath;
+        return { uri: folderUri(path), name: path.split("/").filter(Boolean).at(-1) ?? "/", kind: "directory", size: null, version: path };
+      },
+      read: () => Promise.reject(Object.assign(new Error("Folders only"), { code: "unsupported" })),
+      readDirectory: async (uri): Promise<DirectoryPage> => {
+        const listing = await browse(uri);
+        return {
+          cursor: null,
+          entries: listing.entries.map((entry): FileEntry => ({
+            uri: folderUri(entry.path),
+            name: entry.name,
+            kind: entry.isDir ? "directory" : "file",
+            size: entry.isDir ? null : entry.size ?? null,
+            mime: entry.mimeType ?? undefined,
+            denied: entry.readable ? undefined : { read: "Librarian can't read this folder" },
+          })),
+        };
+      },
+    };
+  }, [client]);
+}
+
+/** Choose a folder on the server, for a library's root or a destination. */
 export function FolderPickerDialog({ isOpen, onOpenChange, initialPath, onPick }: FolderPickerDialogProps) {
-  const [path, setPath] = useState<string | null>(initialPath || null);
-  useEffect(() => {
-    if (isOpen) setPath(initialPath || null);
-  }, [isOpen, initialPath]);
-
-  const { data, previousData, loading, error } = useQuery(BrowseDirectoryDocument, { variables: { input: { path, dirsOnly: true, showHidden: false } }, skip: !isOpen });
-  const listing = (data ?? previousData)?.browseDirectory;
-
+  const provider = useServerFolders();
+  const { data } = useQuery(BrowseDirectoryDocument, {
+    skip: !isOpen,
+    variables: { input: { path: initialPath || null, dirsOnly: true, showHidden: false } },
+  });
+  const places = useMemo<FileDialogPlace[]>(
+    () => (data?.browseDirectory.quickPaths ?? []).map((quick) => ({ label: quick.name, uri: folderUri(quick.path) })),
+    [data],
+  );
   return (
-    <Dialog
-      isOpen={isOpen}
+    <FileDialog
+      mode="folder"
+      open={isOpen}
       onOpenChange={onOpenChange}
-      title="Choose a folder"
-      size="md"
-      footer={
-        <>
-          <Button variant="ghost" onPress={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            isDisabled={!listing || loading || Boolean(error)}
-            onPress={() => {
-              if (listing) onPick(listing.currentPath);
-              onOpenChange(false);
-            }}
-          >
-            Use this folder
-          </Button>
-        </>
-      }
-    >
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" isIconOnly aria-label="Parent folder" isDisabled={!listing?.parentPath} onPress={() => listing?.parentPath && setPath(listing.parentPath)}>
-            <IconArrowUp />
-          </Button>
-          <code className="min-w-0 flex-1 truncate rounded-lg bg-surface-secondary px-3 py-2 font-mono text-label text-foreground">{listing?.currentPath ?? path ?? "/"}</code>
-        </div>
-        {listing?.quickPaths.length ? (
-          <div className="flex flex-wrap gap-1.5">
-            {listing.quickPaths.map((quick) => (
-              <Button key={quick.path} size="sm" variant="ghost" onPress={() => setPath(quick.path)}>
-                <IconFolder /> {quick.name}
-              </Button>
-            ))}
-          </div>
-        ) : null}
-        <div className="scrollbar-thin max-h-80 min-h-48 overflow-y-auto rounded-card border border-border">
-          {loading && !listing ? (
-            <div className="grid h-48 place-items-center">
-              <Spinner />
-            </div>
-          ) : error ? (
-            <EmptyState compact icon={IconLock} title="Can't read this folder" description={error.message} />
-          ) : listing && listing.entries.length === 0 ? (
-            <EmptyState compact icon={IconFolderOpen} title="Empty folder" />
-          ) : (
-            <ul>
-              {listing?.entries.map((entry) => (
-                <li key={entry.path}>
-                  <ListRow
-                    disabled={!entry.readable}
-                    selected={entry.path === listing.currentPath}
-                    onClick={() => setPath(entry.path)}
-                    onDoubleClick={() => {
-                      if (!entry.readable) return;
-                      onPick(entry.path);
-                      onOpenChange(false);
-                    }}
-                    icon={<IconFolder />}
-                    title={entry.name}
-                    trailing={!entry.writable ? <IconLock size="sm" className="text-muted" /> : undefined}
-                    className="w-full"
-                    data-focusable
-                  />
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    </Dialog>
+      providers={[provider]}
+      places={places}
+      defaultUri={folderUri(initialPath || data?.browseDirectory.currentPath || "/")}
+      onChoose={({ folder }) => {
+        onPick(folderPath(folder.uri));
+        onOpenChange(false);
+      }}
+    />
   );
 }

@@ -1,6 +1,6 @@
 # Librarian web style guide
 
-Glass UX 0.17.0 owns the shared UI and appearance runtime. Follow the
+Glass UX 0.19.0 owns the shared UI and appearance runtime. Follow the
 [migration plan](../docs/glass-ux-migration-plan.md),
 [shared design rules](../docs/glass-ux/ui-rules.md) and
 [layout contract](../docs/glass-ux/layout-contract.md). The
@@ -106,7 +106,7 @@ See [responsive audit](../docs/responsive-media-audit.md) for route coverage and
 the release-source continuation limitation. Never filter a partial server batch
 while presenting it as the complete dataset.
 
-The pinned Glass dependency has a small pnpm patch at `patches/glass-ux@0.17.0.patch`: grid
+The pinned Glass dependency has a small pnpm patch at `patches/glass-ux@0.19.0.patch`: grid
 focus capture synchronizes the virtualizer's active row after native focus, retaining
 alphabet-jump and cell focus while scrolling. Its additive `infinite.revision` rearms replaced
 batches without using the semantic query key or resetting the reader, and `setDuration` lets the

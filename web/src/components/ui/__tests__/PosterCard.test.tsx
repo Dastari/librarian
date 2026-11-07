@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { statusMeta } from "@/lib/status";
 import { renderWithProviders } from "@/test";
 
-import { PosterCard } from "../PosterCard";
+import { PosterCard, PosterInTable } from "../PosterCard";
 
 describe("PosterCard", () => {
   it("shows the title, meta line and artwork", async () => {
@@ -81,5 +81,13 @@ describe("PosterCard", () => {
     const card = screen.getByRole("button", { name: /Dune/ }).closest("article");
     expect(card).toHaveAttribute("data-selected", "true");
     expect(card?.querySelector(".poster-art")).toBeTruthy();
+  });
+
+  it("isn't a focus stop of its own inside a table, whose card owns the arrow keys", async () => {
+    await renderWithProviders(<PosterInTable.Provider value={true}><PosterCard title="Dune" image={null} onPress={() => {}} onPlay={() => {}} /></PosterInTable.Provider>);
+    const open = screen.getByRole("button", { name: /^Dune/ });
+    expect(open).toHaveAttribute("tabindex", "-1");
+    expect(open).not.toHaveAttribute("data-focusable");
+    expect(screen.getByRole("button", { name: "Play Dune" })).toHaveAttribute("tabindex", "-1");
   });
 });
