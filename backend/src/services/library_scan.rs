@@ -1889,7 +1889,109 @@ impl LibraryScanService {
             "Completed startup scan-state reconciliation: reset_libraries={}", libraries_reset
         );
 
+        self.backfill_sort_keys().await;
+
         Ok(())
+    }
+
+    /// Records from before sort keys were written get them here. Anyone's own choice stays.
+    async fn backfill_sort_keys(&self) {
+        use crate::services::graphql::entities::{
+            Album, Artist, Audiobook, Collection, Movie, Show,
+        };
+
+        let Ok(database) = self.database().await else {
+            return;
+        };
+        let pool = database.pool().pool();
+        let mut changes: Vec<(&str, &str, String, String)> = Vec::new();
+        let mut note = |entity, field, id: String, title: &str, key: Option<&str>| {
+            let target = crate::services::write_rules::sort_key(title);
+            let stale = match key.map(str::trim) {
+                None | Some("") => true,
+                Some(key) => key == title.trim(),
+            };
+            if stale && key != Some(target.as_str()) {
+                changes.push((entity, field, id, target));
+            }
+        };
+        for row in Movie::query(pool).fetch_all().await.unwrap_or_default() {
+            note(
+                "Movie",
+                "sortTitle",
+                row.id,
+                &row.title,
+                row.sort_title.as_deref(),
+            );
+        }
+        for row in Audiobook::query(pool).fetch_all().await.unwrap_or_default() {
+            note(
+                "Audiobook",
+                "sortTitle",
+                row.id,
+                &row.title,
+                row.sort_title.as_deref(),
+            );
+        }
+        for row in Show::query(pool).fetch_all().await.unwrap_or_default() {
+            note(
+                "Show",
+                "sortName",
+                row.id,
+                &row.name,
+                row.sort_name.as_deref(),
+            );
+        }
+        for row in Album::query(pool).fetch_all().await.unwrap_or_default() {
+            note(
+                "Album",
+                "sortName",
+                row.id,
+                &row.name,
+                row.sort_name.as_deref(),
+            );
+        }
+        for row in Artist::query(pool).fetch_all().await.unwrap_or_default() {
+            note(
+                "Artist",
+                "sortName",
+                row.id,
+                &row.name,
+                row.sort_name.as_deref(),
+            );
+        }
+        for row in Collection::query(pool)
+            .fetch_all()
+            .await
+            .unwrap_or_default()
+        {
+            note(
+                "Collection",
+                "sortName",
+                row.id,
+                &row.name,
+                row.sort_name.as_deref(),
+            );
+        }
+        let total = changes.len();
+        for (entity, field, id, key) in changes {
+            let mutation = format!(
+                "mutation Backfill($id: String!, $input: Update{entity}Input!) {{ Result: update{entity}(id: $id, input: $input) {{ Success: success }} }}"
+            );
+            if let Err(error) = self
+                .execute_mutation(
+                    &AuthUser::system_admin(),
+                    &mutation,
+                    serde_json::json!({ "id": id, "input": { field: key } }),
+                )
+                .await
+            {
+                warn!(entity, id, error = %error, "Could not set a sort key");
+            }
+        }
+        if total > 0 {
+            info!(total, "Set sort keys on existing records");
+        }
     }
 
     fn extensions_for_library(library_type: &str) -> &'static [&'static str] {

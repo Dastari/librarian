@@ -119,7 +119,7 @@ index 4a37e12..b104993 100644
  function CompactTier({ parts, dom }) {
      const { name, title, kind, icon, image, portrait, state, count, facts, actions, targets, href, onOpen, heading = "h2", slots } = parts;
 diff --git a/dist/ui/entity-settings/entity-settings-dialog.js b/dist/ui/entity-settings/entity-settings-dialog.js
-index 142a6bf..e85b61c 100644
+index 142a6bf..e803570 100644
 --- a/dist/ui/entity-settings/entity-settings-dialog.js
 +++ b/dist/ui/entity-settings/entity-settings-dialog.js
 @@ -4,7 +4,7 @@ import { useMessages } from "../../lib/i18n/index.js";
@@ -140,7 +140,15 @@ index 142a6bf..e85b61c 100644
      const messages = useMessages(entitySettingsMessages);
      const title = titleProp ?? messages.settings;
      const [innerTab, setInnerTab] = useState(defaultTab ?? tabs[0]?.value ?? "");
-@@ -212,7 +212,7 @@ export function EntitySettingsDialog({ open, onOpenChange, confirmOnCancel = fal
+@@ -199,6 +199,7 @@ export function EntitySettingsDialog({ open, onOpenChange, confirmOnCancel = fal
+         value: entry.value,
+         label: entry.label,
+         icon: entry.icon,
++        count: entry.count,
+         marker: markers[entry.value],
+         content: loading ? (_jsx(TabSkeleton, {})) : (_jsx("div", { className: "fa-form-stack fa-entity-settings-tab", "data-settings-tab": entry.value, children: entry.content })),
+     }));
+@@ -212,7 +213,7 @@ export function EntitySettingsDialog({ open, onOpenChange, confirmOnCancel = fal
                  event.preventDefault();
                  event.stopPropagation();
                  void save();
@@ -149,7 +157,7 @@ index 142a6bf..e85b61c 100644
                                  // Through the guard: a dirty form asks first, and discarding resets it.
                                  if (confirmOnCancel)
                                      return guard.rootProps.onOpenChange(false);
-@@ -222,5 +222,5 @@ export function EntitySettingsDialog({ open, onOpenChange, confirmOnCancel = fal
+@@ -222,5 +223,5 @@ export function EntitySettingsDialog({ open, onOpenChange, confirmOnCancel = fal
      if (preview) {
          return (_jsxs(Dialog.Preview, { size: size, kind: "settings", children: [body, guard.confirm] }));
      }
@@ -157,10 +165,19 @@ index 142a6bf..e85b61c 100644
 +    return (_jsx(Dialog.Root, { ...guard.rootProps, children: _jsxs(Dialog.Popup, { "aria-label": identity ? entityName : undefined, size: size, kind: "settings", initialFocus: () => rootRef.current?.closest(".fa-dialog")?.querySelector('[role="tab"][aria-selected="true"]') ?? true, children: [body, guard.confirm] }) }));
  }
 diff --git a/dist/ui/entity-settings/entity-settings-dialog.d.ts b/dist/ui/entity-settings/entity-settings-dialog.d.ts
-index 9fcc932..e086159 100644
+index 9fcc932..1b6f58e 100644
 --- a/dist/ui/entity-settings/entity-settings-dialog.d.ts
 +++ b/dist/ui/entity-settings/entity-settings-dialog.d.ts
-@@ -61,6 +61,8 @@ export interface EntitySettingsDialogProps {
+@@ -32,6 +32,8 @@ export interface EntitySettingsTab {
+     label: string;
+     /** Pass the icon without a size. */
+     icon?: ReactNode;
++    /** A count at the end of the tab: issues, files. */
++    count?: number;
+     /**
+      * The form fields the tab edits, as names or prefixes ("snmp" covers "snmp.port"). They
+      * drive the tab's dots: unsaved changes, and errors after a failed save. A tab that acts
+@@ -61,6 +63,8 @@ export interface EntitySettingsDialogProps {
      /** Called with the `value` of the tab the person selects. Pair with `tab` to control it; without `tab` the dialog tracks the tab itself. */
      onTabChange?: (tab: string) => void;
      /** The entity's identity tile: its glyph or photo with the state dot. */

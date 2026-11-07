@@ -37,7 +37,7 @@ export function MoviesBrowser({ libraryId }: { libraryId: string }) {
   const player = usePlayer();
   const isAdmin = useIsAdmin();
   const filters = useBrowserFilters();
-  const table = useServerTable<MovieOrderByInput>({ persistKey: `movies.${libraryId}`, defaultSorting: [{ id: "title", desc: false }], sortMap: { title: "title" } });
+  const table = useServerTable<MovieOrderByInput>({ persistKey: `movies.${libraryId}`, defaultSorting: [{ id: "title", desc: false }], sortMap: { title: "sortTitle" } });
   const [adding, setAdding] = useState(false);
 
   const where = useMemo<MovieWhereInput>(() => {
@@ -60,7 +60,7 @@ export function MoviesBrowser({ libraryId }: { libraryId: string }) {
   const jump = useLetterJump({
     rows: list.rows,
     getRowId,
-    getTitle: (row) => row.title,
+    getTitle: (row) => row.sortTitle || row.title,
     hasMore: list.hasMore,
     loading: list.fetching || list.loadingMore,
     queryKey: JSON.stringify(where),

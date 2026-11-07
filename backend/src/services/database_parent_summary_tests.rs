@@ -800,6 +800,7 @@ pub(super) async fn collection(db: &Database, lib: &Library, key: i32) -> Collec
     Collection::insert(
         db,
         CreateCollectionInput {
+            sort_name: None,
             library_id: lib.id.clone(),
             user_id: lib.user_id.clone(),
             tmdb_collection_id: key,

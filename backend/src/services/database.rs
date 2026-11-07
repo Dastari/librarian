@@ -883,12 +883,29 @@ impl AppWriteInputTransform {
         input: &mut (dyn std::any::Any + Send + Sync),
     ) -> async_graphql::Result<()> {
         use crate::services::write_rules;
-        match entity_name {
-            "User" => input
-                .downcast_mut::<CreateUserInput>()
-                .map_or(Ok(()), write_rules::prepare_user_create),
-            _ => Ok(()),
+        // Everything with a title sorts the same way, however it was added.
+        macro_rules! sort_key {
+            ($ty:ty, $title:ident, $key:ident) => {
+                if let Some(input) = input.downcast_mut::<$ty>() {
+                    input.$key = write_rules::sort_key_for_new(&input.$title, input.$key.take());
+                }
+            };
         }
+        match entity_name {
+            "User" => {
+                return input
+                    .downcast_mut::<CreateUserInput>()
+                    .map_or(Ok(()), write_rules::prepare_user_create);
+            }
+            "Movie" => sort_key!(CreateMovieInput, title, sort_title),
+            "Audiobook" => sort_key!(CreateAudiobookInput, title, sort_title),
+            "Show" => sort_key!(CreateShowInput, name, sort_name),
+            "Album" => sort_key!(CreateAlbumInput, name, sort_name),
+            "Artist" => sort_key!(CreateArtistInput, name, sort_name),
+            "Collection" => sort_key!(CreateCollectionInput, name, sort_name),
+            _ => {}
+        }
+        Ok(())
     }
 
     fn prepare_content_update(
@@ -898,6 +915,33 @@ impl AppWriteInputTransform {
         input: &mut (dyn std::any::Any + Send + Sync),
     ) -> async_graphql::Result<()> {
         use crate::services::write_rules;
+        // A rename moves the sort key along, unless someone set their own or is setting it now.
+        macro_rules! sort_key {
+            ($input:ty, $row:ty, $title:ident, $key:ident) => {
+                if let (Some(input), Some(row)) = (
+                    input.downcast_mut::<$input>(),
+                    existing_row.and_then(|row| row.downcast_ref::<$row>()),
+                ) && input.$key.is_none()
+                    && let Some(new_title) = input.$title.as_deref()
+                {
+                    input.$key = write_rules::sort_key_after_rename(
+                        &row.$title,
+                        row.$key.as_deref(),
+                        new_title,
+                    )
+                    .map(Some);
+                }
+            };
+        }
+        match entity_name {
+            "Movie" => sort_key!(UpdateMovieInput, Movie, title, sort_title),
+            "Audiobook" => sort_key!(UpdateAudiobookInput, Audiobook, title, sort_title),
+            "Show" => sort_key!(UpdateShowInput, Show, name, sort_name),
+            "Album" => sort_key!(UpdateAlbumInput, Album, name, sort_name),
+            "Artist" => sort_key!(UpdateArtistInput, Artist, name, sort_name),
+            "Collection" => sort_key!(UpdateCollectionInput, Collection, name, sort_name),
+            _ => {}
+        }
         match entity_name {
             "User" => input
                 .downcast_mut::<UpdateUserInput>()

@@ -45,6 +45,11 @@ pub struct Collection {
     #[sortable]
     pub name: String,
 
+    /// How it sorts: its name without a leading "The", "A" or "An".
+    #[filterable(type = "string")]
+    #[sortable]
+    pub sort_name: Option<String>,
+
     #[graphql(name = "overview")]
     pub overview: Option<String>,
 

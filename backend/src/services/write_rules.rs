@@ -317,3 +317,105 @@ mod tests {
         assert!(unrelated.match_type.is_none());
     }
 }
+
+/// How a title sorts: without a leading "The", "A" or "An", so "The Sagan Diary" sits among the S's.
+/// A title that's nothing but the word keeps it.
+pub fn sort_key(title: &str) -> String {
+    let title = title.trim();
+    for article in ["the", "an", "a"] {
+        let Some(head) = title.get(..article.len()) else {
+            continue;
+        };
+        let rest = &title[article.len()..];
+        if head.eq_ignore_ascii_case(article) && rest.starts_with(char::is_whitespace) {
+            let rest = rest.trim_start();
+            if !rest.is_empty() {
+                return rest.to_string();
+            }
+        }
+    }
+    title.to_string()
+}
+
+/// The sort key a new record starts with. One a provider just copied from the title isn't a choice.
+pub fn sort_key_for_new(title: &str, given: Option<String>) -> Option<String> {
+    match given {
+        Some(given) if !given.trim().is_empty() && given.trim() != title.trim() => Some(given),
+        _ => Some(sort_key(title)),
+    }
+}
+
+/// The sort key after a rename, unless someone set their own, which a rename leaves alone.
+pub fn sort_key_after_rename(
+    old_title: &str,
+    old_key: Option<&str>,
+    new_title: &str,
+) -> Option<String> {
+    let followed_title = match old_key.map(str::trim) {
+        None | Some("") => true,
+        Some(key) => key == old_title.trim() || key == sort_key(old_title),
+    };
+    followed_title.then(|| sort_key(new_title))
+}
+
+#[cfg(test)]
+mod sort_key_tests {
+    use super::*;
+
+    #[test]
+    fn leading_articles_are_ignored() {
+        assert_eq!(sort_key("The Sagan Diary"), "Sagan Diary");
+        assert_eq!(
+            sort_key("A Knight of the Seven Kingdoms"),
+            "Knight of the Seven Kingdoms"
+        );
+        assert_eq!(sort_key("An Old Road"), "Old Road");
+        assert_eq!(sort_key("the lower case"), "lower case");
+    }
+
+    #[test]
+    fn only_a_whole_leading_word_counts() {
+        assert_eq!(sort_key("Theory of Everything"), "Theory of Everything");
+        assert_eq!(sort_key("Amadeus"), "Amadeus");
+        assert_eq!(sort_key("Andor"), "Andor");
+        assert_eq!(sort_key("The"), "The");
+        assert_eq!(sort_key("Zoe's Tale"), "Zoe's Tale");
+    }
+
+    #[test]
+    fn a_new_record_keeps_a_real_choice_but_not_a_copy_of_its_title() {
+        assert_eq!(sort_key_for_new("The Wire", None).as_deref(), Some("Wire"));
+        assert_eq!(
+            sort_key_for_new("The Wire", Some(" ".into())).as_deref(),
+            Some("Wire")
+        );
+        assert_eq!(
+            sort_key_for_new("The Wire", Some("The Wire".into())).as_deref(),
+            Some("Wire")
+        );
+        assert_eq!(
+            sort_key_for_new("The Beatles", Some("Beatles, The".into())).as_deref(),
+            Some("Beatles, The")
+        );
+    }
+
+    #[test]
+    fn a_rename_only_moves_a_key_that_followed_the_title() {
+        assert_eq!(
+            sort_key_after_rename("The Old", None, "The New").as_deref(),
+            Some("New")
+        );
+        assert_eq!(
+            sort_key_after_rename("The Old", Some("Old"), "The New").as_deref(),
+            Some("New")
+        );
+        assert_eq!(
+            sort_key_after_rename("The Old", Some("The Old"), "The New").as_deref(),
+            Some("New")
+        );
+        assert_eq!(
+            sort_key_after_rename("The Old", Some("Mine"), "The New"),
+            None
+        );
+    }
+}

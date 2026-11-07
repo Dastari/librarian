@@ -4,6 +4,7 @@ import { ActionBar } from "glass-ux/actions";
 import { EntitySettingsDialog, type EntitySettingsTab } from "glass-ux/entity-settings";
 import { formBehaviour, useAppForm } from "glass-ux/form";
 import { IconClock, IconFile, IconFolder, IconHistory, IconSettings, IconTrash, IconWarning } from "glass-ux/icons";
+import { Surface } from "glass-ux/surface";
 import { toast } from "glass-ux/toast";
 import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
@@ -24,6 +25,7 @@ import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 
 import { FilesBrowser } from "./browser/FilesBrowser";
 import { LibraryIdentity } from "./LibraryIdentity";
+import { previewNamingPattern } from "./namingPreview";
 import { ScansPanel } from "./ScansPanel";
 import { useLibraryActions } from "./useLibraryActions";
 
@@ -104,7 +106,9 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosen
     }
   };
 
-  const patternOptions = useMemo(() => [{ value: "", label: "Librarian default" }, ...(patterns.data?.namingPatterns.edges ?? []).map(({ node }) => ({ value: node.pattern, label: node.name, description: node.pattern }))], [patterns.data]);
+  const defaultPattern = useMemo(() => (patterns.data?.namingPatterns.edges ?? []).find(({ node }) => node.isDefault)?.node.pattern ?? "", [patterns.data]);
+  const previewOf = (pattern: string) => previewNamingPattern(pattern || defaultPattern, library.libraryType);
+  const patternOptions = [{ value: "", label: "Librarian default", description: previewOf("") }, ...(patterns.data?.namingPatterns.edges ?? []).map(({ node }) => ({ value: node.pattern, label: node.name, description: previewOf(node.pattern) }))];
   const profileOptions = useMemo(() => [{ value: "", label: "Use the default profile" }, ...(profiles.data?.qualityProfiles.edges ?? []).map(({ node }) => ({ value: node.id, label: node.name, description: node.isDefault ? "Default" : undefined }))], [profiles.data]);
 
   const allTabs: EntitySettingsTab[] = [
@@ -137,15 +141,21 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosen
         <div className="flex flex-col gap-3">
           <form.AppField name="autoOrganize">{(field) => <field.SwitchRow label="Organize files" description="Rename and move matched files into the naming pattern." />}</form.AppField>
           <form.AppField name="namingPattern">{(field) => <field.SelectField label="Naming pattern" options={patternOptions} />}</form.AppField>
+          <form.Subscribe selector={(state) => state.values.namingPattern}>{(pattern) => (
+            <Surface material="inset" padding="tile" radius="tile" className="flex min-w-0 flex-col gap-1">
+              <p className="text-label-sm text-muted">A file would go here</p>
+              <p className="font-mono text-label-sm text-foreground [overflow-wrap:anywhere]">{previewOf(pattern)}</p>
+            </Surface>
+          )}</form.Subscribe>
         </div>
       ),
     },
     {
-      value: "files", label: fileCount != null ? `Files ${fileCount}` : "Files", icon: <IconFile />,
+      value: "files", label: "Files", icon: <IconFile />, count: fileCount ?? undefined,
       content: tab === "files" ? <div className="flex h-[min(32rem,70svh)] min-h-0 flex-col overflow-hidden"><FilesBrowser libraryId={library.id} filterPrefix="file" /></div> : null,
     },
     {
-      value: "issues", label: issues > 0 ? `Issues ${issues}` : "Issues", icon: <IconWarning />,
+      value: "issues", label: "Issues", icon: <IconWarning />, count: issues > 0 ? issues : undefined,
       content: tab === "issues" ? <ScansPanel libraryId={library.id} section="issues" scanRunId={scanRunId} onScanRunChange={setScanRunId} onShowIssues={setScanRunId} /> : null,
     },
     {

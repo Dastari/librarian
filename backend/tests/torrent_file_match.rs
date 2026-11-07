@@ -646,6 +646,50 @@ async fn a_finished_pack_brings_in_what_is_wanted_and_reports_the_rest() {
 /// Restarting must not pull old downloads into a library, even when one now matches something
 /// wanted. A restored torrent reads as empty and then has all its files finish at once.
 #[tokio::test(flavor = "multi_thread")]
+async fn titles_sort_without_a_leading_article() {
+    let app = TestApp::start_with(TestAppOptions::default()).await;
+    let mut admin = app.admin_client().await;
+    let (library_id, _) = library(&app, &mut admin, "books", "AUDIOBOOKS").await;
+    let (book, _) = audiobook_with_chapters(&mut admin, &library_id, "The Long Way", 1).await;
+    let sort_title = |result: Value| result["audiobooks"]["edges"][0]["node"]["sortTitle"].clone();
+    const READ: &str = r#"query R($id: String!) { audiobooks(where: { id: { eq: $id } }) { edges { node { sortTitle } } } }"#;
+    const RENAME: &str = r#"mutation U($id: String!, $input: UpdateAudiobookInput!) { updateAudiobook(id: $id, input: $input) { success error } }"#;
+    assert_eq!(
+        sort_title(admin.query(READ, json!({ "id": book })).await),
+        "Long Way"
+    );
+
+    admin
+        .query(
+            RENAME,
+            json!({ "id": book, "input": { "title": "A Short Way" } }),
+        )
+        .await;
+    assert_eq!(
+        sort_title(admin.query(READ, json!({ "id": book })).await),
+        "Short Way"
+    );
+
+    // Someone's own choice stays through a rename.
+    admin
+        .query(
+            RENAME,
+            json!({ "id": book, "input": { "sortTitle": "Mine" } }),
+        )
+        .await;
+    admin
+        .query(
+            RENAME,
+            json!({ "id": book, "input": { "title": "The Third Way" } }),
+        )
+        .await;
+    assert_eq!(
+        sort_title(admin.query(READ, json!({ "id": book })).await),
+        "Mine"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn only_the_latest_identification_runs_are_kept() {
     let app = TestApp::start_with(TestAppOptions {
         with_torrent: true,

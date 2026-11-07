@@ -1618,6 +1618,10 @@ type Collection {
 	userId: String!
 	tmdbCollectionId: Int!
 	name: String!
+	"""
+	How it sorts: its name without a leading "The", "A" or "An".
+	"""
+	sortName: String
 	overview: String
 	posterUrl: String
 	backdropUrl: String
@@ -1678,6 +1682,7 @@ type CollectionEdge {
 
 input CollectionOrderByInput {
 	name: OrderDirection
+	sortName: OrderDirection
 	movieCount: OrderDirection
 	lastSyncedAt: OrderDirection
 	createdAt: OrderDirection
@@ -1699,6 +1704,7 @@ input CollectionWhereInput {
 	userId: StringFilter
 	tmdbCollectionId: IntFilter
 	name: StringFilter
+	sortName: StringFilter
 	movieCount: IntFilter
 	lastSyncedAt: DateFilter
 	createdAt: DateFilter
@@ -1975,6 +1981,7 @@ input CreateCollectionInput {
 	userId: String!
 	tmdbCollectionId: Int!
 	name: String!
+	sortName: String
 	overview: String
 	posterUrl: String
 	backdropUrl: String
@@ -15064,6 +15071,7 @@ input UpdateCollectionInput {
 	userId: String
 	tmdbCollectionId: Int
 	name: String
+	sortName: String
 	overview: String
 	posterUrl: String
 	backdropUrl: String
