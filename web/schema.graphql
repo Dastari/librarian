@@ -2049,6 +2049,20 @@ input CreateReleaseBlocklistInput {
   expiresAt: String
 }
 
+input CreateRssFeedInput {
+  userId: String!
+  libraryId: String
+  name: String!
+  url: String!
+  enabled: Boolean!
+  pollIntervalMinutes: Int!
+  postDownloadAction: String
+  lastPolledAt: String
+  lastSuccessfulAt: String
+  lastError: String
+  consecutiveFailures: Int
+}
+
 input CreateSavedViewInput {
   userId: String!
   name: String!
@@ -2511,6 +2525,13 @@ type DeleteQualityProfilesResult {
 
 """Result of bulk delete by Where filter"""
 type DeleteReleaseBlocklistsResult {
+  success: Boolean!
+  error: String
+  deletedCount: Int!
+}
+
+"""Result of bulk delete by Where filter"""
+type DeleteRssFeedsResult {
   success: Boolean!
   error: String
   deletedCount: Int!
@@ -5736,6 +5757,57 @@ type Mutation {
     """Where"""
     where: TorrentFileWhereInput
   ): DeleteTorrentFilesResult!
+
+  """
+  Create a new #struct_name_str
+  Create one RssFeed records
+  """
+  createRssFeed(
+    """Input"""
+    input: CreateRssFeedInput!
+  ): RssFeedResult!
+
+  """
+  Update an existing #struct_name_str
+  Update one RssFeed records
+  """
+  updateRssFeed(
+    """Id"""
+    id: String!
+
+    """Input"""
+    input: UpdateRssFeedInput!
+  ): RssFeedResult!
+
+  """
+  Delete a #struct_name_str
+  Delete one RssFeed records
+  """
+  deleteRssFeed(
+    """Id"""
+    id: String!
+  ): RssFeedResult!
+
+  """
+  Update multiple #plural_name matching the given Where filter
+  Update matching RssFeed records
+  """
+  updateRssFeeds(
+    """Where"""
+    where: RssFeedWhereInput
+
+    """Input"""
+    input: UpdateRssFeedInput!
+  ): UpdateRssFeedsResult!
+
+  """
+  Delete multiple #plural_name matching the given Where filter
+  Delete matching RssFeed records
+  """
+  deleteRssFeeds(
+    """Where"""
+    where: RssFeedWhereInput
+  ): DeleteRssFeedsResult!
 
   """
   Create a new #struct_name_str
@@ -10059,6 +10131,13 @@ input RssFeedOrderByInput {
   updatedAt: OrderDirection
 }
 
+"""Result type for #struct_name mutations"""
+type RssFeedResult {
+  success: Boolean!
+  error: String
+  rssFeed: RssFeed
+}
+
 input RssFeedWhereInput {
   id: StringFilter
   userId: StringFilter
@@ -13614,6 +13693,27 @@ input UpdateReleaseBlocklistInput {
 
 """Result of bulk update by Where filter"""
 type UpdateReleaseBlocklistsResult {
+  success: Boolean!
+  error: String
+  affectedCount: Int!
+}
+
+input UpdateRssFeedInput {
+  userId: String
+  libraryId: String
+  name: String
+  url: String
+  enabled: Boolean
+  pollIntervalMinutes: Int
+  postDownloadAction: String
+  lastPolledAt: String
+  lastSuccessfulAt: String
+  lastError: String
+  consecutiveFailures: Int
+}
+
+"""Result of bulk update by Where filter"""
+type UpdateRssFeedsResult {
   success: Boolean!
   error: String
   affectedCount: Int!

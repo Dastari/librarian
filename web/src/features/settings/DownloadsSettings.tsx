@@ -12,6 +12,7 @@ import { errorMessage } from "@/lib/graphql/errors";
 
 import { AutoDownloadStatus } from "./AutoDownloadStatus";
 import { BlockedReleases } from "./BlockedReleases";
+import { RssFeeds } from "./RssFeeds";
 import { asBool, asNumber, useAppSettings } from "./useAppSettings";
 
 const requiredNumber = (rule: z.ZodNumber) => z.number().nullable().transform((value, context) => {
@@ -149,6 +150,7 @@ export function DownloadsSettings() {
           <form.SubmitButton>Save</form.SubmitButton>
         </FormActions>
       </Form>
+      <RssFeeds />
       <BlockedReleases />
     </div>
   );

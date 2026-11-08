@@ -9,6 +9,7 @@ import {
   EntityAppSettingCreateDocument,
   EntityAppSettingUpdateDocument,
   EntityReleaseBlocklistListDocument,
+  EntityRssFeedListDocument,
   TriggerAutoDownloadDocument,
 } from "@/graphql/generated/graphql";
 import { renderWithProviders } from "@/test";
@@ -44,6 +45,11 @@ const blocklistMock = {
   result: { data: { releaseBlocklists: { __typename: "ReleaseBlocklistConnection", edges: [], pageInfo: { __typename: "PageInfo", hasNextPage: false, hasPreviousPage: false, totalCount: 0 } } } },
 };
 
+const rssFeedsMock = {
+  request: { query: EntityRssFeedListDocument, variables: { orderBy: [{ name: "ASC" }], page: { limit: 100, offset: 0 } } },
+  result: { data: { rssFeeds: { __typename: "RssFeedConnection", edges: [], pageInfo: { __typename: "PageInfo", hasNextPage: false, hasPreviousPage: false, totalCount: 0 } } } },
+};
+
 const updateMock = (id: string, value: string) => {
   const called = vi.fn(() => ({ data: { updateAppSetting: { __typename: "UpdateAppSettingResult", success: true, error: null, appSetting: null } } }));
   return { called, mock: { request: { query: EntityAppSettingUpdateDocument, variables: { id, input: { value } } }, result: called } };
@@ -62,6 +68,7 @@ const base = (extra: unknown[] = []) => [
     ["auto_download.search_backoff_minutes", "360"],
   ]),
   blocklistMock,
+  rssFeedsMock,
   ...extra,
 ];
 
@@ -69,7 +76,7 @@ const mount = (extra: unknown[] = []) => renderWithProviders(<DownloadsSettings 
 
 /** A server that has never been given an automatic-downloads setting. */
 const mountFresh = (extra: unknown[] = []) => renderWithProviders(<DownloadsSettings />, {
-  mocks: [categoryMock("torrent", TORRENT), categoryMock("auto_download", []), blocklistMock, ...extra] as never,
+  mocks: [categoryMock("torrent", TORRENT), categoryMock("auto_download", []), blocklistMock, rssFeedsMock, ...extra] as never,
 });
 
 /** Number fields commit on blur, so every edit ends with a Tab out of the field. */
@@ -120,7 +127,7 @@ describe("DownloadsSettings", () => {
     const at = new Date(Date.now() - 5 * 60_000).toISOString();
     const status = JSON.stringify({ sweep: { at, searched: 3, grabbed: 1, capped: 2 }, rss: { at, feeds: 2, failed: 1, newItems: 40, matched: 3, grabbed: 1 } });
     await renderWithProviders(<DownloadsSettings />, {
-      mocks: [categoryMock("torrent", TORRENT), categoryMock("auto_download", [["auto_download.enabled", "true"], ["auto_download.status", status]]), blocklistMock] as never,
+      mocks: [categoryMock("torrent", TORRENT), categoryMock("auto_download", [["auto_download.enabled", "true"], ["auto_download.status", status]]), blocklistMock, rssFeedsMock] as never,
     });
     expect(await screen.findByText(/searched 3, grabbed 1, 2 waiting for a free slot/)).toBeInTheDocument();
     expect(screen.getByText(/2 feed\(s\), 1 failed, 40 new item\(s\), 3 matched, 1 grabbed/)).toBeInTheDocument();

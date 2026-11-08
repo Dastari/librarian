@@ -38,6 +38,48 @@ query EntityRssFeedGet($id: String!) {
   }
 }
 
+mutation EntityRssFeedCreate($input: CreateRssFeedInput!) {
+  createRssFeed(input: $input) {
+    success
+    error
+    rssFeed {
+      ...RssFeedFields
+    }
+  }
+}
+
+mutation EntityRssFeedUpdate($id: String!, $input: UpdateRssFeedInput!) {
+  updateRssFeed(id: $id, input: $input) {
+    success
+    error
+    rssFeed {
+      ...RssFeedFields
+    }
+  }
+}
+
+mutation EntityRssFeedUpdateMany($where: RssFeedWhereInput, $input: UpdateRssFeedInput!) {
+  updateRssFeeds(where: $where, input: $input) {
+    success
+    error
+    affectedCount
+  }
+}
+
+mutation EntityRssFeedDelete($id: String!) {
+  deleteRssFeed(id: $id) {
+    success
+    error
+  }
+}
+
+mutation EntityRssFeedDeleteMany($where: RssFeedWhereInput) {
+  deleteRssFeeds(where: $where) {
+    success
+    error
+  }
+}
+
 subscription EntityRssFeedChanged($filter: SubscriptionFilterInput, $keys: [String!]) {
   rssFeedChanged(filter: $filter, keys: $keys) {
     action
