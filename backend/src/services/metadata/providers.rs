@@ -706,6 +706,25 @@ pub struct AddTvShowOptions {
     pub path: Option<String>,
 }
 
+/// A MusicBrainz release group that credits no artist, so no Artist record can be made for it.
+#[derive(Debug)]
+pub struct NoCreditedArtist {
+    pub release_group_id: String,
+    pub title: String,
+}
+
+impl std::fmt::Display for NoCreditedArtist {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "MusicBrainz release group {} ('{}') lists no artist",
+            self.release_group_id, self.title
+        )
+    }
+}
+
+impl std::error::Error for NoCreditedArtist {}
+
 /// Options for adding an album from a metadata provider
 #[derive(Debug, Clone)]
 pub struct AddAlbumOptions {
@@ -3771,9 +3790,18 @@ impl MetadataService {
                 .ok_or_else(|| anyhow::anyhow!("Album not found after lookup"));
         }
 
+        // An album with no credited artist is not added under a made-up "Unknown Artist": its files
+        // would be filed in that folder. The caller keeps the album's own tags instead, and a later
+        // scan can look again.
         let artist_name = release_group
             .artist_names()
-            .unwrap_or_else(|| "Unknown Artist".to_string());
+            .filter(|name| !name.trim().is_empty())
+            .ok_or_else(|| {
+                anyhow::Error::new(NoCreditedArtist {
+                    release_group_id: provider_id.clone(),
+                    title: release_group.title.clone(),
+                })
+            })?;
         let artist_mbid = release_group
             .artist_credit
             .as_ref()
