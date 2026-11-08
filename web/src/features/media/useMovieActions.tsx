@@ -14,6 +14,7 @@ import { activeContentStatusQueries } from "@/lib/graphql/content-status";
 import { assertSuccess } from "@/lib/graphql/errors";
 
 import type { MovieEntity } from "./MovieIdentity";
+import { resetProgressAction, useResetProgress, type ProgressReset } from "./progressReset";
 
 export const MOVIE_SETTINGS_TABS = ["general", "tags", "downloads", "files", "info", "remove"] as const;
 export type MovieSettingsTab = (typeof MOVIE_SETTINGS_TABS)[number];
@@ -23,11 +24,13 @@ export type MovieSettingsTab = (typeof MOVIE_SETTINGS_TABS)[number];
  * table row's menu, its settings dialog. `settings` opens the dialog at a section. `open` is left
  * out on its page, and `play` lets the page resume where someone stopped.
  */
-export function useMovieActions<T extends MovieEntity>({ settings, open = true, play, playLabel }: {
+export function useMovieActions<T extends MovieEntity>({ settings, open = true, play, playLabel, reset }: {
   settings: (movie: T, tab?: MovieSettingsTab) => void;
   open?: boolean;
   play?: (movie: T) => void;
   playLabel?: string;
+  /** Where this person's progress is known (its page), which adds "Mark as unwatched". */
+  reset?: ProgressReset<T>;
 }): { actions: ActionSet<T>; dialogs: ReactNode } {
   const client = useApolloClient();
   const navigate = useNavigate();
@@ -37,6 +40,7 @@ export function useMovieActions<T extends MovieEntity>({ settings, open = true, 
   const [update] = useMutation(EntityMovieUpdateDocument, { refetchQueries: () => activeContentStatusQueries(client) });
   const [refresh, { loading: refreshing }] = useMutation(RefreshMovieDocument);
   const [recache] = useMutation(RecacheMovieArtworkDocument);
+  const resetProgress = useResetProgress();
   const [saving, setSaving] = useState<T | null>(null);
   const [finding, setFinding] = useState<T | null>(null);
 
@@ -63,6 +67,7 @@ export function useMovieActions<T extends MovieEntity>({ settings, open = true, 
         visible: (rows) => one(rows) && rows[0]!.userId === user?.id,
         run: (rows) => setSaving(rows[0]!),
       },
+      ...resetProgressAction("video", reset, resetProgress),
       ...(isAdmin ? [
         {
           id: "wanted", label: (rows: readonly T[]) => (rows[0]!.wanted ? "Remove from Wanted" : "Add to Wanted"), icon: IconBookmark, group: "manage" as const, priority: 1,
@@ -100,7 +105,7 @@ export function useMovieActions<T extends MovieEntity>({ settings, open = true, 
         run: (rows: readonly T[]) => settings(rows[0]!, "remove"),
       }] : []),
     ]);
-  }, [isAdmin, navigate, open, play, playLabel, player, recache, refresh, refreshing, settings, update, user?.id]);
+  }, [isAdmin, navigate, open, play, playLabel, player, recache, refresh, refreshing, reset, resetProgress, settings, update, user?.id]);
 
   const dialogs = (
     <>

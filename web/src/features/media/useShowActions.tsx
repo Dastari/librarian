@@ -11,6 +11,7 @@ import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { assertSuccess } from "@/lib/graphql/errors";
 
 import type { ShowEntity } from "./ShowIdentity";
+import { resetProgressAction, useResetProgress, type ProgressReset } from "./progressReset";
 
 export const SHOW_SETTINGS_TABS = ["general", "downloads", "files", "info", "remove"] as const;
 export type ShowSettingsTab = (typeof SHOW_SETTINGS_TABS)[number];
@@ -19,17 +20,20 @@ export type ShowSettingsTab = (typeof SHOW_SETTINGS_TABS)[number];
  * Everything that can be done to a show, wherever it's shown. `play` is the next episode, which
  * only its page knows; `season` is the one a release search starts from.
  */
-export function useShowActions<T extends ShowEntity>({ settings, open = true, play, season, onRefreshed }: {
+export function useShowActions<T extends ShowEntity>({ settings, open = true, play, season, onRefreshed, reset }: {
   settings: (show: T, tab?: ShowSettingsTab) => void;
   open?: boolean;
   play?: { label: string; run: () => void };
   season?: number;
   onRefreshed?: () => void;
+  /** Where this person's progress is known (its page), which adds "Mark as unwatched". */
+  reset?: ProgressReset<T>;
 }): { actions: ActionSet<T>; dialogs: ReactNode } {
   const navigate = useNavigate();
   const isAdmin = useIsAdmin();
   const { user } = useSession();
   const [refresh, { loading: refreshing }] = useMutation(RefreshShowDocument);
+  const resetProgress = useResetProgress();
   const [saving, setSaving] = useState<T | null>(null);
   const [finding, setFinding] = useState<T | null>(null);
 
@@ -51,6 +55,7 @@ export function useShowActions<T extends ShowEntity>({ settings, open = true, pl
         visible: (rows) => one(rows) && rows[0]!.userId === user?.id,
         run: (rows) => setSaving(rows[0]!),
       },
+      ...resetProgressAction("video", reset, resetProgress),
       ...(isAdmin ? [
         {
           id: "find", label: "Find releases", icon: IconDownload, group: "manage" as const, priority: 2, primary: !play,
@@ -79,7 +84,7 @@ export function useShowActions<T extends ShowEntity>({ settings, open = true, pl
         run: (rows: readonly T[]) => settings(rows[0]!, "remove"),
       }] : []),
     ]);
-  }, [isAdmin, navigate, onRefreshed, open, play, refresh, refreshing, settings, user?.id]);
+  }, [isAdmin, navigate, onRefreshed, open, play, refresh, refreshing, reset, resetProgress, settings, user?.id]);
 
   const dialogs = (
     <>
