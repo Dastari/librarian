@@ -101,7 +101,6 @@ export function BlockedReleases() {
         loading={loading && rows.length === 0}
         actions={actions} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "release", other: "releases" }} />}
 
-        density="compact"
         noun={{ one: "release", other: "releases" }}
         emptyMessage="Nothing is blocked."
       />

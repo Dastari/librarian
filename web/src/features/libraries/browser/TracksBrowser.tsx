@@ -145,7 +145,6 @@ export function TracksBrowser({ libraryId }: { libraryId: string }) {
           actions={actions}
           selectable
           renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "track", other: "tracks" }} />}
-          density="compact"
           noun={{ one: "track", other: "tracks" }}
           search={search}
           toolbar={

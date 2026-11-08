@@ -337,7 +337,6 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
               onRetry={() => void retryPage()}
               getRowId={releaseId}
               getRowLabel={(release) => release.title}
-              density="compact"
               noun={{ one: "release", other: "releases" }}
               emptyMessage={<span className="flex flex-col items-center gap-1"><span>{allReleases.length ? "Nothing matches these filters" : "No releases found"}</span><span className="shrink-0 text-label-sm text-muted">{allReleases.length ? (ebookCount === allReleases.length ? "Every result looks like an ebook." : "Loosen a filter to see more.") : "Try a shorter title or search without the year."}</span></span>}
             />

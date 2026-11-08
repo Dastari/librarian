@@ -351,7 +351,7 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
         <LoadedDataTable
           id={`audiobook-chapters:${user?.id ?? "anonymous"}:${book.libraryId}:${book.id}`}
           label={`${book.title} chapters`} columns={chapterColumns} rows={chapters} getRowId={(chapter) => chapter.id} getRowLabel={(chapter) => chapter.title ?? `Chapter ${chapter.chapterNumber}`}
-          height="auto" density="compact" noun={{ one: "chapter", other: "chapters" }} selectable actions={actions} renderRowActions={noRowMenu}
+          height="auto" noun={{ one: "chapter", other: "chapters" }} selectable actions={actions} renderRowActions={noRowMenu}
           renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "chapter", other: "chapters" }} />}
           complete={pages.complete} search={{ fields: ["title"], placeholder: "Search chapters" }} refetching={loading || pages.loading || progress.loading}
           status={pages.error ? <span role="status">Could not load all chapters. <Button size="sm" variant="ghost" onClick={pages.retry}>Retry chapters</Button></span>

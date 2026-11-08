@@ -248,7 +248,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
         <LoadedDataTable
           id={`album-tracks:${user?.id ?? "anonymous"}:${album.libraryId}:${album.id}`}
           label={`${album.name} tracks`} columns={trackColumns} rows={tracks} getRowId={(track) => track.id} getRowLabel={(track) => track.title}
-          height="auto" density="compact" noun={{ one: "track", other: "tracks" }} selectable actions={actions} renderRowActions={noRowMenu}
+          height="auto" noun={{ one: "track", other: "tracks" }} selectable actions={actions} renderRowActions={noRowMenu}
           renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "track", other: "tracks" }} />}
           complete={pages.complete} search={{ fields: ["title", { field: "artistName", value: (track) => track.artistName }], placeholder: "Search tracks" }} refetching={loading || pages.loading}
           status={pages.error ? <span role="status">Could not load all tracks. Play individual tracks or <Button size="sm" variant="ghost" onClick={pages.retry}>Retry tracks</Button></span> : pages.loading ? "Loading remaining tracks…" : error ? <span role="status">Could not refresh tracks. <Button size="sm" variant="ghost" onClick={() => void refetch()}>Retry refresh</Button></span> : undefined}
