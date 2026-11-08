@@ -172,8 +172,8 @@ export function UsersSettings() {
           <FieldGroup>
             <FormSelectField control={inviteForm.control} name="role" label="Role" options={[{ key: "member", label: "Member", description: "Browse and play" }, { key: "admin", label: "Admin", description: "Manage libraries, sources and users" }]} />
             <FormSelectField control={inviteForm.control} name="accessLevel" label="Library access" options={[{ key: "full", label: "All libraries" }, { key: "restricted", label: "Restricted" }]} />
-            <FormNumberField control={inviteForm.control} name="maxUses" label="Maximum uses" min={1} max={100} />
-            <FormNumberField control={inviteForm.control} name="expiresInDays" label="Expires in (days)" min={1} max={365} />
+            <FormNumberField control={inviteForm.control} name="maxUses" label="Maximum uses" min={1} max={100} suffix="uses" />
+            <FormNumberField control={inviteForm.control} name="expiresInDays" label="Expires in" min={1} max={365} suffix="days" />
           </FieldGroup>
         </form>
       </Dialog>

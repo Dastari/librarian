@@ -5,11 +5,14 @@ import { toast } from "glass-ux/toast";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
+import { ByteSizeInput } from "glass-ux/byte-size-field";
+import { Field } from "glass-ux/field";
+import { TagInput } from "glass-ux/tag-input";
 import { createDataTableColumns, filters, IdentityCell, TextCell } from "glass-ux/data-table";
 import { IconCopy, IconEdit, IconPlus, IconStar, IconTrash } from "glass-ux/icons";
 import { IconTags } from "@tabler/icons-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm, type Control, type FieldPath } from "react-hook-form";
 import { z } from "zod";
 
 import { Button, Dialog, FieldGroup, FormNumberField, FormSelectField, FormSwitchField, FormTextField } from "@/components/ui";
@@ -24,6 +27,7 @@ import { useSession } from "@/lib/auth/useSession";
 import { glyph } from "@/lib/entities/kinds";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { LANGUAGES, languageName } from "@/lib/languages";
+import { cn } from "@/lib/utils";
 
 import { FormOrderedChips } from "./OrderedChips";
 
@@ -190,8 +194,8 @@ export function QualitySettings() {
             <GroupLabel>Quality</GroupLabel>
             {kind === "VIDEO" ? (
               <>
-                <FormTextField control={form.control} name="allowedResolutions" label="Resolutions" description="Comma separated: 2160p, 1080p, 720p" />
-                <FormTextField control={form.control} name="allowedVideoCodecs" label="Video codecs" description="hevc, h264, av1" />
+                <FormTagsField control={form.control} name="allowedResolutions" label="Resolutions" suggestions={["2160p", "1080p", "720p"]} />
+                <FormTagsField control={form.control} name="allowedVideoCodecs" label="Video codecs" suggestions={["hevc", "h264", "av1"]} />
                 <FormOrderedChips
                   control={form.control}
                   name="resolutionPreference"
@@ -201,13 +205,13 @@ export function QualitySettings() {
                   placeholder="Add a resolution"
                   className="sm:col-span-2"
                 />
-                <FormTextField control={form.control} name="allowedHdrTypes" label="HDR types" description="hdr10, dolby_vision, hlg" />
+                <FormTagsField control={form.control} name="allowedHdrTypes" label="HDR types" suggestions={["hdr10", "dolby_vision", "hlg"]} />
                 <FormSwitchField control={form.control} name="requireHdr" label="Require HDR" />
               </>
             ) : (
-              <FormTextField control={form.control} name="allowedAudioFormats" label="Audio formats" description="flac, alac, mp3, aac" className="sm:col-span-2" />
+              <FormTagsField control={form.control} name="allowedAudioFormats" label="Audio formats" suggestions={["flac", "alac", "mp3", "aac"]} className="sm:col-span-2" />
             )}
-            <FormTextField control={form.control} name="allowedSources" label="Sources" description="bluray, web, remux, hdtv" />
+            <FormTagsField control={form.control} name="allowedSources" label="Sources" suggestions={["bluray", "web", "remux", "hdtv"]} />
             <FormTextField control={form.control} name="cutoffResolution" label="Upgrade until" description="Stop looking for upgrades at this resolution" />
             <FormSwitchField control={form.control} name="upgradeUntilCutoff" label="Keep upgrading until the cutoff" className="sm:col-span-2" />
 
@@ -225,10 +229,10 @@ export function QualitySettings() {
             <FormSwitchField control={form.control} name="requireLanguageMatch" label="Only accept these languages" description="An untagged release counts as English." className="sm:col-span-2" />
 
             <GroupLabel>Release filters</GroupLabel>
-            <FormNumberField control={form.control} name="minSizeMb" label="Minimum size (MB)" min={0} description="Per episode for season packs. Empty = no minimum." />
-            <FormNumberField control={form.control} name="maxSizeMb" label="Maximum size (MB)" min={0} description="Per episode for season packs. Empty = no maximum." />
-            <FormNumberField control={form.control} name="minSeeders" label="Minimum seeders" min={0} />
-            <FormNumberField control={form.control} name="maxReleaseAgeDays" label="Maximum age (days)" min={0} description="Empty = any age." />
+            <FormMegabytesField control={form.control} name="minSizeMb" label="Minimum size" description="Per episode for season packs." placeholder="No minimum" />
+            <FormMegabytesField control={form.control} name="maxSizeMb" label="Maximum size" description="Per episode for season packs." placeholder="No maximum" />
+            <FormNumberField control={form.control} name="minSeeders" label="Minimum seeders" min={0} suffix="seeders" />
+            <FormNumberField control={form.control} name="maxReleaseAgeDays" label="Maximum age" min={0} suffix="days" description="Empty = any age." />
             <FormSwitchField control={form.control} name="allowSeasonPacks" label="Allow season packs" className="sm:col-span-2" />
             <FormSwitchField control={form.control} name="preferProperRepack" label="Prefer PROPER and REPACK releases" description="Also treats one as an upgrade over the file you already have." className="sm:col-span-2" />
 
@@ -241,14 +245,58 @@ export function QualitySettings() {
               placeholder="Add a release group"
               className="sm:col-span-2"
             />
-            <FormTextField control={form.control} name="releaseGroupWhitelist" label="Only these release groups" />
-            <FormTextField control={form.control} name="releaseGroupBlacklist" label="Blocked release groups" />
+            <FormTagsField control={form.control} name="releaseGroupWhitelist" label="Only these release groups" />
+            <FormTagsField control={form.control} name="releaseGroupBlacklist" label="Blocked release groups" />
 
             <FormSwitchField control={form.control} name="isDefault" label="Default for new libraries of this kind" className="sm:col-span-2" />
           </FieldGroup>
         </form>
       </Dialog>
     </SettingsPage>
+  );
+}
+
+const BYTES_PER_MB = 1024 * 1024;
+type Values = Input;
+
+/**
+ * A comma-separated list held as text (what the profile stores) shown as chips. The form value
+ * stays the string, so saving splits it exactly as before.
+ */
+function FormTagsField({ control, name, label, description, suggestions, className }: { control: Control<Values>; name: FieldPath<Values>; label: string; description?: string; suggestions?: string[]; className?: string }) {
+  return (
+    <Controller control={control} name={name} render={({ field, fieldState }) => (
+      <Field label={label} hint={description} error={fieldState.error?.message} className={cn("w-full", className)}>
+        <TagInput
+          value={splitList(typeof field.value === "string" ? field.value : "")}
+          onValueChange={(tags) => field.onChange(tags.join(", "))}
+          onBlur={field.onBlur}
+          suggestions={suggestions?.map((value) => ({ value, label: value }))}
+          invalid={Boolean(fieldState.error)}
+        />
+      </Field>
+    )} />
+  );
+}
+
+/** A size the profile stores in whole MiB (what it compares per episode), so a bare number reads as MiB. Empty is no limit. */
+function FormMegabytesField({ control, name, label, description, placeholder }: { control: Control<Values>; name: "minSizeMb" | "maxSizeMb"; label: string; description?: string; placeholder?: string }) {
+  return (
+    <Controller control={control} name={name} render={({ field, fieldState }) => (
+      <Field label={label} hint={description} error={fieldState.error?.message} className="w-full">
+        <ByteSizeInput
+          base="binary"
+          width="full"
+          defaultUnit="MiB"
+          clearable
+          placeholder={placeholder}
+          value={typeof field.value === "number" ? field.value * BYTES_PER_MB : null}
+          onValueChange={(bytes) => field.onChange(bytes === null ? null : Math.round(bytes / BYTES_PER_MB))}
+          onBlur={field.onBlur}
+          invalid={Boolean(fieldState.error)}
+        />
+      </Field>
+    )} />
   );
 }
 
