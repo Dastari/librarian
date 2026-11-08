@@ -52,6 +52,8 @@ use crate::services::release_match;
 mod identify;
 mod listen;
 mod music;
+#[cfg(test)]
+mod organize_tests;
 
 pub use identify::{IdentifiedChoice, IdentifyCandidate, IdentifyTrigger};
 
@@ -209,6 +211,8 @@ pub struct ManualFileTarget {
 
 /// `match_type` recorded when a person chose the target.
 const MANUAL_MATCH_TYPE: &str = "manual";
+/// Where a library keeps duplicates a person removed, recoverable. Directly under the root.
+const LIBRARY_TRASH_DIR: &str = ".librarian-trash";
 
 /// In a match's reason: this one file is the entire book, so it belongs to every chapter.
 const WHOLE_BOOK_REASON: &str = "one file holds the whole book";
@@ -737,6 +741,36 @@ struct MediaFileRow {
 struct ExistingMediaFileRow {
     id: String,
     path: String,
+}
+
+/// A file already linked to a library item, with what organizing needs to know about the link.
+#[derive(Debug, Clone)]
+struct MatchedFile {
+    media_file_id: String,
+    path: String,
+    target_type: &'static str,
+    target_id: String,
+    match_type: Option<String>,
+}
+
+impl MatchedFile {
+    /// The same item organizing plans from: a movie first, then an episode, track or chapter.
+    fn of(file: &MediaFileRow) -> Option<Self> {
+        let (target_type, target_id) = file
+            .movie_id
+            .as_deref()
+            .map(|id| ("Movie", id))
+            .or_else(|| file.episode_id.as_deref().map(|id| ("Episode", id)))
+            .or_else(|| file.track_id.as_deref().map(|id| ("Track", id)))
+            .or_else(|| file.chapter_id.as_deref().map(|id| ("Chapter", id)))?;
+        Some(Self {
+            media_file_id: file.id.clone(),
+            path: file.path.clone(),
+            target_type,
+            target_id: target_id.to_string(),
+            match_type: file.match_type.clone(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -2179,7 +2213,12 @@ impl LibraryScanService {
     ) {
         let (tx, rx) = mpsc::channel(128);
         let handle = tokio::task::spawn_blocking(move || {
-            for result in WalkDir::new(&root) {
+            // The library's own trash holds files a person removed as duplicates. They are not
+            // library files: finding them again would match and organize them back out of it.
+            let walk = WalkDir::new(&root).into_iter().filter_entry(|entry| {
+                !(entry.depth() == 1 && entry.file_name() == LIBRARY_TRASH_DIR)
+            });
+            for result in walk {
                 if cancel.is_cancelled() {
                     break;
                 }
@@ -3811,7 +3850,7 @@ impl LibraryScanService {
             anyhow::bail!("Duplicate content changed since it was verified; rescan before removal");
         }
 
-        let trash_dir = create_library_directory(&root, &root.join(".librarian-trash"))
+        let trash_dir = create_library_directory(&root, &root.join(LIBRARY_TRASH_DIR))
             .context("Failed to create the contained library trash directory")?;
         let original_name = duplicate_path
             .file_name()
@@ -4410,6 +4449,7 @@ impl LibraryScanService {
         let mut discovered_paths: HashSet<String> = HashSet::new();
         let mut pending_provider_fallback: Vec<PendingProviderFallback> = Vec::new();
         let mut duplicate_candidates: Vec<DuplicateCandidate> = Vec::new();
+        let mut organize_candidates: Vec<MatchedFile> = Vec::new();
         let mut media_files_by_path = self.load_media_files_by_path(library_id).await?;
         let reconciliation_rows = media_files_by_path
             .values()
@@ -4475,6 +4515,7 @@ impl LibraryScanService {
             let modified_at = discovered.modified_at;
 
             let media_file = media_files_by_path.remove(&abs_path);
+            let mut matched_link: Option<MatchedFile> = None;
             let (
                 media_file_id,
                 is_new_media_file,
@@ -4510,6 +4551,7 @@ impl LibraryScanService {
                     )
                     .await?;
                 }
+                matched_link = MatchedFile::of(&existing);
                 let analysis_state = if !version_changed && existing.analyzed_at.is_some() {
                     "ANALYZED"
                 } else {
@@ -4629,6 +4671,14 @@ impl LibraryScanService {
                 unchanged_skipped_count += 1;
                 matched_count += 1;
                 scanned_count += 1;
+                // Matching is settled, but whether the file is where the library's naming pattern
+                // puts it is not: it may have been matched while organizing was off, or the
+                // pattern or the title may have changed since. Checked together after the walk.
+                if library.auto_organize
+                    && let Some(link) = matched_link
+                {
+                    organize_candidates.push(link);
+                }
                 debug!(
                     library_id = %library_id,
                     media_file_id = %media_file_id,
@@ -4814,6 +4864,13 @@ impl LibraryScanService {
             .reconcile_missing_media_files(&auth_user, &discovered_paths, &reconciliation_rows)
             .await?;
 
+        let organized_misplaced_count = if library.auto_organize {
+            self.organize_unchanged_matched_files(&library, &auth_user, organize_candidates)
+                .await
+        } else {
+            0
+        };
+
         self.reconcile_movie_collections_for_library(&library).await;
 
         if Self::is_tv_library_type(&normalized_library_type) {
@@ -4931,6 +4988,7 @@ impl LibraryScanService {
                 provider_configuration_blocked = provider_summary.configuration_blocked,
                 duplicate_count,
                 unchanged_skipped_count,
+                organized_misplaced_count,
                 auto_organize = library.auto_organize,
                 elapsed_ms,
                 files_per_second,
@@ -4960,6 +5018,7 @@ impl LibraryScanService {
                 provider_pending_files = provider_summary.pending_files,
                 provider_matched_files = provider_summary.matched_files,
                 unchanged_skipped_count,
+                organized_misplaced_count,
                 auto_organize = library.auto_organize,
                 elapsed_ms,
                 files_per_second,
@@ -6201,6 +6260,7 @@ impl LibraryScanService {
             Some("Media file has no library association yet")
             | Some("Source file does not exist")
             | Some("Media file is not matched to a library item")
+            | Some(ARTIST_UNKNOWN_REASON)
             | Some("Target path already exists; skipped to avoid overwrite") => {
                 reason.unwrap_or_default().to_string()
             }
@@ -6288,7 +6348,7 @@ impl LibraryScanService {
             return;
         }
 
-        let organize_result = self.organize_media_file(media_file_id).await;
+        let organize_result = self.move_media_file_to_pattern(media_file_id).await;
         if Self::auto_organize_result_is_success(&organize_result) {
             return;
         }
@@ -9425,7 +9485,11 @@ impl LibraryScanService {
                     .and_then(|m| m.get("Year"))
                     .and_then(|v| v.as_i64())
                     .map(|v| v as i32);
-                apply_movie_naming_pattern(&naming_pattern, title, year, original_filename, ext)
+                TargetFacts::Movie {
+                    title: title.to_string(),
+                    year,
+                }
+                .relative_path(&naming_pattern, original_filename, ext)?
             }
             ("tv", "Episode") => {
                 let data = self
@@ -9475,14 +9539,13 @@ impl LibraryScanService {
                 let episode_title = episode_node
                     .and_then(|e| e.get("Title"))
                     .and_then(|v| v.as_str());
-                apply_tv_naming_pattern(
-                    &naming_pattern,
-                    show_name,
-                    season as i32,
-                    episode as i32,
-                    episode_title,
-                    ext,
-                )
+                TargetFacts::Episode {
+                    show_name: show_name.to_string(),
+                    season: season as i32,
+                    episode: episode as i32,
+                    title: episode_title.map(str::to_string),
+                }
+                .relative_path(&naming_pattern, original_filename, ext)?
             }
             ("music", "Track") => {
                 let data = self
@@ -9493,7 +9556,6 @@ impl LibraryScanService {
                                 Title: title
                                 TrackNumber: trackNumber
                                 DiscNumber: discNumber
-                                ArtistName: artistName
                                 AlbumId: albumId
                             }
                         }"#,
@@ -9541,10 +9603,10 @@ impl LibraryScanService {
                     .and_then(|t| t.get("DiscNumber"))
                     .and_then(|v| v.as_i64())
                     .map(|v| v as i32);
-                // An album stays in one folder, whoever guests on each track.
+                // An album stays in one folder, whoever guests on each track: the folder is named
+                // from the album's Artist record and nothing a track says about itself.
                 let artist_name = album
                     .and_then(|a| a.pointer("/Artist/Name"))
-                    .or_else(|| track.and_then(|t| t.get("ArtistName")))
                     .and_then(|v| v.as_str());
                 let discs = album
                     .and_then(|a| a.pointer("/Tracks/Edges"))
@@ -9554,17 +9616,16 @@ impl LibraryScanService {
                     .filter_map(|edge| edge.pointer("/Node/DiscNumber")?.as_i64())
                     .max()
                     .unwrap_or(1) as i32;
-                apply_music_naming_pattern(
-                    &music_rules::pattern_for_discs(&naming_pattern, discs),
-                    artist_name.unwrap_or("Unknown Artist"),
-                    album_name,
+                TargetFacts::Track {
+                    title: track_title.to_string(),
+                    album_name: album_name.to_string(),
                     album_year,
-                    track_number as i32,
+                    track_number: track_number as i32,
                     disc_number,
-                    track_title,
-                    original_filename,
-                    ext,
-                )
+                    discs,
+                    artist_name: artist_name.map(str::to_string),
+                }
+                .relative_path(&naming_pattern, original_filename, ext)?
             }
             ("audiobooks", "Chapter") => {
                 let data = self
@@ -9613,15 +9674,13 @@ impl LibraryScanService {
                 let author_name = audiobook
                     .and_then(|a| a.get("AuthorName"))
                     .and_then(|v| v.as_str());
-                apply_audiobook_naming_pattern(
-                    &naming_pattern,
-                    author_name.unwrap_or("Unknown Author"),
-                    book_title,
-                    chapter_number as i32,
-                    chapter_title,
-                    original_filename,
-                    ext,
-                )
+                TargetFacts::Chapter {
+                    author_name: author_name.map(str::to_string),
+                    book_title: book_title.to_string(),
+                    chapter_number: chapter_number as i32,
+                    chapter_title: chapter_title.map(str::to_string),
+                }
+                .relative_path(&naming_pattern, original_filename, ext)?
             }
             _ => anyhow::bail!("Unsupported library type/target for organizing"),
         };
@@ -9836,7 +9895,89 @@ impl LibraryScanService {
         Ok(repaired)
     }
 
+    /// Move one matched file to where the library's naming pattern puts it, then remove the
+    /// folders that left empty. A scan organizes through `move_media_file_to_pattern` instead and
+    /// clears empty folders once at the end, which costs less than doing so after every move.
     pub async fn organize_media_file(&self, media_file_id: &str) -> Result<OrganizeResult> {
+        let result = self.move_media_file_to_pattern(media_file_id).await?;
+        if result.success
+            && let (Some(old_path), Some(new_path)) = (&result.old_path, &result.new_path)
+            && old_path != new_path
+        {
+            self.remove_folders_emptied_by_move(media_file_id, Path::new(old_path))
+                .await;
+        }
+        Ok(result)
+    }
+
+    /// Remove the folder a file was moved out of, and each parent that leaves empty, stopping at
+    /// the library root. Hidden folders, the trash and any folder a library item expects stay.
+    async fn remove_folders_emptied_by_move(&self, media_file_id: &str, old_path: &Path) {
+        let Some(old_dir) = old_path.parent() else {
+            return;
+        };
+        let library = match self.get_media_file(media_file_id).await {
+            Ok(file) => match file.library_id {
+                Some(library_id) => self.get_library(&library_id).await,
+                None => return,
+            },
+            Err(error) => Err(error),
+        };
+        let library = match library {
+            Ok(library) => library,
+            Err(error) => {
+                warn!(
+                    media_file_id = %media_file_id,
+                    old_path = %old_path.display(),
+                    error = %error,
+                    "Could not tidy the folder '{}' a file moved out of: {}",
+                    old_dir.display(),
+                    error
+                );
+                return;
+            }
+        };
+        let root = PathBuf::from(&library.path);
+        // Only a folder this move emptied needs work, and knowing what the library expects costs
+        // reads of every item, so the common move that leaves a folder in use stops here.
+        let emptied = match tokio::fs::read_dir(old_dir).await {
+            Ok(mut entries) => matches!(entries.next_entry().await, Ok(None)),
+            Err(_) => false,
+        };
+        if !emptied || old_dir == root || !old_dir.starts_with(&root) {
+            return;
+        }
+        let protected = match self.build_protected_paths(&library).await {
+            Ok(protected) => protected,
+            Err(error) => {
+                warn!(
+                    library_id = %library.id,
+                    old_path = %old_path.display(),
+                    error = %error,
+                    "Could not tidy the folder '{}' a file moved out of: {}",
+                    old_dir.display(),
+                    error
+                );
+                return;
+            }
+        };
+        let (root, start, protected) = (root, old_dir.to_path_buf(), protected);
+        let removed = tokio::task::spawn_blocking(move || {
+            remove_empty_folders_upward(&root, &start, &protected)
+        })
+        .await
+        .unwrap_or_default();
+        for folder in removed {
+            debug!(
+                library_id = %library.id,
+                folder_path = %folder.display(),
+                "Removed folder '{}': organizing left it empty",
+                folder.display()
+            );
+        }
+    }
+
+    async fn move_media_file_to_pattern(&self, media_file_id: &str) -> Result<OrganizeResult> {
         let media_file = self.get_media_file(media_file_id).await?;
         let Some(media_library_id) = media_file.library_id.clone() else {
             return Ok(OrganizeResult {
@@ -14066,6 +14207,349 @@ impl LibraryScanService {
         Ok(())
     }
 
+    /// What every library item's path is made from, for the whole library in a few paged reads, so
+    /// a scan can tell which files are out of place without asking about each one.
+    async fn load_target_facts(
+        &self,
+        library: &LibraryRow,
+        auth_user: &AuthUser,
+    ) -> Result<HashMap<String, TargetFacts>> {
+        let mut facts = HashMap::new();
+        let nodes = |data: &serde_json::Value, connection: &str| -> Vec<serde_json::Value> {
+            data.get(connection)
+                .and_then(|value| value.get("Edges"))
+                .and_then(|value| value.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|edge| edge.get("Node").cloned())
+                .collect()
+        };
+        let text = |node: &serde_json::Value, key: &str| -> Option<String> {
+            node.get(key)
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        };
+        let variables = serde_json::json!({ "libraryId": library.id });
+        match Self::normalize_library_type(&library.library_type).as_str() {
+            "movies" => {
+                let data = self
+                    .execute_graphql_paged(
+                        auth_user,
+                        r#"query OrganizeLibraryMovies($libraryId: String!, $page: PageInput) {
+                            Movies: movies(where: { libraryId: { eq: $libraryId } }, page: $page) {
+                                Edges: edges { Node: node { Id: id Title: title Year: year } }
+                            }
+                        }"#,
+                        variables,
+                        "Movies",
+                    )
+                    .await?;
+                for node in nodes(&data, "Movies") {
+                    let (Some(id), Some(title)) = (text(&node, "Id"), text(&node, "Title")) else {
+                        continue;
+                    };
+                    let year = node.get("Year").and_then(|v| v.as_i64()).map(|v| v as i32);
+                    facts.insert(id, TargetFacts::Movie { title, year });
+                }
+            }
+            "tv" => {
+                let data = self
+                    .execute_graphql_paged(
+                        auth_user,
+                        r#"query OrganizeLibraryShows($libraryId: String!, $page: PageInput) {
+                            Shows: shows(where: { libraryId: { eq: $libraryId } }, page: $page) {
+                                Edges: edges { Node: node { Id: id Name: name } }
+                            }
+                        }"#,
+                        variables,
+                        "Shows",
+                    )
+                    .await?;
+                let shows: HashMap<String, String> = nodes(&data, "Shows")
+                    .iter()
+                    .filter_map(|node| Some((text(node, "Id")?, text(node, "Name")?)))
+                    .collect();
+                let show_ids: Vec<String> = shows.keys().cloned().collect();
+                for episode in self.load_episodes_for_show_ids(&show_ids).await? {
+                    let Some(show_name) = shows.get(&episode.show_id) else {
+                        continue;
+                    };
+                    facts.insert(
+                        episode.id,
+                        TargetFacts::Episode {
+                            show_name: show_name.clone(),
+                            season: episode.season,
+                            episode: episode.episode,
+                            title: episode.title,
+                        },
+                    );
+                }
+            }
+            "music" => {
+                let data = self
+                    .execute_graphql_paged(
+                        auth_user,
+                        r#"query OrganizeLibraryAlbums($libraryId: String!, $page: PageInput) {
+                            Albums: albums(where: { libraryId: { eq: $libraryId } }, page: $page) {
+                                Edges: edges {
+                                    Node: node { Id: id Name: name Year: year Artist: artist { Name: name } }
+                                }
+                            }
+                        }"#,
+                        variables,
+                        "Albums",
+                    )
+                    .await?;
+                let albums: HashMap<String, (String, Option<i32>, Option<String>)> =
+                    nodes(&data, "Albums")
+                        .iter()
+                        .filter_map(|node| {
+                            Some((
+                                text(node, "Id")?,
+                                (
+                                    text(node, "Name")?,
+                                    node.get("Year").and_then(|v| v.as_i64()).map(|v| v as i32),
+                                    node.pointer("/Artist/Name")
+                                        .and_then(|v| v.as_str())
+                                        .map(str::to_string),
+                                ),
+                            ))
+                        })
+                        .collect();
+                let tracks = self.load_tracks_for_library(&library.id).await?;
+                let mut discs: HashMap<String, i32> = HashMap::new();
+                for track in &tracks {
+                    let most = discs.entry(track.album_id.clone()).or_insert(1);
+                    *most = (*most).max(track.disc_number.unwrap_or(1));
+                }
+                for track in tracks {
+                    let Some((album_name, album_year, artist_name)) = albums.get(&track.album_id)
+                    else {
+                        continue;
+                    };
+                    facts.insert(
+                        track.id,
+                        TargetFacts::Track {
+                            title: track.title,
+                            album_name: album_name.clone(),
+                            album_year: *album_year,
+                            track_number: track.track_number,
+                            disc_number: track.disc_number,
+                            discs: discs.get(&track.album_id).copied().unwrap_or(1),
+                            artist_name: artist_name.clone(),
+                        },
+                    );
+                }
+            }
+            "audiobooks" => {
+                let data = self
+                    .execute_graphql_paged(
+                        auth_user,
+                        r#"query OrganizeLibraryBooks($libraryId: String!, $page: PageInput) {
+                            Audiobooks: audiobooks(where: { libraryId: { eq: $libraryId } }, page: $page) {
+                                Edges: edges { Node: node { Id: id Title: title AuthorName: authorName } }
+                            }
+                        }"#,
+                        variables,
+                        "Audiobooks",
+                    )
+                    .await?;
+                let books: HashMap<String, (String, Option<String>)> = nodes(&data, "Audiobooks")
+                    .iter()
+                    .filter_map(|node| {
+                        Some((
+                            text(node, "Id")?,
+                            (text(node, "Title")?, text(node, "AuthorName")),
+                        ))
+                    })
+                    .collect();
+                let book_ids: Vec<String> = books.keys().cloned().collect();
+                for chapter in self.load_chapters_for_audiobook_ids(&book_ids).await? {
+                    let Some((book_title, author_name)) = books.get(&chapter.audiobook_id) else {
+                        continue;
+                    };
+                    facts.insert(
+                        chapter.id,
+                        TargetFacts::Chapter {
+                            author_name: author_name.clone(),
+                            book_title: book_title.clone(),
+                            chapter_number: chapter.chapter_number,
+                            chapter_title: chapter.title,
+                        },
+                    );
+                }
+            }
+            _ => {}
+        }
+        Ok(facts)
+    }
+
+    /// Organize files a scan skipped as unchanged but that are not where the naming pattern puts
+    /// them. Nothing is re-matched or re-read: where each file belongs is worked out from the
+    /// library's own records in bulk, and only a file that is somewhere else goes through
+    /// `organize_media_file`, which re-plans it, never overwrites, and records a failure. Returns
+    /// how many files moved.
+    async fn organize_unchanged_matched_files(
+        &self,
+        library: &LibraryRow,
+        auth_user: &AuthUser,
+        files: Vec<MatchedFile>,
+    ) -> usize {
+        if files.is_empty() {
+            return 0;
+        }
+        let naming_pattern = match self.resolve_library_naming_pattern(library).await {
+            Ok(pattern) => pattern,
+            Err(error) => {
+                warn!(
+                    library_id = %library.id,
+                    library_name = %library.name,
+                    error = %error,
+                    "Could not check library '{}' for misplaced files: no usable naming pattern: {}",
+                    library.name,
+                    error
+                );
+                return 0;
+            }
+        };
+        let facts = match self.load_target_facts(library, auth_user).await {
+            Ok(facts) => facts,
+            Err(error) => {
+                warn!(
+                    library_id = %library.id,
+                    library_name = %library.name,
+                    error = %error,
+                    "Could not check library '{}' for misplaced files: reading its items failed: {}",
+                    library.name,
+                    error
+                );
+                return 0;
+            }
+        };
+        let root = PathBuf::from(&library.path);
+        let mut moved = 0;
+        for file in files {
+            let Some(facts) = facts.get(&file.target_id) else {
+                continue;
+            };
+            let current = Path::new(&file.path);
+            let original_filename = current
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("file");
+            let ext = current
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or("mkv");
+            let planned = match facts
+                .relative_path(&naming_pattern, original_filename, ext)
+                .and_then(|relative| {
+                    validate_relative_library_path(&relative)?;
+                    Ok(root.join(relative))
+                }) {
+                Ok(planned) => planned,
+                Err(error) => {
+                    debug!(
+                        library_id = %library.id,
+                        media_file_id = %file.media_file_id,
+                        media_file_path = %file.path,
+                        reason = %error,
+                        "Left '{}' where it is: no path to plan for it: {}",
+                        file.path,
+                        error
+                    );
+                    continue;
+                }
+            };
+            // A book split in parts, or sharing one file, is named by `organize_media_file` after
+            // its parts, so only the folder is compared for chapters.
+            let in_place = match facts {
+                TargetFacts::Chapter { .. } => current.parent() == planned.parent(),
+                _ => current == planned,
+            };
+            if in_place {
+                continue;
+            }
+            // Same guard as for a new match, without its notification: the person was told then.
+            if file.target_type == "Movie" && file.match_type.as_deref() != Some(MANUAL_MATCH_TYPE)
+            {
+                let verdict = self
+                    .should_skip_auto_organize_for_match(
+                        library,
+                        auth_user,
+                        &file.media_file_id,
+                        &file.path,
+                        &MatchResult {
+                            success: true,
+                            matched_type: Some(file.target_type.to_string()),
+                            matched_id: Some(file.target_id.clone()),
+                            ..Default::default()
+                        },
+                    )
+                    .await;
+                if !matches!(verdict, Ok(None)) {
+                    debug!(
+                        library_id = %library.id,
+                        media_file_id = %file.media_file_id,
+                        media_file_path = %file.path,
+                        "Left '{}' where it is: its name and its matched movie disagree on the year",
+                        file.path
+                    );
+                    continue;
+                }
+            }
+            let outcome = self.move_media_file_to_pattern(&file.media_file_id).await;
+            match &outcome {
+                Ok(result) if result.success => {
+                    if result.new_path.as_deref() != Some(file.path.as_str()) {
+                        moved += 1;
+                        info!(
+                            library_id = %library.id,
+                            media_file_id = %file.media_file_id,
+                            old_path = %file.path,
+                            new_path = result.new_path.as_deref().unwrap_or(""),
+                            "Moved '{}' to '{}': it was not where the naming pattern puts it",
+                            file.path,
+                            result.new_path.as_deref().unwrap_or("")
+                        );
+                    }
+                }
+                _ => {
+                    let failure = match &outcome {
+                        Ok(result) => {
+                            Self::sanitized_organize_failure_reason(result.reason.as_deref())
+                        }
+                        Err(_) => "The file operation or database update did not complete safely. Review the server log for the correlated internal error.".to_string(),
+                    };
+                    warn!(
+                        library_id = %library.id,
+                        media_file_id = %file.media_file_id,
+                        media_file_path = %file.path,
+                        planned_path = %planned.display(),
+                        "Could not move '{}' to '{}': {}",
+                        file.path,
+                        planned.display(),
+                        match &outcome {
+                            Ok(result) => result.reason.clone().unwrap_or_default(),
+                            Err(error) => error.to_string(),
+                        }
+                    );
+                    self.ensure_auto_organize_issue_notification(
+                        auth_user,
+                        library,
+                        &file.media_file_id,
+                        &file.path,
+                        "Auto-organize failed",
+                        "organize matched media file",
+                        &failure,
+                    )
+                    .await;
+                }
+            }
+        }
+        moved
+    }
+
     async fn cleanup_empty_folders(&self, library: &LibraryRow) -> Result<()> {
         let library_root = PathBuf::from(&library.path);
         if !library_root.exists() {
@@ -14076,6 +14560,10 @@ impl LibraryScanService {
         Self::cleanup_empty_unprotected_folders(&library_root, &protected).await
     }
 
+    /// Remove every empty folder under the library root that no library item expects, a whole
+    /// empty tree at a time. Never the root, never a folder with anything in it (hidden files
+    /// included), and never a hidden folder such as the library's `.librarian-trash` or a sync
+    /// tool's marker, which are not this scan's to judge.
     async fn cleanup_empty_unprotected_folders(
         library_root: &Path,
         protected: &HashSet<PathBuf>,
@@ -14088,6 +14576,7 @@ impl LibraryScanService {
         let mut dirs = tokio::task::spawn_blocking(move || {
             WalkDir::new(traversal_root)
                 .into_iter()
+                .filter_entry(|entry| entry.depth() == 0 || !is_hidden_name(entry.file_name()))
                 .filter_map(std::result::Result::ok)
                 .filter(|entry| entry.file_type().is_dir())
                 .map(|entry| entry.into_path())
@@ -14096,43 +14585,33 @@ impl LibraryScanService {
         .await
         .context("Empty-folder traversal worker failed")?;
 
+        // Deepest first, so a folder whose last child was just removed is empty by its turn.
         dirs.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
 
         for dir in dirs {
             if dir == library_root || protected.contains(&dir) {
                 continue;
             }
-
-            let is_empty = tokio::fs::read_dir(&dir)
-                .await
-                .map(|mut rd| async move { rd.next_entry().await.ok().flatten().is_none() })
-                .ok();
-
-            if let Some(check) = is_empty
-                && check.await
-            {
-                match tokio::fs::remove_dir(&dir).await {
-                    Ok(()) => {
-                        debug!(
-                            folder_path = %dir.to_string_lossy(),
-                            library_root = %library_root.to_string_lossy(),
-                            "Removed empty unprotected library folder: folder_path={}, library_root={}",
-                            dir.to_string_lossy(),
-                            library_root.to_string_lossy()
-                        );
-                    }
-                    Err(error) => {
-                        debug!(
-                            folder_path = %dir.to_string_lossy(),
-                            library_root = %library_root.to_string_lossy(),
-                            error = %error,
-                            "Failed to remove empty unprotected library folder: folder_path={}, library_root={}, error={}",
-                            dir.to_string_lossy(),
-                            library_root.to_string_lossy(),
-                            error
-                        );
-                    }
-                }
+            // `remove_dir` only ever removes an empty directory, so a file that lands here after
+            // the walk is never lost.
+            match tokio::fs::remove_dir(&dir).await {
+                Ok(()) => debug!(
+                    folder_path = %dir.to_string_lossy(),
+                    library_root = %library_root.to_string_lossy(),
+                    "Removed empty unprotected library folder: folder_path={}, library_root={}",
+                    dir.to_string_lossy(),
+                    library_root.to_string_lossy()
+                ),
+                Err(error) if folder_in_use(&error) => {}
+                Err(error) => debug!(
+                    folder_path = %dir.to_string_lossy(),
+                    library_root = %library_root.to_string_lossy(),
+                    error = %error,
+                    "Failed to remove empty unprotected library folder: folder_path={}, library_root={}, error={}",
+                    dir.to_string_lossy(),
+                    library_root.to_string_lossy(),
+                    error
+                ),
             }
         }
 
@@ -14351,24 +14830,19 @@ impl LibraryScanService {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("track.mp3");
-            let rel = apply_music_naming_pattern(
-                &music_rules::pattern_for_discs(
-                    &naming_pattern,
-                    album_discs.get(&track.album_id).copied().unwrap_or(1),
-                ),
-                artists
-                    .get(&track.album_id)
-                    .map(String::as_str)
-                    .or(track.artist_name.as_deref())
-                    .unwrap_or("Unknown Artist"),
-                album_name,
-                *album_year,
-                track.track_number,
-                track.disc_number,
-                &track.title,
-                original_filename,
-                "mp3",
-            );
+            // The same facts organizing uses; a track with no real artist has no folder to keep.
+            let Ok(rel) = (TargetFacts::Track {
+                title: track.title.clone(),
+                album_name: album_name.clone(),
+                album_year: *album_year,
+                track_number: track.track_number,
+                disc_number: track.disc_number,
+                discs: album_discs.get(&track.album_id).copied().unwrap_or(1),
+                artist_name: artists.get(&track.album_id).cloned(),
+            })
+            .relative_path(&naming_pattern, original_filename, "mp3") else {
+                continue;
+            };
             validate_relative_library_path(&rel)?;
             let target = root.join(rel);
             checked_library_path(&root, &target)?;
@@ -15386,13 +15860,17 @@ fn get_tag_ci<'a>(tags: &'a HashMap<String, String>, key: &str) -> Option<&'a st
         .map(|(_, v)| v.as_str())
 }
 
+/// Turns a title or name into one folder or file name component. This is the only place names
+/// become path text, so a name has exactly one spelling on disk: typographic apostrophes
+/// (`\u{2019}`, `\u{2018}`, `\u{02BC}`) become the plain `'`, because the same artist or title is
+/// credited with either by different sources and must not get a folder for each.
 fn sanitize_for_filename(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for c in input.chars() {
-        if matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
-            out.push('_');
-        } else {
-            out.push(c);
+        match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => out.push('_'),
+            '\u{2018}' | '\u{2019}' | '\u{02BC}' => out.push('\''),
+            _ => out.push(c),
         }
     }
     out.trim().trim_end_matches('.').to_string()
@@ -15525,6 +16003,122 @@ fn apply_music_naming_pattern(
     out = replace_number_token(out, "track", track_number);
     out = replace_number_token(out, "disc", disc_number.unwrap_or(1));
     PathBuf::from(out)
+}
+
+/// Why a track has no folder to go to. A placeholder artist is never a folder: files put under
+/// one are what a person later has to find and move by hand.
+const ARTIST_UNKNOWN_REASON: &str =
+    "The album's artist is not known, so there is no artist folder to organize into";
+
+/// The artist folder for a track's album: the library's Artist record, sanitised like every other
+/// name, or `None` when the record has no real name.
+fn music_artist_folder(artist_name: Option<&str>) -> Option<String> {
+    let name = artist_name?.trim();
+    if name.is_empty() || name.eq_ignore_ascii_case("unknown artist") {
+        return None;
+    }
+    let folder = sanitize_for_filename(name);
+    (!folder.is_empty()).then_some(folder)
+}
+
+/// Everything a matched file's library path is made from. A file is planned from these alone, so
+/// organizing one file and checking a whole library at once agree on where each file belongs.
+#[derive(Debug, Clone)]
+enum TargetFacts {
+    Movie {
+        title: String,
+        year: Option<i32>,
+    },
+    Episode {
+        show_name: String,
+        season: i32,
+        episode: i32,
+        title: Option<String>,
+    },
+    Track {
+        title: String,
+        album_name: String,
+        album_year: Option<i32>,
+        track_number: i32,
+        disc_number: Option<i32>,
+        /// The most discs any track of the album is on.
+        discs: i32,
+        /// The name on the album's Artist record.
+        artist_name: Option<String>,
+    },
+    Chapter {
+        author_name: Option<String>,
+        book_title: String,
+        chapter_number: i32,
+        chapter_title: Option<String>,
+    },
+}
+
+impl TargetFacts {
+    /// Where the file goes, relative to the library root, under the library's naming pattern.
+    fn relative_path(
+        &self,
+        naming_pattern: &str,
+        original_filename: &str,
+        ext: &str,
+    ) -> Result<PathBuf> {
+        Ok(match self {
+            Self::Movie { title, year } => {
+                apply_movie_naming_pattern(naming_pattern, title, *year, original_filename, ext)
+            }
+            Self::Episode {
+                show_name,
+                season,
+                episode,
+                title,
+            } => apply_tv_naming_pattern(
+                naming_pattern,
+                show_name,
+                *season,
+                *episode,
+                title.as_deref(),
+                ext,
+            ),
+            Self::Track {
+                title,
+                album_name,
+                album_year,
+                track_number,
+                disc_number,
+                discs,
+                artist_name,
+            } => {
+                let Some(artist_folder) = music_artist_folder(artist_name.as_deref()) else {
+                    anyhow::bail!(ARTIST_UNKNOWN_REASON);
+                };
+                apply_music_naming_pattern(
+                    &music_rules::pattern_for_discs(naming_pattern, *discs),
+                    &artist_folder,
+                    album_name,
+                    *album_year,
+                    *track_number,
+                    *disc_number,
+                    title,
+                    original_filename,
+                    ext,
+                )
+            }
+            Self::Chapter {
+                author_name,
+                book_title,
+                chapter_number,
+                chapter_title,
+            } => apply_audiobook_naming_pattern(
+                naming_pattern,
+                author_name.as_deref().unwrap_or("Unknown Author"),
+                book_title,
+                *chapter_number,
+                chapter_title.as_deref(),
+                original_filename,
+                ext,
+            ),
+        })
+    }
 }
 
 fn apply_audiobook_naming_pattern(
@@ -15698,6 +16292,45 @@ fn remove_media_file(root: &Path, target: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Whether a folder or file name is hidden. Hidden folders are never removed as empty: the
+/// library's own `.librarian-trash` is one, and sync tools keep markers in others.
+fn is_hidden_name(name: &std::ffi::OsStr) -> bool {
+    name.to_string_lossy().starts_with('.')
+}
+
+/// A `remove_dir` that failed only because the folder has something in it.
+fn folder_in_use(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::DirectoryNotEmpty || error.raw_os_error() == Some(39) // ENOTEMPTY where the kind is not mapped
+}
+
+/// Remove `start`, then each parent in turn, while they are empty, stopping before the library
+/// root, a hidden folder or a folder in `protected`. Returns the folders removed.
+fn remove_empty_folders_upward(
+    root: &Path,
+    start: &Path,
+    protected: &HashSet<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut removed = Vec::new();
+    let mut current = start.to_path_buf();
+    while current != root
+        && current.starts_with(root)
+        && !protected.contains(&current)
+        && !current.file_name().is_some_and(is_hidden_name)
+    {
+        match std::fs::remove_dir(&current) {
+            Ok(()) => removed.push(current.clone()),
+            // Already gone: its parent may still be empty.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => break,
+        }
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        current = parent.to_path_buf();
+    }
+    removed
+}
+
 fn create_library_directory(root: &Path, directory: &Path) -> Result<PathBuf> {
     checked_library_path(root, directory)?;
     let relative = directory.strip_prefix(root)?;
@@ -15737,14 +16370,32 @@ async fn place_in_library(
         let parent = target
             .parent()
             .context("Library destination has no parent")?;
-        create_library_directory(&root, parent)?;
-        let target = checked_library_path(&root, &target)?;
-        let source = if source_is_library {
-            checked_library_path(&root, &source)?
-        } else {
-            source
-        };
-        no_clobber_place_blocking(&source, &target, remove_source)
+        // A scan tidying empty folders can remove the new folder between making it and linking
+        // into it. The source is still there then, so make the folder again and retry.
+        let mut attempts = 0;
+        loop {
+            create_library_directory(&root, parent)?;
+            let target = checked_library_path(&root, &target)?;
+            let source = if source_is_library {
+                checked_library_path(&root, &source)?
+            } else {
+                source.clone()
+            };
+            match no_clobber_place_blocking(&source, &target, remove_source) {
+                Err(error)
+                    if attempts < 3
+                        && source.exists()
+                        && error.chain().any(|cause| {
+                            cause
+                                .downcast_ref::<std::io::Error>()
+                                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+                        }) =>
+                {
+                    attempts += 1;
+                }
+                other => return other,
+            }
+        }
     })
     .await
     .context("Contained library placement task failed")?
