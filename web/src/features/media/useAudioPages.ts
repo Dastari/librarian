@@ -82,6 +82,8 @@ export function useAudioPages<T extends { id: string }>(
   return {
     rows, complete: Boolean(current?.complete), loading: Boolean(firstPage && (!current || current.loading)), error: current?.error,
     retry: useCallback(() => { void run(lastFresh.current).catch(() => {}); }, [run]),
+    /** Reload every page, after a change the live layer may not carry (a bulk update). */
+    refresh: useCallback(() => { void run(true).catch(() => {}); }, [run]),
     updateRow: useCallback((row: T) => setSnapshot((previous) => previous?.key === key ? { ...previous, rows: previous.rows.map((item) => item.id === row.id ? row : item) } : previous), [key]),
   };
 }

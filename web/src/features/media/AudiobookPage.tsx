@@ -339,7 +339,7 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
   };
 
   const playBook = queue.length > 0 ? { label: resumeLabel, run: () => playFrom(), disabledReason: !pages.complete ? "Load all chapters to listen to the book" : progressUnavailable } : undefined;
-  const { actions: bookActions, dialogs: bookDialogs, openSettings } = useAudiobookEntity<NonNullable<typeof book>>({ open: false, play: playBook, onChanged: () => void refetch(), reset: bookReset });
+  const { actions: bookActions, dialogs: bookDialogs, openSettings } = useAudiobookEntity<NonNullable<typeof book>>({ open: false, play: playBook, onChanged: () => { void refetch(); pages.refresh(); }, reset: bookReset });
 
   if (error && !book) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!book) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Audiobook not found" description="This item may have been removed from the library." className="page-gutter my-8" />;

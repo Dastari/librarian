@@ -212,7 +212,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
 
   const playAlbum = queue.length > 0 ? { label: "Play", run: () => playFrom(), disabledReason: !pages.complete ? "Load all tracks to play the album" : undefined } : undefined;
   const enqueue = pages.complete && queue.length > 0 ? () => player.enqueue(queue) : undefined;
-  const { actions: albumActions, dialogs: albumDialogs, openSettings } = useAlbumEntity<NonNullable<typeof album>>({ open: false, play: playAlbum, enqueue, artist: tracks[0]?.artistName, reset: albumReset });
+  const { actions: albumActions, dialogs: albumDialogs, openSettings } = useAlbumEntity<NonNullable<typeof album>>({ open: false, play: playAlbum, enqueue, artist: tracks[0]?.artistName, reset: albumReset, onChanged: pages.refresh });
 
   if (error && !album) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!album) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Album not found" description="This item may have been removed from the library." className="page-gutter my-8" />;

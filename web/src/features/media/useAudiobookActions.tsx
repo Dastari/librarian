@@ -14,6 +14,7 @@ import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 
 import type { AudiobookEntity } from "./AudiobookIdentity";
 import { resetProgressAction, useResetProgress, type ProgressReset } from "./progressReset";
+import { useWantMissing, wantMissingActions } from "./wantMissing";
 
 export const AUDIOBOOK_SETTINGS_TABS = ["general", "downloads", "files", "info", "remove"] as const;
 export type AudiobookSettingsTab = (typeof AUDIOBOOK_SETTINGS_TABS)[number];
@@ -35,6 +36,7 @@ export function useAudiobookActions<T extends AudiobookEntity>({ settings, open 
   const [change] = useMutation(ChangeAudiobookEditionDocument);
   const [searchEditions, editions] = useLazyQuery(AudiobookEditionsDocument, { fetchPolicy: "network-only" });
   const resetProgress = useResetProgress();
+  const wantMissing = useWantMissing();
   const [saving, setSaving] = useState<T | null>(null);
   const [finding, setFinding] = useState<T | null>(null);
   const [choosing, setChoosing] = useState<T | null>(null);
@@ -65,6 +67,7 @@ export function useAudiobookActions<T extends AudiobookEntity>({ settings, open 
           visible: one,
           run: (rows: readonly T[]) => setFinding(rows[0]!),
         },
+        ...wantMissingActions<T>("chapters", wantMissing, onChanged),
         {
           id: "change-edition", label: "Change edition", icon: IconRefresh, group: "manage" as const, priority: 3,
           visible: one,
@@ -100,7 +103,7 @@ export function useAudiobookActions<T extends AudiobookEntity>({ settings, open 
         run: (rows: readonly T[]) => settings(rows[0]!, "remove"),
       }] : []),
     ]);
-  }, [isAdmin, listen, navigate, onChanged, open, play, reset, resetProgress, restore, settings, user?.id]);
+  }, [isAdmin, listen, navigate, onChanged, open, play, reset, resetProgress, restore, settings, user?.id, wantMissing]);
 
   const useEdition = async (listing: Listing) => {
     if (!listing.providerId || !choosing) return;
