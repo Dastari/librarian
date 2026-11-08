@@ -146,6 +146,8 @@ fn entry(user: &AuthUser, list: &str, movie: &str, position: i32) -> CreateListE
         album_id: None,
         audiobook_id: None,
         track_id: None,
+        episode_id: None,
+        chapter_id: None,
     }
 }
 
@@ -615,4 +617,239 @@ async fn all_personal_roots_keep_admin_counts_private_and_smart_rules_cannot_cro
         let response = f.execute("mutation($input:CreatePersonalListInput!){createPersonalList(input:$input){success error personalList{id}}}", json!({"input":{"userId":f.user.user_id,"name":name,"kind":kind,"savedViewId":view}}), &f.user).await;
         rejected(response, "createPersonalList");
     }
+}
+
+async fn show_with_episode(f: &Fixture, library: &str, number: i32) -> (String, String) {
+    let show = f.create("Show", json!({"userId":f.user.user_id,"libraryId":library,"name":format!("Series {number}"),"genres":[],"autoDownload":false,"autoDownloadMode":"NONE"}), &f.admin).await;
+    let episode = Episode::insert(
+        &f.db,
+        CreateEpisodeInput {
+            show_id: show.clone(),
+            season: 1,
+            episode: number,
+            absolute_number: None,
+            title: Some(format!("Episode {number}")),
+            overview: None,
+            air_date: None,
+            air_stamp: None,
+            runtime: Some(42),
+            still_url: None,
+            tvmaze_id: None,
+            tmdb_id: None,
+            tvdb_id: None,
+            wanted: false,
+            ignored: None,
+            media_file_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    (show, episode.id)
+}
+
+async fn book_with_chapter(f: &Fixture, library: &str) -> (String, String) {
+    let book = f.create("Audiobook", json!({"userId":f.user.user_id,"libraryId":library,"title":"Narrated","narrators":[],"autoDownload":false,"autoDownloadMode":"NONE","hasFiles":false}), &f.admin).await;
+    let chapter = Chapter::insert(
+        &f.db,
+        CreateChapterInput {
+            audiobook_id: book.clone(),
+            chapter_number: 1,
+            title: Some("One".into()),
+            start_time_secs: 0.0,
+            end_time_secs: None,
+            duration_secs: Some(600),
+            file_offset_secs: None,
+            wanted: false,
+            ignored: None,
+            media_file_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    (book, chapter.id)
+}
+
+async fn entry_order(f: &Fixture, list: &str) -> Vec<(String, i32)> {
+    ListEntry::query(f.db.pool())
+        .filter(ListEntryWhereInput {
+            list_id: Some(eq(list)),
+            ..Default::default()
+        })
+        .order_by(ListEntryOrderByInput {
+            position: Some(OrderDirection::Asc),
+            id: Some(OrderDirection::Asc),
+            ..Default::default()
+        })
+        .fetch_all()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.id, row.position))
+        .collect()
+}
+
+#[tokio::test]
+async fn playlists_hold_episodes_and_chapters_and_drop_them_when_the_target_is_deleted() {
+    let f = Fixture::new().await;
+    let library = f.library(&f.user, "episodic-library").await;
+    let foreign_library = f.library(&f.other, "foreign-episodic-library").await;
+    let list = f.list(&f.user, "Episodes and chapters", "MANUAL").await;
+    let (show, episode) = show_with_episode(&f, &library, 1).await;
+    let (book, chapter) = book_with_chapter(&f, &library).await;
+    let episode_entry = f
+        .create(
+            "ListEntry",
+            json!({"userId":f.user.user_id,"listId":list,"position":0,"episodeId":episode}),
+            &f.user,
+        )
+        .await;
+    f.create(
+        "ListEntry",
+        json!({"userId":f.user.user_id,"listId":list,"position":1024,"chapterId":chapter}),
+        &f.user,
+    )
+    .await;
+    let response = f.execute("query($id:String!){personalList(id:$id){entries(orderBy:{position:ASC,id:ASC}){edges{node{episodeId chapterId}} pageInfo{totalCount}}}}", json!({"id":list}), &f.user).await;
+    assert!(response.errors.is_empty(), "{response:?}");
+    let data = response.data.into_json().unwrap();
+    assert_eq!(data["personalList"]["entries"]["pageInfo"]["totalCount"], 2);
+    // One target per entry, and each target is checked against its real owner.
+    let two = CreateListEntryInput {
+        episode_id: Some(episode.clone()),
+        chapter_id: Some(chapter.clone()),
+        movie_id: None,
+        ..entry(&f.user, &list, "unused", 2048)
+    };
+    assert!(ListEntry::insert(&f.db, two).await.is_err());
+    // Duplicates are refused for the new targets just as for the old ones.
+    let again = CreateListEntryInput {
+        episode_id: Some(episode.clone()),
+        movie_id: None,
+        ..entry(&f.user, &list, "unused", 3072)
+    };
+    assert!(ListEntry::insert(&f.db, again).await.is_err());
+    // A show in someone else's library cannot be reached through its episodes.
+    let foreign_show = f.create("Show", json!({"userId":f.other.user_id,"libraryId":foreign_library,"name":"Foreign","genres":[],"autoDownload":false,"autoDownloadMode":"NONE"}), &f.admin).await;
+    let foreign_episode = Episode::insert(
+        &f.db,
+        CreateEpisodeInput {
+            show_id: foreign_show,
+            season: 1,
+            episode: 1,
+            absolute_number: None,
+            title: None,
+            overview: None,
+            air_date: None,
+            air_stamp: None,
+            runtime: None,
+            still_url: None,
+            tvmaze_id: None,
+            tmdb_id: None,
+            tvdb_id: None,
+            wanted: false,
+            ignored: None,
+            media_file_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let forged = CreateListEntryInput {
+        episode_id: Some(foreign_episode.id),
+        movie_id: None,
+        ..entry(&f.user, &list, "unused", 4096)
+    };
+    assert!(ListEntry::insert(&f.db, forged).await.is_err());
+    // The link cannot be moved to another target afterwards.
+    let response = f.execute("mutation($id:String!,$episode:String!){updateListEntry(id:$id,input:{episodeId:$episode}){success error}}", json!({"id":episode_entry,"episode":episode}), &f.user).await;
+    rejected(response, "updateListEntry");
+    // Deleting a target removes its entries through the entity layer.
+    Chapter::delete_by_id(&f.db, &chapter).await.unwrap();
+    assert_eq!(entry_order(&f, &list).await.len(), 1);
+    Show::delete_by_id(&f.db, &show).await.unwrap();
+    assert!(entry_order(&f, &list).await.is_empty());
+    let _ = book;
+}
+
+#[tokio::test]
+async fn moving_into_a_closed_gap_or_a_concurrent_append_respaces_the_list_in_one_consistent_order() {
+    let f = Fixture::new().await;
+    let library = f.library(&f.user, "ordered-library").await;
+    let list = f.list(&f.user, "Ordered", "MANUAL").await;
+    let mut ids = Vec::new();
+    for index in 0..4 {
+        let movie = f.movie(&f.user, &library, &format!("Film {index}")).await;
+        ids.push(
+            ListEntry::insert(&f.db, entry(&f.user, &list, &movie, index * 1024))
+                .await
+                .unwrap()
+                .id,
+        );
+    }
+    // Moving the last entry to the front sends the first entry's own position:
+    // "just before it". The write settles into the next free order.
+    let response = f.execute("mutation($id:String!,$position:Int!){updateListEntry(id:$id,input:{position:$position}){success error}}", json!({"id":ids[3],"position":0}), &f.user).await;
+    assert!(response.errors.is_empty(), "{response:?}");
+    let order: Vec<String> = entry_order(&f, &list)
+        .await
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(order, vec![ids[3].clone(), ids[0].clone(), ids[1].clone(), ids[2].clone()]);
+    let positions: Vec<i32> = entry_order(&f, &list)
+        .await
+        .into_iter()
+        .map(|(_, position)| position)
+        .collect();
+    assert_eq!(positions, vec![0, 1024, 2048, 3072]);
+    // A move that has room needs no renumbering at all.
+    let before = entry_order(&f, &list).await;
+    let response = f.execute("mutation($id:String!,$position:Int!){updateListEntry(id:$id,input:{position:$position}){success error}}", json!({"id":ids[2],"position":512}), &f.user).await;
+    assert!(response.errors.is_empty(), "{response:?}");
+    let after = entry_order(&f, &list).await;
+    assert_eq!(after[1], (ids[2].clone(), 512));
+    assert_eq!(after[0], before[0]);
+    // Two clients appending at once pick the same position: the later write
+    // ends up last, and nothing keeps a duplicate position.
+    let late_a = f.movie(&f.user, &library, "Late A").await;
+    let late_b = f.movie(&f.user, &library, "Late B").await;
+    let a = ListEntry::insert(&f.db, entry(&f.user, &list, &late_a, 4096))
+        .await
+        .unwrap();
+    let b = ListEntry::insert(&f.db, entry(&f.user, &list, &late_b, 4096))
+        .await
+        .unwrap();
+    let rows = entry_order(&f, &list).await;
+    let tail: Vec<&String> = rows.iter().rev().take(2).map(|(id, _)| id).collect();
+    assert_eq!(tail, vec![&b.id, &a.id]);
+    let mut positions: Vec<i32> = rows.iter().map(|(_, position)| *position).collect();
+    positions.dedup();
+    assert_eq!(positions.len(), rows.len());
+}
+
+#[test]
+fn respacing_puts_a_moved_entry_before_its_tie_and_a_new_one_after() {
+    let row = |id: &str, position: i32| -> ListEntry {
+        serde_json::from_value(json!({
+            "UserId":"u","ListId":"l","Position":position,"MovieId":id,"ShowId":null,"AlbumId":null,
+            "AudiobookId":null,"TrackId":null,"EpisodeId":null,"ChapterId":null,
+            "CreatedAt":"","UpdatedAt":"","Id":id
+        }))
+        .unwrap()
+    };
+    let rows = vec![row("a", 0), row("b", 5), row("c", 5)];
+    let moved = respaced_order(&rows, "c", false);
+    assert_eq!(
+        moved,
+        vec![("a".into(), 0), ("c".into(), 1024), ("b".into(), 2048)]
+    );
+    let moved = respaced_order(&rows, "b", false);
+    assert_eq!(
+        moved,
+        vec![("a".into(), 0), ("b".into(), 1024), ("c".into(), 2048)]
+    );
+    let created = respaced_order(&rows, "b", true);
+    assert_eq!(
+        created,
+        vec![("a".into(), 0), ("c".into(), 1024), ("b".into(), 2048)]
+    );
 }
