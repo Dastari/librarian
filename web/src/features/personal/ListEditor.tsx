@@ -38,12 +38,12 @@ export function ListEditor({ open, onOpenChange, initial, personalListId }: { op
         catch (error) { await deleteView({ variables: { id: saved.id } }).catch(() => {}); throw error; }
       }
     }
-    toast.success(initial ? "Rules saved" : "List created"); onOpenChange(false);
+    toast.success(initial ? "Rules saved" : "Playlist created"); onOpenChange(false);
   } });
-  return <Dialog isOpen={open} onOpenChange={onOpenChange} title={initial ? "Edit collection rules" : "New list or collection"}>
+  return <Dialog isOpen={open} onOpenChange={onOpenChange} title={initial ? "Edit collection rules" : "New playlist or collection"}>
     <Form form={form} onError={(error) => toast.danger(errorMessage(error))}><FormStack>
       <form.AppField name="name">{(field) => <field.TextField label="Name" required />}</form.AppField>
-      {!initial ? <form.AppField name="kind">{(field) => <field.SelectField label="Type" options={[{ value: "MANUAL", label: "Manual list / playlist" }, { value: "SMART", label: "Smart collection" }]} />}</form.AppField> : null}
+      {!initial ? <form.AppField name="kind">{(field) => <field.SelectField label="Type" options={[{ value: "MANUAL", label: "Playlist" }, { value: "SMART", label: "Smart collection" }]} />}</form.AppField> : null}
       <form.Subscribe selector={(state) => state.values}>{(values) => values.kind === "SMART" ? <>
         <form.AppField name="contentType">{(field) => <field.SelectField label="Media" options={[{ value: "MOVIE", label: "Movies" }, { value: "SHOW", label: "Shows" }, { value: "ALBUM", label: "Albums" }, { value: "AUDIOBOOK", label: "Audiobooks" }, { value: "TRACK", label: "Tracks" }]} />}</form.AppField>
         <form.AppField name="libraryId">{(field) => <field.SelectField label="Library" options={[{ value: "", label: "All my libraries" }, ...libraries.rows.map((library) => ({ value: library.id, label: library.name }))]} />}</form.AppField>

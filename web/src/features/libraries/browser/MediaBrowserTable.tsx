@@ -3,7 +3,9 @@ import { DataTable, type DataTableColumn, type DataTableCard, type DataTableStat
 import { useCallback, useMemo, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 
 import { AlphabetRail, ErrorState, PosterInTable, GlassSegmented, SkeletonCard, ViewToggle, type ViewMode } from "@/components/ui";
+import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { TableToolbar } from "@/components/ui/TableToolbar";
+import { useTableSelection } from "@/hooks/useTableSelection";
 import { useSession } from "@/lib/auth/useSession";
 import { usePref } from "@/lib/prefs";
 import { useIsDesktop } from "@/hooks/useMediaQuery";
@@ -79,11 +81,15 @@ export function MediaBrowserTable<T extends object>({ persistKey, label, noun, p
   const desktop = useIsDesktop();
   const [view, setView] = usePref<ViewMode>(`browser.view.${persistKey}`, "card");
   const search = useMemo(() => ({ fields: [], placeholder, toCondition: () => ({}) }), [placeholder]);
-  const state = useMemo<DataTableState>(() => ({ pagination: { pageIndex: 0, pageSize: 50 }, selection: {}, filters: [], sorting, search: query }), [sorting, query]);
+  // Titles can be picked together once an action works on several (Add to playlist).
+  const bulk = Boolean(actions?.actions.some((action) => action.bulk));
+  const picked = useTableSelection({ scope: [user?.id, persistKey, list.queryKey], rows: list.rows, getRowId, ready: !list.fetching });
+  const state = useMemo<DataTableState>(() => ({ pagination: { pageIndex: 0, pageSize: 50 }, selection: bulk ? picked.selection : {}, filters: [], sorting, search: query }), [sorting, query, bulk, picked.selection]);
   const onStateChange = useCallback((next: DataTableState, change: DataTableStateChange) => {
     if (change === "search") onQueryChange(next.search ?? "");
     else if (change === "sorting") onSortingChange(next.sorting);
-  }, [onQueryChange, onSortingChange]);
+    else if (change === "selection") picked.onSelectionChange(next.selection);
+  }, [onQueryChange, onSortingChange, picked.onSelectionChange]);
   const renderCard = useCallback((row: T, _card: DataTableCard) => renderPoster(row), [renderPoster]);
 
   return (
@@ -112,8 +118,9 @@ export function MediaBrowserTable<T extends object>({ persistKey, label, noun, p
             state={state}
             onStateChange={onStateChange}
             infinite={{ revision: list.loadRevision, hasMore: list.hasMore, onLoadMore: list.loadMore, loadingMore: list.loadingMore }}
-            selectable={false}
+            selectable={bulk}
             actions={actions}
+            renderBulkActions={bulk && actions ? (rows) => <TableBulkActions set={actions} rows={rows} noun={noun} /> : undefined}
             noun={noun}
             search={search}
             toolbar={(

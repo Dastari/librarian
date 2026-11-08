@@ -105,3 +105,11 @@ video:focus, audio:focus { outline: none; }
   width: 100%;
   object-fit: cover;
 }
+/* A playlist's picture: up to four covers, the way a music app draws one. */
+.entity-art[data-mosaic] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 1px;
+}
+.entity-art[data-mosaic="3"] > img:nth-child(3) { grid-column: span 2; }

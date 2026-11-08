@@ -2,13 +2,13 @@ import { Link, useNavigate, type LinkProps } from "@tanstack/react-router";
 import { useMutation } from "@apollo/client/react";
 import { ActionContextMenu, defineActions, type ActionSet } from "glass-ux/actions";
 import { Button } from "glass-ux/button";
-import { IconBookmark, IconChevronLeft, IconChevronRight, IconClose, IconFilter, IconInfo, IconRefresh } from "glass-ux/icons";
+import { IconChevronLeft, IconChevronRight, IconClose, IconFilter, IconInfo, IconRefresh } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
 import { Tooltip } from "glass-ux/tooltip";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 
 import { Artwork } from "@/components/ui";
-import { SaveToListDialog } from "@/features/personal/SaveToListDialog";
+import { useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
 import { RefreshShowDocument } from "@/graphql/generated/graphql";
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
@@ -24,10 +24,14 @@ export function useLibraryShowActions() {
   const navigate = useNavigate();
   const isAdmin = useIsAdmin();
   const [refreshShow] = useMutation(RefreshShowDocument);
-  const [saving, setSaving] = useState<LibraryShowTarget | null>(null);
+  const playlist = useAddToPlaylist<LibraryShowTarget>({
+    targetsOf: (rows) => rows.map((show) => ({ kind: "show" as const, id: show.id })),
+    titleOf: (rows) => rows.length === 1 ? rows[0]!.name : `${rows.length} shows`,
+    priority: 2,
+  });
   const actions = useMemo(() => defineActions<LibraryShowTarget>("guide-show", [
     { id: "open", label: "Open show", icon: IconInfo, group: "open", priority: 1, run: ([show]) => void navigate({ to: "/shows/$showId", params: { showId: show!.id } }) },
-    { id: "save", label: "Save to list", icon: IconBookmark, group: "open", priority: 2, run: ([show]) => setSaving(show!) },
+    playlist.action,
     ...(isAdmin ? [{
       id: "refresh", label: "Refresh metadata", icon: IconRefresh, group: "manage" as const, priority: 3,
       run: ([show]: readonly LibraryShowTarget[]) => void refreshShow({ variables: { id: show!.id } }).then(({ data }) => {
@@ -35,8 +39,8 @@ export function useLibraryShowActions() {
         toast.success(`Refreshed ${show!.name}`);
       }).catch((error: unknown) => toast.danger(errorMessage(error))),
     }] : []),
-  ]), [navigate, isAdmin, refreshShow]);
-  const dialog = saving ? <SaveToListDialog open onOpenChange={(open) => { if (!open) setSaving(null); }} target={{ kind: "show", id: saving.id }} title={saving.name} /> : null;
+  ]), [navigate, isAdmin, refreshShow, playlist.action]);
+  const dialog = playlist.dialog;
   return { actions, dialog };
 }
 

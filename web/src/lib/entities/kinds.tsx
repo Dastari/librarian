@@ -1,7 +1,7 @@
 import { defineEntityKinds, type EntityKindSpec } from "glass-ux/ai";
 import type { IconComponent, IconProps } from "glass-ux/icon";
 import { IconAlerts, IconDownload, IconFileVideo, IconLayers, IconPlug, IconUser, IconWarning } from "glass-ux/icons";
-import { IconBooks, IconDeviceTv, IconDisc, IconMicrophone2, IconMovie, IconMusic, IconStack2, IconUserStar, type TablerIcon } from "@tabler/icons-react";
+import { IconBooks, IconDeviceTv, IconDisc, IconMicrophone2, IconMovie, IconMusic, IconPlaylist, IconStack2, IconUserStar, type TablerIcon } from "@tabler/icons-react";
 
 /** Tabler glyphs (media kinds Glass UX has no icon for) in Glass's icon contract. */
 export function glyph(Icon: TablerIcon, name: string): IconComponent {
@@ -29,6 +29,7 @@ export const ENTITY_KINDS = defineEntityKinds({
   audiobook: kind(glyph(IconBooks, "audiobook"), "Audiobook", "Audiobooks", "audiobooks"),
   person: kind(glyph(IconUserStar, "person"), "Person", "People", "people"),
   collection: kind(glyph(IconStack2, "collection"), "Collection", "Collections", "collections"),
+  playlist: kind(glyph(IconPlaylist, "playlist"), "Playlist", "Playlists", "lists"),
   library: kind(IconLayers, "Library", "Libraries", "libraries"),
   torrent: kind(IconDownload, "Download", "Downloads", "downloads"),
   mediaFile: kind(IconFileVideo, "File", "Files", "files"),

@@ -1,11 +1,11 @@
 import { useMutation } from "@apollo/client/react";
 import { useNavigate } from "@tanstack/react-router";
 import { defineActions, type ActionSet } from "glass-ux/actions";
-import { IconBookmark, IconDownload, IconExternalLink, IconPlay, IconRefresh, IconSettings, IconTrash } from "glass-ux/icons";
+import { IconDownload, IconExternalLink, IconPlay, IconRefresh, IconSettings, IconTrash } from "glass-ux/icons";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
-import { SaveToListDialog } from "@/features/personal/SaveToListDialog";
+import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
 import { RefreshShowDocument } from "@/graphql/generated/graphql";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { assertSuccess } from "@/lib/graphql/errors";
@@ -34,7 +34,13 @@ export function useShowActions<T extends ShowEntity>({ settings, open = true, pl
   const { user } = useSession();
   const [refresh, { loading: refreshing }] = useMutation(RefreshShowDocument);
   const resetProgress = useResetProgress();
-  const [saving, setSaving] = useState<T | null>(null);
+  const playlist = useAddToPlaylist<T>({
+    targetsOf: (rows) => rows.map((row) => ({ kind: "show" as const, id: row.id })),
+    titleOf: (rows) => playlistTitle(rows, rows[0]!.name, { one: "show", other: "shows" }),
+    allowed: (rows) => Boolean(user) && rows.every((row) => row.userId === user?.id),
+    bulk: true,
+    priority: 2,
+  });
   const [finding, setFinding] = useState<T | null>(null);
 
   const actions = useMemo(() => {
@@ -50,11 +56,7 @@ export function useShowActions<T extends ShowEntity>({ settings, open = true, pl
         visible: one,
         run: (rows: readonly T[]) => void navigate({ to: "/shows/$showId", params: { showId: rows[0]!.id } }),
       }] : []),
-      {
-        id: "save", label: "Save to list", icon: IconBookmark, group: "open", priority: 2,
-        visible: (rows) => one(rows) && rows[0]!.userId === user?.id,
-        run: (rows) => setSaving(rows[0]!),
-      },
+      playlist.action,
       ...resetProgressAction("video", reset, resetProgress),
       ...(isAdmin ? [
         {
@@ -88,7 +90,7 @@ export function useShowActions<T extends ShowEntity>({ settings, open = true, pl
 
   const dialogs = (
     <>
-      {saving ? <SaveToListDialog open onOpenChange={(next) => { if (!next) setSaving(null); }} target={{ kind: "show", id: saving.id }} title={saving.name} /> : null}
+      {playlist.dialog}
       {finding ? <ReleaseSearchDialog isOpen onOpenChange={(next) => { if (!next) setFinding(null); }} query={finding.name} imdbId={finding.imdbId} season={season} libraryId={finding.libraryId} target={{ showId: finding.id }} /> : null}
     </>
   );

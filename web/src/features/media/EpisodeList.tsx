@@ -17,6 +17,7 @@ import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { EntityEpisodeUpdateDocument, EntityEpisodeUpdateManyDocument, type PlaybackProgressFieldsFragment, type UpdateEpisodeInput } from "@/graphql/generated/graphql";
 import { episodeThumb } from "@/lib/artwork";
+import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { formatDate } from "@/lib/format";
 import { activeContentStatusQueries } from "@/lib/graphql/content-status";
@@ -43,6 +44,8 @@ interface EpisodeListProps {
   showId: string;
   showName: string;
   libraryId: string;
+  /** Whose show this is: only its owner can add its episodes to a playlist. */
+  ownerId?: string;
   /** Called after a bulk or single update so the parent can refetch. */
   onChanged?: () => void;
   /** `row` is the watching view (a row of stills); `table` is the management view. */
@@ -156,7 +159,7 @@ function createEpisodeColumns() {
 const episodeColumns = createEpisodeColumns();
 
 /** Season tables over the parent-owned episode query, playback and acquisition handlers. */
-export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile, loading, complete = true, status, playbackUnavailable, onPlay, showId, showName, libraryId, onChanged, view = "table", tint, headerExtra }: EpisodeListProps) {
+export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile, loading, complete = true, status, playbackUnavailable, onPlay, showId, showName, libraryId, ownerId, onChanged, view = "table", tint, headerExtra }: EpisodeListProps) {
   const client = useApolloClient();
   const isAdmin = useIsAdmin();
   const { user } = useSession();
@@ -181,6 +184,13 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
   const [updateEpisode] = useMutation(EntityEpisodeUpdateDocument, { refetchQueries: () => activeContentStatusQueries(client) });
   const [updateEpisodes] = useMutation(EntityEpisodeUpdateManyDocument, { refetchQueries: () => activeContentStatusQueries(client) });
   const resetProgress = useResetProgress();
+  const episodePlaylist = useAddToPlaylist<EpisodeRow>({
+    targetsOf: (rows) => rows.map((row) => ({ kind: "episode" as const, id: row.id })),
+    titleOf: (rows) => playlistTitle(rows, rows[0]!.title ?? `Episode ${rows[0]!.episode}`, episodeNoun),
+    allowed: () => Boolean(user) && ownerId === user?.id,
+    bulk: true,
+    priority: 3,
+  });
   const [searching, setSearching] = useState<EpisodeRow | null>(null);
   const groups = useMemo(() => groupBySeason(episodes), [episodes]);
   const tableScope = `episodes:${user?.id ?? "anonymous"}:${libraryId}:${showId}`;
@@ -276,9 +286,10 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
       run: (rows) => updateSelected(rows, { ignored: false }), successMessage: () => "Selected missing episodes no longer ignored",
     },
     ...resetProgressAction("video", episodeReset, resetProgress),
+    episodePlaylist.action,
     { id: "copy-titles", label: "Copy episode titles", icon: IconCopy, group: "organise", bulk: true,
       run: async (rows) => { await copyText(rows.map(episodeLabel).join("\n")); }, successMessage: () => "Episode titles copied" },
-  ]), [isAdmin, onPlay, update, updateSelected, playbackUnavailable, episodeReset, resetProgress]);
+  ]), [episodePlaylist.action, isAdmin, onPlay, update, updateSelected, playbackUnavailable, episodeReset, resetProgress]);
 
   const columns = episodeColumns;
   const presentation = useMemo(() => ({
@@ -296,6 +307,7 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
           ))}
           {status ? <div className="text-label-sm text-muted">{status}</div> : null}
           <ReleaseSearchDialog isOpen={Boolean(searching)} onOpenChange={(open) => !open && setSearching(null)} query={showName} season={searching?.season} episode={searching?.episode} libraryId={libraryId} target={{ showId, episodeId: searching?.id }} />
+          {episodePlaylist.dialog}
         </div>
       </EpisodePresentationContext.Provider>
     );
@@ -330,6 +342,7 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
         </section>
       ))}
       <ReleaseSearchDialog isOpen={Boolean(searching)} onOpenChange={(open) => !open && setSearching(null)} query={showName} season={searching?.season} episode={searching?.episode} libraryId={libraryId} target={{ showId, episodeId: searching?.id }} />
+      {episodePlaylist.dialog}
     </div>
     </EpisodePresentationContext.Provider>
   );

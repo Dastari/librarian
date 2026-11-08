@@ -5,7 +5,7 @@ import { IconBookmark, IconDownload, IconExternalLink, IconPlay, IconRefresh, Ic
 import { useMemo, useState, type ReactNode } from "react";
 
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
-import { SaveToListDialog } from "@/features/personal/SaveToListDialog";
+import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
 import { usePlayer } from "@/features/player/usePlayer";
 import { EntityMovieUpdateDocument, RecacheMovieArtworkDocument, RefreshMovieDocument } from "@/graphql/generated/graphql";
 import { movieBackdrop, moviePoster } from "@/lib/artwork";
@@ -41,7 +41,13 @@ export function useMovieActions<T extends MovieEntity>({ settings, open = true, 
   const [refresh, { loading: refreshing }] = useMutation(RefreshMovieDocument);
   const [recache] = useMutation(RecacheMovieArtworkDocument);
   const resetProgress = useResetProgress();
-  const [saving, setSaving] = useState<T | null>(null);
+  const playlist = useAddToPlaylist<T>({
+    targetsOf: (rows) => rows.map((row) => ({ kind: "movie" as const, id: row.id })),
+    titleOf: (rows) => playlistTitle(rows, rows[0]!.title, { one: "movie", other: "movies" }),
+    allowed: (rows) => Boolean(user) && rows.every((row) => row.userId === user?.id),
+    bulk: true,
+    priority: 2,
+  });
   const [finding, setFinding] = useState<T | null>(null);
 
   const actions = useMemo(() => {
@@ -62,11 +68,7 @@ export function useMovieActions<T extends MovieEntity>({ settings, open = true, 
         visible: one,
         run: (rows: readonly T[]) => void navigate({ to: "/movies/$movieId", params: { movieId: rows[0]!.id } }),
       }] : []),
-      {
-        id: "save", label: "Save to list", icon: IconBookmark, group: "open", priority: 2,
-        visible: (rows) => one(rows) && rows[0]!.userId === user?.id,
-        run: (rows) => setSaving(rows[0]!),
-      },
+      playlist.action,
       ...resetProgressAction("video", reset, resetProgress),
       ...(isAdmin ? [
         {
@@ -109,7 +111,7 @@ export function useMovieActions<T extends MovieEntity>({ settings, open = true, 
 
   const dialogs = (
     <>
-      {saving ? <SaveToListDialog open onOpenChange={(next) => { if (!next) setSaving(null); }} target={{ kind: "movie", id: saving.id }} title={saving.title} /> : null}
+      {playlist.dialog}
       {finding ? <ReleaseSearchDialog isOpen onOpenChange={(next) => { if (!next) setFinding(null); }} query={finding.title} year={finding.year} imdbId={finding.imdbId} libraryId={finding.libraryId} target={{ movieId: finding.id }} /> : null}
     </>
   );
