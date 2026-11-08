@@ -9,6 +9,8 @@ fragment ListEntryFields on ListEntry {
   albumId
   audiobookId
   trackId
+  episodeId
+  chapterId
   createdAt
   updatedAt
   id

@@ -1821,6 +1821,8 @@ input CreateListEntryInput {
   albumId: String
   audiobookId: String
   trackId: String
+  episodeId: String
+  chapterId: String
 }
 
 input CreateMatchingAssistantInput {
@@ -3743,6 +3745,8 @@ type ListEntry {
   albumId: String
   audiobookId: String
   trackId: String
+  episodeId: String
+  chapterId: String
   createdAt: String!
   updatedAt: String!
   id: String!
@@ -3764,6 +3768,12 @@ type ListEntry {
 
   """Track"""
   track: Track
+
+  """Episode"""
+  episode: Episode
+
+  """Chapter"""
+  chapter: Chapter
 }
 
 """Event for #struct_name changes (subscriptions)"""
@@ -3818,6 +3828,8 @@ input ListEntryWhereInput {
   albumId: StringFilter
   audiobookId: StringFilter
   trackId: StringFilter
+  episodeId: StringFilter
+  chapterId: StringFilter
   createdAt: DateFilter
   updatedAt: DateFilter
   id: StringFilter
@@ -13293,6 +13305,8 @@ input UpdateListEntryInput {
   albumId: String
   audiobookId: String
   trackId: String
+  episodeId: String
+  chapterId: String
 }
 
 input UpdateMatchingAssistantInput {
