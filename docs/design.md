@@ -518,9 +518,10 @@ When this section conflicts with older Q&A answers below, this section wins.
   - If no local wanted/entity match is found, attempt provider lookup/create (movies via TMDB, shows via TVMaze), then re-match/link
   - Matching should prefer explicit `wanted` gaps when multiple candidates are plausible
   - If `auto_organize=true`, run `organizeMediaFile` for matched files
+  - If `auto_organize=true`, also organize files the scan skipped as unchanged that are not where the naming pattern puts them (Q78); nothing is re-matched or re-read
   - Reconcile deleted files from DB relations
   - For TV libraries, ensure expected show/season folders exist
-  - If `auto_organize=true`, clean up empty non-protected folders
+  - If `auto_organize=true`, clean up empty non-protected folders (Q80)
 - Organization rules:
   - Uses `library.naming_pattern` as primary naming template
   - If empty, resolves default from `naming_patterns` by `library_type`
@@ -1235,6 +1236,38 @@ full recount. Old and new parents are invalidated on reparenting and deletion.
 Personal playback checkpoints retain their own user-scoped events. Existing
 summary drift is repaired by the explicit administrator reconciliation action,
 which defaults to dry-run; it never runs implicitly at startup.
+
+### Q78: Does a scan organize a file it skips as unchanged?
+**Answer:** Yes. A file that is linked to a library item and has the size and modification time recorded
+for it is not re-matched, re-probed or re-hashed, but when `auto_organize=true` the scan still checks
+where it is. Where each item's file belongs is worked out for the whole library from a few paged reads of
+its movies/episodes/tracks/chapters and the library's naming pattern, with no per-file query. Only a file
+that is somewhere else goes through `organize_media_file`, which re-plans it, never overwrites an existing
+file, and records a failure as an `ORGANIZATION` notification. So a file matched while organizing was off,
+or left behind by a changed pattern or a renamed title, is moved by the next scan, and a library whose files
+are all in place pays for the reads only. A movie whose name and matched title disagree on the year keeps
+the same guard as a new match (Q61) but gives no second notification. Audiobook chapters are compared by
+folder only, because a book in parts or in one file is named after its parts.
+
+### Q79: What names a music file's artist folder?
+**Answer:** The Artist record of the track's album, and nothing a track says about itself: a per-track
+credit (which differs by release and may be empty) never picks a folder, and the library's Artist rows are
+the only source. Every folder or file name goes through one sanitiser, which also turns typographic
+apostrophes (`’`, `‘`, `ʼ`) into `'`, so `Guns N’ Roses` and `Guns N' Roses` are one folder.
+An album whose artist has no real name (`Unknown Artist`, empty) has no artist folder: its files are left
+where they are, never filed under a placeholder, and a provider album that credits no artist is not added
+under a made-up one (its files' own tags name the album's artist instead). Files an earlier version put in
+`Unknown Artist/` or in a second spelling's folder are moved to the right one by the next scan (Q78).
+
+### Q80: Which folders does organizing remove?
+**Answer:** Folders it leaves empty, a whole empty tree at a time, up to but never including the library
+root. After `organizeMediaFile` moves a file, its old folder and each parent that is empty as a result are
+removed; a scan with `auto_organize=true` then removes every remaining empty folder no library item expects
+(TV show/season folders and the planned folders of known items are kept). A folder with anything in it stays,
+hidden files such as `.DS_Store` included, and so does a hidden folder (names starting with `.`): the
+library's own `.librarian-trash` and a sync tool's markers are not Librarian's to judge. Scans do not walk
+into the trash, so what is in it is never recorded as library files or organized back out. Removal is a
+plain `rmdir`, which cannot remove a folder a file has just been placed in.
 
 ---
 

@@ -9,7 +9,9 @@ use crate::graphql::entities::{
     Album, AlbumWhereInput, Artist, ArtistWhereInput, Track, TrackWhereInput,
 };
 use crate::services::metadata::musicbrainz::MusicBrainzTrack;
-use crate::services::metadata::providers::{AddAlbumOptions, listing_track_facts};
+use crate::services::metadata::providers::{
+    AddAlbumOptions, NoCreditedArtist, listing_track_facts,
+};
 use crate::services::music_rules::{self, ListingFit};
 use crate::services::release_match::{ReleaseFile, TrackFacts};
 
@@ -335,7 +337,7 @@ impl LibraryScanService {
             }
         }
         if let Some((_, provider_id, listing)) = best {
-            return metadata
+            match metadata
                 .add_album_from_provider(AddAlbumOptions {
                     provider: MetadataProvider::Musicbrainz,
                     provider_id,
@@ -344,7 +346,20 @@ impl LibraryScanService {
                     monitor_type: AutoDownloadMode::None,
                     listing,
                 })
-                .await;
+                .await
+            {
+                Ok(album) => return Ok(album),
+                // No credited artist means no artist folder: the files' own tags name it instead.
+                Err(error) if error.downcast_ref::<NoCreditedArtist>().is_some() => warn!(
+                    library_id = %library.id,
+                    album = %title,
+                    error = %error,
+                    "Using the tags of '{}' because the provider credits it to no artist: {}",
+                    title,
+                    error
+                ),
+                Err(error) => return Err(error),
+            }
         }
         self.album_from_tags(library, auth_user, title, artist, members)
             .await
