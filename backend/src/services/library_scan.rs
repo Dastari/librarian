@@ -10966,7 +10966,6 @@ impl LibraryScanService {
                 .all(|file| held_by_library(&file.reason))
             && linked.hard_failure.is_none()
             && linked.review.is_none();
-        let mut messages = messages;
         if all_held {
             status = "completed";
             error = None;
@@ -15259,6 +15258,7 @@ fn source_row_is_this_import(source: &serde_json::Value, owner_id: &str, info_ha
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_music_naming_pattern(
     pattern: &str,
     artist_name: &str,
@@ -16573,7 +16573,10 @@ mod tests {
             })
             .fetch_all()
             .await?;
-        assert_eq!(issues.len(), 2, "each durable scan keeps its own issue");
+        // The second scan finds the same problem: it's the same issue, seen twice, not a new row.
+        assert_eq!(issues.len(), 1, "a repeated problem stays one issue");
+        assert_eq!(issues[0].occurrence_count, 2);
+        assert!(issues[0].resolved_at.is_none());
 
         let notifications = Notification::query(database.pool().pool())
             .filter(NotificationWhereInput {
