@@ -42,10 +42,6 @@ use super::auto_settings::{AutoDownloadSettings, SETTING_STATUS};
 use super::auto_trail::Trigger;
 use super::rss_poll;
 
-/// How often the workers look at the clock.
-const TICK: Duration = Duration::from_secs(60);
-/// Let the other services finish starting before the first pass.
-const STARTUP_DELAY: Duration = Duration::from_secs(45);
 /// The air-time pass runs this often between sweeps.
 const AIR_TIME_PASS_MINUTES: i64 = 5;
 const SETTING_RETRY_SWEEP_INTERVAL_MINUTES: &str = "auto_download.retry_sweep_interval_minutes";
@@ -65,6 +61,10 @@ pub struct AutoDownloadServiceConfig {
     pub retry_sweep_interval_minutes: u64,
     pub default_retry_after_minutes: i64,
     pub default_retry_window_days: i64,
+    /// How often the scheduler and the RSS worker look at the clock.
+    pub tick_seconds: u64,
+    /// Let the other services finish starting before the first pass.
+    pub startup_delay_seconds: u64,
 }
 
 impl Default for AutoDownloadServiceConfig {
@@ -75,6 +75,8 @@ impl Default for AutoDownloadServiceConfig {
             default_retry_after_minutes: 15,
             // Q34: retries are bounded to torrents added within the last 7 days.
             default_retry_window_days: 7,
+            tick_seconds: 60,
+            startup_delay_seconds: 45,
         }
     }
 }
@@ -148,6 +150,7 @@ impl Service for AutoDownloadService {
             || self.config.retry_sweep_interval_minutes == 0
             || self.config.default_retry_after_minutes <= 0
             || self.config.default_retry_window_days <= 0
+            || self.config.tick_seconds == 0
         {
             anyhow::bail!("Auto-download intervals and retry windows must be greater than zero");
         }
@@ -163,14 +166,18 @@ impl Service for AutoDownloadService {
 
         let manager_main = self.manager.clone();
         let token_main = cancel_token.clone();
+        let rhythm = Rhythm {
+            tick: Duration::from_secs(self.config.tick_seconds),
+            startup_delay: Duration::from_secs(self.config.startup_delay_seconds),
+        };
         let main_handle = tokio::spawn(async move {
-            scheduler_loop(manager_main, token_main).await;
+            scheduler_loop(manager_main, token_main, rhythm).await;
         });
 
         let manager_rss = self.manager.clone();
         let token_rss = cancel_token.clone();
         let rss_handle = tokio::spawn(async move {
-            rss_loop(manager_rss, token_rss).await;
+            rss_loop(manager_rss, token_rss, rhythm).await;
         });
 
         let manager_retry = self.manager.clone();
@@ -383,10 +390,17 @@ async fn record_hunt_status(
     .await;
 }
 
-async fn scheduler_loop(manager: Arc<ServicesManager>, cancel: CancellationToken) {
+/// How often the workers look at the clock, and how long they let the rest of the server start.
+#[derive(Debug, Clone, Copy)]
+struct Rhythm {
+    tick: Duration,
+    startup_delay: Duration,
+}
+
+async fn scheduler_loop(manager: Arc<ServicesManager>, cancel: CancellationToken, rhythm: Rhythm) {
     tokio::select! {
         _ = cancel.cancelled() => return,
-        _ = tokio::time::sleep(STARTUP_DELAY) => {}
+        _ = tokio::time::sleep(rhythm.startup_delay) => {}
     }
     let mut last_sweep: Option<DateTime<Utc>> = None;
     let mut last_air_time: Option<DateTime<Utc>> = None;
@@ -394,7 +408,7 @@ async fn scheduler_loop(manager: Arc<ServicesManager>, cancel: CancellationToken
         let Some(settings) = load_settings(&manager).await else {
             tokio::select! {
                 _ = cancel.cancelled() => break,
-                _ = tokio::time::sleep(TICK) => continue,
+                _ = tokio::time::sleep(rhythm.tick) => continue,
             }
         };
         if !settings.enabled {
@@ -417,7 +431,7 @@ async fn scheduler_loop(manager: Arc<ServicesManager>, cancel: CancellationToken
         }
         tokio::select! {
             _ = cancel.cancelled() => break,
-            _ = tokio::time::sleep(TICK) => {}
+            _ = tokio::time::sleep(rhythm.tick) => {}
         }
     }
 }
@@ -445,10 +459,10 @@ async fn run_hunt(manager: &Arc<ServicesManager>, kind: &str, trigger: Trigger, 
     }
 }
 
-async fn rss_loop(manager: Arc<ServicesManager>, cancel: CancellationToken) {
+async fn rss_loop(manager: Arc<ServicesManager>, cancel: CancellationToken, rhythm: Rhythm) {
     tokio::select! {
         _ = cancel.cancelled() => return,
-        _ = tokio::time::sleep(STARTUP_DELAY) => {}
+        _ = tokio::time::sleep(rhythm.startup_delay) => {}
     }
     loop {
         if load_settings(&manager)
@@ -490,7 +504,7 @@ async fn rss_loop(manager: Arc<ServicesManager>, cancel: CancellationToken) {
         }
         tokio::select! {
             _ = cancel.cancelled() => break,
-            _ = tokio::time::sleep(TICK) => {}
+            _ = tokio::time::sleep(rhythm.tick) => {}
         }
     }
 }
