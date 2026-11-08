@@ -23,7 +23,7 @@ import {
 } from "@/graphql/generated/graphql";
 import { albumCover, audiobookCover, movieBackdrop, moviePoster, showBackdrop, showPoster } from "@/lib/artwork";
 
-import { episodeCode, type PlaylistTarget } from "./types";
+import { episodeCode, targetKey, type PlaylistTarget } from "./types";
 
 type MovieNode = PlaylistPlayMoviesQuery["movies"]["edges"][number]["node"];
 type EpisodeNode = PlaylistPlayEpisodesQuery["episodes"]["edges"][number]["node"];
@@ -180,3 +180,19 @@ export function startPlaylistPlayback(player: PlaylistPlayer, navigate: (mediaFi
   return true;
 }
 
+
+/**
+ * The targets a list of player items stand for, in order, for "Save queue as playlist": a track is
+ * a track, a chapter a chapter, a movie a movie, an episode an episode. A playlist holds each
+ * target once, so a repeat is dropped.
+ */
+export function playItemTargets(items: readonly Pick<PlayItem, "entity">[]): PlaylistTarget[] {
+  const seen = new Set<string>();
+  return items.flatMap((item) => {
+    const target: PlaylistTarget = { kind: item.entity.kind, id: item.entity.id };
+    const key = targetKey(target);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [target];
+  });
+}

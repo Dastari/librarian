@@ -10,7 +10,7 @@ import type { ReactElement } from "react";
 import { Observable } from "rxjs";
 import { expect, vi } from "vitest";
 
-import type { HomeShelfFieldsFragment, PersonalEntryFragment, PersonalListFieldsFragment, SavedViewFieldsFragment } from "@/graphql/generated/graphql";
+import type { HomeShelfFieldsFragment, PersonalEntryFragment, PlaylistCoverEntryFragment, PersonalListFieldsFragment, SavedViewFieldsFragment } from "@/graphql/generated/graphql";
 import { createTestRouter, TestRouterProvider } from "@/test/router";
 import { LiveContext } from "@/lib/graphql/live/hooks";
 import { LiveRegistry } from "@/lib/graphql/live/registry";
@@ -45,7 +45,7 @@ export const personalEntry = (index: number, overrides: Record<string, unknown> 
   movie: null, show: null, album: null, audiobook: null, track: null, episode: null, chapter: null, ...overrides,
 }) as unknown as PersonalEntryFragment & { __typename: "ListEntry" };
 /** The playlist with its entry count and first entries, as the playlist queries return it. */
-export const playlist = (overrides: Record<string, unknown> = {}, count = 0, covers: object[] = []) => ({
+export const playlist = (overrides: Record<string, unknown> = {}, count = 0, covers: PlaylistCoverEntryFragment[] = []) => ({
   ...personalList(),
   entries: { __typename: "ListEntryConnection" as const, edges: covers.map((node) => ({ __typename: "ListEntryEdge" as const, node })), pageInfo: { __typename: "PageInfo" as const, totalCount: count } },
   ...overrides,

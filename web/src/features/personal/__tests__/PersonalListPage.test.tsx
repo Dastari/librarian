@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { EntityHomeShelfListDocument, EntityListEntryDeleteDocument, EntityListEntryUpdateDocument, PersonalEntriesDocument, PlaylistGetDocument, PlaylistPlayMoviesDocument } from "@/graphql/generated/graphql";
+import { EntityListEntryDeleteDocument, EntityListEntryUpdateDocument, PersonalEntriesDocument, PlaylistGetDocument, PlaylistPlayMoviesDocument } from "@/graphql/generated/graphql";
 import { playerStore } from "@/features/player/store";
 
 import { PersonalListPage } from "../PersonalListPage";
@@ -26,7 +26,7 @@ async function mountList(positions = [0, 1024, 2048]) {
   return { ...view, rows };
 }
 
-async function choose(view: Awaited<ReturnType<typeof mountList>>, row: string, action: string) {
+async function choose(row: string, action: string) {
   const trigger = screen.getByRole("button", { name: `Actions for ${row}` });
   await userEvent.click(trigger);
   const item = await screen.findByRole("menuitem", { name: action });
@@ -51,7 +51,7 @@ describe("playlist page header", () => {
 describe("playlist page reorder and row menu focus", () => {
   it("moves the second entry before a zero-position head with one write, leaving the tie to the server", async () => {
     const view = await mountList();
-    await choose(view, "Second film", "Move up");
+    await choose("Second film", "Move up");
     const update = await view.next(EntityListEntryUpdateDocument);
     expect(update.operation.variables).toEqual({ id: "entry-1", input: { position: 0 } });
     expectValidOperation(update.operation);
@@ -65,19 +65,19 @@ describe("playlist page reorder and row menu focus", () => {
 
   it("puts a moved entry halfway between its new neighbours", async () => {
     const view = await mountList();
-    await choose(view, "Third film", "Move up");
+    await choose("Third film", "Move up");
     expect((await view.next(EntityListEntryUpdateDocument)).operation.variables).toEqual({ id: "entry-2", input: { position: 512 } });
   });
 
   it("sends the next neighbour's own position when no gap is left", async () => {
     const view = await mountList([0, 1, 2]);
-    await choose(view, "Third film", "Move up");
+    await choose("Third film", "Move up");
     expect((await view.next(EntityListEntryUpdateDocument)).operation.variables).toEqual({ id: "entry-2", input: { position: 1 } });
   });
 
   it("keeps the row-menu opener and says why while a reorder is pending and after refusal", async () => {
     const view = await mountList();
-    const trigger = await choose(view, "Second film", "Move up");
+    const trigger = await choose("Second film", "Move up");
     const update = await view.next(EntityListEntryUpdateDocument);
     await waitFor(() => expect(trigger).toHaveFocus());
     await userEvent.click(trigger);
@@ -96,7 +96,7 @@ describe("playlist page reorder and row menu focus", () => {
 describe("playlist page playing", () => {
   it("plays from the chosen entry: its video first, the rest queued in order", async () => {
     const view = await mountList();
-    await choose(view, "Second film", "Play from here");
+    await choose("Second film", "Play from here");
     const resolve = await view.next(PlaylistPlayMoviesDocument);
     expect(resolve.operation.variables).toEqual({ ids: ["movie-1", "movie-2"] });
     await respond(resolve, { movies: { edges: ["movie-2", "movie-1"].map((id) => ({ node: { __typename: "Movie", id, title: id, year: 2026, runtime: 100, mediaFileId: `file-${id.at(-1)}` } })) } });
