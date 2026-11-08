@@ -1,7 +1,7 @@
 import { IconImage, IconInfo } from "glass-ux/icons";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
 import { Artwork, EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, Panel, PosterCard, Section, SkeletonHero, StatusChip } from "@/components/ui";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
@@ -22,6 +22,7 @@ import { LIBRARY_TYPES } from "@/lib/library-types";
 import { MediaActions } from "./MediaActions";
 import { DetailShell } from "./DetailShell";
 import { FileDetails } from "./FileDetails";
+import { filesWithProgress, type ProgressReset } from "./progressReset";
 import { useMovieEntity } from "./useMovieEntity";
 
 export function MoviePage({ movieId }: { movieId: string }) {
@@ -45,7 +46,10 @@ export function MoviePage({ movieId }: { movieId: string }) {
     void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: target.mediaFileId } });
   }, [navigate, player, resumeAt]);
   const playLabel = resumeAt ? `Resume · ${formatClock(resumeAt)}` : "Play";
-  const { actions, dialogs, openSettings } = useMovieEntity<NonNullable<typeof movie>>({ open: false, play, playLabel });
+  const reset = useMemo<ProgressReset<{ mediaFileId?: string | null }>>(() => ({
+    files: (rows) => filesWithProgress(rows.map((row) => row.mediaFileId), new Map(resume && resume.mediaFileId ? [[resume.mediaFileId, resume]] : [])),
+  }), [resume]);
+  const { actions, dialogs, openSettings } = useMovieEntity<NonNullable<typeof movie>>({ open: false, play, playLabel, reset });
 
   if (error && !movie) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!movie) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Movie not found" description="This item may have been removed from the library." className="page-gutter my-8" />;
