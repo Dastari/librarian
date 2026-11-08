@@ -96,6 +96,18 @@ impl CredentialEncryption {
         self.decrypt(ciphertext, nonce)
     }
 
+    /// A stored secret as text: a current envelope, a historical one, or a value stored before it was
+    /// encrypted (feed addresses written by older versions).
+    pub fn reveal(&self, stored: &str) -> Result<String> {
+        if stored.starts_with("v2:") {
+            self.decrypt_envelope(stored)
+        } else if Self::looks_like_envelope(stored) {
+            self.decrypt_legacy_envelope(stored)
+        } else {
+            Ok(stored.to_string())
+        }
+    }
+
     pub fn looks_like_envelope(value: &str) -> bool {
         if value.starts_with("v2:") {
             return value.split(':').count() == 4;

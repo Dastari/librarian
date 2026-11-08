@@ -25,6 +25,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use graphql_orm::graphql::filters::{DateFilter, StringFilter};
+use graphql_orm::graphql::orm::OrderDirection;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use sha2::{Digest, Sha256};
@@ -32,12 +33,17 @@ use tracing::{debug, info, warn};
 
 use crate::db::Database;
 use crate::graphql::entities::{
-    CreateRssFeedItemInput, Library, LibraryWhereInput, QualityProfile, RssFeed, RssFeedItem,
-    RssFeedItemWhereInput, RssFeedWhereInput, UpdateRssFeedInput,
+    Album, AlbumWhereInput, Artist, ArtistWhereInput, Audiobook, AudiobookWhereInput,
+    CreateRssFeedItemInput, Library, LibraryWhereInput, Movie, MovieWhereInput, QualityProfile,
+    RssFeed, RssFeedItem, RssFeedItemOrderByInput, RssFeedItemWhereInput, RssFeedWhereInput, Show,
+    ShowWhereInput, UpdateRssFeedInput, UpdateRssFeedItemInput,
 };
 use crate::services::ServicesManager;
+use crate::services::feed_catalogue::{self, ItemFacts, ItemMatch, TitleIndex};
 use crate::services::quality::{profile, scoring};
+use crate::services::redact::redact_text;
 use crate::services::sources::SourceRelease;
+use crate::services::sources::health::{self, FailureKind};
 
 use super::auto_download::{
     self, Blocklist, GrabEnv, HuntScope, NoGrabFacts, WantedCandidate, describe_no_grab,
@@ -351,13 +357,48 @@ fn validate_feed_url(url: &str) -> Result<reqwest::Url> {
     reqwest::Url::parse(url.trim()).context("the feed address is not a valid URL")
 }
 
-/// Fetch one feed. A host that asks to be left alone (429/503 with `Retry-After`) is believed.
+/// The text of a feed's address: it is stored as an encrypted envelope (or, on rows written before
+/// that, as plain text, which is encrypted the next time the feed is saved).
+pub async fn reveal_feed_url(manager: &Arc<ServicesManager>, feed: &RssFeed) -> Result<String> {
+    let sources = manager
+        .get_sources()
+        .await
+        .context("the sources service is not available")?;
+    let sources = sources
+        .get_manager()
+        .await
+        .context("source credentials are not available: no credential key is configured")?;
+    sources
+        .encryption()
+        .reveal(&feed.url)
+        .context("the feed address could not be decrypted with the current credential key")
+}
+
+/// Reveal a stored item link the same way.
+pub async fn reveal_item_link(manager: &Arc<ServicesManager>, stored: &str) -> Result<String> {
+    let sources = manager
+        .get_sources()
+        .await
+        .context("the sources service is not available")?;
+    let sources = sources
+        .get_manager()
+        .await
+        .context("source credentials are not available: no credential key is configured")?;
+    sources
+        .encryption()
+        .reveal(stored)
+        .context("the item link could not be decrypted with the current credential key")
+}
+
+/// Fetch one feed from `address` (its revealed URL). A host that asks to be left alone (429/503
+/// with `Retry-After`) is believed. Nothing in an error may quote the address: it holds the
+/// account's passkey.
 async fn fetch_feed(
     client: &reqwest::Client,
-    feed: &RssFeed,
+    address: &str,
 ) -> Result<Vec<SourceRelease>, FeedFailure> {
-    let url =
-        validate_feed_url(&feed.url).map_err(|error| FeedFailure::new(error.to_string(), None))?;
+    let url = validate_feed_url(address)
+        .map_err(|error| FeedFailure::new(error.to_string(), None, FailureKind::Other))?;
     let response = client
         .get(url)
         .header(
@@ -367,7 +408,14 @@ async fn fetch_feed(
         .send()
         .await
         .map_err(|error| {
-            FeedFailure::new(format!("the feed could not be reached: {error}"), None)
+            FeedFailure::new(
+                redact_text(&format!(
+                    "the feed could not be reached: {}",
+                    error.without_url()
+                )),
+                None,
+                FailureKind::Unreachable,
+            )
         })?;
     let status = response.status();
     if !status.is_success() {
@@ -377,20 +425,53 @@ async fn fetch_feed(
                 .get(reqwest::header::RETRY_AFTER)
                 .and_then(|value| value.to_str().ok()),
         );
+        let kind = health::classify_http_status(status.as_u16()).unwrap_or(FailureKind::Other);
         return Err(FeedFailure::new(
-            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                "the feed host is rate limiting requests".to_string()
-            } else {
-                format!("the feed answered HTTP {status}")
+            match kind {
+                FailureKind::RateLimited => "the feed host is rate limiting requests".to_string(),
+                FailureKind::Auth => format!(
+                    "the feed refused the request (HTTP {}): its link may have expired",
+                    status.as_u16()
+                ),
+                _ => format!("the feed answered HTTP {status}"),
             },
             retry_after,
+            kind,
         ));
     }
     let body = crate::services::http_client::response_text_limited(response, MAX_FEED_BYTES)
         .await
-        .map_err(|error| FeedFailure::new(format!("the feed could not be read: {error}"), None))?;
+        .map_err(|error| {
+            FeedFailure::new(
+                redact_text(&format!("the feed could not be read: {error}")),
+                None,
+                FailureKind::Unreachable,
+            )
+        })?;
+    // Some trackers answer an expired link with a login page and a 200.
+    let head: String = body
+        .chars()
+        .take(2000)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if !head.contains("<rss")
+        && !head.contains("<feed")
+        && (head.contains("<html") || head.contains("login"))
+    {
+        return Err(FeedFailure::new(
+            "the feed returned a web page instead of RSS: its link may have expired".to_string(),
+            None,
+            FailureKind::Auth,
+        ));
+    }
     let mut items = crate::services::sources::definitions::torznab::parse_torznab_rss(&body)
-        .map_err(|error| FeedFailure::new(format!("the feed is not RSS 2.0: {error}"), None))?;
+        .map_err(|error| {
+            FeedFailure::new(
+                redact_text(&format!("the feed is not RSS 2.0: {error}")),
+                None,
+                FailureKind::Other,
+            )
+        })?;
     items.truncate(MAX_ITEMS_PER_POLL);
     for item in &mut items {
         if item.info_hash.is_none() {
@@ -404,13 +485,15 @@ async fn fetch_feed(
 struct FeedFailure {
     message: String,
     retry_after: Option<i64>,
+    kind: FailureKind,
 }
 
 impl FeedFailure {
-    fn new(message: String, retry_after: Option<i64>) -> Self {
+    fn new(message: String, retry_after: Option<i64>, kind: FailureKind) -> Self {
         Self {
             message,
             retry_after,
+            kind,
         }
     }
 }
@@ -424,6 +507,8 @@ async fn record_poll_ok(db: &Database, feed: &RssFeed, now: DateTime<Utc>) {
             last_successful_at: Some(Some(now.to_rfc3339())),
             last_error: Some(None),
             consecutive_failures: Some(Some(0)),
+            health_status: Some(Some(health::STATUS_OK.to_string())),
+            health_kind: Some(None),
             ..Default::default()
         },
     )
@@ -431,6 +516,7 @@ async fn record_poll_ok(db: &Database, feed: &RssFeed, now: DateTime<Utc>) {
     {
         warn!(feed = %feed.name, error = %error, "RSS: could not record a successful poll");
     }
+    super::source_health::feed_outcome(db, feed, None).await;
 }
 
 async fn record_poll_failed(
@@ -459,6 +545,8 @@ async fn record_poll_failed(
             last_polled_at: Some(Some(polled_at.to_rfc3339())),
             last_error: Some(Some(failure.message.clone())),
             consecutive_failures: Some(Some(feed.consecutive_failures.unwrap_or(0) + 1)),
+            health_status: Some(Some(failure.kind.status().to_string())),
+            health_kind: Some(Some(failure.kind.as_str().to_string())),
             ..Default::default()
         },
     )
@@ -466,6 +554,16 @@ async fn record_poll_failed(
     {
         warn!(feed = %feed.name, error = %error, "RSS: could not record a failed poll");
     }
+    super::source_health::feed_outcome(
+        db,
+        feed,
+        Some((
+            failure.kind,
+            &failure.message,
+            feed.consecutive_failures.unwrap_or(0) + 1,
+        )),
+    )
+    .await;
 }
 
 /// Library ids a feed may grab for: the one it names, or every library its owner has.
@@ -512,16 +610,184 @@ async fn seen_link_hashes(
         .collect())
 }
 
+/// What the library holds that a feed's items may be matched to: every show, movie, album and
+/// audiobook in the libraries the feed grabs for.
+pub async fn load_title_index(db: &Database, libraries: &HashSet<String>) -> Result<TitleIndex> {
+    use crate::services::feed_catalogue::{AlbumRef, BookRef, MovieRef, ShowRef};
+    if libraries.is_empty() {
+        return Ok(TitleIndex::default());
+    }
+    let in_libraries = StringFilter {
+        in_list: Some(libraries.iter().cloned().collect()),
+        ..Default::default()
+    };
+    let shows = Show::query(db.pool())
+        .filter(ShowWhereInput {
+            library_id: Some(in_libraries.clone()),
+            ..Default::default()
+        })
+        .fetch_all()
+        .await
+        .context("failed to list shows for the feed catalogue")?
+        .into_iter()
+        .map(|show| ShowRef {
+            id: show.id,
+            library_id: show.library_id,
+            name: show.name,
+            year: show.year,
+        })
+        .collect();
+    let movies = Movie::query(db.pool())
+        .filter(MovieWhereInput {
+            library_id: Some(in_libraries.clone()),
+            ..Default::default()
+        })
+        .fetch_all()
+        .await
+        .context("failed to list movies for the feed catalogue")?
+        .into_iter()
+        .map(|movie| MovieRef {
+            id: movie.id,
+            library_id: movie.library_id,
+            title: movie.title,
+            year: movie.year,
+        })
+        .collect();
+    let artists: HashMap<String, String> = Artist::query(db.pool())
+        .filter(ArtistWhereInput {
+            library_id: Some(in_libraries.clone()),
+            ..Default::default()
+        })
+        .fetch_all()
+        .await
+        .context("failed to list artists for the feed catalogue")?
+        .into_iter()
+        .map(|artist| (artist.id, artist.name))
+        .collect();
+    let albums = Album::query(db.pool())
+        .filter(AlbumWhereInput {
+            library_id: Some(in_libraries.clone()),
+            ..Default::default()
+        })
+        .fetch_all()
+        .await
+        .context("failed to list albums for the feed catalogue")?
+        .into_iter()
+        .map(|album| AlbumRef {
+            artist: artists.get(&album.artist_id).cloned().unwrap_or_default(),
+            id: album.id,
+            library_id: album.library_id,
+            name: album.name,
+            year: album.year,
+        })
+        .collect();
+    let books = Audiobook::query(db.pool())
+        .filter(AudiobookWhereInput {
+            library_id: Some(in_libraries),
+            ..Default::default()
+        })
+        .fetch_all()
+        .await
+        .context("failed to list audiobooks for the feed catalogue")?
+        .into_iter()
+        .map(|book| BookRef {
+            id: book.id,
+            library_id: book.library_id,
+            title: book.title,
+            author: book.author_name,
+        })
+        .collect();
+    Ok(TitleIndex::new(shows, movies, albums, books))
+}
+
+/// The columns an item's reading and match are stored in.
+#[derive(Debug, Clone, Default)]
+struct CatalogueColumns {
+    size: Option<i64>,
+    category: Option<String>,
+    parsed_scope: Option<String>,
+    parsed_year: Option<i32>,
+    parsed_season_end: Option<i32>,
+    parsed_group: Option<String>,
+    parsed_artist: Option<String>,
+    parsed_album: Option<String>,
+    parsed_format: Option<String>,
+    parsed_bitrate: Option<String>,
+    match_kind: Option<String>,
+    match_show_id: Option<String>,
+    match_movie_id: Option<String>,
+    match_album_id: Option<String>,
+    match_audiobook_id: Option<String>,
+    match_season: Option<i32>,
+    match_episode: Option<i32>,
+    match_label: Option<String>,
+    match_confidence: Option<i32>,
+    match_reason: Option<String>,
+}
+
+impl CatalogueColumns {
+    fn new(facts: &ItemFacts, matched: &Result<ItemMatch, String>) -> Self {
+        let mut columns = Self {
+            size: facts.size,
+            category: facts.category.clone(),
+            parsed_scope: Some(facts.scope.as_str().to_string()),
+            parsed_year: facts.year(),
+            parsed_season_end: facts.parsed.season_end,
+            parsed_group: facts.parsed.release_group.clone(),
+            parsed_artist: facts.music.artist.clone(),
+            parsed_album: facts.music.album.clone(),
+            parsed_format: facts.music.format.clone(),
+            parsed_bitrate: facts.music.bitrate.clone(),
+            ..Default::default()
+        };
+        match matched {
+            Ok(hit) => {
+                columns.match_kind = Some(hit.kind.as_str().to_string());
+                columns.match_show_id = hit.show_id.clone();
+                columns.match_movie_id = hit.movie_id.clone();
+                columns.match_album_id = hit.album_id.clone();
+                columns.match_audiobook_id = hit.audiobook_id.clone();
+                columns.match_season = hit.season;
+                columns.match_episode = hit.episode;
+                columns.match_label = Some(hit.label.clone());
+                columns.match_confidence = Some(hit.confidence);
+                columns.match_reason = Some(hit.reason.clone());
+            }
+            Err(reason) => columns.match_reason = Some(reason.clone()),
+        }
+        columns
+    }
+}
+
+/// Read one release the way the catalogue does and say what it is.
+fn describe_release(
+    release: &SourceRelease,
+    index: &TitleIndex,
+) -> (ItemFacts, Result<ItemMatch, String>) {
+    let facts = feed_catalogue::read_item(
+        &release.title,
+        release.description.as_deref(),
+        &release.categories,
+        release.size,
+    );
+    let matched = feed_catalogue::match_item(&facts, index);
+    (facts, matched)
+}
+
 async fn remember_item(
     db: &Database,
     feed: &RssFeed,
     release: &SourceRelease,
+    index: &TitleIndex,
     torrent_id: Option<&str>,
     skipped_reason: Option<&str>,
     now: DateTime<Utc>,
+    processed: bool,
 ) {
     let (link_hash, title_hash) = item_hashes(release);
     let parsed = scoring::parse_release(&release.title);
+    let (facts, matched) = describe_release(release, index);
+    let columns = CatalogueColumns::new(&facts, &matched);
     if let Err(error) = RssFeedItem::insert(
         db,
         CreateRssFeedItemInput {
@@ -535,8 +801,31 @@ async fn remember_item(
                 .clone()
                 .or_else(|| release.link.clone())
                 .unwrap_or_else(|| release.guid.clone()),
+            info_hash: release.info_hash.clone(),
+            size: columns.size,
+            seeders: release.seeders,
+            category: columns.category,
+            parsed_scope: columns.parsed_scope,
+            parsed_year: columns.parsed_year,
+            parsed_season_end: columns.parsed_season_end,
+            parsed_group: columns.parsed_group,
+            parsed_artist: columns.parsed_artist,
+            parsed_album: columns.parsed_album,
+            parsed_format: columns.parsed_format,
+            parsed_bitrate: columns.parsed_bitrate,
+            match_kind: columns.match_kind,
+            match_show_id: columns.match_show_id,
+            match_movie_id: columns.match_movie_id,
+            match_album_id: columns.match_album_id,
+            match_audiobook_id: columns.match_audiobook_id,
+            match_season: columns.match_season,
+            match_episode: columns.match_episode,
+            match_label: columns.match_label,
+            match_confidence: columns.match_confidence,
+            match_reason: columns.match_reason,
+            matched_at: Some(now.to_rfc3339()),
             pub_date: Some(release.publish_date.to_rfc3339()),
-            description: None,
+            description: release.description.clone(),
             parsed_show_name: Some(title_prefix(&release.title)).filter(|name| !name.is_empty()),
             parsed_season: parsed.season,
             parsed_episode: parsed.episodes.first().copied(),
@@ -545,7 +834,7 @@ async fn remember_item(
             parsed_source: parsed.source_type,
             parsed_audio: parsed.audio,
             parsed_hdr: parsed.hdr_type,
-            processed: true,
+            processed,
             torrent_id: torrent_id.map(ToString::to_string),
             skipped_reason: skipped_reason.map(ToString::to_string),
             seen_at: now.to_rfc3339(),
@@ -556,9 +845,149 @@ async fn remember_item(
         warn!(
             feed = %feed.name,
             item = %release.title,
-            error = %error,
+            error = %redact_text(&error.to_string()),
             "RSS: could not remember a feed item"
         );
+    }
+}
+
+/// How many unmatched items a poll looks at again.
+const REMATCH_BATCH: i64 = 400;
+
+/// Items that matched nothing when they were seen may match now (a title was added to the
+/// library), and items remembered before the catalogue existed have no reading at all. Look at
+/// the newest unmatched ones again. Returns how many are now matched.
+pub async fn rematch_unmatched(db: &Database, feed: &RssFeed, index: &TitleIndex) -> usize {
+    if index.is_empty() {
+        return 0;
+    }
+    let rows = match RssFeedItem::query(db.pool())
+        .filter(RssFeedItemWhereInput {
+            feed_id: Some(string_eq(&feed.id)),
+            match_kind: Some(StringFilter {
+                is_null: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .order_by(RssFeedItemOrderByInput {
+            seen_at: Some(OrderDirection::Desc),
+            ..Default::default()
+        })
+        .limit(REMATCH_BATCH)
+        .fetch_all()
+        .await
+    {
+        Ok(rows) => rows,
+        Err(error) => {
+            warn!(feed = %feed.name, error = %error, "RSS: could not look for items to match again");
+            return 0;
+        }
+    };
+    let now = Utc::now().to_rfc3339();
+    let mut newly_matched = 0;
+    for row in rows {
+        let facts =
+            feed_catalogue::read_item(&row.title, row.description.as_deref(), &[], row.size);
+        let matched = feed_catalogue::match_item(&facts, index);
+        let columns = CatalogueColumns::new(&facts, &matched);
+        // Nothing to write when it is still unmatched for the same reason and already read.
+        if matched.is_err()
+            && row.parsed_scope.is_some()
+            && row.match_reason == columns.match_reason
+        {
+            continue;
+        }
+        if matched.is_ok() {
+            newly_matched += 1;
+        }
+        if let Err(error) = RssFeedItem::update_by_id(
+            db,
+            &row.id,
+            UpdateRssFeedItemInput {
+                size: Some(columns.size),
+                category: Some(columns.category),
+                parsed_scope: Some(columns.parsed_scope),
+                parsed_year: Some(columns.parsed_year),
+                parsed_season_end: Some(columns.parsed_season_end),
+                parsed_group: Some(columns.parsed_group),
+                parsed_artist: Some(columns.parsed_artist),
+                parsed_album: Some(columns.parsed_album),
+                parsed_format: Some(columns.parsed_format),
+                parsed_bitrate: Some(columns.parsed_bitrate),
+                match_kind: Some(columns.match_kind),
+                match_show_id: Some(columns.match_show_id),
+                match_movie_id: Some(columns.match_movie_id),
+                match_album_id: Some(columns.match_album_id),
+                match_audiobook_id: Some(columns.match_audiobook_id),
+                match_season: Some(columns.match_season),
+                match_episode: Some(columns.match_episode),
+                match_label: Some(columns.match_label),
+                match_confidence: Some(columns.match_confidence),
+                match_reason: Some(columns.match_reason),
+                matched_at: Some(Some(now.clone())),
+                ..Default::default()
+            },
+        )
+        .await
+        {
+            warn!(feed = %feed.name, item = %row.title, error = %error, "RSS: could not store an item's match");
+        }
+    }
+    newly_matched
+}
+
+/// Bring feeds and items written before addresses were encrypted up to date: saving a value
+/// through the generated update runs the write transform, which encrypts it and, for a feed,
+/// stores the redacted display form. Cheap when there is nothing to do.
+pub async fn secure_stored_secrets(db: &Database) {
+    use crate::services::sources::encryption::CredentialEncryption;
+    let feeds = RssFeed::query(db.pool())
+        .fetch_all()
+        .await
+        .unwrap_or_default();
+    for feed in feeds {
+        let encrypted = CredentialEncryption::looks_like_envelope(&feed.url);
+        if encrypted && feed.url_display.is_some() {
+            continue;
+        }
+        if encrypted {
+            // Encrypted but without a display form: nothing to redact from without the key here.
+            continue;
+        }
+        if let Err(error) = RssFeed::update_by_id(
+            db,
+            &feed.id,
+            UpdateRssFeedInput {
+                // Saving an address clears the feed's failure count (write_rules), which is right
+                // here too: the next poll finds out again.
+                url: Some(feed.url.clone()),
+                ..Default::default()
+            },
+        )
+        .await
+        {
+            warn!(feed = %feed.name, error = %redact_text(&error.to_string()), "RSS: could not encrypt a stored feed address");
+        }
+    }
+    let plain_items = RssFeedItem::query(db.pool())
+        .filter(RssFeedItemWhereInput::default())
+        .fetch_all()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|item| !CredentialEncryption::looks_like_envelope(&item.link))
+        .collect::<Vec<_>>();
+    for item in plain_items {
+        let _ = RssFeedItem::update_by_id(
+            db,
+            &item.id,
+            UpdateRssFeedItemInput {
+                link: Some(item.link.clone()),
+                ..Default::default()
+            },
+        )
+        .await;
     }
 }
 
@@ -584,10 +1013,21 @@ async fn prune_old_items(db: &Database, now: DateTime<Utc>) {
 // The pass
 // ===========================================================================
 
-/// Poll every feed that is due, match what is new, and grab what is wanted.
-///
-/// Whoever calls this has decided automatic downloading is on; the pass does not check.
-pub async fn poll_due_feeds(manager: &Arc<ServicesManager>) -> Result<RssPassSummary> {
+/// Poll every feed that is due. Items are always read into the catalogue; with `grab` they are
+/// also matched against what is wanted and grabbed. The caller decides `grab` (automatic
+/// downloading is on); a feed is a source, so its catalogue fills either way.
+pub async fn poll_due_feeds(manager: &Arc<ServicesManager>, grab: bool) -> Result<RssPassSummary> {
+    poll_feeds(manager, None, false, grab).await
+}
+
+/// Poll `only_feed` (or every enabled feed), whether or not it is due when `force` is set (a
+/// person pressed Poll now; a disabled feed is still polled then).
+pub async fn poll_feeds(
+    manager: &Arc<ServicesManager>,
+    only_feed: Option<&str>,
+    force: bool,
+    grab: bool,
+) -> Result<RssPassSummary> {
     let db_service = manager
         .get_database()
         .await
@@ -595,9 +1035,12 @@ pub async fn poll_due_feeds(manager: &Arc<ServicesManager>) -> Result<RssPassSum
     let db = db_service.pool().clone();
     let now = Utc::now();
 
+    secure_stored_secrets(&db).await;
+
     let feeds: Vec<RssFeed> = RssFeed::query(db.pool())
         .filter(RssFeedWhereInput {
-            enabled: Some(graphql_orm::graphql::filters::BoolFilter {
+            id: only_feed.map(string_eq),
+            enabled: (only_feed.is_none()).then(|| graphql_orm::graphql::filters::BoolFilter {
                 eq: Some(true),
                 ..Default::default()
             }),
@@ -609,12 +1052,13 @@ pub async fn poll_due_feeds(manager: &Arc<ServicesManager>) -> Result<RssPassSum
     let due: Vec<RssFeed> = feeds
         .into_iter()
         .filter(|feed| {
-            feed_due(
-                feed.last_polled_at.as_deref(),
-                feed.poll_interval_minutes,
-                feed.consecutive_failures.unwrap_or(0),
-                now,
-            )
+            force
+                || feed_due(
+                    feed.last_polled_at.as_deref(),
+                    feed.poll_interval_minutes,
+                    feed.consecutive_failures.unwrap_or(0),
+                    now,
+                )
         })
         .collect();
 
@@ -634,7 +1078,15 @@ pub async fn poll_due_feeds(manager: &Arc<ServicesManager>) -> Result<RssPassSum
             tokio::time::sleep(GAP_BETWEEN_FEEDS).await;
         }
         let polled_at = Utc::now();
-        match fetch_feed(&client, &feed).await {
+        let fetched_items = match reveal_feed_url(manager, &feed).await {
+            Ok(address) => fetch_feed(&client, &address).await,
+            Err(error) => Err(FeedFailure::new(
+                redact_text(&format!("{error:#}")),
+                None,
+                FailureKind::Auth,
+            )),
+        };
+        match fetched_items {
             Ok(items) => {
                 summary.feeds_polled += 1;
                 info!(
@@ -663,6 +1115,16 @@ pub async fn poll_due_feeds(manager: &Arc<ServicesManager>) -> Result<RssPassSum
         }
     }
     if fetched.is_empty() {
+        return Ok(summary);
+    }
+
+    if !grab {
+        for FetchedFeed { feed, items } in fetched {
+            if let Err(error) = catalogue_only(&db, &feed, items, &mut summary).await {
+                warn!(feed = %feed.name, error = %redact_text(&format!("{error:#}")), "RSS: could not catalogue feed '{}'", feed.name);
+            }
+        }
+        prune_old_items(&db, now).await;
         return Ok(summary);
     }
 
@@ -708,6 +1170,32 @@ pub async fn poll_due_feeds(manager: &Arc<ServicesManager>) -> Result<RssPassSum
     Ok(summary)
 }
 
+/// Read a feed's new items into the catalogue without matching them to wanted targets or grabbing.
+async fn catalogue_only(
+    db: &Database,
+    feed: &RssFeed,
+    items: Vec<SourceRelease>,
+    summary: &mut RssPassSummary,
+) -> Result<()> {
+    let now = Utc::now();
+    let hashes: Vec<String> = items.iter().map(|item| item_hashes(item).0).collect();
+    let seen = seen_link_hashes(db, feed, &hashes).await?;
+    let new_items: Vec<SourceRelease> = items
+        .into_iter()
+        .zip(hashes)
+        .filter(|(_, hash)| !seen.contains(hash))
+        .map(|(item, _)| item)
+        .collect();
+    summary.new_items += new_items.len();
+    let libraries = feed_libraries(db, feed).await?;
+    let index = load_title_index(db, &libraries).await?;
+    for item in &new_items {
+        remember_item(db, feed, item, &index, None, None, now, false).await;
+    }
+    rematch_unmatched(db, feed, &index).await;
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn process_feed(
     env: &GrabEnv,
@@ -732,7 +1220,12 @@ async fn process_feed(
         .map(|(item, _)| item)
         .collect();
     summary.new_items += new_items.len();
+
+    // What the feed's items are matched to in the catalogue.
+    let catalogue_libraries = feed_libraries(db, feed).await?;
+    let index = load_title_index(db, &catalogue_libraries).await?;
     if new_items.is_empty() {
+        rematch_unmatched(db, feed, &index).await;
         return Ok(());
     }
 
@@ -937,8 +1430,19 @@ async fn process_feed(
             .get(&item.guid)
             .map(String::as_str)
             .filter(|id| !id.is_empty());
-        remember_item(db, feed, item, torrent_id, reason.as_deref(), now).await;
+        remember_item(
+            db,
+            feed,
+            item,
+            &index,
+            torrent_id,
+            reason.as_deref(),
+            now,
+            true,
+        )
+        .await;
     }
+    rematch_unmatched(db, feed, &index).await;
     debug!(
         feed = %feed.name,
         remembered = fates.len().saturating_sub(unresolved.len()),

@@ -196,6 +196,7 @@ pub(crate) fn entity_metadata() -> Vec<&'static graphql_orm::graphql::orm::Entit
         <TorznabCategory as Entity>::metadata(),
         <QualityProfile as Entity>::metadata(),
         <ReleaseBlocklist as Entity>::metadata(),
+        <ReleaseRecommendation as Entity>::metadata(),
     ]
 }
 
@@ -989,6 +990,20 @@ impl AppWriteInputTransform {
         }
     }
 
+    /// Encrypt a secret that rides in a feed address or link, like source credentials. Where no
+    /// services manager exists at all (a bare repository in a tool or test) the value is kept as
+    /// given; a running server always has one, and one without a credential key refuses the write.
+    async fn protect_feed_secret(
+        &self,
+        ctx: Option<&async_graphql::Context<'_>>,
+        plaintext: String,
+    ) -> async_graphql::Result<String> {
+        if ctx.is_none() && self.services_from_ctx(None).is_none() {
+            return Ok(plaintext);
+        }
+        self.encrypt_source_credentials(ctx, plaintext).await
+    }
+
     async fn encrypt_source_credentials(
         &self,
         ctx: Option<&async_graphql::Context<'_>>,
@@ -1085,6 +1100,24 @@ impl WriteInputTransform for AppWriteInputTransform {
                     .encrypt_source_credentials(ctx, input.credentials.clone())
                     .await?;
             }
+            if entity_name == "RssFeed"
+                && let Some(input) = input.downcast_mut::<CreateRssFeedInput>()
+            {
+                input.url_display = Some(crate::services::redact::feed_url_display(&input.url));
+                input.url = self.protect_feed_secret(ctx, input.url.clone()).await?;
+            }
+            if entity_name == "RssFeedItem"
+                && let Some(input) = input.downcast_mut::<CreateRssFeedItemInput>()
+            {
+                input.link = self.protect_feed_secret(ctx, input.link.clone()).await?;
+            }
+            if entity_name == "ReleaseRecommendation"
+                && let Some(input) = input.downcast_mut::<CreateReleaseRecommendationInput>()
+            {
+                input.release_link = self
+                    .protect_feed_secret(ctx, input.release_link.clone())
+                    .await?;
+            }
             if entity_name == "MatchingAssistant"
                 && let Some(input) = input.downcast_mut::<CreateMatchingAssistantInput>()
             {
@@ -1122,6 +1155,19 @@ impl WriteInputTransform for AppWriteInputTransform {
                 && let Some(credentials) = input.credentials.take()
             {
                 input.credentials = Some(self.encrypt_source_credentials(ctx, credentials).await?);
+            }
+            if entity_name == "RssFeed"
+                && let Some(input) = input.downcast_mut::<UpdateRssFeedInput>()
+                && let Some(url) = input.url.take()
+            {
+                input.url_display = Some(Some(crate::services::redact::feed_url_display(&url)));
+                input.url = Some(self.protect_feed_secret(ctx, url).await?);
+            }
+            if entity_name == "RssFeedItem"
+                && let Some(input) = input.downcast_mut::<UpdateRssFeedItemInput>()
+                && let Some(link) = input.link.take()
+            {
+                input.link = Some(self.protect_feed_secret(ctx, link).await?);
             }
             if entity_name == "MatchingAssistant"
                 && let Some(input) = input.downcast_mut::<UpdateMatchingAssistantInput>()

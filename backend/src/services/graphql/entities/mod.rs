@@ -63,6 +63,7 @@ pub mod artwork_cache;
 pub mod notification;
 pub mod quality_profile;
 pub mod release_blocklist;
+pub mod release_recommendation;
 pub mod storage_object;
 pub mod torznab_category;
 
@@ -112,6 +113,7 @@ pub use playback_session::*;
 pub use quality_profile::*;
 pub use refresh_token::*;
 pub use release_blocklist::*;
+pub use release_recommendation::*;
 pub use rss_feed::*;
 pub use rss_feed_item::*;
 pub use schedule_cache::*;

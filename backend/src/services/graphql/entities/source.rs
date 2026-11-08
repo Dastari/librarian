@@ -120,6 +120,32 @@ pub struct Source {
     #[filterable(type = "date")]
     pub last_error_at: Option<String>,
 
+    /// `ok`, `failing` or `auth_expired`: the outcome of the last health check or real use.
+    #[graphql(name = "healthStatus")]
+    #[filterable(type = "string")]
+    pub health_status: Option<String>,
+
+    /// Why it is failing: `auth`, `unreachable`, `rate_limited` or `other`.
+    #[graphql(name = "healthKind")]
+    #[filterable(type = "string")]
+    pub health_kind: Option<String>,
+
+    /// When the source was last tested or used, whichever is later.
+    #[graphql(name = "lastCheckedAt")]
+    #[filterable(type = "date")]
+    pub last_checked_at: Option<String>,
+
+    /// When the hourly check will test it next (pushed out while it keeps failing).
+    #[graphql(name = "nextCheckAt")]
+    #[filterable(type = "date")]
+    pub next_check_at: Option<String>,
+
+    /// When Librarian last tried to sign this source in with a username and password. Never more
+    /// than one attempt an hour, so a wrong password cannot lock the account.
+    #[graphql(name = "loginAttemptedAt")]
+    #[filterable(type = "date")]
+    pub login_attempted_at: Option<String>,
+
     #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
@@ -255,6 +281,13 @@ pub struct SourceReleaseInfoGql {
     pub source_id: Option<String>,
     #[graphql(name = "sourceName")]
     pub source_name: Option<String>,
+    /// True for a release read from an RSS feed's catalogue rather than searched on an indexer.
+    #[graphql(name = "fromFeed")]
+    pub from_feed: bool,
+    /// For a feed release: the catalogue item to pass to `addTorrent.feedItemId`. A feed release
+    /// has no link a client may see, since the link carries the tracker passkey.
+    #[graphql(name = "feedItemId")]
+    pub feed_item_id: Option<String>,
     /// Quality tags parsed out of the release title.
     #[graphql(name = "parsed")]
     pub parsed: ParsedReleaseGql,
@@ -338,6 +371,9 @@ pub struct SourceSearchResultItemGql {
     pub elapsed_ms: i64,
     #[graphql(name = "fromCache")]
     pub from_cache: bool,
+    /// True when this entry is an RSS feed's catalogue, not an indexer.
+    #[graphql(name = "fromFeed")]
+    pub from_feed: bool,
     #[graphql(name = "error")]
     pub error: Option<String>,
 }
@@ -721,6 +757,22 @@ impl SourceCustomQueries {
             }
         }
 
+        // Feeds are sources too: the catalogue answers from what they have already listed, with
+        // no request to the tracker. Only the first page; a catalogue has no further pages.
+        let mut feed_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        if continuations.is_empty() {
+            match feed_search_pages(db, user, &input).await {
+                Ok((pages, ids)) => {
+                    results.extend(pages);
+                    feed_ids.extend(ids);
+                }
+                Err(error) => tracing::warn!(
+                    error = %crate::services::redact::redact_text(&error.message),
+                    "Release search: the feed catalogue could not be searched"
+                ),
+            }
+        }
+
         let mut total_releases = 0;
         let gql_results: Vec<SourceSearchResultItemGql> = results
             .into_iter()
@@ -799,7 +851,14 @@ impl SourceCustomQueries {
                             }
                             None => (None, None),
                         };
+                        let from_feed = feed_ids.contains(&r.source_id);
                         SourceReleaseInfoGql {
+                            from_feed,
+                            feed_item_id: rel
+                                .guid
+                                .strip_prefix(FEED_ITEM_GUID_PREFIX)
+                                .filter(|_| from_feed)
+                                .map(str::to_string),
                             stable_id: rel.stable_id(&r.source_id),
                             title: rel.title.clone(),
                             guid: rel.guid.clone(),
@@ -835,6 +894,7 @@ impl SourceCustomQueries {
                     })
                     .collect();
 
+                let entry_from_feed = feed_ids.contains(&r.source_id);
                 SourceSearchResultItemGql {
                     page_info: page.page_info,
                     source_id: r.source_id,
@@ -842,6 +902,7 @@ impl SourceCustomQueries {
                     releases,
                     elapsed_ms: r.elapsed_ms as i64,
                     from_cache: r.from_cache,
+                    from_feed: entry_from_feed,
                     error: r.error,
                 }
             })
@@ -1098,13 +1159,11 @@ impl SourceCustomMutations {
                     Some(result) => {
                         let releases_found = result.releases.len() as i32;
 
-                        let _ = update_source_status(
+                        crate::jobs::source_health::record_source_check(
                             db,
-                            &id,
-                            Some(0),
-                            Some(None),
-                            Some(Some(now_iso_string())),
-                            None,
+                            &source,
+                            &crate::jobs::source_health::CheckResult::Ok,
+                            chrono::Utc::now(),
                         )
                         .await;
 
@@ -1126,13 +1185,14 @@ impl SourceCustomMutations {
             Ok(false) => {
                 let error = "Connection test failed - check your credentials".to_string();
 
-                let _ = update_source_status(
+                crate::jobs::source_health::record_source_check(
                     db,
-                    &id,
-                    Some(source.error_count + 1),
-                    Some(Some(error.clone())),
-                    None,
-                    Some(Some(now_iso_string())),
+                    &source,
+                    &crate::jobs::source_health::CheckResult::failed(
+                        crate::services::sources::health::FailureKind::Auth,
+                        &error,
+                    ),
+                    chrono::Utc::now(),
                 )
                 .await;
 
@@ -1144,17 +1204,21 @@ impl SourceCustomMutations {
                 })
             }
             Err(e) => {
-                let error = e.to_string();
-
-                let _ = update_source_status(
+                let result = crate::jobs::source_health::CheckResult::from_error(&e);
+                crate::jobs::source_health::record_source_check(
                     db,
-                    &id,
-                    Some(source.error_count + 1),
-                    Some(Some(error.clone())),
-                    None,
-                    Some(Some(now_iso_string())),
+                    &source,
+                    &result,
+                    chrono::Utc::now(),
                 )
                 .await;
+                // The message is the redacted one: errors can quote an address with its key.
+                let error = match &result {
+                    crate::jobs::source_health::CheckResult::Failed { message, .. } => {
+                        message.clone()
+                    }
+                    crate::jobs::source_health::CheckResult::Ok => e.to_string(),
+                };
 
                 Ok(SourceTestConnectionResultGql {
                     success: false,
@@ -1200,6 +1264,7 @@ impl SourceCustomMutations {
                     error_count: None,
                     last_success_at: None,
                     last_error_at: None,
+                    ..Default::default()
                 },
             )
             .await?;
@@ -1233,46 +1298,6 @@ fn format_bytes(bytes: i64) -> String {
     } else {
         format!("{} B", bytes)
     }
-}
-
-fn now_iso_string() -> String {
-    chrono::Utc::now().to_rfc3339()
-}
-
-async fn update_source_status(
-    db: &Database,
-    id: &str,
-    error_count: Option<i32>,
-    last_error: Option<Option<String>>,
-    last_success_at: Option<Option<String>>,
-    last_error_at: Option<Option<String>>,
-) -> Result<()> {
-    Source::update_by_id(
-        db,
-        &id.to_string(),
-        UpdateSourceInput {
-            name: None,
-            source_type: None,
-            definition_id: None,
-            enabled: None,
-            priority: None,
-            media_types: None,
-            site_url: None,
-            supports_search: None,
-            supports_tv_search: None,
-            supports_movie_search: None,
-            supports_music_search: None,
-            supports_book_search: None,
-            credentials: None,
-            settings: None,
-            last_error,
-            error_count,
-            last_success_at,
-            last_error_at,
-        },
-    )
-    .await?;
-    Ok(())
 }
 
 #[cfg(test)]

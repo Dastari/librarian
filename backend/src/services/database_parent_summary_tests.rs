@@ -756,6 +756,9 @@ async fn rss_library_status_reparent_and_delete_invalidate_surviving_libraries()
             last_successful_at: None,
             last_error: None,
             consecutive_failures: None,
+            url_display: None,
+            health_status: None,
+            health_kind: None,
         },
     )
     .await

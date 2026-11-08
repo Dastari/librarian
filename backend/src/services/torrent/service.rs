@@ -128,6 +128,9 @@ pub struct TorrentAddMetadata {
     pub show_id: Option<String>,
     pub album_id: Option<String>,
     pub audiobook_id: Option<String>,
+    /// For a pack: the files that fill what is missing. Set when "Download only the missing files
+    /// from packs" is on; the torrent then downloads just those (see `torrent::partial`).
+    pub wanted_files: Option<crate::services::torrent::partial::WantedFiles>,
 }
 
 /// `created` means a new owned persisted record. Reusing a registered runtime identity
@@ -156,6 +159,55 @@ fn wanted_linkage(metadata: &TorrentAddMetadata) -> database::WantedLinkage<'_> 
         show_id: metadata.show_id.as_deref(),
         album_id: metadata.album_id.as_deref(),
         audiobook_id: metadata.audiobook_id.as_deref(),
+    }
+}
+
+/// Select only the wanted files of a paused torrent. A selection that cannot be made, or that would
+/// leave nothing out, leaves the whole torrent selected: never fewer files than were asked for.
+async fn apply_wanted_files(
+    session: &Arc<Session>,
+    handle: &Arc<librqbit::ManagedTorrent>,
+    wanted: &crate::services::torrent::partial::WantedFiles,
+    info_hash: &str,
+    name: &str,
+) {
+    let Some(info) = handle.metadata.load_full() else {
+        return;
+    };
+    let names: Vec<String> = info
+        .file_infos
+        .iter()
+        .map(|file| file.relative_filename.to_string_lossy().to_string())
+        .collect();
+    let Some(chosen) = crate::services::torrent::partial::select_wanted_files(&names, wanted)
+    else {
+        info!(
+            info_hash,
+            name,
+            files = names.len(),
+            "Downloading all {} files of '{name}': the missing ones could not be told apart or are all of them",
+            names.len()
+        );
+        return;
+    };
+    let selection: std::collections::HashSet<usize> = chosen.iter().copied().collect();
+    match session.update_only_files(handle, &selection).await {
+        Ok(()) => info!(
+            info_hash,
+            name,
+            selected = chosen.len(),
+            files = names.len(),
+            "Downloading only {} of {} files of '{name}': the ones that fill what is missing",
+            chosen.len(),
+            names.len()
+        ),
+        Err(error) => warn!(
+            info_hash,
+            name,
+            error = %error,
+            "Could not select only the missing files of '{name}'; downloading all {} files",
+            names.len()
+        ),
     }
 }
 
@@ -426,6 +478,10 @@ impl TorrentService {
                         name, reason, "Refused a release with no usable files"
                     );
                     anyhow::bail!(reason);
+                }
+                // Still paused: choose which files to download before any byte is fetched.
+                if let Some(wanted) = metadata.wanted_files.as_ref() {
+                    apply_wanted_files(&r.session, &handle, wanted, &info_hash, &name).await;
                 }
                 let result: Result<bool> = async {
                     let actor = current_add_actor(&r.db, &actor).await?;

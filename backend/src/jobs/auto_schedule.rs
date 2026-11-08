@@ -130,6 +130,15 @@ pub enum Expectation {
     Movie {
         year: Option<i32>,
     },
+    /// A pack of several seasons or the complete series. Only recommendations look for these: the
+    /// hunt never searches for a whole series.
+    SeriesPack,
+    /// A whole album by this artist, as music titles give it (`Artist - Album (Year) [FLAC]`).
+    /// Only recommendations look for these: the hunt searches album tracks one at a time.
+    Album {
+        artist: String,
+        name: String,
+    },
 }
 
 impl Expectation {
@@ -198,6 +207,43 @@ impl Expectation {
                     _ => None,
                 }
             }
+            Self::SeriesPack => {
+                if !parsed.episodes.is_empty() {
+                    return Some("a single episode, wanted the complete series".to_string());
+                }
+                match (parsed.season, parsed.season_end) {
+                    (None, None) if parsed.is_season_pack => None,
+                    (Some(first), Some(last)) if last > first => None,
+                    (Some(season), _) => Some(format!(
+                        "only season {season}, wanted several seasons or the complete series"
+                    )),
+                    _ => Some("does not say it covers several seasons".to_string()),
+                }
+            }
+            Self::Album { .. } => None,
+        }
+    }
+
+    /// The same check for what music and books can only be judged by from the title text: whether
+    /// `title` names this album. Kept apart from [`Self::mismatch`] because it needs the raw title,
+    /// not the parse.
+    pub fn title_mismatch(&self, title: &str, strict: bool) -> Option<String> {
+        let Self::Album { artist, name } = self else {
+            return None;
+        };
+        let facts = crate::services::feed_catalogue::read_music_title(title);
+        match (facts.artist.as_deref(), facts.album.as_deref()) {
+            (Some(found_artist), Some(found_album)) => {
+                if !crate::services::music_rules::same_artist(artist, found_artist) {
+                    Some(format!("by {found_artist}, wanted {artist}"))
+                } else if !crate::services::music_rules::same_album_title(name, found_album) {
+                    Some(format!("the album '{found_album}', wanted '{name}'"))
+                } else {
+                    None
+                }
+            }
+            _ if strict => Some(format!("does not say which album it is, wanted '{name}'")),
+            _ => None,
         }
     }
 }

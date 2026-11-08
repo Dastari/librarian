@@ -94,6 +94,7 @@ impl OwnershipRowPolicy {
             "PlaybackProgress" => direct!(PlaybackProgressWhereInput),
             "PlaybackSession" => direct!(PlaybackSessionWhereInput),
             "Notification" => direct!(NotificationWhereInput),
+            "ReleaseRecommendation" => direct!(ReleaseRecommendationWhereInput),
             "RssFeed" => direct!(RssFeedWhereInput),
             "Torrent" => direct!(TorrentWhereInput),
             "UsenetDownload" => direct!(UsenetDownloadWhereInput),
@@ -168,6 +169,7 @@ impl OwnershipRowPolicy {
             | "PlaybackProgress"
             | "PlaybackSession"
             | "Notification"
+            | "ReleaseRecommendation"
             | "RssFeed"
             | "Torrent"
             | "UsenetDownload"
@@ -215,6 +217,7 @@ impl OwnershipRowPolicy {
             "PlaybackProgress" => required!(PlaybackProgress),
             "PlaybackSession" => required!(PlaybackSession),
             "Notification" => required!(Notification),
+            "ReleaseRecommendation" => required!(ReleaseRecommendation),
             "RssFeed" => required!(RssFeed),
             "Torrent" => required!(Torrent),
             "UsenetDownload" => required!(UsenetDownload),

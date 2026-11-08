@@ -21,7 +21,7 @@ use super::definitions::torznab::TorznabSource;
 use super::definitions::x1337::Source1337x;
 use super::definitions::yts::YtsSource;
 use super::encryption::CredentialEncryption;
-use super::{Source, SourceQuery, SourceRelease, SourceSearchResult};
+use super::{SessionRefresher, Source, SourceQuery, SourceRelease, SourceSearchResult};
 
 #[path = "paging.rs"]
 mod paging;
@@ -49,6 +49,42 @@ pub struct SourcesManager {
     cache: RwLock<SearchCache>,
     /// Rate limiting semaphores per source
     rate_limiters: RwLock<HashMap<String, Arc<Semaphore>>>,
+    /// How each source's last real use went, so health checks can count it as a check.
+    usage: Arc<UsageLog>,
+    /// Signs password-authenticated sources in again when their session ends.
+    session_refresher: RwLock<Option<Arc<dyn SessionRefresher>>>,
+}
+
+/// The outcome of a source's most recent real search.
+#[derive(Debug, Clone)]
+pub struct SourceUse {
+    pub at: chrono::DateTime<chrono::Utc>,
+    pub ok: bool,
+    /// The error text of a failed use (unredacted: it stays inside the server).
+    pub error: Option<String>,
+}
+
+/// Per-source record of the latest real use.
+#[derive(Debug, Default)]
+pub struct UsageLog {
+    entries: RwLock<HashMap<String, SourceUse>>,
+}
+
+impl UsageLog {
+    pub fn note(&self, source_id: &str, outcome: Result<(), String>) {
+        self.entries.write().insert(
+            source_id.to_string(),
+            SourceUse {
+                at: chrono::Utc::now(),
+                ok: outcome.is_ok(),
+                error: outcome.err(),
+            },
+        );
+    }
+
+    pub fn latest(&self, source_id: &str) -> Option<SourceUse> {
+        self.entries.read().get(source_id).cloned()
+    }
 }
 
 impl SourcesManager {
@@ -64,7 +100,29 @@ impl SourcesManager {
             priorities: RwLock::new(HashMap::new()),
             cache: RwLock::new(SearchCache::new(DEFAULT_CACHE_TTL)),
             rate_limiters: RwLock::new(HashMap::new()),
+            usage: Arc::new(UsageLog::default()),
+            session_refresher: RwLock::new(None),
         })
+    }
+
+    /// Sign a password-authenticated source in again now (subject to the one-an-hour limit). The
+    /// error is for people: it never contains credentials or cookies.
+    pub async fn refresh_session(&self, source_id: &str) -> Result<String, String> {
+        let refresher = self.session_refresher.read().clone();
+        match refresher {
+            Some(refresher) => refresher.refresh(source_id).await,
+            None => Err("sign-in is not available".to_string()),
+        }
+    }
+
+    /// How a source's last real search went.
+    pub fn latest_use(&self, source_id: &str) -> Option<SourceUse> {
+        self.usage.latest(source_id)
+    }
+
+    /// Install what signs password-authenticated sources in again.
+    pub fn set_session_refresher(&self, refresher: Arc<dyn SessionRefresher>) {
+        *self.session_refresher.write() = Some(refresher);
     }
 
     /// Load a source from its configuration
@@ -90,17 +148,37 @@ impl SourcesManager {
                 settings,
             )?),
             "iptorrents" => {
-                let cookie = credentials.get("Cookie").cloned().unwrap_or_default();
+                let password_login = credentials
+                    .get("AuthMethod")
+                    .is_none_or(|method| method != "cookie")
+                    && credentials
+                        .get("Username")
+                        .is_some_and(|name| !name.is_empty())
+                    && credentials
+                        .get("Password")
+                        .is_some_and(|word| !word.is_empty());
+                let cookie = if password_login {
+                    credentials.get("SessionCookie")
+                } else {
+                    credentials.get("Cookie")
+                }
+                .cloned()
+                .unwrap_or_default();
                 let user_agent = credentials.get("UserAgent").cloned().unwrap_or_default();
 
-                Arc::new(IPTorrentsSource::new(
+                let source = IPTorrentsSource::new(
                     source_id.to_string(),
                     name.to_string(),
                     site_url,
                     &cookie,
                     &user_agent,
                     settings,
-                )?)
+                )?;
+                Arc::new(if password_login {
+                    source.with_password_login(self.session_refresher.read().clone())
+                } else {
+                    source
+                })
             }
             "limetorrents" => Arc::new(LimeTorrentsSource::new(
                 source_id.to_string(),
@@ -224,10 +302,28 @@ impl SourcesManager {
             let query = query.clone();
             let cache = self.cache.read().clone();
             let rate_limiter = self.rate_limiters.read().get(&source_id).cloned();
+            let usage = self.usage.clone();
 
             let handle = tokio::spawn(async move {
-                Self::search_single_with_timeout(source_id, source, &query, cache, rate_limiter)
-                    .await
+                let result = Self::search_single_with_timeout(
+                    source_id,
+                    source,
+                    &query,
+                    cache,
+                    rate_limiter,
+                )
+                .await;
+                // A cached answer says nothing about the source today.
+                if !result.from_cache {
+                    usage.note(
+                        &result.source_id,
+                        match &result.error {
+                            None => Ok(()),
+                            Some(error) => Err(error.clone()),
+                        },
+                    );
+                }
+                result
             });
             handles.push(handle);
         }
@@ -267,10 +363,28 @@ impl SourcesManager {
             let query = query.clone();
             let cache = self.cache.read().clone();
             let rate_limiter = self.rate_limiters.read().get(&source_id).cloned();
+            let usage = self.usage.clone();
 
             let handle = tokio::spawn(async move {
-                Self::search_single_with_timeout(source_id, source, &query, cache, rate_limiter)
-                    .await
+                let result = Self::search_single_with_timeout(
+                    source_id,
+                    source,
+                    &query,
+                    cache,
+                    rate_limiter,
+                )
+                .await;
+                // A cached answer says nothing about the source today.
+                if !result.from_cache {
+                    usage.note(
+                        &result.source_id,
+                        match &result.error {
+                            None => Ok(()),
+                            Some(error) => Err(error.clone()),
+                        },
+                    );
+                }
+                result
             });
             handles.push(handle);
         }

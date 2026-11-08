@@ -12,8 +12,9 @@ use graphql_orm::schema_roots;
 use crate::db::Database;
 use crate::services::graphql::entities::*;
 use crate::services::graphql::mutations::{
-    ArtworkMutations, AuthMutations, AutoDownloadMutations, BackupMutations, FilesystemMutations,
-    LibraryScanMutations, MaintenanceMutations, NotificationFeedMutations, QualityMutations,
+    ArtworkMutations, AuthMutations, AutoDownloadMutations, BackupMutations, FeedMutations,
+    FilesystemMutations, LibraryScanMutations, MaintenanceMutations, NotificationFeedMutations,
+    QualityMutations, RecommendationMutations,
 };
 use crate::services::graphql::queries::{
     BackupQueries, ContentStatusQueries, FilesystemQueries, GenreQueries, ResumeQueries,
@@ -89,6 +90,7 @@ macro_rules! librarian_schema_roots {
         TorznabCategory,
         QualityProfile,
         ReleaseBlocklist,
+        ReleaseRecommendation,
     ],
     // Entities that no client or internal GraphQL operation writes through the generated
     // roots: they are written by services in Rust (analysis, scan runs, auth sessions) or
@@ -110,9 +112,10 @@ macro_rules! librarian_schema_roots {
         TorznabCategory,
         UsenetDownload,
         UsenetServer,
+        ReleaseRecommendation,
     ],
     extra_query_types: [FilesystemQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries],
-    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations],
+    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations],
     extra_subscription_types: [BackupSubscriptions, FilesystemSubscriptions, TorrentRuntimeSubscriptions, SessionSubscriptions, SourceCapabilitySubscriptions],
         }
     };
@@ -430,6 +433,7 @@ mod tests {
             TorznabCategory,
             QualityProfile,
             ReleaseBlocklist,
+            ReleaseRecommendation,
         );
         expected.sort();
         actual.sort();
