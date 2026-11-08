@@ -1142,10 +1142,10 @@ when the filesystem can provide one. If a filesystem cannot provide modification
 fallback signal.
 
 ### Q68: What does `autoDownloadMode` mean for a Show/Album/Audiobook, and how does it relate to `autoDownload`?
-**Answer:** `autoDownloadMode` is authoritative and `autoDownload` is the normalised master switch. `NONE` = never hunt (implies `autoDownload = false`); `WANTED` = hunt only children already flagged `wanted`; `ALL` = every child that is missing (no `mediaFileId`), not `ignored`, and already aired/released is automatically treated as wanted — `jobs::auto_download` writes `wanted = true` on those rows through the entity layer so the stored status matches what the hunt is doing, which also means a future episode becomes wanted by itself once its air date passes. Items with no air/release date at all are treated as released (back-catalogue entries frequently have none). Movies are unchanged: `monitored` + `wanted`. The job normalises the pair on read (`normalize_auto_download`); the frontend sets both fields together.
+**Answer:** `autoDownloadMode` is authoritative and `autoDownload` is the normalised master switch. `NONE` = never hunt (implies `autoDownload = false`); `WANTED` = hunt only children already flagged `wanted`; `ALL` = every child that is missing (no `mediaFileId`), not `ignored`, and already aired/released is automatically treated as wanted — `jobs::auto_download` writes `wanted = true` on those rows through the entity layer so the stored status matches what the hunt is doing, which also means a future episode becomes wanted by itself once it has aired and its grace period (Q81) has passed. Items with no air/release date at all are treated as released (back-catalogue entries frequently have none). Movies are unchanged: `monitored` + `wanted`. The job normalises the pair on read (`normalize_auto_download`); the frontend sets both fields together.
 
 ### Q69: How often may the same wanted item be searched for?
-**Answer:** At most once every 6 hours per target. `jobs::auto_download` keeps a `target key -> last searched at` map in the `auto_download.search_state` app setting (written through the `AppSetting` entity, so it survives restarts and is visible/clearable in settings). Keys are `episode:<id>`, `movie:<id>`, `track:<id>`, `audiobook:<id>` and `show:<id>:s<season>` for season packs; entries older than 30 days are pruned on write. The `searchMissing` mutation and the retry sweep's re-hunt ignore the backoff, so a user pressing "search" always gets a real search.
+**Answer:** At most once every `auto_download.search_backoff_minutes` (default 360, i.e. 6 hours) per target, or every `auto_download.air_retry_minutes` (default 60) while an episode is inside its post-air window (Q81). `jobs::auto_download` keeps a `target key -> last searched at` map in the `auto_download.search_state` app setting (written through the `AppSetting` entity, so it survives restarts and is visible/clearable in settings). Keys are `episode:<id>`, `movie:<id>`, `track:<id>`, `audiobook:<id>` and `show:<id>:s<season>` for season packs; entries older than 30 days are pruned on write. The `searchMissing` mutation and the retry sweep's re-hunt ignore the backoff, so a user pressing "search" always gets a real search.
 
 ### Q70: What happens to a release that fails to import or never downloads?
 **Answer:** It is blocklisted and the target is re-hunted. The 15-minute retry sweep classifies every grabbed torrent inside the retry window: `postProcessStatus = "failed"` (reason `import_failed`) or zero bytes downloaded for more than 24 hours (reason `stalled`) creates a `ReleaseBlocklist` row carrying the info hash, guid, title, source and wanted-target ids, then immediately runs a scoped hunt for that target with the backoff disabled. `jobs::auto_download` drops any candidate whose info hash or guid is blocklisted, and treats a blocklisted in-flight torrent as resolved so the re-hunt is not blocked by the grab it just blocked. Entries block forever unless `expiresAt` is set. Everything else that merely never resolved is re-processed as before (Q34).
@@ -1373,3 +1373,65 @@ overwritten by the environment. Discovery timeout and retention stay environment
 **Guard:** `services::graphql::schema::tests::no_root_field_is_defined_by_more_than_one_chunk` fails when a root
 field is defined by more than one chunk of the merged root (async-graphql silently keeps only one, which is how a
 hand-written `updateCastDevice` went unnoticed). It reads the same chunk list that `schema_roots!` is given.
+
+### Q80: What turns automatic downloading on, and what runs when it is?
+**Answer:** One setting, `auto_download.enabled`, default **off**, edited on Settings › Downloads. There is no environment
+fallback, so the switch always shows what the server does. While it is off nothing searches, polls a feed, grabs, or
+re-searches after blocklisting a dead grab. `triggerAutoDownload` ("Run now") and `searchMissing` ("Search now") still run: a
+person pressed a button. When it is on, `AutoDownloadService` runs three workers, each re-reading the settings every minute so
+a change needs no restart: the **scheduler** (a full sweep of every wanted title every `auto_download.interval_minutes`,
+default 60, starting on the first tick after the switch is turned on; plus the air-time pass, Q81, every five minutes), the
+**RSS worker** (Q82), and the **retry sweep** (Q70). All settings are `auto_download.*` app settings; values the scheduler
+cannot honour are clamped (`jobs::auto_settings`). What each pass did last is written to `auto_download.status` and shown on the
+Downloads screen. Per title: `NONE` never, `WANTED` only rows flagged wanted, `ALL` every missing row that has aired or been
+released (Q68); movies are downloaded when `monitored` and `wanted` and their release date has passed.
+
+### Q81: When is an episode searched for after it airs?
+**Answer:** Not before `air_stamp` (or, with only a date, the start of that day in UTC) plus `auto_download.air_grace_minutes`
+(default 60), because releases take time to appear. From then on, for `auto_download.air_window_days` (default 7) it is on the
+quick schedule: searched again every `auto_download.air_retry_minutes` (default 60) until a release is grabbed. After the
+window it is back-catalogue and follows the ordinary `search_backoff_minutes` (Q69) for as long as it stays missing in `ALL`
+mode, or while it stays flagged wanted in `WANTED` mode. The five-minute **air-time pass** looks only at episodes inside the
+window so a new episode is searched within minutes of becoming searchable instead of at the next hourly sweep; it uses the same
+backoff map as the sweep, so the two never search the same episode twice in a row. Episodes with no date at all are
+back-catalogue. Movies have only TMDB's primary release date (no digital release date is stored), so they get neither grace nor
+the quick window: they are searched once that date has passed, on the ordinary backoff. A season pack is searched on the
+ordinary backoff; its per-episode fallbacks use the episode's own schedule, and a pack that is still inside its backoff does
+not hold the episode searches back.
+
+### Q82: How are RSS feeds used?
+**Answer:** `jobs::rss_poll` polls each enabled `RssFeed` on its own `pollIntervalMinutes`, never faster than 15 minutes, with the
+wait doubling for every consecutive failure (up to a day) and a `Retry-After` from the host obeyed. Feeds are read one after
+another with a pause between them and a 4 MB limit on the response; only RSS 2.0 (including Torznab attributes and magnet
+links) is understood, and only `http`/`https`. Items already seen (a `RssFeedItem` row per item, kept 30 days) are skipped. New
+items are matched against what the hunt would search for (same modes, quality profile and blocklist; the grace period does not
+apply, since a release that exists is a release) **in the feed owner's libraries only**, and in the feed's library when it names
+one. A match must name the show or movie exactly after normalising case and punctuation ("The Office" is not "The Office US"),
+must agree with any TVDB/TVmaze/TMDB id the item carries, and must be the right episode, season pack or year; a title that does
+not say which episode it is for is refused. Among releases of one target the quality profile's ranking decides, and a grabbed
+season pack supersedes the episodes inside it. The grab goes through the same path as a search (`grab_release`), with
+`sourceFeedId` set. Music and audiobook targets are not matched by feeds: they are per-track and whole-book searches, and an
+album or book release cannot be tied to one of them safely. A grab that failed, or one skipped because the cap (Q83) was
+reached, is not remembered, so the next poll tries again.
+
+### Q83: How are double and runaway downloads prevented?
+**Answer:** (1) One process-wide lock covers every search-and-grab (sweep, air-time pass, manual search, retry, RSS), so two
+cannot both choose a release for one episode; a target with a non-failed, non-blocklisted torrent is not a candidate at all,
+and the torrent service refuses a second record for an info hash. (2) At most `auto_download.max_concurrent_grabs` (default 5)
+automatic grabs may be downloading (linked to a wanted target, not completed, not failed); beyond that, targets are not searched
+(so no backoff is spent) and wait for a free slot. A person pressing Search now on one title is not held to the cap. (3) Every
+candidate carries what a release must be to count as it (`Expectation`): the right episode, season pack or movie year. A search
+narrowed by season and episode may keep a title that does not say which episode it is; one naming a different episode is never
+taken. (4) A release with no magnet is fetched through its source's login before it reaches the torrent client, exactly as the
+manual add does, because some trackers hand a `.torrent` only to a logged-in client.
+
+### Q84: What trail does automatic downloading leave?
+**Answer:** Notifications of category `auto_download` (Activity), owned by the owner of the target's library, never by a user the
+job picked. A **grab** gets its own `SUCCESS` notification (what, from where, which profile, what triggered it: sweep, air-time,
+manual, retry or a named feed) linked to the torrent. A target that was searched with no result keeps **one** open "Waiting for …"
+notification, rewritten each time with why nothing was taken and when it is next searched: no release found (or the sources that
+failed), releases found but below the quality profile (with the commonest reasons), blocklisted, for another episode, season or
+year, or a title too different. It resolves when the target is grabbed. Back-catalogue episodes (past their quick window) and individual music tracks only keep an already-open one up to date and never open a new one, so a first sweep of a show with two hundred missing old episodes does not open two hundred notifications; manual searches always open one. A failed grab ("Could not grab …"), the cap being reached
+("waiting for a free slot") and a blocklisted dead grab are likewise single notifications. Skipping a target because it is inside
+its backoff is not recorded per tick; it is visible as the "next search after" time on the waiting notification and in the debug
+log. Every search, grab and skip is also logged with the target, trigger and reason, per `logging.mdc`.
