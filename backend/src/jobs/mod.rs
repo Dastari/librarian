@@ -12,7 +12,11 @@
 //! Pipeline Decision Guide for the design this implements.
 
 pub mod auto_download;
+pub mod auto_schedule;
+pub mod auto_settings;
+pub mod auto_trail;
 pub mod download_monitor;
+pub mod rss_poll;
 
 pub use download_monitor::AutoDownloadServiceConfig;
 

@@ -17,13 +17,22 @@
 //!   those rows so the UI status matches reality (a future episode becomes
 //!   wanted by itself once its air date passes).
 //!
+//! Episodes are not searched the moment they air: they wait out a grace period for releases to
+//! appear, are retried on a quick schedule for a few days, and then on the ordinary backoff (see
+//! `auto_schedule`). Every candidate also carries an [`Expectation`], so a release for the next
+//! episode, another season or another year's remake is never taken for the wanted item.
+//!
+//! Hunts never overlap (one process-wide lock covers every search-and-grab, including RSS grabs),
+//! and no more than `auto_download.max_concurrent_grabs` automatic grabs are downloading at once.
+//! Every search, grab and skip leaves a trail in Activity (`auto_trail`).
+//!
 //! Three behaviours keep the hunt from hammering indexers or re-grabbing junk:
 //!
 //! - **Season packs**: when a season is mostly missing and the profile allows
 //!   packs, the pack is searched first ("Show S02" and "Show Season 2"); only
 //!   if no pack is grabbed does the job fall back to per-episode searches.
-//! - **Search backoff**: a target is not re-searched more often than every
-//!   [`SEARCH_BACKOFF_HOURS`] hours. The timestamps live in the
+//! - **Search backoff**: a target is not re-searched more often than the configured backoff
+//!   (six hours by default). The timestamps live in the
 //!   `auto_download.search_state` app setting so a restart does not reset
 //!   them. Manual searches (`searchMissing`) ignore the backoff.
 //! - **Release blocklist**: releases recorded in `ReleaseBlocklist` (added by
@@ -34,11 +43,11 @@
 //! Q50, Q52).
 
 use crate::services::release_match;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use graphql_orm::graphql::filters::{BoolFilter, IntFilter, StringFilter};
 use tracing::{info, warn};
 
@@ -53,16 +62,30 @@ use crate::graphql::entities::{
 };
 use crate::services::ServicesManager;
 use crate::services::quality::profile;
+use crate::services::quality::scoring;
 use crate::services::sources::{QueryType, SourceQuery, SourceRelease};
 use crate::services::torrent::TorrentAddMetadata;
+
+use super::auto_schedule::{
+    Expectation, SearchState, Timing, backoff_elapsed, backoff_for, classify_episode,
+    classify_release, grab_budget, next_search_at, release_instant,
+};
+use super::auto_settings::AutoDownloadSettings;
+use super::auto_trail::{GrabRecord, Trail, Trigger};
 
 /// App setting holding the per-target "last searched at" map (JSON object of
 /// `target key -> RFC3339 timestamp`).
 const SEARCH_STATE_SETTING: &str = "auto_download.search_state";
 
-/// A target is not re-searched more often than this, unless the search was
-/// triggered manually through `searchMissing`.
-pub const SEARCH_BACKOFF_HOURS: i64 = 6;
+/// One search-and-grab at a time, process-wide: scheduled sweeps, the air-time pass, manual
+/// searches, retries and RSS grabs all take this before deciding what to grab, so two of them can
+/// never both pick a release for the same episode.
+static HUNT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Hold the lock that keeps automatic grabs from overlapping.
+pub async fn hunt_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    HUNT_LOCK.lock().await
+}
 
 /// Search-state entries older than this are dropped when the map is written
 /// back, so the setting cannot grow without bound.
@@ -112,6 +135,14 @@ pub struct WantedCandidate {
     /// except season packs; used to interpret the profile's size limits per
     /// episode.
     pub episode_count: i32,
+    /// Where the target stands relative to its release: decides which backoff applies.
+    pub timing: Timing,
+    /// What a release must be to count as this target (right episode, season, year).
+    pub expectation: Expectation,
+    /// The show or movie title an RSS item has to be named after. `None` for music and
+    /// audiobooks, which a feed cannot be matched to (releases are albums and whole books, not
+    /// the per-track targets that are hunted).
+    pub feed_name: Option<String>,
     /// Tried, in order, only if this candidate grabs nothing. Used for the
     /// "season pack first, per-episode second" flow. One level deep — a
     /// fallback never has fallbacks of its own.
@@ -184,6 +215,10 @@ pub struct AutoDownloadRunSummary {
     pub candidates_considered: usize,
     pub searched: usize,
     pub grabbed: usize,
+    /// Left alone because they were searched within their backoff.
+    pub backoff_skipped: usize,
+    /// Left for later because the limit on automatic downloads was reached.
+    pub capped: usize,
     pub errors: Vec<String>,
 }
 
@@ -266,6 +301,11 @@ impl Blocklist {
         Ok(blocklist)
     }
 
+    #[cfg(test)]
+    pub(crate) fn block_info_hash(&mut self, info_hash: &str) {
+        self.info_hashes.insert(info_hash.to_ascii_lowercase());
+    }
+
     pub fn blocks_info_hash(&self, info_hash: &str) -> bool {
         self.info_hashes.contains(&info_hash.to_ascii_lowercase())
     }
@@ -286,9 +326,6 @@ impl Blocklist {
 // ===========================================================================
 // Search backoff state
 // ===========================================================================
-
-/// `target key -> last searched at (RFC3339)`.
-pub type SearchState = HashMap<String, String>;
 
 async fn find_search_state_setting(db: &Database) -> Result<Option<AppSetting>> {
     Ok(AppSetting::query(db.pool())
@@ -370,19 +407,6 @@ async fn save_search_state(db: &Database, state: &SearchState) -> Result<()> {
     Ok(())
 }
 
-/// Whether a target may be searched again: never searched before, or the
-/// backoff window has elapsed. Pure so the window logic is unit-testable.
-pub fn backoff_elapsed(state: &SearchState, key: &str, now: DateTime<Utc>) -> bool {
-    let Some(last) = state.get(key) else {
-        return true;
-    };
-    let Ok(parsed) = DateTime::parse_from_rfc3339(last) else {
-        return true;
-    };
-    now.signed_duration_since(parsed.with_timezone(&Utc))
-        >= chrono::Duration::hours(SEARCH_BACKOFF_HOURS)
-}
-
 // ===========================================================================
 // Shared discovery helpers
 // ===========================================================================
@@ -404,23 +428,20 @@ async fn has_unresolved_torrent(
     }))
 }
 
-/// Whether a dated item has already been released. Items with no date at all
-/// are treated as released: back-catalogue entries frequently have no air date
-/// and refusing to hunt them would make `ALL` mode useless.
-fn is_released(date: Option<&str>, stamp: Option<&str>, now: DateTime<Utc>) -> bool {
-    for value in [stamp, date].into_iter().flatten() {
-        let value = value.trim();
-        if value.is_empty() {
-            continue;
-        }
-        if let Ok(parsed) = DateTime::parse_from_rfc3339(value) {
-            return parsed.with_timezone(&Utc) <= now;
-        }
-        if let Ok(parsed) = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d") {
-            return parsed <= now.date_naive();
-        }
-    }
-    true
+/// Timing of an item with a single release date (movies, albums, audiobooks): searchable from
+/// that day on, always on the ordinary backoff. Movies carry only TMDB's primary release date, not
+/// a digital one, so they get no grace period and no quick-retry window.
+fn dated_timing(date: Option<&str>, now: DateTime<Utc>) -> Timing {
+    classify_release(
+        release_instant(date, None),
+        now,
+        Duration::zero(),
+        Duration::zero(),
+    )
+}
+
+fn not_yet(timing: Timing) -> bool {
+    matches!(timing, Timing::NotYet { .. })
 }
 
 fn is_ignored(ignored: Option<bool>) -> bool {
@@ -469,6 +490,7 @@ fn episode_candidate(
     show: &Show,
     episode: &Episode,
     profile_override: Option<String>,
+    timing: Timing,
 ) -> WantedCandidate {
     let term = format!(
         "{} S{:02}E{:02}",
@@ -499,6 +521,12 @@ fn episode_candidate(
         quality_profile_override_id: profile_override,
         search_key: format!("episode:{}", episode.id),
         episode_count: 1,
+        timing,
+        expectation: Expectation::Episode {
+            season: episode.season,
+            episode: episode.episode,
+        },
+        feed_name: Some(show.name.clone()),
         fallbacks: Vec::new(),
     }
 }
@@ -546,6 +574,9 @@ fn season_pack_candidate(
         quality_profile_override_id: profile_override,
         search_key: format!("show:{}:s{}", show.id, season),
         episode_count: episode_count.max(1),
+        timing: Timing::Back,
+        expectation: Expectation::SeasonPack { season },
+        feed_name: Some(show.name.clone()),
         fallbacks,
     }
 }
@@ -565,6 +596,8 @@ async fn discover_episode_candidates(
     db: &Database,
     scope: &HuntScope,
     blocklist: &Blocklist,
+    settings: &AutoDownloadSettings,
+    now: DateTime<Utc>,
 ) -> Result<Vec<WantedCandidate>> {
     let mut filter = ShowWhereInput::default();
     if let Some(library_id) = &scope.library_id {
@@ -575,7 +608,6 @@ async fn discover_episode_candidates(
     }
     let shows = Show::query(db.pool()).filter(filter).fetch_all().await?;
 
-    let now = Utc::now();
     let mut out = Vec::new();
 
     for show in shows {
@@ -597,17 +629,22 @@ async fn discover_episode_candidates(
             .fetch_all()
             .await?;
 
-        // Missing = no file, not ignored, already aired.
+        let timing_of = |episode: &Episode| {
+            classify_episode(
+                episode.air_date.as_deref(),
+                episode.air_stamp.as_deref(),
+                now,
+                settings,
+            )
+        };
+
+        // Missing = no file, not ignored, aired and past its grace period for releases to appear.
         let missing: Vec<Episode> = episodes
             .iter()
             .filter(|episode| {
                 episode.media_file_id.is_none()
                     && !is_ignored(episode.ignored)
-                    && is_released(
-                        episode.air_date.as_deref(),
-                        episode.air_stamp.as_deref(),
-                        now,
-                    )
+                    && !not_yet(timing_of(episode))
             })
             .cloned()
             .collect();
@@ -681,14 +718,7 @@ async fn discover_episode_candidates(
                 .collect();
             let aired_in_season = episodes
                 .iter()
-                .filter(|episode| {
-                    episode.season == season
-                        && is_released(
-                            episode.air_date.as_deref(),
-                            episode.air_stamp.as_deref(),
-                            now,
-                        )
-                })
+                .filter(|episode| episode.season == season && !not_yet(timing_of(episode)))
                 .count();
 
             let mut per_episode = Vec::new();
@@ -709,6 +739,7 @@ async fn discover_episode_candidates(
                     &show,
                     episode,
                     show.quality_profile_id.clone(),
+                    timing_of(episode),
                 ));
             }
 
@@ -756,6 +787,7 @@ async fn discover_track_candidates(
     db: &Database,
     scope: &HuntScope,
     blocklist: &Blocklist,
+    now: DateTime<Utc>,
 ) -> Result<Vec<WantedCandidate>> {
     let mut filter = AlbumWhereInput::default();
     if let Some(library_id) = &scope.library_id {
@@ -766,7 +798,6 @@ async fn discover_track_candidates(
     }
     let albums = Album::query(db.pool()).filter(filter).fetch_all().await?;
 
-    let now = Utc::now();
     let mut out = Vec::new();
 
     for album in albums {
@@ -775,7 +806,8 @@ async fn discover_track_candidates(
         if !enabled {
             continue;
         }
-        if !is_released(album.release_date.as_deref(), None, now) {
+        let timing = dated_timing(album.release_date.as_deref(), now);
+        if not_yet(timing) {
             continue;
         }
 
@@ -869,6 +901,9 @@ async fn discover_track_candidates(
                 quality_profile_override_id: album.quality_profile_id.clone(),
                 search_key: format!("track:{}", track.id),
                 episode_count: 1,
+                timing,
+                expectation: Expectation::Unchecked,
+                feed_name: None,
                 fallbacks: Vec::new(),
             });
         }
@@ -888,6 +923,7 @@ async fn discover_audiobook_candidates(
     db: &Database,
     scope: &HuntScope,
     blocklist: &Blocklist,
+    now: DateTime<Utc>,
 ) -> Result<Vec<WantedCandidate>> {
     let mut filter = AudiobookWhereInput::default();
     if let Some(library_id) = &scope.library_id {
@@ -901,7 +937,6 @@ async fn discover_audiobook_candidates(
         .fetch_all()
         .await?;
 
-    let now = Utc::now();
     let mut out = Vec::new();
 
     for audiobook in audiobooks {
@@ -910,7 +945,8 @@ async fn discover_audiobook_candidates(
         if !enabled {
             continue;
         }
-        if !is_released(audiobook.published_date.as_deref(), None, now) {
+        let timing = dated_timing(audiobook.published_date.as_deref(), now);
+        if not_yet(timing) {
             continue;
         }
 
@@ -1011,6 +1047,9 @@ async fn discover_audiobook_candidates(
             quality_profile_override_id: audiobook.quality_profile_id.clone(),
             search_key: format!("audiobook:{}", audiobook.id),
             episode_count: 1,
+            timing,
+            expectation: Expectation::Unchecked,
+            feed_name: None,
             fallbacks: Vec::new(),
         });
     }
@@ -1025,6 +1064,7 @@ async fn discover_movie_candidates(
     db: &Database,
     scope: &HuntScope,
     blocklist: &Blocklist,
+    now: DateTime<Utc>,
 ) -> Result<Vec<WantedCandidate>> {
     let mut filter = MovieWhereInput {
         monitored: Some(bool_eq(true)),
@@ -1042,14 +1082,14 @@ async fn discover_movie_candidates(
     }
     let movies = Movie::query(db.pool()).filter(filter).fetch_all().await?;
 
-    let now = Utc::now();
     let mut out = Vec::new();
 
     for movie in movies {
         if is_ignored(movie.ignored) || movie.media_file_id.is_some() {
             continue;
         }
-        if !is_released(movie.release_date.as_deref(), None, now) {
+        let timing = dated_timing(movie.release_date.as_deref(), now);
+        if not_yet(timing) {
             continue;
         }
         if has_unresolved_torrent(
@@ -1091,52 +1131,235 @@ async fn discover_movie_candidates(
             quality_profile_override_id: movie.quality_profile_id.clone(),
             search_key: format!("movie:{}", movie.id),
             episode_count: 1,
+            timing,
+            expectation: Expectation::Movie {
+                year: movie
+                    .year
+                    .or_else(|| year_from_date(movie.release_date.as_deref())),
+            },
+            feed_name: Some(movie.title.clone()),
             fallbacks: Vec::new(),
         });
     }
     Ok(out)
 }
 
-async fn discover_candidates(
+/// Everything the scope names that is wanted right now, with each target's timing and identity.
+/// `now` and the settings are parameters so a pass is reproducible.
+pub async fn discover_candidates(
     db: &Database,
     scope: &HuntScope,
     blocklist: &Blocklist,
+    settings: &AutoDownloadSettings,
+    now: DateTime<Utc>,
 ) -> Result<Vec<WantedCandidate>> {
     let mut out = Vec::new();
     if scope.wants_shows() {
-        out.extend(discover_episode_candidates(db, scope, blocklist).await?);
+        out.extend(discover_episode_candidates(db, scope, blocklist, settings, now).await?);
     }
     if scope.wants_albums() {
-        out.extend(discover_track_candidates(db, scope, blocklist).await?);
+        out.extend(discover_track_candidates(db, scope, blocklist, now).await?);
     }
     if scope.wants_audiobooks() {
-        out.extend(discover_audiobook_candidates(db, scope, blocklist).await?);
+        out.extend(discover_audiobook_candidates(db, scope, blocklist, now).await?);
     }
     if scope.wants_movies() {
-        out.extend(discover_movie_candidates(db, scope, blocklist).await?);
+        out.extend(discover_movie_candidates(db, scope, blocklist, now).await?);
     }
     Ok(out)
 }
 
 // ===========================================================================
-// Search + grab
+// Grabbing
+// ===========================================================================
+
+/// What a grab needs: the database, the torrent client, and the services manager (to fetch a
+/// `.torrent` file through a source's login).
+#[derive(Clone)]
+pub struct GrabEnv {
+    pub db: Database,
+    pub torrent: Arc<crate::services::torrent::TorrentService>,
+    pub manager: Arc<ServicesManager>,
+}
+
+/// A release that was added to the download client as a new record.
+#[derive(Debug, Clone)]
+pub struct GrabbedRelease {
+    pub info_hash: String,
+    pub torrent_name: String,
+    pub torrent_id: Option<String>,
+}
+
+/// Add `release` to the download client for `candidate`, stamping the wanted-target linkage and the
+/// tracker's seeding floors. `Ok(None)` means the client already had that torrent.
+///
+/// A release with no magnet is fetched through its source first, as the manual add does: some
+/// trackers only hand a `.torrent` file to a logged-in client and the torrent client has no login.
+pub async fn grab_release(
+    env: &GrabEnv,
+    candidate: &WantedCandidate,
+    release: &SourceRelease,
+    feed_id: Option<&str>,
+) -> Result<Option<GrabbedRelease>> {
+    let uri = release
+        .magnet_uri
+        .clone()
+        .or_else(|| release.link.clone())
+        .context("the release has neither a magnet URI nor a download link")?;
+
+    let metadata = TorrentAddMetadata {
+        library_id: Some(candidate.library_id.clone()),
+        source_url: release
+            .details
+            .clone()
+            .or_else(|| Some(release.guid.clone())),
+        source_indexer_id: release.source_id.clone(),
+        source_feed_id: feed_id.map(ToString::to_string),
+        episode_id: candidate.linkage.episode_id.clone(),
+        movie_id: candidate.linkage.movie_id.clone(),
+        track_id: candidate.linkage.track_id.clone(),
+        chapter_id: candidate.linkage.chapter_id.clone(),
+        show_id: candidate.linkage.show_id.clone(),
+        album_id: candidate.linkage.album_id.clone(),
+        audiobook_id: candidate.linkage.audiobook_id.clone(),
+    };
+
+    let file = match (release.magnet_uri.as_deref(), release.source_id.as_deref()) {
+        (None, Some(source_id)) => {
+            crate::services::graphql::entities::fetch_torrent_from_source(
+                &env.manager,
+                source_id,
+                &uri,
+            )
+            .await?
+        }
+        _ => None,
+    };
+
+    let actor = crate::services::torrent::system_auth_user();
+    let outcome = match file {
+        Some(bytes) => {
+            env.torrent
+                .add_torrent_file_for_actor_with_outcome(bytes, &actor, metadata)
+                .await
+        }
+        None => {
+            env.torrent
+                .add_magnet_for_actor_with_outcome(&uri, &actor, metadata)
+                .await
+        }
+    }?;
+    if !outcome.created {
+        tracing::debug!(
+            candidate = %candidate.label,
+            info_hash = %outcome.info.info_hash,
+            "Auto-download: the download client already has this torrent; grab details unchanged"
+        );
+        return Ok(None);
+    }
+    let info = outcome.info;
+
+    // Season (for packs) and the tracker's seeding floors are not carried by
+    // `TorrentAddMetadata`; stamp them on the row the torrent service just created.
+    let details = TorrentGrabDetails::from_release_limits(
+        candidate.linkage.season,
+        release.minimum_ratio,
+        release.minimum_seed_time,
+    );
+    if let Err(error) = stamp_torrent_grab_details(&env.db, &info.info_hash, details).await {
+        warn!(
+            candidate = %candidate.label,
+            info_hash = %info.info_hash,
+            error = %error,
+            "Auto-download: grabbed a release but could not stamp its grab details"
+        );
+    }
+    let torrent_id = Torrent::query(env.db.pool())
+        .filter(TorrentWhereInput {
+            info_hash: Some(string_eq(&info.info_hash)),
+            ..Default::default()
+        })
+        .fetch_all()
+        .await
+        .ok()
+        .and_then(|rows| rows.into_iter().next())
+        .map(|row| row.id);
+    Ok(Some(GrabbedRelease {
+        info_hash: info.info_hash,
+        torrent_name: info.name,
+        torrent_id,
+    }))
+}
+
+/// Whether a torrent still counts against the cap on automatic grabs: it is linked to a wanted
+/// target, has not finished and has not failed.
+pub fn counts_as_in_flight(torrent: &Torrent) -> bool {
+    super::download_monitor::has_wanted_linkage(torrent)
+        && torrent.completed_at.is_none()
+        && torrent.post_process_status.as_deref() != Some("failed")
+}
+
+/// How many automatic grabs are downloading right now.
+pub async fn count_in_flight(db: &Database) -> Result<usize> {
+    let rows = Torrent::query(db.pool())
+        .filter(TorrentWhereInput {
+            completed_at: Some(graphql_orm::graphql::filters::DateFilter {
+                is_null: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .fetch_all()
+        .await
+        .context("failed to count automatic downloads in progress")?;
+    Ok(rows
+        .iter()
+        .filter(|torrent| counts_as_in_flight(torrent))
+        .count())
+}
+
+// ===========================================================================
+// Search + decide
 // ===========================================================================
 
 struct HuntContext {
-    db: Database,
+    env: GrabEnv,
     sources: Arc<crate::services::sources::manager::SourcesManager>,
-    torrent: Arc<crate::services::torrent::TorrentService>,
     blocklist: Blocklist,
+    trail: Trail,
+    trigger: Trigger,
+    /// Automatic grabs that may still start in this pass.
+    budget: usize,
+}
+
+/// What searching the sources for one candidate turned up.
+#[derive(Default)]
+struct Collected {
+    releases: Vec<SourceRelease>,
+    /// Distinct releases returned, blocklisted ones included.
+    seen: usize,
+    blocklisted: usize,
+    /// How many sources could take the search.
+    sources: usize,
+    errors: Vec<String>,
 }
 
 /// Run every query variant for a candidate and merge the results,
 /// de-duplicating on info hash (falling back to guid) and dropping
 /// blocklisted releases.
-async fn collect_releases(ctx: &HuntContext, candidate: &WantedCandidate) -> Vec<SourceRelease> {
+async fn collect_releases(ctx: &HuntContext, candidate: &WantedCandidate) -> Collected {
     let mut seen: HashSet<String> = HashSet::new();
-    let mut releases = Vec::new();
+    let mut collected = Collected::default();
     for query in &candidate.queries {
-        for result in ctx.sources.search_all(query).await {
+        let results = ctx.sources.search_all(query).await;
+        collected.sources = collected.sources.max(results.len());
+        for result in results {
+            if let Some(error) = &result.error {
+                let error = format!("{}: {error}", result.source_name);
+                if !collected.errors.contains(&error) {
+                    collected.errors.push(error);
+                }
+            }
             for release in result.releases {
                 // Only a person can sort out a pack, an ebook is never what was wanted, and neither
                 // is another book of the series.
@@ -1173,7 +1396,9 @@ async fn collect_releases(ctx: &HuntContext, candidate: &WantedCandidate) -> Vec
                 if !seen.insert(key) {
                     continue;
                 }
+                collected.seen += 1;
                 if ctx.blocklist.blocks(&release) {
+                    collected.blocklisted += 1;
                     tracing::debug!(
                         candidate = %candidate.label,
                         release = %release.title,
@@ -1181,11 +1406,146 @@ async fn collect_releases(ctx: &HuntContext, candidate: &WantedCandidate) -> Vec
                     );
                     continue;
                 }
-                releases.push(release);
+                collected.releases.push(release);
             }
         }
     }
-    releases
+    collected
+}
+
+/// Releases that are what the candidate asked for, plus how many were not and one example why.
+/// A search can return the neighbours of what was asked for (the next episode, last year's remake).
+pub fn verify_releases(
+    candidate: &WantedCandidate,
+    releases: Vec<SourceRelease>,
+    strict: bool,
+) -> (Vec<SourceRelease>, usize, Option<String>) {
+    let mut kept = Vec::new();
+    let mut wrong = 0;
+    let mut example = None;
+    for release in releases {
+        let parsed = scoring::parse_release(&release.title);
+        match candidate.expectation.mismatch(&parsed, strict) {
+            None => kept.push(release),
+            Some(reason) => {
+                wrong += 1;
+                example.get_or_insert_with(|| format!("'{}' is {reason}", release.title));
+            }
+        }
+    }
+    (kept, wrong, example)
+}
+
+/// Everything known about why a search took nothing.
+#[derive(Debug, Default, Clone)]
+pub struct NoGrabFacts {
+    pub sources: usize,
+    pub errors: Vec<String>,
+    pub seen: usize,
+    pub blocklisted: usize,
+    pub wrong_target: usize,
+    pub wrong_example: Option<String>,
+    pub too_different: usize,
+    pub below_profile: usize,
+    pub profile: String,
+    pub profile_reasons: Vec<String>,
+}
+
+/// One line saying why nothing was grabbed: no release, below the profile, blocklisted, or the
+/// wrong episode/season/year.
+pub fn describe_no_grab(facts: &NoGrabFacts) -> String {
+    if facts.sources == 0 {
+        let mut text = "no source can take this search; add or enable one in Settings".to_string();
+        if !facts.errors.is_empty() {
+            text = format!("{text} ({})", facts.errors.join("; "));
+        }
+        return text;
+    }
+    if facts.seen == 0 {
+        return if facts.errors.is_empty() {
+            format!("no release found on {} source(s)", facts.sources)
+        } else {
+            format!(
+                "no release found; {} source error(s): {}",
+                facts.errors.len(),
+                facts.errors.join("; ")
+            )
+        };
+    }
+    let mut parts = Vec::new();
+    if facts.blocklisted > 0 {
+        parts.push(format!("{} blocklisted", facts.blocklisted));
+    }
+    if facts.wrong_target > 0 {
+        parts.push(format!(
+            "{} for something else{}",
+            facts.wrong_target,
+            facts
+                .wrong_example
+                .as_deref()
+                .map(|example| format!(" (e.g. {example})"))
+                .unwrap_or_default()
+        ));
+    }
+    if facts.too_different > 0 {
+        parts.push(format!(
+            "{} with a title too different",
+            facts.too_different
+        ));
+    }
+    if facts.below_profile > 0 {
+        parts.push(format!(
+            "{} below the '{}' profile{}",
+            facts.below_profile,
+            facts.profile,
+            if facts.profile_reasons.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", facts.profile_reasons.join("; "))
+            }
+        ));
+    }
+    format!(
+        "{} release(s) found, none usable: {}",
+        facts.seen,
+        parts.join(", ")
+    )
+}
+
+/// Why each release the profile turned down was turned down: how many were too different in title,
+/// how many were below the profile, and the most common reasons for the latter.
+pub fn explain_profile_rejections(
+    match_title: &str,
+    releases: &[SourceRelease],
+    quality_profile: &QualityProfile,
+    episode_count: i32,
+) -> (usize, usize, Vec<String>) {
+    let mut too_different = 0;
+    let mut below = 0;
+    let mut tally: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for release in releases {
+        if scoring::title_similarity(match_title, &release.title) < scoring::MIN_TITLE_SIMILARITY {
+            too_different += 1;
+            continue;
+        }
+        let parsed = scoring::parse_release(&release.title);
+        let facts = profile::ReleaseFacts::from_release(release, episode_count);
+        let (verdict, reasons) = profile::match_release(&parsed, quality_profile, &facts);
+        if verdict == profile::ProfileMatch::Rejected {
+            below += 1;
+            for reason in reasons {
+                *tally.entry(reason).or_default() += 1;
+            }
+        }
+    }
+    let mut ranked: Vec<(String, usize)> = tally.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let reasons = ranked
+        .into_iter()
+        .take(2)
+        .map(|(reason, _)| reason)
+        .collect();
+    (too_different, below, reasons)
 }
 
 async fn resolve_candidate_profile(
@@ -1193,7 +1553,7 @@ async fn resolve_candidate_profile(
     candidate: &WantedCandidate,
 ) -> QualityProfile {
     match profile::resolve_profile(
-        &ctx.db,
+        &ctx.env.db,
         candidate.quality_profile_override_id.as_deref(),
         &candidate.library_id,
     )
@@ -1211,120 +1571,203 @@ async fn resolve_candidate_profile(
     }
 }
 
+/// Whether a search with no result opens a "Waiting for …" notification. Everything does except the
+/// long tail, back-catalogue episodes and individual tracks (a manual search always does): a first
+/// sweep of a show with two hundred missing old episodes must not open two hundred notifications.
+fn opens_notification(candidate: &WantedCandidate, trigger: &Trigger) -> bool {
+    let long_tail = candidate.linkage.track_id.is_some()
+        || (candidate.timing == Timing::Back
+            && matches!(
+                candidate.expectation,
+                Expectation::Episode { .. } | Expectation::SeasonPack { .. }
+            ));
+    *trigger == Trigger::Manual || !long_tail
+}
+
 /// Search for and grab the best release for one candidate.
 /// Returns `Ok(true)` when a release was grabbed.
 async fn try_candidate(
-    ctx: &HuntContext,
+    ctx: &mut HuntContext,
     candidate: &WantedCandidate,
     summary: &mut AutoDownloadRunSummary,
+    next_search: Option<DateTime<Utc>>,
 ) -> Result<bool> {
     summary.searched += 1;
-    let releases = collect_releases(ctx, candidate).await;
+    let collected = collect_releases(ctx, candidate).await;
     let quality_profile = resolve_candidate_profile(ctx, candidate).await;
+
+    // A search narrowed by season and episode may return a title that does not say which episode
+    // it is; one that names another episode is never accepted.
+    let (verified, wrong_target, wrong_example) =
+        verify_releases(candidate, collected.releases.clone(), false);
 
     let Some(best) = profile::pick_best_for_profile(
         &candidate.match_title,
-        releases,
+        verified.clone(),
         &quality_profile,
         candidate.episode_count,
     ) else {
-        tracing::debug!(
-            candidate = %candidate.label,
-            profile = %quality_profile.name,
-            "Auto-download: no acceptable release found"
+        let (too_different, below_profile, profile_reasons) = explain_profile_rejections(
+            &candidate.match_title,
+            &verified,
+            &quality_profile,
+            candidate.episode_count,
         );
+        let why = describe_no_grab(&NoGrabFacts {
+            sources: collected.sources,
+            errors: collected.errors.clone(),
+            seen: collected.seen,
+            blocklisted: collected.blocklisted,
+            wrong_target,
+            wrong_example,
+            too_different,
+            below_profile,
+            profile: quality_profile.name.clone(),
+            profile_reasons,
+        });
+        info!(
+            candidate = %candidate.label,
+            trigger = ctx.trigger.tag(),
+            profile = %quality_profile.name,
+            "Auto-download: searched for {}, nothing taken: {why}",
+            candidate.label
+        );
+        ctx.trail
+            .waiting(
+                &candidate.library_id,
+                &candidate.label,
+                &why,
+                next_search,
+                &ctx.trigger,
+                opens_notification(candidate, &ctx.trigger),
+            )
+            .await;
         return Ok(false);
     };
 
     let release = best.release;
-    let Some(uri) = release.magnet_uri.clone().or_else(|| release.link.clone()) else {
+    if release.magnet_uri.is_none() && release.link.is_none() {
         warn!(
             candidate = %candidate.label,
             release = %release.title,
             "Auto-download: best release had neither a magnet URI nor a download link; skipping"
         );
+        ctx.trail
+            .waiting(
+                &candidate.library_id,
+                &candidate.label,
+                &format!("'{}' has no magnet or download link", release.title),
+                next_search,
+                &ctx.trigger,
+                true,
+            )
+            .await;
         return Ok(false);
-    };
+    }
 
-    let metadata = TorrentAddMetadata {
-        library_id: Some(candidate.library_id.clone()),
-        source_url: release
-            .details
-            .clone()
-            .or_else(|| Some(release.guid.clone())),
-        source_indexer_id: release.source_id.clone(),
-        source_feed_id: None,
-        episode_id: candidate.linkage.episode_id.clone(),
-        movie_id: candidate.linkage.movie_id.clone(),
-        track_id: candidate.linkage.track_id.clone(),
-        chapter_id: candidate.linkage.chapter_id.clone(),
-        show_id: candidate.linkage.show_id.clone(),
-        album_id: candidate.linkage.album_id.clone(),
-        audiobook_id: candidate.linkage.audiobook_id.clone(),
-    };
-
-    match ctx
-        .torrent
-        .add_magnet_for_actor_with_outcome(
-            &uri,
-            &crate::services::torrent::system_auth_user(),
-            metadata,
-        )
-        .await
-    {
-        Ok(outcome) => {
-            if !outcome.created {
-                tracing::debug!(info_hash = %outcome.info.info_hash, "Auto-download: existing owned torrent retained; grab details unchanged");
-                return Ok(false);
-            }
-            let info = outcome.info;
+    match grab_release(&ctx.env, candidate, &release, None).await {
+        Ok(Some(grabbed)) => {
             summary.grabbed += 1;
-            // Season (for packs) and the tracker's seeding floors are not
-            // carried by `TorrentAddMetadata`; stamp them on the row the
-            // torrent service just created.
-            let details = TorrentGrabDetails::from_release_limits(
-                candidate.linkage.season,
-                release.minimum_ratio,
-                release.minimum_seed_time,
-            );
-            if let Err(error) = stamp_torrent_grab_details(&ctx.db, &info.info_hash, details).await
-            {
-                warn!(
-                    candidate = %candidate.label,
-                    info_hash = %info.info_hash,
-                    error = %error,
-                    "Auto-download: grabbed a release but could not stamp its grab details"
-                );
-            }
+            ctx.budget = ctx.budget.saturating_sub(1);
             info!(
                 candidate = %candidate.label,
-                torrent = %info.name,
+                trigger = ctx.trigger.tag(),
+                torrent = %grabbed.torrent_name,
                 release = %release.title,
+                source = release.source_name.as_deref().unwrap_or("unknown"),
                 seeders = release.seeders.unwrap_or(0),
                 profile = %quality_profile.name,
-                "Auto-download: grabbed release"
+                "Auto-download: grabbed release '{}' for {}",
+                release.title,
+                candidate.label
             );
+            ctx.trail
+                .grabbed(&GrabRecord {
+                    library_id: &candidate.library_id,
+                    label: &candidate.label,
+                    release: &release.title,
+                    source: release.source_name.as_deref(),
+                    profile: &quality_profile.name,
+                    trigger: &ctx.trigger,
+                    torrent_id: grabbed.torrent_id.as_deref(),
+                })
+                .await;
             Ok(true)
+        }
+        Ok(None) => {
+            ctx.trail
+                .waiting(
+                    &candidate.library_id,
+                    &candidate.label,
+                    &format!("'{}' is already in the download client", release.title),
+                    next_search,
+                    &ctx.trigger,
+                    true,
+                )
+                .await;
+            Ok(false)
         }
         Err(error) => {
             warn!(
                 error = %error,
                 candidate = %candidate.label,
                 release = %release.title,
-                "Auto-download: grab failed"
+                "Auto-download: grab of '{}' for {} failed",
+                release.title,
+                candidate.label
             );
             summary
                 .errors
                 .push(format!("{}: {}", candidate.label, error));
+            ctx.trail
+                .grab_failed(
+                    &candidate.library_id,
+                    &candidate.label,
+                    &release.title,
+                    &error.to_string(),
+                )
+                .await;
             Ok(false)
         }
     }
 }
 
-/// Run one hunt pass over `scope`.
+/// The candidates the air-time pass looks at: targets still on the quick-retry schedule. A season
+/// pack is left to the full sweep, but its per-episode fallbacks that are fresh are searched.
+pub fn fresh_targets(candidates: Vec<WantedCandidate>) -> Vec<WantedCandidate> {
+    let mut out = Vec::new();
+    for candidate in candidates {
+        if candidate.timing == Timing::Fresh {
+            out.push(candidate);
+        } else {
+            out.extend(
+                candidate
+                    .fallbacks
+                    .into_iter()
+                    .filter(|fallback| fallback.timing == Timing::Fresh),
+            );
+        }
+    }
+    out
+}
+
+/// Run one hunt pass over `scope`, on behalf of a manual search.
 pub async fn run_scoped(
     manager: &Arc<ServicesManager>,
     scope: &HuntScope,
+) -> Result<AutoDownloadRunSummary> {
+    run_pass(manager, scope, Trigger::Manual, false).await
+}
+
+/// Run one hunt pass.
+///
+/// `fresh_only` is the air-time pass: it looks only at episodes inside their quick-retry window.
+/// Whoever calls this decides whether automatic downloading is on; the pass itself does not.
+pub async fn run_pass(
+    manager: &Arc<ServicesManager>,
+    scope: &HuntScope,
+    trigger: Trigger,
+    fresh_only: bool,
 ) -> Result<AutoDownloadRunSummary> {
     let db_service = manager
         .get_database()
@@ -1346,12 +1789,20 @@ pub async fn run_scoped(
         .await
         .context("torrent service not available")?;
 
+    // One search-and-grab at a time, so two passes cannot both pick a release for one episode.
+    let _hunting = hunt_lock().await;
+
+    let settings = AutoDownloadSettings::load(&db).await;
     let blocklist = Blocklist::load(&db).await.unwrap_or_else(|error| {
         warn!(error = %error, "Auto-download: failed to load the release blocklist; continuing without it");
         Blocklist::default()
     });
 
-    let candidates = discover_candidates(&db, scope, &blocklist).await?;
+    let now = Utc::now();
+    let mut candidates = discover_candidates(&db, scope, &blocklist, &settings, now).await?;
+    if fresh_only {
+        candidates = fresh_targets(candidates);
+    }
     let mut summary = AutoDownloadRunSummary {
         candidates_considered: candidates.len(),
         ..Default::default()
@@ -1360,48 +1811,133 @@ pub async fn run_scoped(
         return Ok(summary);
     }
 
+    // A person pressing Search on one title is not held to the cap; everything automatic is.
+    let exempt_from_cap = scope.ignore_backoff && trigger == Trigger::Manual;
+    let in_flight = count_in_flight(&db).await.unwrap_or(0);
+    let budget = if exempt_from_cap {
+        usize::MAX
+    } else {
+        grab_budget(in_flight, settings.max_concurrent_grabs)
+    };
+
     let mut state = load_search_state(&db).await;
-    let now = Utc::now();
     let now_iso = now.to_rfc3339();
 
     info!(
         count = summary.candidates_considered,
+        trigger = trigger.tag(),
+        in_flight,
+        cap = settings.max_concurrent_grabs,
         blocklist_active = !blocklist.is_empty(),
         scope_library = scope.library_id.as_deref().unwrap_or("all"),
         "Auto-download: found wanted candidates to search"
     );
 
-    let ctx = HuntContext {
-        db: db.clone(),
+    let mut ctx = HuntContext {
+        env: GrabEnv {
+            db: db.clone(),
+            torrent: torrent_service,
+            manager: manager.clone(),
+        },
         sources: sources_manager,
-        torrent: torrent_service,
         blocklist,
+        trail: Trail::new(&db),
+        trigger,
+        budget,
     };
 
+    let mut libraries: HashSet<String> = HashSet::new();
+    let mut capped: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
     for candidate in candidates {
-        if !scope.ignore_backoff && !backoff_elapsed(&state, &candidate.search_key, now) {
+        libraries.insert(candidate.library_id.clone());
+
+        if ctx.budget == 0 {
+            // Not searched, so no backoff is spent: it goes first once a slot is free.
+            summary.capped += 1;
+            *capped.entry(candidate.library_id.clone()).or_default() += 1;
             tracing::debug!(
                 candidate = %candidate.label,
-                "Auto-download: skipping, searched within the last {SEARCH_BACKOFF_HOURS}h"
+                "Auto-download: not searching {}, the limit on automatic downloads is reached",
+                candidate.label
             );
             continue;
         }
-        state.insert(candidate.search_key.clone(), now_iso.clone());
 
-        let grabbed = try_candidate(&ctx, &candidate, &mut summary).await?;
+        let mut grabbed = false;
+        if due(&state, &candidate, scope, &settings, now) {
+            let backoff = backoff_for(candidate.timing, &settings);
+            state.insert(candidate.search_key.clone(), now_iso.clone());
+            grabbed = try_candidate(
+                &mut ctx,
+                &candidate,
+                &mut summary,
+                next_search_at(&state, &candidate.search_key, backoff),
+            )
+            .await?;
+        } else {
+            summary.backoff_skipped += 1;
+            tracing::debug!(
+                candidate = %candidate.label,
+                "Auto-download: not searching {} yet, it was searched recently (next after {:?})",
+                candidate.label,
+                next_search_at(
+                    &state,
+                    &candidate.search_key,
+                    backoff_for(candidate.timing, &settings)
+                )
+            );
+        }
         if grabbed {
             continue;
         }
 
-        // Season-pack fallback: one level only, and each fallback carries its
-        // own backoff key so a failed pack search does not burn the
-        // per-episode budget.
+        // Season-pack fallback: one level only, and each fallback carries its own backoff key so a
+        // failed pack search does not burn the per-episode budget, and a pack still inside its
+        // backoff does not hold the per-episode searches back.
         for fallback in &candidate.fallbacks {
-            if !scope.ignore_backoff && !backoff_elapsed(&state, &fallback.search_key, now) {
+            if ctx.budget == 0 {
+                summary.capped += 1;
+                *capped.entry(fallback.library_id.clone()).or_default() += 1;
                 continue;
             }
+            if !due(&state, fallback, scope, &settings, now) {
+                summary.backoff_skipped += 1;
+                continue;
+            }
+            let backoff = backoff_for(fallback.timing, &settings);
             state.insert(fallback.search_key.clone(), now_iso.clone());
-            let _ = try_candidate(&ctx, fallback, &mut summary).await?;
+            let _ = try_candidate(
+                &mut ctx,
+                fallback,
+                &mut summary,
+                next_search_at(&state, &fallback.search_key, backoff),
+            )
+            .await?;
+        }
+    }
+
+    if summary.capped > 0 {
+        warn!(
+            capped = summary.capped,
+            in_flight,
+            cap = settings.max_concurrent_grabs,
+            "Auto-download: the limit on automatic downloads was reached; {} wanted item(s) wait for a free slot",
+            summary.capped
+        );
+        for (library_id, waiting) in &capped {
+            ctx.trail
+                .cap_reached(
+                    library_id,
+                    in_flight,
+                    settings.max_concurrent_grabs,
+                    *waiting,
+                )
+                .await;
+        }
+    } else {
+        for library_id in &libraries {
+            ctx.trail.cap_cleared(library_id).await;
         }
     }
 
@@ -1412,18 +1948,34 @@ pub async fn run_scoped(
     Ok(summary)
 }
 
-/// Run one full auto-download pass, optionally scoped to a single library.
-///
-/// Called both by the background timer loop (when enabled) and by the
-/// `triggerAutoDownload` GraphQL mutation (always, regardless of the enabled
-/// gate — that gate only controls the automatic loop).
+/// Whether a candidate may be searched in this pass.
+fn due(
+    state: &SearchState,
+    candidate: &WantedCandidate,
+    scope: &HuntScope,
+    settings: &AutoDownloadSettings,
+    now: DateTime<Utc>,
+) -> bool {
+    scope.ignore_backoff
+        || backoff_elapsed(
+            state,
+            &candidate.search_key,
+            now,
+            backoff_for(candidate.timing, settings),
+        )
+}
+
+/// Run one full pass over the library (or one library) for a person who asked for it. Respects the
+/// backoff and the cap like the scheduled sweep, but runs whether or not automatic downloading is on.
 pub async fn run_once(
     manager: &Arc<ServicesManager>,
     library_id: Option<&str>,
 ) -> Result<AutoDownloadRunSummary> {
-    run_scoped(
+    run_pass(
         manager,
         &HuntScope::library(library_id.map(ToString::to_string)),
+        Trigger::Manual,
+        false,
     )
     .await
 }
@@ -1460,46 +2012,6 @@ mod tests {
         assert!(!should_hunt_season_pack(10, 10, false));
         // Never with nothing missing.
         assert!(!should_hunt_season_pack(0, 10, true));
-    }
-
-    #[test]
-    fn backoff_blocks_recent_searches_only() {
-        let now = Utc::now();
-        let mut state = SearchState::new();
-        assert!(backoff_elapsed(&state, "movie:1", now));
-
-        state.insert(
-            "movie:1".to_string(),
-            (now - chrono::Duration::hours(1)).to_rfc3339(),
-        );
-        assert!(!backoff_elapsed(&state, "movie:1", now));
-
-        state.insert(
-            "movie:1".to_string(),
-            (now - chrono::Duration::hours(SEARCH_BACKOFF_HOURS + 1)).to_rfc3339(),
-        );
-        assert!(backoff_elapsed(&state, "movie:1", now));
-
-        state.insert("movie:1".to_string(), "not-a-timestamp".to_string());
-        assert!(backoff_elapsed(&state, "movie:1", now));
-    }
-
-    #[test]
-    fn is_released_handles_missing_and_future_dates() {
-        let now = Utc::now();
-        assert!(is_released(None, None, now));
-        assert!(is_released(Some("2020-01-01"), None, now));
-        assert!(!is_released(Some("2999-01-01"), None, now));
-        assert!(!is_released(
-            None,
-            Some(&(now + chrono::Duration::days(2)).to_rfc3339()),
-            now
-        ));
-        assert!(is_released(
-            None,
-            Some(&(now - chrono::Duration::days(2)).to_rfc3339()),
-            now
-        ));
     }
 
     #[test]
@@ -1548,3 +2060,7 @@ mod tests {
         assert_eq!(year_from_date(None), None);
     }
 }
+
+#[cfg(test)]
+#[path = "auto_download_tests.rs"]
+mod discovery_tests;

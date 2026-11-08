@@ -1832,7 +1832,7 @@ fn looks_like_torrent_file(bytes: &[u8]) -> bool {
 
 /// The release's torrent file, fetched with its source's login. `None` means the source has no
 /// part in this link, and the client should fetch it directly as before.
-async fn fetch_torrent_from_source(
+pub(crate) async fn fetch_torrent_from_source(
     manager: &ServicesManager,
     source_id: &str,
     link: &str,

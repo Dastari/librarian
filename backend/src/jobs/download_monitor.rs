@@ -1,20 +1,22 @@
-//! `AutoDownloadService`: the auto-download background loop.
+//! `AutoDownloadService`: the automatic-downloading scheduler.
 //!
-//! Runs `jobs::auto_download::run_once` on a timer (only when explicitly
-//! enabled — see the safety note below) plus a retry/reconciliation sweep
-//! that re-checks torrents grabbed by auto-download whose post-process status
-//! is still null/unmatched, bounded to a 7-day retry window (design.md Q34).
+//! Three workers run for the life of the server, and every one of them does nothing while the
+//! `auto_download.enabled` setting is off (the default; there is no environment fallback, so
+//! Settings › Downloads always shows what the server is doing):
 //!
-//! # Safety default: disabled unless explicitly enabled
+//! - the **scheduler** ticks every minute. It sweeps the whole library every
+//!   `auto_download.interval_minutes`, and between sweeps runs the cheap **air-time pass** every
+//!   five minutes, which looks only at episodes that have aired within the last
+//!   `auto_download.air_window_days` days (and have passed their grace period) so a new episode is
+//!   searched for within minutes of becoming searchable, not at the next hourly sweep;
+//! - the **RSS worker** ticks every minute and polls each enabled feed that is due
+//!   (`jobs::rss_poll`);
+//! - the **retry sweep** re-checks torrents grabbed for a wanted target whose import never
+//!   resolved, blocklists dead grabs and, when automatic downloading is on, searches again for the
+//!   target (design.md Q34).
 //!
-//! The automatic timer loop defaults to **disabled**. The import path this
-//! feeds (torrent completion -> `matchMediaFile` -> auto-link) has a history
-//! of confidence-floor bugs (tier1-features-plan.md §5 top risk #1); running
-//! unattended search+grab automation before that's solid could mass-produce
-//! wrong-show links. Enable via the `auto_download.enabled` app_setting or the
-//! `LIBRARIAN_AUTO_DOWNLOAD_ENABLED` env var. The `triggerAutoDownload`
-//! GraphQL mutation always runs a pass on demand regardless of this gate, so
-//! admins can safely exercise the pipeline before flipping it on.
+//! `triggerAutoDownload` ("Run now") and `searchMissing` run a pass on demand whether or not the
+//! switch is on: pressing a button is a person's decision, not automation.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,10 +38,16 @@ use crate::services::torrent::system_auth_user;
 use graphql_orm::graphql::filters::{DateFilter, StringFilter};
 
 use super::auto_download::{self, AutoDownloadRunSummary, HuntScope};
+use super::auto_settings::{AutoDownloadSettings, SETTING_STATUS};
+use super::auto_trail::Trigger;
+use super::rss_poll;
 
-const ENV_ENABLED: &str = "LIBRARIAN_AUTO_DOWNLOAD_ENABLED";
-const SETTING_ENABLED: &str = "auto_download.enabled";
-const SETTING_INTERVAL_MINUTES: &str = "auto_download.interval_minutes";
+/// How often the workers look at the clock.
+const TICK: Duration = Duration::from_secs(60);
+/// Let the other services finish starting before the first pass.
+const STARTUP_DELAY: Duration = Duration::from_secs(45);
+/// The air-time pass runs this often between sweeps.
+const AIR_TIME_PASS_MINUTES: i64 = 5;
 const SETTING_RETRY_SWEEP_INTERVAL_MINUTES: &str = "auto_download.retry_sweep_interval_minutes";
 const SETTING_RETRY_AFTER_MINUTES: &str = "auto_download.retry_after_minutes";
 const SETTING_RETRY_WINDOW_DAYS: &str = "auto_download.retry_window_days";
@@ -75,6 +83,7 @@ struct AutoDownloadRuntime {
     cancel_token: CancellationToken,
     main_handle: tokio::task::JoinHandle<()>,
     retry_handle: tokio::task::JoinHandle<()>,
+    rss_handle: tokio::task::JoinHandle<()>,
 }
 
 impl AutoDownloadRuntime {
@@ -82,6 +91,7 @@ impl AutoDownloadRuntime {
         self.cancel_token.cancel();
         let _ = self.main_handle.await;
         let _ = self.retry_handle.await;
+        let _ = self.rss_handle.await;
     }
 }
 
@@ -102,10 +112,12 @@ impl AutoDownloadService {
         }
     }
 
-    /// Run one pass immediately, regardless of the enabled gate. Used by the
+    /// Run one pass immediately, regardless of the enabled gate: a person asked for it. Used by the
     /// `triggerAutoDownload` GraphQL mutation.
     pub async fn trigger_now(&self, library_id: Option<String>) -> Result<AutoDownloadRunSummary> {
-        auto_download::run_once(&self.manager, library_id.as_deref()).await
+        let summary = auto_download::run_once(&self.manager, library_id.as_deref()).await?;
+        record_hunt_status(&self.manager, "manual", &summary).await;
+        Ok(summary)
     }
 
     /// Run one hunt pass over a specific scope immediately, ignoring both the
@@ -150,10 +162,15 @@ impl Service for AutoDownloadService {
         let cancel_token = CancellationToken::new();
 
         let manager_main = self.manager.clone();
-        let default_interval = self.config.default_interval_minutes;
         let token_main = cancel_token.clone();
         let main_handle = tokio::spawn(async move {
-            main_loop(manager_main, default_interval, token_main).await;
+            scheduler_loop(manager_main, token_main).await;
+        });
+
+        let manager_rss = self.manager.clone();
+        let token_rss = cancel_token.clone();
+        let rss_handle = tokio::spawn(async move {
+            rss_loop(manager_rss, token_rss).await;
         });
 
         let manager_retry = self.manager.clone();
@@ -176,11 +193,12 @@ impl Service for AutoDownloadService {
             cancel_token,
             main_handle,
             retry_handle,
+            rss_handle,
         }));
 
         info!(
             service = "auto_download",
-            "Auto-download service started (disabled by default; enable via auto_download.enabled setting or LIBRARIAN_AUTO_DOWNLOAD_ENABLED)"
+            "Auto-download service started; it does nothing until the auto_download.enabled setting is on (Settings > Downloads)"
         );
         Ok(())
     }
@@ -202,7 +220,10 @@ impl Service for AutoDownloadService {
         let Some(runtime) = runtime.as_ref() else {
             return Ok(ServiceHealth::degraded("auto_download service not started"));
         };
-        if runtime.main_handle.is_finished() || runtime.retry_handle.is_finished() {
+        if runtime.main_handle.is_finished()
+            || runtime.retry_handle.is_finished()
+            || runtime.rss_handle.is_finished()
+        {
             return Ok(ServiceHealth::degraded(
                 "one or more auto-download workers exited unexpectedly",
             ));
@@ -211,31 +232,9 @@ impl Service for AutoDownloadService {
     }
 }
 
-async fn is_enabled(manager: &Arc<ServicesManager>) -> bool {
-    let Some(db_service) = manager.get_database().await else {
-        return false;
-    };
-    let db = db_service.pool().clone();
-    if let Ok(Some(v)) = crate::services::torrent::get_setting::<bool>(&db, SETTING_ENABLED).await {
-        return v;
-    }
-    std::env::var(ENV_ENABLED)
-        .ok()
-        .map(|v| {
-            matches!(
-                v.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
-}
-
-async fn load_u64_setting(db: &Database, key: &str, default: u64) -> u64 {
-    crate::services::torrent::get_setting::<u64>(db, key)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or(default)
+async fn load_settings(manager: &Arc<ServicesManager>) -> Option<AutoDownloadSettings> {
+    let db_service = manager.get_database().await?;
+    Some(AutoDownloadSettings::load(&db_service.pool().clone()).await)
 }
 
 async fn load_i64_setting(db: &Database, key: &str, default: i64) -> i64 {
@@ -246,43 +245,252 @@ async fn load_i64_setting(db: &Database, key: &str, default: i64) -> i64 {
         .unwrap_or(default)
 }
 
-async fn main_loop(
-    manager: Arc<ServicesManager>,
-    default_interval_minutes: u64,
-    cancel: CancellationToken,
-) {
-    loop {
-        let interval_minutes = match manager.get_database().await {
-            Some(db_service) => {
-                load_u64_setting(
-                    &db_service.pool().clone(),
-                    SETTING_INTERVAL_MINUTES,
-                    default_interval_minutes,
-                )
-                .await
-            }
-            None => default_interval_minutes,
-        }
-        .max(1);
+async fn load_u64_setting(db: &Database, key: &str, default: u64) -> u64 {
+    crate::services::torrent::get_setting::<u64>(db, key)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(default)
+}
 
+/// What the scheduler should do on a tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PassKind {
+    /// Search everything wanted.
+    Sweep,
+    /// Search only episodes that have just aired.
+    AirTime,
+}
+
+/// Decide what to run on a tick. Pure, so the schedule can be tested with a fixed clock.
+///
+/// Nothing runs while automatic downloading is off. The first tick after it is turned on sweeps
+/// immediately (the per-target backoff keeps that from searching what was just searched); after
+/// that a sweep is due every `interval_minutes` and, in between, the air-time pass every five minutes.
+pub fn next_pass(
+    settings: &AutoDownloadSettings,
+    now: DateTime<Utc>,
+    last_sweep: Option<DateTime<Utc>>,
+    last_air_time: Option<DateTime<Utc>>,
+) -> Option<PassKind> {
+    if !settings.enabled {
+        return None;
+    }
+    let elapsed = |last: Option<DateTime<Utc>>, minutes: i64| {
+        last.is_none_or(|last| now - last >= chrono::Duration::minutes(minutes))
+    };
+    if elapsed(last_sweep, settings.interval_minutes as i64) {
+        return Some(PassKind::Sweep);
+    }
+    // With a zero-day window no episode is ever fresh, so the extra pass would find nothing.
+    if settings.air_window_days > 0 && elapsed(last_air_time, AIR_TIME_PASS_MINUTES) {
+        return Some(PassKind::AirTime);
+    }
+    None
+}
+
+/// Merge one pass's result into the stored status JSON (`{"sweep": {...}, "airTime": {...}, ...}`),
+/// keeping the other kinds' last results.
+pub fn merge_status(
+    existing: Option<&str>,
+    kind: &str,
+    at: DateTime<Utc>,
+    result: serde_json::Value,
+) -> String {
+    let mut status = existing
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+        .filter(serde_json::Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}));
+    let mut entry = result;
+    if let Some(object) = entry.as_object_mut() {
+        object.insert("at".to_string(), serde_json::json!(at.to_rfc3339()));
+    }
+    status[kind] = entry;
+    status.to_string()
+}
+
+async fn write_status(manager: &Arc<ServicesManager>, kind: &str, result: serde_json::Value) {
+    let Some(db_service) = manager.get_database().await else {
+        return;
+    };
+    let db = db_service.pool().clone();
+    use crate::graphql::entities::{
+        AppSetting, AppSettingWhereInput, CreateAppSettingInput, UpdateAppSettingInput,
+    };
+    let existing = AppSetting::query(db.pool())
+        .filter(AppSettingWhereInput {
+            key: Some(StringFilter {
+                eq: Some(SETTING_STATUS.to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .fetch_all()
+        .await
+        .ok()
+        .and_then(|rows| rows.into_iter().next());
+    let value = merge_status(
+        existing.as_ref().map(|row| row.value.as_str()),
+        kind,
+        Utc::now(),
+        result,
+    );
+    let outcome = match existing {
+        Some(row) => AppSetting::update_by_id(
+            &db,
+            &row.id,
+            UpdateAppSettingInput {
+                value: Some(value),
+                ..Default::default()
+            },
+        )
+        .await
+        .map(|_| ()),
+        None => AppSetting::insert(
+            &db,
+            CreateAppSettingInput {
+                key: SETTING_STATUS.to_string(),
+                value,
+                description: Some("Automatic downloading: what each pass did last".to_string()),
+                category: "auto_download".to_string(),
+            },
+        )
+        .await
+        .map(|_| ()),
+    };
+    if let Err(error) = outcome {
+        warn!(error = %error, "Auto-download: could not record the status of the last pass");
+    }
+}
+
+async fn record_hunt_status(
+    manager: &Arc<ServicesManager>,
+    kind: &str,
+    summary: &AutoDownloadRunSummary,
+) {
+    write_status(
+        manager,
+        kind,
+        serde_json::json!({
+            "candidates": summary.candidates_considered,
+            "searched": summary.searched,
+            "grabbed": summary.grabbed,
+            "backoffSkipped": summary.backoff_skipped,
+            "capped": summary.capped,
+            "errors": summary.errors.iter().take(3).collect::<Vec<_>>(),
+        }),
+    )
+    .await;
+}
+
+async fn scheduler_loop(manager: Arc<ServicesManager>, cancel: CancellationToken) {
+    tokio::select! {
+        _ = cancel.cancelled() => return,
+        _ = tokio::time::sleep(STARTUP_DELAY) => {}
+    }
+    let mut last_sweep: Option<DateTime<Utc>> = None;
+    let mut last_air_time: Option<DateTime<Utc>> = None;
+    loop {
+        let Some(settings) = load_settings(&manager).await else {
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                _ = tokio::time::sleep(TICK) => continue,
+            }
+        };
+        if !settings.enabled {
+            // Turning it on starts with a sweep.
+            last_sweep = None;
+            last_air_time = None;
+        }
+        let now = Utc::now();
+        match next_pass(&settings, now, last_sweep, last_air_time) {
+            Some(PassKind::Sweep) => {
+                last_sweep = Some(now);
+                last_air_time = Some(now);
+                run_hunt(&manager, "sweep", Trigger::Sweep, false).await;
+            }
+            Some(PassKind::AirTime) => {
+                last_air_time = Some(now);
+                run_hunt(&manager, "airTime", Trigger::AirTime, true).await;
+            }
+            None => tracing::debug!("Auto-download: nothing due on this tick"),
+        }
         tokio::select! {
             _ = cancel.cancelled() => break,
-            _ = tokio::time::sleep(Duration::from_secs(interval_minutes * 60)) => {
-                if !is_enabled(&manager).await {
-                    tracing::debug!("Auto-download: disabled, skipping scheduled run");
-                    continue;
-                }
-                match auto_download::run_once(&manager, None).await {
-                    Ok(summary) => info!(
-                        candidates = summary.candidates_considered,
-                        searched = summary.searched,
+            _ = tokio::time::sleep(TICK) => {}
+        }
+    }
+}
+
+async fn run_hunt(manager: &Arc<ServicesManager>, kind: &str, trigger: Trigger, fresh_only: bool) {
+    match auto_download::run_pass(manager, &HuntScope::default(), trigger, fresh_only).await {
+        Ok(summary) => {
+            info!(
+                pass = kind,
+                candidates = summary.candidates_considered,
+                searched = summary.searched,
+                grabbed = summary.grabbed,
+                backoff_skipped = summary.backoff_skipped,
+                capped = summary.capped,
+                errors = summary.errors.len(),
+                "Auto-download: {kind} pass finished: {} searched, {} grabbed, {} waiting on backoff, {} waiting on the limit",
+                summary.searched,
+                summary.grabbed,
+                summary.backoff_skipped,
+                summary.capped
+            );
+            record_hunt_status(manager, kind, &summary).await;
+        }
+        Err(error) => warn!(pass = kind, error = %error, "Auto-download: {kind} pass failed"),
+    }
+}
+
+async fn rss_loop(manager: Arc<ServicesManager>, cancel: CancellationToken) {
+    tokio::select! {
+        _ = cancel.cancelled() => return,
+        _ = tokio::time::sleep(STARTUP_DELAY) => {}
+    }
+    loop {
+        if load_settings(&manager)
+            .await
+            .is_some_and(|settings| settings.enabled)
+        {
+            match rss_poll::poll_due_feeds(&manager).await {
+                Ok(summary) if summary.feeds_polled > 0 => {
+                    info!(
+                        feeds = summary.feeds_polled,
+                        failed = summary.feeds_failed,
+                        new_items = summary.new_items,
+                        matched = summary.matched,
                         grabbed = summary.grabbed,
-                        errors = summary.errors.len(),
-                        "Auto-download: scheduled run finished"
-                    ),
-                    Err(e) => warn!(error = %e, "Auto-download: scheduled run failed"),
+                        capped = summary.capped,
+                        "RSS: polled {} feed(s): {} new item(s), {} matched, {} grabbed",
+                        summary.feeds_polled,
+                        summary.new_items,
+                        summary.matched,
+                        summary.grabbed
+                    );
+                    write_status(
+                        &manager,
+                        "rss",
+                        serde_json::json!({
+                            "feeds": summary.feeds_polled,
+                            "failed": summary.feeds_failed,
+                            "newItems": summary.new_items,
+                            "matched": summary.matched,
+                            "grabbed": summary.grabbed,
+                            "capped": summary.capped,
+                        }),
+                    )
+                    .await;
                 }
+                Ok(_) => {}
+                Err(error) => warn!(error = %error, "RSS: poll pass failed"),
             }
+        }
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            _ = tokio::time::sleep(TICK) => {}
         }
     }
 }
@@ -359,7 +567,7 @@ fn blocklist_reason(
     None
 }
 
-fn has_wanted_linkage(torrent: &Torrent) -> bool {
+pub(super) fn has_wanted_linkage(torrent: &Torrent) -> bool {
     torrent.episode_id.is_some()
         || torrent.movie_id.is_some()
         || torrent.track_id.is_some()
@@ -440,6 +648,28 @@ async fn blocklist_and_rehunt(
         "Auto-download: blocklisted a dead release"
     );
 
+    let searching_again = AutoDownloadSettings::load(db).await.enabled;
+    if let Some(library_id) = torrent.library_id.as_deref() {
+        let torrent_id = Some(torrent.id.as_str());
+        super::auto_trail::Trail::new(db)
+            .blocklisted(
+                library_id,
+                &torrent.name,
+                reason,
+                searching_again,
+                torrent_id,
+            )
+            .await;
+    }
+    if !searching_again {
+        info!(
+            info_hash = %torrent.info_hash,
+            torrent_name = %torrent.name,
+            "Auto-download: automatic downloading is off, so the target of the blocklisted release is not searched again"
+        );
+        return Ok(());
+    }
+
     let Some(scope) = rehunt_scope(torrent) else {
         warn!(
             info_hash = %torrent.info_hash,
@@ -449,7 +679,7 @@ async fn blocklist_and_rehunt(
         return Ok(());
     };
 
-    match auto_download::run_scoped(manager, &scope).await {
+    match auto_download::run_pass(manager, &scope, Trigger::Retry, false).await {
         Ok(summary) => info!(
             torrent_name = %torrent.name,
             searched = summary.searched,
@@ -772,6 +1002,146 @@ mod tests {
         unlinked.episode_id = None;
         unlinked.show_id = None;
         assert!(rehunt_scope(&unlinked).is_none());
+    }
+
+    #[test]
+    fn only_unfinished_unfailed_linked_downloads_count_against_the_cap() {
+        let downloading = base_torrent();
+        assert!(auto_download::counts_as_in_flight(&downloading));
+
+        let mut finished = base_torrent();
+        finished.completed_at = Some(Utc::now().to_rfc3339());
+        assert!(
+            !auto_download::counts_as_in_flight(&finished),
+            "seeding is not downloading"
+        );
+
+        let mut failed = base_torrent();
+        failed.post_process_status = Some("failed".to_string());
+        assert!(!auto_download::counts_as_in_flight(&failed));
+
+        let mut manual = base_torrent();
+        manual.episode_id = None;
+        manual.show_id = None;
+        assert!(
+            !auto_download::counts_as_in_flight(&manual),
+            "a download nobody wanted for a title"
+        );
+    }
+
+    fn settings(enabled: bool) -> AutoDownloadSettings {
+        AutoDownloadSettings {
+            enabled,
+            ..AutoDownloadSettings::default()
+        }
+    }
+
+    fn at(text: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(text)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn nothing_is_scheduled_while_the_setting_is_off() {
+        let now = at("2026-11-08T12:00:00Z");
+        assert_eq!(next_pass(&settings(false), now, None, None), None);
+        assert_eq!(
+            next_pass(
+                &settings(false),
+                now,
+                Some(now - chrono::Duration::days(3)),
+                None
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn the_first_tick_after_turning_it_on_sweeps() {
+        let now = at("2026-11-08T12:00:00Z");
+        assert_eq!(
+            next_pass(&settings(true), now, None, None),
+            Some(PassKind::Sweep)
+        );
+    }
+
+    #[test]
+    fn a_sweep_is_due_every_interval_and_the_air_time_pass_fills_the_gaps() {
+        let now = at("2026-11-08T12:00:00Z");
+        let settings = settings(true); // sweep every 60 minutes, air-time pass every 5
+        let swept = Some(now - chrono::Duration::minutes(10));
+
+        // 10 minutes after a sweep, 10 after the last air-time pass: the air-time pass is due.
+        assert_eq!(
+            next_pass(
+                &settings,
+                now,
+                swept,
+                Some(now - chrono::Duration::minutes(10))
+            ),
+            Some(PassKind::AirTime)
+        );
+        // Air-time pass ran 2 minutes ago: nothing is due.
+        assert_eq!(
+            next_pass(
+                &settings,
+                now,
+                swept,
+                Some(now - chrono::Duration::minutes(2))
+            ),
+            None
+        );
+        // An hour after the sweep: sweep again, whatever the air-time pass did.
+        assert_eq!(
+            next_pass(
+                &settings,
+                now,
+                Some(now - chrono::Duration::minutes(60)),
+                Some(now - chrono::Duration::minutes(1))
+            ),
+            Some(PassKind::Sweep)
+        );
+    }
+
+    #[test]
+    fn with_no_post_air_window_there_is_no_air_time_pass() {
+        let now = at("2026-11-08T12:00:00Z");
+        let settings = AutoDownloadSettings {
+            air_window_days: 0,
+            ..settings(true)
+        };
+        assert_eq!(
+            next_pass(
+                &settings,
+                now,
+                Some(now - chrono::Duration::minutes(10)),
+                None
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn status_keeps_each_kind_of_pass_and_survives_damage() {
+        let at = at("2026-11-08T12:00:00Z");
+        let first = merge_status(None, "sweep", at, serde_json::json!({"searched": 3}));
+        let second = merge_status(Some(&first), "rss", at, serde_json::json!({"feeds": 2}));
+        let status: serde_json::Value = serde_json::from_str(&second).unwrap();
+        assert_eq!(status["sweep"]["searched"], 3);
+        assert_eq!(status["rss"]["feeds"], 2);
+        assert_eq!(status["rss"]["at"], at.to_rfc3339());
+
+        let repaired = merge_status(
+            Some("{not json"),
+            "sweep",
+            at,
+            serde_json::json!({"searched": 1}),
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&repaired).unwrap()["sweep"]["searched"],
+            1
+        );
     }
 
     #[test]
