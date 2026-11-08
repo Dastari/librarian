@@ -43,6 +43,7 @@ pub mod http_server;
 pub mod identify_rules;
 pub mod jev;
 pub mod library_scan;
+pub mod library_storage;
 pub mod logging;
 pub mod login_rate_limit;
 pub mod manager;
