@@ -8,7 +8,7 @@ import type { ProgressReset } from "./progressReset";
 import { useAlbumActions, type AlbumSettingsTab } from "./useAlbumActions";
 
 /** An album's actions, with its settings dialog ready to open from them. */
-export function useAlbumEntity<T extends AlbumEntity>(options: { open?: boolean; play?: { label: string; run: () => void; disabledReason?: string }; enqueue?: () => void; artist?: string | null; reset?: ProgressReset<T>; onChanged?: () => void } = {}) {
+export function useAlbumEntity<T extends AlbumEntity>(options: { open?: boolean; play?: { label: string; run: () => void; disabledReason?: string }; artist?: string | null; reset?: ProgressReset<T>; onChanged?: () => void } = {}) {
   const isAdmin = useIsAdmin();
   const [settings, setSettings] = useState<{ id: string; tab: AlbumSettingsTab } | null>(null);
   const openSettings = useCallback((album: T, tab?: AlbumSettingsTab) => setSettings({ id: album.id, tab: tab ?? (isAdmin ? "general" : "info") }), [isAdmin]);

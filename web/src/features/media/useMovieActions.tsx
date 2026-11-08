@@ -6,6 +6,7 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
+import { useQueueActions } from "@/features/player/queueActions";
 import { usePlayer } from "@/features/player/usePlayer";
 import { EntityMovieUpdateDocument, RecacheMovieArtworkDocument, RefreshMovieDocument } from "@/graphql/generated/graphql";
 import { movieBackdrop, moviePoster } from "@/lib/artwork";
@@ -48,6 +49,8 @@ export function useMovieActions<T extends MovieEntity>({ settings, open = true, 
     bulk: true,
     priority: 2,
   });
+  // Play next / Add to queue (the play queue): one movie, or every selected movie that has a file.
+  const queueActions = useQueueActions<T>((rows) => rows.filter((movie) => movie.mediaFileId).map((movie) => ({ kind: "movie" as const, id: movie.id })), { visible: (rows) => rows.some((movie) => movie.mediaFileId) });
   const [finding, setFinding] = useState<T | null>(null);
 
   const actions = useMemo(() => {
@@ -63,6 +66,7 @@ export function useMovieActions<T extends MovieEntity>({ settings, open = true, 
           void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: movie.mediaFileId! } });
         },
       },
+      ...queueActions,
       ...(open ? [{
         id: "open", label: "Open movie", icon: IconExternalLink, group: "open" as const, priority: 1,
         visible: one,
@@ -107,7 +111,7 @@ export function useMovieActions<T extends MovieEntity>({ settings, open = true, 
         run: (rows: readonly T[]) => settings(rows[0]!, "remove"),
       }] : []),
     ]);
-  }, [isAdmin, navigate, open, play, playLabel, player, recache, refresh, refreshing, reset, resetProgress, settings, update, user?.id]);
+  }, [isAdmin, navigate, open, play, playLabel, player, queueActions, recache, refresh, refreshing, reset, resetProgress, settings, update, user?.id]);
 
   const dialogs = (
     <>

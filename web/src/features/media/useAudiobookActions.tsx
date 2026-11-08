@@ -8,6 +8,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { ChooseListingDialog, type Listing } from "@/features/downloads/ChooseListingDialog";
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
+import { useQueueActions } from "@/features/player/queueActions";
 import { AudiobookEditionsDocument, ChangeAudiobookEditionDocument, ListenToAudiobookChaptersDocument, RestoreAudiobookChaptersDocument } from "@/graphql/generated/graphql";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
@@ -44,6 +45,8 @@ export function useAudiobookActions<T extends AudiobookEntity>({ settings, open 
     bulk: true,
     priority: 2,
   });
+  // Play next / Add to queue (the play queue): every chapter (or file) of each selected book, in order.
+  const queueActions = useQueueActions<T>((rows) => rows.map((book) => ({ kind: "audiobook" as const, id: book.id })));
   const [finding, setFinding] = useState<T | null>(null);
   const [choosing, setChoosing] = useState<T | null>(null);
 
@@ -56,6 +59,7 @@ export function useAudiobookActions<T extends AudiobookEntity>({ settings, open 
         disabledReason: () => play.disabledReason ?? false,
         run: () => play.run(),
       }] : []),
+      ...queueActions,
       ...(open ? [{
         id: "open", label: "Open audiobook", icon: IconExternalLink, group: "open" as const, priority: 1,
         visible: one,
@@ -105,7 +109,7 @@ export function useAudiobookActions<T extends AudiobookEntity>({ settings, open 
         run: (rows: readonly T[]) => settings(rows[0]!, "remove"),
       }] : []),
     ]);
-  }, [isAdmin, listen, navigate, onChanged, open, play, reset, resetProgress, restore, settings, user?.id, wantMissing]);
+  }, [isAdmin, listen, navigate, onChanged, open, play, queueActions, reset, resetProgress, restore, settings, user?.id, wantMissing]);
 
   const useEdition = async (listing: Listing) => {
     if (!listing.providerId || !choosing) return;

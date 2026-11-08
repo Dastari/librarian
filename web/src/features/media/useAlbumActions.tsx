@@ -1,10 +1,11 @@
 import { useNavigate } from "@tanstack/react-router";
 import { defineActions, type ActionSet } from "glass-ux/actions";
-import { IconDownload, IconExternalLink, IconPlay, IconPlus, IconSettings, IconTrash } from "glass-ux/icons";
+import { IconDownload, IconExternalLink, IconPlay, IconSettings, IconTrash } from "glass-ux/icons";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
+import { useQueueActions } from "@/features/player/queueActions";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 
 import type { AlbumEntity } from "./AlbumIdentity";
@@ -14,12 +15,11 @@ import { useWantMissing, wantMissingActions } from "./wantMissing";
 export const ALBUM_SETTINGS_TABS = ["general", "downloads", "files", "info", "remove"] as const;
 export type AlbumSettingsTab = (typeof ALBUM_SETTINGS_TABS)[number];
 
-/** Everything that can be done to an album, wherever it's shown. `play` and `enqueue` need its page's tracks. */
-export function useAlbumActions<T extends AlbumEntity>({ settings, open = true, play, enqueue, artist, reset, onChanged }: {
+/** Everything that can be done to an album, wherever it's shown. `play` needs its page's tracks. */
+export function useAlbumActions<T extends AlbumEntity>({ settings, open = true, play, artist, reset, onChanged }: {
   settings: (album: T, tab?: AlbumSettingsTab) => void;
   open?: boolean;
   play?: { label: string; run: () => void; disabledReason?: string };
-  enqueue?: () => void;
   /** Who a release search looks for, where it's known. */
   artist?: string | null;
   /** Where this person's progress is known (its page), which adds "Mark as unplayed". */
@@ -39,6 +39,8 @@ export function useAlbumActions<T extends AlbumEntity>({ settings, open = true, 
     bulk: true,
     priority: 2,
   });
+  // Play next / Add to queue (the play queue): every track of each selected album, in order.
+  const queueActions = useQueueActions<T>((rows) => rows.map((album) => ({ kind: "album" as const, id: album.id })));
   const [finding, setFinding] = useState<T | null>(null);
 
   const actions = useMemo(() => {
@@ -50,11 +52,7 @@ export function useAlbumActions<T extends AlbumEntity>({ settings, open = true, 
         disabledReason: () => play.disabledReason ?? false,
         run: () => play.run(),
       }] : []),
-      ...(enqueue ? [{
-        id: "enqueue", label: "Add to queue", icon: IconPlus, group: "open" as const, priority: 1,
-        visible: one,
-        run: () => enqueue(),
-      }] : []),
+      ...queueActions,
       ...(open ? [{
         id: "open", label: "Open album", icon: IconExternalLink, group: "open" as const, priority: 1,
         visible: one,
@@ -78,7 +76,7 @@ export function useAlbumActions<T extends AlbumEntity>({ settings, open = true, 
         run: (rows: readonly T[]) => settings(rows[0]!, "remove"),
       }] : []),
     ]);
-  }, [enqueue, isAdmin, navigate, onChanged, open, play, reset, resetProgress, settings, user?.id, wantMissing]);
+  }, [isAdmin, navigate, onChanged, open, play, queueActions, reset, resetProgress, settings, user?.id, wantMissing]);
 
   const dialogs = (
     <>

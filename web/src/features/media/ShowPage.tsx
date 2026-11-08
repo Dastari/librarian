@@ -6,6 +6,8 @@ import { useMemo, useState } from "react";
 import { Button, EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, PosterCard, Section, SkeletonHero, ViewToggle, type ViewMode } from "@/components/ui";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
 import { autoDownloadMeta } from "@/features/acquisition/mode";
+import { episodePlayItem } from "@/features/player/playItems";
+import type { PlayItem } from "@/features/player/store";
 import { usePlayer } from "@/features/player/usePlayer";
 import { EntitySeasonListDocument, ShowDetailDocument, type ShowEpisodesQuery } from "@/graphql/generated/graphql";
 import { useContentStatuses } from "@/hooks/useContentStatuses";
@@ -63,9 +65,13 @@ export function ShowPage({ showId, initialSeason, focusEpisodeId }: {
   const nextUp = list.find((episode) => episode.mediaFileId && !progressByFile.get(episode.mediaFileId!)?.isWatched) ?? list.find((episode) => episode.mediaFileId);
   const play = (episode: EpisodeRow) => {
     if (!show || !episode.mediaFileId || progress.loading || progress.error) return;
-    const code = `S${String(episode.season).padStart(2, "0")} · E${String(episode.episode).padStart(2, "0")}`;
     const saved = progressByFile.get(episode.mediaFileId);
-    player.playVideo({ mediaFileId: episode.mediaFileId, title: show.name, subtitle: [code, episode.title].filter(Boolean).join("  "), artwork: showPoster(show), backdrop: showBackdrop(show), entity: { kind: "episode", id: episode.id }, href: `/shows/${show.id}`, startPosition: saved && !saved.isWatched && saved.currentPosition > 5 ? saved.currentPosition : undefined });
+    const first = episodePlayItem(episode, show, saved && !saved.isWatched && saved.currentPosition > 5 ? saved.currentPosition : undefined);
+    if (!first) return;
+    // The rest of the show follows in the queue; if the list is still loading, the queue finds them when it runs out.
+    const at = list.findIndex((candidate) => candidate.id === episode.id);
+    const following = episodes.complete && at >= 0 ? list.slice(at + 1).map((candidate) => episodePlayItem(candidate, show)).filter((item): item is PlayItem => item !== null) : [];
+    player.playVideo(first, following);
     void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: episode.mediaFileId } });
   };
 

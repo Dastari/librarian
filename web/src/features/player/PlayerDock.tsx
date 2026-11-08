@@ -86,9 +86,8 @@ export function PlayerDock() {
       if (!active()) return;
       checkpoint(false);
       void flush(true);
-      const snapshot = playerStore.getSnapshot();
-      if (snapshot.index < snapshot.queue.length - 1) playerStore.skip(1);
-      else playerStore.updateTransport({ playing: false });
+      // Next entry, audio or video; past the last, whatever the queue continues with, else it stops.
+      void playerStore.advance();
     };
     audio.addEventListener("timeupdate", onTime);
     audio.addEventListener("durationchange", onDuration);

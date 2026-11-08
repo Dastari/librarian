@@ -1,12 +1,10 @@
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
-import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo } from "react";
 
 import { EntityMediaFileGetDocument, EpisodeDetailDocument, MovieDetailDocument } from "@/graphql/generated/graphql";
-import { useShowEpisodes } from "@/features/media/useShowEpisodes";
-import { movieBackdrop, moviePoster, showBackdrop, showPoster } from "@/lib/artwork";
 
-import { playerStore, usePlayerState, type PlayItem } from "./store";
+import { episodePlayItem, moviePlayItem } from "./playItems";
+import { canAdvance, currentQueueItem, playerStore, usePlayerState, type PlayItem } from "./store";
 import { VideoPlayer } from "./VideoPlayer";
 
 interface WatchPageProps {
@@ -21,10 +19,9 @@ interface WatchPageProps {
 
 /**
  * Resolves the item to play when the route is opened directly (deep link, refresh) and wires
- * "next episode" for shows. Audio playback is paused while video plays.
+ * Next and the end of a video to the play queue. Audio playback is paused while video plays.
  */
 export function WatchPage({ mediaFileId, onBack, mini = false, userId, onMinimise, onExpand, onClose }: WatchPageProps) {
-  const navigate = useNavigate();
   const state = usePlayerState();
   const known = state.video?.mediaFileId === mediaFileId ? state.video : null;
 
@@ -36,52 +33,29 @@ export function WatchPage({ mediaFileId, onBack, mini = false, userId, onMinimis
 
   const resolved = useMemo<PlayItem | null>(() => {
     if (known) return known;
-    if (movie.data?.movie) {
-      const item = movie.data.movie;
-      return { mediaFileId, title: item.title, subtitle: item.year ? String(item.year) : undefined, artwork: moviePoster(item.id), backdrop: movieBackdrop(item.id), entity: { kind: "movie", id: item.id }, href: `/movies/${item.id}` };
-    }
-    if (episode.data?.episode) {
-      const item = episode.data.episode;
-      const code = `S${String(item.season).padStart(2, "0")} · E${String(item.episode).padStart(2, "0")}`;
-      return {
-        mediaFileId,
-        title: item.show?.name ?? item.title ?? "Episode",
-        subtitle: [code, item.title].filter(Boolean).join("  "),
-        artwork: item.show ? showPoster(item.show) : undefined,
-        backdrop: item.show ? showBackdrop(item.show) : undefined,
-        entity: { kind: "episode", id: item.id },
-        href: `/shows/${item.showId}`,
-      };
-    }
+    if (movie.data?.movie) return moviePlayItem({ ...movie.data.movie, mediaFileId });
+    if (episode.data?.episode?.show) return episodePlayItem({ ...episode.data.episode, mediaFileId }, episode.data.episode.show);
     return null;
   }, [known, movie.data, episode.data, mediaFileId]);
 
+  // Opened directly (a link, a refresh): this is the queue, so what follows it can play on.
   useEffect(() => {
-    if (resolved && !known) playerStore.setVideo(resolved);
+    if (resolved && !known) playerStore.playQueue([resolved], 0);
   }, [resolved, known]);
 
   useEffect(() => {
     playerStore.updateTransport({ playing: false });
   }, []);
 
-  // Next episode lookup for shows.
-  const showId = resolved?.entity.kind === "episode" ? (episode.data?.episode?.showId ?? state.video?.href?.split("/").pop() ?? null) : null;
-  const episodes = useShowEpisodes(showId ?? "");
-  const nextEpisode = useMemo(() => {
-    if (!resolved || resolved.entity.kind !== "episode" || !episodes.complete) return null;
-    const list = episodes.rows;
-    const index = list.findIndex((candidate) => candidate.id === resolved.entity.id);
-    if (index < 0) return null;
-    return list.slice(index + 1).find((candidate) => candidate.mediaFileId) ?? null;
-  }, [episodes.rows, episodes.complete, resolved]);
-
-  const playNext = useCallback(() => {
-    if (!nextEpisode?.mediaFileId || !resolved) return;
-    const code = `S${String(nextEpisode.season).padStart(2, "0")} · E${String(nextEpisode.episode).padStart(2, "0")}`;
-    playerStore.setVideo({ mediaFileId: nextEpisode.mediaFileId, title: resolved.title, subtitle: [code, nextEpisode.title].filter(Boolean).join("  "), artwork: resolved.artwork, entity: { kind: "episode", id: nextEpisode.id }, href: resolved.href });
-    // In the floating window the next episode just plays there.
-    if (!mini) void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: nextEpisode.mediaFileId }, replace: true });
-  }, [mini, navigate, nextEpisode, resolved]);
+  // Next and the end of a video both move the queue on, which also switches to the audio dock
+  // when what is next is audio. The next entry is the queue's own; at the queue's end the
+  // continuation (the rest of the show) is looked up when it is asked for.
+  const queued = currentQueueItem(state)?.mediaFileId === resolved?.mediaFileId;
+  const upcoming = queued ? state.queue[state.index + 1] : undefined;
+  const hasNext = queued && canAdvance(state);
+  const nextLabel = !hasNext ? undefined : upcoming ? (upcoming.entity.kind === "episode" ? `Next: ${/E\d+/.exec(upcoming.subtitle ?? "")?.[0] ?? upcoming.title}` : `Next: ${upcoming.title}`) : "Next episode";
+  const advance = useCallback(() => { void playerStore.advance(); }, []);
+  const skip = useCallback(() => playerStore.skip(1), []);
 
   if (!resolved) {
     return <div className="h-dvh w-full bg-black" aria-busy />;
@@ -92,9 +66,9 @@ export function WatchPage({ mediaFileId, onBack, mini = false, userId, onMinimis
       key={resolved.mediaFileId}
       item={resolved}
       onBack={onBack}
-      onNext={nextEpisode ? playNext : undefined}
-      nextLabel={nextEpisode ? `Next: E${String(nextEpisode.episode).padStart(2, "0")}` : undefined}
-      onEnded={nextEpisode ? playNext : undefined}
+      onNext={hasNext ? skip : undefined}
+      nextLabel={nextLabel}
+      onEnded={advance}
       mini={mini}
       userId={userId}
       onMinimise={onMinimise}

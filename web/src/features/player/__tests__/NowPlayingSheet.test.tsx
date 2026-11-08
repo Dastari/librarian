@@ -8,12 +8,14 @@ import { renderWithProviders } from "@/test";
 import { NowPlayingSheet } from "../NowPlayingSheet";
 import { playerStore, type PlayItem } from "../store";
 import { audioCommands } from "../usePlayer";
+import { useTableLayout } from "./tableLayout";
 
 const queue: PlayItem[] = [
   { mediaFileId: "file-1", title: "First track", duration: 120, entity: { kind: "track", id: "track-1" } },
   { mediaFileId: "file-2", title: "Second track", duration: 240, entity: { kind: "track", id: "track-2" } },
 ];
 
+useTableLayout();
 afterEach(() => { act(() => playerStore.stopAudio()); delete audioCommands.retry; });
 
 function Fixture() {
@@ -31,11 +33,11 @@ describe("NowPlayingSheet", () => {
     const opener = screen.getByRole("button", { name: "Expand player" });
     await userEvent.click(opener);
     const dialog = await screen.findByRole("dialog", { name: "Now playing" });
-    const next = within(dialog).getByRole("button", { name: /Second track/ });
+    const grid = within(dialog).getByRole("grid", { name: "Play queue" });
+    const next = await within(grid).findByRole("row", { name: /Second track/ });
     next.focus();
     await userEvent.keyboard("{Enter}");
     expect(playerStore.getSnapshot().index).toBe(1);
-    expect(next).toHaveAttribute("aria-current", "true");
     await userEvent.keyboard("{Escape}");
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await vi.waitFor(() => expect(opener).toHaveFocus());

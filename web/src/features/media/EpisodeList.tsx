@@ -28,6 +28,9 @@ import { qualityStatus, statusMeta } from "@/lib/status";
 import { groupBySeason, type SeasonGroup } from "./seasons";
 import type { EpisodeRow } from "./ShowPage";
 import { filesWithProgress, resetProgressAction, useResetProgress, type ProgressReset } from "./progressReset";
+import { episodePlayItem } from "@/features/player/playItems";
+import { useQueueActions } from "@/features/player/queueActions";
+import type { PlayItem } from "@/features/player/store";
 import { noRowMenu, RowActions, type RowPlayState } from "./RowPlayAction";
 
 interface EpisodeListProps {
@@ -238,6 +241,11 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
     files: (seasons) => filesWithProgress(seasons.flatMap((season) => season.episodes.map((episode) => episode.mediaFileId)), progressByFile),
     disabledReason: () => (!complete ? "Loading the complete episode list" : playbackUnavailable),
   }), [progressByFile, playbackUnavailable, complete]);
+  // Play next / Add to queue (the play queue): the selected episodes that have a file, in show order.
+  const queueActions = useQueueActions<EpisodeRow>((rows) => [[...rows]
+    .sort((a, b) => (a.season || Number.MAX_SAFE_INTEGER) - (b.season || Number.MAX_SAFE_INTEGER) || a.episode - b.episode)
+    .map((episode) => episodePlayItem(episode, { id: showId, name: showName }))
+    .filter((item): item is PlayItem => item !== null)], { visible: (rows) => rows.some((episode) => episode.mediaFileId), disabledReason: () => playbackUnavailable });
   const actions = useMemo(() => defineActions<EpisodeRow>("episode", [
     {
       id: "play", label: "Play", icon: IconPlay, group: "open", primary: true, bulk: true,
@@ -245,6 +253,7 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
       disabledReason: () => playbackUnavailable,
       run: ([episode]) => { if (episode?.mediaFileId) onPlay(episode); },
     },
+    ...queueActions,
     {
       id: "wanted", label: ([episode]) => episode?.wanted ? "Wanted" : "Want", icon: IconBookmark, group: "manage", priority: 1, bulk: true,
       visible: (rows) => rows.length === 1 && isAdmin && Boolean(rows[0] && !rows[0].mediaFileId && !rows[0].ignored),
@@ -289,7 +298,7 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
     episodePlaylist.action,
     { id: "copy-titles", label: "Copy episode titles", icon: IconCopy, group: "organise", bulk: true,
       run: async (rows) => { await copyText(rows.map(episodeLabel).join("\n")); }, successMessage: () => "Episode titles copied" },
-  ]), [episodePlaylist.action, isAdmin, onPlay, update, updateSelected, playbackUnavailable, episodeReset, resetProgress]);
+  ]), [episodePlaylist.action, queueActions, isAdmin, onPlay, update, updateSelected, playbackUnavailable, episodeReset, resetProgress]);
 
   const columns = episodeColumns;
   const presentation = useMemo(() => ({

@@ -5,7 +5,7 @@ import { Link } from "@tanstack/react-router";
 import { defineActions, type ActionSet } from "glass-ux/actions";
 import { Button } from "glass-ux/button";
 import { createDataTableColumns, filters, NumericCell, TextCell, TwoLineCell } from "glass-ux/data-table";
-import { IconBookmark, IconCopy, IconInfo, IconPlay, IconPlus } from "glass-ux/icons";
+import { IconBookmark, IconCopy, IconInfo, IconPlay } from "glass-ux/icons";
 import { createContext, useCallback, useContext, useMemo } from "react";
 
 import { EmptyState, ErrorState, MetaLine, SkeletonHero, StatusChip } from "@/components/ui";
@@ -14,6 +14,7 @@ import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
 import { autoDownloadMeta } from "@/features/acquisition/mode";
 import { trackToPlayItem } from "@/features/libraries/browser/TracksBrowser";
+import { useQueueActions } from "@/features/player/queueActions";
 import { usePlayer } from "@/features/player/usePlayer";
 import { playerStore, type PlayItem } from "@/features/player/store";
 import { AlbumDetailDocument, AlbumTracksPageDocument, EntityTrackUpdateDocument, EntityTrackUpdateManyDocument, type AlbumDetailQuery } from "@/graphql/generated/graphql";
@@ -175,6 +176,8 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     bulk: true,
     priority: 2,
   });
+  // Play next / Add to queue (the play queue): the selected tracks, in album order.
+  const queueActions = useQueueActions<TrackRow>((rows) => [selectedQueue(rows)], { visible: (rows) => rows.some((item) => item.mediaFileId), disabledReason: selectedPlaybackUnavailable });
   const actions = useMemo(() => defineActions<TrackRow>("track", [
     { id: "play", label: "Play", icon: IconPlay, group: "open", primary: true, bulk: true,
       visible: (rows) => rows.length === 1 && Boolean(rows[0]?.mediaFileId),
@@ -185,9 +188,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     { id: "play-selected", label: "Play selected tracks", icon: IconPlay, group: "open", bulk: true,
       visible: (rows) => rows.length > 1, disabledReason: selectedPlaybackUnavailable,
       run: (rows) => { const items = selectedQueue(rows); if (!items.length || selectedPlaybackUnavailable(rows)) throw new Error("Selected tracks are not ready to play"); player.playAudio(items); } },
-    { id: "enqueue", label: "Add to queue", icon: IconPlus, group: "organise", bulk: true,
-      disabledReason: selectedPlaybackUnavailable,
-      run: (rows) => { const items = selectedQueue(rows); if (!items.length || selectedPlaybackUnavailable(rows)) throw new Error("Selected tracks are not ready to queue"); player.enqueue(items); }, successMessage: () => "Added to queue" },
+    ...queueActions,
     { id: "want-selected", label: "Want selected missing tracks", icon: IconBookmark, group: "manage", bulk: true,
       visible: (rows) => isAdmin && rows.length > 1 && rows.some((item) => !item.mediaFileId && !item.wanted),
       run: (rows) => setSelectedWanted(rows, true), successMessage: () => "Selected missing tracks wanted" },
@@ -198,7 +199,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     trackPlaylist.action,
     { id: "copy-titles", label: "Copy track titles", icon: IconCopy, group: "organise", bulk: true,
       run: async (rows) => { await copyText(rows.map((item) => item.title).join("\n")); }, successMessage: () => "Track titles copied" },
-  ]), [trackPlaylist.action, isAdmin, playFrom, toggleWanted, setSelectedWanted, selectedQueue, player, trackReset, resetProgress]);
+  ]), [trackPlaylist.action, queueActions, isAdmin, playFrom, toggleWanted, setSelectedWanted, selectedQueue, player, trackReset, resetProgress]);
 
   const currentItemId = player.audio?.entity.id;
   const fractionOf = (track: TrackRow) => {
@@ -221,8 +222,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
   };
 
   const playAlbum = queue.length > 0 ? { label: "Play", run: () => playFrom(), disabledReason: !pages.complete ? "Load all tracks to play the album" : undefined } : undefined;
-  const enqueue = pages.complete && queue.length > 0 ? () => player.enqueue(queue) : undefined;
-  const { actions: albumActions, dialogs: albumDialogs, openSettings } = useAlbumEntity<NonNullable<typeof album>>({ open: false, play: playAlbum, enqueue, artist: tracks[0]?.artistName, reset: albumReset, onChanged: pages.refresh });
+  const { actions: albumActions, dialogs: albumDialogs, openSettings } = useAlbumEntity<NonNullable<typeof album>>({ open: false, play: playAlbum, artist: tracks[0]?.artistName, reset: albumReset, onChanged: pages.refresh });
 
   if (error && !album) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!album) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Album not found" description="This item may have been removed from the library." className="page-gutter my-8" />;
