@@ -175,6 +175,21 @@ describe("useProgressSync serialization", () => {
     expect(calls(EntityPlaybackSessionCreateDocument)).toHaveLength(2);
   });
 
+  it("creates a fresh checkpoint when the playing file's row is reset by \"Mark as unplayed\"", async () => {
+    const { result } = renderHook(() => useProgressSync(item("file")));
+    act(() => result.current.report(40, 300, true));
+    await settle();
+    await act(async () => result.current.flush(true));
+    expect(calls(EntityPlaybackProgressUpdateDocument).length + calls(EntityPlaybackProgressCreateDocument).length).toBeGreaterThan(0);
+    // The reset deletes the row; the live invalidation re-reads it as gone while playback goes on.
+    runtime.rows.clear();
+    await act(async () => { await runtime.refresh?.(); });
+    act(() => result.current.report(55, 300, true));
+    await act(async () => result.current.flush(true));
+    expect(calls(EntityPlaybackProgressUpdateDocument).every(({ variables }) => variables.id === "progress-user-a-file")).toBe(true);
+    expect(calls(EntityPlaybackProgressCreateDocument).map(({ variables }) => variables.input.currentPosition)).toEqual([40, 55]);
+  });
+
   it("replaces authority across mounts without waiting on or reusing old private work", async () => {
     const pending = deferred<ReturnType<typeof response>>();
     runtime.client.mutate.mockImplementation((request: Mutation) => request.mutation === EntityPlaybackProgressCreateDocument && request.variables.input.currentPosition === 40
