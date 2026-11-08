@@ -897,6 +897,11 @@ impl AppWriteInputTransform {
                     .downcast_mut::<CreateUserInput>()
                     .map_or(Ok(()), write_rules::prepare_user_create);
             }
+            "RssFeed" => {
+                return input
+                    .downcast_mut::<CreateRssFeedInput>()
+                    .map_or(Ok(()), write_rules::prepare_feed_create);
+            }
             "Movie" => sort_key!(CreateMovieInput, title, sort_title),
             "Audiobook" => sort_key!(CreateAudiobookInput, title, sort_title),
             "Show" => sort_key!(CreateShowInput, name, sort_name),
@@ -956,6 +961,9 @@ impl AppWriteInputTransform {
             "User" => input
                 .downcast_mut::<UpdateUserInput>()
                 .map_or(Ok(()), write_rules::prepare_user_update),
+            "RssFeed" => input
+                .downcast_mut::<UpdateRssFeedInput>()
+                .map_or(Ok(()), write_rules::prepare_feed_update),
             "LibraryScanIssue" => {
                 input
                     .downcast_mut::<UpdateLibraryScanIssueInput>()

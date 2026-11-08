@@ -9,6 +9,7 @@ import {
   EntityAppSettingCreateDocument,
   EntityAppSettingUpdateDocument,
   EntityReleaseBlocklistListDocument,
+  EntityRssFeedListDocument,
   TriggerAutoDownloadDocument,
 } from "@/graphql/generated/graphql";
 import { renderWithProviders } from "@/test";
@@ -44,6 +45,11 @@ const blocklistMock = {
   result: { data: { releaseBlocklists: { __typename: "ReleaseBlocklistConnection", edges: [], pageInfo: { __typename: "PageInfo", hasNextPage: false, hasPreviousPage: false, totalCount: 0 } } } },
 };
 
+const rssFeedsMock = {
+  request: { query: EntityRssFeedListDocument, variables: { orderBy: [{ name: "ASC" }], page: { limit: 100, offset: 0 } } },
+  result: { data: { rssFeeds: { __typename: "RssFeedConnection", edges: [], pageInfo: { __typename: "PageInfo", hasNextPage: false, hasPreviousPage: false, totalCount: 0 } } } },
+};
+
 const updateMock = (id: string, value: string) => {
   const called = vi.fn(() => ({ data: { updateAppSetting: { __typename: "UpdateAppSettingResult", success: true, error: null, appSetting: null } } }));
   return { called, mock: { request: { query: EntityAppSettingUpdateDocument, variables: { id, input: { value } } }, result: called } };
@@ -59,13 +65,19 @@ const base = (extra: unknown[] = []) => [
   categoryMock("auto_download", [
     ["auto_download.enabled", "true"],
     ["auto_download.interval_minutes", "60"],
-    ["auto_download.retry_after_minutes", "240"],
+    ["auto_download.search_backoff_minutes", "360"],
   ]),
   blocklistMock,
+  rssFeedsMock,
   ...extra,
 ];
 
 const mount = (extra: unknown[] = []) => renderWithProviders(<DownloadsSettings />, { mocks: base(extra) as never });
+
+/** A server that has never been given an automatic-downloads setting. */
+const mountFresh = (extra: unknown[] = []) => renderWithProviders(<DownloadsSettings />, {
+  mocks: [categoryMock("torrent", TORRENT), categoryMock("auto_download", []), blocklistMock, rssFeedsMock, ...extra] as never,
+});
 
 /** Number fields commit on blur, so every edit ends with a Tab out of the field. */
 const setNumber = async (label: string, value: string) => {
@@ -84,6 +96,50 @@ describe("DownloadsSettings", () => {
     expect(screen.getByDisplayValue("6,881")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: /Enable DHT/ })).toBeChecked();
     expect(screen.getByRole("switch", { name: /Search and download automatically/ })).toBeChecked();
+  });
+
+  it("shows automatic downloads off, with the real defaults, until the server has a setting", async () => {
+    await mountFresh();
+    await screen.findByDisplayValue("/data/downloads");
+    // The server does nothing without `auto_download.enabled`, so the switch must not claim otherwise.
+    expect(screen.getByRole("switch", { name: /Search and download automatically/ })).not.toBeChecked();
+    expect(screen.getAllByDisplayValue("60").length).toBeGreaterThan(0);
+    expect(screen.getAllByDisplayValue("360").length).toBeGreaterThan(0);
+    expect(screen.getByText("Nothing has run yet.")).toBeInTheDocument();
+  });
+
+  it("writes the scheduling keys the server reads", async () => {
+    const grace = createMock("auto_download.air_grace_minutes", "120", "auto_download");
+    const window = createMock("auto_download.air_window_days", "3", "auto_download");
+    const cap = createMock("auto_download.max_concurrent_grabs", "2", "auto_download");
+    await mount([grace.mock, window.mock, cap.mock]);
+    await setNumber("Wait after an episode airs (minutes)", "120");
+    await setNumber("Watch new episodes for (days)", "3");
+    await setNumber("Most automatic downloads at once", "2");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Settings saved")).toBeInTheDocument();
+    expect(grace.called).toHaveBeenCalled();
+    expect(window.called).toHaveBeenCalled();
+    expect(cap.called).toHaveBeenCalled();
+  });
+
+  it("says what the scheduler last did", async () => {
+    const at = new Date(Date.now() - 5 * 60_000).toISOString();
+    const status = JSON.stringify({ sweep: { at, searched: 3, grabbed: 1, capped: 2 }, rss: { at, feeds: 2, failed: 1, newItems: 40, matched: 3, grabbed: 1 } });
+    await renderWithProviders(<DownloadsSettings />, {
+      mocks: [categoryMock("torrent", TORRENT), categoryMock("auto_download", [["auto_download.enabled", "true"], ["auto_download.status", status]]), blocklistMock, rssFeedsMock] as never,
+    });
+    expect(await screen.findByText(/searched 3, grabbed 1, 2 waiting for a free slot/)).toBeInTheDocument();
+    expect(screen.getByText(/2 feed\(s\), 1 failed, 40 new item\(s\), 3 matched, 1 grabbed/)).toBeInTheDocument();
+  });
+
+  it("explains what each automatic-download choice does", async () => {
+    await mount();
+    expect(await screen.findByText("Shows, albums and audiobooks")).toBeInTheDocument();
+    expect(screen.getByText(/Wanted only: Only items you mark as wanted/)).toBeInTheDocument();
+    expect(screen.getByText(/Everything missing: Every item without a file/)).toBeInTheDocument();
+    expect(screen.getByText("Movies")).toBeInTheDocument();
+    expect(screen.getByText("New episodes")).toBeInTheDocument();
   });
 
   it("keeps Save disabled until something changes", async () => {
@@ -182,7 +238,7 @@ describe("DownloadsSettings", () => {
           data: { appSettings: { edges: [
             setting("auto_download.enabled", "true", "auto_download"),
             setting("auto_download.interval_minutes", "60", "auto_download"),
-            setting("auto_download.retry_after_minutes", "480", "auto_download"),
+            setting("auto_download.search_backoff_minutes", "480", "auto_download"),
           ] } },
         });
       };
@@ -190,7 +246,7 @@ describe("DownloadsSettings", () => {
     }
     await renderWithProviders(<SettingsWithSnapshot />, { mocks: base() as never });
     const folder = await screen.findByDisplayValue("/data/downloads");
-    await screen.findAllByDisplayValue("240");
+    await screen.findAllByDisplayValue("360");
     await userEvent.clear(folder);
     act(() => receiveSnapshot());
     await screen.findAllByDisplayValue("480");

@@ -94,6 +94,9 @@ pub struct TestAppOptions {
     /// disabled by default (`auto_download.enabled`), so this only makes
     /// `manager.get_auto_download()` available for `searchMissing`.
     pub with_auto_download: bool,
+    /// Make the auto-download scheduler tick every second and start at once, so a test can watch
+    /// it act on its own instead of waiting out the production rhythm.
+    pub fast_auto_download: bool,
     /// Real HLS packaging for media acceptance tests; disabled for other tests.
     pub with_transcode: bool,
     pub transcode_ffmpeg_path: Option<String>,
@@ -112,6 +115,7 @@ impl Default for TestAppOptions {
             secure_cookies: false,
             with_torrent: false,
             with_auto_download: false,
+            fast_auto_download: false,
             with_transcode: false,
             transcode_ffmpeg_path: None,
             torrent_max_concurrent: 5,
@@ -284,7 +288,15 @@ impl TestApp {
             });
         }
         if options.with_auto_download {
-            builder = builder.add_service(AutoDownloadServiceConfig::default());
+            builder = builder.add_service(if options.fast_auto_download {
+                AutoDownloadServiceConfig {
+                    tick_seconds: 1,
+                    startup_delay_seconds: 0,
+                    ..Default::default()
+                }
+            } else {
+                AutoDownloadServiceConfig::default()
+            });
         }
         if options.with_transcode {
             builder = builder.add_service(librarian::services::transcode::TranscodeServiceConfig {

@@ -17,7 +17,7 @@
   {"entity":"Chapter","read":"member.read","write":"member.write","scope":"derived"},
   {"entity":"Torrent","read":"member.read","write":"member.write","scope":"owner"},
   {"entity":"TorrentFile","read":"member.read","write":"admin.write","scope":"derived"},
-  {"entity":"RssFeed","read":"member.read","write":"member.write","scope":"owner"},
+  {"entity":"RssFeed","read":"member.read","write":"admin.write","scope":"owner"},
   {"entity":"RssFeedItem","read":"member.read","write":"admin.write","scope":"derived"},
   {"entity":"PendingFileMatch","read":"member.read","write":"member.write","scope":"owner"},
   {"entity":"Source","read":"admin.read","write":"admin.write","scope":"admin"},

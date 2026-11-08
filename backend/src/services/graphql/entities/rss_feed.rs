@@ -16,7 +16,12 @@ use serde::{Deserialize, Serialize};
 #[graphql(complex)]
 #[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
-#[graphql_entity(table = "rss_feeds", plural = "RssFeeds", default_sort = "name")]
+#[graphql_entity(
+    table = "rss_feeds",
+    plural = "RssFeeds",
+    default_sort = "name",
+    write_policy = "admin.write"
+)]
 pub struct RssFeed {
     #[graphql(name = "id")]
     #[primary_key]
