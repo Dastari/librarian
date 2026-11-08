@@ -69,6 +69,41 @@ bridge uses Glass inputs/selects/numbers/switches. Preserve blur/ref behavior an
 nullable numeric values. New complete form migrations should use the library's
 form bindings; remove the bridge when its final consumer moves.
 
+## Settings pages
+
+Routes under `/settings` are site settings: pages, with no card or panel around anything. Group with
+space and a label (R15.8), and let the settings navigation name the page, so no page repeats its
+title. Build them from three shared pieces in `features/settings`:
+
+- `SettingsPage` stacks the page's groups `gap-8` apart.
+- `SettingsSection` is one group. **Rows** (`width="readable"`) get the overline group label and
+  are held to `--settings-measure` (52rem, the `settings-measure` utility), left-aligned with the
+  page gutter. They stay left-aligned on wide screens so a table below them on the same page shares
+  their left edge. **Records** (the default, `width="full"`) get a title row (one line of help,
+  actions on the right) above a full-width table, the way every entity table sits on the canvas.
+  A form wrapping several row groups puts `settings-measure` on the `Form` once, and its
+  `FormActions` end the page in the same column.
+- `SettingFields` holds the row-shaped bound fields for `useAppForm`: `NumberRow`, `PercentRow`,
+  `DurationRow`, `ByteSizeRow`, `TextRow`, `UrlRow`, `SelectRow` and `TagsRow`, beside the library's
+  `field.SwitchRow` and `field.SegmentedRow`. Each is a `SettingRow` (label and help left, control
+  right, the validation message in the description slot) over the bare Glass control, so the control
+  keeps its value contract. Pass `settingsFormBehaviour` instead of `formBehaviour`, because the
+  library's focus-first-invalid only looks inside `Field`s.
+
+Choose the control by what the value is: a switch for a boolean, a number with a `unit` for a count,
+`DurationRow` for an interval stored in seconds, `PercentRow` for a ratio stored as a fraction,
+`ByteSizeRow` for sizes, `UrlRow` for an address, chips for a short list, a select for a choice with
+detail and segmented for two to four short ones. Keep a stored contract as it is: convert at the
+form boundary, never in the schema. Secrets are `TextRow type="password" autoComplete="off"`,
+because the password input would let a browser fill the account password into an API key.
+Read-only facts are `SettingRow`s with the value as the control (see About).
+
+Lists of records are tables (`LoadedDataTable`, `height="auto"` on these scrolling pages, or `fill`
+for an unbounded feed such as Logs) with their `EntityIdentity` and `ActionSet`; adding or editing
+one opens its dialog. A row's control wraps under its text in a narrow row and takes the full width
+there (`SettingFields` sizes controls by the row's own container, not the viewport), so phones need
+no separate layout. Check a new page at 390px, a laptop, 2560px, TV mode and Light.
+
 ## Tables and media compositions
 
 Use public Glass DataTable for migrated data views. Logs, season episodes, album tracks and audiobook chapters now use it.
