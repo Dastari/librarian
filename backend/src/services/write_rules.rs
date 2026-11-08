@@ -10,9 +10,10 @@
 use async_graphql::{Error, ErrorExtensions, Result};
 
 use crate::graphql::entities::{
-    CreateUserInput, LibraryScanIssue, MediaFile, UpdateLibraryScanIssueInput,
-    UpdateMediaFileInput, UpdateUserInput,
+    CreateRssFeedInput, CreateUserInput, LibraryScanIssue, MediaFile, UpdateLibraryScanIssueInput,
+    UpdateMediaFileInput, UpdateRssFeedInput, UpdateUserInput,
 };
+use crate::jobs::rss_poll::{MIN_POLL_MINUTES, feed_url_problem};
 use crate::services::graphql::auth::{AuthUser, Role};
 
 /// Longest resolution note kept on a scan issue.
@@ -83,6 +84,43 @@ pub fn prepare_user_create(input: &mut CreateUserInput) -> Result<()> {
 pub fn prepare_user_update(input: &mut UpdateUserInput) -> Result<()> {
     if let Some(role) = input.role.as_deref() {
         input.role = Some(normalized_role(role)?);
+    }
+    Ok(())
+}
+
+/// A new RSS feed: a name, a fetchable `http`/`https` address, and an interval no shorter than the
+/// poller will honour (shorter is raised to it rather than refused).
+pub fn prepare_feed_create(input: &mut CreateRssFeedInput) -> Result<()> {
+    input.name = input.name.trim().to_string();
+    if input.name.is_empty() {
+        return Err(invalid("A feed needs a name"));
+    }
+    input.url = input.url.trim().to_string();
+    if let Some(problem) = feed_url_problem(&input.url) {
+        return Err(invalid(problem));
+    }
+    input.poll_interval_minutes = input.poll_interval_minutes.max(MIN_POLL_MINUTES as i32);
+    Ok(())
+}
+
+/// The same rules for an edit, for the fields it sets. A new address starts the feed afresh.
+pub fn prepare_feed_update(input: &mut UpdateRssFeedInput) -> Result<()> {
+    if let Some(name) = input.name.as_mut() {
+        *name = name.trim().to_string();
+        if name.is_empty() {
+            return Err(invalid("A feed needs a name"));
+        }
+    }
+    if let Some(url) = input.url.as_mut() {
+        *url = url.trim().to_string();
+        if let Some(problem) = feed_url_problem(url) {
+            return Err(invalid(problem));
+        }
+        input.consecutive_failures = Some(Some(0));
+        input.last_error = Some(None);
+    }
+    if let Some(minutes) = input.poll_interval_minutes.as_mut() {
+        *minutes = (*minutes).max(MIN_POLL_MINUTES as i32);
     }
     Ok(())
 }
@@ -196,6 +234,81 @@ mod tests {
         let stamped = input.resolved_at.unwrap().unwrap();
         assert_ne!(stamped, "client-supplied");
         chrono::DateTime::parse_from_rfc3339(&stamped).expect("server timestamp");
+    }
+
+    fn new_feed(name: &str, url: &str, minutes: i32) -> CreateRssFeedInput {
+        CreateRssFeedInput {
+            user_id: "u".into(),
+            library_id: None,
+            name: name.into(),
+            url: url.into(),
+            enabled: true,
+            poll_interval_minutes: minutes,
+            post_download_action: None,
+            last_polled_at: None,
+            last_successful_at: None,
+            last_error: None,
+            consecutive_failures: None,
+        }
+    }
+
+    #[test]
+    fn a_feed_needs_a_name_and_a_fetchable_address() {
+        let mut ok = new_feed("  TV  ", "  https://example.com/rss  ", 30);
+        prepare_feed_create(&mut ok).unwrap();
+        assert_eq!(ok.name, "TV");
+        assert_eq!(ok.url, "https://example.com/rss");
+        assert_eq!(ok.poll_interval_minutes, 30);
+
+        for (name, url) in [
+            ("", "https://example.com/rss"),
+            ("TV", "file:///etc/passwd"),
+            ("TV", "ftp://example.com/rss"),
+            ("TV", "not a url"),
+        ] {
+            assert!(
+                prepare_feed_create(&mut new_feed(name, url, 30)).is_err(),
+                "{name:?} {url:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_feed_interval_is_raised_to_the_polling_floor() {
+        let mut quick = new_feed("TV", "https://example.com/rss", 1);
+        prepare_feed_create(&mut quick).unwrap();
+        assert_eq!(quick.poll_interval_minutes, MIN_POLL_MINUTES as i32);
+
+        let mut edit = UpdateRssFeedInput {
+            poll_interval_minutes: Some(2),
+            ..Default::default()
+        };
+        prepare_feed_update(&mut edit).unwrap();
+        assert_eq!(edit.poll_interval_minutes, Some(MIN_POLL_MINUTES as i32));
+    }
+
+    #[test]
+    fn a_new_address_clears_a_feeds_failures_and_a_bad_one_is_refused() {
+        let mut moved = UpdateRssFeedInput {
+            url: Some("https://example.com/new".into()),
+            ..Default::default()
+        };
+        prepare_feed_update(&mut moved).unwrap();
+        assert_eq!(moved.consecutive_failures, Some(Some(0)));
+        assert_eq!(moved.last_error, Some(None));
+
+        let mut bad = UpdateRssFeedInput {
+            url: Some("gopher://example.com".into()),
+            ..Default::default()
+        };
+        assert!(prepare_feed_update(&mut bad).is_err());
+
+        let mut untouched = UpdateRssFeedInput {
+            enabled: Some(false),
+            ..Default::default()
+        };
+        prepare_feed_update(&mut untouched).unwrap();
+        assert_eq!(untouched.consecutive_failures, None);
     }
 
     #[test]

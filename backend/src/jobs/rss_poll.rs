@@ -329,12 +329,26 @@ struct FetchedFeed {
     items: Vec<SourceRelease>,
 }
 
-fn validate_feed_url(url: &str) -> Result<reqwest::Url> {
-    let parsed = reqwest::Url::parse(url.trim()).context("the feed address is not a valid URL")?;
-    match parsed.scheme() {
-        "http" | "https" => Ok(parsed),
-        other => anyhow::bail!("feeds must be http or https, not {other}"),
+/// Why a feed address cannot be used, if it cannot: only `http` and `https` are fetched.
+pub fn feed_url_problem(url: &str) -> Option<String> {
+    match reqwest::Url::parse(url.trim()) {
+        Err(_) => Some("the feed address is not a valid URL".to_string()),
+        Ok(parsed) if !matches!(parsed.scheme(), "http" | "https") => Some(format!(
+            "feeds must be http or https, not {}",
+            parsed.scheme()
+        )),
+        Ok(parsed) if parsed.host_str().is_none() => {
+            Some("the feed address has no host".to_string())
+        }
+        Ok(_) => None,
     }
+}
+
+fn validate_feed_url(url: &str) -> Result<reqwest::Url> {
+    if let Some(problem) = feed_url_problem(url) {
+        anyhow::bail!(problem);
+    }
+    reqwest::Url::parse(url.trim()).context("the feed address is not a valid URL")
 }
 
 /// Fetch one feed. A host that asks to be left alone (429/503 with `Retry-After`) is believed.

@@ -104,7 +104,6 @@ macro_rules! librarian_schema_roots {
         VideoStream,
         MediaChapter,
         RefreshToken,
-        RssFeed,
         RssFeedItem,
         LibraryScanRun,
         SourcePriorityRule,

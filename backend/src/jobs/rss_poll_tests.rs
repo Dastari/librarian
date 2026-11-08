@@ -358,3 +358,17 @@ fn one_release_for_two_episodes_is_a_candidate_for_both() {
         vec![ItemFate::Candidate(0), ItemFate::Candidate(1)]
     );
 }
+
+#[test]
+fn only_http_and_https_feeds_can_be_fetched() {
+    assert_eq!(feed_url_problem("https://example.com/rss?key=abc"), None);
+    assert_eq!(
+        feed_url_problem("http://192.168.1.5:9117/api?t=search"),
+        None
+    );
+    assert!(feed_url_problem("file:///etc/passwd").is_some());
+    assert!(feed_url_problem("ftp://example.com/feed").is_some());
+    assert!(feed_url_problem("magnet:?xt=urn:btih:abc").is_some());
+    assert!(feed_url_problem("nonsense").is_some());
+    assert!(feed_url_problem("").is_some());
+}
