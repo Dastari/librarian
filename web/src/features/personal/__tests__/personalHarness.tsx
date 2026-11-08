@@ -10,7 +10,7 @@ import type { ReactElement } from "react";
 import { Observable } from "rxjs";
 import { expect, vi } from "vitest";
 
-import type { HomeShelfFieldsFragment, PersonalEntryFragment, PersonalListFieldsFragment, SavedViewFieldsFragment } from "@/graphql/generated/graphql";
+import type { HomeShelfFieldsFragment, PersonalEntryFragment, PlaylistCoverEntryFragment, PersonalListFieldsFragment, SavedViewFieldsFragment } from "@/graphql/generated/graphql";
 import { createTestRouter, TestRouterProvider } from "@/test/router";
 import { LiveContext } from "@/lib/graphql/live/hooks";
 import { LiveRegistry } from "@/lib/graphql/live/registry";
@@ -23,28 +23,33 @@ export const personalList = (overrides: Partial<PersonalListFieldsFragment> = {}
   id: "list-a", userId: OWNER, name: "Evening films", kind: "MANUAL", description: null, savedViewId: null,
   createdAt: STAMP, updatedAt: STAMP, ...overrides,
 });
-export const personalEntry = (index: number, overrides: Partial<PersonalEntryFragment> = {}) => {
-  const entry: PersonalEntryFragment = {
-    id: `entry-${index}`, listId: "list-a", position: index * 10,
-    movieId: `movie-${index}`, showId: null, albumId: null, audiobookId: null, trackId: null,
-    movie: null, show: null, album: null, audiobook: null, track: null, ...overrides,
-  };
-  return {
-    ...entry,
-    __typename: "ListEntry" as const,
-    movie: entry.movie ? { ...entry.movie, __typename: "Movie" as const } : null,
-    show: entry.show ? { ...entry.show, __typename: "Show" as const } : null,
-    album: entry.album ? {
-      ...entry.album, __typename: "Album" as const,
-      artist: entry.album.artist ? { ...entry.album.artist, __typename: "Artist" as const } : null,
-    } : null,
-    audiobook: entry.audiobook ? { ...entry.audiobook, __typename: "Audiobook" as const } : null,
-    track: entry.track ? {
-      ...entry.track, __typename: "Track" as const,
-      album: entry.track.album ? { ...entry.track.album, __typename: "Album" as const } : null,
-    } : null,
-  };
-};
+export const movieFields = (id: string, title: string, overrides: Record<string, unknown> = {}) => ({
+  __typename: "Movie" as const,
+  id, libraryId: "library-a", userId: OWNER, title, sortTitle: null, originalTitle: null, year: 2026, tmdbId: null, imdbId: null,
+  overview: null, tagline: null, runtime: 100, genres: [], lockedFields: null, director: null, castNames: [], productionCountries: [],
+  spokenLanguages: [], tmdbRating: null, tmdbVoteCount: null, collectionId: null, collectionName: null, collectionPosterUrl: null,
+  releaseDate: null, certification: null, monitored: false, tmdbStatus: null, wanted: false, ignored: false, downloadStatus: null,
+  hasFile: false, mediaFileId: null, qualityProfileId: null, createdAt: STAMP, updatedAt: STAMP, ...overrides,
+});
+export const trackFields = (id: string, title: string, overrides: Record<string, unknown> = {}) => ({
+  __typename: "Track" as const,
+  id, title, albumId: "album-a", libraryId: "library-a", trackNumber: 1, discNumber: 1, musicbrainzId: null, isrc: null, durationSecs: 180,
+  explicit: false, artistName: "Artist", artistId: null, wanted: false, ignored: false, mediaFileId: `file-${id}`, createdAt: STAMP, updatedAt: STAMP,
+  album: { __typename: "Album" as const, id: "album-a", name: "Record", coverUrl: null }, ...overrides,
+});
+/** A playlist entry as the server returns it. Each target is a full record (see `movieFields`, `trackFields`). */
+export const personalEntry = (index: number, overrides: Record<string, unknown> = {}) => ({
+  __typename: "ListEntry" as const,
+  id: `entry-${index}`, userId: OWNER, listId: "list-a", position: index * 10,
+  movieId: `movie-${index}`, showId: null, albumId: null, audiobookId: null, trackId: null, episodeId: null, chapterId: null,
+  movie: null, show: null, album: null, audiobook: null, track: null, episode: null, chapter: null, ...overrides,
+}) as unknown as PersonalEntryFragment & { __typename: "ListEntry" };
+/** The playlist with its entry count and first entries, as the playlist queries return it. */
+export const playlist = (overrides: Record<string, unknown> = {}, count = 0, covers: PlaylistCoverEntryFragment[] = []) => ({
+  ...personalList(),
+  entries: { __typename: "ListEntryConnection" as const, edges: covers.map((node) => ({ __typename: "ListEntryEdge" as const, node })), pageInfo: { __typename: "PageInfo" as const, totalCount: count } },
+  ...overrides,
+});
 export const homeShelf = (overrides: Partial<HomeShelfFieldsFragment> = {}): HomeShelfFieldsFragment & { __typename: "HomeShelf" } => ({
   __typename: "HomeShelf",
   id: "shelf-a", userId: OWNER, shelfKey: "list:list-a", position: 8192, visible: true,

@@ -1,158 +1,142 @@
 import { copyText } from "glass-ux/copy-button";
 import { useMutation } from "@apollo/client/react";
 import { useNavigate } from "@tanstack/react-router";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { defineActions } from "glass-ux/actions";
-import { Badge } from "glass-ux/badge";
-import { createDataTableColumns, DataTable, IdentityCell } from "glass-ux/data-table";
-import { IconArrowDown, IconArrowUp, IconBookmark, IconCopy, IconExternalLink, IconPlay, IconPlus, IconTrash } from "glass-ux/icons";
+import { createDataTableColumns, DataTable, TextCell } from "glass-ux/data-table";
+import { IconArrowDown, IconArrowUp, IconBookmark, IconCopy, IconExternalLink, IconPlay, IconShuffle, IconTrash } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
-import { Form, FormActions, FormStack, formBehaviour, useAppForm } from "glass-ux/form";
-import { z } from "zod";
-import { Artwork, Button, ConfirmDialog, Dialog, EmptyState, ErrorState, PageHeader } from "@/components/ui";
+import { EmptyState, ErrorState } from "@/components/ui";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { useSession } from "@/lib/auth/useSession";
 import { useSelectableTableState } from "@/hooks/useTableSelection";
-import type { PlayItem } from "@/features/player/store";
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
-import { usePlayer } from "@/features/player/usePlayer";
-import { EntityListEntryDeleteDocument, EntityListEntryUpdateDocument, EntityPersonalListDeleteDocument, EntityPersonalListGetDocument, EntityPersonalListUpdateDocument, EntitySavedViewGetDocument, PersonalEntriesDocument, type PersonalEntryFragment } from "@/graphql/generated/graphql";
+import { EntityListEntryDeleteDocument, EntityListEntryUpdateDocument, EntitySavedViewGetDocument, PersonalEntriesDocument, PlaylistGetDocument, type PersonalEntryFragment } from "@/graphql/generated/graphql";
+import { formatRuntime } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { useLiveQuery } from "@/lib/graphql/live/hooks";
-import { ListEditor } from "./ListEditor";
+import { entryKindLabel, EntryIdentity, entryLength } from "./EntryIdentity";
+import { PlaylistIdentity } from "./PlaylistIdentity";
+import { moved, positionForMove } from "./positions";
+import { playlistDuration } from "./playlistTotals";
 import { SmartResults } from "./SmartResults";
-import { entryPresentation } from "./types";
+import { entryPresentation, entryTarget, type PlaylistTarget } from "./types";
+import { playlistTitle, useAddToPlaylist } from "./useAddToPlaylist";
 import { useHomeShelves } from "./usePersonalLibrary";
+import { usePlaylistEntity } from "./usePlaylistEntity";
+import { usePlaylistPlayback } from "./usePlaylistPlayback";
 
 type Entry = PersonalEntryFragment;
 const getEntryId = (entry: Entry) => entry.id;
-const entryKind = (entry: Entry) => (entry.movie ? "Movie" : entry.show ? "Show" : entry.album ? "Album" : entry.audiobook ? "Audiobook" : entry.track ? "Track" : "Unavailable");
+const entryTitle = (entry: Entry) => entryPresentation(entry)?.title ?? "Unavailable item";
+const noun = { one: "item", other: "items" };
 const column = createDataTableColumns<Entry>();
 const columns = column.columns([
-  column.accessor((entry) => entryPresentation(entry)?.title ?? "Unavailable item", {
-    id: "title", header: "Title", width: 28, priority: 1, cardRole: "title",
-    cell: ({ row }) => {
-      const item = entryPresentation(row.original);
-      return <IdentityCell icon={item?.image ? <Artwork src={item.image} alt="" aspect={item.square ? "square" : "poster"} className={item.square ? "w-8 rounded-sm" : "w-6 rounded-sm"} /> : undefined} title={item?.title ?? "Unavailable item"} subtitle={item?.subtitle} />;
-    },
-  }),
-  column.accessor(entryKind, { id: "kind", header: "Type", width: 8, priority: 2, cell: ({ row }) => <Badge size="sm" tone="neutral">{entryKind(row.original)}</Badge> }),
+  column.accessor(entryTitle, { id: "title", header: "Title", width: 30, priority: 1, cardRole: "title", cell: ({ row }) => <EntryIdentity entry={row.original} /> }),
+  column.accessor(entryKindLabel, { id: "kind", header: "Type", width: 9, priority: 2, cardRole: "subtitle", cell: ({ row }) => <TextCell muted>{entryKindLabel(row.original)}</TextCell> }),
+  column.accessor(entryLength, { id: "length", header: "Length", width: 7, priority: 2, align: "end", grow: false, cell: ({ row }) => <TextCell muted>{entryLength(row.original)}</TextCell> }),
 ]);
 
+/** One playlist: its identity with Play and Shuffle, then its entries in order, to reorder, remove and act on together. */
 export function PersonalListPage({ listId }: { listId: string }) {
   const navigate = useNavigate();
-  const player = usePlayer();
+  const playback = usePlaylistPlayback();
   const { user } = useSession();
-  const list = useLiveQuery(EntityPersonalListGetDocument, { variables: { id: listId } });
+  const list = useLiveQuery(PlaylistGetDocument, { variables: { id: listId } });
   const candidate = list.data?.personalList;
   const current = candidate?.id === listId ? candidate : null;
   const saved = useLiveQuery(EntitySavedViewGetDocument, { variables: { id: current?.savedViewId ?? "" }, skip: !current?.savedViewId });
   const entries = useCompleteConnection(PersonalEntriesDocument, { listId }, (data) => data.listEntries, { skip: current?.kind === "SMART" });
   const table = useSelectableTableState({ scope: [user?.id, listId], rows: entries.rows, columns, getRowId: getEntryId, ready: entries.complete && !entries.fetching });
-  const ready = useRef({ listId, complete: false });
-  if (ready.current.listId !== listId) ready.current = { listId, complete: false };
-  if (entries.complete) ready.current.complete = true;
   const home = useHomeShelves();
-  const [deleteList, { loading: deleting }] = useMutation(EntityPersonalListDeleteDocument);
+  const { actions: listActions, dialogs } = usePlaylistEntity<NonNullable<typeof current>>({ open: false });
   const [remove] = useMutation(EntityListEntryDeleteDocument);
   const [move] = useMutation(EntityListEntryUpdateDocument);
-  const [confirm, setConfirm] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [renaming, setRenaming] = useState(false);
   const [pending, setPending] = useState(false);
-  const run = async (action: () => Promise<unknown>) => { setPending(true); try { await action(); } catch (error) { toast.danger(errorMessage(error)); } finally { setPending(false); } };
-  const reorder = async (entry: PersonalEntryFragment, delta: number) => {
-    const index = entries.rows.findIndex((row) => row.id === entry.id);
-    const target = index + delta;
-    if (target < 0 || target >= entries.rows.length) return;
-    const ordered = [...entries.rows]; ordered.splice(index, 1); ordered.splice(target, 0, entry);
-    // Sparse positions keep the common move to one generated write. Rebalance only if needed.
-    const before = ordered[target - 1]?.position;
-    const after = ordered[target + 1]?.position;
-    const position = before === undefined ? (after ?? 0) - 1024 : after === undefined ? before + 1024 : Math.floor((before + after) / 2);
-    const updates = position < 0 || (before !== undefined && after !== undefined && after - before < 2) ? ordered.map((row, i) => ({ id: row.id, position: i * 1024 })) : [{ id: entry.id, position }];
-    for (const update of updates) { const { data } = await move({ variables: { id: update.id, input: { position: update.position } } }); assertSuccess(data?.updateListEntry, "Could not reorder list"); }
+  const busy = useRef(false);
+  const run = async (action: () => Promise<unknown>) => {
+    if (busy.current) return;
+    busy.current = true; setPending(true);
+    try { await action(); } catch (error) { toast.danger(errorMessage(error)); } finally { busy.current = false; setPending(false); }
+  };
+  const playlist = useAddToPlaylist<Entry>({
+    targetsOf: (rows) => rows.flatMap((row) => { const target = entryTarget(row); return target ? [target] : []; }),
+    titleOf: (rows) => playlistTitle(rows, entryTitle(rows[0]!), noun),
+    bulk: true,
+    priority: 4,
+  });
+
+  // One write between two neighbours; the server settles a closed gap (see positions.ts).
+  const reorderTo = async (entry: Entry, to: number) => {
+    const from = entries.rows.findIndex((row) => row.id === entry.id);
+    if (from < 0 || to === from || to < 0 || to >= entries.rows.length) return;
+    const ordered = moved(entries.rows, from, to);
+    const position = positionForMove(ordered, to);
+    const { data } = await move({ variables: { id: entry.id, input: { position } } });
+    assertSuccess(data?.updateListEntry, "Could not reorder the playlist");
     await entries.refetch();
   };
-  const reorderTo = async (entry: Entry, target: number) => {
-    const index = entries.rows.findIndex((row) => row.id === entry.id);
-    if (index < 0 || target === index) return;
-    await reorder(entry, target - index);
-  };
-  const selectedAudio = (selected: readonly Entry[]): PlayItem[] => {
-    const ids = new Set(selected.map((entry) => entry.id));
-    return entries.rows.filter((entry) => ids.has(entry.id)).flatMap((entry) => entry.track?.mediaFileId ? [{ mediaFileId: entry.track.mediaFileId, title: entry.track.title, subtitle: entry.track.artistName ?? undefined, artwork: entryPresentation(entry)?.image, href: `/albums/${entry.track.albumId}`, entity: { kind: "track" as const, id: entry.track.id }, duration: entry.track.durationSecs ?? undefined }] : []);
-  };
-  const audioUnavailable = (rows: readonly Entry[]) => rows.some((entry) => !entry.track?.mediaFileId) ? "Select only tracks with files to play or queue them." : false;
-  const actions = defineActions<Entry>("list-entry", [
-    { id: "open", label: (rows) => `Open ${entryKind(rows[0]!).toLowerCase()}`, icon: IconExternalLink, group: "open", priority: 2, bulk: true, visible: (rows) => rows.length === 1 && Boolean(entryPresentation(rows[0]!)?.href), run: (rows, context) => { const href = entryPresentation(rows[0]!)?.href; if (href) context.navigate(href); } },
+  const targetsFrom = (rows: readonly Entry[]): PlaylistTarget[] => rows.flatMap((row) => { const target = entryTarget(row); return target ? [target] : []; });
+  const inOrder = (selected: readonly Entry[]) => { const ids = new Set(selected.map((row) => row.id)); return entries.rows.filter((row) => ids.has(row.id)); };
+  const locked = pending ? "Saving the playlist" : !entries.complete ? "Load the whole playlist to reorder" : false;
+  const actions = useMemo(() => defineActions<Entry>("list-entry", [
     {
-      id: "play", label: "Play", icon: IconPlay, group: "open", priority: 1, bulk: true, visible: (rows) => rows.length === 1 && Boolean(rows[0]!.track?.mediaFileId),
-      run: (rows) => { const track = rows[0]!.track!; player.playAudio([{ mediaFileId: track.mediaFileId!, title: track.title, subtitle: track.artistName ?? undefined, artwork: entryPresentation(rows[0]!)?.image, href: `/albums/${track.albumId}`, entity: { kind: "track", id: track.id }, duration: track.durationSecs ?? undefined }]); },
+      id: "play", label: (rows) => (rows.length === 1 ? "Play from here" : `Play ${rows.length} selected`), icon: IconPlay, group: "open", priority: 1, primary: true, bulk: true,
+      run: (rows) => playback.play(targetsFrom(rows.length === 1 ? entries.rows.slice(entries.rows.findIndex((row) => row.id === rows[0]!.id)) : inOrder(rows))),
     },
-    { id: "play-selected", label: "Play selected tracks", icon: IconPlay, group: "open", bulk: true,
-      visible: (rows) => rows.length > 1, disabledReason: audioUnavailable,
-      run: (rows) => { if (audioUnavailable(rows)) throw new Error("Select playable tracks"); const items = selectedAudio(rows); if (!items.length) throw new Error("No playable tracks selected"); player.playAudio(items); } },
-    { id: "enqueue", label: "Add to queue", icon: IconPlus, group: "organise", bulk: true,
-      disabledReason: audioUnavailable,
-      run: (rows) => { if (audioUnavailable(rows)) throw new Error("Select playable tracks"); const items = selectedAudio(rows); if (!items.length) throw new Error("No playable tracks selected"); player.enqueue(items); }, successMessage: () => "Added to queue" },
-    { id: "copy-titles", label: "Copy item titles", icon: IconCopy, group: "organise", bulk: true,
-      run: async (rows) => { await copyText(rows.map((entry) => entryPresentation(entry)?.title ?? "Unavailable item").join("\n")); }, successMessage: () => "Item titles copied" },
-    { id: "up", label: "Move up", icon: IconArrowUp, group: "organise", bulk: true, visible: (rows) => rows.length === 1 && entries.rows[0]?.id !== rows[0]!.id, disabledReason: () => (pending ? "Saving list" : !entries.complete ? "Load the complete list to reorder" : false), run: (rows) => run(() => reorder(rows[0]!, -1)) },
-    { id: "down", label: "Move down", icon: IconArrowDown, group: "organise", bulk: true, visible: (rows) => rows.length === 1 && entries.rows.at(-1)?.id !== rows[0]!.id, disabledReason: () => (pending ? "Saving list" : !entries.complete ? "Load the complete list to reorder" : false), run: (rows) => run(() => reorder(rows[0]!, 1)) },
     {
-      id: "remove", label: (rows) => (rows.length === 1 ? "Remove from list" : `Remove ${rows.length} from list`), icon: IconTrash, group: "danger", bulk: true,
-      disabledReason: () => (pending ? "Saving list" : false),
-      confirm: (rows) => rows.length > 1 ? { title: `Remove ${rows.length} items from this list?`, body: "Media and files remain in the library.", confirmLabel: "Remove items", tone: "danger" } : null,
+      id: "shuffle", label: (rows) => (rows.length === 1 ? "Shuffle from here" : `Shuffle ${rows.length} selected`), icon: IconShuffle, group: "open", bulk: true,
+      run: (rows) => playback.shuffle(targetsFrom(rows.length === 1 ? entries.rows.slice(entries.rows.findIndex((row) => row.id === rows[0]!.id)) : inOrder(rows))),
+    },
+    { id: "open", label: (rows) => `Open ${entryKindLabel(rows[0]!).toLowerCase()}`, icon: IconExternalLink, group: "open", priority: 2, visible: (rows) => rows.length === 1 && Boolean(entryPresentation(rows[0]!)?.href), run: (rows, context) => { const href = entryPresentation(rows[0]!)?.href; if (href) context.navigate(href); } },
+    playlist.action,
+    { id: "copy-titles", label: "Copy item titles", icon: IconCopy, group: "organise", bulk: true, run: async (rows) => { await copyText(rows.map(entryTitle).join("\n")); }, successMessage: () => "Item titles copied" },
+    { id: "up", label: "Move up", icon: IconArrowUp, group: "organise", visible: (rows) => rows.length === 1 && entries.rows[0]?.id !== rows[0]!.id, disabledReason: () => locked, run: (rows) => run(() => reorderTo(rows[0]!, entries.rows.findIndex((row) => row.id === rows[0]!.id) - 1)) },
+    { id: "down", label: "Move down", icon: IconArrowDown, group: "organise", visible: (rows) => rows.length === 1 && entries.rows.at(-1)?.id !== rows[0]!.id, disabledReason: () => locked, run: (rows) => run(() => reorderTo(rows[0]!, entries.rows.findIndex((row) => row.id === rows[0]!.id) + 1)) },
+    {
+      id: "remove", label: (rows) => (rows.length === 1 ? "Remove from playlist" : `Remove ${rows.length} from playlist`), icon: IconTrash, group: "danger", bulk: true,
+      disabledReason: () => (pending ? "Saving the playlist" : false),
+      confirm: (rows) => rows.length > 1 ? { title: `Remove ${rows.length} items from this playlist?`, body: "Media and files remain in the library.", confirmLabel: "Remove items", tone: "danger" } : null,
       run: async (rows) => {
         setPending(true);
         const failures: string[] = [];
         try {
           for (const entry of rows) {
-            try { const { data } = await remove({ variables: { id: entry.id } }); assertSuccess(data?.deleteListEntry, "Could not remove item"); }
-            catch (error) { failures.push(`${entryPresentation(entry)?.title ?? entry.id}: ${errorMessage(error)}`); }
+            try { assertSuccess((await remove({ variables: { id: entry.id } })).data?.deleteListEntry, "Could not remove the item"); }
+            catch (error) { failures.push(`${entryTitle(entry)}: ${errorMessage(error)}`); }
           }
         } finally { try { await entries.refetch(); } finally { setPending(false); } }
         if (failures.length) throw new Error(`Removed ${rows.length - failures.length} of ${rows.length} items. ${failures.join("; ")}`);
       },
-      successMessage: (rows) => (rows.length === 1 ? "Removed from the list" : `Removed ${rows.length} items`),
+      successMessage: (rows) => (rows.length === 1 ? "Removed from the playlist" : `Removed ${rows.length} items`),
     },
-  ]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ]), [entries.rows, entries.complete, locked, pending, playback, playlist.action, remove, move]);
+
   if (list.error && !current) return <ErrorState error={list.error} onRetry={() => void list.refetch()} className="m-6" />;
-  if (!current) return <div className="page-gutter py-6">{list.loading ? <p role="status">Loading list…</p> : <EmptyState icon={IconBookmark} title="List not found" />}</div>;
-  const pinned = home.rows.find((shelf) => shelf.listId === listId && shelf.visible);
-  const audio = entries.rows.flatMap((entry) => entry.track?.mediaFileId ? [{ mediaFileId: entry.track.mediaFileId, title: entry.track.title, subtitle: entry.track.artistName ?? undefined, artwork: entryPresentation(entry)?.image, href: `/albums/${entry.track.albumId}`, entity: { kind: "track" as const, id: entry.track.id }, duration: entry.track.durationSecs ?? undefined }] : []);
+  if (!current) return <div className="page-gutter py-6">{list.loading ? <p role="status">Loading playlist…</p> : <EmptyState icon={IconBookmark} title="Playlist not found" />}</div>;
+  const pinned = home.rows.some((shelf) => shelf.listId === listId && shelf.visible);
+  const totals = entries.complete ? playlistDuration(entries.rows) : null;
+  const duration = totals?.seconds ? `${totals.partial ? "At least " : ""}${formatRuntime(totals.seconds)}` : undefined;
   return <div data-print-flow className="page-gutter flex min-h-0 min-w-0 flex-1 flex-col gap-5 overflow-hidden py-6">
-    <PageHeader title={current.name} className="shrink-0" actions={<div className="flex flex-wrap gap-2">
-      {audio.length > 0 ? <Button variant="primary" isDisabled={!entries.complete} onPress={() => player.playAudio(audio)}><IconPlay />Play playlist</Button> : null}
-      <Button isPending={pending} isDisabled={!home.complete} onPress={() => void run(() => home.save(`list:${listId}`, { position: pinned?.position ?? 1000 + home.rows.length * 10, visible: !pinned, listId }))}>{pinned ? "Unpin from Home" : "Pin to Home"}</Button>
-      {saved.data?.savedView ? <Button onPress={() => setEditing(true)}>Edit rules</Button> : null}
-      {current.kind === "MANUAL" ? <Button onPress={() => setRenaming(true)}>Rename</Button> : null}
-      <Button variant="danger-soft" onPress={() => setConfirm(true)}>Delete list</Button>
-    </div>} />
+    <PlaylistIdentity list={current} tier="header" heading="h1" actions={listActions} pinned={pinned} duration={duration} className="shrink-0" />
     {home.error ? <ErrorState error={home.error} onRetry={() => void home.refetch()} /> : null}
     {current.kind === "SMART" ? saved.data?.savedView ? <SmartResults view={saved.data.savedView} /> : saved.error ? <ErrorState error={saved.error} onRetry={() => void saved.refetch()} /> : <p role="status">Loading rules…</p> : <>
       {entries.error ? <ErrorState error={entries.error} onRetry={() => void entries.refetch()} /> : null}
-      <DataTable<Entry> id={`personal:${user?.id ?? "session"}:${listId}`} queryKey={[user?.id, listId]} label={current.name} height="fill" columns={columns} rows={table.rows} getRowId={getEntryId} state={table.state} onStateChange={table.onStateChange} getRowLabel={(entry) => entryPresentation(entry)?.title ?? "Unavailable item"}
+      <DataTable<Entry> id={`personal:${user?.id ?? "session"}:${listId}`} queryKey={[user?.id, listId]} label={current.name} height="fill" columns={columns} rows={table.rows} getRowId={getEntryId} state={table.state} onStateChange={table.onStateChange} getRowLabel={entryTitle}
         loading={entries.loading} refetching={entries.fetching && !entries.loading}
-        actions={actions} selectable renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "item", other: "items" }} />} onRowOpen={(entry) => { const href = entryPresentation(entry)?.href; if (href) void navigate({ href }); }} rowOpen="click"
+        actions={actions} selectable renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={noun} />}
+        onRowOpen={(entry) => { const href = entryPresentation(entry)?.href; if (href) void navigate({ href }); }} rowOpen="click"
         infinite={{ hasMore: false, onLoadMore: () => undefined }}
-        reorder={{ disabled: pending ? "Saving list" : !entries.complete ? "Load the complete list to reorder" : false, onReorder: (change) => run(() => reorderTo(change.row, change.to)) }}
-        noun={{ one: "item", other: "items" }} emptyMessage="Nothing saved yet. Use Save on a title, or the track menu, to add items to this list." />
+        reorder={{ disabled: locked, onReorder: async (change) => {
+          // A rejection puts the row back and the table says why.
+          if (busy.current) throw new Error("Saving the playlist");
+          busy.current = true; setPending(true);
+          try { await reorderTo(change.row, change.to); } finally { busy.current = false; setPending(false); }
+        } }}
+        noun={noun} emptyMessage="Nothing in this playlist yet. Choose Add to playlist on a movie, show, episode, album, track, audiobook or chapter." />
     </>}
-    <ConfirmDialog isOpen={confirm} onOpenChange={setConfirm} title={`Delete ${current.name}?`} description="The list is removed. Media and download settings stay as they are." confirmLabel="Delete list" destructive isPending={deleting} onConfirm={() => run(async () => { const { data } = await deleteList({ variables: { id: listId } }); assertSuccess(data?.deletePersonalList, "Could not delete list"); await navigate({ to: "/lists" }); })} />
-    {editing && saved.data?.savedView ? <ListEditor open={editing} onOpenChange={setEditing} initial={saved.data.savedView} personalListId={listId} /> : null}
-    {renaming ? <RenameList id={listId} name={current.name} onOpenChange={setRenaming} /> : null}
+    {playlist.dialog}
+    {dialogs}
   </div>;
-}
-
-function RenameList({ id, name, onOpenChange }: { id: string; name: string; onOpenChange: (open: boolean) => void }) {
-  const [update] = useMutation(EntityPersonalListUpdateDocument);
-  const form = useAppForm({ ...formBehaviour, defaultValues: { name }, validators: { onDynamic: z.object({ name: z.string().trim().min(1, "Enter a name").max(120) }) }, onSubmit: async ({ value }) => {
-    const { data } = await update({ variables: { id, input: { name: value.name.trim() } } }); assertSuccess(data?.updatePersonalList, "Could not rename list"); onOpenChange(false);
-  } });
-  return <Dialog isOpen onOpenChange={onOpenChange} title="Rename list"><Form form={form} onError={(error) => toast.danger(errorMessage(error))}><FormStack>
-    <form.AppField name="name">{(field) => <field.TextField label="Name" required />}</form.AppField>
-    <FormActions><form.SubmitButton>Save</form.SubmitButton></FormActions>
-  </FormStack></Form></Dialog>;
 }

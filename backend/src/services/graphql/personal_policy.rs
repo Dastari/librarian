@@ -6,9 +6,9 @@ use std::any::Any;
 
 use async_graphql::{Context, Error, ErrorExtensions, Result};
 use graphql_orm::DefaultBackend;
-use graphql_orm::graphql::filters::StringFilter;
+use graphql_orm::graphql::filters::{IntFilter, StringFilter};
 use graphql_orm::graphql::orm::{
-    ChangeAction, MutationContext, MutationEvent, MutationPhase, ReadPredicate,
+    ChangeAction, MutationContext, MutationEvent, MutationPhase, OrderDirection, ReadPredicate,
 };
 
 use crate::db::Database;
@@ -148,6 +148,8 @@ pub(crate) fn prepare_update(
                 || v.album_id.is_some()
                 || v.audiobook_id.is_some()
                 || v.track_id.is_some()
+                || v.episode_id.is_some()
+                || v.chapter_id.is_some()
         }
         "SavedView" => input
             .downcast_ref::<UpdateSavedViewInput>()
@@ -239,6 +241,8 @@ pub(crate) async fn write_field(
                         | "albumId"
                         | "audiobookId"
                         | "trackId"
+                        | "episodeId"
+                        | "chapterId"
                 )
             {
                 Err(denied())
@@ -309,13 +313,15 @@ async fn validate_entry(tx: &mut MutationContext<'_>, row: &ListEntry) -> Result
         &row.album_id,
         &row.audiobook_id,
         &row.track_id,
+        &row.episode_id,
+        &row.chapter_id,
     ]
     .into_iter()
     .filter(|id| id.is_some())
     .count();
     if count != 1 {
         return Err(invalid(
-            "A list entry must reference exactly one movie, show, album, audiobook or track",
+            "A list entry must reference exactly one movie, show, episode, album, track, audiobook or chapter",
         ));
     }
     let list = tx
@@ -360,6 +366,174 @@ async fn validate_entry(tx: &mut MutationContext<'_>, row: &ListEntry) -> Result
             .filter(|album| album.user_id == row.user_id && album.library_id == track.library_id)
             .ok_or_else(denied)?;
         let _ = album;
+    }
+    // Episodes and chapters carry no owner of their own: they belong to whoever
+    // owns the show or audiobook above them, in a library that person owns.
+    if let Some(id) = &row.episode_id {
+        let episode = tx
+            .find_by_id::<Episode>(id)
+            .await
+            .map_err(db_error)?
+            .ok_or_else(denied)?;
+        let show = tx
+            .find_by_id::<Show>(&episode.show_id)
+            .await
+            .map_err(db_error)?
+            .filter(|show| show.user_id == row.user_id)
+            .ok_or_else(denied)?;
+        library_owned(tx, &show.library_id, &row.user_id).await?;
+    }
+    if let Some(id) = &row.chapter_id {
+        let chapter = tx
+            .find_by_id::<Chapter>(id)
+            .await
+            .map_err(db_error)?
+            .ok_or_else(denied)?;
+        let book = tx
+            .find_by_id::<Audiobook>(&chapter.audiobook_id)
+            .await
+            .map_err(db_error)?
+            .filter(|book| book.user_id == row.user_id)
+            .ok_or_else(denied)?;
+        library_owned(tx, &book.library_id, &row.user_id).await?;
+    }
+    Ok(())
+}
+
+/// Entries are spaced so a move is usually one write. Clients put an entry
+/// between two neighbours by taking the midpoint of their positions; when no
+/// gap is left they send the neighbour's own position, which means "just
+/// before it". Two concurrent appends can pick the same position too. Either
+/// way the tie is settled here, inside the originating transaction, so every
+/// client sees one consistent order: a moved entry goes before what it tied
+/// with, a newly added one goes after it, and the whole list is respaced.
+pub(crate) const POSITION_SPACING: i32 = 1024;
+
+async fn list_entry_rows(tx: &mut MutationContext<'_>, list_id: &str) -> Result<Vec<ListEntry>> {
+    const PAGE: i64 = 100;
+    let mut rows = Vec::new();
+    let mut offset = 0_i64;
+    loop {
+        let page = tx
+            .query::<ListEntry>()
+            .filter(ListEntryWhereInput {
+                list_id: Some(eq(list_id)),
+                ..Default::default()
+            })
+            .order_by(ListEntryOrderByInput {
+                position: Some(OrderDirection::Asc),
+                id: Some(OrderDirection::Asc),
+                ..Default::default()
+            })
+            .limit(PAGE)
+            .offset(offset)
+            .fetch_all()
+            .await
+            .map_err(db_error)?;
+        let complete = (page.len() as i64) < PAGE;
+        rows.extend(page);
+        if complete {
+            return Ok(rows);
+        }
+        offset += PAGE;
+    }
+}
+
+/// The order a list should have once `written` has been placed among its ties.
+pub(crate) fn respaced_order(
+    rows: &[ListEntry],
+    written: &str,
+    created: bool,
+) -> Vec<(String, i32)> {
+    let mut keyed: Vec<(i32, u8, &str)> = rows
+        .iter()
+        .map(|row| {
+            let rank = if row.id != written {
+                1
+            } else if created {
+                2
+            } else {
+                0
+            };
+            (row.position, rank, row.id.as_str())
+        })
+        .collect();
+    keyed.sort();
+    keyed
+        .into_iter()
+        .enumerate()
+        .map(|(index, (_, _, id))| {
+            (
+                id.to_owned(),
+                (index as i32).saturating_mul(POSITION_SPACING),
+            )
+        })
+        .collect()
+}
+
+async fn settle_position_tie(
+    tx: &mut MutationContext<'_>,
+    row: &ListEntry,
+    created: bool,
+) -> Result<()> {
+    let tied = tx
+        .query::<ListEntry>()
+        .filter(ListEntryWhereInput {
+            list_id: Some(eq(&row.list_id)),
+            position: Some(IntFilter {
+                eq: Some(row.position),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .count()
+        .await
+        .map_err(db_error)?;
+    if tied < 2 {
+        return Ok(());
+    }
+    let rows = list_entry_rows(tx, &row.list_id).await?;
+    let target = respaced_order(&rows, &row.id, created);
+    let changed: Vec<(String, i32)> = target
+        .into_iter()
+        .filter(|(id, position)| {
+            rows.iter()
+                .any(|existing| &existing.id == id && existing.position != *position)
+        })
+        .collect();
+    // Park the changing entries above everything first so that no write along
+    // the way lands on a position another entry still holds.
+    let ceiling = rows
+        .iter()
+        .map(|existing| existing.position)
+        .max()
+        .unwrap_or(0)
+        .max((rows.len() as i32).saturating_mul(POSITION_SPACING));
+    let parking = ceiling
+        .checked_add(1 + changed.len() as i32)
+        .map(|_| ceiling + 1)
+        .ok_or_else(|| invalid("List positions are exhausted"))?;
+    for (offset, (id, _)) in changed.iter().enumerate() {
+        tx.update_by_id::<ListEntry>(
+            id,
+            UpdateListEntryInput {
+                position: Some(parking + offset as i32),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(db_error)?;
+    }
+    for (id, position) in changed {
+        tx.update_by_id::<ListEntry>(
+            &id,
+            UpdateListEntryInput {
+                position: Some(position),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(db_error)?;
     }
     Ok(())
 }
@@ -407,6 +581,8 @@ async fn validate_row(tx: &mut MutationContext<'_>, event: &MutationEvent) -> Re
                     || old.album_id != row.album_id
                     || old.audiobook_id != row.audiobook_id
                     || old.track_id != row.track_id
+                    || old.episode_id != row.episode_id
+                    || old.chapter_id != row.chapter_id
             }) {
                 return Err(invalid(
                     "List entry ownership and content associations are immutable",
@@ -496,6 +672,18 @@ pub(crate) async fn on_mutation(
         // Hooks also cover trusted writes and transaction-local bulk mutations.
         validate_row(tx, event).await?;
     }
+    if event.entity_name == "ListEntry"
+        && event.action != ChangeAction::Deleted
+        && let Some(row) = event.after::<ListEntry>()?
+    {
+        let moved = event.action == ChangeAction::Created
+            || event
+                .before::<ListEntry>()?
+                .is_none_or(|old| old.position != row.position);
+        if moved {
+            settle_position_tie(tx, row, event.action == ChangeAction::Created).await?;
+        }
+    }
     // The surviving list must invalidate after a deleted child. Metadata upward
     // propagation handles create/update; this write supplies delete provenance.
     if event.entity_name == "ListEntry"
@@ -580,6 +768,12 @@ async fn cleanup_deleted(tx: &mut MutationContext<'_>, event: &MutationEvent) ->
         }
         "Track" => {
             delete!(ListEntry, ListEntryWhereInput, track_id);
+        }
+        "Episode" => {
+            delete!(ListEntry, ListEntryWhereInput, episode_id);
+        }
+        "Chapter" => {
+            delete!(ListEntry, ListEntryWhereInput, chapter_id);
         }
         "User" => {
             delete!(HomeShelf, HomeShelfWhereInput, user_id);

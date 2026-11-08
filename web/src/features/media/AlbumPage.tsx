@@ -19,6 +19,7 @@ import { playerStore, type PlayItem } from "@/features/player/store";
 import { AlbumDetailDocument, AlbumTracksPageDocument, EntityTrackUpdateDocument, EntityTrackUpdateManyDocument, type AlbumDetailQuery } from "@/graphql/generated/graphql";
 import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
 import { albumCover } from "@/lib/artwork";
+import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { formatClock, formatRuntime, formatYear } from "@/lib/format";
 import { activeContentStatusQueries } from "@/lib/graphql/content-status";
@@ -166,6 +167,14 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     return queue.filter((item) => selected.has(item.entity.id));
   }, [queue]);
   const selectedPlaybackUnavailable = (rows: readonly TrackRow[]) => rows.some((item) => !item.mediaFileId) ? "Some selected tracks have no file. Deselect them to play this selection." : undefined;
+  const ownAlbum = Boolean(user) && album?.userId === user?.id;
+  const trackPlaylist = useAddToPlaylist<TrackRow>({
+    targetsOf: (rows) => rows.map((row) => ({ kind: "track" as const, id: row.id })),
+    titleOf: (rows) => playlistTitle(rows, rows[0]!.title, { one: "track", other: "tracks" }),
+    allowed: () => ownAlbum,
+    bulk: true,
+    priority: 2,
+  });
   const actions = useMemo(() => defineActions<TrackRow>("track", [
     { id: "play", label: "Play", icon: IconPlay, group: "open", primary: true, bulk: true,
       visible: (rows) => rows.length === 1 && Boolean(rows[0]?.mediaFileId),
@@ -186,9 +195,10 @@ export function AlbumPage({ albumId }: { albumId: string }) {
       visible: (rows) => isAdmin && rows.length > 1 && rows.some((item) => !item.mediaFileId && item.wanted),
       run: (rows) => setSelectedWanted(rows, false), successMessage: () => "Selected missing tracks no longer wanted" },
     ...resetProgressAction<TrackRow>("audio", trackReset, resetProgress),
+    trackPlaylist.action,
     { id: "copy-titles", label: "Copy track titles", icon: IconCopy, group: "organise", bulk: true,
       run: async (rows) => { await copyText(rows.map((item) => item.title).join("\n")); }, successMessage: () => "Track titles copied" },
-  ]), [isAdmin, playFrom, toggleWanted, setSelectedWanted, selectedQueue, player, trackReset, resetProgress]);
+  ]), [trackPlaylist.action, isAdmin, playFrom, toggleWanted, setSelectedWanted, selectedQueue, player, trackReset, resetProgress]);
 
   const currentItemId = player.audio?.entity.id;
   const fractionOf = (track: TrackRow) => {
@@ -263,6 +273,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
         />
       </AlbumTableContext.Provider>
       {albumDialogs}
+      {trackPlaylist.dialog}
     </DetailShell>
   );
 }

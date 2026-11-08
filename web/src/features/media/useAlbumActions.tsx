@@ -1,10 +1,10 @@
 import { useNavigate } from "@tanstack/react-router";
 import { defineActions, type ActionSet } from "glass-ux/actions";
-import { IconBookmark, IconDownload, IconExternalLink, IconPlay, IconPlus, IconSettings, IconTrash } from "glass-ux/icons";
+import { IconDownload, IconExternalLink, IconPlay, IconPlus, IconSettings, IconTrash } from "glass-ux/icons";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
-import { SaveToListDialog } from "@/features/personal/SaveToListDialog";
+import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 
 import type { AlbumEntity } from "./AlbumIdentity";
@@ -32,7 +32,13 @@ export function useAlbumActions<T extends AlbumEntity>({ settings, open = true, 
   const { user } = useSession();
   const resetProgress = useResetProgress();
   const wantMissing = useWantMissing();
-  const [saving, setSaving] = useState<T | null>(null);
+  const playlist = useAddToPlaylist<T>({
+    targetsOf: (rows) => rows.map((row) => ({ kind: "album" as const, id: row.id })),
+    titleOf: (rows) => playlistTitle(rows, rows[0]!.name, { one: "album", other: "albums" }),
+    allowed: (rows) => Boolean(user) && rows.every((row) => row.userId === user?.id),
+    bulk: true,
+    priority: 2,
+  });
   const [finding, setFinding] = useState<T | null>(null);
 
   const actions = useMemo(() => {
@@ -54,11 +60,7 @@ export function useAlbumActions<T extends AlbumEntity>({ settings, open = true, 
         visible: one,
         run: (rows: readonly T[]) => void navigate({ to: "/albums/$albumId", params: { albumId: rows[0]!.id } }),
       }] : []),
-      {
-        id: "save", label: "Save to list", icon: IconBookmark, group: "open", priority: 2,
-        visible: (rows) => one(rows) && rows[0]!.userId === user?.id,
-        run: (rows) => setSaving(rows[0]!),
-      },
+      playlist.action,
       ...resetProgressAction("audio", reset, resetProgress),
       ...(isAdmin ? [{
         id: "find", label: "Find releases", icon: IconDownload, group: "manage" as const, priority: 2, primary: !play,
@@ -80,7 +82,7 @@ export function useAlbumActions<T extends AlbumEntity>({ settings, open = true, 
 
   const dialogs = (
     <>
-      {saving ? <SaveToListDialog open onOpenChange={(next) => { if (!next) setSaving(null); }} target={{ kind: "album", id: saving.id }} title={saving.name} /> : null}
+      {playlist.dialog}
       {finding ? <ReleaseSearchDialog isOpen onOpenChange={(next) => { if (!next) setFinding(null); }} query={[artist, finding.name].filter(Boolean).join(" ")} year={finding.year} libraryId={finding.libraryId} artist={artist} album={finding.name} target={{ albumId: finding.id }} /> : null}
     </>
   );

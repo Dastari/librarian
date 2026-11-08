@@ -1,15 +1,101 @@
+# A playlist entry carries whichever target it points at, in full, so a row can draw that target's
+# own identity without a second request.
 fragment PersonalEntry on ListEntry {
-  id listId position movieId showId albumId audiobookId trackId
-  movie { id title year libraryId mediaFileId }
-  show { id name year libraryId posterUrl }
-  album { id name year libraryId coverUrl artist { id name } }
-  audiobook { id title libraryId coverUrl authorName }
-  track { id title libraryId albumId artistName mediaFileId durationSecs album { id coverUrl } }
+  id userId listId position movieId showId albumId audiobookId trackId episodeId chapterId
+  movie { ...MovieFields }
+  show { ...ShowFields }
+  album { ...AlbumFields artist { id name } }
+  audiobook { ...AudiobookFields }
+  track { ...TrackFields album { id name coverUrl } }
+  episode { ...EpisodeFields show { id name } }
+  chapter { ...ChapterFields audiobook { id title authorName } mediaFile { id duration } }
 }
 
 query PersonalEntries($listId: String!, $page: PageInput) {
   listEntries(where: { listId: { eq: $listId } }, orderBy: [{ position: ASC }, { id: ASC }], page: $page) {
     edges { node { ...PersonalEntry } }
     pageInfo { hasNextPage totalCount }
+  }
+}
+
+# What a playlist's picture is made from: the first few entries, by id alone (artwork is keyed by id).
+fragment PlaylistCoverEntry on ListEntry {
+  id movieId showId albumId audiobookId trackId episodeId chapterId
+  track { albumId }
+  episode { showId }
+  chapter { audiobookId }
+}
+
+fragment PlaylistSummary on PersonalList {
+  ...PersonalListFields
+  entries(orderBy: { position: ASC, id: ASC }, page: { limit: 4, offset: 0 }) {
+    edges { node { ...PlaylistCoverEntry } }
+    pageInfo { totalCount }
+  }
+}
+
+query PlaylistList($where: PersonalListWhereInput, $orderBy: [PersonalListOrderByInput!], $page: PageInput) {
+  personalLists(where: $where, orderBy: $orderBy, page: $page) {
+    edges { node { ...PlaylistSummary } }
+    pageInfo { hasNextPage hasPreviousPage totalCount }
+  }
+}
+
+query PlaylistGet($id: String!) {
+  personalList(id: $id) { ...PlaylistSummary }
+}
+
+# Which targets a playlist already holds, to add without duplicating and to place new entries last.
+query PlaylistMembers($listId: String!, $page: PageInput) {
+  listEntries(where: { listId: { eq: $listId } }, orderBy: [{ position: ASC }, { id: ASC }], page: $page) {
+    edges { node { id position movieId showId albumId audiobookId trackId episodeId chapterId } }
+    pageInfo { hasNextPage totalCount }
+  }
+}
+
+# Playing: resolve targets to what the player needs. Each takes up to a page of ids.
+query PlaylistPlayMovies($ids: [String!]!) {
+  movies(where: { id: { inList: $ids } }, page: { limit: 100, offset: 0 }) {
+    edges { node { id title year runtime mediaFileId } }
+  }
+}
+
+query PlaylistPlayEpisodes($ids: [String!]!) {
+  episodes(where: { id: { inList: $ids } }, page: { limit: 100, offset: 0 }) {
+    edges { node { id showId season episode title runtime mediaFileId show { id name } } }
+  }
+}
+
+query PlaylistPlayTracks($ids: [String!]!) {
+  tracks(where: { id: { inList: $ids } }, page: { limit: 100, offset: 0 }) {
+    edges { node { id title albumId discNumber trackNumber artistName durationSecs mediaFileId album { id name } } }
+  }
+}
+
+query PlaylistPlayChapters($ids: [String!]!) {
+  chapters(where: { id: { inList: $ids } }, page: { limit: 100, offset: 0 }) {
+    edges { node { id audiobookId chapterNumber title startTimeSecs durationSecs fileOffsetSecs mediaFileId mediaFile { id duration } audiobook { id title authorName } } }
+  }
+}
+
+# Containers expand to their playable children; the caller sorts them and follows hasNextPage.
+query PlaylistAlbumTracks($ids: [String!]!, $offset: Int!) {
+  tracks(where: { albumId: { inList: $ids } }, orderBy: [{ discNumber: ASC }, { trackNumber: ASC }], page: { limit: 100, offset: $offset }) {
+    edges { node { id title albumId discNumber trackNumber artistName durationSecs mediaFileId album { id name } } }
+    pageInfo { hasNextPage }
+  }
+}
+
+query PlaylistShowEpisodes($ids: [String!]!, $offset: Int!) {
+  episodes(where: { showId: { inList: $ids } }, orderBy: [{ season: ASC }, { episode: ASC }], page: { limit: 100, offset: $offset }) {
+    edges { node { id showId season episode title runtime mediaFileId show { id name } } }
+    pageInfo { hasNextPage }
+  }
+}
+
+query PlaylistBookChapters($ids: [String!]!, $offset: Int!) {
+  chapters(where: { audiobookId: { inList: $ids } }, orderBy: [{ chapterNumber: ASC }], page: { limit: 100, offset: $offset }) {
+    edges { node { id audiobookId chapterNumber title startTimeSecs durationSecs fileOffsetSecs mediaFileId mediaFile { id duration } audiobook { id title authorName } } }
+    pageInfo { hasNextPage }
   }
 }

@@ -2,7 +2,7 @@ import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, DataTable, IdentityCell, TextCell, type DataTableSearch, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
 import { IconExternalLink, IconPlay, IconPlus } from "glass-ux/icons";
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useContext, useMemo } from "react";
 
 import { TableToolbar } from "@/components/ui/TableToolbar";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
@@ -11,7 +11,7 @@ import { ArtGlyph } from "@/components/entities/ArtGlyph";
 import { EntityChip } from "@/components/entities/EntityChip";
 import { refCellEntity } from "@/lib/entities/resolver";
 import { ErrorState, GlassSegmented } from "@/components/ui";
-import { SaveToListDialog } from "@/features/personal/SaveToListDialog";
+import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
 import type { PlayItem } from "@/features/player/store";
 import { usePlayer } from "@/features/player/usePlayer";
 import { EntityLibraryGetDocument, LibraryTracksDocument, type ContentStatus, type LibraryTracksQuery, type TrackOrderByInput, type TrackWhereInput } from "@/graphql/generated/graphql";
@@ -73,7 +73,13 @@ export function TracksBrowser({ libraryId }: { libraryId: string }) {
   const { user } = useSession();
   const ownership = useLiveQuery(EntityLibraryGetDocument, { variables: { id: libraryId } });
   const ownLibrary = ownership.data?.library?.userId === user?.id && Boolean(user);
-  const [savingTrack, setSavingTrack] = useState<{ id: string; title: string } | null>(null);
+  const playlist = useAddToPlaylist<TrackRow>({
+    targetsOf: (rows) => rows.map((row) => ({ kind: "track" as const, id: row.id })),
+    titleOf: (rows) => playlistTitle(rows, rows[0]!.title, { one: "track", other: "tracks" }),
+    allowed: () => ownLibrary,
+    bulk: true,
+    priority: 2,
+  });
   const player = usePlayer();
   const filters = useBrowserFilters();
   const table = useServerTable<TrackOrderByInput>({ persistKey: `tracks.${libraryId}`, defaultSorting: [{ id: "title", desc: false }] });
@@ -120,7 +126,7 @@ export function TracksBrowser({ libraryId }: { libraryId: string }) {
       disabledReason: (rows) => rows.some((row) => !row.mediaFileId) ? "Some selected tracks have no file. Deselect them to queue." : false,
       run: (rows) => player.enqueue(selectedQueue(rows)), successMessage: () => "Added to queue" },
     { id: "open-album", bulk: true, label: "Open album", icon: IconExternalLink, group: "open", priority: 2, visible: (rows) => rows.length === 1, run: (rows, context) => context.navigate(`/albums/${rows[0]!.albumId}`) },
-    { id: "save", bulk: true, label: "Save to list…", icon: IconPlus, group: "organise", priority: 2, visible: (rows) => ownLibrary && rows.length === 1, run: (rows) => setSavingTrack(rows[0]!) },
+    playlist.action,
   ]), [ownLibrary, playFrom, player, list.rows]);
 
   return (
@@ -163,7 +169,7 @@ export function TracksBrowser({ libraryId }: { libraryId: string }) {
         />
         </StatusContext.Provider>
       </div>
-      {savingTrack ? <SaveToListDialog open onOpenChange={(open) => { if (!open) setSavingTrack(null); }} target={{ kind: "track", id: savingTrack.id }} title={savingTrack.title} /> : null}
+      {playlist.dialog}
     </div>
   );
 }

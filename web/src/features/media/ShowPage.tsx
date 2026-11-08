@@ -136,7 +136,7 @@ export function ShowPage({ showId, initialSeason, focusEpisodeId }: {
             headerExtra={<ViewToggle value={episodeView} onChange={setEpisodeView} className="shrink-0" />}
             complete={episodes.complete} episodes={seasonEpisodes} statuses={statuses} progressByFile={progressByFile} loading={episodes.loading && list.length === 0} playbackUnavailable={progress.loading ? "Loading watch progress" : progress.error ? "Retry watch progress" : undefined}
             status={episodes.error || progress.error ? <span role="status">Could not load {episodes.error ? "all episodes" : "watch progress"}. <Button size="sm" onPress={() => { void episodes.refetch().catch(() => {}); void progress.refetch().catch(() => {}); }}>Retry</Button></span> : !episodes.complete || progress.loading ? "Loading episodes and watch progress…" : undefined}
-            onPlay={play} showId={show.id} showName={show.name} libraryId={show.libraryId} onChanged={() => { void episodes.refetch().catch(() => {}); }} />
+            onPlay={play} showId={show.id} showName={show.name} libraryId={show.libraryId} ownerId={show.userId} onChanged={() => { void episodes.refetch().catch(() => {}); }} />
         </section>
       </div>
 

@@ -18,6 +18,7 @@ import { playerStore, type PlayItem } from "@/features/player/store";
 import { AudiobookDetailDocument, AudiobookChaptersPageDocument, AudiobookPartsDocument, EntityChapterUpdateDocument, EntityChapterUpdateManyDocument, type AudiobookDetailQuery } from "@/graphql/generated/graphql";
 import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
 import { audiobookCover } from "@/lib/artwork";
+import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { formatClock, formatRuntime } from "@/lib/format";
 import { activeContentStatusQueries } from "@/lib/graphql/content-status";
@@ -296,6 +297,14 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
     });
   }, [queue, progressByFile]);
   const selectedPlaybackUnavailable = (rows: readonly ChapterRow[]) => rows.some((item) => !item.mediaFileId) ? "Some selected chapters have no file. Deselect them to play this selection." : progressUnavailable;
+  const ownBook = Boolean(user) && book?.userId === user?.id;
+  const chapterPlaylist = useAddToPlaylist<ChapterRow>({
+    targetsOf: (rows) => rows.map((row) => ({ kind: "chapter" as const, id: row.id })),
+    titleOf: (rows) => playlistTitle(rows, rows[0]!.title ?? `Chapter ${rows[0]!.chapterNumber}`, { one: "chapter", other: "chapters" }),
+    allowed: () => ownBook,
+    bulk: true,
+    priority: 2,
+  });
   const actions = useMemo(() => defineActions<ChapterRow>("chapter", [
     { id: "play", label: ([chapter]) => {
         const saved = chapter?.mediaFileId ? progressByFile.get(chapter.mediaFileId) : undefined;
@@ -322,9 +331,10 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
       visible: (rows) => isAdmin && rows.length > 1 && rows.some((item) => !item.mediaFileId && item.wanted),
       run: (rows) => setSelectedWanted(rows, false), successMessage: () => "Selected missing chapters no longer wanted" },
     ...resetProgressAction<ChapterRow>("audio", chapterReset, resetProgress),
+    chapterPlaylist.action,
     { id: "copy-titles", label: "Copy chapter titles", icon: IconCopy, group: "organise", bulk: true,
       run: async (rows) => { await copyText(rows.map((item) => item.title ?? `Chapter ${item.chapterNumber}`).join("\n")); }, successMessage: () => "Chapter titles copied" },
-  ]), [isAdmin, playFrom, toggleWanted, setSelectedWanted, selectedQueue, player, progressByFile, progressUnavailable, wholeFile, inParts, chapterStart, chapterEnd, chapterReset, resetProgress]);
+  ]), [chapterPlaylist.action, isAdmin, playFrom, toggleWanted, setSelectedWanted, selectedQueue, player, progressByFile, progressUnavailable, wholeFile, inParts, chapterStart, chapterEnd, chapterReset, resetProgress]);
 
   const currentItemId = (wholeFile || inParts) && player.audio?.audiobookId === audiobookId ? chapterAt(player.transport.position, player.audio.mediaFileId)?.id : player.audio?.entity.id;
   const playStateOf = (chapter: ChapterRow): RowPlayState => {
@@ -384,6 +394,7 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
         />
       </AudiobookTableContext.Provider>
       {bookDialogs}
+      {chapterPlaylist.dialog}
     </DetailShell>
   );
 }

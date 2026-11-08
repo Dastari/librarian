@@ -54,7 +54,7 @@ describe("Mark as unwatched on a movie", () => {
     view.unmount();
     const none = await renderWithProviders(<Probe reset={{ files: () => [] }} />);
     expect(labels()).not.toContain("Mark as unwatched");
-    expect(labels()).toContain("Save to list");
+    expect(labels()).toContain("Add to playlist…");
     none.unmount();
     await renderWithProviders(<Probe />);
     expect(labels()).not.toContain("Mark as unwatched");

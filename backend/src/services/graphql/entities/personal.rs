@@ -154,6 +154,10 @@ pub struct PersonalListCustomOperations;
     unique_index = "list_id,album_id",
     unique_index = "list_id,audiobook_id",
     unique_index = "list_id,track_id",
+    index = "episode_id",
+    index = "chapter_id",
+    unique_index = "list_id,episode_id",
+    unique_index = "list_id,chapter_id",
     read_policy = "member.read",
     write_policy = "member.write"
 )]
@@ -182,6 +186,15 @@ pub struct ListEntry {
     #[filterable(type = "string")]
     #[graphql_orm(write_policy = "owned.link")]
     pub track_id: Option<String>,
+    #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
+    // No physical key on episode_id and chapter_id: adding one rebuilds the table, which startup
+    // does not do on its own. An entry goes with its episode or chapter through `cleanup_deleted`
+    // in personal_policy.rs.
+    pub episode_id: Option<String>,
+    #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
+    pub chapter_id: Option<String>,
     #[filterable(type = "date")]
     #[sortable]
     pub created_at: String,
@@ -234,6 +247,28 @@ pub struct ListEntry {
     #[skip_db]
     #[relation(target = "Track", from = "track_id", to = "id", on_delete = "cascade")]
     pub track: Option<Box<Track>>,
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Episode",
+        from = "episode_id",
+        to = "id",
+        on_delete = "cascade",
+        emit_fk = false
+    )]
+    pub episode: Option<Box<Episode>>,
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Chapter",
+        from = "chapter_id",
+        to = "id",
+        on_delete = "cascade",
+        emit_fk = false
+    )]
+    pub chapter: Option<Box<Chapter>>,
 }
 #[derive(Default)]
 pub struct ListEntryCustomOperations;
