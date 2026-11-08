@@ -97,6 +97,9 @@ const updateMock = (id: string, input: unknown) => {
 
 const mount = (profiles: Profile[], extra: unknown[] = []) => renderWithProviders(<QualitySettings />, { mocks: [listMock(profiles), ...extra] as never });
 
+/** What a chip list shows, in order. */
+const chips = (dialog: HTMLElement, label: string) =>
+  [...within(dialog).getByLabelText(label).closest(".fa-tag-input")!.querySelectorAll(".fa-chip-label")].map((node) => node.textContent);
 const openEditor = async (name = "Standard") => {
   await userEvent.click(await screen.findByText(name));
   return screen.findByRole("dialog");
@@ -127,9 +130,9 @@ describe("QualitySettings editor", () => {
     await mount([profile()]);
     const dialog = await openEditor();
     expect(dialog).toHaveTextContent("Edit Standard");
-    expect(within(dialog).getByDisplayValue("2160p, 1080p")).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue("hevc, h264")).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue("bluray, web")).toBeInTheDocument();
+    expect(chips(dialog, "Resolutions")).toEqual(["2160p", "1080p"]);
+    expect(chips(dialog, "Video codecs")).toEqual(["hevc", "h264"]);
+    expect(chips(dialog, "Sources")).toEqual(["bluray", "web"]);
     expect(within(dialog).getByRole("switch", { name: /Keep upgrading until the cutoff/ })).toBeChecked();
     expect(within(dialog).getByText("English")).toBeInTheDocument();
     expect(within(dialog).getByText("NTb")).toBeInTheDocument();
@@ -139,10 +142,22 @@ describe("QualitySettings editor", () => {
     const save = updateMock("qp-1", savedInput({ allowedVideoCodecs: ["hevc", "h264", "av1"] }));
     await mount([profile()], [save.mock]);
     const dialog = await openEditor();
-    await userEvent.type(within(dialog).getByDisplayValue("hevc, h264"), ", av1");
+    await userEvent.type(within(dialog).getByLabelText("Video codecs"), "av1{Enter}");
     await userEvent.click(within(dialog).getByRole("button", { name: "Save" }));
     await vi.waitFor(() => expect(save.called).toHaveBeenCalled());
     expect(await screen.findByText("Profile saved")).toBeInTheDocument();
+  });
+
+  it("keeps the size limits in whole MiB: a bare number is MiB and a stored one reads back as such", async () => {
+    const save = updateMock("qp-1", savedInput({ minSizeMb: 700, maxSizeMb: 4096 }));
+    await mount([profile({ maxSizeMb: 4096 })], [save.mock]);
+    const dialog = await openEditor();
+    expect(within(dialog).getByLabelText("Maximum size")).toHaveValue("4 GiB");
+    await userEvent.type(within(dialog).getByLabelText("Minimum size"), "700");
+    await userEvent.tab();
+    expect(within(dialog).getByLabelText("Minimum size")).toHaveValue("700 MiB");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(save.called).toHaveBeenCalled());
   });
 
   it("turns an empty cutoff into null", async () => {
@@ -158,9 +173,9 @@ describe("QualitySettings editor", () => {
     const save = updateMock("qp-1", savedInput({ allowedResolutions: ["1080p"], resolutionPreference: [] }));
     await mount([profile()], [save.mock]);
     const dialog = await openEditor();
-    const resolutions = within(dialog).getByDisplayValue("2160p, 1080p");
-    await userEvent.clear(resolutions);
-    await userEvent.type(resolutions, "1080p");
+    const resolutions = within(dialog).getByLabelText("Resolutions");
+    await userEvent.click(resolutions);
+    await userEvent.keyboard("{Backspace}{Backspace}1080p{Enter}");
     await userEvent.click(within(dialog).getByRole("button", { name: "Save" }));
     await vi.waitFor(() => expect(save.called).toHaveBeenCalled());
   });
@@ -179,7 +194,7 @@ describe("QualitySettings editor", () => {
     await mount([profile({ mediaKind: "AUDIO", allowedAudioFormats: ["flac"] })]);
     const dialog = await openEditor();
     expect(within(dialog).queryByLabelText("Resolutions")).toBeNull();
-    expect(within(dialog).getByDisplayValue("flac")).toBeInTheDocument();
+    expect(chips(dialog, "Audio formats")).toEqual(["flac"]);
   });
 
   it("refuses a profile with no name", async () => {

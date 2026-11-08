@@ -2,7 +2,7 @@ import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
 import { copyText } from "glass-ux/copy-button";
 import { useMutation } from "@apollo/client/react";
 import { toast } from "glass-ux/toast";
-import { Form, FormActions, formBehaviour, useAppForm } from "glass-ux/form";
+import { Form, FormActions, useAppForm } from "glass-ux/form";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, filters, IdentityCell } from "glass-ux/data-table";
@@ -11,7 +11,7 @@ import { IconFolders } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
-import { Button, Dialog, FieldGroup, Panel } from "@/components/ui";
+import { Button, Dialog, FieldGroup } from "@/components/ui";
 import { EntityNamingPatternCreateDocument, EntityNamingPatternDeleteDocument, EntityNamingPatternListDocument, EntityNamingPatternUpdateDocument, type NamingPatternFieldsFragment } from "@/graphql/generated/graphql";
 import { useSession } from "@/lib/auth/useSession";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
@@ -24,7 +24,8 @@ import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { runSettingsSelection } from "./runSettingsSelection";
 
 import { SettingsLoadError } from "./SettingsLoadError";
-import { SettingsSection } from "./SettingsSection";
+import { SelectRow, settingsFormBehaviour } from "./SettingFields";
+import { SettingsPage, SettingsSection } from "./SettingsSection";
 import { useSettingsConnection } from "./useSettingsConnection";
 
 const globalSchema = z.object({ autoOrganize: z.boolean(), deleteEmptyFolders: z.boolean(), copyMode: z.string() });
@@ -53,7 +54,7 @@ export function OrganizationSettings() {
   const { user } = useSession();
   const organize = useAppSettings("organize");
   const globalDefaults = useRef<GlobalValues>({ autoOrganize: false, deleteEmptyFolders: true, copyMode: "hardlink" });
-  const globalForm = useAppForm({ ...formBehaviour, validators: { onDynamic: globalSchema }, defaultValues: globalDefaults.current,
+  const globalForm = useAppForm({ ...settingsFormBehaviour, validators: { onDynamic: globalSchema }, defaultValues: globalDefaults.current,
     onSubmit: async ({ value }) => {
       const values = globalSchema.parse(value);
       await organize.save({ "organize.auto_organize": values.autoOrganize, "organize.delete_empty_folders": values.deleteEmptyFolders, "organize.copy_mode": values.copyMode });
@@ -81,7 +82,7 @@ export function OrganizationSettings() {
     const source = editing === "new" ? null : editing;
     return { name: source?.name ?? "", libraryType: source?.libraryType ?? "movies", pattern: source?.pattern ?? "", description: source?.description ?? "", isDefault: source?.isDefault ?? false };
   }, [editing]);
-  const patternForm = useAppForm({ ...formBehaviour, validators: { onDynamic: patternSchema }, defaultValues: patternDefaults,
+  const patternForm = useAppForm({ ...settingsFormBehaviour, validators: { onDynamic: patternSchema }, defaultValues: patternDefaults,
     onSubmit: async ({ value }) => {
       if (!user) throw new Error("Sign in to save a naming pattern");
       const values = patternSchema.parse(value);
@@ -125,15 +126,13 @@ export function OrganizationSettings() {
   ]), [refreshPatterns, remove, rows, update]);
 
   return (
-    <div className="flex flex-col gap-6">
-      <Form form={globalForm} className="flex min-w-0 flex-col gap-6" onError={(error) => toast.danger(errorMessage(error, "Could not save settings"))}>
-        <Panel title="File handling">
-          <FieldGroup>
-            <globalForm.AppField name="autoOrganize">{(field) => <field.SwitchRow label="Organize imported files by default" description="Per-library settings override this." />}</globalForm.AppField>
-            <globalForm.AppField name="deleteEmptyFolders">{(field) => <field.SwitchRow label="Remove empty folders after moving files" description="Folders that belong to the naming structure are always kept." />}</globalForm.AppField>
-            <globalForm.AppField name="copyMode">{(field) => <field.SelectField label="Import method" options={[{ value: "hardlink", label: "Hard link, copy if not possible", detail: "Keeps seeding without using extra space" }, { value: "copy", label: "Always copy" }, { value: "move", label: "Move", detail: "Source files are removed once the import succeeds" }]} />}</globalForm.AppField>
-          </FieldGroup>
-        </Panel>
+    <SettingsPage>
+      <Form form={globalForm} className="settings-measure flex min-w-0 flex-col gap-4" onError={(error) => toast.danger(errorMessage(error, "Could not save settings"))}>
+        <SettingsSection title="File handling" width="readable">
+          <globalForm.AppField name="autoOrganize">{(field) => <field.SwitchRow label="Organize imported files by default" description="Per-library settings override this." />}</globalForm.AppField>
+          <globalForm.AppField name="deleteEmptyFolders">{(field) => <field.SwitchRow label="Remove empty folders after moving files" description="Folders that belong to the naming structure are always kept." />}</globalForm.AppField>
+          <globalForm.AppField name="copyMode">{() => <SelectRow label="Import method" options={[{ value: "hardlink", label: "Hard link, copy if not possible", detail: "Keeps seeding without using extra space" }, { value: "copy", label: "Always copy" }, { value: "move", label: "Move", detail: "Source files are removed once the import succeeds" }]} />}</globalForm.AppField>
+        </SettingsSection>
         <FormActions>
           <globalForm.Subscribe selector={(state) => state.isSubmitting}>{(pending) => <globalForm.CancelButton disabled={pending}>Discard</globalForm.CancelButton>}</globalForm.Subscribe>
           <globalForm.SubmitButton>Save</globalForm.SubmitButton>
@@ -160,6 +159,6 @@ export function OrganizationSettings() {
           </FormActions>
         </Form>
       </Dialog>
-    </div>
+    </SettingsPage>
   );
 }

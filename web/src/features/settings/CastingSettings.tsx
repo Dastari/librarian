@@ -3,7 +3,7 @@ import { copyText } from "glass-ux/copy-button";
 import { useMutation } from "@apollo/client/react";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { toast } from "glass-ux/toast";
-import { Form, FormActions, formBehaviour, useAppForm } from "glass-ux/form";
+import { Form, FormActions, useAppForm } from "glass-ux/form";
 import { defineActions, type ActionDefinition } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, IdentityCell, RelativeTime, TextCell } from "glass-ux/data-table";
@@ -12,7 +12,7 @@ import { IconCast, IconPower, IconRadar } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
-import { Button, Dialog, FieldGroup, Panel } from "@/components/ui";
+import { Button, Dialog, FieldGroup } from "@/components/ui";
 import {
   DiscoverCastDevicesDocument,
   EntityCastDeviceCreateDocument,
@@ -34,7 +34,8 @@ import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { runSettingsSelection } from "./runSettingsSelection";
 
 import { SettingsLoadError } from "./SettingsLoadError";
-import { SettingsSection } from "./SettingsSection";
+import { DurationRow, PercentRow, TextRow, settingsFormBehaviour } from "./SettingFields";
+import { SettingsPage, SettingsSection } from "./SettingsSection";
 import { useSettingsConnection } from "./useSettingsConnection";
 
 const requiredNumber = (rule: z.ZodNumber) => z.number().nullable().transform((value, context) => {
@@ -90,7 +91,7 @@ export function CastingSettings() {
   }), [setting]);
   const defaults = useRef(storedValues);
   const settingsForm = useAppForm({
-    ...formBehaviour,
+    ...settingsFormBehaviour,
     defaultValues: defaults.current,
     validators: { onDynamic: settingsSchema },
     onSubmit: async ({ value, formApi }) => {
@@ -114,7 +115,7 @@ export function CastingSettings() {
   }, [storedValues, settings.loading, settingsForm]);
   const deviceDefaults: DeviceValues = { name: "", address: "", port: 8009 };
   const deviceForm = useAppForm({
-    ...formBehaviour,
+    ...settingsFormBehaviour,
     defaultValues: deviceDefaults,
     validators: { onDynamic: deviceSchema },
     onSubmit: async ({ value }) => {
@@ -173,25 +174,23 @@ export function CastingSettings() {
   ]), [isAdmin, refreshDevices, removeDevice, updateDevice]);
 
   return (
-    <div className="flex flex-col gap-6">
+    <SettingsPage>
       <SettingsSection title="Cast devices" description="Chromecast and Google TV receivers on your network. DLNA renderers are listed for information only." actions={<><Button size="sm" variant="ghost" onPress={() => void runDiscovery()} isPending={discovering}><IconRadar size={16} /> Discover</Button>{isAdmin ? <Button size="sm" variant="primary" onPress={() => { deviceForm.reset(deviceDefaults); setAddingOpen(true); }}><IconPlus /> Add manually</Button> : null}</>}>
         <SettingsLoadError error={devices.error} retry={devices.refetch} hasRows={rows.length > 0} />
         <LoadedDataTable<Device> complete={!devices.loading && !devices.error} height="auto" selectable queryKey={user?.id} id={`librarian.${user?.id ?? "session"}.settings.cast-devices`} label="Cast devices" columns={columns} rows={rows} getRowId={(device) => device.id} getRowLabel={(device) => device.name} loading={devices.loading && rows.length === 0} actions={actions} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "device", other: "devices" }} />} noun={{ one: "device", other: "devices" }} emptyMessage="No devices found. Run discovery on the same network as your receivers, or add one by address." />
       </SettingsSection>
 
       {isAdmin ? (
-        <Form form={settingsForm} className="flex min-w-0 flex-col gap-6" onError={(error) => toast.danger(errorMessage(error, "Could not save settings"))}>
+        <Form form={settingsForm} className="settings-measure flex min-w-0 flex-col gap-4" onError={(error) => toast.danger(errorMessage(error, "Could not save settings"))}>
           <settingsForm.Subscribe selector={(state) => [state.isSubmitting, state.isDefaultValue]}>
             {([submitting, unchanged]) => <>
-              <Panel title="Casting behaviour">
-                <FieldGroup columns={2}>
-                  <settingsForm.AppField name="autoDiscoveryEnabled">{(field) => <field.SwitchRow label="Discover devices automatically" className="sm:col-span-2" disabled={settings.loading || submitting} />}</settingsForm.AppField>
-                  <settingsForm.AppField name="discoveryIntervalSeconds">{(field) => <field.NumberField label="Discovery interval (seconds)" min={30} max={3600} step={30} disabled={settings.loading || submitting} />}</settingsForm.AppField>
-                  <settingsForm.AppField name="defaultVolume">{(field) => <field.NumberField label="Default volume (0–1)" min={0} max={1} step={0.05} disabled={settings.loading || submitting} />}</settingsForm.AppField>
-                  <settingsForm.AppField name="transcodeIncompatible">{(field) => <field.SwitchRow label="Transcode files the receiver cannot play" className="sm:col-span-2" disabled={settings.loading || submitting} />}</settingsForm.AppField>
-                  <settingsForm.AppField name="preferredQuality">{(field) => <field.TextField label="Preferred quality" placeholder="1080p" disabled={settings.loading || submitting} />}</settingsForm.AppField>
-                </FieldGroup>
-              </Panel>
+              <SettingsSection title="Casting behaviour" width="readable">
+                <settingsForm.AppField name="autoDiscoveryEnabled">{(field) => <field.SwitchRow label="Discover devices automatically" disabled={settings.loading || submitting} />}</settingsForm.AppField>
+                <settingsForm.AppField name="discoveryIntervalSeconds">{() => <DurationRow label="Discovery interval" units={["m", "s"]} defaultUnit="s" disabled={settings.loading || submitting} />}</settingsForm.AppField>
+                <settingsForm.AppField name="defaultVolume">{() => <PercentRow label="Default volume" min={0} max={1} step={0.05} disabled={settings.loading || submitting} />}</settingsForm.AppField>
+                <settingsForm.AppField name="transcodeIncompatible">{(field) => <field.SwitchRow label="Transcode files the receiver cannot play" disabled={settings.loading || submitting} />}</settingsForm.AppField>
+                <settingsForm.AppField name="preferredQuality">{() => <TextRow label="Preferred quality" placeholder="1080p" disabled={settings.loading || submitting} />}</settingsForm.AppField>
+              </SettingsSection>
               <FormActions>
                 <settingsForm.CancelButton disabled={settings.loading || submitting || unchanged} onCancel={() => { defaults.current = storedValues; settingsForm.reset(storedValues); }}>Discard</settingsForm.CancelButton>
                 <settingsForm.SubmitButton disabled={settings.loading || submitting}>Save</settingsForm.SubmitButton>
@@ -208,7 +207,7 @@ export function CastingSettings() {
 
               <FieldGroup>
                 <deviceForm.AppField name="address">{(field) => <field.TextField label="IP address or hostname" className="font-mono" required disabled={submitting} />}</deviceForm.AppField>
-                <deviceForm.AppField name="port">{(field) => <field.NumberField label="Port" min={1} max={65535} disabled={submitting} />}</deviceForm.AppField>
+                <deviceForm.AppField name="port">{(field) => <field.PortField label="Port" disabled={submitting} />}</deviceForm.AppField>
                 <deviceForm.AppField name="name">{(field) => <field.TextField label="Name" hint="Optional; the device name is used when empty." disabled={submitting} />}</deviceForm.AppField>
               </FieldGroup>
               <FormActions>
@@ -219,6 +218,6 @@ export function CastingSettings() {
           </deviceForm.Subscribe>
         </Form>
       </Dialog>
-    </div>
+    </SettingsPage>
   );
 }

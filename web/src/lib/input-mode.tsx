@@ -295,6 +295,14 @@ function leavesField(active: HTMLElement, direction: Direction): boolean {
   return direction === start ? selectionStart === 0 : selectionStart === value.length;
 }
 
+/**
+ * A tag field is a combobox for its suggestions, but with its list closed it is one line of chips:
+ * on a TV Up/Down leave it instead of owning the remote.
+ */
+function leavesClosedTagField(active: HTMLElement, direction: string): boolean {
+  return (direction === "ArrowUp" || direction === "ArrowDown") && active instanceof HTMLInputElement && active.getAttribute("aria-expanded") !== "true" && Boolean(active.closest(".fa-tag-input"));
+}
+
 function overlayOpen(): boolean {
   return Boolean(document.querySelector(OPEN_OVERLAY));
 }
@@ -341,6 +349,18 @@ export function useSpatialNavigation(enabled = true, tv = false, onBack: () => v
     // arrows before Base UI's trigger turns them into "open the menu".
     const onModalKeyDown = (event: KeyboardEvent) => {
       const active = document.activeElement as HTMLElement | null;
+      // Base UI's combobox takes Up/Down to open its list before a bubbling handler could run.
+      if (tv && active && !event.defaultPrevented && !event.altKey && !event.ctrlKey && !event.metaKey && leavesClosedTagField(active, event.key)) {
+        const scope = active.closest<HTMLElement>('[role="dialog"], [role="alertdialog"]') ?? document;
+        const next = findNext(active, event.key as Direction, scope);
+        if (next) {
+          event.preventDefault();
+          event.stopPropagation();
+          next.focus({ preventScroll: true });
+          revealFocused(next);
+        }
+        return;
+      }
       if (tv && active?.matches('[aria-haspopup="menu"]:not([role="menuitem"])') && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
         const scope = active.closest<HTMLElement>('[role="dialog"], [role="alertdialog"]') ?? document;
         const next = findNext(active, event.key, scope);

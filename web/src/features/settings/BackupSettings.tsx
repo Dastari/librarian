@@ -73,6 +73,7 @@ export function BackupSettings() {
       description="Full backups of the catalogue database and stored objects such as artwork."
       actions={<Button size="sm" variant="primary" onPress={() => void create()} isPending={creating} isDisabled={!capabilities?.fullDatabaseBackupAvailable}><IconBackup size="md" /> Back up now</Button>}
     >
+      <div className="settings-measure flex flex-col gap-3">
       {capabilities ? (
         <div className="flex flex-wrap items-center gap-2">
           <Capability label="Database backup" available={capabilities.fullDatabaseBackupAvailable} />
@@ -86,6 +87,7 @@ export function BackupSettings() {
         Both targets must be new; the command refuses existing files. Check the restored copy, then point the server at it.
         Media files on disk are not part of a snapshot.
       </p>
+      </div>
       <SettingsLoadError error={error} retry={() => refetch().catch(() => {})} hasRows={snapshots.length > 0} />
       <LoadedDataTable<Snapshot> complete={!loading && !error} height="auto" selectable queryKey={user?.id}
         id={`librarian.${user?.id ?? "session"}.settings.backups`}

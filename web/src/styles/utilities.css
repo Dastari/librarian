@@ -6,6 +6,17 @@
 
 /* Layout helpers shared by every page. */
 
+/* Settings pages made of setting rows read at a limited measure, left-aligned with the
+ * page; tables on the same page keep the full width (web/STYLE_GUIDE.md, Settings pages). */
+:root {
+  --settings-measure: 52rem;
+}
+
+@utility settings-measure {
+  width: 100%;
+  max-width: var(--settings-measure);
+}
+
 @utility page-gutter {
   padding-inline: calc(var(--page-gutter) + var(--safe-left)) calc(var(--page-gutter) + var(--safe-right));
 }

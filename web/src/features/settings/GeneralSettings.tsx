@@ -1,21 +1,24 @@
-import { Form, FormActions, FormStack, formBehaviour, numberRule, useAppForm } from "glass-ux/form";
+import { Form, FormActions, numberRule, useAppForm } from "glass-ux/form";
 import { SettingRow } from "glass-ux/setting-row";
 import { Switch } from "glass-ux/switch";
 import { toast } from "glass-ux/toast";
 import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
-import { Panel, ThemePicker } from "@/components/ui";
+import { ThemePicker } from "@/components/ui";
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { errorMessage } from "@/lib/graphql/errors";
 import { useInputMode } from "@/lib/input-mode";
+import { LANGUAGES } from "@/lib/languages";
 
+import { DurationRow, TagsRow, TextRow, settingsFormBehaviour } from "./SettingFields";
+import { SettingsPage, SettingsSection } from "./SettingsSection";
 import { asList, asNumber, useAppSettings } from "./useAppSettings";
 
 const schema = z.object({
   playbackSyncInterval: numberRule({ required: true, integer: true, min: 5, max: 300, requiredMessage: "Enter a progress interval", rangeMessage: "Enter a whole number from 5 to 300" }),
   preferredLanguage: z.string().trim().max(10),
-  subtitleLanguages: z.string().trim().max(200),
+  subtitleLanguages: z.array(z.string().trim().min(1)).refine((languages) => languages.join(",").length <= 200, "Use at most 200 characters"),
 });
 type Values = z.infer<typeof schema>;
 
@@ -29,7 +32,7 @@ export function GeneralSettings() {
   const storedValues = useMemo<Values>(() => ({
     playbackSyncInterval: asNumber(playback.values.get("playback_sync_interval"), 15),
     preferredLanguage: metadata.values.get("metadata.preferred_language") ?? "en",
-    subtitleLanguages: asList(subtitles.values.get("subtitles.preferred_languages")).join(", "),
+    subtitleLanguages: asList(subtitles.values.get("subtitles.preferred_languages")),
   }), [playback.values, metadata.values, subtitles.values]);
   const loading = playback.loading || metadata.loading || subtitles.loading;
   // TanStack reapplies the supplied defaults when an untouched form rerenders.
@@ -37,7 +40,7 @@ export function GeneralSettings() {
   const [baseline, setBaseline] = useState<Values>(storedValues);
 
   const form = useAppForm({
-    ...formBehaviour,
+    ...settingsFormBehaviour,
     defaultValues: baseline,
     validators: { onDynamic: schema },
     onSubmit: async ({ value, formApi }) => {
@@ -45,7 +48,7 @@ export function GeneralSettings() {
       const saved = schema.parse(value);
       await playback.save({ playback_sync_interval: String(saved.playbackSyncInterval) });
       await metadata.save({ "metadata.preferred_language": saved.preferredLanguage });
-      await subtitles.save({ "subtitles.preferred_languages": JSON.stringify(saved.subtitleLanguages.split(",").map((item) => item.trim()).filter(Boolean)) });
+      await subtitles.save({ "subtitles.preferred_languages": JSON.stringify(saved.subtitleLanguages) });
       setBaseline(saved);
       formApi.reset(saved);
       toast.success("Settings saved");
@@ -61,38 +64,33 @@ export function GeneralSettings() {
   }, [storedValues, loading, form]);
 
   return (
-    <div className="flex flex-col gap-6">
-      <Panel title="Appearance" description="Applies to this device.">
+    <SettingsPage>
+      <SettingsSection title="This device" width="readable">
         <ThemePicker />
         <SettingRow
           label="TV mode"
           description={`Larger targets and type for remote controls. Currently ${mode === "tv" ? "on" : "off"}${forced ? " (forced)" : " (detected)"}.`}
           control={<Switch checked={forced === "tv"} onCheckedChange={(checked) => setForced(checked ? "tv" : null)} />}
-          className="mt-3"
         />
-      </Panel>
+      </SettingsSection>
 
       {isAdmin ? (
-        <Form form={form} onError={(error) => toast.danger(errorMessage(error, "Could not save settings"))} className="flex min-w-0 flex-col gap-6">
+        <Form form={form} onError={(error) => toast.danger(errorMessage(error, "Could not save settings"))} className="settings-measure flex min-w-0 flex-col gap-8">
           <form.Subscribe selector={(state) => state.isSubmitting}>
             {(submitting) => <>
-              <Panel title="Playback">
-                <FormStack>
-                  <form.AppField name="playbackSyncInterval">
-                    {(field) => <field.NumberField label="Save progress every (seconds)" min={5} max={300} step={5} required disabled={loading || submitting} />}
-                  </form.AppField>
-                </FormStack>
-              </Panel>
-              <Panel title="Language">
-                <FormStack>
-                  <form.AppField name="preferredLanguage">
-                    {(field) => <field.TextField label="Metadata language" hint="ISO code, e.g. en or de." disabled={loading || submitting} />}
-                  </form.AppField>
-                  <form.AppField name="subtitleLanguages">
-                    {(field) => <field.TextField label="Preferred subtitle languages" hint="Comma separated, in order of preference." disabled={loading || submitting} />}
-                  </form.AppField>
-                </FormStack>
-              </Panel>
+              <SettingsSection title="Playback" width="readable">
+                <form.AppField name="playbackSyncInterval">
+                  {() => <DurationRow label="Save progress every" description="How often the position in what you are watching is saved." units={["m", "s"]} defaultUnit="s" disabled={loading || submitting} />}
+                </form.AppField>
+              </SettingsSection>
+              <SettingsSection title="Language" width="readable">
+                <form.AppField name="preferredLanguage">
+                  {() => <TextRow label="Metadata language" description="ISO code, e.g. en or de." disabled={loading || submitting} />}
+                </form.AppField>
+                <form.AppField name="subtitleLanguages">
+                  {() => <TagsRow label="Preferred subtitle languages" description="In order of preference." suggestions={LANGUAGES.map((language) => ({ value: language.code, label: language.name }))} disabled={loading || submitting} />}
+                </form.AppField>
+              </SettingsSection>
               <FormActions>
                 <form.Subscribe selector={(state) => state.isDefaultValue}>
                   {(unchanged) => <form.CancelButton disabled={loading || submitting || unchanged} onCancel={() => {
@@ -106,6 +104,6 @@ export function GeneralSettings() {
           </form.Subscribe>
         </Form>
       ) : null}
-    </div>
+    </SettingsPage>
   );
 }
