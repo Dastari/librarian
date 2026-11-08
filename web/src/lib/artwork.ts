@@ -19,7 +19,8 @@ export const seasonPoster = (season: { id: string; posterUrl?: string | null } |
 export const episodeThumb = (episodeId: string) => artworkUrl("episode", episodeId, "thumbnail");
 
 export const albumCover = (album: { id: string }) => artworkUrl("album", album.id, "cover");
-export const artistImage = (artist: { id: string }) => artworkUrl("artist", artist.id, "poster");
+/** An artist's picture, once the server has found one (`imageUrl`); until then there is none, and the kind's glyph stands in. */
+export const artistImage = (artist: { id: string; imageUrl?: string | null }) => (artist.imageUrl ? artworkUrl("artist", artist.id, "poster") : undefined);
 export const audiobookCover = (book: { id: string }) => artworkUrl("audiobook", book.id, "cover");
 
 export const collectionPoster = (collection: { tmdbCollectionId: number }) => artworkUrl("collection", collection.tmdbCollectionId, "poster");
