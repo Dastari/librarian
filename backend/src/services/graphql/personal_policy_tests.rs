@@ -771,7 +771,8 @@ async fn playlists_hold_episodes_and_chapters_and_drop_them_when_the_target_is_d
 }
 
 #[tokio::test]
-async fn moving_into_a_closed_gap_or_a_concurrent_append_respaces_the_list_in_one_consistent_order() {
+async fn moving_into_a_closed_gap_or_a_concurrent_append_respaces_the_list_in_one_consistent_order()
+{
     let f = Fixture::new().await;
     let library = f.library(&f.user, "ordered-library").await;
     let list = f.list(&f.user, "Ordered", "MANUAL").await;
@@ -794,7 +795,15 @@ async fn moving_into_a_closed_gap_or_a_concurrent_append_respaces_the_list_in_on
         .into_iter()
         .map(|(id, _)| id)
         .collect();
-    assert_eq!(order, vec![ids[3].clone(), ids[0].clone(), ids[1].clone(), ids[2].clone()]);
+    assert_eq!(
+        order,
+        vec![
+            ids[3].clone(),
+            ids[0].clone(),
+            ids[1].clone(),
+            ids[2].clone()
+        ]
+    );
     let positions: Vec<i32> = entry_order(&f, &list)
         .await
         .into_iter()

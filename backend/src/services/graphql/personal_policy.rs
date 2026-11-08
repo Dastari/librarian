@@ -440,7 +440,11 @@ async fn list_entry_rows(tx: &mut MutationContext<'_>, list_id: &str) -> Result<
 }
 
 /// The order a list should have once `written` has been placed among its ties.
-pub(crate) fn respaced_order(rows: &[ListEntry], written: &str, created: bool) -> Vec<(String, i32)> {
+pub(crate) fn respaced_order(
+    rows: &[ListEntry],
+    written: &str,
+    created: bool,
+) -> Vec<(String, i32)> {
     let mut keyed: Vec<(i32, u8, &str)> = rows
         .iter()
         .map(|row| {
@@ -458,7 +462,12 @@ pub(crate) fn respaced_order(rows: &[ListEntry], written: &str, created: bool) -
     keyed
         .into_iter()
         .enumerate()
-        .map(|(index, (_, _, id))| (id.to_owned(), (index as i32).saturating_mul(POSITION_SPACING)))
+        .map(|(index, (_, _, id))| {
+            (
+                id.to_owned(),
+                (index as i32).saturating_mul(POSITION_SPACING),
+            )
+        })
         .collect()
 }
 
