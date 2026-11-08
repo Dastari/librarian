@@ -1,11 +1,13 @@
 import { useMutation } from "@apollo/client/react";
 import { defineActions, type ActionSet } from "glass-ux/actions";
-import { IconExternalLink, IconFile, IconRefresh, IconSettings, IconTrash, IconWarning } from "glass-ux/icons";
+import { IconExternalLink, IconFile, IconPlus, IconRefresh, IconSettings, IconTrash, IconWarning } from "glass-ux/icons";
 import { parseAsString, useQueryState } from "nuqs";
 import { useCallback, useMemo } from "react";
 
 import { ScanLibraryDocument } from "@/graphql/generated/graphql";
+import { addHref, addScopeFor } from "@/features/search/addScopes";
 import { useIsAdmin } from "@/lib/auth/useSession";
+import { libraryType } from "@/lib/library-types";
 
 import type { LibraryEntity } from "./LibraryIdentity";
 import { isLibrarySettingsTab, type LibrarySettingsTab } from "./LibrarySettingsDialog";
@@ -38,6 +40,12 @@ export function useLibraryActions<T extends LibraryEntity>({ settings, open = tr
         onChanged?.();
       },
       successMessage: (rows: readonly T[]) => (rows.length === 1 ? "Scan started" : `Started ${rows.length} scans`),
+    }] : []),
+    ...(isAdmin ? [{
+      // Where new titles come from: Search, on the tab that adds this library's kind.
+      id: "add", label: (rows: readonly T[]) => addScopeFor(libraryType(rows[0]?.libraryType).type)?.label ?? "Add", icon: IconPlus, group: "open" as const, priority: 0,
+      visible: (rows: readonly T[]) => rows.length === 1 && addHref(libraryType(rows[0]!.libraryType).type) !== null,
+      run: (rows: readonly T[], context: { navigate: (href: string) => void }) => context.navigate(addHref(libraryType(rows[0]!.libraryType).type)!),
     }] : []),
     {
       id: "files", label: "Files", icon: IconFile, group: "open", priority: 2,

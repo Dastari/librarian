@@ -18,11 +18,12 @@ import { cn } from "@/lib/utils";
 
 import { ProviderResults } from "./ProviderResults";
 import { SearchTile } from "./SearchTile";
+import { ADD_SCOPES } from "./addScopes";
 import { useSearchFocusRequest } from "./searchFocus";
 import { rankHits, startHits, suggestTerms, type SearchHit } from "./searchResults";
+import { useTypeToSearch } from "./useTypeToSearch";
 
 const SCOPES = ["library", "movie", "show", "album", "audiobook"] as const;
-const ADD_LABELS = { movies: "Add movies", tv: "Add TV shows", music: "Add music", audiobooks: "Add audiobooks" } as const;
 type Scope = (typeof SCOPES)[number];
 
 const RECENT_LIMIT = 8;
@@ -75,6 +76,12 @@ export function SearchPage() {
     } else document.querySelector<HTMLElement>(".search-tv-keys button")?.focus();
   });
 
+  // Typing anywhere on the page searches; on a computer the field takes focus so the caret follows.
+  useTypeToSearch(
+    (update) => void setQuery((previous) => update(previous) || null),
+    () => inputRef.current?.focus(),
+  );
+
   const remember = () => {
     const term = debounced;
     if (term) setRecent((previous) => [term, ...previous.filter((item) => item.toLocaleLowerCase() !== term.toLocaleLowerCase())].slice(0, RECENT_LIMIT));
@@ -86,7 +93,7 @@ export function SearchPage() {
     ...(isAdmin
       ? (["movies", "tv", "music", "audiobooks"] as const)
           .filter((type) => libraryList.some((library) => libraryType(library.libraryType).type === type))
-          .map((type) => ({ key: (type === "movies" ? "movie" : type === "tv" ? "show" : type === "music" ? "album" : "audiobook") as Scope, label: ADD_LABELS[type] }))
+          .map((type) => ({ key: ADD_SCOPES[type].scope as Scope, label: ADD_SCOPES[type].label }))
       : []),
   ];
   const scopes = availableScopes.length > 1 ? <SegmentTabs ariaLabel="Search scope" items={availableScopes} selected={scope} onSelect={(key) => void setScope(key as Scope)} size="sm" className="max-w-2xl" /> : null;
