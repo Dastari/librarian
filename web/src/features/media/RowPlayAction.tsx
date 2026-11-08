@@ -1,7 +1,7 @@
 import { ActionBar, type ActionSet } from "glass-ux/actions";
 import { Button } from "glass-ux/button";
 import { TextCell } from "glass-ux/data-table";
-import { IconBookmark, IconCheck, IconPause, IconPlay } from "glass-ux/icons";
+import { IconBookmark, IconPause, IconPlay } from "glass-ux/icons";
 import { MeterCell } from "glass-ux/meter-cell";
 import { toast } from "glass-ux/toast";
 
@@ -58,9 +58,9 @@ export function RowActions<T>({ set, target, label, play, want }: RowActionsProp
                   <PlayingBars />
                   <IconPause className="row-play-pause" />
                 </>
-              ) : play.state === "finished" ? (
-                <IconCheck className="text-success" />
               ) : (
+                // Finished rows keep the play icon: a tick doesn't read as "play again" on touch,
+                // and the progress column already says it's done.
                 <IconPlay />
               )
             }

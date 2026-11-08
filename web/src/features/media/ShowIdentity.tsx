@@ -6,7 +6,7 @@ import { autoDownloadMeta } from "@/features/acquisition/mode";
 import type { AutoDownloadMode } from "@/graphql/generated/graphql";
 import { showPoster } from "@/lib/artwork";
 import { sizedArtwork } from "@/lib/api/urls";
-import { ArtGlyph } from "@/components/entities/ArtGlyph";
+import { ArtGlyph, ArtImage } from "@/components/entities/ArtGlyph";
 import { ENTITY_KINDS } from "@/lib/entities/kinds";
 
 export interface ShowEntity {
@@ -41,7 +41,7 @@ export function showIdentityProps<T extends ShowEntity>(show: T, { actions, have
     kind: ENTITY_KINDS.show.noun,
     name: show.name,
     icon: <ArtGlyph src={sizedArtwork(showPoster(show), 96)} fallback={<ENTITY_KINDS.show.icon />} shape="poster" />,
-    image: <img src={sizedArtwork(showPoster(show), 120)} alt="" />,
+    image: <ArtImage src={sizedArtwork(showPoster(show), 120)} fallback={<ENTITY_KINDS.show.icon />} />,
     state: showState(show, have, total),
     facts: [show.year ? String(show.year) : "", show.network ?? "", show.status ?? ""],
     target: show,

@@ -6,7 +6,7 @@ import { autoDownloadMeta } from "@/features/acquisition/mode";
 import type { AutoDownloadMode } from "@/graphql/generated/graphql";
 import { albumCover } from "@/lib/artwork";
 import { sizedArtwork } from "@/lib/api/urls";
-import { ArtGlyph } from "@/components/entities/ArtGlyph";
+import { ArtGlyph, ArtImage } from "@/components/entities/ArtGlyph";
 import { ENTITY_KINDS } from "@/lib/entities/kinds";
 import { pluralize } from "@/lib/format";
 
@@ -37,7 +37,7 @@ export function albumIdentityProps<T extends AlbumEntity>(album: T, { actions }:
     kind: ENTITY_KINDS.album.noun,
     name: album.name,
     icon: <ArtGlyph src={sizedArtwork(albumCover(album), 96)} fallback={<ENTITY_KINDS.album.icon />} shape="square" />,
-    image: <img src={sizedArtwork(albumCover(album), 120)} alt="" />,
+    image: <ArtImage src={sizedArtwork(albumCover(album), 120)} fallback={<ENTITY_KINDS.album.icon />} />,
     state: albumState(album),
     facts: [album.year ? String(album.year) : "", album.albumType ?? "", album.trackCount ? pluralize(album.trackCount, "track") : ""],
     target: album,

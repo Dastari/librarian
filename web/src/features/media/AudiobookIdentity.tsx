@@ -6,7 +6,7 @@ import { autoDownloadMeta } from "@/features/acquisition/mode";
 import type { AutoDownloadMode } from "@/graphql/generated/graphql";
 import { audiobookCover } from "@/lib/artwork";
 import { sizedArtwork } from "@/lib/api/urls";
-import { ArtGlyph } from "@/components/entities/ArtGlyph";
+import { ArtGlyph, ArtImage } from "@/components/entities/ArtGlyph";
 import { ENTITY_KINDS } from "@/lib/entities/kinds";
 import { formatRuntime } from "@/lib/format";
 
@@ -42,7 +42,7 @@ export function audiobookIdentityProps<T extends AudiobookEntity>(book: T, { act
     kind: ENTITY_KINDS.audiobook.noun,
     name: book.title,
     icon: <ArtGlyph src={sizedArtwork(audiobookCover(book), 96)} fallback={<ENTITY_KINDS.audiobook.icon />} shape="square" />,
-    image: <img src={sizedArtwork(audiobookCover(book), 120)} alt="" />,
+    image: <ArtImage src={sizedArtwork(audiobookCover(book), 120)} fallback={<ENTITY_KINDS.audiobook.icon />} />,
     state: audiobookState(book),
     facts: [book.authorName ?? "", book.narratorName ? `read by ${book.narratorName}` : "", book.totalDurationSecs ? formatRuntime(book.totalDurationSecs) : ""],
     target: book,

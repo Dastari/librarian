@@ -276,12 +276,12 @@ export const canChooseAnother = (item: Item) => !["imported", "needs_choice", "u
 
 const column = createDataTableColumns<Item>();
 const COLUMNS = column.columns([
-  column.accessor((item) => item.title ?? item.label, { id: "title", header: "Title", width: 30, priority: 1, cardRole: "title", cell: ({ row }) => <TitleCell item={row.original} /> }),
+  column.accessor((item) => item.title ?? item.label, { id: "title", header: "Title", width: 26, priority: 1, cardRole: "title", cell: ({ row }) => <TitleCell item={row.original} /> }),
   column.display({ id: "status", header: "Status", width: 16, priority: 1, cell: ({ row }) => <StatusCell item={row.original} /> }),
   column.accessor((item) => item.seconds ?? 0, { id: "length", header: "Length", width: 7, priority: 3, align: "end", cell: ({ row }) => <TextCell muted>{row.original.seconds ? formatRuntime(Math.round(row.original.seconds)) : ""}</TextCell> }),
   column.accessor((item) => item.fileCount, { id: "files", header: "Files", width: 6, priority: 4, align: "end", cell: ({ row }) => <TextCell muted>{finished(row.original) ? row.original.fileCount : `${row.original.finishedFiles} of ${row.original.fileCount}`}</TextCell> }),
   column.display({ id: "details", header: "", width: 3, priority: 1, cell: () => null }),
-  column.display({ id: "next", header: "", width: 10, priority: 1, align: "end", cell: ({ row }) => <ItemAction item={row.original} /> }),
+  column.display({ id: "next", header: "", width: 14, priority: 1, align: "end", cell: ({ row }) => <ItemAction item={row.original} /> }),
 ]);
 
 const getItemId = (item: Item) => item.id;

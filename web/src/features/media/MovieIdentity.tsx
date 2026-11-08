@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 
 import { moviePoster } from "@/lib/artwork";
 import { sizedArtwork } from "@/lib/api/urls";
-import { ArtGlyph } from "@/components/entities/ArtGlyph";
+import { ArtGlyph, ArtImage } from "@/components/entities/ArtGlyph";
 import { ENTITY_KINDS } from "@/lib/entities/kinds";
 import { formatRuntime } from "@/lib/format";
 import { statusMeta, type StatusMeta } from "@/lib/status";
@@ -43,7 +43,7 @@ export function movieIdentityProps<T extends MovieEntity>(movie: T, { actions, s
     kind: ENTITY_KINDS.movie.noun,
     name: movie.title,
     icon: <ArtGlyph src={sizedArtwork(moviePoster(movie.id), 96)} fallback={<ENTITY_KINDS.movie.icon />} shape="poster" />,
-    image: <img src={sizedArtwork(moviePoster(movie.id), 120)} alt="" />,
+    image: <ArtImage src={sizedArtwork(moviePoster(movie.id), 120)} fallback={<ENTITY_KINDS.movie.icon />} />,
     state: mediaEntityState(status ?? statusOf(movie)),
     facts: [movie.year ? String(movie.year) : "", movie.runtime ? formatRuntime(movie.runtime, "minutes") : "", movie.certification ?? ""],
     target: movie,
