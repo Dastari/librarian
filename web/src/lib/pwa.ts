@@ -4,8 +4,9 @@
  * Production builds register the Workbox worker (prompt style: a new build waits until the person
  * refreshes) and also poll `version.json`, so a deployment is noticed where no worker runs or
  * before the worker has looked. The development server (the live site on :3000 runs Vite with
- * HMR) registers nothing and polls nothing; it unregisters any worker a production preview left
- * on the same origin, so a cache can never stand in for the dev server.
+ * HMR) serves the web manifest, so the installed app launches standalone, but registers no
+ * worker and polls nothing; it unregisters any worker a production preview left on the same
+ * origin, so a cache can never stand in for the dev server.
  */
 import { useSyncExternalStore } from "react";
 

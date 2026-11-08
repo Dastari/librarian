@@ -103,10 +103,12 @@
     var(--background);
 }
 
-/* Library tiles: fluid columns capped so a two-library server does not get half-screen cards. */
+/* Library tiles: as many columns of at least 19rem as fit, sharing the row between them, so a tablet
+ * pane fills with three tiles instead of two fixed-width ones and a dead strip. `auto-fill` keeps
+ * empty tracks, so a two-library server still gets tile-sized cards, not half-screen ones. */
 @utility library-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 22rem));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr));
   gap: 1rem;
 }
 

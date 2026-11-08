@@ -15,6 +15,9 @@ implemented components and the remaining compatibility boundary.
   (`black-translucent`): anything at an edge pads with `--safe-top`, `--safe-bottom` and the
   inline `--safe-inline-start`/`--safe-inline-end` (a landscape notch), and full-screen
   layers use `dvh`, never `vh`. Check portrait and landscape with emulated insets.
+  `styles/native.css` holds the installed-app and touch behaviour (no double-tap zoom, no callout or
+  selection on chrome, no keyboard hint on the search field). The dev server serves the web manifest
+  (so the live site installs standalone) but registers no service worker; production builds add the worker.
 - The document never scrolls and neither does the frame. Each page has one `PageScroller`. Routed
   tabs sit outside it, so they stay put while the view under them scrolls. A bounded pane clips
   (`overflow: clip`); `overflow: hidden` can still be scrolled from code by a focus or a reveal.
