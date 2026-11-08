@@ -2,17 +2,19 @@ import { Input } from "glass-ux/input";
 import { Select } from "glass-ux/select";
 import { useMutation, useQuery } from "@apollo/client/react";
 import { toast } from "glass-ux/toast";
-import { Form, FormActions, formBehaviour, useAppForm } from "glass-ux/form";
+import { Form, FormActions, useAppForm } from "glass-ux/form";
 import { IconPlug } from "glass-ux/icons";
 import { IconTestPipe } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
-import { Button, FieldGroup, KeyValueList, Panel } from "@/components/ui";
+import { Button, KeyValueList } from "@/components/ui";
 import { ListeningStatusDocument, TestLlmParserDocument, TestOllamaConnectionDocument, TestTmdbConnectionDocument } from "@/graphql/generated/graphql";
 import { errorMessage } from "@/lib/graphql/errors";
 import { LIBRARY_TYPE_OPTIONS } from "@/lib/library-types";
 
+import { NumberRow, PercentRow, DurationRow, TextRow, UrlRow, settingsFormBehaviour } from "./SettingFields";
+import { SettingsPage, SettingsSection } from "./SettingsSection";
 import { SmartMatchingPanel } from "./SmartMatchingPanel";
 import { asBool, asNumber, useAppSettings } from "./useAppSettings";
 
@@ -88,7 +90,7 @@ export function MetadataSettings() {
   const defaults = useRef(storedValues);
   const loading = metadata.loading || llm.loading;
   const form = useAppForm({
-    ...formBehaviour,
+    ...settingsFormBehaviour,
     defaultValues: defaults.current,
     validators: { onDynamic: schema },
     onSubmit: async ({ value, formApi }) => {
@@ -152,85 +154,78 @@ export function MetadataSettings() {
   };
 
   return (
-    <div className="flex min-w-0 flex-col gap-6">
-    <Form form={form} className="flex min-w-0 flex-col gap-6" onError={(error) => toast.danger(errorMessage(error, "Could not save settings"))}>
-      <form.Subscribe selector={(state) => [state.isSubmitting, state.isDefaultValue]}>
-        {([submitting, unchanged]) => <>
-          <Panel title="Movies · TMDB" actions={<Button size="sm" variant="ghost" onPress={() => void runTmdbTest()} isPending={tmdbTest.loading}><IconPlug size="md" /> Test</Button>}>
-            <FieldGroup>
-              <form.AppField name="tmdbEnabled">{(field) => <field.SwitchRow label="Use TMDB for movies and collections" disabled={loading || submitting} />}</form.AppField>
-              <form.AppField name="tmdbApiKey">{(field) => <field.TextField label="API key" type="password" autoComplete="off" className="font-mono" hint="Required for movie libraries. Get one at themoviedb.org." disabled={loading || submitting} />}</form.AppField>
-              <form.AppField name="cacheTmdb">{(field) => <field.NumberField label="Cache results for (days)" min={0} max={365} disabled={loading || submitting} />}</form.AppField>
-            </FieldGroup>
-          </Panel>
-          <Panel title="TV · TVmaze">
-            <FieldGroup>
-              <form.AppField name="tvmazeEnabled">{(field) => <field.SwitchRow label="Use TVmaze for shows and episodes" disabled={loading || submitting} />}</form.AppField>
-              <form.AppField name="tvdbApiKey">{(field) => <field.TextField label="TVDB API key" type="password" autoComplete="off" className="font-mono" hint="Optional, used for extra artwork." disabled={loading || submitting} />}</form.AppField>
-              <form.AppField name="cacheTvmaze">{(field) => <field.NumberField label="Cache results for (days)" min={0} max={365} disabled={loading || submitting} />}</form.AppField>
-            </FieldGroup>
-          </Panel>
-          <Panel title="Music and books">
-            <FieldGroup columns={2}>
-              <form.AppField name="musicbrainzEnabled">{(field) => <field.SwitchRow label="MusicBrainz" disabled={loading || submitting} />}</form.AppField>
-              <form.AppField name="cacheMusicbrainz">{(field) => <field.NumberField label="Cache (days)" min={0} max={365} disabled={loading || submitting} />}</form.AppField>
-              <form.AppField name="audibleEnabled">{(field) => <field.SwitchRow label="Audible" description="Audiobook search, details and lengths. Searched first." disabled={loading || submitting} />}</form.AppField>
-              <form.AppField name="cacheAudible">{(field) => <field.NumberField label="Cache (days)" min={0} max={365} disabled={loading || submitting} />}</form.AppField>
-              <form.AppField name="audnexusEnabled">{(field) => <field.SwitchRow label="Audnexus" description="Chapter lists for Audible's books. Cached with Audible." className="sm:col-span-2" disabled={loading || submitting} />}</form.AppField>
-              <form.AppField name="openlibraryEnabled">{(field) => <field.SwitchRow label="Open Library" description="Audiobooks, when Audible has nothing." disabled={loading || submitting} />}</form.AppField>
-              <form.AppField name="cacheOpenlibrary">{(field) => <field.NumberField label="Cache (days)" min={0} max={365} disabled={loading || submitting} />}</form.AppField>
-            </FieldGroup>
-            <div className="mt-4">
-              <form.AppField name="autoFetch">{(field) => <field.SwitchRow label="Fetch metadata automatically for scanned files" disabled={loading || submitting} />}</form.AppField>
-            </div>
-          </Panel>
-          <Panel title="Listening" description="Runs on this server, and nothing leaves it. Hears what a book's opening says about it, and where its chapters are announced.">
-            <form.AppField name="listeningEnabled">{(field) => <field.SwitchRow label="Listen to audiobooks to identify them and check their chapters" description={listening.data?.listeningStatus.detail} disabled={loading || submitting} />}</form.AppField>
-          </Panel>
-          <Panel title="Filename parsing with Ollama" description="Optional fallback when filenames are ambiguous. Deterministic parsing always runs first." actions={<Button size="sm" variant="ghost" onPress={() => void runOllamaTest()} isPending={ollamaTest.loading}><IconPlug size="md" /> Test</Button>}>
-            <FieldGroup columns={2}>
-              <form.AppField name="llmEnabled">{(field) => <field.SwitchRow label="Enable" className="sm:col-span-2" disabled={loading || submitting} />}</form.AppField>
-              <form.AppField name="ollamaUrl">{(field) => <field.TextField label="Ollama URL" className="font-mono" disabled={loading || submitting} />}</form.AppField>
-              <form.AppField name="ollamaModel">{(field) => <field.TextField label="Model" placeholder="llama3.1" className="font-mono" disabled={loading || submitting} />}</form.AppField>
-              <form.AppField name="llmConfidence">{(field) => <field.NumberField label="Confidence threshold" min={0} max={1} step={0.05} disabled={loading || submitting} />}</form.AppField>
-              <form.AppField name="llmTimeout">{(field) => <field.NumberField label="Timeout (seconds)" min={1} max={600} disabled={loading || submitting} />}</form.AppField>
-              <form.AppField name="llmUseForAmbiguous">{(field) => <field.SwitchRow label="Only consult for ambiguous filenames" className="sm:col-span-2" disabled={loading || submitting} />}</form.AppField>
-            </FieldGroup>
-            <div className="mt-5 rounded-card border border-border bg-surface-secondary p-4">
-              <p className="text-title-sm text-foreground">Try the parser</p>
-              <p className="text-label-sm text-muted">Runs the filename through the deterministic parser and, when enabled, Ollama. It does not query metadata providers.</p>
-              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                <Input value={sample.filename} onValueChange={(value) => setSample({ ...sample, filename: value })} aria-label="Sample filename" className="min-w-0 flex-1" />
-                <Select value={sample.libraryType} onValueChange={(value) => { if (value) setSample({ ...sample, libraryType: value }); }} aria-label="Library type" className="min-w-0 sm:w-40" options={LIBRARY_TYPE_OPTIONS.map((option) => ({ value: option.type, label: option.label }))} />
-                <Button variant="secondary" isPending={parserTest.loading} onPress={() => void testParser({ variables: { input: sample } }).catch((error) => toast.danger(errorMessage(error)))}>
-                  <IconTestPipe size={16} /> Parse
-                </Button>
-              </div>
-              {parserTest.data ? (
-                <div className="mt-4">
-                  <KeyValueList
-                    columns={2}
-                    items={[
-                      { label: "Regex result", value: parserTest.data.testLlmParser.regexResult, mono: true },
-                      { label: "LLM title", value: parserTest.data.testLlmParser.llmResult?.title ?? parserTest.data.testLlmParser.llmResult?.showTitle },
-                      { label: "LLM year", value: parserTest.data.testLlmParser.llmResult?.year },
-                      { label: "Season / episode", value: parserTest.data.testLlmParser.llmResult?.season !== null && parserTest.data.testLlmParser.llmResult?.season !== undefined ? `${parserTest.data.testLlmParser.llmResult.season} / ${parserTest.data.testLlmParser.llmResult.episode ?? "—"}` : undefined },
-                      { label: "Confidence", value: parserTest.data.testLlmParser.llmResult?.confidence?.toFixed(2) },
-                      { label: "Error", value: parserTest.data.testLlmParser.error },
-                    ]}
-                  />
-                </div>
-              ) : null}
-            </div>
-          </Panel>
-          <FormActions>
-            <form.CancelButton disabled={loading || submitting || unchanged} onCancel={() => { defaults.current = storedValues; form.reset(storedValues); }}>Discard</form.CancelButton>
-            <form.SubmitButton disabled={loading || submitting}>Save</form.SubmitButton>
-          </FormActions>
-        </>}
-      </form.Subscribe>
-    </Form>
-    <SmartMatchingPanel />
-    </div>
+    <SettingsPage>
+      <Form form={form} className="settings-measure flex min-w-0 flex-col gap-8" onError={(error) => toast.danger(errorMessage(error, "Could not save settings"))}>
+        <form.Subscribe selector={(state) => [state.isSubmitting, state.isDefaultValue]}>
+          {([submitting, unchanged]) => {
+            const off = loading || submitting;
+            return <>
+              <SettingsSection title="Movies · TMDB" width="readable" actions={<Button size="sm" variant="ghost" onPress={() => void runTmdbTest()} isPending={tmdbTest.loading}><IconPlug size="md" /> Test</Button>}>
+                <form.AppField name="tmdbEnabled">{(field) => <field.SwitchRow label="Use TMDB for movies and collections" disabled={off} />}</form.AppField>
+                <form.AppField name="tmdbApiKey">{() => <TextRow label="API key" type="password" autoComplete="off" mono description="Required for movie libraries. Get one at themoviedb.org." disabled={off} />}</form.AppField>
+                <form.AppField name="cacheTmdb">{() => <NumberRow label="Cache results for" unit="days" min={0} max={365} disabled={off} />}</form.AppField>
+              </SettingsSection>
+              <SettingsSection title="TV · TVmaze" width="readable">
+                <form.AppField name="tvmazeEnabled">{(field) => <field.SwitchRow label="Use TVmaze for shows and episodes" disabled={off} />}</form.AppField>
+                <form.AppField name="tvdbApiKey">{() => <TextRow label="TVDB API key" type="password" autoComplete="off" mono description="Optional, used for extra artwork." disabled={off} />}</form.AppField>
+                <form.AppField name="cacheTvmaze">{() => <NumberRow label="Cache results for" unit="days" min={0} max={365} disabled={off} />}</form.AppField>
+              </SettingsSection>
+              <SettingsSection title="Music and books" width="readable">
+                <form.AppField name="musicbrainzEnabled">{(field) => <field.SwitchRow label="MusicBrainz" disabled={off} />}</form.AppField>
+                <form.AppField name="cacheMusicbrainz">{() => <NumberRow label="Cache MusicBrainz results for" unit="days" min={0} max={365} disabled={off} />}</form.AppField>
+                <form.AppField name="audibleEnabled">{(field) => <field.SwitchRow label="Audible" description="Audiobook search, details and lengths. Searched first." disabled={off} />}</form.AppField>
+                <form.AppField name="cacheAudible">{() => <NumberRow label="Cache Audible results for" unit="days" min={0} max={365} disabled={off} />}</form.AppField>
+                <form.AppField name="audnexusEnabled">{(field) => <field.SwitchRow label="Audnexus" description="Chapter lists for Audible's books. Cached with Audible." disabled={off} />}</form.AppField>
+                <form.AppField name="openlibraryEnabled">{(field) => <field.SwitchRow label="Open Library" description="Audiobooks, when Audible has nothing." disabled={off} />}</form.AppField>
+                <form.AppField name="cacheOpenlibrary">{() => <NumberRow label="Cache Open Library results for" unit="days" min={0} max={365} disabled={off} />}</form.AppField>
+              </SettingsSection>
+              <SettingsSection title="Fetching and listening" width="readable">
+                <form.AppField name="autoFetch">{(field) => <field.SwitchRow label="Fetch metadata automatically for scanned files" disabled={off} />}</form.AppField>
+                <form.AppField name="listeningEnabled">
+                  {(field) => <field.SwitchRow label="Listen to audiobooks to identify them and check their chapters" description={<>Runs on this server, and nothing leaves it. Hears what a book's opening says about it, and where its chapters are announced.{listening.data?.listeningStatus.detail ? <> {listening.data.listeningStatus.detail}</> : null}</>} disabled={off} />}
+                </form.AppField>
+              </SettingsSection>
+              <SettingsSection title="Filename parsing with Ollama" width="readable" description="Optional fallback when filenames are ambiguous. Deterministic parsing always runs first." actions={<Button size="sm" variant="ghost" onPress={() => void runOllamaTest()} isPending={ollamaTest.loading}><IconPlug size="md" /> Test</Button>}>
+                <form.AppField name="llmEnabled">{(field) => <field.SwitchRow label="Enable" disabled={off} />}</form.AppField>
+                <form.AppField name="ollamaUrl">{() => <UrlRow label="Ollama URL" schemes={["http", "https"]} defaultScheme="http" requireTld={false} openable={false} disabled={off} />}</form.AppField>
+                <form.AppField name="ollamaModel">{() => <TextRow label="Model" placeholder="llama3.1" mono disabled={off} />}</form.AppField>
+                <form.AppField name="llmConfidence">{() => <PercentRow label="Confidence threshold" min={0} max={1} step={0.05} disabled={off} />}</form.AppField>
+                <form.AppField name="llmTimeout">{() => <DurationRow label="Timeout" units={["m", "s"]} defaultUnit="s" disabled={off} />}</form.AppField>
+                <form.AppField name="llmUseForAmbiguous">{(field) => <field.SwitchRow label="Only consult for ambiguous filenames" disabled={off} />}</form.AppField>
+              </SettingsSection>
+              <FormActions>
+                <form.CancelButton disabled={off || unchanged} onCancel={() => { defaults.current = storedValues; form.reset(storedValues); }}>Discard</form.CancelButton>
+                <form.SubmitButton disabled={off}>Save</form.SubmitButton>
+              </FormActions>
+            </>;
+          }}
+        </form.Subscribe>
+      </Form>
+
+      <SettingsSection title="Try the parser" width="readable" description="Runs the filename through the deterministic parser and, when enabled, Ollama. It does not query metadata providers.">
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Input value={sample.filename} onValueChange={(value) => setSample({ ...sample, filename: value })} aria-label="Sample filename" className="min-w-0 flex-1" />
+          <Select value={sample.libraryType} onValueChange={(value) => { if (value) setSample({ ...sample, libraryType: value }); }} aria-label="Library type" className="min-w-0 sm:w-40" options={LIBRARY_TYPE_OPTIONS.map((option) => ({ value: option.type, label: option.label }))} />
+          <Button variant="secondary" isPending={parserTest.loading} onPress={() => void testParser({ variables: { input: sample } }).catch((error) => toast.danger(errorMessage(error)))}>
+            <IconTestPipe size={16} /> Parse
+          </Button>
+        </div>
+        {parserTest.data ? (
+          <KeyValueList
+            columns={2}
+            items={[
+              { label: "Regex result", value: parserTest.data.testLlmParser.regexResult, mono: true },
+              { label: "LLM title", value: parserTest.data.testLlmParser.llmResult?.title ?? parserTest.data.testLlmParser.llmResult?.showTitle },
+              { label: "LLM year", value: parserTest.data.testLlmParser.llmResult?.year },
+              { label: "Season / episode", value: parserTest.data.testLlmParser.llmResult?.season !== null && parserTest.data.testLlmParser.llmResult?.season !== undefined ? `${parserTest.data.testLlmParser.llmResult.season} / ${parserTest.data.testLlmParser.llmResult.episode ?? "—"}` : undefined },
+              { label: "Confidence", value: parserTest.data.testLlmParser.llmResult?.confidence?.toFixed(2) },
+              { label: "Error", value: parserTest.data.testLlmParser.error },
+            ]}
+          />
+        ) : null}
+      </SettingsSection>
+
+      <SmartMatchingPanel />
+    </SettingsPage>
   );
 }

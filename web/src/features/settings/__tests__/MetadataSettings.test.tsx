@@ -90,7 +90,7 @@ describe("MetadataSettings bound form", () => {
     await edit("API key", "  ");
     await edit("Model", "  ");
     await edit("Ollama URL", " http://local:11434 ");
-    const cache = screen.getAllByLabelText("Cache results for (days)").filter((node) => node.tagName === "INPUT")[0]!;
+    const cache = screen.getAllByLabelText("Cache results for").filter((node) => node.tagName === "INPUT")[0]!;
     await userEvent.clear(cache);
     await userEvent.type(cache, "0");
     await userEvent.tab();
@@ -106,7 +106,7 @@ describe("MetadataSettings bound form", () => {
 
   it("rejects a cleared number rather than silently saving zero", async () => {
     await mount();
-    const timeout = await edit("Timeout (seconds)", "");
+    const timeout = await edit("Timeout", "");
     await userEvent.click(save());
     expect(await screen.findByText("Enter a number")).toBeInTheDocument();
     expect(timeout).toHaveValue("");
@@ -150,7 +150,7 @@ describe("MetadataSettings bound form", () => {
     await waitFor(() => expect(state.testTmdb).toHaveBeenCalledWith({ variables: { input: { apiKey: "draft-key" } } }));
     await userEvent.click(tests[1]!);
     await waitFor(() => expect(state.testOllama).toHaveBeenCalledWith({ variables: { input: { ollamaUrl: "http://draft:11434" } } }));
-    await edit("Timeout (seconds)", "");
+    await edit("Timeout", "");
     await edit("Sample filename", "Example.2026.mkv");
     await userEvent.click(screen.getByRole("button", { name: "Parse" }));
     expect(state.testParser).toHaveBeenCalledWith({ variables: { input: { filename: "Example.2026.mkv", libraryType: "movies" } } });

@@ -31,7 +31,7 @@ import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { runSettingsSelection } from "./runSettingsSelection";
 
 import { SettingsLoadError } from "./SettingsLoadError";
-import { SettingsSection } from "./SettingsSection";
+import { SettingsPage, SettingsSection } from "./SettingsSection";
 import { useSettingsConnection } from "./useSettingsConnection";
 
 const list = z.string();
@@ -175,7 +175,7 @@ export function QualitySettings() {
   const resolutions = splitList(form.watch("allowedResolutions"));
 
   return (
-    <div className="flex flex-col gap-6">
+    <SettingsPage>
       <SettingsSection title="Quality profiles" description="Decide which releases are acceptable and when a better file should replace an existing one." actions={<Button variant="primary" size="sm" onPress={() => setEditing("new")}><IconPlus /> New profile</Button>}>
         <SettingsLoadError error={list.error} retry={list.refetch} hasRows={profiles.length > 0} />
         <LoadedDataTable<Profile> complete={!list.loading && !list.error} height="auto" selectable queryKey={user?.id} id={`librarian.${user?.id ?? "session"}.settings.quality-profiles`} label="Quality profiles" columns={columns} rows={profiles} getRowId={(profile) => profile.id} getRowLabel={(profile) => profile.name} loading={loading && profiles.length === 0} actions={actions} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "profile", other: "profiles" }} />} onRowOpen={(profile) => setEditing(profile)} rowOpen="click" noun={{ one: "profile", other: "profiles" }} emptyMessage="No profiles yet" />
@@ -248,7 +248,7 @@ export function QualitySettings() {
           </FieldGroup>
         </form>
       </Dialog>
-    </div>
+    </SettingsPage>
   );
 }
 

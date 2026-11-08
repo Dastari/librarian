@@ -51,7 +51,7 @@ describe("GeneralSettings bound form", () => {
     settings.metadata.values = new Map([["metadata.preferred_language", "de"]]);
     await mount();
     await userEvent.click(screen.getByRole("switch", { name: /TV mode/ }));
-    expect(screen.getByRole("textbox", { name: "Save progress every (seconds)" })).toHaveValue("30");
+    expect(screen.getByRole("textbox", { name: "Save progress every" })).toHaveValue("30s");
     expect(screen.getByDisplayValue("de")).toBeInTheDocument();
     expect(screen.getByDisplayValue("en, de")).toBeInTheDocument();
     expect(save()).toBeDisabled();
@@ -60,7 +60,7 @@ describe("GeneralSettings bound form", () => {
 
   it("hydrates stored values and restores the saved baseline on discard", async () => {
     await mount();
-    expect(screen.getByRole("textbox", { name: "Save progress every (seconds)" })).toHaveValue("30");
+    expect(screen.getByRole("textbox", { name: "Save progress every" })).toHaveValue("30s");
     expect(screen.getByDisplayValue("en, de")).toBeInTheDocument();
     expect(save()).toBeDisabled();
     expect(screen.getByRole("button", { name: "Discard" })).toBeDisabled();
@@ -74,7 +74,7 @@ describe("GeneralSettings bound form", () => {
 
   it("saves all categories using the existing string and JSON contracts, then adopts the baseline", async () => {
     await mount();
-    await edit("Save progress every (seconds)", "45");
+    await edit("Save progress every", "45");
     await edit("Metadata language", " fr ");
     await edit("Preferred subtitle languages", " fr, , de ");
     await userEvent.click(save());
@@ -83,14 +83,14 @@ describe("GeneralSettings bound form", () => {
     expect(settings.metadata.save).toHaveBeenCalledWith({ "metadata.preferred_language": "fr" });
     expect(settings.subtitles.save).toHaveBeenCalledWith({ "subtitles.preferred_languages": '["fr","de"]' });
     await userEvent.click(screen.getByRole("switch", { name: /TV mode/ }));
-    expect(screen.getByRole("textbox", { name: "Save progress every (seconds)" })).toHaveValue("45");
+    expect(screen.getByRole("textbox", { name: "Save progress every" })).toHaveValue("45s");
     expect(screen.getByDisplayValue("fr")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Discard" })).toBeDisabled();
   });
 
   it("rejects an empty interval and focuses it without writing settings", async () => {
     await mount();
-    const input = await edit("Save progress every (seconds)", "");
+    const input = await edit("Save progress every", "");
     expect(input).toHaveValue("");
     await userEvent.click(save());
     expect(await screen.findByText("Enter a progress interval")).toBeInTheDocument();
@@ -122,7 +122,7 @@ describe("GeneralSettings bound form", () => {
     await userEvent.click(screen.getByRole("button", { name: "Discard" }));
     await userEvent.click(screen.getByRole("switch", { name: /TV mode/ }));
     expect(screen.getByDisplayValue("es")).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Save progress every (seconds)" })).toHaveValue("60");
+    expect(screen.getByRole("textbox", { name: "Save progress every" })).toHaveValue("1m");
     expect(save()).toBeDisabled();
   });
 
@@ -169,7 +169,7 @@ describe("GeneralSettings bound form", () => {
   it("retains immediate device preferences for non-admins without exposing server settings", async () => {
     settings.admin = false;
     await mount();
-    expect(screen.getByText("Appearance")).toBeInTheDocument();
+    expect(screen.getByText("This device")).toBeInTheDocument();
     expect(screen.queryByLabelText("Metadata language")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("switch", { name: /TV mode/ }));
