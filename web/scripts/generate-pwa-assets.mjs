@@ -159,7 +159,7 @@ function constellation({ width, height, scale, clear, seed }) {
  * @param {"none"|"below"|"beside"} [options.wordmark]
  * @param {string} [options.glyph] SVG markup (24 × 24, stroked) drawn instead of the mark
  */
-function artHtml({ width, height, mark, style = "art", radius = 0, stars = true, starScale = 1, wordmark = "none", glyph, seed = "librarian" }) {
+function artHtml({ width, height, mark, style = "art", radius = 0, stars = true, starScale = 1, wordmark = "none", glyph, seed = "librarian", bare = false }) {
   const short = Math.min(width, height);
   const markW = short * mark;
   const markH = (markW * MARK_VIEWBOX[1]) / MARK_VIEWBOX[0];
@@ -184,7 +184,7 @@ function artHtml({ width, height, mark, style = "art", radius = 0, stars = true,
       ${stars ? `<div class="layer stars">${constellation({ width, height, scale: starScale, clear, seed })}</div>` : ""}
       <div class="layer vignette"></div>
       <div class="layer fade"></div>
-      <div class="center ${wordmark === "beside" ? "row" : "column"}" style="--glow:${glow}px;gap:${wordmark === "beside" ? markH * 0.32 : wordSize * 0.55}px">${centre}${word}</div>
+      ${bare ? "" : `<div class="center ${wordmark === "beside" ? "row" : "column"}" style="--glow:${glow}px;gap:${wordmark === "beside" ? markH * 0.32 : wordSize * 0.55}px">${centre}${word}</div>`}
     </div>`,
     `.art{position:fixed;inset:0;overflow:hidden;background:${CINEMA.canvas}}
      .layer{position:absolute;inset:0}
@@ -232,15 +232,15 @@ const APPLE_DEVICES = [
   { w: 375, h: 667, dpr: 2, name: "iPhone 6s, 7, 8, SE (2nd and 3rd gen)" },
   { w: 320, h: 568, dpr: 2, name: "iPhone SE (1st gen), iPod touch" },
   // iPad
-  { w: 1032, h: 1376, dpr: 2, name: "iPad Pro 13-inch (M4, M5)" },
-  { w: 1024, h: 1366, dpr: 2, name: "iPad Pro 12.9-inch, iPad Air 13-inch" },
-  { w: 834, h: 1210, dpr: 2, name: "iPad Pro 11-inch (M4, M5)" },
-  { w: 834, h: 1194, dpr: 2, name: "iPad Pro 11-inch, iPad Air 11-inch (M2)" },
-  { w: 820, h: 1180, dpr: 2, name: "iPad Air 10.9-inch, iPad 10th gen, iPad (A16)" },
-  { w: 834, h: 1112, dpr: 2, name: "iPad Air 10.5-inch, iPad Pro 10.5-inch" },
-  { w: 810, h: 1080, dpr: 2, name: "iPad 10.2-inch" },
-  { w: 768, h: 1024, dpr: 2, name: "iPad 9.7-inch, iPad mini 5" },
-  { w: 744, h: 1133, dpr: 2, name: "iPad mini (6th gen, A17 Pro)" },
+  { w: 1032, h: 1376, dpr: 2, name: "iPad Pro 13-inch (M4, M5)", ipad: true },
+  { w: 1024, h: 1366, dpr: 2, name: "iPad Pro 12.9-inch, iPad Air 13-inch", ipad: true },
+  { w: 834, h: 1210, dpr: 2, name: "iPad Pro 11-inch (M4, M5)", ipad: true },
+  { w: 834, h: 1194, dpr: 2, name: "iPad Pro 11-inch, iPad Air 11-inch (M2)", ipad: true },
+  { w: 820, h: 1180, dpr: 2, name: "iPad Air 10.9-inch, iPad 10th gen, iPad (A16)", ipad: true },
+  { w: 834, h: 1112, dpr: 2, name: "iPad Air 10.5-inch, iPad Pro 10.5-inch", ipad: true },
+  { w: 810, h: 1080, dpr: 2, name: "iPad 10.2-inch", ipad: true },
+  { w: 768, h: 1024, dpr: 2, name: "iPad 9.7-inch, iPad mini 5", ipad: true },
+  { w: 744, h: 1133, dpr: 2, name: "iPad mini (6th gen, A17 Pro)", ipad: true },
 ];
 
 /* ── Rendering ───────────────────────────────────────────────────────────────────────────────── */
@@ -331,14 +331,17 @@ await save(
 );
 
 // iOS startup images, drawn at the device's CSS size and pixel ratio so the constellation has the
-// sign-in screen's proportions on every device.
+// sign-in screen's proportions on every device. An installed app on iPad shows the portrait image
+// in landscape too, stretched to fit (a long-standing Safari bug that ignores the landscape link),
+// so iPads get only the background: a gradient stretched either way still looks right, where the
+// mark, wordmark and constellation would be squashed.
 const splashLinks = [];
 for (const device of APPLE_DEVICES) {
   for (const orientation of ["portrait", "landscape"]) {
     const width = orientation === "portrait" ? device.w : device.h;
     const height = orientation === "portrait" ? device.h : device.w;
     const file = `apple-splash-${width * device.dpr}x${height * device.dpr}.jpg`;
-    const html = artHtml({ width, height, mark: 0.2, wordmark: "below", seed: `splash-${orientation}` });
+    const html = artHtml({ width, height, mark: 0.2, wordmark: "below", seed: `splash-${orientation}`, stars: !device.ipad, bare: device.ipad });
     await save(resolve(splashDir, file), await render(html, { width, height, dpr: device.dpr }), { jpeg: true });
     splashLinks.push(
       `<link rel="apple-touch-startup-image" href="/splash/${file}" media="(device-width: ${device.w}px) and (device-height: ${device.h}px) and (-webkit-device-pixel-ratio: ${device.dpr}) and (orientation: ${orientation})" />`,

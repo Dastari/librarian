@@ -55,8 +55,10 @@ export function LibraryLayout({ library }: { library: LibraryDetail }) {
   const primaryCount = views.find((view) => view.count !== undefined)?.count ?? fileCount ?? 0;
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const navigate = useNavigate();
-  // A view switch needs the row's room as well, so a library with one collapses sooner.
-  const narrow = useMediaQuery(views.length > 1 ? "(max-width: 79.99rem)" : "(max-width: 39.99rem)");
+  // Only a phone collapses the identity. Below desktop width the view switch can't share the
+  // identity's row, so it moves to a line of its own instead of shrinking the identity with it.
+  const narrow = useMediaQuery("(max-width: 39.99rem)");
+  const switchBelow = useMediaQuery("(max-width: 79.99rem)");
   // Browsers own their result scrolling; Recommended is a page of artwork and shelves that scrolls as a whole.
   const flow = useRouterState({ select: (state) => state.matches.some((match) => match.routeId === "/_app/libraries/$libraryId/recommended") });
   const [art, setArt] = useState<SpotlightArt | null>(null);
@@ -92,13 +94,13 @@ export function LibraryLayout({ library }: { library: LibraryDetail }) {
           actions={actions}
           headerActions={narrow ? undefined : (
             <span data-print="hide" className="flex min-w-0 items-center gap-3">
-              {viewSwitch}
+              {switchBelow ? null : viewSwitch}
               <ActionBar set={actions} targets={[scanningLibrary]} label={`Actions for ${library.name}`} maxButtons={1} />
             </span>
           )}
         />
         {/* On its own line it keeps its own width rather than stretching across the page. */}
-        {narrow && viewSwitch ? <div className="max-w-full self-start">{viewSwitch}</div> : null}
+        {(narrow || switchBelow) && viewSwitch ? <div className="max-w-full self-start">{viewSwitch}</div> : null}
       </div>
       <PageScroller data-print-flow scrolling={flow} className={cn("page-gutter flex min-h-0 flex-1 flex-col", !flow && "fa-focus-room", !flow && "pb-[calc(var(--space-3)+var(--focus-reach))] sm:pb-[calc(var(--space-4)+var(--focus-reach))]")}>
         <Outlet />
