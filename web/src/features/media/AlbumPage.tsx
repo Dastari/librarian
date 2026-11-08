@@ -29,6 +29,7 @@ import { statusMeta } from "@/lib/status";
 import { MediaActions } from "./MediaActions";
 import { useAlbumEntity } from "./useAlbumEntity";
 import { noRowMenu, PlayProgressCell, RowActions, type RowPlayState } from "./RowPlayAction";
+import { filesWithProgress, resetProgressAction, useResetProgress, type ProgressReset } from "./progressReset";
 import { useMediaProgress } from "./useMediaProgress";
 import { DetailShell } from "./DetailShell";
 import { useAudioPages } from "./useAudioPages";
@@ -143,7 +144,12 @@ export function AlbumPage({ albumId }: { albumId: string }) {
   }, [pages.complete, queue, player]);
   const discs = new Set(tracks.map((track) => track.discNumber ?? 1)).size;
   const fileIds = useMemo(() => tracks.map((track) => track.mediaFileId).filter((id): id is string => Boolean(id)), [tracks]);
-  const { progressByFile } = useMediaProgress(fileIds, user?.id);
+  const { progressByFile, loading: progressLoading, error: progressError } = useMediaProgress(fileIds, user?.id);
+  const resetProgress = useResetProgress();
+  // Only the tracks on this page can be reset, so it waits for the whole album and for progress.
+  const progressWait = !pages.complete ? "Loading all tracks" : progressLoading ? "Loading playback progress" : progressError ? "Playback progress could not be loaded" : undefined;
+  const albumReset = useMemo<ProgressReset<unknown>>(() => ({ files: () => filesWithProgress(fileIds, progressByFile), disabledReason: () => progressWait }), [fileIds, progressByFile, progressWait]);
+  const trackReset = useMemo<ProgressReset<TrackRow>>(() => ({ files: (rows) => filesWithProgress(rows.map((row) => row.mediaFileId), progressByFile), disabledReason: () => (progressLoading ? "Loading playback progress" : progressError ? "Playback progress could not be loaded" : undefined) }), [progressByFile, progressLoading, progressError]);
   const setSelectedWanted = useCallback(async (selected: readonly TrackRow[], wanted: boolean) => {
     if (!isAdmin) throw new Error("Administrator access required");
     const missing = selected.filter((item) => !item.mediaFileId && item.wanted !== wanted);
@@ -179,9 +185,10 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     { id: "unwant-selected", label: "Unwant selected missing tracks", icon: IconBookmark, group: "manage", bulk: true,
       visible: (rows) => isAdmin && rows.length > 1 && rows.some((item) => !item.mediaFileId && item.wanted),
       run: (rows) => setSelectedWanted(rows, false), successMessage: () => "Selected missing tracks no longer wanted" },
+    ...resetProgressAction<TrackRow>("audio", trackReset, resetProgress),
     { id: "copy-titles", label: "Copy track titles", icon: IconCopy, group: "organise", bulk: true,
       run: async (rows) => { await copyText(rows.map((item) => item.title).join("\n")); }, successMessage: () => "Track titles copied" },
-  ]), [isAdmin, playFrom, toggleWanted, setSelectedWanted, selectedQueue, player]);
+  ]), [isAdmin, playFrom, toggleWanted, setSelectedWanted, selectedQueue, player, trackReset, resetProgress]);
 
   const currentItemId = player.audio?.entity.id;
   const fractionOf = (track: TrackRow) => {
@@ -205,7 +212,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
 
   const playAlbum = queue.length > 0 ? { label: "Play", run: () => playFrom(), disabledReason: !pages.complete ? "Load all tracks to play the album" : undefined } : undefined;
   const enqueue = pages.complete && queue.length > 0 ? () => player.enqueue(queue) : undefined;
-  const { actions: albumActions, dialogs: albumDialogs, openSettings } = useAlbumEntity<NonNullable<typeof album>>({ open: false, play: playAlbum, enqueue, artist: tracks[0]?.artistName });
+  const { actions: albumActions, dialogs: albumDialogs, openSettings } = useAlbumEntity<NonNullable<typeof album>>({ open: false, play: playAlbum, enqueue, artist: tracks[0]?.artistName, reset: albumReset });
 
   if (error && !album) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!album) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Album not found" description="This item may have been removed from the library." className="page-gutter my-8" />;

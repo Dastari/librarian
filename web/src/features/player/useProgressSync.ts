@@ -180,7 +180,9 @@ export function useProgressSync(item: PlayItem | null, activationKey?: string | 
         const rows = result.data?.playbackProgresses.edges;
         const row = rows?.find(({ node }) => node.userId === userId && node.mediaFileId === mediaFileId)?.node;
         if (!rows || (!row && rows.length > 0)) throw new Error("Playback checkpoint scope mismatch");
-        lease.lane.progressId = row?.id ?? lease.lane.progressId;
+        // No row is the truth: it may have been reset ("Mark as unwatched") while this plays, so the
+        // next checkpoint creates a fresh one instead of updating a row that is gone.
+        lease.lane.progressId = row?.id ?? null;
         scope.readReady = true;
         setRead({ scope, row });
         if (activation.reported && activation.latest.playing && !activation.sessionRequested) {

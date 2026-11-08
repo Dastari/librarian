@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   AlbumDetailDocument, AlbumTracksPageDocument, AudiobookChaptersPageDocument, AudiobookDetailDocument,
-  EntityChapterUpdateDocument, EntityTrackUpdateDocument, EntityTrackUpdateManyDocument, PlaybackProgressForFilesDocument,
+  AudiobookPartsDocument, EntityChapterUpdateDocument, EntityPlaybackProgressDeleteManyDocument, EntityTrackUpdateDocument, EntityTrackUpdateManyDocument, PlaybackProgressForFilesDocument,
   type AlbumDetailQuery, type AudiobookDetailQuery, type PlaybackProgressFieldsFragment,
 } from "@/graphql/generated/graphql";
 import { renderWithProviders } from "@/test";
@@ -369,5 +369,138 @@ describe("selected audio detail actions", { timeout: 30000 }, () => {
     await screen.findByRole("menuitem", { name: "Copy track titles" });
     expect(screen.queryByRole("menuitem", { name: /Want selected/ })).toBeNull();
     expect(screen.getByRole("menuitem", { name: "Play selected tracks" })).toHaveAttribute("aria-disabled", "true");
+  });
+});
+
+describe("marking audio unplayed", { timeout: 30000 }, () => {
+  const heard = (file: string, overrides: Partial<PlaybackProgressFieldsFragment> = {}) => ({ ...saved(1, 40), id: `progress-${file}`, mediaFileId: file, ...overrides });
+  const resetMock = (mediaFileIds: string[]) => {
+    const called = vi.fn(() => ({ data: { deletePlaybackProgresses: { __typename: "DeletePlaybackProgressesResult", success: true, error: null } } }));
+    return { called, mock: { request: { query: EntityPlaybackProgressDeleteManyDocument, variables: { where: { userId: { eq: "audio-user" }, mediaFileId: { inList: mediaFileIds } } } }, result: called } };
+  };
+  const menuItems = async (button: HTMLElement) => {
+    await userEvent.click(button);
+    return within(await screen.findByRole("menu")).getAllByRole("menuitem").map((item) => item.textContent);
+  };
+  const menuClosed = () => waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+  const rowMenu = (kind: "album" | "book", title: string) => within(row(kind, title)).getByRole("button", { name: /^More actions/ });
+
+  it("offers a track only the action it can use, and resets just that track's file", async () => {
+    const tracks = [track(1), track(2), track(3)];
+    const { called, mock } = resetMock(["track-file-1"]);
+    await mount("album", [albumMock(tracks), progressMock([heard("track-file-1"), heard("track-file-3", { currentPosition: 0, isWatched: true })]), mock]);
+    await findRow("album", "Track 3");
+    await waitFor(() => expect(within(row("album", "Track 1")).getByRole("button", { name: "Resume" })).not.toHaveAttribute("aria-disabled", "true"));
+    expect(await menuItems(rowMenu("album", "Track 2"))).not.toContain("Mark as unplayed");
+    await userEvent.keyboard("{Escape}");
+    await menuClosed();
+    await userEvent.click(rowMenu("album", "Track 1"));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Mark as unplayed" }));
+    await waitFor(() => expect(called).toHaveBeenCalledOnce());
+  });
+
+  it("resets the whole album from its header, and a selection of tracks", async () => {
+    const tracks = [track(1), track(2), track(3)];
+    const everything = resetMock(["track-file-1", "track-file-3"]);
+    await mount("album", [albumMock(tracks), progressMock([heard("track-file-1"), heard("track-file-3", { currentPosition: 0, isWatched: true })]), everything.mock]);
+    await findRow("album", "Track 3");
+    await waitFor(() => expect(within(row("album", "Track 1")).getByRole("button", { name: "Resume" })).not.toHaveAttribute("aria-disabled", "true"));
+    await userEvent.click(within(hero()).getByRole("button", { name: /^More actions/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Mark as unplayed" }));
+    await waitFor(() => expect(everything.called).toHaveBeenCalledOnce());
+  });
+
+  it("resets a selection of tracks in one request", async () => {
+    const tracks = [track(1), track(2), track(3)];
+    const picked = resetMock(["track-file-1"]);
+    await mount("album", [albumMock(tracks), progressMock([heard("track-file-1")]), picked.mock]);
+    await findRow("album", "Track 3");
+    await waitFor(() => expect(within(row("album", "Track 1")).getByRole("button", { name: "Resume" })).not.toHaveAttribute("aria-disabled", "true"));
+    for (const n of [1, 2]) await userEvent.click(screen.getByRole("checkbox", { name: `Select Track ${n}` }));
+    await userEvent.click(screen.getByRole("button", { name: "Actions for 2 selected tracks" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Mark as unplayed" }));
+    await waitFor(() => expect(picked.called).toHaveBeenCalledOnce());
+  });
+
+  it("is a member's action as much as an administrator's", async () => {
+    admin = false;
+    const tracks = [track(1), track(2)];
+    const { called, mock } = resetMock(["track-file-1"]);
+    await mount("album", [albumMock(tracks), progressMock([heard("track-file-1")]), mock]);
+    await findRow("album", "Track 2");
+    await waitFor(() => expect(within(row("album", "Track 1")).getByRole("button", { name: "Resume" })).not.toHaveAttribute("aria-disabled", "true"));
+    await userEvent.click(rowMenu("album", "Track 1"));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Mark as unplayed" }));
+    await waitFor(() => expect(called).toHaveBeenCalledOnce());
+  });
+
+  it("offers nothing on an album with no progress", async () => {
+    await mount("album", [albumMock([track(1), track(2)]), progressMock()]);
+    await findRow("album", "Track 2");
+    expect(await menuItems(within(hero()).getByRole("button", { name: /^More actions/ }))).not.toContain("Mark as unplayed");
+  });
+
+  it("resets a chapter that has a file of its own, and the book through every file", async () => {
+    const chapters = [chapter(1), chapter(2), chapter(3)];
+    const one = resetMock(["chapter-file-2"]);
+    const whole = resetMock(["chapter-file-2", "chapter-file-3"]);
+    await mount("book", [bookMock(chapters), progressMock([saved(2, 45), saved(3, 300, true)]), one.mock, whole.mock]);
+    await findRow("book", "Part 3");
+    await waitFor(() => expect(within(row("book", "Part 2")).getByRole("button", { name: "Resume" })).not.toHaveAttribute("aria-disabled", "true"));
+    expect(await menuItems(rowMenu("book", "Part 1"))).not.toContain("Mark as unplayed");
+    await userEvent.keyboard("{Escape}");
+    await menuClosed();
+    await userEvent.click(rowMenu("book", "Part 2"));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Mark as unplayed" }));
+    await waitFor(() => expect(one.called).toHaveBeenCalledOnce());
+    await menuClosed();
+    await userEvent.click(within(hero()).getByRole("button", { name: /^More actions/ }));
+    // Progress is read again after a reset, and the book's action waits for that.
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Mark as unplayed" })).not.toHaveAttribute("aria-disabled", "true"));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Mark as unplayed" }));
+    await waitFor(() => expect(whole.called).toHaveBeenCalledOnce());
+  });
+
+  it("only offers the whole book when its chapters are places in one file", async () => {
+    const shared = [1, 2, 3].map((n) => chapter(n, { mediaFileId: "book-file", startTimeSecs: (n - 1) * 100 }));
+    const { called, mock } = resetMock(["book-file"]);
+    await mount("book", [bookMock(shared), progressMock([heard("book-file", { duration: 300 })]), mock]);
+    await findRow("book", "Part 3");
+    await waitFor(() => expect(within(hero()).getByRole("button", { name: /^Resume chapter/ })).not.toHaveAttribute("aria-disabled", "true"));
+    // One saved position can't be split between chapters, so no chapter offers its own reset.
+    for (const part of ["Part 1", "Part 2", "Part 3"]) {
+      expect(await menuItems(rowMenu("book", part))).not.toContain("Mark as unplayed");
+      await userEvent.keyboard("{Escape}");
+      await menuClosed();
+    }
+    await userEvent.click(within(hero()).getByRole("button", { name: /^More actions/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Mark as unplayed" }));
+    await waitFor(() => expect(called).toHaveBeenCalledOnce());
+  });
+
+  it("resets a book cut into parts through every part, including one no chapter starts in", async () => {
+    // Chapters are places in the parts; listening is saved against the part files themselves.
+    const chapters = [1, 2].map((n) => chapter(n, { mediaFileId: `part-${n}`, fileOffsetSecs: 0 }));
+    const parts = ["part-1", "part-2", "part-3"].map((id, index) => ({ __typename: "MediaFile", id, chapterId: chapters[Math.min(index, 1)]!.id, path: `/books/${id}.mp3`, duration: 300 }));
+    const partsMock = { request: { query: AudiobookPartsDocument, variables: () => true }, result: { data: { mediaFiles: { __typename: "MediaFileConnection", edges: parts.map((node) => ({ __typename: "MediaFileEdge", node })) } } } };
+    const unreferenced = heard("part-3", { currentPosition: 0, isWatched: true });
+    const { called, mock } = resetMock(["part-1", "part-3"]);
+    await mount("book", [{ ...bookMock(chapters), result: { data: { audiobook: { ...book(chapters), fileShape: "parts" } } } }, partsMock, progressMock([heard("part-1"), unreferenced]), mock]);
+    await findRow("book", "Part 2");
+    await waitFor(() => expect(within(hero()).getByRole("button", { name: /^Resume chapter|^Listen/ })).not.toHaveAttribute("aria-disabled", "true"));
+    await userEvent.click(within(hero()).getByRole("button", { name: /^More actions/ }));
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Mark as unplayed" })).not.toHaveAttribute("aria-disabled", "true"));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Mark as unplayed" }));
+    await waitFor(() => expect(called).toHaveBeenCalledOnce());
+  });
+
+  it("waits for the whole list before offering to reset a long book", async () => {
+    const first = Array.from({ length: 100 }, (_, i) => chapter(i + 1));
+    // The last chapter never arrives, so the book can't claim to reset all of it.
+    await mount("book", [bookMock(first, 101, true), { request: { query: AudiobookChaptersPageDocument, variables: { id: "book", offset: 100 } }, error: new Error("Offline") }, progressMock([saved(1, 45)])]);
+    await notice(/Could not load all chapters/);
+    await userEvent.click(within(hero()).getByRole("button", { name: /^More actions/ }));
+    const reset = await screen.findByRole("menuitem", { name: "Mark as unplayed" });
+    expect(reset).toHaveAttribute("aria-disabled", "true");
   });
 });

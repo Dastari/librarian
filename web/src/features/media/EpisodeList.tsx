@@ -26,6 +26,7 @@ import { qualityStatus, statusMeta } from "@/lib/status";
 
 import { groupBySeason, type SeasonGroup } from "./seasons";
 import type { EpisodeRow } from "./ShowPage";
+import { filesWithProgress, resetProgressAction, useResetProgress, type ProgressReset } from "./progressReset";
 import { noRowMenu, RowActions, type RowPlayState } from "./RowPlayAction";
 
 interface EpisodeListProps {
@@ -66,6 +67,9 @@ interface EpisodePresentation {
   playEpisode: (episode: EpisodeRow) => void;
   wantEpisode?: (episode: EpisodeRow) => Promise<unknown>;
   playbackUnavailable?: string;
+  /** Marks a whole season unwatched, from its header. */
+  seasonReset: ProgressReset<SeasonGroup<EpisodeRow>>;
+  resetFiles: (mediaFileIds: readonly string[]) => Promise<void>;
 }
 const EpisodePresentationContext = createContext<EpisodePresentation | null>(null);
 const useEpisodePresentation = () => {
@@ -176,6 +180,7 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
   }, [focusEpisodeId, focusLoaded]);
   const [updateEpisode] = useMutation(EntityEpisodeUpdateDocument, { refetchQueries: () => activeContentStatusQueries(client) });
   const [updateEpisodes] = useMutation(EntityEpisodeUpdateManyDocument, { refetchQueries: () => activeContentStatusQueries(client) });
+  const resetProgress = useResetProgress();
   const [searching, setSearching] = useState<EpisodeRow | null>(null);
   const groups = useMemo(() => groupBySeason(episodes), [episodes]);
   const tableScope = `episodes:${user?.id ?? "anonymous"}:${libraryId}:${showId}`;
@@ -214,6 +219,15 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
     } finally { onChanged?.(); }
   }, [isAdmin, updateEpisodes, showId, onChanged]);
 
+  // Only what is on this page can be reset, so an unfinished episode list or progress read waits.
+  const episodeReset = useMemo<ProgressReset<EpisodeRow>>(() => ({
+    files: (rows) => filesWithProgress(rows.map((row) => row.mediaFileId), progressByFile),
+    disabledReason: () => playbackUnavailable,
+  }), [progressByFile, playbackUnavailable]);
+  const seasonReset = useMemo<ProgressReset<SeasonGroup<EpisodeRow>>>(() => ({
+    files: (seasons) => filesWithProgress(seasons.flatMap((season) => season.episodes.map((episode) => episode.mediaFileId)), progressByFile),
+    disabledReason: () => (!complete ? "Loading the complete episode list" : playbackUnavailable),
+  }), [progressByFile, playbackUnavailable, complete]);
   const actions = useMemo(() => defineActions<EpisodeRow>("episode", [
     {
       id: "play", label: "Play", icon: IconPlay, group: "open", primary: true, bulk: true,
@@ -261,16 +275,17 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
       visible: (rows) => isAdmin && rows.length > 1 && rows.some((episode) => !episode.mediaFileId && episode.ignored),
       run: (rows) => updateSelected(rows, { ignored: false }), successMessage: () => "Selected missing episodes no longer ignored",
     },
+    ...resetProgressAction("video", episodeReset, resetProgress),
     { id: "copy-titles", label: "Copy episode titles", icon: IconCopy, group: "organise", bulk: true,
       run: async (rows) => { await copyText(rows.map(episodeLabel).join("\n")); }, successMessage: () => "Episode titles copied" },
-  ]), [isAdmin, onPlay, update, updateSelected, playbackUnavailable]);
+  ]), [isAdmin, onPlay, update, updateSelected, playbackUnavailable, episodeReset, resetProgress]);
 
   const columns = episodeColumns;
   const presentation = useMemo(() => ({
-    actions, statuses, progressByFile, playbackUnavailable,
+    actions, statuses, progressByFile, playbackUnavailable, seasonReset, resetFiles: resetProgress,
     playEpisode: onPlay,
     wantEpisode: isAdmin ? (episode: EpisodeRow) => update(episode, { wanted: !episode.wanted }) : undefined,
-  }), [actions, statuses, progressByFile, playbackUnavailable, onPlay, isAdmin, update]);
+  }), [actions, statuses, progressByFile, playbackUnavailable, seasonReset, resetProgress, onPlay, isAdmin, update]);
 
   if (view === "row") {
     return (
@@ -328,21 +343,28 @@ interface SeasonHeaderProps {
 }
 
 function SeasonHeader({ group, isAdmin, onBulk, extra }: SeasonHeaderProps) {
+  const { seasonReset, resetFiles } = useEpisodePresentation();
   const actions: ActionSet<SeasonGroup<EpisodeRow>> = useMemo(() => defineActions<SeasonGroup<EpisodeRow>>("season", [
     {
       id: "want-missing", label: "Want all missing", icon: IconBookmark, group: "manage", priority: 1,
+      visible: () => isAdmin,
       disabledReason: () => group.missing === 0 ? "No missing episodes in this season" : null,
       run: ([season]) => season && onBulk(season.season, { wanted: true, ignored: false }, true, `${season.label}: missing episodes wanted`),
     },
     {
       id: "unwant", label: "Unwant all", icon: IconBookmark, group: "manage", priority: 2,
+      visible: () => isAdmin,
       run: ([season]) => season && onBulk(season.season, { wanted: false }, false, `${season.label}: no longer wanted`),
     },
     {
       id: "ignore", label: group.allIgnored ? "Unignore season" : "Ignore season", icon: group.allIgnored ? IconEye : IconEyeOff, group: "manage", priority: 3,
+      visible: () => isAdmin,
       run: ([season]) => season && onBulk(season.season, season.allIgnored ? { ignored: false } : { ignored: true, wanted: false }, false, `${season.label}: ${season.allIgnored ? "no longer ignored" : "ignored"}`),
     },
-  ]), [group, onBulk]);
+    // Every member can reset their own progress; the rest of the bar is administration.
+    ...resetProgressAction("video", seasonReset, resetFiles, { id: "reset-progress", label: "Mark season as unwatched" }),
+  ]), [group, onBulk, isAdmin, seasonReset, resetFiles]);
+  const showBar = isAdmin || seasonReset.files([group]).length > 0;
 
   return (
     <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -354,7 +376,7 @@ function SeasonHeader({ group, isAdmin, onBulk, extra }: SeasonHeaderProps) {
       </span>
       {/* Season management is for pointer and keyboard; the remote moves straight to episodes. */}
       <span data-tv-skip className="ms-auto flex min-w-0 max-w-full items-center gap-2">
-        {isAdmin ? <ActionBar set={actions} targets={[group]} label={group.label} className="min-w-0 max-w-full" /> : null}
+        {showBar ? <ActionBar set={actions} targets={[group]} label={group.label} className="min-w-0 max-w-full" /> : null}
         {extra}
       </span>
     </header>

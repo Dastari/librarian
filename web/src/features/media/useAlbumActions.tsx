@@ -8,22 +8,26 @@ import { SaveToListDialog } from "@/features/personal/SaveToListDialog";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 
 import type { AlbumEntity } from "./AlbumIdentity";
+import { resetProgressAction, useResetProgress, type ProgressReset } from "./progressReset";
 
 export const ALBUM_SETTINGS_TABS = ["general", "downloads", "files", "info", "remove"] as const;
 export type AlbumSettingsTab = (typeof ALBUM_SETTINGS_TABS)[number];
 
 /** Everything that can be done to an album, wherever it's shown. `play` and `enqueue` need its page's tracks. */
-export function useAlbumActions<T extends AlbumEntity>({ settings, open = true, play, enqueue, artist }: {
+export function useAlbumActions<T extends AlbumEntity>({ settings, open = true, play, enqueue, artist, reset }: {
   settings: (album: T, tab?: AlbumSettingsTab) => void;
   open?: boolean;
   play?: { label: string; run: () => void; disabledReason?: string };
   enqueue?: () => void;
   /** Who a release search looks for, where it's known. */
   artist?: string | null;
+  /** Where this person's progress is known (its page), which adds "Mark as unplayed". */
+  reset?: ProgressReset<T>;
 }): { actions: ActionSet<T>; dialogs: ReactNode } {
   const navigate = useNavigate();
   const isAdmin = useIsAdmin();
   const { user } = useSession();
+  const resetProgress = useResetProgress();
   const [saving, setSaving] = useState<T | null>(null);
   const [finding, setFinding] = useState<T | null>(null);
 
@@ -51,6 +55,7 @@ export function useAlbumActions<T extends AlbumEntity>({ settings, open = true, 
         visible: (rows) => one(rows) && rows[0]!.userId === user?.id,
         run: (rows) => setSaving(rows[0]!),
       },
+      ...resetProgressAction("audio", reset, resetProgress),
       ...(isAdmin ? [{
         id: "find", label: "Find releases", icon: IconDownload, group: "manage" as const, priority: 2, primary: !play,
         visible: one,
@@ -67,7 +72,7 @@ export function useAlbumActions<T extends AlbumEntity>({ settings, open = true, 
         run: (rows: readonly T[]) => settings(rows[0]!, "remove"),
       }] : []),
     ]);
-  }, [enqueue, isAdmin, navigate, open, play, settings, user?.id]);
+  }, [enqueue, isAdmin, navigate, open, play, reset, resetProgress, settings, user?.id]);
 
   const dialogs = (
     <>

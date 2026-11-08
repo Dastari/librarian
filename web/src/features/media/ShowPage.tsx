@@ -16,6 +16,7 @@ import { LIBRARY_TYPES } from "@/lib/library-types";
 import { usePref } from "@/lib/prefs";
 
 
+import { filesWithProgress, type ProgressReset } from "./progressReset";
 import { useMediaProgress } from "./useMediaProgress";
 import { useShowEpisodes } from "./useShowEpisodes";
 import { MediaActions } from "./MediaActions";
@@ -69,7 +70,12 @@ export function ShowPage({ showId, initialSeason, focusEpisodeId }: {
   };
 
   const playNext = nextUp?.mediaFileId ? { label: `${(progressByFile.get(nextUp.mediaFileId!)?.currentPosition ?? 0) > 5 && !progressByFile.get(nextUp.mediaFileId!)?.isWatched ? "Resume" : "Play"} S${String(nextUp.season).padStart(2, "0")}E${String(nextUp.episode).padStart(2, "0")}`, run: () => play(nextUp), disabledReason: !episodes.complete ? "Loading the complete episode list" : progress.loading ? "Loading watch progress" : progress.error ? "Watch progress could not be loaded" : undefined } : undefined;
-  const { actions, dialogs, openSettings } = useShowEntity<NonNullable<typeof show>>({ open: false, play: playNext, season: activeSeason, onRefreshed: () => { void episodes.refetch().catch(() => {}); } });
+  // The whole show: every episode's file, so it waits for the complete list and for progress.
+  const reset = useMemo<ProgressReset<unknown>>(() => ({
+    files: () => filesWithProgress(fileIds, progressByFile),
+    disabledReason: () => (!episodes.complete ? "Loading the complete episode list" : progress.loading ? "Loading watch progress" : progress.error ? "Watch progress could not be loaded" : undefined),
+  }), [fileIds, progressByFile, episodes.complete, progress.loading, progress.error]);
+  const { actions, dialogs, openSettings } = useShowEntity<NonNullable<typeof show>>({ open: false, play: playNext, season: activeSeason, onRefreshed: () => { void episodes.refetch().catch(() => {}); }, reset });
 
   if (error && !show) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!show) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Show not found" description="This item may have been removed from the library." className="page-gutter my-8" />;

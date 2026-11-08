@@ -31,6 +31,7 @@ import { useAudiobookEntity } from "./useAudiobookEntity";
 import { noRowMenu, PlayProgressCell, RowActions, type RowPlayState } from "./RowPlayAction";
 import { DetailShell } from "./DetailShell";
 import { useAudioPages } from "./useAudioPages";
+import { filesWithProgress, resetProgressAction, useResetProgress, type ProgressReset } from "./progressReset";
 import { useMediaProgress } from "./useMediaProgress";
 
 type ChapterRow = NonNullable<AudiobookDetailQuery["audiobook"]>["chapters"]["edges"][number]["node"];
@@ -125,8 +126,6 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
   const ids = useMemo(() => chapters.map((chapter) => chapter.id), [chapters]);
   const statuses = useContentStatuses("CHAPTER", ids);
   const fileIds = useMemo(() => chapters.map((chapter) => chapter.mediaFileId).filter((id): id is string => Boolean(id)), [chapters]);
-  const progress = useMediaProgress(fileIds, user?.id);
-  const { progressByFile } = progress;
   const [updateChapter] = useMutation(EntityChapterUpdateDocument, { refetchQueries: () => activeContentStatusQueries(client) });
   const [updateChapters] = useMutation(EntityChapterUpdateManyDocument, { refetchQueries: () => activeContentStatusQueries(client) });
 
@@ -144,6 +143,10 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
   const partsQuery = useQuery(AudiobookPartsDocument, { variables: { chapterIds: ids }, skip: !inParts || ids.length === 0 });
   const parts = useMemo(() => (partsQuery.data?.mediaFiles.edges ?? []).map((edge) => edge.node).sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true })), [partsQuery.data]);
   const partIndex = useCallback((id: string | null | undefined) => parts.findIndex((part) => part.id === id), [parts]);
+  // Parts are files of their own, and listening is saved against them, whether or not a chapter starts in one.
+  const progressFileIds = useMemo(() => [...new Set([...fileIds, ...parts.map((part) => part.id)])], [fileIds, parts]);
+  const progress = useMediaProgress(progressFileIds, user?.id);
+  const { progressByFile } = progress;
   const chapterStart = useCallback((chapter: ChapterRow) => inParts ? chapter.fileOffsetSecs ?? 0 : chapter.startTimeSecs, [inParts]);
   const chapterEnd = useCallback((chapter: ChapterRow) => inParts ? (chapter.fileOffsetSecs ?? 0) + (chapter.durationSecs ?? 0) : chapter.endTimeSecs ?? chapter.startTimeSecs + (chapter.durationSecs ?? 0), [inParts]);
   const chapterAt = useCallback((position: number, fileId?: string | null) => {
@@ -226,6 +229,23 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
   const resumeLabel = resumeIndex > 0 || (savedResume && !savedResume.isWatched && savedResume.currentPosition > 0)
     ? `Resume chapter ${resumeChapter?.chapterNumber ?? resumeIndex + 1}` : "Listen";
   const progressUnavailable = progress.error ? "Retry playback progress before listening" : progress.loading ? "Loading playback progress" : undefined;
+  const resetProgress = useResetProgress();
+  // The whole book is every file it is in (chapters' files, or its parts), so it waits for the full list and for progress.
+  const bookReset = useMemo<ProgressReset<unknown>>(() => ({
+    files: () => filesWithProgress(progressFileIds, progressByFile),
+    disabledReason: () => (!pages.complete ? "Loading all chapters" : progressUnavailable),
+  }), [progressFileIds, progressByFile, pages.complete, progressUnavailable]);
+  // A chapter has progress of its own only in a file of its own. Chapters that are places in one
+  // file (the whole book, or parts) share that file's single position, so only the book resets.
+  const chapterReset = useMemo<ProgressReset<ChapterRow>>(() => ({
+    files: (rows) => {
+      if (wholeFile || inParts) return [];
+      const holders = new Map<string, number>();
+      for (const chapter of chapters) if (chapter.mediaFileId) holders.set(chapter.mediaFileId, (holders.get(chapter.mediaFileId) ?? 0) + 1);
+      return filesWithProgress(rows.map((row) => row.mediaFileId).filter((id) => id && holders.get(id) === 1), progressByFile);
+    },
+    disabledReason: () => progressUnavailable,
+  }), [wholeFile, inParts, chapters, progressByFile, progressUnavailable]);
   const playFrom = useCallback((chapter?: ChapterRow) => {
     if (progressUnavailable || (!chapter && !pages.complete)) return;
     if (inParts) {
@@ -301,9 +321,10 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
     { id: "unwant-selected", label: "Unwant selected missing chapters", icon: IconBookmark, group: "manage", bulk: true,
       visible: (rows) => isAdmin && rows.length > 1 && rows.some((item) => !item.mediaFileId && item.wanted),
       run: (rows) => setSelectedWanted(rows, false), successMessage: () => "Selected missing chapters no longer wanted" },
+    ...resetProgressAction<ChapterRow>("audio", chapterReset, resetProgress),
     { id: "copy-titles", label: "Copy chapter titles", icon: IconCopy, group: "organise", bulk: true,
       run: async (rows) => { await copyText(rows.map((item) => item.title ?? `Chapter ${item.chapterNumber}`).join("\n")); }, successMessage: () => "Chapter titles copied" },
-  ]), [isAdmin, playFrom, toggleWanted, setSelectedWanted, selectedQueue, player, progressByFile, progressUnavailable, wholeFile, inParts, chapterStart, chapterEnd]);
+  ]), [isAdmin, playFrom, toggleWanted, setSelectedWanted, selectedQueue, player, progressByFile, progressUnavailable, wholeFile, inParts, chapterStart, chapterEnd, chapterReset, resetProgress]);
 
   const currentItemId = (wholeFile || inParts) && player.audio?.audiobookId === audiobookId ? chapterAt(player.transport.position, player.audio.mediaFileId)?.id : player.audio?.entity.id;
   const playStateOf = (chapter: ChapterRow): RowPlayState => {
@@ -318,7 +339,7 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
   };
 
   const playBook = queue.length > 0 ? { label: resumeLabel, run: () => playFrom(), disabledReason: !pages.complete ? "Load all chapters to listen to the book" : progressUnavailable } : undefined;
-  const { actions: bookActions, dialogs: bookDialogs, openSettings } = useAudiobookEntity<NonNullable<typeof book>>({ open: false, play: playBook, onChanged: () => void refetch() });
+  const { actions: bookActions, dialogs: bookDialogs, openSettings } = useAudiobookEntity<NonNullable<typeof book>>({ open: false, play: playBook, onChanged: () => void refetch(), reset: bookReset });
 
   if (error && !book) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!book) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Audiobook not found" description="This item may have been removed from the library." className="page-gutter my-8" />;

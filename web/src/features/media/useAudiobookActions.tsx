@@ -13,16 +13,19 @@ import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 
 import type { AudiobookEntity } from "./AudiobookIdentity";
+import { resetProgressAction, useResetProgress, type ProgressReset } from "./progressReset";
 
 export const AUDIOBOOK_SETTINGS_TABS = ["general", "downloads", "files", "info", "remove"] as const;
 export type AudiobookSettingsTab = (typeof AUDIOBOOK_SETTINGS_TABS)[number];
 
 /** Everything that can be done to a book, wherever it's shown. `play` is where its page would resume. */
-export function useAudiobookActions<T extends AudiobookEntity>({ settings, open = true, play, onChanged }: {
+export function useAudiobookActions<T extends AudiobookEntity>({ settings, open = true, play, onChanged, reset }: {
   settings: (book: T, tab?: AudiobookSettingsTab) => void;
   open?: boolean;
   play?: { label: string; run: () => void; disabledReason?: string };
   onChanged?: () => void;
+  /** Where this person's progress is known (its page), which adds "Mark as unplayed". */
+  reset?: ProgressReset<T>;
 }): { actions: ActionSet<T>; dialogs: ReactNode } {
   const navigate = useNavigate();
   const isAdmin = useIsAdmin();
@@ -31,6 +34,7 @@ export function useAudiobookActions<T extends AudiobookEntity>({ settings, open 
   const [listen] = useMutation(ListenToAudiobookChaptersDocument);
   const [change] = useMutation(ChangeAudiobookEditionDocument);
   const [searchEditions, editions] = useLazyQuery(AudiobookEditionsDocument, { fetchPolicy: "network-only" });
+  const resetProgress = useResetProgress();
   const [saving, setSaving] = useState<T | null>(null);
   const [finding, setFinding] = useState<T | null>(null);
   const [choosing, setChoosing] = useState<T | null>(null);
@@ -54,6 +58,7 @@ export function useAudiobookActions<T extends AudiobookEntity>({ settings, open 
         visible: (rows) => one(rows) && rows[0]!.userId === user?.id,
         run: (rows) => setSaving(rows[0]!),
       },
+      ...resetProgressAction("audio", reset, resetProgress),
       ...(isAdmin ? [
         {
           id: "find", label: "Find releases", icon: IconDownload, group: "manage" as const, priority: 2, primary: !play,
@@ -95,7 +100,7 @@ export function useAudiobookActions<T extends AudiobookEntity>({ settings, open 
         run: (rows: readonly T[]) => settings(rows[0]!, "remove"),
       }] : []),
     ]);
-  }, [isAdmin, listen, navigate, onChanged, open, play, restore, settings, user?.id]);
+  }, [isAdmin, listen, navigate, onChanged, open, play, reset, resetProgress, restore, settings, user?.id]);
 
   const useEdition = async (listing: Listing) => {
     if (!listing.providerId || !choosing) return;

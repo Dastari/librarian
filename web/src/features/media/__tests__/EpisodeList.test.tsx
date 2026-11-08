@@ -4,7 +4,7 @@ import { useState, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
-import { EntityEpisodeUpdateDocument, EntityEpisodeUpdateManyDocument, type ContentStatus, type PlaybackProgressFieldsFragment } from "@/graphql/generated/graphql";
+import { EntityEpisodeUpdateDocument, EntityEpisodeUpdateManyDocument, EntityPlaybackProgressDeleteManyDocument, type ContentStatus, type PlaybackProgressFieldsFragment } from "@/graphql/generated/graphql";
 import { renderWithProviders } from "@/test";
 
 import { EpisodeList } from "../EpisodeList";
@@ -440,5 +440,74 @@ describe("episode selection context", () => {
     await userEvent.click(screen.getByRole("button", { name: "Actions for 2 selected episodes" }));
     await screen.findByRole("menuitem", { name: "Copy episode titles" });
     expect(screen.queryByRole("menuitem", { name: /Want selected|Ignore selected/ })).toBeNull();
+  });
+});
+
+describe("marking episodes unwatched", () => {
+  const progressFor = (...entries: Array<[string, Partial<PlaybackProgressFieldsFragment>]>) =>
+    new Map<string | null | undefined, PlaybackProgressFieldsFragment>(entries.map(([file, row]) => [file, { currentPosition: 0, duration: 2700, isWatched: false, ...row } as PlaybackProgressFieldsFragment]));
+  const resetMock = (mediaFileIds: string[]) => {
+    const called = vi.fn(() => ({ data: { deletePlaybackProgresses: { __typename: "DeletePlaybackProgressesResult", success: true, error: null } } }));
+    return { called, mock: { request: { query: EntityPlaybackProgressDeleteManyDocument, variables: { where: { userId: { eq: "episode-user" }, mediaFileId: { inList: mediaFileIds } } } }, result: called } };
+  };
+  const episodes = [episode(1, 1, { mediaFileId: "file-1" }), episode(1, 2, { mediaFileId: "file-2" }), episode(1, 3, { mediaFileId: "file-3" }), episode(2, 1, { mediaFileId: "file-4" })];
+  const progressByFile = progressFor(["file-1", { currentPosition: 600 }], ["file-2", { isWatched: true }], ["file-4", { currentPosition: 90 }]);
+
+  it("offers it on an episode row only when that episode has progress, and resets just its file", async () => {
+    const { called, mock } = resetMock(["file-1"]);
+    await mount(episodes, [mock], vi.fn(), { progressByFile });
+    await userEvent.click(within(rowFor(1, 3)).getByRole("button", { name: /^More actions/ }));
+    expect(screen.queryByRole("menuitem", { name: "Mark as unwatched" })).not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await chooseFromMenu("Mark as unwatched", rowFor(1, 1));
+    await vi.waitFor(() => expect(called).toHaveBeenCalledOnce());
+  });
+
+  it("offers it to a member, who has no other episode actions, and treats a finished mark as progress", async () => {
+    isAdmin = false;
+    const { called, mock } = resetMock(["file-2"]);
+    await mount(episodes, [mock], vi.fn(), { progressByFile });
+    await chooseFromMenu("Mark as unwatched", rowFor(1, 2));
+    await vi.waitFor(() => expect(called).toHaveBeenCalledOnce());
+  });
+
+  it("resets a whole season from its header, to a member too, leaving other seasons alone", async () => {
+    isAdmin = false;
+    const { called, mock } = resetMock(["file-1", "file-2"]);
+    await mount(episodes, [mock], vi.fn(), { progressByFile });
+    const header = screen.getByRole("heading", { level: 3, name: "Season 1" }).closest("header")!;
+    await chooseFromMenu("Mark season as unwatched", header);
+    await vi.waitFor(() => expect(called).toHaveBeenCalledOnce());
+  });
+
+  it("shows no season action to a member when the season has no progress, and nothing for a member at all", async () => {
+    isAdmin = false;
+    await mount([episode(1, 1, { mediaFileId: "file-1" })], [], vi.fn(), { progressByFile: new Map() });
+    const header = screen.getByRole("heading", { level: 3, name: "Season 1" }).closest("header")!;
+    expect(within(header).queryByRole("button")).toBeNull();
+  });
+
+  it("holds the season action back until every episode is loaded", async () => {
+    await mount(episodes, [], vi.fn(), { progressByFile, complete: false });
+    const header = screen.getByRole("heading", { level: 3, name: "Season 1" }).closest("header")!;
+    await userEvent.click(within(header).getByRole("button", { name: /^More actions/ }));
+    expect(await screen.findByRole("menuitem", { name: "Mark season as unwatched" })).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("resets a selection of episodes in one request", async () => {
+    const { called, mock } = resetMock(["file-1", "file-2"]);
+    await mount(episodes, [mock], vi.fn(), { progressByFile });
+    for (const number of [1, 2, 3]) await userEvent.click(within(rowFor(1, number)).getByRole("checkbox"));
+    await userEvent.click(screen.getByRole("button", { name: /Actions for 3 selected/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Mark as unwatched" }));
+    await vi.waitFor(() => expect(called).toHaveBeenCalledOnce());
+  });
+
+  it("marks tiles in the row view too", async () => {
+    const { called, mock } = resetMock(["file-1"]);
+    await mount(episodes.slice(0, 1), [mock], vi.fn(), { progressByFile, view: "row" });
+    await userEvent.click(screen.getByRole("button", { name: "Actions for S01E01 · Episode 1" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Mark as unwatched" }));
+    await vi.waitFor(() => expect(called).toHaveBeenCalledOnce());
   });
 });
