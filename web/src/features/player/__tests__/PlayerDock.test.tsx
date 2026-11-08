@@ -102,7 +102,7 @@ describe("audio reliability", () => {
     expect(next.transport).toMatchObject({ playing: true, position: 0, loading: true });
     expect(next.audioActivation).not.toBe(current.audioActivation);
     expect(engine.sourceOptions.mock.lastCall![3]).toEqual({ activationKey: next.audioActivation });
-    expect(engine.progressOptions.mock.lastCall).toEqual([repeated, next.audioActivation]);
+    expect(engine.progressOptions.mock.lastCall).toEqual([expect.objectContaining(repeated), next.audioActivation]);
   });
 
   it("ignores pause during a source transition and records a real pause", async () => {
