@@ -1,6 +1,5 @@
 use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -39,6 +38,10 @@ use crate::services::graphql::entities::{
     UpdateLibraryScanRunInput, User,
 };
 use crate::services::graphql::{AuthUser, LibrarianSchema};
+use crate::services::library_storage::{
+    EntryKind, IntoStoragePath, PlaceMode, StorageErrorKind, WalkFilter, WalkOptions,
+    library_storage, place_no_clobber_blocking,
+};
 use crate::services::manager::{Service, ServiceHealth, ServicesManager};
 use crate::services::metadata::providers::{
     AddAlbumOptions, AddAudiobookOptions, AddMovieOptions, AddTvShowOptions, MetadataProvider,
@@ -2212,73 +2215,86 @@ impl LibraryScanService {
         JoinHandle<()>,
     ) {
         let (tx, rx) = mpsc::channel(128);
-        let handle = tokio::task::spawn_blocking(move || {
+        let handle = tokio::spawn(async move {
+            let root = root.into_storage_path();
             // The library's own trash holds files a person removed as duplicates. They are not
             // library files: finding them again would match and organize them back out of it.
-            let walk = WalkDir::new(&root).into_iter().filter_entry(|entry| {
-                !(entry.depth() == 1 && entry.file_name() == LIBRARY_TRASH_DIR)
-            });
-            for result in walk {
-                if cancel.is_cancelled() {
-                    break;
+            let prune: WalkFilter =
+                Arc::new(|entry| entry.depth == 1 && entry.name == LIBRARY_TRASH_DIR);
+            let report: WalkFilter = Arc::new(move |entry| {
+                if entry.kind != EntryKind::File {
+                    return false;
                 }
-                let entry = match result {
-                    Ok(entry) => entry,
-                    Err(error) => {
-                        if tx
-                            .blocking_send(Err(format!("Unable to read library entry: {error}")))
-                            .is_err()
-                        {
-                            break;
-                        }
-                        continue;
-                    }
-                };
-                if !entry.file_type().is_file() {
-                    continue;
+                if entry.name.starts_with('.') || entry.name.starts_with("._") {
+                    return false;
                 }
-
-                let path = entry.path();
-                let file_name = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or_default();
-                if file_name.starts_with('.') || file_name.starts_with("._") {
-                    continue;
-                }
-                let extension = path
+                let extension = Path::new(entry.name)
                     .extension()
                     .and_then(|extension| extension.to_str())
                     .map(str::to_ascii_lowercase)
                     .unwrap_or_default();
-                if !allowed_extensions
+                allowed_extensions
                     .iter()
                     .any(|allowed| *allowed == extension)
-                {
-                    continue;
+            });
+            let walk = library_storage().walk(
+                &root,
+                WalkOptions {
+                    prune: Some(prune),
+                    report: Some(report),
+                    with_metadata: true,
+                },
+                cancel.clone(),
+            );
+            let mut walk = match walk {
+                Ok(walk) => walk,
+                Err(error) => {
+                    let _ = tx
+                        .send(Err(format!("Unable to read library entry: {error}")))
+                        .await;
+                    return;
                 }
-
-                let metadata = entry.metadata().ok();
-                let discovered = DiscoveredMediaFile {
-                    absolute_path: path.to_string_lossy().to_string(),
-                    relative_path: path
-                        .strip_prefix(&root)
-                        .ok()
-                        .map(|relative| relative.to_string_lossy().to_string()),
-                    extension,
-                    size: metadata
-                        .as_ref()
-                        .and_then(|metadata| i64::try_from(metadata.len()).ok())
-                        .unwrap_or(i64::MAX),
-                    modified_at: metadata
-                        .and_then(|metadata| metadata.modified().ok())
-                        .map(DateTime::<Utc>::from)
-                        .map(|value| value.to_rfc3339_opts(SecondsFormat::Nanos, true)),
+            };
+            while let Some(result) = walk.entries.recv().await {
+                if cancel.is_cancelled() {
+                    break;
+                }
+                let sent = match result {
+                    Ok(entry) => {
+                        let extension = entry
+                            .path
+                            .extension()
+                            .map(|extension| extension.to_ascii_lowercase())
+                            .unwrap_or_default();
+                        let relative_path = entry.path.relative_to(&root);
+                        let meta = entry.meta;
+                        tx.send(Ok(DiscoveredMediaFile {
+                            absolute_path: entry.path.into_string(),
+                            relative_path,
+                            extension,
+                            size: meta
+                                .as_ref()
+                                .and_then(|meta| i64::try_from(meta.size).ok())
+                                .unwrap_or(i64::MAX),
+                            modified_at: meta
+                                .and_then(|meta| meta.modified)
+                                .map(DateTime::<Utc>::from)
+                                .map(|value| value.to_rfc3339_opts(SecondsFormat::Nanos, true)),
+                        }))
+                        .await
+                    }
+                    Err(error) => {
+                        tx.send(Err(format!("Unable to read library entry: {error}")))
+                            .await
+                    }
                 };
-                if tx.blocking_send(Ok(discovered)).is_err() {
+                if sent.is_err() {
                     break;
                 }
             }
+            // Dropping the receiver stops the walk; wait for it to finish.
+            drop(walk.entries);
+            let _ = walk.task.await;
         });
         (rx, handle)
     }
@@ -2287,27 +2303,27 @@ impl LibraryScanService {
         candidate: DuplicateCandidate,
         cancel: CancellationToken,
     ) -> Result<(DuplicateCandidate, String)> {
-        tokio::task::spawn_blocking(move || {
-            let mut file = std::fs::File::open(&candidate.path)
-                .with_context(|| "Unable to open duplicate candidate")?;
-            let mut digest = Sha256::new();
-            let mut buffer = vec![0_u8; 1024 * 1024];
-            loop {
-                if cancel.is_cancelled() {
-                    anyhow::bail!("SCAN_CANCELLED");
-                }
-                let read = file
-                    .read(&mut buffer)
-                    .with_context(|| "Unable to read duplicate candidate")?;
-                if read == 0 {
-                    break;
-                }
-                digest.update(&buffer[..read]);
+        let mut file = library_storage()
+            .open_read(&candidate.path)
+            .await
+            .with_context(|| "Unable to open duplicate candidate")?
+            .reader;
+        let mut digest = Sha256::new();
+        let mut buffer = vec![0_u8; 1024 * 1024];
+        loop {
+            if cancel.is_cancelled() {
+                anyhow::bail!("SCAN_CANCELLED");
             }
-            Ok((candidate, hex::encode(digest.finalize())))
-        })
-        .await
-        .context("Duplicate hash worker failed")?
+            let read = file
+                .read(&mut buffer)
+                .await
+                .with_context(|| "Unable to read duplicate candidate")?;
+            if read == 0 {
+                break;
+            }
+            digest.update(&buffer[..read]);
+        }
+        Ok((candidate, hex::encode(digest.finalize())))
     }
 
     /// Whether a title plays this file: it's the file a movie, episode, track or chapter points at,
@@ -3742,10 +3758,10 @@ impl LibraryScanService {
                 "the duplicate copy was removed from the library".to_string(),
             ));
         }
-        if !tokio::fs::try_exists(&details.duplicate_path).await? {
+        if !library_storage().exists(&details.duplicate_path).await? {
             return Ok(Some("the duplicate copy is no longer on disk".to_string()));
         }
-        if !tokio::fs::try_exists(&details.keeper_path).await? {
+        if !library_storage().exists(&details.keeper_path).await? {
             return Ok(Some(
                 "the copy that was kept is no longer on disk".to_string(),
             ));
@@ -3961,7 +3977,8 @@ impl LibraryScanService {
             .unwrap_or("media");
         let trash_path = trash_dir.join(format!("{}-{original_name}", Uuid::new_v4()));
         checked_library_path(&root, &trash_path)?;
-        tokio::fs::rename(&duplicate_path, &trash_path)
+        library_storage()
+            .rename(&duplicate_path, &trash_path, PlaceMode::Replace)
             .await
             .context("Failed to move duplicate to recoverable trash")?;
 
@@ -3983,7 +4000,10 @@ impl LibraryScanService {
             .and_then(|success| success.as_bool())
             .unwrap_or(false);
         if !deleted {
-            if let Err(restore_error) = tokio::fs::rename(&trash_path, &duplicate_path).await {
+            if let Err(restore_error) = library_storage()
+                .rename(&trash_path, &duplicate_path, PlaceMode::Replace)
+                .await
+            {
                 error!(
                     library_id = %library.id,
                     media_file_id,
@@ -10044,10 +10064,10 @@ impl LibraryScanService {
         let root = PathBuf::from(&library.path);
         // Only a folder this move emptied needs work, and knowing what the library expects costs
         // reads of every item, so the common move that leaves a folder in use stops here.
-        let emptied = match tokio::fs::read_dir(old_dir).await {
-            Ok(mut entries) => matches!(entries.next_entry().await, Ok(None)),
-            Err(_) => false,
-        };
+        let emptied = library_storage()
+            .is_dir_empty(old_dir)
+            .await
+            .unwrap_or(false);
         if !emptied || old_dir == root || !old_dir.starts_with(&root) {
             return;
         }
@@ -12495,7 +12515,7 @@ impl LibraryScanService {
             // file imported before, another size is a second copy, and which to keep is a person's
             // call. Only a file that has gone from disk is imported again.
             let held_on_disk = match track.held_path.as_deref() {
-                Some(path) => tokio::fs::try_exists(path).await.unwrap_or(true),
+                Some(path) => library_storage().exists(path).await.unwrap_or(true),
                 None => track.held_size.is_some(),
             };
             // Unless a person chose this download's better copies: then a better one takes the
@@ -14672,22 +14692,37 @@ impl LibraryScanService {
         library_root: &Path,
         protected: &HashSet<PathBuf>,
     ) -> Result<()> {
-        if !library_root.exists() {
+        if !library_storage()
+            .exists(library_root)
+            .await
+            .unwrap_or(false)
+        {
             return Ok(());
         }
 
-        let traversal_root = library_root.to_path_buf();
-        let mut dirs = tokio::task::spawn_blocking(move || {
-            WalkDir::new(traversal_root)
-                .into_iter()
-                .filter_entry(|entry| entry.depth() == 0 || !is_hidden_name(entry.file_name()))
-                .filter_map(std::result::Result::ok)
-                .filter(|entry| entry.file_type().is_dir())
-                .map(|entry| entry.into_path())
-                .collect::<Vec<_>>()
-        })
-        .await
-        .context("Empty-folder traversal worker failed")?;
+        // Hidden folders (the library's trash, a sync tool's markers) are never entered.
+        let prune: WalkFilter =
+            Arc::new(|entry| entry.depth > 0 && is_hidden_name(std::ffi::OsStr::new(entry.name)));
+        let report: WalkFilter = Arc::new(|entry| entry.kind == EntryKind::Directory);
+        let mut walk = library_storage().walk(
+            library_root,
+            WalkOptions {
+                prune: Some(prune),
+                report: Some(report),
+                with_metadata: false,
+            },
+            CancellationToken::new(),
+        )?;
+        let mut dirs = Vec::new();
+        while let Some(entry) = walk.entries.recv().await {
+            // An entry that cannot be read is left out, as it always was.
+            if let Ok(entry) = entry {
+                dirs.push(PathBuf::from(entry.path.into_string()));
+            }
+        }
+        walk.task
+            .await
+            .context("Empty-folder traversal worker failed")?;
 
         // Deepest first, so a folder whose last child was just removed is empty by its turn.
         dirs.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
@@ -14698,7 +14733,7 @@ impl LibraryScanService {
             }
             // `remove_dir` only ever removes an empty directory, so a file that lands here after
             // the walk is never lost.
-            match tokio::fs::remove_dir(&dir).await {
+            match library_storage().remove_dir(&dir).await {
                 Ok(()) => debug!(
                     folder_path = %dir.to_string_lossy(),
                     library_root = %library_root.to_string_lossy(),
@@ -14706,7 +14741,7 @@ impl LibraryScanService {
                     dir.to_string_lossy(),
                     library_root.to_string_lossy()
                 ),
-                Err(error) if folder_in_use(&error) => {}
+                Err(error) if error.kind() == StorageErrorKind::NotEmpty => {}
                 Err(error) => debug!(
                     folder_path = %dir.to_string_lossy(),
                     library_root = %library_root.to_string_lossy(),
@@ -16402,11 +16437,6 @@ fn is_hidden_name(name: &std::ffi::OsStr) -> bool {
     name.to_string_lossy().starts_with('.')
 }
 
-/// A `remove_dir` that failed only because the folder has something in it.
-fn folder_in_use(error: &std::io::Error) -> bool {
-    error.kind() == std::io::ErrorKind::DirectoryNotEmpty || error.raw_os_error() == Some(39) // ENOTEMPTY where the kind is not mapped
-}
-
 /// Remove `start`, then each parent in turn, while they are empty, stopping before the library
 /// root, a hidden folder or a folder in `protected`. Returns the folders removed.
 fn remove_empty_folders_upward(
@@ -16485,7 +16515,7 @@ async fn place_in_library(
             } else {
                 source.clone()
             };
-            match no_clobber_place_blocking(&source, &target, remove_source) {
+            match place_no_clobber_blocking(&source, &target, remove_source) {
                 Err(error)
                     if attempts < 3
                         && source.exists()
@@ -16506,36 +16536,24 @@ async fn place_in_library(
 }
 
 async fn paths_refer_to_same_file(left: &Path, right: &Path) -> bool {
-    let Ok(left_meta) = tokio::fs::metadata(left).await else {
+    let storage = library_storage();
+    let (Ok(left_meta), Ok(right_meta)) = (storage.stat(left).await, storage.stat(right).await)
+    else {
         return false;
     };
-    let Ok(right_meta) = tokio::fs::metadata(right).await else {
-        return false;
-    };
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        left_meta.dev() == right_meta.dev() && left_meta.ino() == right_meta.ino()
-    }
-
-    #[cfg(not(unix))]
-    {
-        tokio::fs::canonicalize(left).await.ok() == tokio::fs::canonicalize(right).await.ok()
+    match (left_meta.identity, right_meta.identity) {
+        (Some(left), Some(right)) => left == right,
+        _ => tokio::fs::canonicalize(left).await.ok() == tokio::fs::canonicalize(right).await.ok(),
     }
 }
 
-/// Outcome of [`place_in_library`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NoClobberOutcome {
-    /// `src` (or its bytes, for a copy) is now at `dst`.
-    Placed,
-    /// `dst` already existed; nothing was touched (`src` is untouched, `dst` is
-    /// untouched). The caller should treat this as a conflict.
-    TargetExists,
-}
+// Outcome of `place_in_library`: `Placed`, or `TargetExists` (nothing was touched, so the caller
+// treats it as a conflict). The no-clobber primitive itself, `place_no_clobber_blocking`, is the
+// local storage's (`services/library_storage/local.rs`); its reasoning is documented there.
+use crate::services::library_storage::PlaceOutcome as NoClobberOutcome;
 
-/// Place `src` at `dst` without ever clobbering an existing `dst`.
+/// Place `src` at `dst` without ever clobbering an existing `dst`; see
+/// [`place_no_clobber_blocking`] for how.
 ///
 /// This replaces the `exists()`-then-`rename()`/`copy()` pattern that races under
 /// concurrent organize/import (audit #4 — TOCTOU: another task can create `dst`
@@ -16563,87 +16581,10 @@ async fn no_clobber_place(
     remove_source_on_success: bool,
 ) -> Result<NoClobberOutcome> {
     tokio::task::spawn_blocking(move || {
-        no_clobber_place_blocking(&src, &dst, remove_source_on_success)
+        place_no_clobber_blocking(&src, &dst, remove_source_on_success)
     })
     .await
     .context("no-clobber file placement task panicked")?
-}
-
-fn no_clobber_place_blocking(
-    src: &Path,
-    dst: &Path,
-    remove_source_on_success: bool,
-) -> Result<NoClobberOutcome> {
-    match std::fs::hard_link(src, dst) {
-        Ok(()) => {
-            if remove_source_on_success {
-                std::fs::remove_file(src).with_context(|| {
-                    format!("failed to remove source file after move: {}", src.display())
-                })?;
-            }
-            Ok(NoClobberOutcome::Placed)
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            Ok(NoClobberOutcome::TargetExists)
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
-            cross_device_no_clobber_place(src, dst, remove_source_on_success)
-        }
-        Err(e) => Err(anyhow::Error::from(e).context(format!(
-            "hard_link failed: {} -> {}",
-            src.display(),
-            dst.display()
-        ))),
-    }
-}
-
-fn cross_device_no_clobber_place(
-    src: &Path,
-    dst: &Path,
-    remove_source_on_success: bool,
-) -> Result<NoClobberOutcome> {
-    let tmp_path = cross_device_temp_path(dst);
-    let result = (|| -> Result<NoClobberOutcome> {
-        std::fs::copy(src, &tmp_path).with_context(|| {
-            format!(
-                "cross-device copy-to-temp failed: {} -> {}",
-                src.display(),
-                tmp_path.display()
-            )
-        })?;
-        match std::fs::hard_link(&tmp_path, dst) {
-            Ok(()) => Ok(NoClobberOutcome::Placed),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                Ok(NoClobberOutcome::TargetExists)
-            }
-            Err(e) => Err(anyhow::Error::from(e).context(format!(
-                "cross-device no-clobber hard_link failed: {} -> {}",
-                tmp_path.display(),
-                dst.display()
-            ))),
-        }
-    })();
-    // Always clean up the temp file, regardless of outcome.
-    let _ = std::fs::remove_file(&tmp_path);
-
-    let outcome = result?;
-    if outcome == NoClobberOutcome::Placed && remove_source_on_success {
-        std::fs::remove_file(src).with_context(|| {
-            format!(
-                "failed to remove source file after cross-device move: {}",
-                src.display()
-            )
-        })?;
-    }
-    Ok(outcome)
-}
-
-fn cross_device_temp_path(dst: &Path) -> PathBuf {
-    let file_name = dst
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "librarian-file".to_string());
-    dst.with_file_name(format!("{file_name}.librarian-tmp-{}", Uuid::new_v4()))
 }
 
 #[cfg(test)]

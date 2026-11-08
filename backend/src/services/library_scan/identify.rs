@@ -1094,13 +1094,14 @@ impl LibraryScanService {
             if !*finished {
                 continue;
             }
-            let small = tokio::fs::metadata(path)
+            let small = library_storage()
+                .stat(path)
                 .await
-                .is_ok_and(|meta| meta.len() <= MAX_TEXT_BYTES);
+                .is_ok_and(|meta| meta.size <= MAX_TEXT_BYTES);
             if !small {
                 continue;
             }
-            let Ok(bytes) = tokio::fs::read(path).await else {
+            let Ok(bytes) = library_storage().read_all(path).await else {
                 continue;
             };
             let name = Path::new(path)
@@ -2111,7 +2112,7 @@ impl LibraryScanService {
         };
         for id in ids {
             if let Ok(Some(file)) = MediaFile::get(database.pool().pool(), &id).await
-                && tokio::fs::try_exists(&file.path).await.unwrap_or(true)
+                && library_storage().exists(&file.path).await.unwrap_or(true)
             {
                 held.insert(id, file);
             }

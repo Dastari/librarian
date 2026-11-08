@@ -18,7 +18,6 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use graphql_orm::graphql::filters::{IntFilter, StringFilter};
 use serde::Deserialize;
-use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 use tracing::{debug, error, warn};
@@ -29,6 +28,7 @@ use crate::graphql::AuthUser;
 use crate::graphql::entities::{
     AudioStream, AudioStreamWhereInput, CastSession, Library, MediaFile, Subtitle,
 };
+use crate::services::library_storage::{OpenedRead, StorageErrorKind, library_storage};
 use crate::services::transcode::ffmpeg::{
     self, MAX_SUBTITLE_BYTES, PLAYLIST_FILENAME, SubtitleError,
 };
@@ -91,20 +91,39 @@ async fn stream_media(
     } else {
         authorize_browser_media(&state, &headers, &media_file).await?;
     }
-    let path = Path::new(&media_file.path);
+    let storage = library_storage();
 
-    if !path.exists() {
-        warn!(
-            media_file_id = %file_id,
-            media_file_path = %media_file.path,
-            "Media stream path does not exist: media_file_id={}, path={}",
-            file_id,
-            media_file.path
-        );
-        return Err(StatusCode::NOT_FOUND);
+    match storage.exists(&media_file.path).await {
+        Ok(true) => {}
+        Err(e) if e.kind() == StorageErrorKind::Unavailable => {
+            warn!(
+                media_file_id = %file_id,
+                media_file_path = %media_file.path,
+                error = %e,
+                "Media stream storage is unavailable: media_file_id={}, path={}, error={}",
+                file_id,
+                media_file.path,
+                e
+            );
+            return Err(StatusCode::SERVICE_UNAVAILABLE);
+        }
+        // A path that cannot be checked is served as missing, as it always was.
+        Ok(false) | Err(_) => {
+            warn!(
+                media_file_id = %file_id,
+                media_file_path = %media_file.path,
+                "Media stream path does not exist: media_file_id={}, path={}",
+                file_id,
+                media_file.path
+            );
+            return Err(StatusCode::NOT_FOUND);
+        }
     }
 
-    let mut file = File::open(path).await.map_err(|e| {
+    let OpenedRead {
+        reader: mut file,
+        meta: metadata,
+    } = storage.open_read(&media_file.path).await.map_err(|e| {
         error!(
             media_file_id = %file_id,
             media_file_path = %media_file.path,
@@ -116,20 +135,7 @@ async fn stream_media(
         );
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-
-    let metadata = file.metadata().await.map_err(|e| {
-        error!(
-            media_file_id = %file_id,
-            media_file_path = %media_file.path,
-            error = %e,
-            "Failed reading media metadata for stream: media_file_id={}, path={}, error={}",
-            file_id,
-            media_file.path,
-            e
-        );
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-    let file_size = metadata.len();
+    let file_size = metadata.size;
     let content_type = get_content_type(&media_file.path);
 
     let range = if let Some(value) = headers.get(RANGE) {
@@ -231,8 +237,10 @@ async fn media_info(
         .as_ref()
         .map(|stream| stream.codec.as_str())
         .or(media_file.audio_codec.as_deref());
-    let path = Path::new(&media_file.path);
-    let exists = path.exists();
+    let exists = library_storage()
+        .exists(&media_file.path)
+        .await
+        .unwrap_or(false);
     let content_type = get_content_type(&media_file.path);
 
     let chromecast_compatible = is_chromecast_compatible(
