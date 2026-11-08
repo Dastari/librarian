@@ -325,8 +325,10 @@ describe("selected audio detail actions", { timeout: 30000 }, () => {
     expect(playAudio.mock.lastCall![0].map((item: { entity: { id: string } }) => item.entity.id)).toEqual(["track-1", "track-3"]);
     await userEvent.click(screen.getByRole("button", { name: "Actions for 2 selected tracks" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Add to queue" }));
-    await waitFor(() => expect(enqueue).toHaveBeenCalled());
-    expect(enqueue.mock.lastCall![0].map((item: { entity: { id: string } }) => item.entity.id)).toEqual(["track-1", "track-3"]);
+    // The queue actions write to the player store directly; with nothing playing, queueing starts it.
+    await waitFor(() => expect(playerStore.getSnapshot().queue).toHaveLength(2));
+    expect(playerStore.getSnapshot().queue.map((item) => item.entity.id)).toEqual(["track-1", "track-3"]);
+    playerStore.stopAudio();
   });
 
   it("updates only selected missing tracks and disables playback of mixed availability", async () => {
