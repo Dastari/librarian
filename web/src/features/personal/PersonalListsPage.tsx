@@ -10,6 +10,7 @@ import { TableToolbar } from "@/components/ui/TableToolbar";
 import { useSession } from "@/lib/auth/useSession";
 import { parseTimestamp } from "@/lib/format";
 import { sizedArtwork } from "@/lib/api/urls";
+import { ENTITY_KINDS } from "@/lib/entities/kinds";
 import { usePref } from "@/lib/prefs";
 import { ListEditor } from "./ListEditor";
 import { PlaylistIdentity, playlistKindLabel } from "./PlaylistIdentity";
@@ -26,6 +27,7 @@ const columns = column.columns([
   column.accessor("updatedAt", { header: "Updated", width: 9, priority: 2, sortable: true, sortDescFirst: true, cell: ({ row }) => <RelativeTime value={parseTimestamp(row.original.updatedAt)} /> }),
 ]);
 const noun = { one: "playlist", other: "playlists" };
+const PlaylistGlyph = ENTITY_KINDS.playlist.icon;
 
 /** Someone's playlists, smart collections and Watch Later, as rows or cards, with making a new one in the table's toolbar. */
 export function PersonalListsPage() {
@@ -39,7 +41,7 @@ export function PersonalListsPage() {
   const open = useCallback((row: Playlist) => void navigate({ to: "/lists/$listId", params: { listId: row.id } }), [navigate]);
   const { actions, dialogs } = usePlaylistEntity<Playlist>();
   const renderCard = useCallback((row: Playlist) => (
-    <PosterCard title={row.name} meta={[playlistKindLabel(row.kind), row.kind === "SMART" ? "" : `${playlistCount(row)} items`].filter(Boolean).join(" · ")} image={sizedArtwork(playlistCovers(row.entries.edges.map((edge) => edge.node))[0], 320)} aspect="square" to="/lists/$listId" params={{ listId: row.id }} />
+    <PosterCard title={row.name} meta={[playlistKindLabel(row.kind), row.kind === "SMART" ? "" : `${playlistCount(row)} items`].filter(Boolean).join(" · ")} image={sizedArtwork(playlistCovers(row.entries.edges.map((edge) => edge.node))[0], 320)} aspect="square" fallbackIcon={<PlaylistGlyph />} to="/lists/$listId" params={{ listId: row.id }} />
   ), []);
   const hasWatchLater = useMemo(() => lists.rows.some((list) => list.kind === "WATCH_LATER"), [lists.rows]);
   return <div className="page-gutter flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-clip py-4 md:py-6">
