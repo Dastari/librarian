@@ -1,3 +1,4 @@
+pub mod artist_image;
 pub mod musicbrainz;
 pub mod providers;
 pub mod settings;

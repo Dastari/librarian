@@ -3581,6 +3581,109 @@ impl LibraryScanService {
         }
     }
 
+    /// Artists with no picture ask for one: Wikimedia Commons through their MusicBrainz id, else
+    /// Deezer by exact name. A few per scan, those with an id first, so a large library doesn't
+    /// hammer the sites. A picture the user set is never replaced, and an artist nothing has a
+    /// picture for takes its turn at random rather than holding up the ones behind it.
+    async fn backfill_artist_images(&self, library: &LibraryRow) {
+        use rand::seq::SliceRandom;
+        const PER_SCAN: usize = 10;
+        let Ok(database) = self.database().await else {
+            return;
+        };
+        let mut missing = match crate::graphql::entities::Artist::query(database.pool().pool())
+            .filter(crate::graphql::entities::ArtistWhereInput {
+                library_id: Some(StringFilter {
+                    eq: Some(library.id.clone()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await
+        {
+            Ok(artists) => artists
+                .into_iter()
+                .filter(|artist| artist.image_url.as_deref().is_none_or(str::is_empty))
+                .collect::<Vec<_>>(),
+            Err(error) => {
+                debug!(library_id = %library.id, error = %error, "Could not list artists missing pictures");
+                return;
+            }
+        };
+        if missing.is_empty() {
+            return;
+        }
+        missing.shuffle(&mut rand::rng());
+        missing.sort_by_key(|artist| {
+            artist
+                .musicbrainz_id
+                .as_deref()
+                .is_none_or(|id| Uuid::parse_str(id).is_err())
+        });
+        missing.truncate(PER_SCAN);
+        let Ok(metadata) = self.metadata_service().await else {
+            return;
+        };
+        let Ok(auth_user) = self.system_auth_user(Some(&library.user_id)).await else {
+            return;
+        };
+        for artist in missing {
+            let musicbrainz_id = artist
+                .musicbrainz_id
+                .as_deref()
+                .and_then(|id| Uuid::parse_str(id).ok());
+            let image = match metadata.artist_image(musicbrainz_id, &artist.name).await {
+                Ok(Some(image)) => image,
+                Ok(None) => continue,
+                Err(error) => {
+                    debug!(
+                        artist_id = %artist.id,
+                        error = %error,
+                        "Could not find a picture for artist '{}' yet: {}",
+                        artist.name,
+                        error
+                    );
+                    continue;
+                }
+            };
+            // The lookup is slow; the user may have set a picture meanwhile.
+            match crate::graphql::entities::Artist::get(database.pool().pool(), &artist.id).await {
+                Ok(Some(current)) if current.image_url.as_deref().is_none_or(str::is_empty) => {}
+                Ok(_) => continue,
+                Err(error) => {
+                    debug!(artist_id = %artist.id, error = %error, "Could not re-read artist '{}' before saving its picture", artist.name);
+                    continue;
+                }
+            }
+            match self
+                .execute_mutation(
+                    &auth_user,
+                    r#"mutation BackfillArtistImage($id: String!, $input: UpdateArtistInput!) {
+                        Saved: updateArtist(id: $id, input: $input) { Success: success Error: error }
+                    }"#,
+                    serde_json::json!({ "id": artist.id, "input": { "imageUrl": image } }),
+                )
+                .await
+            {
+                Ok(data) if data["Saved"]["Success"].as_bool() == Some(true) => info!(
+                    library_id = %library.id,
+                    artist_id = %artist.id,
+                    artist = %artist.name,
+                    image_url = %image,
+                    "Filled in a picture for artist '{}'",
+                    artist.name
+                ),
+                Ok(data) => {
+                    warn!(artist_id = %artist.id, error = %data["Saved"]["Error"], "Failed to save a picture for artist '{}'", artist.name);
+                }
+                Err(error) => {
+                    warn!(artist_id = %artist.id, error = %error, "Failed to save a picture for artist '{}'", artist.name);
+                }
+            }
+        }
+    }
+
     /// Why a duplicate pair no longer needs settling, or `None` while both copies are there.
     /// `remove_keeper` asks about the pair the other way round, where the kept copy goes and so
     /// must still be a library file.
@@ -4982,6 +5085,7 @@ impl LibraryScanService {
         self.settle_duplicates_if_asked(&library).await;
         if library.library_type == "music" {
             self.backfill_album_covers(&library).await;
+            self.backfill_artist_images(&library).await;
         }
 
         // Downloads compared with this library before may now be in it, or have more to add.

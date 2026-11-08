@@ -12,7 +12,7 @@ export interface SearchHit {
   kind: SearchHitKind;
   title: string;
   meta?: string;
-  image: string;
+  image?: string;
   /** Shown when `image` is missing (an episode without a still shows its show). */
   fallbackImage?: string;
   /** Wide artwork fills the tile; square covers sit on a blurred copy of themselves. */
