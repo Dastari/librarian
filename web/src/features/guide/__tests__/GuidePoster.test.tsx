@@ -13,7 +13,6 @@ vi.mock("@tanstack/react-router", async (original) => ({
 }));
 vi.mock("@apollo/client/react", () => ({ useMutation: () => [vi.fn()] }));
 vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => true }));
-vi.mock("@/features/personal/SaveToListDialog", () => ({ SaveToListDialog: () => null }));
 
 const listing = { tvmazeShowId: 1, name: "Silo", network: "Apple TV" };
 const wrap = (children: ReactNode) => render(<TooltipProvider><ActionProvider navigate={vi.fn()}>{children}</ActionProvider></TooltipProvider>);

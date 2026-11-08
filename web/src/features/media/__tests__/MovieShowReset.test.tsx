@@ -16,7 +16,6 @@ let admin = false;
 vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => admin, useSession: () => ({ user: { id: "viewer", role: admin ? "admin" : "member" } }) }));
 vi.mock("@/features/player/usePlayer", () => ({ usePlayer: () => ({ playVideo: vi.fn() }) }));
 vi.mock("@/features/downloads/ReleaseSearchDialog", () => ({ ReleaseSearchDialog: () => null }));
-vi.mock("@/features/personal/SaveToListDialog", () => ({ SaveToListDialog: () => null }));
 beforeEach(() => { admin = false; });
 
 const movie = { id: "movie-1", userId: "viewer", title: "Dune", year: 2021, mediaFileId: "movie-file", hasFile: true } as unknown as MovieEntity;

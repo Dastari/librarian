@@ -12,7 +12,6 @@ vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => fixture.admin, useSe
 vi.mock("@/lib/graphql/live/hooks", () => ({ useLiveQuery: () => ({ data: { library: { userId: "owner" } } }) }));
 vi.mock("@/hooks/useContentStatuses", () => ({ useContentStatuses: () => new Map() }));
 vi.mock("@/features/player/usePlayer", () => ({ usePlayer: () => ({ playAudio: fixture.play, enqueue: fixture.enqueue }) }));
-vi.mock("@/features/personal/SaveToListDialog", () => ({ SaveToListDialog: () => null }));
 vi.mock("@/features/libraries/ManualMatchDialog", () => ({ ManualMatchDialog: () => null }));
 vi.mock("../useBrowserFilters", () => ({ useBrowserFilters: () => ({ query: fixture.query, debouncedQuery: fixture.query, availability: "all", setQuery: vi.fn(), setAvailability: vi.fn() }), titleFilter: () => fixture.query ? { contains: fixture.query } : undefined }));
 vi.mock("@/hooks/useServerTable", () => ({ useServerTable: () => ({ sorting: [], orderBy: [], setSorting: vi.fn() }) }));
