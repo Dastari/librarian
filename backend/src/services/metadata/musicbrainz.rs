@@ -334,6 +334,61 @@ impl MusicBrainzClient {
         .await
     }
 
+    /// The User-Agent every request to MusicBrainz, and to the sites it points at, identifies as.
+    pub fn user_agent(&self) -> &str {
+        &self.user_agent
+    }
+
+    /// The Wikidata entity (`Q11885`) MusicBrainz links an artist to, if it does. This is the exact
+    /// match for an artist: MusicBrainz editors attach the Wikidata item by hand, so no name
+    /// guessing is involved.
+    pub async fn get_artist_wikidata_id(&self, artist_id: Uuid) -> Result<Option<String>> {
+        debug!(artist_id = %artist_id, "Fetching URL relations for MusicBrainz artist");
+
+        let url = format!("{}/artist/{}", self.base_url, artist_id);
+        let client = self.client.clone();
+        let user_agent = self.user_agent.clone();
+        let retry_config = self.retry_config.clone();
+
+        let body: serde_json::Value = retry_async(
+            || {
+                let url = url.clone();
+                let client = client.clone();
+                let ua = user_agent.clone();
+                async move {
+                    let query_params =
+                        [("fmt", "json".to_string()), ("inc", "url-rels".to_string())];
+                    let response = client
+                        .get_with_headers_and_query(&url, &[("User-Agent", &ua)], &query_params)
+                        .await?;
+                    if response.status().as_u16() == 503 {
+                        anyhow::bail!("Rate limited (503)");
+                    }
+                    if response.status().as_u16() == 404 {
+                        return Ok(serde_json::Value::Null);
+                    }
+                    if !response.status().is_success() {
+                        anyhow::bail!(
+                            "MusicBrainz artist URL relations failed with status: {}",
+                            response.status()
+                        );
+                    }
+                    crate::services::http_client::response_json_limited(
+                        response,
+                        crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                    )
+                    .await
+                    .context("Failed to parse MusicBrainz artist URL relations")
+                }
+            },
+            &retry_config,
+            "musicbrainz_get_artist_url_relations",
+        )
+        .await?;
+
+        Ok(super::artist_image::wikidata_id_from_relations(&body))
+    }
+
     /// Get cover art for a release group from Cover Art Archive
     pub async fn get_cover_art(&self, release_group_id: Uuid) -> Result<Option<String>> {
         let url = format!(

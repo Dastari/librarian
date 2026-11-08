@@ -1538,6 +1538,152 @@ impl MetadataService {
         Ok(cover)
     }
 
+    /// An artist's picture: Wikimedia Commons through the artist's MusicBrainz id and Wikidata,
+    /// else Deezer's picture for an artist of exactly the same name. Found pictures are
+    /// remembered in the metadata cache (by id, and by name for Deezer) so an artist removed and
+    /// added again doesn't ask the sites a second time; nothing is remembered about a miss.
+    /// `Err` means a site couldn't be asked and nothing else found a picture, so a later try may
+    /// do better.
+    pub async fn artist_image(
+        &self,
+        musicbrainz_id: Option<Uuid>,
+        artist_name: &str,
+    ) -> Result<Option<String>> {
+        use super::artist_image::{
+            IMAGE_BY_MBID_OPERATION, IMAGE_BY_NAME_OPERATION, deezer_image, name_cache_key,
+            wikidata_image,
+        };
+        let max_age_days = self
+            .provider_cache_days(MetadataProvider::Musicbrainz)
+            .await;
+        let id_key = musicbrainz_id.map(|id| id.to_string());
+        let name_key = name_cache_key(artist_name);
+        if let Some(id_key) = &id_key
+            && let Ok(Some(cached)) = self
+                .read_metadata_cache::<String>(
+                    MetadataProvider::Musicbrainz,
+                    IMAGE_BY_MBID_OPERATION,
+                    id_key,
+                    max_age_days,
+                )
+                .await
+        {
+            return Ok(Some(cached));
+        }
+
+        let musicbrainz = self.get_musicbrainz_client().await?;
+        let user_agent = musicbrainz.user_agent().to_string();
+        let mut failure: Option<anyhow::Error> = None;
+
+        if let (Some(id), Some(id_key)) = (musicbrainz_id, &id_key) {
+            let from_wikidata = async {
+                match musicbrainz.get_artist_wikidata_id(id).await? {
+                    Some(item) => wikidata_image(&user_agent, &item).await,
+                    None => Ok(None),
+                }
+            }
+            .await;
+            match from_wikidata {
+                Ok(Some(image)) => {
+                    info!(
+                        artist = %artist_name,
+                        musicbrainz_id = %id,
+                        image_url = %image,
+                        "Found a Wikimedia Commons picture for artist '{}' (MusicBrainz {})",
+                        artist_name,
+                        id
+                    );
+                    self.remember_artist_image(
+                        IMAGE_BY_MBID_OPERATION,
+                        id_key,
+                        &image,
+                        artist_name,
+                    )
+                    .await;
+                    return Ok(Some(image));
+                }
+                Ok(None) => debug!(
+                    artist = %artist_name,
+                    musicbrainz_id = %id,
+                    "No Wikidata picture for artist '{}' (MusicBrainz {}); trying Deezer",
+                    artist_name,
+                    id
+                ),
+                Err(error) => {
+                    debug!(
+                        artist = %artist_name,
+                        musicbrainz_id = %id,
+                        error = %error,
+                        "Could not look up the Wikidata picture for artist '{}' (MusicBrainz {}); trying Deezer",
+                        artist_name,
+                        id
+                    );
+                    failure = Some(error);
+                }
+            }
+        }
+
+        if !name_key.is_empty() {
+            if let Ok(Some(cached)) = self
+                .read_metadata_cache::<String>(
+                    MetadataProvider::Musicbrainz,
+                    IMAGE_BY_NAME_OPERATION,
+                    &name_key,
+                    max_age_days,
+                )
+                .await
+            {
+                return Ok(Some(cached));
+            }
+            match deezer_image(&user_agent, artist_name).await {
+                Ok(Some(image)) => {
+                    self.remember_artist_image(
+                        IMAGE_BY_NAME_OPERATION,
+                        &name_key,
+                        &image,
+                        artist_name,
+                    )
+                    .await;
+                    // A lookup that couldn't reach Wikidata shouldn't pin this picture to the id
+                    // and keep Wikidata from being asked again.
+                    if failure.is_none()
+                        && let Some(id_key) = &id_key
+                    {
+                        self.remember_artist_image(
+                            IMAGE_BY_MBID_OPERATION,
+                            id_key,
+                            &image,
+                            artist_name,
+                        )
+                        .await;
+                    }
+                    return Ok(Some(image));
+                }
+                Ok(None) => {}
+                Err(error) => failure = Some(failure.unwrap_or(error)),
+            }
+        }
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(None),
+        }
+    }
+
+    async fn remember_artist_image(
+        &self,
+        operation: &str,
+        cache_key: &str,
+        image: &String,
+        artist_name: &str,
+    ) {
+        if let Err(error) = self
+            .upsert_metadata_cache(MetadataProvider::Musicbrainz, operation, cache_key, image)
+            .await
+        {
+            debug!(artist = %artist_name, error = %error, "Could not remember a picture for artist '{}'", artist_name);
+        }
+    }
+
     /// Get MusicBrainz client, honoring the user-agent setting
     pub async fn get_musicbrainz_client(&self) -> Result<Arc<MusicBrainzClient>> {
         let settings = MetadataSettings::load(&self.db).await?;
@@ -3817,6 +3963,32 @@ impl MetadataService {
         {
             id
         } else {
+            // Best effort and bounded: a slow or failing picture lookup never holds up or fails
+            // the import. The post-scan backfill asks again for artists left without one.
+            let image_url = match artist_mbid
+                .as_deref()
+                .and_then(|id| Uuid::parse_str(id).ok())
+            {
+                Some(id) => {
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(25),
+                        self.artist_image(Some(id), &artist_name),
+                    )
+                    .await
+                    {
+                        Ok(Ok(image)) => image,
+                        Ok(Err(error)) => {
+                            debug!(artist = %artist_name, error = %error, "No picture for new artist '{}' yet: {}", artist_name, error);
+                            None
+                        }
+                        Err(_) => {
+                            debug!(artist = %artist_name, "Picture lookup for new artist '{}' timed out", artist_name);
+                            None
+                        }
+                    }
+                }
+                None => None,
+            };
             let created = self
                 .execute_mutation(
                     &auth_user,
@@ -3829,7 +4001,8 @@ impl MetadataService {
                             "userId": options.user_id.to_string(),
                             "name": artist_name.clone(),
                             "sortName": artist_name.clone(),
-                            "musicbrainzId": artist_mbid
+                            "musicbrainzId": artist_mbid,
+                            "imageUrl": image_url
                         }
                     }),
                 )

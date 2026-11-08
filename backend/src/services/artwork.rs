@@ -41,6 +41,12 @@ const DEFAULT_ARTWORK_HOSTS: &[&str] = &[
     "m.media-amazon.com",
     "coverartarchive.org",
     "archive.org",
+    // Artist pictures: Wikimedia Commons (its file paths redirect to upload.wikimedia.org) and
+    // Deezer's image CDN.
+    "commons.wikimedia.org",
+    "upload.wikimedia.org",
+    "cdn-images.dzcdn.net",
+    "e-cdns-images.dzcdn.net",
 ];
 /// Hosts whose servers have changing names. Cover Art Archive sends images to `archive.org`, which
 /// sends them on to whichever storage server has them, like `dn721606.ca.archive.org`.
@@ -1187,6 +1193,13 @@ fn pinned_artwork_client(host: &str, socket_addr: Option<SocketAddr>) -> Result<
     .connect_timeout(CONNECT_TIMEOUT)
     .timeout(REQUEST_TIMEOUT)
     .pool_idle_timeout(Duration::from_secs(10));
+    // Wikimedia's User-Agent policy asks for a descriptive agent with a way to reach the operator,
+    // which the metadata agent has and the bare product name doesn't.
+    if host.ends_with(".wikimedia.org") {
+        builder = builder.user_agent(
+            crate::services::metadata::musicbrainz::MusicBrainzClient::default_user_agent(),
+        );
+    }
     if let Some(socket_addr) = socket_addr {
         builder = builder.resolve(host, socket_addr);
     }
