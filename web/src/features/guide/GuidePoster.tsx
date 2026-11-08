@@ -9,6 +9,7 @@ import { useMemo, type ReactNode } from "react";
 
 import { Artwork } from "@/components/ui";
 import { useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
+import { useQueueActions } from "@/features/player/queueActions";
 import { RefreshShowDocument } from "@/graphql/generated/graphql";
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
@@ -24,6 +25,8 @@ export function useLibraryShowActions() {
   const navigate = useNavigate();
   const isAdmin = useIsAdmin();
   const [refreshShow] = useMutation(RefreshShowDocument);
+  // Play next / Add to queue: every playable episode of the show, in order.
+  const queueActions = useQueueActions<LibraryShowTarget>((rows) => rows.map((show) => ({ kind: "show" as const, id: show.id })));
   const playlist = useAddToPlaylist<LibraryShowTarget>({
     targetsOf: (rows) => rows.map((show) => ({ kind: "show" as const, id: show.id })),
     titleOf: (rows) => rows.length === 1 ? rows[0]!.name : `${rows.length} shows`,
@@ -31,6 +34,7 @@ export function useLibraryShowActions() {
   });
   const actions = useMemo(() => defineActions<LibraryShowTarget>("guide-show", [
     { id: "open", label: "Open show", icon: IconInfo, group: "open", priority: 1, run: ([show]) => void navigate({ to: "/shows/$showId", params: { showId: show!.id } }) },
+    ...queueActions,
     playlist.action,
     ...(isAdmin ? [{
       id: "refresh", label: "Refresh metadata", icon: IconRefresh, group: "manage" as const, priority: 3,
@@ -39,7 +43,7 @@ export function useLibraryShowActions() {
         toast.success(`Refreshed ${show!.name}`);
       }).catch((error: unknown) => toast.danger(errorMessage(error))),
     }] : []),
-  ]), [navigate, isAdmin, refreshShow, playlist.action]);
+  ]), [navigate, isAdmin, queueActions, refreshShow, playlist.action]);
   const dialog = playlist.dialog;
   return { actions, dialog };
 }

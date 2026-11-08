@@ -4,18 +4,27 @@ import type { ActionDefinition, ActionGroup } from "glass-ux/actions";
 import { IconPlus, IconSkipForward } from "glass-ux/icons";
 import { useMemo, useRef } from "react";
 
-import { playlistAdapter } from "./playlistAdapter";
-import { resolvePlayItems, type PlayableRef } from "./playables";
+import { expandPlaylist, playlistPlayItems } from "@/features/personal/playlistPlayback";
+import type { PlaylistTarget } from "@/features/personal/types";
+
 import { playerStore, type PlayItem } from "./store";
 
-/** What a row stands for in the queue: items already in hand, a thing to expand, or a playlist. */
-export type QueueSource = PlayItem[] | PlayableRef | { kind: "playlist"; id: string };
+/**
+ * What a row stands for in the queue: items already in hand, one playable thing (a movie, show,
+ * episode, album, track, audiobook or chapter, which expands to its playable children), several
+ * of them in order, or a playlist.
+ */
+export type QueueSource = PlayItem[] | PlaylistTarget | { kind: "targets"; targets: readonly PlaylistTarget[] } | { kind: "playlist"; id: string };
 
-/** Turns sources into play items, in order. Entities are expanded with the GraphQL they are read through. */
+/**
+ * Turns sources into play items, in order. Entities and playlists expand through the playlist
+ * helpers (`playlistPlayItems`, `expandPlaylist`), the one place that knows how each kind plays.
+ */
 export async function resolveQueueSources(client: ApolloClient, sources: readonly QueueSource[]): Promise<PlayItem[]> {
-  const groups = await Promise.all(sources.map((source) => {
-    if (Array.isArray(source)) return Promise.resolve(source);
-    return source.kind === "playlist" ? playlistAdapter.expand(client, source.id) : resolvePlayItems(client, source);
+  const groups = await Promise.all(sources.map(async (source): Promise<PlayItem[]> => {
+    if (Array.isArray(source)) return source;
+    if (source.kind === "playlist") return expandPlaylist(client, source.id);
+    return (await playlistPlayItems(client, "targets" in source ? source.targets : [source])).items;
   }));
   return groups.flat();
 }

@@ -4,26 +4,30 @@
  *
  * - tracks and chapters become audio items; movies and episodes become video items;
  * - an album expands to its tracks (disc, then track number), a show to its episodes (season,
- *   then episode), an audiobook to its files (a book held in one file is one item that carries its
- *   chapter marks, a book in parts is one item per part);
+ *   then episode, specials last), an audiobook to its files (a book held in one file is one item
+ *   that carries its chapter marks, a book in parts is one item per part). Containers expand
+ *   through the play queue's own helpers (`player/playables.ts`), so "Add album to queue" and "a
+ *   playlist holding that album" always agree;
  * - anything without a file is left out and counted in `skipped`.
  *
- * It only reads. Starting playback is `startPlaylistPlayback`, which uses the player's public API
- * (`playAudio`, `playVideo`, `enqueue`) and nothing else, so the queue can change underneath it.
- * The queue's own "Add album/playlist" actions reuse `playlistPlayItems` and `shufflePlayItems`.
+ * It only reads. Starting playback is `startPlaylistPlayback`: the items become the play queue
+ * (`playQueue`), audio and video in whatever mix the playlist has, and the queue director moves
+ * between the audio dock and the video player as it plays. The queue's "Play next" / "Add to
+ * queue" resolve playlists through `expandPlaylist` and lists of targets through `playlistPlayItems`.
  */
 import type { ApolloClient, TypedDocumentNode } from "@apollo/client";
 
-import type { PlayItem } from "@/features/player/store";
+import { albumPlayItems, audiobookItems, showPlayItems } from "@/features/player/playables";
+import { episodePlayItem, moviePlayItem, trackPlayItem } from "@/features/player/playItems";
+import { isVideoItem, type PlayItem } from "@/features/player/store";
 import {
-  PlaylistAlbumTracksDocument, PlaylistBookChaptersDocument, PlaylistPlayChaptersDocument, PlaylistPlayEpisodesDocument,
-  PlaylistPlayMoviesDocument, PlaylistPlayTracksDocument, PlaylistShowEpisodesDocument,
-  type PlaylistAlbumTracksQuery, type PlaylistBookChaptersQuery, type PlaylistPlayChaptersQuery, type PlaylistPlayEpisodesQuery,
-  type PlaylistPlayMoviesQuery, type PlaylistPlayTracksQuery, type PlaylistShowEpisodesQuery,
+  PlaylistPlayChaptersDocument, PlaylistPlayEpisodesDocument, PlaylistPlayMoviesDocument, PlaylistPlayTracksDocument,
+  type PlaylistPlayChaptersQuery, type PlaylistPlayEpisodesQuery, type PlaylistPlayMoviesQuery, type PlaylistPlayTracksQuery,
 } from "@/graphql/generated/graphql";
-import { albumCover, audiobookCover, movieBackdrop, moviePoster, showBackdrop, showPoster } from "@/lib/artwork";
+import { audiobookCover } from "@/lib/artwork";
 
-import { episodeCode, targetKey, type PlaylistTarget } from "./types";
+import { targetKey, type PlaylistTarget } from "./types";
+import { fetchPlaylistTargets } from "./usePlaylists";
 
 type MovieNode = PlaylistPlayMoviesQuery["movies"]["edges"][number]["node"];
 type EpisodeNode = PlaylistPlayEpisodesQuery["episodes"]["edges"][number]["node"];
@@ -35,26 +39,23 @@ export interface PlaylistPlayItems {
   items: PlayItem[];
   /** Targets that produced nothing, because they have no file yet. */
   skipped: number;
+  /** Where each target's first item sits in `items`, or null for a target that produced nothing. */
+  starts: (number | null)[];
 }
 
-export const isVideoPlayItem = (item: Pick<PlayItem, "entity">) => item.entity.kind === "movie" || item.entity.kind === "episode";
+export const isVideoPlayItem = isVideoItem;
 
-export const movieItem = (movie: MovieNode): PlayItem | null => movie.mediaFileId ? {
-  mediaFileId: movie.mediaFileId, title: movie.title, subtitle: movie.year ? String(movie.year) : undefined,
-  artwork: moviePoster(movie.id), backdrop: movieBackdrop(movie.id), entity: { kind: "movie", id: movie.id }, href: `/movies/${movie.id}`,
-  duration: movie.runtime ? movie.runtime * 60 : undefined,
-} : null;
+export const movieItem = (movie: MovieNode): PlayItem | null => {
+  const item = moviePlayItem(movie);
+  return item && { ...item, duration: movie.runtime ? movie.runtime * 60 : undefined };
+};
 
-export const episodeItem = (episode: EpisodeNode): PlayItem | null => episode.mediaFileId ? {
-  mediaFileId: episode.mediaFileId, title: episode.show?.name ?? "Episode", subtitle: [episodeCode(episode), episode.title].filter(Boolean).join("  "),
-  artwork: showPoster({ id: episode.showId }), backdrop: showBackdrop({ id: episode.showId }), entity: { kind: "episode", id: episode.id }, href: `/shows/${episode.showId}`,
-  duration: episode.runtime ? episode.runtime * 60 : undefined,
-} : null;
+export const episodeItem = (episode: EpisodeNode): PlayItem | null => {
+  const item = episodePlayItem(episode, { id: episode.showId, name: episode.show?.name ?? "Episode" });
+  return item && { ...item, duration: episode.runtime ? episode.runtime * 60 : undefined };
+};
 
-export const trackItem = (track: TrackNode): PlayItem | null => track.mediaFileId ? {
-  mediaFileId: track.mediaFileId, title: track.title, subtitle: [track.artistName, track.album?.name].filter(Boolean).join(" · ") || undefined,
-  artwork: albumCover({ id: track.albumId }), entity: { kind: "track", id: track.id }, href: `/albums/${track.albumId}`, duration: track.durationSecs ?? undefined,
-} : null;
+export const trackItem = (track: TrackNode): PlayItem | null => trackPlayItem(track);
 
 /** One chapter on its own. A chapter inside a file that holds more than itself starts where it does. */
 export function chapterItem(chapter: ChapterNode): PlayItem | null {
@@ -69,40 +70,8 @@ export function chapterItem(chapter: ChapterNode): PlayItem | null {
   };
 }
 
-/** A whole book: one item for each file its chapters live in, with the chapter marks inside it. */
-export function bookItems(chapters: readonly ChapterNode[]): PlayItem[] {
-  const ordered = [...chapters].sort((a, b) => a.chapterNumber - b.chapterNumber);
-  const files = [...new Set(ordered.flatMap((chapter) => chapter.mediaFileId ? [chapter.mediaFileId] : []))];
-  return files.flatMap((file) => {
-    const here = ordered.filter((chapter) => chapter.mediaFileId === file);
-    const first = here[0]!;
-    const shared = here.length > 1;
-    const name = (chapter: ChapterNode) => chapter.title ?? `Chapter ${chapter.chapterNumber}`;
-    return [{
-      mediaFileId: file, title: first.audiobook?.title ?? "Audiobook", subtitle: shared ? first.audiobook?.authorName ?? undefined : name(first),
-      artwork: audiobookCover({ id: first.audiobookId }), entity: { kind: "chapter", id: first.id }, audiobookId: first.audiobookId, href: `/audiobooks/${first.audiobookId}`,
-      duration: shared ? first.mediaFile?.duration ?? undefined : first.durationSecs ?? undefined,
-      chapters: shared ? here.map((chapter) => ({ start: chapter.fileOffsetSecs ?? chapter.startTimeSecs, title: name(chapter) })) : undefined,
-    } satisfies PlayItem];
-  });
-}
-
 const CHUNK = 100;
 const chunks = <T,>(values: readonly T[]) => Array.from({ length: Math.ceil(values.length / CHUNK) }, (_, index) => values.slice(index * CHUNK, (index + 1) * CHUNK));
-
-/** Drains a children query: every page for a set of parents, off-cache so a playlist never plays stale. */
-async function children<TData, TNode>(client: ApolloClient, document: TypedDocumentNode<TData, { ids: string[]; offset: number }>, ids: readonly string[], read: (data: TData) => { nodes: TNode[]; more: boolean }): Promise<TNode[]> {
-  const out: TNode[] = [];
-  for (const part of chunks(ids)) {
-    for (let offset = 0; ; offset += CHUNK) {
-      const { data } = await client.query({ query: document, variables: { ids: part, offset }, fetchPolicy: "network-only" });
-      const page = read(data as TData);
-      out.push(...page.nodes);
-      if (!page.more) break;
-    }
-  }
-  return out;
-}
 
 async function byIds<TData, TNode extends { id: string }>(client: ApolloClient, document: TypedDocumentNode<TData, { ids: string[] }>, ids: readonly string[], nodes: (data: TData) => TNode[]): Promise<Map<string, TNode>> {
   const found = new Map<string, TNode>();
@@ -114,21 +83,26 @@ async function byIds<TData, TNode extends { id: string }>(client: ApolloClient, 
 }
 
 const idsOf = (targets: readonly PlaylistTarget[], kind: PlaylistTarget["kind"]) => targets.filter((target) => target.kind === kind).map((target) => target.id);
-const trackOrder = (a: TrackNode, b: TrackNode) => (a.discNumber ?? 1) - (b.discNumber ?? 1) || a.trackNumber - b.trackNumber;
-const episodeOrder = (a: EpisodeNode, b: EpisodeNode) => a.season - b.season || a.episode - b.episode;
+
+/** Each distinct container expanded once, by the queue's own helper for it. */
+async function expanded(client: ApolloClient, targets: readonly PlaylistTarget[], kind: "album" | "show" | "audiobook", expand: (client: ApolloClient, id: string) => Promise<PlayItem[]>): Promise<Map<string, PlayItem[]>> {
+  const ids = [...new Set(idsOf(targets, kind))];
+  return new Map(await Promise.all(ids.map(async (id) => [id, await expand(client, id)] as const)));
+}
 
 /** The player's items for an ordered list of targets. See the module comment for the rules. */
 export async function playlistPlayItems(client: ApolloClient, targets: readonly PlaylistTarget[]): Promise<PlaylistPlayItems> {
-  const [movies, episodes, tracks, chapters, albumTracks, showEpisodes, bookChapters] = await Promise.all([
+  const [movies, episodes, tracks, chapters, albums, shows, books] = await Promise.all([
     byIds(client, PlaylistPlayMoviesDocument, idsOf(targets, "movie"), (data) => data.movies.edges.map((edge) => edge.node)),
     byIds(client, PlaylistPlayEpisodesDocument, idsOf(targets, "episode"), (data) => data.episodes.edges.map((edge) => edge.node)),
     byIds(client, PlaylistPlayTracksDocument, idsOf(targets, "track"), (data) => data.tracks.edges.map((edge) => edge.node)),
     byIds(client, PlaylistPlayChaptersDocument, idsOf(targets, "chapter"), (data) => data.chapters.edges.map((edge) => edge.node)),
-    children(client, PlaylistAlbumTracksDocument, [...new Set(idsOf(targets, "album"))], (data: PlaylistAlbumTracksQuery) => ({ nodes: data.tracks.edges.map((edge) => edge.node), more: data.tracks.pageInfo.hasNextPage })),
-    children(client, PlaylistShowEpisodesDocument, [...new Set(idsOf(targets, "show"))], (data: PlaylistShowEpisodesQuery) => ({ nodes: data.episodes.edges.map((edge) => edge.node), more: data.episodes.pageInfo.hasNextPage })),
-    children(client, PlaylistBookChaptersDocument, [...new Set(idsOf(targets, "audiobook"))], (data: PlaylistBookChaptersQuery) => ({ nodes: data.chapters.edges.map((edge) => edge.node), more: data.chapters.pageInfo.hasNextPage })),
+    expanded(client, targets, "album", albumPlayItems),
+    expanded(client, targets, "show", showPlayItems),
+    expanded(client, targets, "audiobook", audiobookItems),
   ]);
   const items: PlayItem[] = [];
+  const starts: (number | null)[] = [];
   let skipped = 0;
   for (const target of targets) {
     const found: PlayItem[] = (() => {
@@ -137,15 +111,21 @@ export async function playlistPlayItems(client: ApolloClient, targets: readonly 
         case "episode": return [episodes.get(target.id)].flatMap((episode) => episode ? [episodeItem(episode)] : []);
         case "track": return [tracks.get(target.id)].flatMap((track) => track ? [trackItem(track)] : []);
         case "chapter": return [chapters.get(target.id)].flatMap((chapter) => chapter ? [chapterItem(chapter)] : []);
-        case "album": return albumTracks.filter((track) => track.albumId === target.id).sort(trackOrder).map(trackItem);
-        case "show": return showEpisodes.filter((episode) => episode.showId === target.id).sort(episodeOrder).map(episodeItem);
-        case "audiobook": return bookItems(bookChapters.filter((chapter) => chapter.audiobookId === target.id));
+        case "album": return albums.get(target.id) ?? [];
+        case "show": return shows.get(target.id) ?? [];
+        case "audiobook": return books.get(target.id) ?? [];
       }
     })().filter((item): item is PlayItem => item !== null);
+    starts.push(found.length ? items.length : null);
     if (found.length) items.push(...found);
     else skipped += 1;
   }
-  return { items, skipped };
+  return { items, skipped, starts };
+}
+
+/** What a playlist plays as: its entries in order, expanded as `playlistPlayItems` says. Read off-cache. */
+export async function expandPlaylist(client: ApolloClient, listId: string): Promise<PlayItem[]> {
+  return (await playlistPlayItems(client, await fetchPlaylistTargets(client, listId))).items;
 }
 
 /** A fair shuffle (Fisher–Yates). `random` is injectable for tests. */
@@ -158,38 +138,35 @@ export function shufflePlayItems<T>(items: readonly T[], random: () => number = 
   return next;
 }
 
-/** The slice of the player this needs: the same methods `usePlayer()` returns. */
+/** The slice of the player this needs: `usePlayer().play`, which replaces the queue and starts at an entry. */
 export interface PlaylistPlayer {
-  playAudio: (items: PlayItem[], index?: number) => void;
-  playVideo: (item: PlayItem) => void;
-  enqueue: (items: PlayItem[]) => void;
+  play: (items: PlayItem[], index?: number) => void;
 }
 
 /**
- * Puts the items in the queue in order and starts the first. Audio first: the queue plays it.
- * Video first: the video player takes it (`navigate` opens /watch) and the rest wait in the queue.
+ * Makes the items the play queue, in order, and starts at `index`. Audio and video may be mixed:
+ * the queue director opens the video player when the playing entry is video and returns to the dock
+ * when it is audio, so nothing waits behind the first item.
  */
-export function startPlaylistPlayback(player: PlaylistPlayer, navigate: (mediaFileId: string) => void, items: readonly PlayItem[]): boolean {
-  const [first, ...rest] = items;
-  if (!first) return false;
-  if (isVideoPlayItem(first)) {
-    player.playVideo(first);
-    navigate(first.mediaFileId);
-    if (rest.length) player.enqueue(rest);
-  } else player.playAudio([...items]);
+export function startPlaylistPlayback(player: PlaylistPlayer, items: readonly PlayItem[], index = 0): boolean {
+  if (!items[index]) return false;
+  player.play([...items], index);
   return true;
 }
 
-
 /**
  * The targets a list of player items stand for, in order, for "Save queue as playlist": a track is
- * a track, a chapter a chapter, a movie a movie, an episode an episode. A playlist holds each
+ * a track, a movie a movie, an episode an episode and a chapter a chapter, except that a file
+ * carrying a book's chapter marks (the whole book in one file, or one part of a book in parts) is
+ * the audiobook, so its parts save as one entry that plays the whole book. A playlist holds each
  * target once, so a repeat is dropped.
  */
-export function playItemTargets(items: readonly Pick<PlayItem, "entity">[]): PlaylistTarget[] {
+export function playItemTargets(items: readonly Pick<PlayItem, "entity" | "audiobookId" | "chapters">[]): PlaylistTarget[] {
   const seen = new Set<string>();
   return items.flatMap((item) => {
-    const target: PlaylistTarget = { kind: item.entity.kind, id: item.entity.id };
+    const target: PlaylistTarget = item.entity.kind === "chapter" && item.audiobookId && item.chapters
+      ? { kind: "audiobook", id: item.audiobookId }
+      : { kind: item.entity.kind, id: item.entity.id };
     const key = targetKey(target);
     if (seen.has(key)) return [];
     seen.add(key);

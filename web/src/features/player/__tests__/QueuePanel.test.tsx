@@ -5,16 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithProviders } from "@/test";
 
-import { playlistAdapter } from "../playlistAdapter";
 import { QueuePanel } from "../QueuePanel";
 import { playerStore, usePlayerState, type PlayItem } from "../store";
 import { useTableLayout } from "./tableLayout";
 
 vi.mock("@/lib/auth/session", () => ({ session: { onChange: () => () => {} } }));
 vi.mock("@/lib/auth/useSession", () => ({ useSession: () => ({ user: { id: "user-1" }, status: "authenticated" }) }));
-vi.mock("../playlistAdapter", async (original) => ({
-  ...(await original<typeof import("../playlistAdapter")>()),
-  playlistAdapter: { createFromItems: vi.fn(async () => ({ listId: "list-1", saved: 2, skipped: 0 })), expand: vi.fn() },
+const writes = vi.hoisted(() => ({ createPlaylist: vi.fn(async (_name: string, targets: readonly unknown[]) => ({ id: "list-1", name: "Evening", added: targets.length, alreadyThere: 0 })) }));
+vi.mock("@/features/personal/usePlaylists", async (original) => ({
+  ...(await original<typeof import("@/features/personal/usePlaylists")>()),
+  useCreatePlaylistFromTargets: () => writes.createPlaylist,
 }));
 
 const track = (id: string): PlayItem => ({ mediaFileId: `file-${id}`, title: `Song ${id}`, entity: { kind: "track", id } });
@@ -75,7 +75,7 @@ describe("QueuePanel", () => {
   it("moves, plays next and removes from a row's menu", async () => {
     await renderWithProviders(<Panel />, { router: false, shell: true });
     await userEvent.pointer({ keys: "[MouseRight]", target: await row(/Song d/) });
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Play", "Play next", "Move up", "Remove from queue"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Play", "Play next", "Move up", "Add to playlist…", "Remove from queue"]);
     await userEvent.click(screen.getByRole("menuitem", { name: "Play next" }));
     await waitFor(() => expect(titles()).toEqual(["Song a", "Song d", "Song b", "Song c"]));
     await userEvent.pointer({ keys: "[MouseRight]", target: await row(/Song c/) });
@@ -98,19 +98,36 @@ describe("QueuePanel", () => {
     await userEvent.clear(name);
     await userEvent.type(name, "Evening");
     await userEvent.click(within(dialog).getByRole("button", { name: "Save playlist" }));
-    await waitFor(() => expect(playlistAdapter.createFromItems).toHaveBeenCalledTimes(1));
-    const [, input] = vi.mocked(playlistAdapter.createFromItems).mock.calls[0]!;
-    expect(input).toMatchObject({ userId: "user-1", name: "Evening" });
-    expect(input.items.map((entry) => entry.title)).toEqual(["Song a", "Song b", "Song c", "Song d"]);
+    await waitFor(() => expect(writes.createPlaylist).toHaveBeenCalledTimes(1));
+    expect(writes.createPlaylist).toHaveBeenCalledWith("Evening", ["a", "b", "c", "d"].map((id) => ({ kind: "track", id })));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Save queue as playlist" })).not.toBeInTheDocument());
   });
 
-  it("will not save a queue that holds only what playlists cannot hold yet", async () => {
-    playerStore.playQueue([{ mediaFileId: "file-e", title: "Episode", entity: { kind: "episode", id: "e" } }]);
+  it("keeps every item of a mixed queue, episodes and chapters included", async () => {
+    playerStore.playQueue([
+      track("t1"),
+      { mediaFileId: "file-e", title: "Episode", entity: { kind: "episode", id: "e1" } },
+      { mediaFileId: "file-m", title: "Film", entity: { kind: "movie", id: "m1" } },
+      { mediaFileId: "file-c", title: "Chapter", entity: { kind: "chapter", id: "c1" } },
+    ]);
     await renderWithProviders(<Panel />, { router: false, shell: true });
     await userEvent.click(screen.getByRole("button", { name: "Save as playlist" }));
     const dialog = await screen.findByRole("dialog", { name: "Save queue as playlist" });
-    expect(within(dialog).getByRole("button", { name: "Save playlist" })).toBeDisabled();
-    expect(within(dialog).getByText(/cannot hold episodes or chapters yet/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Save playlist" })).toBeEnabled();
+    expect(within(dialog).queryByText(/cannot/)).not.toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save playlist" }));
+    await waitFor(() => expect(writes.createPlaylist).toHaveBeenCalledTimes(1));
+    expect(writes.createPlaylist.mock.calls[0]![1]).toEqual([{ kind: "track", id: "t1" }, { kind: "episode", id: "e1" }, { kind: "movie", id: "m1" }, { kind: "chapter", id: "c1" }]);
+  });
+
+  it("saves a repeat once and says so", async () => {
+    playerStore.playQueue([track("a"), track("b"), track("a")]);
+    await renderWithProviders(<Panel />, { router: false, shell: true });
+    await userEvent.click(screen.getByRole("button", { name: "Save as playlist" }));
+    const dialog = await screen.findByRole("dialog", { name: "Save queue as playlist" });
+    expect(within(dialog).getByText(/1 repeat is saved once/)).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save playlist" }));
+    await waitFor(() => expect(writes.createPlaylist).toHaveBeenCalledTimes(1));
+    expect(writes.createPlaylist.mock.calls[0]![1]).toEqual([{ kind: "track", id: "a" }, { kind: "track", id: "b" }]);
   });
 });

@@ -2,7 +2,6 @@ import type { ApolloClient } from "@apollo/client";
 import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { playlistAdapter, savableItems } from "../playlistAdapter";
 import { resolveQueueSources, useQueueActions } from "../queueActions";
 import { playerStore, type PlayItem } from "../store";
 
@@ -12,9 +11,6 @@ const apollo = vi.hoisted(() => ({ client: { query: vi.fn(), mutate: vi.fn() } }
 vi.mock("@apollo/client/react", () => ({ useApolloClient: () => apollo.client }));
 
 const track = (id: string): PlayItem => ({ mediaFileId: `file-${id}`, title: id, entity: { kind: "track", id } });
-const episode = (id: string): PlayItem => ({ mediaFileId: `file-${id}`, title: id, entity: { kind: "episode", id } });
-const chapter = (id: string): PlayItem => ({ mediaFileId: `file-${id}`, title: id, entity: { kind: "chapter", id } });
-const movie = (id: string): PlayItem => ({ mediaFileId: `file-${id}`, title: id, entity: { kind: "movie", id } });
 const titles = () => playerStore.getSnapshot().queue.map((entry) => entry.title);
 const client = apollo.client as unknown as ApolloClient;
 
@@ -74,50 +70,45 @@ describe("Play next and Add to queue", () => {
   });
 });
 
-describe("the playlist adapter", () => {
-  it("saves tracks and movies in queue order and reports what lists cannot hold yet", async () => {
-    apollo.client.mutate.mockImplementation(async ({ variables }: { variables: { input: Record<string, unknown> } }) => (
-      "kind" in variables.input
-        ? { data: { createPersonalList: { success: true, error: null, personalList: { id: "list-1" } } } }
-        : { data: { createListEntry: { success: true, error: null } } }
-    ));
-    const queue = [track("t1"), episode("e1"), movie("m1"), chapter("c1"), track("t2")];
-    const result = await playlistAdapter.createFromItems(client, { userId: "user-1", name: "  Road trip ", items: queue });
-    expect(result).toEqual({ listId: "list-1", saved: 3, skipped: 2 });
-    const inputs = apollo.client.mutate.mock.calls.map(([call]) => call.variables.input);
-    expect(inputs[0]).toEqual({ userId: "user-1", name: "Road trip", kind: "MANUAL", description: null, savedViewId: null });
-    expect(inputs.slice(1)).toEqual([
-      { userId: "user-1", listId: "list-1", position: 0, trackId: "t1" },
-      { userId: "user-1", listId: "list-1", position: 1, movieId: "m1" },
-      { userId: "user-1", listId: "list-1", position: 2, trackId: "t2" },
-    ]);
+const personal = vi.hoisted(() => ({ fetchPlaylistTargets: vi.fn() }));
+vi.mock("@/features/personal/usePlaylists", async (original) => ({ ...(await original<typeof import("@/features/personal/usePlaylists")>()), fetchPlaylistTargets: personal.fetchPlaylistTargets }));
+
+describe("playlists as a queue source", () => {
+  /** Answers each generated document by operation name with the rows it has for the requested ids. */
+  const answer = (rows: Record<string, Array<{ id: string }>>) => apollo.client.query.mockImplementation(async ({ query: document, variables }: { query: { definitions: Array<{ name: { value: string } }> }; variables: { ids: string[] } }) => {
+    const name = document.definitions[0]!.name.value;
+    const field = name.includes("Movies") ? "movies" : name.includes("Episodes") ? "episodes" : name.includes("Tracks") ? "tracks" : "chapters";
+    return { data: { [field]: { edges: (rows[name] ?? []).filter((row) => variables.ids.includes(row.id)).map((node) => ({ node })), pageInfo: { hasNextPage: false } } } };
+  });
+  const rows = {
+    PlaylistPlayMovies: [{ id: "m1", title: "Film", year: 1999, runtime: 90, mediaFileId: "file-m1" }],
+    PlaylistPlayEpisodes: [{ id: "e1", showId: "s", season: 1, episode: 2, title: "Pilot", runtime: 40, mediaFileId: "file-e1", show: { id: "s", name: "Series" } }],
+    PlaylistPlayTracks: [{ id: "t1", title: "Song", albumId: "a", discNumber: 1, trackNumber: 1, artistName: "Band", durationSecs: 90, mediaFileId: "file-t1", album: { id: "a", name: "Record" } }, { id: "t2", title: "No file", albumId: "a", discNumber: 1, trackNumber: 2, artistName: null, durationSecs: null, mediaFileId: null, album: null }],
+    PlaylistPlayChapters: [{ id: "c1", audiobookId: "b", chapterNumber: 1, title: "One", startTimeSecs: 0, durationSecs: 600, fileOffsetSecs: null, mediaFileId: "file-c1", mediaFile: { id: "file-c1", duration: 600 }, audiobook: { id: "b", title: "Book", authorName: "Author" } }],
+  };
+
+  it("expands a playlist to every kind it holds, in position order, leaving out what has no file", async () => {
+    personal.fetchPlaylistTargets.mockResolvedValue([{ kind: "movie", id: "m1" }, { kind: "track", id: "t2" }, { kind: "episode", id: "e1" }, { kind: "chapter", id: "c1" }, { kind: "track", id: "t1" }]);
+    answer(rows);
+    const items = await resolveQueueSources(client, [{ kind: "playlist", id: "list-1" }]);
+    expect(personal.fetchPlaylistTargets).toHaveBeenCalledWith(client, "list-1");
+    expect(items.map((entry) => `${entry.entity.kind}:${entry.entity.id}`)).toEqual(["movie:m1", "episode:e1", "chapter:c1", "track:t1"]);
   });
 
-  it("creates nothing when nothing in the queue can be saved", async () => {
-    await expect(playlistAdapter.createFromItems(client, { userId: "user-1", name: "Shows", items: [episode("e1"), chapter("c1")] })).rejects.toThrow(/Episodes and chapters/);
-    expect(apollo.client.mutate).not.toHaveBeenCalled();
+  it("queues a playlist after what is playing: Play next and Add to queue with a playlist source", async () => {
+    personal.fetchPlaylistTargets.mockResolvedValue([{ kind: "episode", id: "e1" }, { kind: "track", id: "t1" }]);
+    answer(rows);
+    playerStore.playQueue([track("now"), track("later")]);
+    const list = renderHook(() => useQueueActions<{ id: string }>((selected) => selected.map((row) => ({ kind: "playlist" as const, id: row.id })))).result.current;
+    await list.find((action) => action.id === "play-next")!.run!([{ id: "list-1" }], {} as never);
+    expect(playerStore.getSnapshot().queue.map((entry) => entry.entity.id)).toEqual(["now", "e1", "t1", "later"]);
+    await list.find((action) => action.id === "enqueue")!.run!([{ id: "list-1" }], {} as never);
+    expect(playerStore.getSnapshot().queue.map((entry) => entry.entity.id)).toEqual(["now", "e1", "t1", "later", "e1", "t1"]);
   });
 
-  it("reports a failed save rather than a half-made playlist as success", async () => {
-    apollo.client.mutate.mockResolvedValueOnce({ data: { createPersonalList: { success: true, error: null, personalList: { id: "list-1" } } } })
-      .mockResolvedValueOnce({ data: { createListEntry: { success: false, error: "nope" } } });
-    await expect(playlistAdapter.createFromItems(client, { userId: "user-1", name: "X", items: [track("t1")] })).rejects.toThrow();
-  });
-
-  it("knows which items it can save", () => {
-    expect(savableItems([track("t"), episode("e"), movie("m"), chapter("c")]).map((entry) => entry.entity.kind)).toEqual(["track", "movie"]);
-  });
-
-  it("expands a playlist to its entries' play items, in position order", async () => {
-    apollo.client.query.mockResolvedValue({ data: { listEntries: {
-      edges: [
-        { node: { id: "1", movie: { id: "m1", title: "Film", year: 1999, libraryId: "l", mediaFileId: "file-m1" }, track: null, albumId: null, audiobookId: null, showId: null } },
-        { node: { id: "2", movie: null, track: { id: "t1", title: "Song", albumId: "album", artistName: "Band", mediaFileId: "file-t1", durationSecs: 90, album: { id: "album", coverUrl: null } }, albumId: null, audiobookId: null, showId: null } },
-        { node: { id: "3", movie: null, track: { id: "t2", title: "No file", albumId: "album", artistName: null, mediaFileId: null, durationSecs: null, album: null }, albumId: null, audiobookId: null, showId: null } },
-      ],
-      pageInfo: { hasNextPage: false, totalCount: 3 },
-    } } });
-    const items = await playlistAdapter.expand(client, "list-1");
-    expect(items.map((entry) => `${entry.entity.kind}:${entry.title}`)).toEqual(["movie:Film", "track:Song"]);
+  it("resolves a list of targets, episodes and chapters included, as one source", async () => {
+    answer(rows);
+    const items = await resolveQueueSources(client, [{ kind: "targets", targets: [{ kind: "chapter", id: "c1" }, { kind: "episode", id: "e1" }] }, { kind: "movie", id: "m1" }]);
+    expect(items.map((entry) => entry.entity.id)).toEqual(["c1", "e1", "m1"]);
   });
 });

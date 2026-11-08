@@ -1,20 +1,18 @@
-import { useApolloClient } from "@apollo/client/react";
 import { Field } from "glass-ux/field";
 import { Input } from "glass-ux/input";
 import { toast } from "glass-ux/toast";
 import { useEffect, useState } from "react";
 
 import { Button, Dialog } from "@/components/ui";
-import { useSession } from "@/lib/auth/useSession";
+import { playItemTargets } from "@/features/personal/playlistPlayback";
+import { useCreatePlaylistFromTargets } from "@/features/personal/usePlaylists";
 import { errorMessage } from "@/lib/graphql/errors";
 
-import { playlistAdapter, savableItems } from "./playlistAdapter";
 import { playerStore } from "./store";
 
-/** Names the queue and saves its entries, in order, as a new playlist. */
+/** Names the queue and saves its entries, in order, as a new playlist: every track, chapter, movie and episode. */
 export function SaveQueueDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const client = useApolloClient();
-  const { user } = useSession();
+  const createPlaylist = useCreatePlaylistFromTargets();
   const [name, setName] = useState("");
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string>();
@@ -25,16 +23,16 @@ export function SaveQueueDialog({ open, onOpenChange }: { open: boolean; onOpenC
   }, [open]);
 
   const items = open ? playerStore.getSnapshot().queue : [];
-  const savable = savableItems(items).length;
-  const skipped = items.length - savable;
+  // A playlist holds each thing once, so a repeat in the queue is saved once.
+  const targets = playItemTargets(items);
+  const repeats = items.length - targets.length;
 
   const save = async () => {
-    if (!user) return;
     setPending(true);
     setFailure(undefined);
     try {
-      const result = await playlistAdapter.createFromItems(client, { userId: user.id, name, items });
-      toast.success(`Saved ${result.saved} ${result.saved === 1 ? "item" : "items"} to "${name.trim()}"${result.skipped ? `. ${result.skipped} ${result.skipped === 1 ? "item" : "items"} could not be saved.` : ""}`);
+      const result = await createPlaylist(name, targets);
+      toast.success(`Saved ${result.added} ${result.added === 1 ? "item" : "items"} to "${name.trim()}"`);
       onOpenChange(false);
     } catch (error) {
       setFailure(errorMessage(error));
@@ -53,13 +51,13 @@ export function SaveQueueDialog({ open, onOpenChange }: { open: boolean; onOpenC
       footer={
         <>
           <Button variant="ghost" onPress={() => onOpenChange(false)} isDisabled={pending}>Cancel</Button>
-          <Button variant="primary" isPending={pending} isDisabled={!name.trim() || savable === 0} onPress={() => void save()}>Save playlist</Button>
+          <Button variant="primary" isPending={pending} isDisabled={!name.trim() || targets.length === 0} onPress={() => void save()}>Save playlist</Button>
         </>
       }
     >
-      <form className="flex min-w-0 flex-col gap-3" onSubmit={(event) => { event.preventDefault(); if (name.trim() && savable > 0 && !pending) void save(); }}>
+      <form className="flex min-w-0 flex-col gap-3" onSubmit={(event) => { event.preventDefault(); if (name.trim() && targets.length > 0 && !pending) void save(); }}>
         <Field label="Name"><Input value={name} onValueChange={setName} required disabled={pending} autoFocus /></Field>
-        {skipped > 0 ? <p className="text-body-sm text-muted">{savable === 0 ? "Playlists cannot hold episodes or chapters yet, so nothing in this queue can be saved." : `${skipped} ${skipped === 1 ? "item" : "items"} (episodes and chapters) cannot be saved to a playlist yet and will be left out.`}</p> : null}
+        {repeats > 0 ? <p className="text-body-sm text-muted">{`${repeats} ${repeats === 1 ? "repeat is" : "repeats are"} saved once, because a playlist holds each item once.`}</p> : null}
         {failure ? <p role="alert" className="text-body-sm text-danger">{failure}</p> : null}
       </form>
     </Dialog>

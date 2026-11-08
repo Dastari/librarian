@@ -77,25 +77,3 @@ query PlaylistPlayChapters($ids: [String!]!) {
     edges { node { id audiobookId chapterNumber title startTimeSecs durationSecs fileOffsetSecs mediaFileId mediaFile { id duration } audiobook { id title authorName } } }
   }
 }
-
-# Containers expand to their playable children; the caller sorts them and follows hasNextPage.
-query PlaylistAlbumTracks($ids: [String!]!, $offset: Int!) {
-  tracks(where: { albumId: { inList: $ids } }, orderBy: [{ discNumber: ASC }, { trackNumber: ASC }], page: { limit: 100, offset: $offset }) {
-    edges { node { id title albumId discNumber trackNumber artistName durationSecs mediaFileId album { id name } } }
-    pageInfo { hasNextPage }
-  }
-}
-
-query PlaylistShowEpisodes($ids: [String!]!, $offset: Int!) {
-  episodes(where: { showId: { inList: $ids } }, orderBy: [{ season: ASC }, { episode: ASC }], page: { limit: 100, offset: $offset }) {
-    edges { node { id showId season episode title runtime mediaFileId show { id name } } }
-    pageInfo { hasNextPage }
-  }
-}
-
-query PlaylistBookChapters($ids: [String!]!, $offset: Int!) {
-  chapters(where: { audiobookId: { inList: $ids } }, orderBy: [{ chapterNumber: ASC }], page: { limit: 100, offset: $offset }) {
-    edges { node { id audiobookId chapterNumber title startTimeSecs durationSecs fileOffsetSecs mediaFileId mediaFile { id duration } audiobook { id title authorName } } }
-    pageInfo { hasNextPage }
-  }
-}

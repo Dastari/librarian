@@ -6,25 +6,13 @@ import {
   AudiobookChaptersPageDocument,
   AudiobookDetailDocument,
   AudiobookPartsDocument,
-  EntityAlbumGetDocument,
-  EntityMovieGetDocument,
-  EntityTrackGetDocument,
-  EpisodeDetailDocument,
   ShowDetailDocument,
   ShowEpisodesDocument,
   ShowEpisodesPageDocument,
 } from "@/graphql/generated/graphql";
 
-import { audiobookPlayItems, episodePlayItem, isPartsBook, moviePlayItem, trackPlayItem } from "./playItems";
+import { audiobookPlayItems, episodePlayItem, isPartsBook, trackPlayItem } from "./playItems";
 import type { PlayItem } from "./store";
-
-/**
- * Anything playable that can be named without its page being open: what "Play next" and "Add to
- * queue" act on from a poster, a table row or a menu. A show, album or book expands to its
- * playable children in order; a movie, track or episode is itself.
- */
-export type PlayableRef =
-  | { kind: "movie" | "show" | "album" | "audiobook" | "track" | "episode"; id: string };
 
 interface Connection<T> {
   edges: Array<{ node: T }>;
@@ -94,33 +82,4 @@ export async function showPlayItems(client: ApolloClient, showId: string): Promi
     .sort((a, b) => season(a.season) - season(b.season) || a.episode - b.episode)
     .map((episode) => episodePlayItem(episode, show))
     .filter((item): item is PlayItem => item !== null);
-}
-
-/** What a reference plays as, in order. Empty when nothing under it has a file. */
-export async function resolvePlayItems(client: ApolloClient, ref: PlayableRef): Promise<PlayItem[]> {
-  switch (ref.kind) {
-    case "movie": {
-      const { data } = await client.query({ query: EntityMovieGetDocument, variables: { id: ref.id }, ...read });
-      const item = data?.movie ? moviePlayItem(data.movie) : null;
-      return item ? [item] : [];
-    }
-    case "show":
-      return showPlayItems(client, ref.id);
-    case "album":
-      return albumPlayItems(client, ref.id);
-    case "audiobook":
-      return audiobookItems(client, ref.id);
-    case "track": {
-      const { data } = await client.query({ query: EntityTrackGetDocument, variables: { id: ref.id }, ...read });
-      if (!data?.track) return [];
-      const album = await client.query({ query: EntityAlbumGetDocument, variables: { id: data.track.albumId }, ...read });
-      const item = trackPlayItem({ ...data.track, album: album.data?.album });
-      return item ? [item] : [];
-    }
-    case "episode": {
-      const { data } = await client.query({ query: EpisodeDetailDocument, variables: { id: ref.id }, ...read });
-      const item = data?.episode?.show ? episodePlayItem(data.episode, data.episode.show) : null;
-      return item ? [item] : [];
-    }
-  }
 }

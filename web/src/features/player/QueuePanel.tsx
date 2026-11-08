@@ -1,4 +1,4 @@
-import { defineActions, type ActionSet } from "glass-ux/actions";
+import { defineActions, type ActionDefinition, type ActionSet } from "glass-ux/actions";
 import { Button } from "glass-ux/button";
 import { createDataTableColumns, DataTable, TextCell } from "glass-ux/data-table";
 import { IconArrowDown, IconArrowUp, IconPlay, IconSave, IconSkipForward, IconTrash } from "glass-ux/icons";
@@ -7,6 +7,8 @@ import { createContext, useContext, useMemo, useState, type RefObject } from "re
 import { Artwork } from "@/components/ui";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { PlayingBars } from "@/features/media/RowPlayAction";
+import { playItemTargets } from "@/features/personal/playlistPlayback";
+import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
 import { useSession } from "@/lib/auth/useSession";
 import { formatClock } from "@/lib/format";
 import { useSelectableTableState } from "@/hooks/useTableSelection";
@@ -60,13 +62,14 @@ const getRowLabel = (row: QueueRow) => row.item.title;
 const noop = () => undefined;
 
 /** The queue's own actions: what can be done to its entries from a row's menu, right-click or the bulk bar. */
-function queueActions(state: PlayerState): ActionSet<QueueRow> {
+function queueActions(state: PlayerState, addToPlaylist: ActionDefinition<QueueRow>): ActionSet<QueueRow> {
   const atCurrent = (rows: readonly QueueRow[]) => rows.length === 1 && rows[0]!.index === state.index;
   return defineActions<QueueRow>("queue-entry", [
     { id: "play", label: "Play", icon: IconPlay, group: "open", priority: 1, bulk: true, visible: (rows) => rows.length === 1 && !atCurrent(rows), run: ([row]) => playerStore.jumpTo(row!.index) },
     { id: "play-next", label: "Play next", icon: IconSkipForward, group: "organise", bulk: true, visible: (rows) => rows.length === 1 && !atCurrent(rows) && rows[0]!.index !== state.index + 1, run: ([row]) => playerStore.move(row!.index, row!.index > state.index ? state.index + 1 : state.index) },
     { id: "up", label: "Move up", icon: IconArrowUp, group: "organise", bulk: true, visible: (rows) => rows.length === 1 && rows[0]!.index > 0, run: ([row]) => playerStore.move(row!.index, row!.index - 1) },
     { id: "down", label: "Move down", icon: IconArrowDown, group: "organise", bulk: true, visible: (rows) => rows.length === 1 && rows[0]!.index < state.queue.length - 1, run: ([row]) => playerStore.move(row!.index, row!.index + 1) },
+    addToPlaylist,
     {
       id: "remove", label: (rows) => (rows.length === 1 ? "Remove from queue" : `Remove ${rows.length} from queue`), icon: IconTrash, group: "danger", bulk: true,
       // Highest index first, so the earlier removals do not move the later ones.
@@ -85,7 +88,13 @@ export function QueuePanel({ state, listRef, fill }: { state: PlayerState; listR
   const [saving, setSaving] = useState(false);
   const rows = useMemo<QueueRow[]>(() => state.queue.map((item, index) => ({ id: item.queueId ?? String(index), item, index })), [state.queue]);
   const table = useSelectableTableState({ scope: [user?.id], rows, getRowId });
-  const actions = useMemo(() => queueActions(state), [state]);
+  const playlist = useAddToPlaylist<QueueRow>({
+    targetsOf: (selected) => playItemTargets(selected.map((row) => row.item)),
+    titleOf: (selected) => playlistTitle(selected, selected[0]!.item.title, { one: "item", other: "items" }),
+    bulk: true,
+    priority: 5,
+  });
+  const actions = useMemo(() => queueActions(state, playlist.action), [state, playlist.action]);
   const context = useMemo(() => ({ currentId: state.queue[state.index]?.queueId, playing: state.transport.playing }), [state.queue, state.index, state.transport.playing]);
   const upcoming = state.queue.length - state.index - 1;
 
@@ -127,6 +136,7 @@ export function QueuePanel({ state, listRef, fill }: { state: PlayerState; listR
         </QueueContext.Provider>
       </div>
       <SaveQueueDialog open={saving} onOpenChange={setSaving} />
+      {playlist.dialog}
     </div>
   );
 }

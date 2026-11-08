@@ -93,15 +93,42 @@ describe("playlist page reorder and row menu focus", () => {
   });
 });
 
+const answerMovies = async (view: Awaited<ReturnType<typeof mountList>>, ids: string[], nth = 0) => {
+  const resolve = await view.next(PlaylistPlayMoviesDocument, nth);
+  expect(resolve.operation.variables).toEqual({ ids });
+  await respond(resolve, { movies: { edges: ids.map((id) => ({ node: { __typename: "Movie", id, title: id, year: 2026, runtime: 100, mediaFileId: `file-${id.at(-1)}` } })) } });
+};
+const queueIds = () => playerStore.getSnapshot().queue.map((item) => item.entity.id);
+
 describe("playlist page playing", () => {
-  it("plays from the chosen entry: its video first, the rest queued in order", async () => {
+  it("plays from the chosen entry with the whole playlist as the queue, so Previous still has what came before", async () => {
     const view = await mountList();
     await choose("Second film", "Play from here");
-    const resolve = await view.next(PlaylistPlayMoviesDocument);
-    expect(resolve.operation.variables).toEqual({ ids: ["movie-1", "movie-2"] });
-    await respond(resolve, { movies: { edges: ["movie-2", "movie-1"].map((id) => ({ node: { __typename: "Movie", id, title: id, year: 2026, runtime: 100, mediaFileId: `file-${id.at(-1)}` } })) } });
+    await answerMovies(view, ["movie-0", "movie-1", "movie-2"]);
     await waitFor(() => expect(playerStore.getSnapshot().video?.entity.id).toBe("movie-1"));
-    expect(playerStore.getSnapshot().queue.map((item) => item.entity.id)).toEqual(["movie-2"]);
+    expect(queueIds()).toEqual(["movie-0", "movie-1", "movie-2"]);
+    expect(playerStore.getSnapshot().index).toBe(1);
+  });
+
+  it("shuffles from the chosen entry: it and what follows, in the queue", async () => {
+    const view = await mountList();
+    await choose("Second film", "Shuffle from here");
+    await answerMovies(view, ["movie-0", "movie-1", "movie-2"]);
+    await waitFor(() => expect(playerStore.getSnapshot().queue).toHaveLength(2));
+    expect([...queueIds()].sort()).toEqual(["movie-1", "movie-2"]);
+    expect(playerStore.getSnapshot().index).toBe(0);
+  });
+
+  it("offers Play next and Add to queue on an entry, queuing just that entry without touching what plays", async () => {
+    const view = await mountList();
+    playerStore.playQueue([{ mediaFileId: "file-now", title: "Now", entity: { kind: "track", id: "now" } }, { mediaFileId: "file-later", title: "Later", entity: { kind: "track", id: "later" } }]);
+    await choose("Second film", "Play next");
+    await answerMovies(view, ["movie-1"]);
+    await waitFor(() => expect(queueIds()).toEqual(["now", "movie-1", "later"]));
+    await choose("Third film", "Add to queue");
+    await answerMovies(view, ["movie-2"], 1);
+    await waitFor(() => expect(queueIds()).toEqual(["now", "movie-1", "later", "movie-2"]));
+    expect(playerStore.getSnapshot().index).toBe(0);
   });
 });
 

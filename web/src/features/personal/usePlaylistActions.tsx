@@ -3,6 +3,7 @@ import { defineActions, type ActionSet } from "glass-ux/actions";
 import { IconEdit, IconExternalLink, IconPin, IconPlay, IconSettings, IconShuffle, IconTrash } from "glass-ux/icons";
 import { useMemo } from "react";
 
+import { useQueueActions } from "@/features/player/queueActions";
 import { EntityPersonalListDeleteDocument } from "@/graphql/generated/graphql";
 import { assertSuccess } from "@/lib/graphql/errors";
 
@@ -22,6 +23,8 @@ export function usePlaylistActions<T extends PlaylistEntity>({ settings, open = 
 }): ActionSet<T> {
   const playback = usePlaylistPlayback();
   const home = useHomeShelves();
+  // Play next / Add to queue: each selected playlist's entries, in order. Smart collections hold none.
+  const queueActions = useQueueActions<T>((rows) => rows.map((row) => ({ kind: "playlist" as const, id: row.id })), { visible: (rows) => rows.every((row) => row.kind !== "SMART") });
   const [remove] = useMutation(EntityPersonalListDeleteDocument);
   return useMemo(() => {
     const one = (rows: readonly T[]) => rows.length === 1;
@@ -36,6 +39,7 @@ export function usePlaylistActions<T extends PlaylistEntity>({ settings, open = 
         id: "shuffle", label: "Shuffle", icon: IconShuffle, group: "open", priority: 1,
         visible: playable, run: (rows) => playback.shufflePlaylist(rows[0]!.id),
       },
+      ...queueActions,
       ...(open ? [{
         id: "open", label: "Open playlist", icon: IconExternalLink, group: "open" as const, priority: 2,
         visible: one, run: (rows: readonly T[], context: { navigate: (href: string) => void }) => context.navigate(`/lists/${rows[0]!.id}`),
@@ -72,5 +76,5 @@ export function usePlaylistActions<T extends PlaylistEntity>({ settings, open = 
         },
       },
     ]);
-  }, [home.complete, home.rows, home.save, open, playback, remove, settings]);
+  }, [home.complete, home.rows, home.save, open, playback, queueActions, remove, settings]);
 }

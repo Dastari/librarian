@@ -1,10 +1,16 @@
 import type { ApolloClient } from "@apollo/client";
 import { getOperationAST } from "graphql";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PlayItem } from "@/features/player/store";
 
-import { isVideoPlayItem, playItemTargets, playlistPlayItems, shufflePlayItems, startPlaylistPlayback } from "../playlistPlayback";
+import { expandPlaylist, isVideoPlayItem, playItemTargets, playlistPlayItems, shufflePlayItems, startPlaylistPlayback } from "../playlistPlayback";
+
+// Containers expand through the queue's own helpers; these stand in for them.
+const playables = vi.hoisted(() => ({ albumPlayItems: vi.fn(), showPlayItems: vi.fn(), audiobookItems: vi.fn() }));
+vi.mock("@/features/player/playables", () => playables);
+const members = vi.hoisted(() => ({ fetchPlaylistTargets: vi.fn() }));
+vi.mock("../usePlaylists", () => members);
 
 type Rows = Record<string, unknown[]>;
 
@@ -16,11 +22,7 @@ function fakeClient(answers: Rows) {
       const name = getOperationAST(query)!.name!.value;
       asked.push({ name, variables });
       const field = name.includes("Movies") ? "movies" : name.includes("Episodes") ? "episodes" : name.includes("Tracks") ? "tracks" : "chapters";
-      const rows = (answers[name] ?? []).filter((row) => {
-        const ids = variables.ids as string[];
-        const parent = name === "PlaylistAlbumTracks" ? (row as { albumId: string }).albumId : name === "PlaylistShowEpisodes" ? (row as { showId: string }).showId : name === "PlaylistBookChapters" ? (row as { audiobookId: string }).audiobookId : (row as { id: string }).id;
-        return ids.includes(parent);
-      });
+      const rows = (answers[name] ?? []).filter((row) => (variables.ids as string[]).includes((row as { id: string }).id));
       return { data: { [field]: { edges: rows.map((node) => ({ node })), pageInfo: { hasNextPage: false } } } };
     },
   } as unknown as ApolloClient;
@@ -34,6 +36,7 @@ const chapter = (id: string, chapterNumber: number, mediaFileId: string | null, 
 const movie = (id: string, mediaFileId: string | null = `f-${id}`) => ({ id, title: `Film ${id}`, year: 2020, runtime: 90, mediaFileId });
 
 describe("playlistPlayItems", () => {
+  beforeEach(() => vi.clearAllMocks());
   it("keeps playlist order across kinds, tracks and chapters as audio, movies and episodes as video", async () => {
     const { client } = fakeClient({
       PlaylistPlayMovies: [movie("m1")], PlaylistPlayEpisodes: [episode("e1", 1, 1)],
@@ -45,36 +48,38 @@ describe("playlistPlayItems", () => {
     expect(skipped).toBe(0);
     expect(items[0]).toMatchObject({ mediaFileId: "f-t1", href: "/albums/a", subtitle: "Band · Record", duration: 200 });
     expect(items[1]).toMatchObject({ duration: 5400, href: "/movies/m1" });
-    expect(items[3]).toMatchObject({ title: "Series", subtitle: "S01E01  Ep e1", href: "/shows/s" });
+    expect(items[3]).toMatchObject({ title: "Series", subtitle: "S01 · E01  Ep e1", href: "/shows/s" });
   });
 
-  it("expands an album to its tracks by disc then number, and a show to its episodes by season then number", async () => {
-    const { client } = fakeClient({
-      PlaylistAlbumTracks: [track("t3", 1, 2), track("t2", 2, 1), track("t1", 1, 1), track("t0", 0, null)],
-      PlaylistShowEpisodes: [episode("e3", 2, 1), episode("e2", 1, 2), episode("e1", 1, 1)],
-    });
-    const { items } = await playlistPlayItems(client, [{ kind: "show", id: "s" }, { kind: "album", id: "a" }]);
-    expect(items.map((item) => item.entity.id)).toEqual(["e1", "e2", "e3", "t0", "t1", "t2", "t3"]);
+  it("expands an album, a show and an audiobook through the queue's helpers, once each, in the playlist's order", async () => {
+    const queued = (kind: PlayItem["entity"]["kind"], id: string): PlayItem => ({ mediaFileId: `f-${id}`, title: id, entity: { kind, id } });
+    playables.showPlayItems.mockResolvedValue([queued("episode", "e1"), queued("episode", "e2")]);
+    playables.albumPlayItems.mockResolvedValue([queued("track", "t1")]);
+    playables.audiobookItems.mockResolvedValue([queued("chapter", "c1")]);
+    const { client } = fakeClient({});
+    const { items, starts } = await playlistPlayItems(client, [{ kind: "show", id: "s" }, { kind: "album", id: "a" }, { kind: "audiobook", id: "b" }, { kind: "album", id: "a" }]);
+    expect(items.map((item) => item.entity.id)).toEqual(["e1", "e2", "t1", "c1", "t1"]);
+    expect(starts).toEqual([0, 2, 3, 4]);
+    expect(playables.albumPlayItems).toHaveBeenCalledTimes(1);
+    expect(playables.albumPlayItems).toHaveBeenCalledWith(client, "a");
+    expect(playables.showPlayItems).toHaveBeenCalledWith(client, "s");
+    expect(playables.audiobookItems).toHaveBeenCalledWith(client, "b");
+  });
+
+  it("carries the album and the show so playback can continue like any queued track or episode", async () => {
+    const { client } = fakeClient({ PlaylistPlayTracks: [track("t1", 1, 1)], PlaylistPlayEpisodes: [episode("e1", 1, 1)] });
+    const { items } = await playlistPlayItems(client, [{ kind: "track", id: "t1" }, { kind: "episode", id: "e1" }]);
+    expect(items[0]).toMatchObject({ albumId: "a" });
+    expect(items[1]).toMatchObject({ showId: "s" });
   });
 
   it("leaves out what has no file and counts it", async () => {
-    const { client } = fakeClient({
-      PlaylistPlayTracks: [track("t1", 1, 1, null), track("t2", 2, 1)], PlaylistAlbumTracks: [track("t9", 1, 1, null)],
-    });
-    const { items, skipped } = await playlistPlayItems(client, [{ kind: "track", id: "t1" }, { kind: "track", id: "t2" }, { kind: "album", id: "a" }, { kind: "movie", id: "gone" }]);
+    playables.albumPlayItems.mockResolvedValue([]);
+    const { client } = fakeClient({ PlaylistPlayTracks: [track("t1", 1, 1, null), track("t2", 2, 1)] });
+    const { items, skipped, starts } = await playlistPlayItems(client, [{ kind: "track", id: "t1" }, { kind: "track", id: "t2" }, { kind: "album", id: "a" }, { kind: "movie", id: "gone" }]);
     expect(items.map((item) => item.entity.id)).toEqual(["t2"]);
     expect(skipped).toBe(3);
-  });
-
-  it("plays an audiobook held in one file as one item with its chapter marks, and a book in parts as one item per part", async () => {
-    const whole = fakeClient({ PlaylistBookChapters: [chapter("c1", 1, "f-book", { startTimeSecs: 0 }), chapter("c2", 2, "f-book", { startTimeSecs: 600 }), chapter("c3", 3, "f-book", { startTimeSecs: 1200 })] });
-    const one = await playlistPlayItems(whole.client, [{ kind: "audiobook", id: "b" }]);
-    expect(one.items).toHaveLength(1);
-    expect(one.items[0]).toMatchObject({ mediaFileId: "f-book", title: "Book", audiobookId: "b", chapters: [{ start: 0, title: "Chapter 1" }, { start: 600, title: "Chapter 2" }, { start: 1200, title: "Chapter 3" }] });
-    const parts = fakeClient({ PlaylistBookChapters: [chapter("c2", 2, "f-2"), chapter("c1", 1, "f-1")] });
-    const many = await playlistPlayItems(parts.client, [{ kind: "audiobook", id: "b" }]);
-    expect(many.items.map((item) => item.mediaFileId)).toEqual(["f-1", "f-2"]);
-    expect(many.items[0]!.chapters).toBeUndefined();
+    expect(starts).toEqual([null, 0, null, null]);
   });
 
   it("starts a lone chapter where it begins inside a larger file", async () => {
@@ -107,30 +112,37 @@ describe("shufflePlayItems", () => {
 describe("startPlaylistPlayback", () => {
   const audio = (id: string): PlayItem => ({ mediaFileId: `f-${id}`, title: id, entity: { kind: "track", id } });
   const video = (id: string): PlayItem => ({ mediaFileId: `f-${id}`, title: id, entity: { kind: "movie", id } });
-  const player = () => ({ playAudio: vi.fn(), playVideo: vi.fn(), enqueue: vi.fn() });
 
-  it("hands audio to the queue in order", () => {
-    const p = player();
-    const go = vi.fn();
-    expect(startPlaylistPlayback(p, go, [audio("a"), video("m"), audio("b")])).toBe(true);
-    expect(p.playAudio).toHaveBeenCalledWith([audio("a"), video("m"), audio("b")]);
-    expect(p.playVideo).not.toHaveBeenCalled();
-    expect(go).not.toHaveBeenCalled();
+  it("makes the whole mixed list the queue, in order, whatever comes first", () => {
+    const player = { play: vi.fn() };
+    expect(startPlaylistPlayback(player, [audio("a"), video("m"), audio("b")])).toBe(true);
+    expect(player.play).toHaveBeenCalledWith([audio("a"), video("m"), audio("b")], 0);
+    player.play.mockClear();
+    startPlaylistPlayback(player, [video("m"), audio("a")]);
+    expect(player.play).toHaveBeenCalledWith([video("m"), audio("a")], 0);
   });
 
-  it("opens the video player for a video first and queues the rest behind it", () => {
-    const p = player();
-    const go = vi.fn();
-    startPlaylistPlayback(p, go, [video("m"), audio("a")]);
-    expect(p.playVideo).toHaveBeenCalledWith(video("m"));
-    expect(go).toHaveBeenCalledWith("f-m");
-    expect(p.enqueue).toHaveBeenCalledWith([audio("a")]);
+  it("starts at the entry asked for with the rest of the list still in the queue", () => {
+    const player = { play: vi.fn() };
+    startPlaylistPlayback(player, [audio("a"), video("m"), audio("b")], 1);
+    expect(player.play).toHaveBeenCalledWith([audio("a"), video("m"), audio("b")], 1);
   });
 
   it("does nothing for nothing", () => {
-    const p = player();
-    expect(startPlaylistPlayback(p, vi.fn(), [])).toBe(false);
-    expect(p.playAudio).not.toHaveBeenCalled();
+    const player = { play: vi.fn() };
+    expect(startPlaylistPlayback(player, [])).toBe(false);
+    expect(startPlaylistPlayback(player, [audio("a")], 3)).toBe(false);
+    expect(player.play).not.toHaveBeenCalled();
+  });
+});
+
+describe("expandPlaylist", () => {
+  it("reads the playlist's targets in order and plays them as items", async () => {
+    members.fetchPlaylistTargets.mockResolvedValue([{ kind: "movie", id: "m1" }, { kind: "episode", id: "e1" }, { kind: "chapter", id: "c1" }]);
+    const { client } = fakeClient({ PlaylistPlayMovies: [movie("m1")], PlaylistPlayEpisodes: [episode("e1", 1, 1)], PlaylistPlayChapters: [chapter("c1", 1, "f-c1")] });
+    const items = await expandPlaylist(client, "list-1");
+    expect(members.fetchPlaylistTargets).toHaveBeenCalledWith(client, "list-1");
+    expect(items.map((item) => `${item.entity.kind}:${item.entity.id}`)).toEqual(["movie:m1", "episode:e1", "chapter:c1"]);
   });
 });
 
@@ -140,5 +152,14 @@ describe("playItemTargets", () => {
     expect(playItemTargets([item("track", "t1"), item("movie", "m1"), item("track", "t1"), item("chapter", "c1"), item("episode", "e1")])).toEqual([
       { kind: "track", id: "t1" }, { kind: "movie", id: "m1" }, { kind: "chapter", id: "c1" }, { kind: "episode", id: "e1" },
     ]);
+  });
+
+  it("keeps an episode and a chapter, which a playlist can hold now", () => {
+    expect(playItemTargets([{ entity: { kind: "episode", id: "e1" } }, { entity: { kind: "chapter", id: "c1" } }])).toEqual([{ kind: "episode", id: "e1" }, { kind: "chapter", id: "c1" }]);
+  });
+
+  it("saves a book's files, which carry its chapter marks, as the audiobook once", () => {
+    const part = (id: string) => ({ entity: { kind: "chapter" as const, id }, audiobookId: "b", chapters: [{ start: 0, title: "One" }] });
+    expect(playItemTargets([part("c1"), part("c9"), { entity: { kind: "chapter", id: "c2" }, audiobookId: "b" }])).toEqual([{ kind: "audiobook", id: "b" }, { kind: "chapter", id: "c2" }]);
   });
 });

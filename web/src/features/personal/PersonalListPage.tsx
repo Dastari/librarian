@@ -10,6 +10,7 @@ import { EmptyState, ErrorState } from "@/components/ui";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { useSession } from "@/lib/auth/useSession";
 import { useSelectableTableState } from "@/hooks/useTableSelection";
+import { useQueueActions } from "@/features/player/queueActions";
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
 import { EntityListEntryDeleteDocument, EntityListEntryUpdateDocument, EntitySavedViewGetDocument, PersonalEntriesDocument, PlaylistGetDocument, type PersonalEntryFragment } from "@/graphql/generated/graphql";
 import { formatRuntime } from "@/lib/format";
@@ -77,17 +78,23 @@ export function PersonalListPage({ listId }: { listId: string }) {
     await entries.refetch();
   };
   const targetsFrom = (rows: readonly Entry[]): PlaylistTarget[] => rows.flatMap((row) => { const target = entryTarget(row); return target ? [target] : []; });
+  // Where an entry sits among the targets (entries pointing at nothing have none).
+  const targetIndex = (entry: Entry) => targetsFrom(entries.rows.slice(0, entries.rows.findIndex((row) => row.id === entry.id))).length;
   const inOrder = (selected: readonly Entry[]) => { const ids = new Set(selected.map((row) => row.id)); return entries.rows.filter((row) => ids.has(row.id)); };
+  // Play next / Add to queue: the selected entries in playlist order; an album, show or book entry expands to its parts.
+  const queueActions = useQueueActions<Entry>((rows) => [{ kind: "targets", targets: targetsFrom(inOrder(rows)) }]);
   const locked = pending ? "Saving the playlist" : !entries.complete ? "Load the whole playlist to reorder" : false;
   const actions = useMemo(() => defineActions<Entry>("list-entry", [
     {
       id: "play", label: (rows) => (rows.length === 1 ? "Play from here" : `Play ${rows.length} selected`), icon: IconPlay, group: "open", priority: 1, primary: true, bulk: true,
-      run: (rows) => playback.play(targetsFrom(rows.length === 1 ? entries.rows.slice(entries.rows.findIndex((row) => row.id === rows[0]!.id)) : inOrder(rows))),
+      // From here keeps the whole playlist in the queue, so Previous goes back through what came before.
+      run: (rows) => rows.length === 1 ? playback.play(targetsFrom(entries.rows), targetIndex(rows[0]!)) : playback.play(targetsFrom(inOrder(rows))),
     },
     {
       id: "shuffle", label: (rows) => (rows.length === 1 ? "Shuffle from here" : `Shuffle ${rows.length} selected`), icon: IconShuffle, group: "open", bulk: true,
-      run: (rows) => playback.shuffle(targetsFrom(rows.length === 1 ? entries.rows.slice(entries.rows.findIndex((row) => row.id === rows[0]!.id)) : inOrder(rows))),
+      run: (rows) => rows.length === 1 ? playback.shuffle(targetsFrom(entries.rows), targetIndex(rows[0]!)) : playback.shuffle(targetsFrom(inOrder(rows))),
     },
+    ...queueActions,
     { id: "open", label: (rows) => `Open ${entryKindLabel(rows[0]!).toLowerCase()}`, icon: IconExternalLink, group: "open", priority: 2, visible: (rows) => rows.length === 1 && Boolean(entryPresentation(rows[0]!)?.href), run: (rows, context) => { const href = entryPresentation(rows[0]!)?.href; if (href) context.navigate(href); } },
     playlist.action,
     { id: "copy-titles", label: "Copy item titles", icon: IconCopy, group: "organise", bulk: true, run: async (rows) => { await copyText(rows.map(entryTitle).join("\n")); }, successMessage: () => "Item titles copied" },
@@ -111,7 +118,7 @@ export function PersonalListPage({ listId }: { listId: string }) {
       successMessage: (rows) => (rows.length === 1 ? "Removed from the playlist" : `Removed ${rows.length} items`),
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ]), [entries.rows, entries.complete, locked, pending, playback, playlist.action, remove, move]);
+  ]), [entries.rows, entries.complete, locked, pending, playback, playlist.action, queueActions, remove, move]);
 
   if (list.error && !current) return <ErrorState error={list.error} onRetry={() => void list.refetch()} className="m-6" />;
   if (!current) return <div className="page-gutter py-6">{list.loading ? <p role="status">Loading playlist…</p> : <EmptyState icon={IconBookmark} title="Playlist not found" />}</div>;
