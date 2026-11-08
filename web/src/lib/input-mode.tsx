@@ -49,28 +49,10 @@ function readForced(): InputMode | null {
 }
 
 export function InputModeProvider({ children }: { children: ReactNode }) {
-  const [detected, setDetected] = useState<InputMode>(detectInitialMode);
+  // TV comes from a TV's browser or a person's choice, never from arrow keys: a desktop keyboard
+  // user browsing rows with arrows would otherwise be switched to the TV scale mid-page.
+  const [detected] = useState<InputMode>(detectInitialMode);
   const [forced, setForcedState] = useState<InputMode | null>(readForced);
-
-  useEffect(() => {
-    // Promote to keyboard-driven behaviour when the user navigates with arrows for a while.
-    let arrowPresses = 0;
-    const onKey = (event: KeyboardEvent) => {
-      if (typeof event.key === "string" && event.key.startsWith("Arrow")) {
-        arrowPresses += 1;
-        if (arrowPresses >= 6 && detected === "pointer") setDetected("tv");
-      }
-    };
-    const onPointer = (event: PointerEvent) => {
-      if (event.pointerType === "mouse" && detected === "tv" && arrowPresses < 6) setDetected("pointer");
-    };
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("pointerdown", onPointer);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("pointerdown", onPointer);
-    };
-  }, [detected]);
 
   const mode = forced ?? detected;
 

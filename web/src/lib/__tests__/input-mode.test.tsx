@@ -75,14 +75,10 @@ describe("input mode", () => {
     expect(screen.getByTestId("mode")).toHaveTextContent("tv");
   });
 
-  it("promotes to TV after repeated arrow presses and returns to pointer on a mouse press", () => {
+  it("stays in pointer mode however many arrow keys are pressed", () => {
     setCoarsePointer(false);
     mount();
-    for (let press = 0; press < 6; press += 1) act(() => void fireEvent.keyDown(window, { key: "ArrowDown" }));
-    expect(screen.getByTestId("mode")).toHaveTextContent("tv");
-    // Note: the arrow counter lives inside the effect, so it resets when `detected` changes and
-    // the `arrowPresses < 6` guard in the pointer handler never holds. Any mouse press demotes.
-    act(() => void fireEvent.pointerDown(window, { pointerType: "mouse" }));
+    for (let press = 0; press < 20; press += 1) act(() => void fireEvent.keyDown(window, { key: "ArrowRight" }));
     expect(screen.getByTestId("mode")).toHaveTextContent("pointer");
   });
 
