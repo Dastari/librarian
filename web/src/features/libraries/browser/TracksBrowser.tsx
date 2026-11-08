@@ -12,7 +12,9 @@ import { EntityChip } from "@/components/entities/EntityChip";
 import { refCellEntity } from "@/lib/entities/resolver";
 import { ErrorState, GlassSegmented } from "@/components/ui";
 import { SaveToListDialog } from "@/features/personal/SaveToListDialog";
+import { trackPlayItem } from "@/features/player/playItems";
 import type { PlayItem } from "@/features/player/store";
+import { useQueueActions } from "@/features/player/queueActions";
 import { usePlayer } from "@/features/player/usePlayer";
 import { EntityLibraryGetDocument, LibraryTracksDocument, type ContentStatus, type LibraryTracksQuery, type TrackOrderByInput, type TrackWhereInput } from "@/graphql/generated/graphql";
 import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
@@ -54,18 +56,7 @@ function columnsFor() {
   ]);
 }
 
-export function trackToPlayItem(row: { id: string; title: string; mediaFileId?: string | null; artistName?: string | null; albumId: string; album?: { id: string; name: string; coverUrl?: string | null } | null; durationSecs?: number | null }): PlayItem | null {
-  if (!row.mediaFileId) return null;
-  return {
-    mediaFileId: row.mediaFileId,
-    title: row.title,
-    subtitle: [row.artistName, row.album?.name].filter(Boolean).join(" · ") || undefined,
-    artwork: row.album ? albumCover(row.album) : undefined,
-    entity: { kind: "track", id: row.id },
-    href: `/albums/${row.albumId}`,
-    duration: row.durationSecs ?? undefined,
-  };
-}
+export const trackToPlayItem = trackPlayItem;
 
 const search: DataTableSearch<TrackRow> = { fields: [], placeholder: "Filter tracks", toCondition: (query) => ({ title: { contains: query } }) };
 
@@ -112,16 +103,16 @@ export function TracksBrowser({ libraryId }: { libraryId: string }) {
     const ids = new Set(rows.map((row) => row.id));
     return list.rows.filter((row) => ids.has(row.id)).map(trackToPlayItem).filter((item): item is PlayItem => item !== null);
   };
+  // Play next / Add to queue (the play queue): the selected tracks, in table order.
+  const queueActions = useQueueActions<TrackRow>((rows) => [selectedQueue(rows)], { disabledReason: (rows) => rows.some((row) => !row.mediaFileId) ? "Some selected tracks have no file. Deselect them to queue." : false });
   const actions = useMemo(() => defineActions<TrackRow>("track", [
     { id: "play", label: (rows) => rows.length === 1 ? "Play from here" : `Play ${rows.length} selected tracks`, icon: IconPlay, group: "open", priority: 1, bulk: true,
       disabledReason: (rows) => rows.some((row) => !row.mediaFileId) ? "Some selected tracks have no file. Deselect them to play." : false,
       run: (rows) => { if (rows.length === 1) playFrom(rows[0]!); else player.playAudio(selectedQueue(rows)); } },
-    { id: "enqueue", label: "Add to queue", icon: IconPlus, group: "open", bulk: true,
-      disabledReason: (rows) => rows.some((row) => !row.mediaFileId) ? "Some selected tracks have no file. Deselect them to queue." : false,
-      run: (rows) => player.enqueue(selectedQueue(rows)), successMessage: () => "Added to queue" },
+    ...queueActions,
     { id: "open-album", bulk: true, label: "Open album", icon: IconExternalLink, group: "open", priority: 2, visible: (rows) => rows.length === 1, run: (rows, context) => context.navigate(`/albums/${rows[0]!.albumId}`) },
     { id: "save", bulk: true, label: "Save to list…", icon: IconPlus, group: "organise", priority: 2, visible: (rows) => ownLibrary && rows.length === 1, run: (rows) => setSavingTrack(rows[0]!) },
-  ]), [ownLibrary, playFrom, player, list.rows]);
+  ]), [ownLibrary, playFrom, player, queueActions, list.rows]);
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 sm:gap-4">

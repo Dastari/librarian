@@ -6,6 +6,7 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { SaveToListDialog } from "@/features/personal/SaveToListDialog";
+import { useQueueActions } from "@/features/player/queueActions";
 import { RefreshShowDocument } from "@/graphql/generated/graphql";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { assertSuccess } from "@/lib/graphql/errors";
@@ -34,6 +35,8 @@ export function useShowActions<T extends ShowEntity>({ settings, open = true, pl
   const { user } = useSession();
   const [refresh, { loading: refreshing }] = useMutation(RefreshShowDocument);
   const resetProgress = useResetProgress();
+  // Play next / Add to queue (the play queue): every playable episode of each selected show, in order.
+  const queueActions = useQueueActions<T>((rows) => rows.map((show) => ({ kind: "show" as const, id: show.id })));
   const [saving, setSaving] = useState<T | null>(null);
   const [finding, setFinding] = useState<T | null>(null);
 
@@ -45,6 +48,7 @@ export function useShowActions<T extends ShowEntity>({ settings, open = true, pl
         visible: one,
         run: () => play.run(),
       }] : []),
+      ...queueActions,
       ...(open ? [{
         id: "open", label: "Open show", icon: IconExternalLink, group: "open" as const, priority: 1,
         visible: one,
@@ -84,7 +88,7 @@ export function useShowActions<T extends ShowEntity>({ settings, open = true, pl
         run: (rows: readonly T[]) => settings(rows[0]!, "remove"),
       }] : []),
     ]);
-  }, [isAdmin, navigate, onRefreshed, open, play, refresh, refreshing, reset, resetProgress, settings, user?.id]);
+  }, [isAdmin, navigate, onRefreshed, open, play, queueActions, refresh, refreshing, reset, resetProgress, settings, user?.id]);
 
   const dialogs = (
     <>
