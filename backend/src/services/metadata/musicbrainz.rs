@@ -357,22 +357,45 @@ impl MusicBrainzClient {
         .build()
         .context("Failed to build HTTP client")?;
 
-        let response = match client
-            .get(&url)
-            .header("User-Agent", &self.user_agent)
-            .send()
-            .await
-        {
-            Ok(resp) => resp,
-            Err(e) => {
-                warn!(
-                    release_group_id = %release_group_id,
-                    url = %url,
-                    error = %e,
-                    "HTTP request to Cover Art Archive failed"
-                );
-                return Err(e.into());
+        // The archive has brief outages; a cover missed then is never asked for again by the
+        // caller that created the album, so give a server error two more tries.
+        let mut attempt = 0_u32;
+        let response = loop {
+            attempt += 1;
+            match client
+                .get(&url)
+                .header("User-Agent", &self.user_agent)
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_server_error() && attempt < 3 => {
+                    warn!(
+                        release_group_id = %release_group_id,
+                        status = %resp.status(),
+                        attempt,
+                        "Cover Art Archive server error; retrying"
+                    );
+                }
+                Ok(resp) => break resp,
+                Err(e) if attempt < 3 => {
+                    warn!(
+                        release_group_id = %release_group_id,
+                        error = %e,
+                        attempt,
+                        "HTTP request to Cover Art Archive failed; retrying"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        release_group_id = %release_group_id,
+                        url = %url,
+                        error = %e,
+                        "HTTP request to Cover Art Archive failed"
+                    );
+                    return Err(e.into());
+                }
             }
+            tokio::time::sleep(Duration::from_secs(u64::from(attempt) * 3)).await;
         };
 
         let status = response.status();

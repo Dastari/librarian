@@ -1499,6 +1499,45 @@ impl MetadataService {
         Ok(client)
     }
 
+    /// A release group's front cover from Cover Art Archive, remembered in the metadata cache
+    /// so an album removed and added again (or a second library holding it) doesn't depend on
+    /// the archive answering a second time. Only found covers are remembered.
+    pub async fn album_cover(&self, release_group_id: Uuid) -> Result<Option<String>> {
+        let cache_key = release_group_id.to_string();
+        let max_age_days = self
+            .provider_cache_days(MetadataProvider::Musicbrainz)
+            .await;
+        if let Ok(Some(cached)) = self
+            .read_metadata_cache::<String>(
+                MetadataProvider::Musicbrainz,
+                "GetCoverArt",
+                &cache_key,
+                max_age_days,
+            )
+            .await
+        {
+            return Ok(Some(cached));
+        }
+        let cover = self
+            .get_musicbrainz_client()
+            .await?
+            .get_cover_art(release_group_id)
+            .await?;
+        if let Some(cover) = &cover
+            && let Err(error) = self
+                .upsert_metadata_cache(
+                    MetadataProvider::Musicbrainz,
+                    "GetCoverArt",
+                    &cache_key,
+                    cover,
+                )
+                .await
+        {
+            debug!(release_group_id = %release_group_id, error = %error, "Could not remember an album cover");
+        }
+        Ok(cover)
+    }
+
     /// Get MusicBrainz client, honoring the user-agent setting
     pub async fn get_musicbrainz_client(&self) -> Result<Arc<MusicBrainzClient>> {
         let settings = MetadataSettings::load(&self.db).await?;
@@ -3819,11 +3858,7 @@ impl MetadataService {
                 .ok_or_else(|| anyhow::anyhow!("Artist not found after creation"))?
         };
 
-        let cover_url = musicbrainz
-            .get_cover_art(release_group_id)
-            .await
-            .ok()
-            .flatten();
+        let cover_url = self.album_cover(release_group_id).await.ok().flatten();
         // Honour the caller's monitoring choice. Previously this was hardcoded
         // to `false`/`NONE`, so album auto-download could never fire.
         let auto_download = options.monitor_type != AutoDownloadMode::None;

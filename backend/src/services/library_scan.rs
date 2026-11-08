@@ -531,7 +531,21 @@ pub struct QueueScanResult {
 #[derive(Debug, Clone)]
 pub struct DuplicateTrashResult {
     pub old_path: String,
-    pub trash_path: String,
+    /// Where the removed copy went; `None` when the issue closed without moving anything.
+    pub trash_path: Option<String>,
+    /// Why the issue closed without moving anything: one of the copies had already gone.
+    pub no_longer_duplicate: Option<String>,
+}
+
+/// What settling every open duplicate in a library did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DuplicateSettlement {
+    /// Pairs settled by moving a copy to the trash.
+    pub settled: usize,
+    /// Issues closed because a copy had already gone, so nothing was left to settle.
+    pub closed: usize,
+    /// Pairs that need a person.
+    pub left: usize,
 }
 
 /// Which of a duplicate pair to keep.
@@ -553,6 +567,10 @@ fn issue_seen_at(issue: &LibraryScanIssue) -> i64 {
             .unwrap_or_default()
     })
 }
+
+/// How a duplicate issue closed because a copy had gone starts. A scan that finds the pair again
+/// reopens it, unlike an issue a person settled.
+pub const NO_LONGER_DUPLICATE: &str = "No longer a duplicate";
 
 /// Why keeping the better copy needs a person.
 pub const BOTH_COPIES_IN_USE: &str = "Both copies are played by titles, so choose which to keep";
@@ -3400,24 +3418,226 @@ impl LibraryScanService {
         if !asked {
             return;
         }
-        if let Ok((settled, left)) = self.settle_duplicates(&library.id).await
-            && settled + left > 0
+        if let Ok(outcome) = self.settle_duplicates(&library.id).await
+            && outcome.settled + outcome.left > 0
         {
             info!(
                 library_id = %library.id,
-                settled,
-                left,
+                settled = outcome.settled,
+                left = outcome.left,
                 "Settled duplicates after a scan: library_id={}, settled={}, left={}",
                 library.id,
-                settled,
-                left
+                outcome.settled,
+                outcome.left
             );
         }
     }
 
-    /// Settle every open duplicate in a library by keeping the copy its title plays. Returns how
-    /// many were settled and how many need a person.
-    pub async fn settle_duplicates(&self, library_id: &str) -> Result<(usize, usize)> {
+    /// Settle every open duplicate in a library by keeping the copy its title plays.
+    pub async fn settle_duplicates(&self, library_id: &str) -> Result<DuplicateSettlement> {
+        let open = self.open_duplicate_issues(library_id).await?;
+        let mut outcome = DuplicateSettlement::default();
+        for issue in open {
+            match self
+                .trash_duplicate_issue_keeping(&issue.id, DuplicateKeep::Best)
+                .await
+            {
+                Ok(result) if result.no_longer_duplicate.is_some() => outcome.closed += 1,
+                Ok(_) => outcome.settled += 1,
+                Err(error) => {
+                    outcome.left += 1;
+                    debug!(issue_id = %issue.id, error = %error, "Left a duplicate for a person to settle");
+                }
+            }
+        }
+        Ok(outcome)
+    }
+
+    /// Close the open duplicate issues whose copies are no longer both there, so issues from
+    /// earlier scans can't outlive the files they were about. Moves nothing.
+    async fn close_stale_duplicates(&self, library: &LibraryRow) {
+        // An unreachable library root says nothing about the files: leave the issues alone.
+        if tokio::fs::canonicalize(&library.path).await.is_err() {
+            return;
+        }
+        let Ok(open) = self.open_duplicate_issues(&library.id).await else {
+            return;
+        };
+        let mut closed = 0_usize;
+        for issue in open {
+            let Some(details) = issue
+                .details_json
+                .as_deref()
+                .and_then(|json| serde_json::from_str::<DuplicateIssueDetails>(json).ok())
+            else {
+                continue;
+            };
+            match self.duplicate_gone(&issue, &details, false).await {
+                Ok(Some(reason)) => {
+                    match self.close_no_longer_duplicate(&issue.id, &reason).await {
+                        Ok(()) => closed += 1,
+                        Err(error) => {
+                            warn!(scan_issue_id = %issue.id, error = %error, "Failed to close a stale duplicate issue");
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    debug!(scan_issue_id = %issue.id, error = %error, "Could not check a duplicate issue's copies");
+                }
+            }
+        }
+        if closed > 0 {
+            info!(
+                library_id = %library.id,
+                closed,
+                "Closed duplicate issues whose copies have gone: library_id={}, closed={}",
+                library.id,
+                closed
+            );
+        }
+    }
+
+    /// Albums whose cover lookup failed when they were created (the archive was down) ask again,
+    /// a few per scan so a large library doesn't hammer the archive.
+    async fn backfill_album_covers(&self, library: &LibraryRow) {
+        const PER_SCAN: usize = 10;
+        let Ok(database) = self.database().await else {
+            return;
+        };
+        let missing = match crate::graphql::entities::Album::query(database.pool().pool())
+            .filter(crate::graphql::entities::AlbumWhereInput {
+                library_id: Some(StringFilter {
+                    eq: Some(library.id.clone()),
+                    ..Default::default()
+                }),
+                musicbrainz_id: Some(StringFilter {
+                    is_null: Some(false),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await
+        {
+            Ok(albums) => albums
+                .into_iter()
+                .filter(|album| album.cover_url.as_deref().is_none_or(str::is_empty))
+                .take(PER_SCAN)
+                .collect::<Vec<_>>(),
+            Err(error) => {
+                debug!(library_id = %library.id, error = %error, "Could not list albums missing covers");
+                return;
+            }
+        };
+        if missing.is_empty() {
+            return;
+        }
+        let Ok(metadata) = self.metadata_service().await else {
+            return;
+        };
+        let Ok(auth_user) = self.system_auth_user(Some(&library.user_id)).await else {
+            return;
+        };
+        for album in missing {
+            let Some(release_group) = album
+                .musicbrainz_id
+                .as_deref()
+                .and_then(|id| Uuid::parse_str(id).ok())
+            else {
+                continue;
+            };
+            let cover = match metadata.album_cover(release_group).await {
+                Ok(Some(cover)) => cover,
+                Ok(None) => continue,
+                Err(error) => {
+                    debug!(album_id = %album.id, error = %error, "Cover Art Archive still unavailable");
+                    continue;
+                }
+            };
+            match self
+                .execute_mutation(
+                    &auth_user,
+                    r#"mutation BackfillAlbumCover($id: String!, $input: UpdateAlbumInput!) {
+                        Saved: updateAlbum(id: $id, input: $input) { Success: success Error: error }
+                    }"#,
+                    serde_json::json!({ "id": album.id, "input": { "coverUrl": cover } }),
+                )
+                .await
+            {
+                Ok(data) if data["Saved"]["Success"].as_bool() == Some(true) => info!(
+                    library_id = %library.id,
+                    album_id = %album.id,
+                    album = %album.name,
+                    "Filled in an album cover that was missing"
+                ),
+                Ok(data) => {
+                    warn!(album_id = %album.id, error = %data["Saved"]["Error"], "Failed to save a backfilled album cover");
+                }
+                Err(error) => {
+                    warn!(album_id = %album.id, error = %error, "Failed to save a backfilled album cover");
+                }
+            }
+        }
+    }
+
+    /// Why a duplicate pair no longer needs settling, or `None` while both copies are there.
+    /// `remove_keeper` asks about the pair the other way round, where the kept copy goes and so
+    /// must still be a library file.
+    async fn duplicate_gone(
+        &self,
+        issue: &LibraryScanIssue,
+        details: &DuplicateIssueDetails,
+        remove_keeper: bool,
+    ) -> Result<Option<String>> {
+        let database = self.database().await?;
+        let issue_file = match issue.media_file_id.as_deref() {
+            Some(id) => MediaFile::get(database.pool().pool(), &id.to_string()).await?,
+            None => None,
+        };
+        if issue_file.is_none() {
+            return Ok(Some(
+                "the duplicate copy was removed from the library".to_string(),
+            ));
+        }
+        if !tokio::fs::try_exists(&details.duplicate_path).await? {
+            return Ok(Some("the duplicate copy is no longer on disk".to_string()));
+        }
+        if !tokio::fs::try_exists(&details.keeper_path).await? {
+            return Ok(Some(
+                "the copy that was kept is no longer on disk".to_string(),
+            ));
+        }
+        if remove_keeper
+            && self
+                .library_file_at(&issue.library_id, &details.keeper_path)
+                .await?
+                .is_none()
+        {
+            return Ok(Some(
+                "the copy that was kept is no longer in the library".to_string(),
+            ));
+        }
+        Ok(None)
+    }
+
+    async fn close_no_longer_duplicate(&self, issue_id: &str, reason: &str) -> Result<()> {
+        self.update_scan_issue(
+            issue_id,
+            UpdateLibraryScanIssueInput {
+                resolved_at: Some(Some(Utc::now().to_rfc3339())),
+                resolution: Some(Some(format!(
+                    "{NO_LONGER_DUPLICATE}: {reason}. Nothing was moved."
+                ))),
+                ..Default::default()
+            },
+        )
+        .await
+        .context("Failed to close the duplicate issue")?;
+        Ok(())
+    }
+
+    async fn open_duplicate_issues(&self, library_id: &str) -> Result<Vec<LibraryScanIssue>> {
         let database = self.database().await?;
         let open = LibraryScanIssue::query(database.pool().pool())
             .filter(LibraryScanIssueWhereInput {
@@ -3432,24 +3652,11 @@ impl LibraryScanService {
                 ..Default::default()
             })
             .fetch_all()
-            .await
-            .unwrap_or_default()
+            .await?
             .into_iter()
-            .filter(|issue| issue.resolved_at.is_none());
-        let (mut settled, mut left) = (0_usize, 0_usize);
-        for issue in open {
-            match self
-                .trash_duplicate_issue_keeping(&issue.id, DuplicateKeep::Best)
-                .await
-            {
-                Ok(_) => settled += 1,
-                Err(error) => {
-                    left += 1;
-                    debug!(issue_id = %issue.id, error = %error, "Left a duplicate for a person to settle");
-                }
-            }
-        }
-        Ok((settled, left))
+            .filter(|issue| issue.resolved_at.is_none())
+            .collect::<Vec<_>>();
+        Ok(open)
     }
 
     /// The library's record of the file at a path.
@@ -3505,6 +3712,26 @@ impl LibraryScanService {
         if details.kind != "byte-identical-duplicate" {
             anyhow::bail!("Duplicate verification context has an unexpected kind");
         }
+        // A copy that has gone since the scan leaves nothing to settle: close the issue and move
+        // nothing, as long as the library itself is reachable.
+        let library = self.get_library(&issue.library_id).await?;
+        tokio::fs::canonicalize(&library.path)
+            .await
+            .context("Library root is unavailable")?;
+        if let Some(reason) = self.duplicate_gone(&issue, &details, remove_keeper).await? {
+            self.close_no_longer_duplicate(issue_id, &reason).await?;
+            info!(
+                scan_issue_id = %issue_id,
+                library_id = %issue.library_id,
+                reason = %reason,
+                "Closed a duplicate issue whose copies are no longer both there"
+            );
+            return Ok(DuplicateTrashResult {
+                old_path: details.duplicate_path,
+                trash_path: None,
+                no_longer_duplicate: Some(reason),
+            });
+        }
         let issue_file_id = issue
             .media_file_id
             .as_deref()
@@ -3540,7 +3767,6 @@ impl LibraryScanService {
             anyhow::bail!("Duplicate file changed since it was verified; rescan before removal");
         }
         let media_file_id = media_file.id.as_str();
-        let library = self.get_library(&issue.library_id).await?;
         let root = tokio::fs::canonicalize(&library.path)
             .await
             .context("Library root is unavailable")?;
@@ -3659,7 +3885,8 @@ impl LibraryScanService {
         );
         Ok(DuplicateTrashResult {
             old_path,
-            trash_path: trash_path_string,
+            trash_path: Some(trash_path_string),
+            no_longer_duplicate: None,
         })
     }
 
@@ -4003,12 +4230,17 @@ impl LibraryScanService {
             }
             return Ok(());
         }
-        // Someone settled this already, as it still is: finding it again doesn't reopen it.
+        // Someone settled this already, as it still is: finding it again doesn't reopen it. An
+        // issue that closed only because a copy had gone isn't a decision, so it doesn't count.
         let bounded_message = Self::bounded_issue_text(message, 1_000);
-        if earlier
-            .iter()
-            .any(|issue| issue.resolved_at.is_some() && issue.message == bounded_message)
-        {
+        if earlier.iter().any(|issue| {
+            issue.resolved_at.is_some()
+                && issue.message == bounded_message
+                && !issue
+                    .resolution
+                    .as_deref()
+                    .is_some_and(|resolution| resolution.starts_with(NO_LONGER_DUPLICATE))
+        }) {
             return Ok(());
         }
         let read_at = None;
@@ -4746,7 +4978,11 @@ impl LibraryScanService {
 
         self.clear_candidate_caches_for_library(library_id).await;
 
+        self.close_stale_duplicates(&library).await;
         self.settle_duplicates_if_asked(&library).await;
+        if library.library_type == "music" {
+            self.backfill_album_covers(&library).await;
+        }
 
         // Downloads compared with this library before may now be in it, or have more to add.
         if scanned_count > unchanged_skipped_count || removed_count > 0 {
@@ -15997,8 +16233,9 @@ mod tests {
     }
 
     use super::{
-        LibraryScanService, LibraryScanServiceConfig, MatchWantedPolicy, NoClobberOutcome,
-        OrganizeResult, ProviderFallbackSummary, no_clobber_place, supervise_worker,
+        DuplicateIssueDetails, DuplicateKeep, LibraryScanService, LibraryScanServiceConfig,
+        MatchWantedPolicy, NO_LONGER_DUPLICATE, NoClobberOutcome, OrganizeResult,
+        ProviderFallbackSummary, no_clobber_place, supervise_worker,
     };
     use quick_xml::{Reader, events::Event};
     use regex::Regex;
@@ -17005,6 +17242,104 @@ mod tests {
             invalidated.file_modified_at.as_deref(),
             Some("2000-01-01T00:00:00Z")
         );
+
+        // Settling a pair whose kept copy has gone closes the issue and moves nothing: the copy
+        // left is the only one.
+        let library_id = unchanged
+            .library_id
+            .clone()
+            .context("media file has no library")?;
+        let open = scanner.open_duplicate_issues(&library_id).await?;
+        assert_eq!(open.len(), 1, "one open issue for the pair");
+        let pair: DuplicateIssueDetails = serde_json::from_str(
+            open[0]
+                .details_json
+                .as_deref()
+                .context("duplicate issue details missing")?,
+        )?;
+        let away = temp_dir.path().join("kept-copy-away.mp3");
+        std::fs::rename(&pair.keeper_path, &away)?;
+        let settled = scanner
+            .trash_duplicate_issue_keeping(&open[0].id, DuplicateKeep::Best)
+            .await?;
+        assert!(settled.trash_path.is_none(), "nothing may move");
+        assert!(
+            settled
+                .no_longer_duplicate
+                .as_deref()
+                .is_some_and(|reason| reason.contains("no longer on disk")),
+            "closed as no longer a duplicate: {:?}",
+            settled.no_longer_duplicate
+        );
+        assert!(std::path::Path::new(&pair.duplicate_path).exists());
+        let closed = LibraryScanIssue::get(database.pool().pool(), &open[0].id)
+            .await?
+            .context("issue vanished")?;
+        assert!(closed.resolved_at.is_some());
+        assert!(
+            closed
+                .resolution
+                .as_deref()
+                .is_some_and(|text| text.starts_with(NO_LONGER_DUPLICATE))
+        );
+
+        // The kept copy coming back makes them duplicates again, and the closure must not
+        // silence that.
+        std::fs::rename(&away, &pair.keeper_path)?;
+        let reopen_id = scanner
+            .queue_scan(&library_id)
+            .await?
+            .scan_run_id
+            .context("rescan did not return a run id")?;
+        for _ in 0..1200 {
+            if LibraryScanRun::get(database.pool().pool(), &reopen_id)
+                .await?
+                .is_some_and(|run| {
+                    matches!(
+                        run.status.as_str(),
+                        "COMPLETED" | "COMPLETED_WITH_ISSUES" | "FAILED" | "CANCELLED"
+                    )
+                })
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let reopened = scanner.open_duplicate_issues(&library_id).await?;
+        assert_eq!(reopened.len(), 1, "the pair is reported again");
+
+        // A copy disappearing between scans closes its issue on the next scan by itself.
+        let reopened_pair: DuplicateIssueDetails = serde_json::from_str(
+            reopened[0]
+                .details_json
+                .as_deref()
+                .context("duplicate issue details missing")?,
+        )?;
+        std::fs::remove_file(&reopened_pair.duplicate_path)?;
+        let sweep_id = scanner
+            .queue_scan(&library_id)
+            .await?
+            .scan_run_id
+            .context("rescan did not return a run id")?;
+        for _ in 0..1200 {
+            if LibraryScanRun::get(database.pool().pool(), &sweep_id)
+                .await?
+                .is_some_and(|run| {
+                    matches!(
+                        run.status.as_str(),
+                        "COMPLETED" | "COMPLETED_WITH_ISSUES" | "FAILED" | "CANCELLED"
+                    )
+                })
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(
+            scanner.open_duplicate_issues(&library_id).await?.is_empty(),
+            "an issue whose copy has gone must not stay open"
+        );
+        assert!(std::path::Path::new(&reopened_pair.keeper_path).exists());
 
         services.stop_all().await?;
         Ok(())

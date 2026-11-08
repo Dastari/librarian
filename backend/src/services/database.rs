@@ -2062,6 +2062,28 @@ impl AppMutationHook {
         )
         .await
         .map_err(Self::db_error)?;
+        // A duplicate issue is about this copy, so removing it leaves nothing to settle.
+        tx.update_where::<LibraryScanIssue>(
+            LibraryScanIssueWhereInput {
+                media_file_id: Some(Self::string_eq(id)),
+                issue_code: Some(Self::string_eq("BYTE_IDENTICAL_DUPLICATE")),
+                resolved_at: Some(graphql_orm::graphql::filters::DateFilter {
+                    is_null: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            UpdateLibraryScanIssueInput {
+                resolved_at: Some(Some(Self::now_rfc3339())),
+                resolution: Some(Some(format!(
+                    "{}: this copy was removed from the library.",
+                    crate::services::library_scan::NO_LONGER_DUPLICATE
+                ))),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(Self::db_error)?;
         // Retain scan history while its Library/ScanRun exists, with a nullable file link.
         tx.update_where::<LibraryScanIssue>(
             LibraryScanIssueWhereInput {

@@ -431,16 +431,10 @@ impl LibraryScanMutations {
             .await
             .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
         Ok(match scan_service.settle_duplicates(&library_id).await {
-            Ok((settled, left)) => ScanIssueActionResult {
+            Ok(outcome) => ScanIssueActionResult {
                 success: true,
                 queued: false,
-                message: match (settled, left) {
-                    (0, 0) => "No duplicates to settle.".to_string(),
-                    (settled, 0) => format!("Kept the better copy of {settled} duplicate(s)."),
-                    (settled, left) => format!(
-                        "Kept the better copy of {settled} duplicate(s). {left} need you to choose: both copies are played by titles."
-                    ),
-                },
+                message: settlement_message(outcome),
             },
             Err(error) => {
                 tracing::warn!(library_id = %library_id, error = %error, "Failed to settle duplicates");
@@ -488,9 +482,14 @@ impl LibraryScanMutations {
         {
             Ok(result) => Ok(TrashDuplicateResult {
                 success: true,
-                message: "The other copy was moved to recoverable library trash.".to_string(),
+                message: match &result.no_longer_duplicate {
+                    Some(reason) => format!(
+                        "No longer a duplicate: {reason}. The issue is closed and nothing was moved."
+                    ),
+                    None => "The other copy was moved to recoverable library trash.".to_string(),
+                },
                 old_path: Some(result.old_path),
-                trash_path: Some(result.trash_path),
+                trash_path: result.trash_path,
             }),
             Err(error) => {
                 tracing::warn!(
@@ -814,5 +813,33 @@ impl LibraryScanMutations {
                 error: Some(error.to_string()),
             }),
         }
+    }
+}
+
+/// What settling a library's duplicates did, in a sentence or two.
+fn settlement_message(outcome: crate::services::library_scan::DuplicateSettlement) -> String {
+    let mut parts = Vec::new();
+    if outcome.settled > 0 {
+        parts.push(format!(
+            "Kept the better copy of {} duplicate(s).",
+            outcome.settled
+        ));
+    }
+    if outcome.closed > 0 {
+        parts.push(format!(
+            "Closed {} that were no longer duplicates.",
+            outcome.closed
+        ));
+    }
+    if outcome.left > 0 {
+        parts.push(format!(
+            "{} need you to choose: both copies are played by titles.",
+            outcome.left
+        ));
+    }
+    if parts.is_empty() {
+        "No duplicates to settle.".to_string()
+    } else {
+        parts.join(" ")
     }
 }
