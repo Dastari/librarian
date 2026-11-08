@@ -188,7 +188,8 @@ The frontend sends plaintext JSON credentials in a single `CreateSource` mutatio
 Librarian's currently supported acquisition paths converge into the same pipeline:
 
 - **Torrent** (built-in client) with DHT, UPNP, seeding control
-- **RSS/source definitions** exist, but unattended feed acquisition is not a qualified downloader
+- **RSS feeds** (`RssFeed`, admin-managed in Settings › Downloads) are polled by the auto-download worker
+  and matched exactly against wanted shows and movies (Q82); source definitions remain separate
 - **Usenet/IRC:** not currently supported acquisition paths; settings or entities must not be presented
   as a working downloader
 - **Manual Download** and direct add
@@ -220,7 +221,8 @@ types reserved for future protocols are schema vocabulary, not a claim that thos
 #### Source Types
 - **Torrent Indexer** — Private/public torrent trackers (e.g., IPTorrents)
 - **Usenet Indexer** — reserved schema value; unavailable without an NNTP/NZB acquisition client
-- **RSS Feed** — schema and source vocabulary; not a qualified unattended acquisition path
+- **RSS Feed** — an `RssFeed` row polled on its own interval (Q82); only admins may create or edit one, because
+  the server fetches its address. Separate from the `RssFeed` source-type vocabulary
 
 #### Source Architecture
 - **`SourcesService`** — Lifecycle service registered with `ServicesManager`, depends on the database service. Manages encryption key creation and source loading.
@@ -1403,7 +1405,7 @@ not hold the episode searches back.
 **Answer:** `jobs::rss_poll` polls each enabled `RssFeed` on its own `pollIntervalMinutes`, never faster than 15 minutes, with the
 wait doubling for every consecutive failure (up to a day) and a `Retry-After` from the host obeyed. Feeds are read one after
 another with a pause between them and a 4 MB limit on the response; only RSS 2.0 (including Torznab attributes and magnet
-links) is understood, and only `http`/`https`. Items already seen (a `RssFeedItem` row per item, kept 30 days) are skipped. New
+links) is understood, and only `http`/`https`. Feeds are created with the generated `createRssFeed`/`updateRssFeed`/`deleteRssFeed` mutations (admin only; a write rule refuses a name-less feed or an address that is not `http`/`https` and raises an interval below 15 minutes to 15). Items already seen (a `RssFeedItem` row per item, kept 30 days) are skipped. New
 items are matched against what the hunt would search for (same modes, quality profile and blocklist; the grace period does not
 apply, since a release that exists is a release) **in the feed owner's libraries only**, and in the feed's library when it names
 one. A match must name the show or movie exactly after normalising case and punctuation ("The Office" is not "The Office US"),
