@@ -1149,7 +1149,26 @@ async fn a_chapter_in_a_part_whose_named_chapter_moved_on_does_not_loop() {
     );
     assert_eq!(files_under(&library_path).len(), 3);
 
-    let placed = admin.query(PLACED, json!({ "id": book })).await;
+    // Chapter links settle in deferred hook work after the import commits, so under load the
+    // first read can see them half applied: wait for every chapter to be placed.
+    let mut placed = Value::Null;
+    for _ in 0..120 {
+        placed = admin.query(PLACED, json!({ "id": book })).await;
+        let linked = placed["audiobook"]["chapters"]["edges"]
+            .as_array()
+            .is_some_and(|rows| {
+                rows.len() == 3
+                    && rows.iter().all(|row| {
+                        row["node"]["mediaFileId"].is_string()
+                            && row["node"]["fileOffsetSecs"].is_number()
+                    })
+                    && rows[1]["node"]["mediaFileId"] == rows[2]["node"]["mediaFileId"]
+            });
+        if linked {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
     let rows = placed["audiobook"]["chapters"]["edges"].as_array().unwrap();
     let file = |index: usize| rows[index]["node"]["mediaFileId"].as_str().expect("linked");
     assert_eq!(file(1), file(2), "both start in part 2: {placed}");
