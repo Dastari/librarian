@@ -9,15 +9,16 @@ import { ThemePicker } from "@/components/ui";
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { errorMessage } from "@/lib/graphql/errors";
 import { useInputMode } from "@/lib/input-mode";
+import { LANGUAGES } from "@/lib/languages";
 
-import { DurationRow, TextRow, settingsFormBehaviour } from "./SettingFields";
+import { DurationRow, TagsRow, TextRow, settingsFormBehaviour } from "./SettingFields";
 import { SettingsPage, SettingsSection } from "./SettingsSection";
 import { asList, asNumber, useAppSettings } from "./useAppSettings";
 
 const schema = z.object({
   playbackSyncInterval: numberRule({ required: true, integer: true, min: 5, max: 300, requiredMessage: "Enter a progress interval", rangeMessage: "Enter a whole number from 5 to 300" }),
   preferredLanguage: z.string().trim().max(10),
-  subtitleLanguages: z.string().trim().max(200),
+  subtitleLanguages: z.array(z.string().trim().min(1)).refine((languages) => languages.join(",").length <= 200, "Use at most 200 characters"),
 });
 type Values = z.infer<typeof schema>;
 
@@ -31,7 +32,7 @@ export function GeneralSettings() {
   const storedValues = useMemo<Values>(() => ({
     playbackSyncInterval: asNumber(playback.values.get("playback_sync_interval"), 15),
     preferredLanguage: metadata.values.get("metadata.preferred_language") ?? "en",
-    subtitleLanguages: asList(subtitles.values.get("subtitles.preferred_languages")).join(", "),
+    subtitleLanguages: asList(subtitles.values.get("subtitles.preferred_languages")),
   }), [playback.values, metadata.values, subtitles.values]);
   const loading = playback.loading || metadata.loading || subtitles.loading;
   // TanStack reapplies the supplied defaults when an untouched form rerenders.
@@ -47,7 +48,7 @@ export function GeneralSettings() {
       const saved = schema.parse(value);
       await playback.save({ playback_sync_interval: String(saved.playbackSyncInterval) });
       await metadata.save({ "metadata.preferred_language": saved.preferredLanguage });
-      await subtitles.save({ "subtitles.preferred_languages": JSON.stringify(saved.subtitleLanguages.split(",").map((item) => item.trim()).filter(Boolean)) });
+      await subtitles.save({ "subtitles.preferred_languages": JSON.stringify(saved.subtitleLanguages) });
       setBaseline(saved);
       formApi.reset(saved);
       toast.success("Settings saved");
@@ -87,7 +88,7 @@ export function GeneralSettings() {
                   {() => <TextRow label="Metadata language" description="ISO code, e.g. en or de." disabled={loading || submitting} />}
                 </form.AppField>
                 <form.AppField name="subtitleLanguages">
-                  {() => <TextRow label="Preferred subtitle languages" description="Comma separated, in order of preference." disabled={loading || submitting} />}
+                  {() => <TagsRow label="Preferred subtitle languages" description="In order of preference." suggestions={LANGUAGES.map((language) => ({ value: language.code, label: language.name }))} disabled={loading || submitting} />}
                 </form.AppField>
               </SettingsSection>
               <FormActions>

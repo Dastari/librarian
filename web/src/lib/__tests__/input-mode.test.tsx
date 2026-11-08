@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { Select } from "glass-ux/select";
 import { Dialog } from "glass-ux/dialog";
 import { Segmented } from "glass-ux/segmented";
+import { TagInput } from "glass-ux/tag-input";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GlassSegmented } from "@/components/ui/GlassControls";
@@ -141,6 +142,17 @@ function GlassSpatialFixture({ overlay }: { overlay: boolean }) {
   );
 }
 
+function TagFixture() {
+  useSpatialNavigation(true, true);
+  return (
+    <main>
+      <button type="button" data-testid="above">Above</button>
+      <TagInput aria-label="Languages" defaultValue={["en"]} suggestions={[{ value: "en", label: "English" }, { value: "de", label: "German" }]} />
+      <button type="button" data-testid="beneath">Beneath</button>
+    </main>
+  );
+}
+
 function position(testId: string, rect: { x: number; y: number }) {
   const element = screen.getByTestId(testId);
   element.getBoundingClientRect = () => ({ x: rect.x, y: rect.y, left: rect.x, top: rect.y, right: rect.x + 40, bottom: rect.y + 20, width: 40, height: 20, toJSON: () => ({}) }) as DOMRect;
@@ -210,6 +222,21 @@ describe("spatial navigation", () => {
     await userEvent.keyboard("{ArrowRight}");
     expect(document.activeElement).toBe(grid);
     expect(list).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("lets the remote leave a tag field with its list closed, up and down", () => {
+    window.localStorage.setItem("librarian.inputMode", "tv");
+    render(<InputModeProvider><TagFixture /></InputModeProvider>);
+    const above = position("above", { x: 0, y: 0 });
+    const beneath = position("beneath", { x: 0, y: 200 });
+    const field = screen.getByRole("combobox", { name: "Languages" });
+    field.getBoundingClientRect = () => ({ x: 0, y: 100, left: 0, top: 100, right: 40, bottom: 120, width: 40, height: 20, toJSON: () => ({}) }) as DOMRect;
+    field.focus();
+    fireEvent.keyDown(field, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(beneath);
+    field.focus();
+    fireEvent.keyDown(field, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(above);
   });
 
   it("moves focus to the nearest element in the pressed direction", () => {

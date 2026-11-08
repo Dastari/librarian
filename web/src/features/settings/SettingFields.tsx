@@ -6,6 +6,7 @@ import { NumberField } from "glass-ux/number-field";
 import { PercentInput } from "glass-ux/percent-field";
 import { Select, type SelectOptions } from "glass-ux/select";
 import { SettingRow } from "glass-ux/setting-row";
+import { TagInput } from "glass-ux/tag-input";
 import { UrlInput } from "glass-ux/url-field";
 import type { ComponentProps, ReactNode } from "react";
 
@@ -130,6 +131,16 @@ export function SelectRow<V extends string = string>({ label, description, badge
   return (
     <Row label={label} description={description} badge={badge} disabled={disabled} className={className} error={error}>
       <Select<V> className={WIDTH.text} options={options} placeholder={placeholder} name={field.name} value={field.state.value} onValueChange={(value) => field.handleChange(value as V)} onBlur={field.handleBlur} disabled={disabled} invalid={Boolean(error)} />
+    </Row>
+  );
+}
+
+/** A short list of values as chips: entered with Enter or a comma, removed with Backspace. */
+export function TagsRow({ label, description, badge, disabled, className, suggestions, placeholder }: RowChrome & { suggestions?: Array<{ value: string; label: string }>; placeholder?: string }) {
+  const { field, error } = useBoundField<string[]>();
+  return (
+    <Row label={label} description={description} badge={badge} disabled={disabled} className={className} error={error}>
+      <TagInput className={WIDTH.address} suggestions={suggestions} placeholder={placeholder} name={field.name} value={field.state.value} onValueChange={(value) => field.handleChange(value)} onBlur={field.handleBlur} disabled={disabled} invalid={Boolean(error)} />
     </Row>
   );
 }
