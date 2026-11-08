@@ -120,7 +120,12 @@ export default defineConfig(({ mode }) => {
       tailwindcss(),
       glassUx(),
       librarianHtml({ publicUrl, version, id, time: builtAt }),
-      // Production builds only: the dev server gets no worker, manifest link or caching.
+      // Production builds get the manifest and the Workbox worker. The dev server (the live site on
+      // :3000 runs it) gets the manifest and its `<link>` too (`devOptions.enabled`), because that
+      // is what a Home Screen install reads to run standalone with the right name, icons, scope and
+      // colours; without it /manifest.webmanifest falls through to the SPA's index.html. The dev
+      // server still registers no worker (src/lib/pwa.ts retires strays): a cache must never
+      // stand in for HMR, and iOS needs no worker to launch an installed app full screen.
       VitePWA({
         registerType: "prompt",
         injectRegister: false,
@@ -167,7 +172,7 @@ export default defineConfig(({ mode }) => {
           navigateFallbackDenylist: [/^\/api(\/|$)/, /^\/graphql(\/|$)/, /^\/version\.json$/],
           maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         },
-        devOptions: { enabled: false },
+        devOptions: { enabled: true },
       }),
     ],
     resolve: {
