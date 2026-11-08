@@ -3,13 +3,13 @@ import { Dialog } from "glass-ux/dialog";
 import { Button as GlassButton } from "glass-ux/button";
 import { Notice } from "glass-ux/notice";
 import { IconChevronDown, IconExternalLink } from "glass-ux/icons";
-import { ListRow } from "glass-ux/list-row";
 
 import { Artwork, Button } from "@/components/ui";
 import { useDialogReturnFocus } from "@/components/ui/Dialog";
 import { formatClock } from "@/lib/format";
 
 import { PlayPauseButton, SeekBar, SkipButton, VolumeControl } from "./controls";
+import { QueuePanel } from "./QueuePanel";
 import { audioCommands, canSkipAudio, skipAudio } from "./usePlayer";
 import { currentChapterTitle, seekSpan } from "./chapterNav";
 import { currentAudioItem, playerStore, usePlayerState } from "./store";
@@ -28,7 +28,7 @@ const BODY_LAYOUT = "now-playing grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0
  * What now playing shows: the artwork, the title and chapter, and the queue. With `withTransport`
  * the controls too (the phone sheet); the desktop drawer keeps them in the dock beneath it.
  */
-function NowPlayingBody({ state, withTransport, onOpenEntity, queueRef }: { state: PlayerState; withTransport: boolean; onOpenEntity: (href: string) => void; queueRef: RefObject<HTMLOListElement | null> }) {
+function NowPlayingBody({ state, withTransport, onOpenEntity, queueRef, fillQueue }: { state: PlayerState; withTransport: boolean; onOpenEntity: (href: string) => void; queueRef: RefObject<HTMLDivElement | null>; fillQueue: boolean }) {
   const item = currentAudioItem(state);
   const { transport } = state;
   if (!item) return null;
@@ -73,39 +73,27 @@ function NowPlayingBody({ state, withTransport, onOpenEntity, queueRef }: { stat
       </div>
       {/* Beside the player, only the queue scrolls: the controls stay where they are. */}
       <div className="flex min-h-0 flex-col">
-        <p className="text-title-md mb-2 shrink-0 text-foreground">Up next</p>
-        <ol ref={queueRef} className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-0.5 md:overflow-y-auto md:overscroll-contain">
-          {state.queue.map((entry, index) => {
-            const active = index === state.index;
-            return (
-              <li key={`${entry.mediaFileId}-${index}`} data-current={active ? "" : undefined}>
-                <ListRow
-                  onClick={() => playerStore.jumpTo(index)}
-                  selected={active}
-                  aria-current={active ? "true" : undefined}
-                  icon={<Artwork src={entry.artwork} alt="" aspect="square" className="size-9 rounded-md" />}
-                  title={entry.title}
-                  meta={entry.subtitle}
-                  trailing={<span className="text-numeric text-label-sm text-muted">{entry.duration ? formatClock(entry.duration) : index + 1}</span>}
-                  className="w-full"
-                />
-              </li>
-            );
-          })}
-        </ol>
+        <QueuePanel state={state} listRef={queueRef} fill={fillQueue} />
       </div>
     </>
   );
 }
 
 /** Opening on what's playing, which may be far down a long queue. */
-function useCurrentInView(open: boolean, index: number) {
-  const queueRef = useRef<HTMLOListElement>(null);
+function useCurrentInView(open: boolean, queueId: string | undefined) {
+  const queueRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!open) return;
-    const frame = requestAnimationFrame(() => queueRef.current?.querySelector("[data-current]")?.scrollIntoView({ block: "nearest" }));
-    return () => cancelAnimationFrame(frame);
-  }, [open, index]);
+    if (!open || !queueId) return;
+    // The table draws rows a moment after it opens.
+    let tries = 0;
+    const look = setInterval(() => {
+      const row = queueRef.current?.querySelector(`[data-row-id="${CSS.escape(queueId)}"]`);
+      if (!row && ++tries < 20) return;
+      clearInterval(look);
+      row?.scrollIntoView({ block: "nearest" });
+    }, 100);
+    return () => clearInterval(look);
+  }, [open, queueId]);
   return queueRef;
 }
 
@@ -113,14 +101,14 @@ function useCurrentInView(open: boolean, index: number) {
 export function NowPlayingSheet({ open, onClose, onOpenEntity }: NowPlayingSheetProps) {
   const finalFocus = useDialogReturnFocus(open);
   const state = usePlayerState();
-  const queueRef = useCurrentInView(open, state.index);
+  const queueRef = useCurrentInView(open, state.queue[state.index]?.queueId);
   if (!currentAudioItem(state)) return null;
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()} sheet>
       <Dialog.Popup size="lg" finalFocus={finalFocus}>
         <Dialog.Header title="Now playing" />
         <Dialog.Body className={BODY_LAYOUT}>
-          <NowPlayingBody state={state} withTransport onOpenEntity={onOpenEntity} queueRef={queueRef} />
+          <NowPlayingBody state={state} withTransport onOpenEntity={onOpenEntity} queueRef={queueRef} fillQueue={false} />
         </Dialog.Body>
       </Dialog.Popup>
     </Dialog.Root>
@@ -134,7 +122,7 @@ export function NowPlayingSheet({ open, onClose, onOpenEntity }: NowPlayingSheet
  */
 export function NowPlayingDrawer({ open, onClose, onOpenEntity }: NowPlayingSheetProps) {
   const state = usePlayerState();
-  const queueRef = useCurrentInView(open, state.index);
+  const queueRef = useCurrentInView(open, state.queue[state.index]?.queueId);
   const panel = useRef<HTMLElement>(null);
   const hasItem = Boolean(currentAudioItem(state));
   useEffect(() => {
@@ -164,7 +152,7 @@ export function NowPlayingDrawer({ open, onClose, onOpenEntity }: NowPlayingShee
         <GlassButton variant="ghost" shape="circle" aria-label="Close now playing" icon={<IconChevronDown />} onClick={onClose} data-drawer-close data-focusable />
       </header>
       <div className={`${BODY_LAYOUT} min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-2`}>
-        <NowPlayingBody state={state} withTransport={false} onOpenEntity={onOpenEntity} queueRef={queueRef} />
+        <NowPlayingBody state={state} withTransport={false} onOpenEntity={onOpenEntity} queueRef={queueRef} fillQueue />
       </div>
     </section>
   );
