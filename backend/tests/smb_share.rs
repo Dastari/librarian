@@ -448,6 +448,87 @@ async fn exercise(app: &TestApp, admin: &mut GqlClient, work: &SmbLocation) {
         )
         .await;
 
+    // ---- fpcalc (when one is given) reads a song on the share through the tool URL.
+    if let Ok(fpcalc) = std::env::var("LIBRARIAN_FPCALC") {
+        let song_local = tmp.path().join("song.flac");
+        let made = std::process::Command::new("ffmpeg")
+            .args([
+                "-nostdin",
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=5",
+            ])
+            .arg(&song_local)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let song = work
+            .join("Music")
+            .join("Artist")
+            .join("Song.flac")
+            .storage_path();
+        storage
+            .create_dir_all(song.parent().unwrap())
+            .await
+            .unwrap();
+        storage
+            .put_from_local(&song_local, &song, PlaceMode::NoClobber)
+            .await
+            .unwrap();
+        // The program itself accepts the URL (no staged copy needed)...
+        let url = tool_argument(&song).await.unwrap();
+        let direct = tokio::process::Command::new(&fpcalc)
+            .args(["-json", "-length", "120"])
+            .arg(&url)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            direct.status.success(),
+            "fpcalc refused the tool URL: {}",
+            String::from_utf8_lossy(&direct.stderr)
+        );
+        let direct: Value = serde_json::from_slice(&direct.stdout).unwrap();
+        assert!(
+            (4.5..5.5).contains(&direct["duration"].as_f64().unwrap()),
+            "{direct}"
+        );
+        // ...and the helper that stages a copy for a tool that refuses it gives the same answer.
+        let scratch = tmp.path().join("scratch");
+        std::fs::create_dir_all(&scratch).unwrap();
+        let fingerprinted =
+            librarian::services::library_storage::run_on_input(&song, &scratch, |input| {
+                let fpcalc = fpcalc.clone();
+                async move {
+                    let output = tokio::process::Command::new(fpcalc)
+                        .args(["-json", "-length", "120"])
+                        .arg(input)
+                        .output()
+                        .await?;
+                    anyhow::ensure!(output.status.success(), "fpcalc failed");
+                    Ok(serde_json::from_slice::<Value>(&output.stdout)?)
+                }
+            })
+            .await
+            .unwrap();
+        assert_eq!(fingerprinted["fingerprint"], direct["fingerprint"]);
+        // And a copy staged from the share is the same file, and removed when dropped.
+        let staged = librarian::services::library_storage::StagedCopy::of(&song, &scratch)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read(staged.path()).unwrap(),
+            std::fs::read(&song_local).unwrap()
+        );
+        let staged_path = staged.path().to_path_buf();
+        drop(staged);
+        assert!(!staged_path.exists());
+    }
+
     // ---- Import: a download is copied onto the share and stays where it was.
     let three = movies
         .join("Film Three (2022)")

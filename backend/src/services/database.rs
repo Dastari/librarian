@@ -1149,7 +1149,14 @@ impl WriteInputTransform for AppWriteInputTransform {
                 && let Some(input) = input.downcast_mut::<UpdateLibraryInput>()
                 && let Some(path) = input.path.as_mut()
             {
-                *path = Self::checked_library_root(path).await?;
+                // Saving other settings sends the path again; only a changed path is checked, so
+                // a share that is down does not stop a person changing a scan interval.
+                let unchanged = existing_row
+                    .and_then(|row| row.downcast_ref::<Library>())
+                    .is_some_and(|library| library.path == *path);
+                if !unchanged {
+                    *path = Self::checked_library_root(path).await?;
+                }
             }
             if entity_name == "Source"
                 && let Some(input) = input.downcast_mut::<UpdateSourceInput>()

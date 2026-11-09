@@ -20,6 +20,7 @@ mod path;
 mod registry;
 mod smb;
 mod smb_reader;
+mod staged;
 mod types;
 
 pub use local::{LocalStorage, place_no_clobber_blocking};
@@ -27,6 +28,7 @@ pub use location::{CredentialRef, LocationError, SmbLocation, StorageLocation};
 pub use path::{IntoStoragePath, StorageKind, StoragePath, is_smb_uri};
 pub use registry::{LibraryStorage, ShareProvider, ToolUrlIssuer, library_storage};
 pub use smb::{SmbCredentials, SmbStorage};
+pub use staged::{MAX_STAGED_BYTES, StagedCopy, run_on_input};
 pub use types::{
     DirEntry, EntryKind, EntryMeta, FileIdentity, PlaceMode, PlaceOutcome, StorageCapabilities,
     StorageError, StorageErrorKind, StorageResult, ToolInput, WalkCandidate, WalkEntry, WalkFilter,

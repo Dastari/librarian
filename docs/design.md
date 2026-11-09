@@ -1551,9 +1551,11 @@ answers only a loopback peer (or the single address the server is bound to). It 
 `Accept-Ranges: bytes` from `open_read`, so ffprobe and ffmpeg can seek; it sits outside `/api`, takes no login, and refuses
 anything else. Tool callers ask `tool_input`/`tool_argument`: a local file gets its path, unchanged, and a file on a share a URL.
 ffprobe (`-protocol_whitelist file,pipe,http,tcp` added for a URL), the HLS remux, transcode and on-demand segment ffmpeg runs,
-the WebVTT subtitle conversion (whose whitelist stays `file,pipe` for local input), the whisper audio clips, and fingerprinting
-all go through it. `fpcalc` is tried with the URL first (it opens input with ffmpeg's libraries, which speak http); if this build
-refuses it, the file is copied to scratch space (at most 1 GiB, removed afterwards) and fingerprinted there. Residual risk, as for
+the WebVTT subtitle conversion (whose whitelist stays `file,pipe` for local input) and the whisper audio clips all go through it.
+`fpcalc` is not run by the product today (`services/fingerprint.rs` is not part of the build, see the note in the music matcher), but
+the helper it will use is in place and checked: Chromaprint 1.5.1's `fpcalc` reads the tool URL directly (its input is opened with
+ffmpeg's libraries, which speak http), and `run_on_input` repeats a failed run on a copy staged in scratch space (at most 1 GiB, removed
+afterwards) for a build that refuses it. Residual risk, as for
 any ffmpeg input: a file disguised as a playlist could make ffmpeg open other http addresses; a library's files are the
 administrator's own.
 

@@ -42,6 +42,9 @@ pub struct LibraryStorage {
     tool_urls: RwLock<Option<Arc<dyn ToolUrlIssuer>>>,
     connecting: tokio::sync::Mutex<()>,
     failures: Mutex<HashMap<String, (Instant, String)>>,
+    /// How long a path on a share waits for the host to install its share provider. At start the
+    /// scheduler can ask before the server has finished setting itself up.
+    provider_grace: Duration,
 }
 
 impl Default for LibraryStorage {
@@ -53,6 +56,7 @@ impl Default for LibraryStorage {
             tool_urls: RwLock::new(None),
             connecting: tokio::sync::Mutex::new(()),
             failures: Mutex::new(HashMap::new()),
+            provider_grace: Duration::ZERO,
         }
     }
 }
@@ -60,7 +64,15 @@ impl Default for LibraryStorage {
 /// The process-wide registry.
 pub fn library_storage() -> &'static LibraryStorage {
     static REGISTRY: OnceLock<LibraryStorage> = OnceLock::new();
-    REGISTRY.get_or_init(LibraryStorage::default)
+    REGISTRY.get_or_init(|| LibraryStorage {
+        // Unit tests have no host to wait for.
+        provider_grace: if cfg!(test) {
+            Duration::ZERO
+        } else {
+            Duration::from_secs(10)
+        },
+        ..LibraryStorage::default()
+    })
 }
 
 impl LibraryStorage {
@@ -98,6 +110,19 @@ impl LibraryStorage {
         }
     }
 
+    async fn provider_within_grace(&self) -> Option<Arc<dyn ShareProvider>> {
+        let deadline = Instant::now() + self.provider_grace;
+        loop {
+            if let Some(provider) = self.provider.read().ok().and_then(|slot| slot.clone()) {
+                return Some(provider);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     fn registered(&self, key: &str) -> Option<Arc<dyn Storage>> {
         self.remotes.read().ok()?.get(key).cloned()
     }
@@ -117,7 +142,7 @@ impl LibraryStorage {
                 if let Some(storage) = self.registered(&key) {
                     return Ok(storage);
                 }
-                let provider = self.provider.read().ok().and_then(|slot| slot.clone());
+                let provider = self.provider_within_grace().await;
                 let Some(provider) = provider else {
                     return Err(StorageError::new(
                         StorageErrorKind::Unavailable,
@@ -399,6 +424,41 @@ mod tests {
         registry.forget_share(&path.as_smb().unwrap());
         registry.for_path(&path).await.expect("connected now");
         assert_eq!(provider.connects(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_path_on_a_share_waits_briefly_for_the_host_to_install_the_provider() {
+        let registry = Arc::new(LibraryStorage {
+            provider_grace: Duration::from_secs(3),
+            ..LibraryStorage::default()
+        });
+        let provider = CountingProvider::new(false);
+        let installer = {
+            let registry = registry.clone();
+            let provider = provider.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                registry.install_share_provider(Arc::new(Shared(provider)));
+            })
+        };
+        // Asked at start-up, before the server has set itself up: it waits, then connects.
+        registry
+            .for_path(&StoragePath::new("smb://nas/media/a.mkv"))
+            .await
+            .expect("connected once the provider arrived");
+        installer.await.unwrap();
+        assert_eq!(provider.connects(), 1);
+        // With no host at all it gives up after the grace period, as unavailable.
+        let alone = LibraryStorage {
+            provider_grace: Duration::from_millis(300),
+            ..LibraryStorage::default()
+        };
+        let error = alone
+            .for_path(&StoragePath::new("smb://nas/media/a.mkv"))
+            .await
+            .err()
+            .expect("no provider");
+        assert_eq!(error.kind(), StorageErrorKind::Unavailable);
     }
 
     #[tokio::test]
