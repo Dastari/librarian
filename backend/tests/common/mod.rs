@@ -922,8 +922,8 @@ impl WsClient {
 ///
 /// `#[tokio::test]` uses the platform default 2 MiB thread stacks, which the
 /// generated GraphQL schema (recursion limit 512, ~46 entities with relation
-/// types) can blow through while building or resolving. `main.rs` runs with
-/// 8 MiB worker stacks for exactly that reason, so tests use the same size —
+/// types) can blow through while building or resolving. Production runs with
+/// 32 MiB worker stacks for exactly that reason, so tests use the same size —
 /// otherwise a test failure is a stack overflow rather than an assertion.
 /// Every app test owns a full service stack (and, for acquisition tests, two librqbit
 /// sessions). libtest runs the tests of a binary concurrently, and under a CPU quota
@@ -942,7 +942,7 @@ where
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let result = std::thread::Builder::new()
         .name("librarian-test".to_string())
-        .stack_size(16 * 1024 * 1024)
+        .stack_size(32 * 1024 * 1024)
         .spawn(move || {
             tokio::runtime::Builder::new_multi_thread()
                 // Two is enough for a test body plus the server it drives.
@@ -952,7 +952,7 @@ where
                 // just starves the machine.
                 .worker_threads(2)
                 .max_blocking_threads(4)
-                .thread_stack_size(8 * 1024 * 1024)
+                .thread_stack_size(32 * 1024 * 1024)
                 .enable_all()
                 .build()
                 .expect("test runtime should build")
