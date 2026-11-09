@@ -15,7 +15,8 @@ use crate::services::graphql::mutations::{
     ArtworkMutations, AuthMutations, AutoDownloadMutations, BackupMutations, DeviceActionMutations,
     DownloadsMoveMutations, DownloadsMoveQueries, FeedMutations, FilesystemMutations,
     LibraryScanMutations, MaintenanceMutations, NotificationFeedMutations, QualityMutations,
-    RecommendationMutations, ServerConnectionMutations, ServerConnectionQueries, SubtitleActionMutations,
+    RecommendationMutations, ServerConnectionMutations, ServerConnectionQueries,
+    SubtitleActionMutations,
 };
 use crate::services::graphql::queries::{
     ArtworkQueries, BackupQueries, ContentStatusQueries, FilesystemQueries, GenreQueries,
