@@ -57,16 +57,28 @@ export const episodeItem = (episode: EpisodeNode): PlayItem | null => {
 
 export const trackItem = (track: TrackNode): PlayItem | null => trackPlayItem(track);
 
+/**
+ * Where a lone chapter stops in its file: its start plus its length, when the file holds more than
+ * the chapter. A chapter that runs to the end of the file (or into the next part) needs no bound.
+ */
+export function chapterEnd(chapter: Pick<ChapterNode, "durationSecs">, offset: number | undefined, fileSecs: number, inLargerFile: boolean): number | undefined {
+  const length = chapter.durationSecs ?? 0;
+  if (length <= 0 || (!inLargerFile && !offset)) return undefined;
+  const end = (offset ?? 0) + length;
+  return fileSecs > 0 && end >= fileSecs - 1 ? undefined : end;
+}
+
 /** One chapter on its own. A chapter inside a file that holds more than itself starts where it does. */
 export function chapterItem(chapter: ChapterNode): PlayItem | null {
   if (!chapter.mediaFileId) return null;
   const fileSecs = chapter.mediaFile?.duration ?? 0;
   const inLargerFile = fileSecs > (chapter.durationSecs ?? 0) + 5;
   const offset = chapter.fileOffsetSecs ?? (inLargerFile && chapter.startTimeSecs > 0 ? chapter.startTimeSecs : undefined);
+  const end = chapterEnd(chapter, offset, fileSecs, inLargerFile);
   return {
     mediaFileId: chapter.mediaFileId, title: chapter.audiobook?.title ?? "Audiobook", subtitle: chapter.title ?? `Chapter ${chapter.chapterNumber}`,
     artwork: audiobookCover({ id: chapter.audiobookId }), entity: { kind: "chapter", id: chapter.id }, audiobookId: chapter.audiobookId,
-    href: `/audiobooks/${chapter.audiobookId}`, duration: chapter.durationSecs ?? undefined, startPosition: offset || undefined,
+    href: `/audiobooks/${chapter.audiobookId}`, duration: chapter.durationSecs ?? undefined, startPosition: offset || undefined, endPosition: end,
   };
 }
 

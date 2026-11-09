@@ -36,6 +36,11 @@ export interface PlayItem {
   /** Where "back" and the dock title should go. */
   href?: string;
   startPosition?: number;
+  /**
+   * Where in the file this entry ends, when it is only part of it (one chapter queued from a
+   * playlist): playback moves to the next entry there instead of running on into the next chapter.
+   */
+  endPosition?: number;
   /** Open paused: a mini player that was paused when the page was refreshed. */
   startPaused?: boolean;
   duration?: number;

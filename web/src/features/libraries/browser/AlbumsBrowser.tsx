@@ -7,6 +7,7 @@ import { useCallback, useMemo, useState } from "react";
 
 import { Button, PosterCard } from "@/components/ui";
 import { useAlbumEntity } from "@/features/media/useAlbumEntity";
+import { useGridReset } from "@/features/media/useProgressOwners";
 import { AlbumIdentity } from "@/features/media/AlbumIdentity";
 import { ProviderSearchDialog } from "@/features/library-add/ProviderSearchDialog";
 import { LibraryAlbumsDocument, type AlbumOrderByInput, type AlbumWhereInput, type LibraryAlbumsQuery } from "@/graphql/generated/graphql";
@@ -38,7 +39,8 @@ export function AlbumsBrowser({ libraryId }: { libraryId: string }) {
   const isAdmin = useIsAdmin();
   const navigate = useNavigate();
   const filters = useBrowserFilters();
-  const { actions, dialogs } = useAlbumEntity<AlbumRow>();
+  const reset = useGridReset<AlbumRow>("album");
+  const { actions, dialogs } = useAlbumEntity<AlbumRow>({ reset });
   const table = useServerTable<AlbumOrderByInput>({ persistKey: `albums.${libraryId}`, defaultSorting: [{ id: "name", desc: false }], sortMap: { name: "sortName" } });
   const [adding, setAdding] = useState(false);
 

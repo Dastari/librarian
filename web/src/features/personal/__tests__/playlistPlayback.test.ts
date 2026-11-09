@@ -89,6 +89,17 @@ describe("playlistPlayItems", () => {
     expect(items[1]!.startPosition).toBeUndefined();
   });
 
+  it("ends a lone chapter where it ends in a larger file, and bounds nothing that runs to its file's end", async () => {
+    const { client } = fakeClient({ PlaylistPlayChapters: [
+      chapter("c2", 2, "f-book", { startTimeSecs: 600, mediaFile: { id: "f-book", duration: 3600 } }),
+      chapter("c3", 3, "f-part", { startTimeSecs: 0, fileOffsetSecs: 300, durationSecs: 900, mediaFile: { id: "f-part", duration: 1200 } }),
+      chapter("c4", 4, "f-parts", { startTimeSecs: 0, fileOffsetSecs: 300, durationSecs: 600, mediaFile: { id: "f-parts", duration: 3000 } }),
+      chapter("c1", 1, "f-own", { startTimeSecs: 0 }),
+    ] });
+    const { items } = await playlistPlayItems(client, [{ kind: "chapter", id: "c2" }, { kind: "chapter", id: "c3" }, { kind: "chapter", id: "c4" }, { kind: "chapter", id: "c1" }]);
+    expect(items.map((item) => item.endPosition)).toEqual([1200, undefined, 900, undefined]);
+  });
+
   it("asks for each kind once, in batches of at most a hundred ids, and not at all for kinds it has none of", async () => {
     const { client, asked } = fakeClient({});
     const targets = Array.from({ length: 230 }, (_, index) => ({ kind: "track" as const, id: `t${index}` }));

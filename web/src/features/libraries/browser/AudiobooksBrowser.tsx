@@ -7,6 +7,7 @@ import { useCallback, useMemo, useState } from "react";
 
 import { Button, PosterCard } from "@/components/ui";
 import { useAudiobookEntity } from "@/features/media/useAudiobookEntity";
+import { useGridReset } from "@/features/media/useProgressOwners";
 import { AudiobookIdentity } from "@/features/media/AudiobookIdentity";
 import { ProviderSearchDialog } from "@/features/library-add/ProviderSearchDialog";
 import { LibraryAudiobooksDocument, type AudiobookOrderByInput, type AudiobookWhereInput, type LibraryAudiobooksQuery } from "@/graphql/generated/graphql";
@@ -37,7 +38,8 @@ export function AudiobooksBrowser({ libraryId }: { libraryId: string }) {
   const isAdmin = useIsAdmin();
   const navigate = useNavigate();
   const filters = useBrowserFilters();
-  const { actions, dialogs } = useAudiobookEntity<BookRow>();
+  const reset = useGridReset<BookRow>("audiobook");
+  const { actions, dialogs } = useAudiobookEntity<BookRow>({ reset });
   const table = useServerTable<AudiobookOrderByInput>({ persistKey: `audiobooks.${libraryId}`, defaultSorting: [{ id: "title", desc: false }], sortMap: { title: "sortTitle" } });
   const [adding, setAdding] = useState(false);
 

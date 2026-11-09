@@ -85,6 +85,11 @@ query LibraryAlbums($where: AlbumWhereInput, $orderBy: [AlbumOrderByInput!], $pa
             totalCount
           }
         }
+        wantedMissing: tracks(where: { wanted: { eq: true }, mediaFileId: { isNull: true } }, page: { limit: 1, offset: 0 }) {
+          pageInfo {
+            totalCount
+          }
+        }
       }
     }
     pageInfo {
@@ -136,6 +141,11 @@ query LibraryAudiobooks($where: AudiobookWhereInput, $orderBy: [AudiobookOrderBy
       node {
         ...AudiobookFields
         downloaded: chapters(where: { mediaFileId: { isNull: false } }, page: { limit: 1, offset: 0 }) {
+          pageInfo {
+            totalCount
+          }
+        }
+        wantedMissing: chapters(where: { wanted: { eq: true }, mediaFileId: { isNull: true } }, page: { limit: 1, offset: 0 }) {
           pageInfo {
             totalCount
           }

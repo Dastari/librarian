@@ -4,8 +4,10 @@ import { IconPlay } from "glass-ux/icons";
 import { Progress } from "glass-ux/progress";
 import { Surface } from "glass-ux/surface";
 import { ToneDot } from "glass-ux/tone-dot";
-import { createContext, useContext, useId, type CSSProperties, type FocusEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { AspectRatio } from "glass-ux/aspect-ratio";
+import { createContext, useContext, useId, useState, type CSSProperties, type FocusEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 
+import { sizedArtwork } from "@/lib/api/urls";
 import type { StatusMeta } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { claimMorph } from "@/lib/view-transition";
@@ -29,6 +31,11 @@ export interface PosterCardProps {
   className?: string;
   style?: CSSProperties;
   fallbackIcon?: ReactNode;
+  /**
+   * A tile made of several pictures, for a list or playlist: up to four covers, two to a row
+   * (the first three or four of its entries). Fewer than two covers fall back to `image`.
+   */
+  mosaic?: readonly string[];
   selected?: boolean;
   /** `row` sizes a shelf tile; `compact` a smaller one (seasons); `fill` takes the grid cell. */
   width?: "row" | "compact" | "fill";
@@ -51,7 +58,21 @@ export interface PosterCardProps {
  */
 export const PosterInTable = createContext(false);
 
-export function PosterCard({ title, meta, image, aspect = "poster", tint, to, params, onPress, progress, status, badge, actions, onPlay, className, style, fallbackIcon, selected, width = "fill", priority, onFocus, wrapTitle }: PosterCardProps) {
+/** Up to four covers in one square. A cover that fails to load drops out, and the rest fill the tile. */
+function CoverMosaic({ covers, tint, fallback }: { covers: readonly string[]; tint?: string; fallback?: ReactNode }) {
+  const [failed, setFailed] = useState<readonly string[]>([]);
+  const shown = covers.filter((cover) => !failed.includes(cover)).slice(0, 4);
+  if (shown.length < 2) return <>{fallback}</>;
+  return (
+    <AspectRatio ratio={1} className="bg-surface-secondary placeholder-gradient" style={tint ? ({ "--placeholder-tint": tint } as CSSProperties) : undefined}>
+      <span className="entity-art" data-shape="square" data-mosaic={shown.length} style={{ borderRadius: 0, boxShadow: "none" }} aria-hidden>
+        {shown.map((cover) => <img key={cover} src={sizedArtwork(cover, 160)} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setFailed((previous) => [...previous, cover])} />)}
+      </span>
+    </AspectRatio>
+  );
+}
+
+export function PosterCard({ title, meta, image, aspect = "poster", tint, to, params, onPress, progress, status, badge, actions, onPlay, className, style, fallbackIcon, mosaic, selected, width = "fill", priority, onFocus, wrapTitle }: PosterCardProps) {
   const labelId = useId();
   const navigationClass = "poster-navigation absolute inset-0 z-10 rounded-tile outline-none";
   const inTable = useContext(PosterInTable);
@@ -60,7 +81,8 @@ export function PosterCard({ title, meta, image, aspect = "poster", tint, to, pa
     ? { tabIndex: -1, onFocus: (event: FocusEvent<HTMLElement>) => { event.currentTarget.closest<HTMLElement>(".fa-dt-card")?.focus({ preventScroll: true }); onFocus?.(event); } }
     : { onFocus, "data-focusable": true };
   const morph = (event: MouseEvent<HTMLElement>) => claimMorph(event.currentTarget.nextElementSibling);
-  // A remote's Play key plays the focused tile; its on-screen play button is for pointers.
+  // A card is one stop: its on-screen play button is for pointers (the card's link opens the page
+  // with Play on it, the Play key plays the focused tile, and the menu has the rest).
   const playKey = onPlay ? (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== "MediaPlayPause" && event.key !== "MediaPlay") return;
     event.preventDefault();
@@ -79,13 +101,16 @@ export function PosterCard({ title, meta, image, aspect = "poster", tint, to, pa
       {navigation}
       <Surface material="card" radius="tile" padding="none"
         className="poster-art pointer-events-none relative overflow-clip">
-        <Artwork src={image} alt="" aspect={aspect} tint={tint} priority={priority} fallback={fallbackIcon} displayWidth={width === "compact" ? 180 : 300} />
+        {(() => {
+          const picture = <Artwork src={image} alt="" aspect={aspect} tint={tint} priority={priority} fallback={fallbackIcon} displayWidth={width === "compact" ? 180 : 300} />;
+          return mosaic && mosaic.length > 1 ? <CoverMosaic covers={mosaic} tint={tint} fallback={picture} /> : picture;
+        })()}
         {badge ? <Surface as="span" material="control" radius="control" padding="none" className="over-imagery absolute start-2 top-2 px-2 py-1 text-caption">{badge}</Surface> : null}
         {status ? <ToneDot overlay label={status.label} tone={status.tone === "default" ? "neutral" : status.tone} className="absolute end-2 top-2" /> : null}
         {onPlay || actions ? (
           <div data-print="hide" className="over-imagery absolute inset-0 z-20 flex items-end justify-end gap-1 p-[max(var(--space-2),var(--focus-reach))]">
             {actions ? <div className="pointer-events-auto flex gap-1">{actions}</div> : null}
-            {onPlay ? <Button variant="primary" shape="circle" icon={<IconPlay />} aria-label={`Play ${title}`} onClick={onPlay} className="pointer-events-auto" tabIndex={inTable ? -1 : undefined} data-focusable={inTable ? undefined : true} data-tv-skip /> : null}
+            {onPlay ? <Button variant="primary" shape="circle" icon={<IconPlay />} aria-label={`Play ${title}`} onClick={onPlay} className="pointer-events-auto" tabIndex={-1} data-nav-skip data-tv-skip /> : null}
           </div>
         ) : null}
         {watched !== null ? (

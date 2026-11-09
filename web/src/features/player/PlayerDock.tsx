@@ -59,10 +59,18 @@ export function PlayerDock() {
       checkpoint(!audio.paused);
     };
     audioCommands.seek = seek;
+    const end = item.endPosition;
+    let finished = false;
+    // The entry's own end is its end: a lone chapter queued from a playlist stops here and the queue moves on.
     const onTime = () => {
       if (!active()) return;
       playerStore.updateTransport({ position: audio.currentTime, buffered: audio.buffered.length ? audio.buffered.end(audio.buffered.length - 1) : 0 });
       checkpoint(!audio.paused);
+      if (end !== undefined && !finished && audio.currentTime >= end) {
+        finished = true;
+        audio.pause();
+        onEnded();
+      }
     };
     const onDuration = () => { if (active()) playerStore.updateTransport({ duration: duration() }); };
     const onPlay = () => {

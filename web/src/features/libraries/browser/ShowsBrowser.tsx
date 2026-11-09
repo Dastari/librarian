@@ -7,6 +7,7 @@ import { useCallback, useMemo, useState } from "react";
 
 import { Button, PosterCard } from "@/components/ui";
 import { useShowEntity } from "@/features/media/useShowEntity";
+import { useGridReset } from "@/features/media/useProgressOwners";
 import { ShowIdentity } from "@/features/media/ShowIdentity";
 import { ProviderSearchDialog } from "@/features/library-add/ProviderSearchDialog";
 import { LibraryShowsDocument, type LibraryShowsQuery, type ShowOrderByInput, type ShowWhereInput } from "@/graphql/generated/graphql";
@@ -49,7 +50,8 @@ export function ShowsBrowser({ libraryId }: { libraryId: string }) {
   const isAdmin = useIsAdmin();
   const navigate = useNavigate();
   const filters = useBrowserFilters();
-  const { actions, dialogs } = useShowEntity<ShowRow>();
+  const reset = useGridReset<ShowRow>("show");
+  const { actions, dialogs } = useShowEntity<ShowRow>({ reset });
   const table = useServerTable<ShowOrderByInput>({ persistKey: `shows.${libraryId}`, defaultSorting: [{ id: "name", desc: false }], sortMap: { name: "sortName" } });
   const [adding, setAdding] = useState(false);
 

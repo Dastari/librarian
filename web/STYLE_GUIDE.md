@@ -262,6 +262,17 @@ results that are not in the library keep their remote URLs.
 - In TV mode single-line fields, ⋯ menu buttons and horizontal tab strips never trap
   the remote; Backspace/Escape and the webOS/Tizen Back keys go back through in-app
   history, then Home. Focused tiles grow with a transform only.
+- A card is one stop. Secondary buttons on it (a poster's play button, a library card's favourite
+  star) are pointer-only: `tabIndex={-1}` and `data-nav-skip`, with their action also in the
+  card's menu or on its Play key. Walking across cards never lands between them.
+- TV mode trims the app chrome: the top bar loses search, Commands, Cast and the account (the
+  rail has Search; the account is its last item, opening the same menu beside the rail; casting
+  is in the players' own controls) and keeps the breadcrumbs. Every scroller that clips (a rail's
+  list, a poster row) pads its ends by `--focus-reach` so the first and last item's ring is
+  never cut off; pad or `scroll-padding`, do not remove the clip.
+- A number field (Glass `NumberField`) never traps Up/Down in TV mode either; OK on it starts an
+  adjusting state (`data-tv-adjusting`) in which Up/Down step the value, and OK or Back ends it
+  (design.md Q107).
 
 ## Motion
 

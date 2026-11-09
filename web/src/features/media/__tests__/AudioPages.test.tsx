@@ -51,14 +51,14 @@ const album = (rows: Track[], total = rows.length, hasMore = false): NonNullable
   year: 2026, musicbrainzId: null, albumType: null, genres: [], label: null, country: null, releaseDate: null,
   coverUrl: null, trackCount: total, discCount: 2, totalDurationSecs: null, autoDownload: false, autoDownloadMode: "NONE",
   qualityProfileId: null, hasFiles: true, sizeBytes: null, path: null, createdAt: stamp, updatedAt: stamp,
-  library: null, tracks: connection(rows, total, hasMore),
+  library: null, wantedMissing: { pageInfo: { totalCount: 0 } }, tracks: connection(rows, total, hasMore),
 });
 const book = (rows: Chapter[], total = rows.length, hasMore = false): NonNullable<AudiobookDetailQuery["audiobook"]> & { __typename: "Audiobook" } => ({
   __typename: "Audiobook", id: "book", lockedFields: null, libraryId: "books", userId: "audio-user", title: "Long book", sortTitle: null, authorName: "Author", seriesName: null, seriesPosition: null, chapterCheckState: null, chapterCheck: null, chapterSource: null, fileShape: null, providerChapters: null,
   narratorName: null, narrators: [], description: null, publisher: null, publishedDate: null, language: null,
   isbn: null, asin: null, audibleId: null, goodreadsId: null, totalDurationSecs: null, chapterCount: total,
   coverUrl: null, autoDownload: false, autoDownloadMode: "NONE", qualityProfileId: null, hasFiles: true,
-  sizeBytes: null, path: null, createdAt: stamp, updatedAt: stamp, library: null, chapters: connection(rows, total, hasMore),
+  sizeBytes: null, path: null, createdAt: stamp, updatedAt: stamp, library: null, wantedMissing: { pageInfo: { totalCount: 0 } }, chapters: connection(rows, total, hasMore),
 });
 const saved = (n: number, position: number, watched = false): PlaybackProgressFieldsFragment & { __typename: "PlaybackProgress" } => ({
   __typename: "PlaybackProgress", id: `progress-${n}`, userId: "audio-user", mediaFileId: `chapter-file-${n}`, currentPosition: position,

@@ -23,7 +23,7 @@ export function AlphabetRail({ value, onChange, available, className, orientatio
       data-nav-zone="letters"
       data-nav-side={orientation === "horizontal" ? undefined : ""}
       className={cn(
-        "scrollbar-none flex text-label-sm",
+        "scrollbar-none flex p-(--focus-reach) text-label-sm",
         orientation === "vertical" ? "flex-col items-center gap-px overflow-y-auto" : "flex-row gap-0.5 overflow-x-auto",
         className,
       )}

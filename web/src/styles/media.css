@@ -151,6 +151,14 @@
   z-index: 1;
 }
 
+/* A number field in TV mode only steps with Up/Down after OK puts it in the adjusting state
+ * (lib/input-mode.tsx); the group wears the focus ring and an accent edge while it does. */
+:root[data-input-mode="tv"] .fa-number-group:has(.fa-number-input[data-tv-adjusting]) {
+  outline: var(--nav-focus-width) solid var(--focus);
+  outline-offset: 2px;
+  box-shadow: inset 0 0 0 1px var(--focus);
+}
+
 :root[data-input-mode="tv"] .tv-lift,
 :root[data-input-mode="tv"] .tv-lift > .tv-lift-target {
   transition: transform calc(var(--duration-base) * var(--motion-scale)) var(--ease-spring);
@@ -411,6 +419,15 @@
  * the home indicator but its scroll ends above it. */
 .app-top { padding-inline-end: max(var(--page-gutter), var(--safe-inline-end)); }
 .app-shell-scroll { padding-block-end: var(--safe-bottom); }
+/* The rail's list scrolls (it clips on both axes), and Glass gives it only a hair of padding, so the
+ * focus ring of the first and last item (Home, the account) was cut off, most of all in TV mode where
+ * the ring is wide. Inset it by the focus reach (the convention of snap-row and the poster grids) and
+ * keep scrolled-to items clear of the edge too. */
+.app-shell-rail .fa-shell-rail-list {
+  padding-block: max(var(--space-1), var(--focus-reach));
+  padding-inline: max(0px, var(--focus-reach));
+  scroll-padding-block: var(--focus-reach);
+}
 .app-rail-divider { flex: none; align-self: stretch; inline-size: auto; padding-block: var(--space-2); padding-inline: var(--space-2); list-style: none; }
 
 @media (width < 48rem) {

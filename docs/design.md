@@ -2111,3 +2111,52 @@ when, "Can't watch the folder" with the reason); Settings › Libraries has a *W
 "Share not reachable, retrying" as a warning state (after scanning and open issues). The watch supervisor follows the
 setting at once: a change to a library's folder or its watch setting nudges it from the `Library` lifecycle hook, and it
 also looks again every minute.
+
+### Q107: What do the arrow keys do in a number field on a TV?
+**Answer:** Up and Down move focus to the next row, like every other single-line field; they never change the value. Glass
+UX is an external package (`glass-ux` from a release tarball), and its `NumberField` is Base UI's: the input steps on
+ArrowUp/ArrowDown and stops the event, so on a page (not in a dialog, where the app's capture handler already won) the
+remote's Down changed the value instead of moving on. The app now takes Up/Down on a number input in TV mode in the capture
+phase of `useSpatialNavigation` (`handleTvNumberKey` in `lib/input-mode.tsx`). The −/+ steppers are `tabIndex=-1`, so a remote
+cannot reach them; to change a value without typing it, OK (Enter) puts the focused field into an explicit *adjusting*
+state (`data-tv-adjusting`, drawn as a focus ring on the field group), where Up/Down step it as Base UI does; OK, Back or
+leaving the field ends it, and Back there does not leave the page. Left/Right keep the text-field rule (they leave once the
+caret is at that end). OK on a number field in TV mode therefore no longer submits its form; use the Save button.
+Upstream suggestion for Glass UX: a `NumberField` prop (or a TV-mode default) that lets ArrowUp/ArrowDown propagate unless the field
+is in an explicit edit state, and focusable steppers in `data-input-mode="tv"`.
+
+**TV app chrome (same entry):** In TV mode (the input-mode flag, which the Android TV app forces) the top bar keeps only the breadcrumbs: the
+search field, the Commands button, the Cast button, the Back button and the account are not rendered, so nothing hidden
+can take focus. The row stays because the brand mark shares it and the shell grid needs it. Search is the rail's own
+Search destination (it was already there); the Search page keeps its type-to-search. Casting stays in the players: the
+video player's cast control and the audio dock's Cast button; what is lost is the top bar's list of active cast sessions.
+The account becomes the last item of the side rail, a rail item with the unread count, opening the same account menu
+beside the rail; Escape returns focus to it. In TV mode the rail scrolls instead of folding items into a More menu, so
+the account item is always in the column. The rail list is inset by the focus reach so the first and last items' rings are
+never clipped. Outside TV mode nothing changes.
+
+### Q108: What does a playlist entry's menu offer?
+**Answer:** The entry's own actions plus its target's. A playlist row (a movie, show, album or book entry) shows the
+playlist's actions (Play from here, Shuffle from here, Play next, Add to queue, Add to playlist, Move up and down, Remove from
+playlist, Copy titles) and then the target's own action set from `useMovieEntity`, `useShowEntity`, `useAlbumEntity`
+and `useAudiobookEntity`: Find releases, Refresh metadata, Add to or Remove from Wanted, its settings dialog and the
+rest. `liftActions` (`features/personal/entryActions.ts`) turns a target's set into entry actions: each runs on the
+entries' targets, shows only when every selected entry points at one of that kind, and its label, confirm,
+disabled reason and success message resolve for those targets. Left out because the entry already does them its own way:
+Play (the entry plays from its place in the list), Open, the queue pair, Add to playlist, and Remove from the library, which
+should not sit next to Remove from playlist. Episodes, tracks and chapters have no action set of their own yet, so their
+entries offer the playlist's actions and Open; giving those three entities sets would put theirs here with no change to
+this page.
+
+### Q109: What does a lone chapter do when it ends, and how does a list card draw its picture?
+**Answer:** A chapter queued on its own (from a playlist or the queue) stops where it ends. When the file holds more than the
+chapter (a whole-book file, or a chapter placed inside a part), its queue entry carries `endPosition` (its start plus its
+length, `chapterEnd` in `features/personal/playlistPlayback.ts`), and the audio dock treats reaching it as the entry
+ending: it pauses and calls `playerStore.advance()`, which moves to the next queue item or asks the continuation resolver.
+A chapter that runs to its file's end, and every per-chapter file, carries none. Whole-book and by-part entries that
+play a book from the page still run through, with their chapter marks. The seek bar of a bounded entry still spans the
+whole file. On `/lists` a card shows up to four distinct covers from the list's first entries in one square tile
+(`mosaic` on `PosterCard`: two side by side, three with the third spanning the bottom, four in a 2×2 grid, the layout the
+identity's picture already uses); entries from one album or show make one tile, so a list built from a single album shows
+that cover alone, and with fewer than two covers, or when covers fail to load, the card falls back to the single cover and
+then to the playlist glyph.

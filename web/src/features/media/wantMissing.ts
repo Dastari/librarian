@@ -28,8 +28,19 @@ export function useWantMissing() {
   }, [updateChapters, updateTracks]);
 }
 
-/** The Want / Stop wanting pair for a book's or album's missing chapters or tracks. Admins only. */
-export function wantMissingActions<T extends { id: string }>(
+/** What a row says about its wanted missing parts: `wantedMissing` is a count read with the row (see the list and detail queries). */
+export interface WantedMissing {
+  wantedMissing?: { pageInfo: { totalCount?: number | null } } | null;
+}
+
+/** How many of a title's missing parts are wanted, or undefined where the row didn't read it. */
+const wantedCount = (row: WantedMissing) => row.wantedMissing?.pageInfo.totalCount ?? undefined;
+
+/**
+ * The Want / Stop wanting pair for a book's or album's missing chapters or tracks. Admins only.
+ * Stop wanting is only offered where something is wanted; a row that never read the count keeps it.
+ */
+export function wantMissingActions<T extends { id: string } & WantedMissing>(
   kind: WantMissingKind,
   wantMissing: ReturnType<typeof useWantMissing>,
   onChanged?: () => void,
@@ -47,6 +58,7 @@ export function wantMissingActions<T extends { id: string }>(
     },
     {
       id: "unwant-missing", label: `Stop wanting missing ${noun}`, icon: IconBookmark, group: "manage" as const, priority: 2, bulk: true,
+      visible: (rows: readonly T[]) => rows.some((row) => (wantedCount(row) ?? 1) > 0),
       run: run(false),
       successMessage: () => `Missing ${noun} no longer wanted`,
     },

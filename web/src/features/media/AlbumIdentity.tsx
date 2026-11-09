@@ -20,6 +20,8 @@ export interface AlbumEntity {
   trackCount?: number | null;
   hasFiles: boolean;
   autoDownloadMode: AutoDownloadMode;
+  /** Missing parts someone wants, counted with the row (for Stop wanting). */
+  wantedMissing?: { pageInfo: { totalCount?: number | null } } | null;
 }
 
 /** Whether its files are here, or else whether they're being fetched. */

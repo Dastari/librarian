@@ -17,6 +17,11 @@ import { formatRuntime } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { useLiveQuery } from "@/lib/graphql/live/hooks";
 import { entryKindLabel, EntryIdentity, entryLength } from "./EntryIdentity";
+import { useAlbumEntity } from "@/features/media/useAlbumEntity";
+import { useAudiobookEntity } from "@/features/media/useAudiobookEntity";
+import { useMovieEntity } from "@/features/media/useMovieEntity";
+import { useShowEntity } from "@/features/media/useShowEntity";
+import { ENTRY_OWN_ACTIONS, liftActions } from "./entryActions";
 import { PlaylistIdentity } from "./PlaylistIdentity";
 import { moved, positionForMove } from "./positions";
 import { playlistDuration } from "./playlistTotals";
@@ -31,6 +36,8 @@ type Entry = PersonalEntryFragment;
 const getEntryId = (entry: Entry) => entry.id;
 const entryTitle = (entry: Entry) => entryPresentation(entry)?.title ?? "Unavailable item";
 const noun = { one: "item", other: "items" };
+/** Removing the title from its library is not something a playlist row should sit beside Remove from playlist with. */
+const LIFT_SKIP: ReadonlySet<string> = new Set([...ENTRY_OWN_ACTIONS, "remove"]);
 const column = createDataTableColumns<Entry>();
 const columns = column.columns([
   column.accessor(entryTitle, { id: "title", header: "Title", width: 30, priority: 1, cardRole: "title", cell: ({ row }) => <EntryIdentity entry={row.original} /> }),
@@ -51,6 +58,12 @@ export function PersonalListPage({ listId }: { listId: string }) {
   const table = useSelectableTableState({ scope: [user?.id, listId], rows: entries.rows, columns, getRowId: getEntryId, ready: entries.complete && !entries.fetching });
   const home = useHomeShelves();
   const { actions: listActions, dialogs } = usePlaylistEntity<NonNullable<typeof current>>({ open: false });
+  // A movie, show, album or book entry carries that title's own actions (Find releases, Refresh
+  // metadata, its settings...) beside the playlist's.
+  const movieEntity = useMovieEntity<NonNullable<Entry["movie"]>>();
+  const showEntity = useShowEntity<NonNullable<Entry["show"]>>();
+  const albumEntity = useAlbumEntity<NonNullable<Entry["album"]>>();
+  const bookEntity = useAudiobookEntity<NonNullable<Entry["audiobook"]>>();
   const [remove] = useMutation(EntityListEntryDeleteDocument);
   const [move] = useMutation(EntityListEntryUpdateDocument);
   const [pending, setPending] = useState(false);
@@ -97,6 +110,10 @@ export function PersonalListPage({ listId }: { listId: string }) {
     ...queueActions,
     { id: "open", label: (rows) => `Open ${entryKindLabel(rows[0]!).toLowerCase()}`, icon: IconExternalLink, group: "open", priority: 2, visible: (rows) => rows.length === 1 && Boolean(entryPresentation(rows[0]!)?.href), run: (rows, context) => { const href = entryPresentation(rows[0]!)?.href; if (href) context.navigate(href); } },
     playlist.action,
+    ...liftActions<Entry, NonNullable<Entry["movie"]>>(movieEntity.actions, (entry) => entry.movie, LIFT_SKIP),
+    ...liftActions<Entry, NonNullable<Entry["show"]>>(showEntity.actions, (entry) => entry.show, LIFT_SKIP),
+    ...liftActions<Entry, NonNullable<Entry["album"]>>(albumEntity.actions, (entry) => entry.album, LIFT_SKIP),
+    ...liftActions<Entry, NonNullable<Entry["audiobook"]>>(bookEntity.actions, (entry) => entry.audiobook, LIFT_SKIP),
     { id: "copy-titles", label: "Copy item titles", icon: IconCopy, group: "organise", bulk: true, run: async (rows) => { await copyText(rows.map(entryTitle).join("\n")); }, successMessage: () => "Item titles copied" },
     { id: "up", label: "Move up", icon: IconArrowUp, group: "organise", visible: (rows) => rows.length === 1 && entries.rows[0]?.id !== rows[0]!.id, disabledReason: () => locked, run: (rows) => run(() => reorderTo(rows[0]!, entries.rows.findIndex((row) => row.id === rows[0]!.id) - 1)) },
     { id: "down", label: "Move down", icon: IconArrowDown, group: "organise", visible: (rows) => rows.length === 1 && entries.rows.at(-1)?.id !== rows[0]!.id, disabledReason: () => locked, run: (rows) => run(() => reorderTo(rows[0]!, entries.rows.findIndex((row) => row.id === rows[0]!.id) + 1)) },
@@ -118,7 +135,7 @@ export function PersonalListPage({ listId }: { listId: string }) {
       successMessage: (rows) => (rows.length === 1 ? "Removed from the playlist" : `Removed ${rows.length} items`),
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ]), [entries.rows, entries.complete, locked, pending, playback, playlist.action, queueActions, remove, move]);
+  ]), [entries.rows, entries.complete, locked, pending, playback, playlist.action, queueActions, remove, move, movieEntity.actions, showEntity.actions, albumEntity.actions, bookEntity.actions]);
 
   if (list.error && !current) return <ErrorState error={list.error} onRetry={() => void list.refetch()} className="m-6" />;
   if (!current) return <div className="page-gutter py-6">{list.loading ? <p role="status">Loading playlist…</p> : <EmptyState icon={IconBookmark} title="Playlist not found" />}</div>;
@@ -145,5 +162,9 @@ export function PersonalListPage({ listId }: { listId: string }) {
     </>}
     {playlist.dialog}
     {dialogs}
+    {movieEntity.dialogs}
+    {showEntity.dialogs}
+    {albumEntity.dialogs}
+    {bookEntity.dialogs}
   </div>;
 }

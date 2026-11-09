@@ -428,7 +428,8 @@ pub struct PreviewGroup {
 pub struct PreviewFile {
     pub path: String,
     pub group_key: Option<String>,
-    /// `match`, `review`, `other` or `none`.
+    /// `match`, `review`, `other` or `none` for a book; `album` or `new` for a music file, by
+    /// whether its album is already held.
     pub status: &'static str,
     pub target: Option<String>,
     pub detail: Option<String>,
@@ -7739,9 +7740,34 @@ impl LibraryScanService {
                 ..Default::default()
             });
         }
+        // Music is albums, not books: name each file's album, disc and track.
+        if self
+            .library_holds_music(database.pool(), link.library_id.as_deref())
+            .await
+        {
+            let mut facts = self.release_facts_for(&audio).await;
+            music_rules::fill_in_discs(&mut facts);
+            let held = self.held_albums(&import.owner_id).await?;
+            return Ok(music::describe_music_release(&facts, &held));
+        }
         // Linked to nothing: see whether its files look like books already in the library.
         self.unlinked_audio_preview(&import.owner_id, &audio, &files)
             .await
+    }
+
+    /// Whether a torrent's library is a music library, so its audio is albums and not books.
+    async fn library_holds_music(
+        &self,
+        db: &crate::db::Database,
+        library_id: Option<&str>,
+    ) -> bool {
+        let Some(id) = library_id else {
+            return false;
+        };
+        match crate::graphql::entities::Library::get(db.pool(), &id.to_string()).await {
+            Ok(Some(library)) => Self::normalize_library_type(&library.library_type) == "music",
+            _ => false,
+        }
     }
 
     async fn release_facts_for(
