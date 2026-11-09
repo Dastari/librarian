@@ -1,4 +1,5 @@
 import { useLiveRoute } from "@/lib/graphql/live/hooks";
+import { libraryTrail } from "@/components/shell/Breadcrumbs";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { ShowPage } from "@/features/media/ShowPage";
@@ -17,7 +18,7 @@ export const Route = createFileRoute("/_app/shows/$showId")({
   }),
     loader: async ({ context, params }) => {
     const { data } = await context.apollo.query({ query: ShowDetailDocument, variables: { id: params.showId }, fetchPolicy: "cache-first" });
-    return { crumb: data?.show?.name ?? "Show" };
+    return { crumb: data?.show?.name ?? "Show", trail: libraryTrail(data?.show?.library, "shows") };
   },
   component: () => {
     const { showId } = Route.useParams();

@@ -2,7 +2,7 @@ import { Outlet, RouterProvider, createMemoryHistory, createRootRoute, createRou
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { Breadcrumbs } from "../Breadcrumbs";
+import { Breadcrumbs, libraryTrail } from "../Breadcrumbs";
 
 /**
  * A three-level tree that exercises both crumb sources: static labels, a label built from the
@@ -71,5 +71,38 @@ describe("Breadcrumbs", () => {
     // The page itself is never a link.
     expect(within(trail).queryByRole("link", { name: "Andor" })).toBeNull();
     expect(trail.querySelector('[aria-current="page"]')).toHaveTextContent("Andor");
+  });
+});
+
+describe("Breadcrumbs for an item outside its library's routes", () => {
+  async function mountAlbum() {
+    const rootRoute = createRootRoute({ component: () => <><Breadcrumbs /><Outlet /></> });
+    const album = createRoute({
+      getParentRoute: () => rootRoute,
+      path: "albums/$albumId",
+      loader: () => ({ crumb: "Wasting Light", trail: libraryTrail({ id: "lib-m", name: "Music" }, "albums") }),
+      component: () => null,
+    });
+    const router = createRouter({ routeTree: rootRoute.addChildren([album]), history: createMemoryHistory({ initialEntries: ["/albums/a-1"] }) });
+    await router.load();
+    render(<RouterProvider router={router as never} />);
+    return screen.getByRole("navigation", { name: "Breadcrumb" });
+  }
+
+  it("reads Libraries, the library, the tab, then the album", async () => {
+    const trail = await mountAlbum();
+    expect(within(trail).getByRole("link", { name: "Libraries" })).toHaveAttribute("href", "/libraries");
+    expect(within(trail).getByRole("link", { name: "Music" })).toHaveAttribute("href", "/libraries/lib-m");
+    expect(within(trail).getByRole("link", { name: "Albums" })).toHaveAttribute("href", "/libraries/lib-m/albums");
+    expect(trail.querySelector('[aria-current="page"]')).toHaveTextContent("Wasting Light");
+  });
+
+  it("names each detail page's tab and leaves the trail off without a library", () => {
+    const library = { id: "l", name: "Lib" };
+    expect(libraryTrail(library, "movies").map((crumb) => crumb.label)).toEqual(["Libraries", "Lib", "Browse"]);
+    expect(libraryTrail(library, "shows").at(-1)?.href).toBe("/libraries/l/shows");
+    expect(libraryTrail(library, "artists").at(-1)?.label).toBe("Artists");
+    expect(libraryTrail(library, "audiobooks").at(-1)?.label).toBe("Audiobooks");
+    expect(libraryTrail(null, "albums")).toEqual([]);
   });
 });
