@@ -1,3 +1,4 @@
+import { RecommendedRelease } from "@/features/recommendations/RecommendedRelease";
 import { copyText } from "glass-ux/copy-button";
 import { useApolloClient, useMutation } from "@apollo/client/react";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
@@ -262,6 +263,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
       }}
     >
       <AlbumTableContext.Provider value={{ actions, statuses, currentItemId, discs, fractionOf, playStateOf, press, want: isAdmin ? toggleWanted : undefined }}>
+        <RecommendedRelease target={{ albumId: album.id }} missing={tracks.filter((track) => !track.mediaFileId).length} />
         <LoadedDataTable
           id={`album-tracks:${user?.id ?? "anonymous"}:${album.libraryId}:${album.id}`}
           label={`${album.name} tracks`} columns={trackColumns} rows={tracks} getRowId={(track) => track.id} getRowLabel={(track) => track.title}

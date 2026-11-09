@@ -22,6 +22,7 @@ import { runSelectionAction } from "@/lib/actions/runSelectionAction";
 import { useSession } from "@/lib/auth/useSession";
 import { Button, EmptyState, ErrorState, GlassSegmented, Spinner } from "@/components/ui";
 import { ENTITY_KINDS } from "@/lib/entities/kinds";
+import { RecommendedRelease } from "@/features/recommendations/RecommendedRelease";
 import { AddTorrentDocument, HasEnabledSourcesDocument, type SearchSourcesQuery } from "@/graphql/generated/graphql";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
@@ -30,12 +31,14 @@ import { cn } from "@/lib/utils";
 
 type Release = SearchSourcesQuery["searchSources"]["sources"][number]["releases"][number];
 const releaseId = (release: Release) => release.stableId;
+/** A release can be grabbed from a link, a magnet, or (a feed release, whose link stays on the server) its catalogue item. */
+const hasDownload = (release: Release) => Boolean(release.magnetUri || release.link || release.feedItemId);
 const ReleaseActionsContext = createContext<{ busy: string | null; grab: (release: Release) => Promise<void> } | null>(null);
 
 function GrabReleaseCell({ release }: { release: Release }) {
   const actions = useContext(ReleaseActionsContext)!;
   return (
-    <Button size="sm" variant="primary" isPending={actions.busy === releaseId(release)} onPress={() => void actions.grab(release)} isDisabled={Boolean(actions.busy && actions.busy !== releaseId(release)) || (!release.magnetUri && !release.link)}>
+    <Button size="sm" variant="primary" isPending={actions.busy === releaseId(release)} onPress={() => void actions.grab(release)} isDisabled={Boolean(actions.busy && actions.busy !== releaseId(release)) || !hasDownload(release)}>
       <IconDownload size="sm" /> Grab
     </Button>
   );
@@ -111,6 +114,15 @@ export interface ReleaseTarget {
   trackId?: string;
   audiobookId?: string;
   chapterId?: string;
+}
+
+/** What a pinned recommendation is for: the season when one is searched, else the movie, album or book. */
+export function recommendationTarget(target: ReleaseTarget | undefined, season: number | null | undefined) {
+  if (target?.movieId) return { movieId: target.movieId };
+  if (target?.albumId) return { albumId: target.albumId };
+  if (target?.audiobookId) return { audiobookId: target.audiobookId };
+  if (target?.showId && season !== null && season !== undefined) return { showId: target.showId, season };
+  return {};
 }
 
 interface ReleaseSearchDialogProps {
@@ -214,8 +226,9 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
       const { data } = await addTorrent({
         variables: {
           input: {
-            magnet: release.magnetUri ?? null,
-            url: release.magnetUri ? null : release.link,
+            magnet: release.feedItemId ? null : release.magnetUri ?? null,
+            url: release.feedItemId || release.magnetUri ? null : release.link,
+            feedItemId: release.feedItemId ?? null,
             libraryId: libraryId ?? null,
             movieId: target?.movieId ?? null,
             showId: target?.showId ?? null,
@@ -225,7 +238,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
             audiobookId: target?.audiobookId ?? null,
             chapterId: target?.chapterId ?? null,
             season: release.parsed.isSeasonPack ? release.parsed.season ?? season ?? null : null,
-            sourceIndexerId: release.sourceId ?? null,
+            sourceIndexerId: release.feedItemId ? null : release.sourceId ?? null,
             sourceUrl: release.details ?? null,
           },
         },
@@ -245,7 +258,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
   const actions = defineActions<Release>("release", [
     {
       id: "grab", label: (selected) => selected.length === 1 ? "Grab release" : `Grab ${selected.length} releases`, icon: ReleaseGlyph, group: "manage", priority: 1, bulk: true,
-      disabledReason: (selected) => busy ? "A download is already being requested." : selected.some((release) => !release.magnetUri && !release.link) ? "Some selected releases have no download link. Deselect them to continue." : false,
+      disabledReason: (selected) => busy ? "A download is already being requested." : selected.some((release) => !hasDownload(release)) ? "Some selected releases have no download link. Deselect them to continue." : false,
       confirm: (selected) => selected.length > 1 ? { title: `Download ${selected.length} releases?`, body: "Each selected release starts a separate download.", confirmLabel: "Download", tone: "warning" } : null,
       run: async (selected) => {
         setBusy("selection");
@@ -255,7 +268,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
     },
     { id: "copy-titles", label: "Copy release titles", icon: IconCopy, group: "open", bulk: true, run: (selected) => copyText(selected.map((release) => release.title).join("\n")), successMessage: () => "Release titles copied" },
     { id: "copy-links", label: "Copy download links", icon: IconCopy, group: "open", bulk: true,
-      disabledReason: (selected) => selected.some((release) => !release.magnetUri && !release.link) ? "Some selected releases have no download link." : false,
+      disabledReason: (selected) => selected.some((release) => !release.magnetUri && !release.link) ? "Some selected releases have no download link to copy (a feed release's link is kept private)." : false,
       run: (selected) => copyText(selected.map((release) => release.magnetUri ?? release.link).join("\n")), successMessage: () => "Download links copied" },
   ]);
 
@@ -266,6 +279,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
       <GlassDialog.Header title="Find a release" />
       <GlassDialog.Body className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex min-h-0 flex-1 flex-col gap-4">
+        <div className="shrink-0 empty:hidden"><RecommendedRelease target={recommendationTarget(target, season)} missing={1} quiet /></div>
         <form
           className="flex min-w-0 shrink-0 gap-2"
           onSubmit={(event) => {
@@ -370,6 +384,7 @@ function ReleaseTags({ release }: { release: Release }) {
   if (parsed.isRepack) tags.push({ key: "repack", label: "REPACK", tone: "brand" });
   if (parsed.releaseGroup) tags.push({ key: "group", label: parsed.releaseGroup });
   if (release.isFreeleech) tags.push({ key: "freeleech", label: "Freeleech", tone: "info" });
+  if (release.fromFeed) tags.push({ key: "feed", label: "From feed", tone: "brand" });
 
   return (
     <>

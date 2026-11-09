@@ -328,5 +328,11 @@
     "list": "releaseBlocklists",
     "get": "releaseBlocklist",
     "changed": "releaseBlocklistChanged"
+  },
+  {
+    "entity": "ReleaseRecommendation",
+    "list": "releaseRecommendations",
+    "get": "releaseRecommendation",
+    "changed": "releaseRecommendationChanged"
   }
 ]

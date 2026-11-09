@@ -9,7 +9,6 @@ import {
   EntityAppSettingCreateDocument,
   EntityAppSettingUpdateDocument,
   EntityReleaseBlocklistListDocument,
-  EntityRssFeedListDocument,
   TriggerAutoDownloadDocument,
 } from "@/graphql/generated/graphql";
 import { renderWithProviders } from "@/test";
@@ -45,11 +44,6 @@ const blocklistMock = {
   result: { data: { releaseBlocklists: { __typename: "ReleaseBlocklistConnection", edges: [], pageInfo: { __typename: "PageInfo", hasNextPage: false, hasPreviousPage: false, totalCount: 0 } } } },
 };
 
-const rssFeedsMock = {
-  request: { query: EntityRssFeedListDocument, variables: { orderBy: [{ name: "ASC" }], page: { limit: 100, offset: 0 } } },
-  result: { data: { rssFeeds: { __typename: "RssFeedConnection", edges: [], pageInfo: { __typename: "PageInfo", hasNextPage: false, hasPreviousPage: false, totalCount: 0 } } } },
-};
-
 const updateMock = (id: string, value: string) => {
   const called = vi.fn(() => ({ data: { updateAppSetting: { __typename: "UpdateAppSettingResult", success: true, error: null, appSetting: null } } }));
   return { called, mock: { request: { query: EntityAppSettingUpdateDocument, variables: { id, input: { value } } }, result: called } };
@@ -68,7 +62,6 @@ const base = (extra: unknown[] = []) => [
     ["auto_download.search_backoff_minutes", "360"],
   ]),
   blocklistMock,
-  rssFeedsMock,
   ...extra,
 ];
 
@@ -76,7 +69,7 @@ const mount = (extra: unknown[] = []) => renderWithProviders(<DownloadsSettings 
 
 /** A server that has never been given an automatic-downloads setting. */
 const mountFresh = (extra: unknown[] = []) => renderWithProviders(<DownloadsSettings />, {
-  mocks: [categoryMock("torrent", TORRENT), categoryMock("auto_download", []), blocklistMock, rssFeedsMock, ...extra] as never,
+  mocks: [categoryMock("torrent", TORRENT), categoryMock("auto_download", []), blocklistMock, ...extra] as never,
 });
 
 /** Number fields commit on blur, so every edit ends with a Tab out of the field. */
@@ -123,11 +116,32 @@ describe("DownloadsSettings", () => {
     expect(cap.called).toHaveBeenCalled();
   });
 
+  it("offers the search budget and partial pack downloads, with the real defaults and the ratio warning", async () => {
+    await mountFresh();
+    await screen.findByDisplayValue("/data/downloads");
+    // 30 searches an hour, and only the missing files of a pack, until someone says otherwise.
+    expect(screen.getAllByDisplayValue("30").length).toBeGreaterThan(0);
+    expect(screen.getByRole("switch", { name: /Download only the missing files from packs/ })).toBeChecked();
+    expect(screen.getByText(/can cost ratio/)).toBeInTheDocument();
+  });
+
+  it("writes the keys the server reads for the budget and partial downloads", async () => {
+    const budget = createMock("auto_download.hourly_search_budget", "10", "auto_download");
+    const partial = createMock("auto_download.only_missing_files", "false", "auto_download");
+    await mountFresh([budget.mock, partial.mock]);
+    await setNumber("Indexer searches for recommendations per hour", "10");
+    await userEvent.click(screen.getByRole("switch", { name: /Download only the missing files from packs/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Settings saved")).toBeInTheDocument();
+    expect(budget.called).toHaveBeenCalled();
+    expect(partial.called).toHaveBeenCalled();
+  });
+
   it("says what the scheduler last did", async () => {
     const at = new Date(Date.now() - 5 * 60_000).toISOString();
     const status = JSON.stringify({ sweep: { at, searched: 3, grabbed: 1, capped: 2 }, rss: { at, feeds: 2, failed: 1, newItems: 40, matched: 3, grabbed: 1 } });
     await renderWithProviders(<DownloadsSettings />, {
-      mocks: [categoryMock("torrent", TORRENT), categoryMock("auto_download", [["auto_download.enabled", "true"], ["auto_download.status", status]]), blocklistMock, rssFeedsMock] as never,
+      mocks: [categoryMock("torrent", TORRENT), categoryMock("auto_download", [["auto_download.enabled", "true"], ["auto_download.status", status]]), blocklistMock] as never,
     });
     expect(await screen.findByText(/searched 3, grabbed 1, 2 waiting for a free slot/)).toBeInTheDocument();
     expect(screen.getByText(/2 feed\(s\), 1 failed, 40 new item\(s\), 3 matched, 1 grabbed/)).toBeInTheDocument();

@@ -77,6 +77,12 @@ input AddTorrentInput {
   sourceUrl: String
   sourceIndexerId: String
   sourceFeedId: String
+
+  """
+  Grab a release from an RSS feed's catalogue. The link carries the tracker's passkey and is
+  never sent to a client, so the server reads it; `magnet` and `url` are ignored.
+  """
+  feedItemId: String
 }
 
 """Result of add torrent mutation"""
@@ -2051,11 +2057,21 @@ input CreateReleaseBlocklistInput {
   expiresAt: String
 }
 
+type CreateRssFeedFromSourcePayload {
+  success: Boolean!
+  error: String
+  feedId: String
+
+  """The new feed's address with every secret hidden."""
+  urlDisplay: String
+}
+
 input CreateRssFeedInput {
   userId: String!
   libraryId: String
   name: String!
   url: String!
+  urlDisplay: String
   enabled: Boolean!
   pollIntervalMinutes: Int!
   postDownloadAction: String
@@ -2063,6 +2079,8 @@ input CreateRssFeedInput {
   lastSuccessfulAt: String
   lastError: String
   consecutiveFailures: Int
+  healthStatus: String
+  healthKind: String
 }
 
 input CreateSavedViewInput {
@@ -2160,6 +2178,11 @@ input CreateSourceInput {
   errorCount: Int!
   lastSuccessAt: String
   lastErrorAt: String
+  healthStatus: String
+  healthKind: String
+  lastCheckedAt: String
+  nextCheckAt: String
+  loginAttemptedAt: String
 }
 
 input CreateSubtitleInput {
@@ -2769,6 +2792,13 @@ type GenreShelf {
 
   """Newest first; empty for movie libraries."""
   shows: [Show!]!
+}
+
+type GrabRecommendationPayload {
+  success: Boolean!
+  error: String
+  torrentId: String
+  torrentName: String
 }
 
 type HomeShelf {
@@ -3930,6 +3960,30 @@ type LogoutPayload {
   error: String
 }
 
+"""
+What to look a recommendation up for: a season (or an episode of it), a movie, an album (or a
+track of it) or an audiobook.
+"""
+input LookupRecommendationsInput {
+  showId: String
+  season: Int
+  episodeId: String
+  movieId: String
+  albumId: String
+  trackId: String
+  audiobookId: String
+}
+
+type LookupRecommendationsPayload {
+  success: Boolean!
+  error: String
+
+  """
+  `cached` (an answer is stored), `queued` or `waiting` (already queued).
+  """
+  state: String
+}
+
 type MarkAllNotificationsReadResult {
   notificationCount: Int!
   scanIssueCount: Int!
@@ -4884,6 +4938,33 @@ type Mutation {
   applying a repair is one generated transaction and publishes on commit.
   """
   reconcileStoredMediaSummaries(dryRun: Boolean! = true): StoredSummaryReconciliationResult!
+
+  """
+  Read a feed now, whether or not it is due (and even if it is disabled). New items go into the
+  catalogue; wanted titles are only grabbed when automatic downloading is on. Admin only.
+  """
+  pollRssFeed(id: String!): PollRssFeedPayload!
+
+  """
+  Read the personal RSS link from a signed-in IPTorrents source and make it an RSS feed. The
+  link carries the account's passkey: it goes straight into the feed's encrypted address and
+  only the redacted form comes back. Admin only.
+  """
+  createRssFeedFromSource(sourceId: String!, name: String, pollIntervalMinutes: Int, libraryId: String): CreateRssFeedFromSourcePayload!
+
+  """
+  Queue a lookup of the best release for something missing, when its page or season is opened.
+  An answer that has not expired is kept and nothing is searched; otherwise the worker looks
+  within the hourly search budget and the page shows "looking" until it has. Owner or admin.
+  """
+  lookupRecommendations(input: LookupRecommendationsInput!): LookupRecommendationsPayload!
+
+  """
+  Download a recommended release through the same path automatic downloading uses, linked to
+  what it is for. With "Download only the missing files from packs" on, a pack downloads only
+  the files that fill what was missing. Owner or admin.
+  """
+  grabRecommendation(id: String!): GrabRecommendationPayload!
 
   """
   Create a new #struct_name_str
@@ -8039,6 +8120,19 @@ input PlaybackSessionWhereInput {
   not: PlaybackSessionWhereInput
 }
 
+type PollRssFeedPayload {
+  success: Boolean!
+  error: String
+
+  """Items not seen before, now in the catalogue."""
+  newItems: Int!
+
+  """
+  Releases grabbed for wanted titles (only when automatic downloading is on).
+  """
+  grabbed: Int!
+}
+
 """Result of processing matched files from a source"""
 type ProcessSourceResult {
   success: Boolean!
@@ -9736,6 +9830,30 @@ type Query {
     """Id"""
     id: String!
   ): ReleaseBlocklist
+
+  """
+  Get a list of #plural_name with optional filtering, sorting, and pagination
+  List ReleaseRecommendation records
+  """
+  releaseRecommendations(
+    """Where"""
+    where: ReleaseRecommendationWhereInput
+
+    """Order by"""
+    orderBy: [ReleaseRecommendationOrderByInput!]
+
+    """Page"""
+    page: PageInput
+  ): ReleaseRecommendationConnection!
+
+  """
+  Get a single #struct_name_str by ID
+  Read one ReleaseRecommendation records
+  """
+  releaseRecommendation(
+    """Id"""
+    id: String!
+  ): ReleaseRecommendation
 }
 
 """Refresh Token"""
@@ -9965,6 +10083,189 @@ input ReleaseBlocklistWhereInput {
   not: ReleaseBlocklistWhereInput
 }
 
+"""Release Recommendation"""
+type ReleaseRecommendation {
+  """Id"""
+  id: String!
+
+  """The library's owner: recommendations belong to them."""
+  userId: String!
+
+  """Library Id"""
+  libraryId: String!
+
+  """
+  `episode`, `season_pack`, `series_pack`, `movie`, `album`, `track` or `book`.
+  """
+  scope: String!
+
+  """`ready`, `searching` or `none`."""
+  status: String!
+
+  """
+  What the lookup is for, as a person would say it: `Fallout S01`, `Heat (1995)`.
+  """
+  targetLabel: String!
+
+  """Show Id"""
+  showId: String
+
+  """The season a season-pack or episode recommendation is for."""
+  season: Int
+
+  """Episode Id"""
+  episodeId: String
+
+  """Movie Id"""
+  movieId: String
+
+  """Album Id"""
+  albumId: String
+
+  """Track Id"""
+  trackId: String
+
+  """Audiobook Id"""
+  audiobookId: String
+
+  """The release's title. Empty unless `status` is `ready`."""
+  title: String
+
+  """`indexer` or `feed`."""
+  sourceKind: String
+
+  """Source Id"""
+  sourceId: String
+
+  """Source Name"""
+  sourceName: String
+
+  """For a release from a feed: its catalogue item."""
+  feedItemId: String
+
+  """Info Hash"""
+  infoHash: String
+
+  """Guid"""
+  guid: String
+
+  """Size"""
+  size: Int
+
+  """Seeders"""
+  seeders: Int
+
+  """The parsed quality, such as `1080p WEB-DL h264`."""
+  quality: String
+
+  """How many of the missing items this release would fill."""
+  coversCount: Int
+
+  """How many are missing in the scope that was looked at."""
+  missingCount: Int
+
+  """
+  Ids of the episodes or tracks it covers, as a JSON array. Used to download only those files from a pack.
+  """
+  coversIds: String
+
+  """
+  Why it won, short: `Best allowed quality`, `Smallest at that quality`, `From a feed`.
+  """
+  reasons: [String!]!
+
+  """For `none`: why nothing was usable."""
+  note: String
+
+  """Found At"""
+  foundAt: String!
+
+  """Expires At"""
+  expiresAt: String!
+
+  """Created At"""
+  createdAt: String!
+
+  """Updated At"""
+  updatedAt: String!
+}
+
+"""Event for #struct_name changes (subscriptions)"""
+type ReleaseRecommendationChangedEvent {
+  action: ChangeAction!
+  changeKind: ChangeKind!
+  id: String!
+  sourceEntity: String
+  sourceId: String
+  path: [String!]!
+  releaseRecommendation: ReleaseRecommendation
+}
+
+"""Connection containing edges and page info"""
+type ReleaseRecommendationConnection {
+  """The edges in this connection"""
+  edges: [ReleaseRecommendationEdge!]!
+
+  """Pagination information"""
+  pageInfo: PageInfo!
+}
+
+"""Edge containing a node and cursor"""
+type ReleaseRecommendationEdge {
+  """The item at the end of the edge"""
+  node: ReleaseRecommendation!
+
+  """A cursor for pagination"""
+  cursor: String!
+}
+
+input ReleaseRecommendationOrderByInput {
+  title: OrderDirection
+  foundAt: OrderDirection
+  expiresAt: OrderDirection
+  createdAt: OrderDirection
+  updatedAt: OrderDirection
+}
+
+input ReleaseRecommendationWhereInput {
+  id: StringFilter
+  userId: StringFilter
+  libraryId: StringFilter
+  scope: StringFilter
+  status: StringFilter
+  targetLabel: StringFilter
+  showId: StringFilter
+  season: IntFilter
+  episodeId: StringFilter
+  movieId: StringFilter
+  albumId: StringFilter
+  trackId: StringFilter
+  audiobookId: StringFilter
+  title: StringFilter
+  sourceKind: StringFilter
+  sourceId: StringFilter
+  feedItemId: StringFilter
+  infoHash: StringFilter
+  guid: StringFilter
+  size: IntFilter
+  seeders: IntFilter
+  coversCount: IntFilter
+  missingCount: IntFilter
+  foundAt: DateFilter
+  expiresAt: DateFilter
+  createdAt: DateFilter
+  updatedAt: DateFilter
+
+  """Logical AND of conditions"""
+  and: [ReleaseRecommendationWhereInput!]
+
+  """Logical OR of conditions"""
+  or: [ReleaseRecommendationWhereInput!]
+
+  """Logical NOT of condition"""
+  not: ReleaseRecommendationWhereInput
+}
+
 """Result of re-matching files for a source"""
 type RematchSourceResult {
   success: Boolean!
@@ -9994,7 +10295,12 @@ type RssFeed {
   userId: String!
   libraryId: String
   name: String!
-  url: String!
+
+  """
+  What to show of the address: host, path and parameter names with every value hidden. Set
+  by the write transform whenever the address is written.
+  """
+  urlDisplay: String
   enabled: Boolean!
   pollIntervalMinutes: Int!
   postDownloadAction: String
@@ -10002,6 +10308,12 @@ type RssFeed {
   lastSuccessfulAt: String
   lastError: String
   consecutiveFailures: Int
+
+  """`ok`, `failing` or `auth_expired`, from the last poll or health check."""
+  healthStatus: String
+
+  """Why it is failing: `auth`, `unreachable`, `rate_limited` or `other`."""
+  healthKind: String
   createdAt: String!
   updatedAt: String!
 
@@ -10048,7 +10360,48 @@ type RssFeedItem {
   linkHash: String!
   titleHash: String!
   title: String!
-  link: String!
+  infoHash: String
+
+  """
+  Bytes, from the feed's size or the description (`12.1 GB; Movie/HD/Bluray`).
+  """
+  size: Int
+  seeders: Int
+
+  """The tracker's category label, from the description."""
+  category: String
+
+  """
+  `episode`, `season_pack`, `series_pack`, `movie`, `album`, `book` or `unknown`.
+  """
+  parsedScope: String
+  parsedYear: Int
+  parsedSeasonEnd: Int
+  parsedGroup: String
+  parsedArtist: String
+  parsedAlbum: String
+  parsedFormat: String
+  parsedBitrate: String
+
+  """
+  What it was taken to be: `movie`, `show`, `season`, `episode`, `album` or `audiobook`;
+  empty when nothing in the library matched (see `matchReason`).
+  """
+  matchKind: String
+  matchShowId: String
+  matchMovieId: String
+  matchAlbumId: String
+  matchAudiobookId: String
+  matchSeason: Int
+  matchEpisode: Int
+  matchLabel: String
+
+  """Percent."""
+  matchConfidence: Int
+
+  """Why it matched, or why it did not."""
+  matchReason: String
+  matchedAt: String
   pubDate: String
   description: String
   parsedShowName: String
@@ -10102,6 +10455,8 @@ type RssFeedItemEdge {
 
 input RssFeedItemOrderByInput {
   title: OrderDirection
+  size: OrderDirection
+  matchConfidence: OrderDirection
   pubDate: OrderDirection
   seenAt: OrderDirection
 }
@@ -10113,6 +10468,27 @@ input RssFeedItemWhereInput {
   linkHash: StringFilter
   titleHash: StringFilter
   title: StringFilter
+  infoHash: StringFilter
+  size: IntFilter
+  seeders: IntFilter
+  category: StringFilter
+  parsedScope: StringFilter
+  parsedYear: IntFilter
+  parsedSeasonEnd: IntFilter
+  parsedGroup: StringFilter
+  parsedArtist: StringFilter
+  parsedAlbum: StringFilter
+  parsedFormat: StringFilter
+  matchKind: StringFilter
+  matchShowId: StringFilter
+  matchMovieId: StringFilter
+  matchAlbumId: StringFilter
+  matchAudiobookId: StringFilter
+  matchSeason: IntFilter
+  matchEpisode: IntFilter
+  matchLabel: StringFilter
+  matchConfidence: IntFilter
+  matchedAt: DateFilter
   pubDate: DateFilter
   parsedShowName: StringFilter
   parsedSeason: IntFilter
@@ -10155,13 +10531,13 @@ input RssFeedWhereInput {
   userId: StringFilter
   libraryId: StringFilter
   name: StringFilter
-  url: StringFilter
   enabled: BoolFilter
   pollIntervalMinutes: IntFilter
   postDownloadAction: StringFilter
   lastPolledAt: DateFilter
   lastSuccessfulAt: DateFilter
   consecutiveFailures: IntFilter
+  healthStatus: StringFilter
   createdAt: DateFilter
   updatedAt: DateFilter
 
@@ -10885,6 +11261,27 @@ type Source {
   """Last Error At"""
   lastErrorAt: String
 
+  """
+  `ok`, `failing` or `auth_expired`: the outcome of the last health check or real use.
+  """
+  healthStatus: String
+
+  """Why it is failing: `auth`, `unreachable`, `rate_limited` or `other`."""
+  healthKind: String
+
+  """When the source was last tested or used, whichever is later."""
+  lastCheckedAt: String
+
+  """
+  When the hourly check will test it next (pushed out while it keeps failing).
+  """
+  nextCheckAt: String
+
+  """
+  When Librarian last tried to sign this source in with a username and password. Never more than one attempt an hour, so a wrong password cannot lock the account.
+  """
+  loginAttemptedAt: String
+
   """Created At"""
   createdAt: String!
 
@@ -11074,6 +11471,17 @@ type SourceReleaseInfo {
   sourceId: String
   sourceName: String
 
+  """
+  True for a release read from an RSS feed's catalogue rather than searched on an indexer.
+  """
+  fromFeed: Boolean!
+
+  """
+  For a feed release: the catalogue item to pass to `addTorrent.feedItemId`. A feed release
+  has no link a client may see, since the link carries the tracker passkey.
+  """
+  feedItemId: String
+
   """Quality tags parsed out of the release title."""
   parsed: ParsedRelease!
 
@@ -11134,6 +11542,9 @@ type SourceSearchResultItem {
   releases: [SourceReleaseInfo!]!
   elapsedMs: Int!
   fromCache: Boolean!
+
+  """True when this entry is an RSS feed's catalogue, not an indexer."""
+  fromFeed: Boolean!
   error: String
 }
 
@@ -11200,6 +11611,11 @@ input SourceWhereInput {
   errorCount: IntFilter
   lastSuccessAt: DateFilter
   lastErrorAt: DateFilter
+  healthStatus: StringFilter
+  healthKind: StringFilter
+  lastCheckedAt: DateFilter
+  nextCheckAt: DateFilter
+  loginAttemptedAt: DateFilter
   createdAt: DateFilter
   updatedAt: DateFilter
 
@@ -12192,6 +12608,23 @@ type Subscription {
     """
     keys: [String!]
   ): ReleaseBlocklistChangedEvent!
+
+  """
+  Subscribe to #struct_name_str changes
+  Observe changes to ReleaseRecommendation records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+  """
+  releaseRecommendationChanged(
+    """Filter"""
+    filter: SubscriptionFilterInput
+
+    """Exact complete primary key to observe"""
+    key: String
+
+    """
+    Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+    """
+    keys: [String!]
+  ): ReleaseRecommendationChangedEvent!
 }
 
 input SubscriptionFilterInput {
@@ -13717,6 +14150,7 @@ input UpdateRssFeedInput {
   libraryId: String
   name: String
   url: String
+  urlDisplay: String
   enabled: Boolean
   pollIntervalMinutes: Int
   postDownloadAction: String
@@ -13724,6 +14158,8 @@ input UpdateRssFeedInput {
   lastSuccessfulAt: String
   lastError: String
   consecutiveFailures: Int
+  healthStatus: String
+  healthKind: String
 }
 
 """Result of bulk update by Where filter"""
@@ -13863,6 +14299,11 @@ input UpdateSourceInput {
   errorCount: Int
   lastSuccessAt: String
   lastErrorAt: String
+  healthStatus: String
+  healthKind: String
+  lastCheckedAt: String
+  nextCheckAt: String
+  loginAttemptedAt: String
 }
 
 """Input for updating source priorities"""

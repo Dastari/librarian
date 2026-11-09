@@ -7,7 +7,29 @@ fragment RssFeedItemFields on RssFeedItem {
   linkHash
   titleHash
   title
-  link
+  infoHash
+  size
+  seeders
+  category
+  parsedScope
+  parsedYear
+  parsedSeasonEnd
+  parsedGroup
+  parsedArtist
+  parsedAlbum
+  parsedFormat
+  parsedBitrate
+  matchKind
+  matchShowId
+  matchMovieId
+  matchAlbumId
+  matchAudiobookId
+  matchSeason
+  matchEpisode
+  matchLabel
+  matchConfidence
+  matchReason
+  matchedAt
   pubDate
   description
   parsedShowName

@@ -1,0 +1,18 @@
+# Queue a lookup of the best release for something missing (a season, movie, album or book).
+mutation LookupRecommendations($input: LookupRecommendationsInput!) {
+  lookupRecommendations(input: $input) {
+    success
+    error
+    state
+  }
+}
+
+# Download a recommended release through the same path automatic downloading uses.
+mutation GrabRecommendation($id: String!) {
+  grabRecommendation(id: $id) {
+    success
+    error
+    torrentId
+    torrentName
+  }
+}
