@@ -10,6 +10,8 @@ use graphql_orm::graphql::orm::OrderDirection;
 
 use crate::graphql::entities::*;
 
+// Built once per request and matched straight away, so the large filter variants are not boxed.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum PersonalViewQuery {
     Movie(MovieWhereInput, MovieOrderByInput),

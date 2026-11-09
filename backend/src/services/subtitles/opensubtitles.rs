@@ -48,8 +48,8 @@ pub fn movie_hash(size: u64, head: &[u8], tail: &[u8]) -> Option<String> {
     }
     let mut hash = size;
     for chunk in [head, tail] {
-        for word in chunk[..HASH_CHUNK as usize].chunks_exact(8) {
-            hash = hash.wrapping_add(u64::from_le_bytes(word.try_into().ok()?));
+        for word in chunk[..HASH_CHUNK as usize].as_chunks::<8>().0 {
+            hash = hash.wrapping_add(u64::from_le_bytes(*word));
         }
     }
     Some(format!("{hash:016x}"))
