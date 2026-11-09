@@ -263,9 +263,11 @@ results that are not in the library keep their remote URLs.
   the remote; Backspace/Escape and the webOS/Tizen Back keys go back through in-app
   history, then Home. Focused tiles grow with a transform only.
 - The Android TV app (`LibrarianTV` in the user agent, `lib/tv-app.ts`, design.md Q137–Q139)
-  is always in TV mode and lays the page out 1920 CSS px wide. Its remote's Back, Menu and media
-  keys arrive as `GoBack`, `ContextMenu` and `Media*` key events, so handle those rather than
-  Android key codes. Handle `GoBack` with `preventDefault()`; otherwise the shell also steps back.
+  is always in TV mode, and the shell sets its viewport to 1920 CSS px wide; never write the
+  viewport meta from the page. Its remote's Back, Menu, Info, Guide and media buttons arrive as
+  standard `GoBack`, `ContextMenu`, `Info`, `Guide` and `Media*` key events (the table is in
+  design.md Q137), so handle those rather than Android key codes. In the TV app the player's volume
+  is the TV's (`bindTvVolume`). Handle `GoBack` with `preventDefault()`; otherwise the shell also steps back.
   `[data-tv-app]` (`styles/tv-app.css`) drops costly effects on budget TVs: a new full-screen
   blur, mask, shadow or animation needs a rule there too.
 

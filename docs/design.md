@@ -1953,3 +1953,305 @@ and the client must start while the share is down, which a store on the share ca
 would only be a backup of a few small files that Librarian can already rebuild (every torrent is in the database with its
 magnet link and save path, and `restore_from_database` re-adds what the session lost). So the session folder stays on this
 machine (`torrent.session_dir`), and only payloads go to a share.
+
+### Q137: How does Librarian run on an Android TV?
+**Answer:** As a thin native shell, `android-tv/`. It is a Kotlin app with one Activity and one
+full-screen WebView, and it loads the web app from the person's own server. A TV without Chrome
+cannot install the PWA, and a WebView shell is the smallest thing that can. The web app already has
+TV mode and remote focus (STYLE_GUIDE "Remote focus"), so the shell adds only what a browser tab
+cannot do.
+
+*Why not Capacitor:*
+- Capacitor packages a bundled web app with a plugin bridge. Here the page comes from the server, so
+  the bundle and most of the runtime would go unused, and the AndroidX dependency tree would add
+  megabytes on a TV with about 390 MB free.
+- The stage 2 player (Q140) is one `addJavascriptInterface` object either way.
+- The shell uses platform APIs only: no AndroidX and no native libraries. The user's TV is 32-bit ARM
+  only, and a pure Java/Kotlin APK runs on every ABI.
+- The release build is minified with R8.
+
+*Manifest:*
+- `LEANBACK_LAUNCHER` and `LAUNCHER`, with a 320 × 180 banner. The banner and the launcher icons are
+  drawn from the brand art by `web/scripts/generate-pwa-assets.mjs --android-tv`; the adaptive icon
+  uses the mark as a vector drawable.
+- leanback and touchscreen are both `required="false"`.
+- minSdk 24, target 37.
+- Cleartext http is allowed (network security config), with system trust anchors only.
+- `enableOnBackInvokedCallback="false"`, so Back still reaches the Activity as a key on Android 16+.
+
+*The WebView:*
+- JavaScript and DOM storage are on. IndexedDB comes with JavaScript.
+- `mediaPlaybackRequiresUserGesture=false`.
+- `LOAD_DEFAULT` cache: the server's headers decide.
+- Cookies are accepted and flushed on pause, and third-party cookies are refused.
+- No zoom, `textZoom` 100, no file or content access, no extra windows.
+- User agent suffix `LibrarianTV/<versionName>`.
+- Renderer priority is `IMPORTANT`, waived when the app is hidden.
+- `onRenderProcessGone` (a crash, or Android reclaiming the renderer) destroys the WebView and builds
+  a new one at the page's last address (`doUpdateVisitedHistory` follows client-side navigation).
+  When it happens in the background, the rebuild waits for the app to come back.
+- `onTrimMemory`: while running, it asks the page to give memory back (the page garbage-collects
+  the Apollo cache). In the background, it releases the WebView.
+- Links to another origin leave the app (`ACTION_VIEW`) and never load in the WebView.
+- The bridge also ignores calls from any page that is not the server's.
+- A main-frame load error shows a native "Reconnecting" screen (below).
+
+*The 10-foot canvas.* The user's TV is a TCL G07: Android 11, 1920 × 1080 at density 320. At that
+density the page's `width=device-width` gives a 960 × 540 CSS viewport, a phone layout blown up.
+TV mode's 1.18× root font is flat, and text zoom and font scale are 1, so neither was the cause.
+
+The shell sets the page's viewport meta to `width=<W>, viewport-fit=cover`, where
+`W = 1920 × 100 / displaySize` (`TvCanvas`):
+- It runs in `onPageStarted` (less flash) and again in `onPageFinished`, and the WebView has
+  `useWideViewPort` on.
+- Chromium applies a changed viewport at once. Measured on the TV: 1920 × 1080 at 100 % (Home shows
+  six cards and the Libraries row), and exactly 1600 × 900 at 120 %.
+- `devicePixelRatio` still reports 2; only the layout width changes.
+- The canvas is a fixed 1920 rather than the panel's pixel width. A TV whose app window really is
+  3840 px wide (density 640) then gets the same 10-foot layout instead of a quarter-size one.
+- The web app never writes the viewport meta (nothing in `web/src` does), so nothing undoes the
+  shell's.
+
+What failed on the G07: building the WebView on a context with a lower `densityDpi`. A
+`ContextWrapper` overriding `getResources()` was ignored (still 960 at 2×). A bare
+`createConfigurationContext()` left the WebView at 0 × 0, blank, because it could no longer find its
+Activity. The WebView stays on the Activity.
+
+*Display size* (80, 90, 100, 110 or 120 %) is the one appearance knob added since appearance was
+locked:
+- TVs differ in size and viewing distance, so it is offered in the TV app only (Settings ›
+  General), next to Blur.
+- The shell keeps it (`DisplayPrefs`) per TV. The page reads and sets it through the bridge
+  (`displaySize()`, `setDisplaySize()`).
+- A change re-runs the viewport script without a reload, keeping the scroll position.
+
+*Reconnecting.* A main-frame load error marks only that navigation as failed: every
+`onPageStarted` clears the mark, so a later successful load always removes the screen. (A sample
+shell's 30 s timeout latched its error screen until a manual retry, on every backend restart.)
+While failed, the shell shows "Reconnecting to <server>. Trying again in N s" with *Try again* and
+*Change server*. It retries after 2, 4, 8 and 16 s, then every 30 s.
+
+*Remote keys* go through `dispatchKeyEvent` (`RemoteKeys`, `PressTracker`). The arrows, OK, Enter
+and the volume keys are not intercepted. The rest map as follows:
+
+| Remote button (Android key code) | Reaches the page as |
+|---|---|
+| Back, gamepad B | `window.librarianTv.back()` (below). Held 700 ms: the server screen |
+| Menu, TV contents menu | `librarianTv.menu()`: a `ContextMenu` keydown, then a `contextmenu` event at the focused element if nothing took it. Held: the server screen |
+| Play/pause, headset hook | `MediaPlayPause` |
+| Play / Pause / Stop | `MediaPlay` / `MediaPause` / `MediaStop` |
+| Next / Previous | `MediaTrackNext` / `MediaTrackPrevious` |
+| Fast-forward, skip forward, step forward | `MediaFastForward`, repeating while held |
+| Rewind, skip backward, step backward | `MediaRewind`, repeating while held |
+| Info | `Info` |
+| Guide | `Guide` |
+| Channel up / down | `PageUp` / `PageDown`, repeating while held |
+
+- Each button arrives as a standard `KeyboardEvent` at the focused element
+  (`librarianTv.keyEvent(key, "keydown" | "keyup", repeat)`, see web/src/lib/tv-app.ts): one keydown,
+  then `repeat: true` keydowns while held for the repeating keys, then one keyup.
+- What the page does with the media keys, Info and Guide belongs to the player and the "Now playing"
+  work (scrubbing previews), not to the shell.
+- `back()` does, in order: an open dialog or menu gets Escape; fullscreen is left; on `/` it returns
+  `"exit"` and the app closes; otherwise a `GoBack` key goes to the focused element, and the shell's
+  remote focus (or the video player) takes it and goes back in-app history.
+- A page that does not take Back, or an older page without the bridge, falls back to
+  `WebView.goBack()`, then finishing the app.
+
+*Keep the screen on:* the video player and the audio dock hold `LibrarianTV.setKeepScreenOn`
+while playing (`holdScreenOn`, one token each), which sets `FLAG_KEEP_SCREEN_ON`.
+
+*The TV's volume.* The player's volume control is the TV's media volume (`STREAM_MUSIC`,
+`VolumeSync`):
+- **Bridge:** `volume()` returns `{level, step, max, muted, fixed, hdmiArc}`; `setVolume(0–1)`
+  sets the nearest whole step without the system UI; `setMuted(bool)` returns whether the TV's mute
+  now matches.
+- **Changes from anywhere** (the remote's volume keys, which the shell never intercepts so Android
+  shows its own volume UI; the TV's menu; CEC) arrive through the `VOLUME_CHANGED_ACTION` and
+  `STREAM_MUTE_CHANGED_ACTION` broadcasts and a `Settings.System` observer. They are coalesced for
+  60 ms and sent to the page as a `librarian-tv-volume` event, and once more after each page load.
+- **Steps:** a step is `level = step / max`, and a level goes to the nearest step, so a round trip
+  never drifts. A 0.05 nudge still moves one step with 15 steps.
+- **In the page** (`bindTvVolume`):
+  - The media element stays at volume 1 and unmuted, so the two levels never multiply.
+  - The element's own `volume` and `muted` read and write the TV's, and a TV change fires
+    `volumechange`, so the Glass video player's slider, its mute button and its keys follow the
+    remote live.
+  - The audio dock's `VolumeControl` uses the same store.
+- **Fixed volume:** reported when `isVolumeFixed()` is true, or when a `setStreamVolume` did not
+  change the stream (volume handed to a sound system). The shell then tries one `adjustStreamVolume`
+  raise or lower with the system UI, which some TVs forward over HDMI-CEC. The page shows "Volume is
+  controlled by your TV or sound system" instead of the slider, and mute falls back to muting the
+  player when the TV will not mute.
+- **Not yet measured:** whether the G07 reports fixed volume with a soundbar on ARC or CEC, and
+  whether `adjustStreamVolume` reaches one. The event's `hdmiArc` flag shows whether an ARC or eARC
+  output is present.
+
+*The web side*, only when the user agent says `LibrarianTV`:
+- TV mode is always on.
+- The `data-tv-app` attribute is set.
+- No service worker is registered, and any old one is retired. The page always comes from the
+  server and cannot work offline anyway; `version.json` polling still offers updates.
+- Route preloading on intent is off: every remote move would preload a page and its data.
+- View transitions are off.
+- Settings › About shows the app version, the server and *Change server*.
+
+*Signing:*
+- The release key is `/root/.config/librarian/android-tv-release.jks`, outside the repository,
+  root-only, with its passwords in a root-only properties file.
+- Gradle signs with it when it can read that file, and with the debug key otherwise.
+- `versionCode` derives from `version.properties` (major × 10000 + minor × 100 + patch), so every
+  release installs over the last. The certificate fingerprint is in `android-tv/README.md`.
+
+### Q138: How does the TV app find the server?
+**Answer:** The backend announces itself over mDNS as `_librarian._tcp` (`services/lan_advertise.rs`).
+It reuses the `mdns-sd` crate that Cast discovery uses, with its own responder.
+
+*The record:*
+- The instance is "Librarian on <host name>".
+- The host is `<host>.local.`, with addresses filled in and kept current by the responder (`addr_auto`).
+- The SRV port is the port of the announced address.
+- The TXT keys are `txtvers=1`, `url` (the origin to open), `name`, `version` and `path=/`.
+
+*The announced address* is the `discovery.web_url` app setting when it is set. Otherwise it is
+`http://<LAN address>:<port>`:
+- the `HOST` bind address when that names one interface, else the default route's address;
+- the backend's own port in a build with the embedded web app;
+- 3000 in a development build, whose web app is the Vite server.
+
+*The settings:*
+- `discovery.web_url` and `discovery.advertise` are seeded from `LIBRARIAN_PUBLIC_WEB_URL` and
+  `LIBRARIAN_LAN_ADVERTISE`. An environment value only seeds a row or replaces an untouched seed
+  (Q77's rule).
+- Settings › General › Network shows both to admins: *Announce on the local network* and *Address
+  for TV apps*.
+- The `AppSetting` write transform checks the values: an http(s) origin without credentials, query
+  or fragment, stored as a JSON string of the origin, or `true`/`false`. A person's bad value is
+  refused. A bad value from the environment is logged and stored as automatic, so a typo cannot stop
+  startup.
+- Saving either setting restarts the service through the `AppSetting` after-hook.
+
+*On a site with `Secure` cookies*, the address must be the https one: an http page cannot keep the
+sign-in cookie. The live site is one of these, so its *Address for TV apps* should be its public
+https address.
+
+*Failures* (no multicast, no LAN address) leave the service degraded with the reason in its health,
+and never stop the server.
+
+*On the TV:*
+- The server screen browses with `NsdManager`, resolving one service at a time (older Android refuses
+  parallel resolves), and holds a Wi-Fi multicast lock while it looks.
+- It lists each server once per address. The announced `url` wins; without one, the SRV address and
+  port are used.
+- A typed address is checked before it is saved. A bare host is tried on 3001, then 3000, then plain
+  http; any HTTP answer below 500 counts as reachable. *Use it anyway* saves an address that did not
+  answer.
+- The server is kept in SharedPreferences, and the sign-in in the WebView's cookie store.
+
+### Q139: What does the app do differently on a budget TV?
+**Answer:** The user's TV is a TCL G07: Android 11, 32-bit ARM only, 2 GB with about 390 MB
+available, Chromium 156 WebView. Measured with the shell's predecessor (a plain WebView):
+- the sign-in page, with its animated backdrop, at 342 MB PSS, 235 MB of it graphics;
+- Home at 212 MB PSS, 96 MB of it graphics.
+`isConstrainedDevice()` (web/src/lib/tv-app.ts) is true in the TV app and wherever
+`navigator.deviceMemory <= 2`, and these follow from it.
+
+- **Animated backgrounds:** these are Home's WebGL scene (`SceneBackdrop`: three, fiber and drei)
+  and sign-in's film constellation (`ConstellationBackdrop`, a full-screen 2D canvas redrawn every
+  frame at up to 2× density, with its thumbnails). The constellation, not WebGL, is what ran on the
+  measured sign-in page.
+  - Neither mounts, and neither lazy chunk loads, in the TV app or at 2 GB or less
+    (`useAnimatedBackdrop`). The static `canvas-ambient` gradient stays.
+  - The WebGL scene also skips reduced motion and screens under 640 px, as before. The constellation
+    keeps its own still drawing for reduced motion and still runs on phones.
+  - A device setting next to Blur, *Animated backgrounds*, turns both off anywhere. It is shown
+    locked off in the TV app and on 2 GB devices. It is stored under
+    `librarian.animatedBackgrounds.v1`, like `librarian.blur.v1`.
+  - A test pins that neither renders for the TV user agent or for `deviceMemory = 2`.
+- **Blur** defaults off there: an unset `librarian.blur.v1` follows `blurDefault()`, and a device's
+  own "on" or "off" still wins.
+- **Composited layers** (`styles/tv-app.css`, `[data-tv-app]`):
+  - The page backdrop loses its `blur(4.5rem)` wash and its masks (each a full-screen offscreen
+    pass), and its scale-in.
+  - Focused tiles keep their scale and ring but drop the large shadow.
+  - Row entrance animations are off.
+  - The guide's sticky headers lose `backdrop-filter`.
+  - Nothing in `src` sets `will-change`. The only other canvas is the constellation; the only WebGL
+    is the Home scene.
+  - Glass surfaces stop blurring with Blur off (`glassRendering: "none"`).
+- **Artwork:** `sizedArtwork` asks for one image pixel per CSS pixel, at most 1280 wide, and gives
+  unsized artwork (backdrops) the same cap.
+- **hls.js:** 30 s ahead (60 s at most), 10 s behind and a 30 MB buffer, instead of 60 s ahead and
+  90 s behind.
+- **Routes:** no preloading on intent and no view transitions, which snapshot whole views as
+  textures. The router keeps only the current route mounted.
+- **The shell:** one WebView, no AndroidX, no native code, no splash bitmap. The renderer can be
+  reclaimed in the background, and memory warnings reach the page.
+
+The user's agent will measure again after sign-in, with a library grid up, which is where artwork
+memory lands.
+
+### Q140: How will the TV app play files natively (stage 2)?
+**Answer:** Not built yet. The plan is a Media3 ExoPlayer in the shell, driven from the page over the
+same bridge, so the web app keeps its UI, queue and progress, and the TV's decoders play what the
+WebView cannot. That covers MKV, HEVC, HDR10/HLG/Dolby Vision where the panel has it, and AC3/EAC3/DTS
+passthrough over HDMI. Media3 is pure Java (`media3-exoplayer`, `-exoplayer-hls`, `-ui`), so it runs on
+the 32-bit TV.
+
+*Choosing native:*
+- The page asks `LibrarianTV.player.canPlay(json)`, passing the `/api/media/{id}/info` fields
+  (container, codecs, HDR, resolution).
+- The shell answers from `MediaCodecList` and `AudioCapabilities` (`{"direct":true,"passthrough":["ac3","eac3"]}`).
+- When `direct` is true, the page plays `/api/media/{id}/stream` natively. Otherwise it keeps its
+  current path (the HLS remux or transcode in the WebView, or natively, below).
+- *Settings › About* gets a "Use the TV's player" switch, on by default, to compare.
+
+*Bridge, page to shell:* a `window.LibrarianTV.player` object with JSON-string arguments, as
+`addJavascriptInterface` passes only primitives.
+- `load({url, startSeconds, title, subtitle, artwork, autoplay, subtitles:[{id, url, language, label, format:"vtt"}], audioStreamIndex})`:
+  - `url` is same-origin and relative: `/api/media/{id}/stream` for direct play, or
+    `/api/media/{id}/hls/playlist.m3u8[?audioStream=n]`.
+  - The shell resolves it against the server.
+  - It adds the WebView's cookies for that origin (`CookieManager.getCookie`) to every request
+    through a `DefaultHttpDataSource.Factory` whose request properties are refreshed per request.
+    The page keeps refreshing the access token while it is open, so a long film keeps working.
+  - Direct play relies on the stream's byte ranges, which `stream_media` already serves.
+- `play()`, `pause()`, `seek(seconds)`, `stop()` (releases the player and its surface).
+- `setAudioTrack(id)` and `setSubtitleTrack(id | null)`:
+  - the ids come from the `tracks` event;
+  - embedded tracks are selected with `TrackSelectionParameters` overrides;
+  - external WebVTT subtitles are `SubtitleConfiguration`s on the `MediaItem`.
+- `setVolume(0..1)`, `setRate(r)`.
+
+*Events, shell to page:* `window.dispatchEvent(new CustomEvent("librariantv:player", {detail}))`
+from `evaluateJavascript`.
+- `state`: `{state:"buffering"|"ready"|"ended"|"idle", playing}`.
+- `time`: `{position, duration, buffered}`, every 1 s while playing and after every seek.
+- `tracks`: `{audio:[{id, language, label, codec, channels, passthrough}], text:[{id, language, label, external}]}`.
+- `error`: `{code, message, fatal}`, from the `PlaybackException` error code name.
+- `closed`: the person left the native player with Back.
+
+*The page:*
+- A `NativeMediaElement` adapter in `features/player/` gives the subset of `HTMLMediaElement` that
+  the Glass `VideoPlayer` controller and `useProgressSync` use: `currentTime`, `duration`, `paused`,
+  `buffered`, `play()`, `pause()` and the `play`, `pause`, `timeupdate`, `ended`, `waiting`,
+  `playing` and `error` events, built from the bridge events.
+- `VideoPlayer` attaches it instead of `<video>` when `canPlay` says so, so progress sync,
+  continue-watching, the queue's next episode and the session save all work unchanged.
+- The page keeps drawing its controls over a transparent WebView: the shell puts Media3's
+  `SurfaceView` behind the WebView and makes the WebView background transparent while native
+  playback runs.
+- The remote keys and the page's controls drive the bridge. Back closes the player through the page
+  as today. Media buttons keep arriving as the standard key events of Q137, so the page's key
+  handling is the same for both players.
+- Volume needs nothing new: Media3 plays on `STREAM_MUSIC`, the stream `VolumeSync` already ties to
+  the page's volume control (Q137). The player's own volume stays at 1.
+
+*The server:* nothing new is needed for direct play.
+- `/info` already gives codecs and HDR, and `/stream` serves ranges with cookie auth.
+- Subtitles are `/api/media/{id}/subtitles/{sid}.vtt`; embedded ones are read from the file itself.
+- Two later additions:
+  - an `/info` field listing the file's embedded subtitle and audio streams with their stream
+    indexes, so the page can show them before Media3 has parsed the file;
+  - a capability-aware decision: the shell sends its `canPlay` answer as `?client=tv&decoders=…`, so
+    the server remuxes only what the TV cannot decode instead of following the browser matrix.
