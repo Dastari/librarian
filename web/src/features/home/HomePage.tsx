@@ -5,6 +5,7 @@ import { HomeCustomization } from "@/features/personal/HomeCustomization";
 import { PersonalShelf } from "@/features/personal/PersonalShelf";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { ButtonLink } from "glass-ux/button-link";
 import { IconPlus } from "glass-ux/icons";
 import { IconStack2 } from "@tabler/icons-react";
 
@@ -55,11 +56,9 @@ export function HomePage() {
           title="Add your first library"
           description="Point Librarian at a folder of movies, shows, music or audiobooks and it will catalogue everything it finds."
           action={
-            <Link to="/settings/libraries">
-              <Button variant="primary" size="lg">
-                <IconPlus size="lg" /> Add library
-              </Button>
-            </Link>
+            <ButtonLink variant="primary" size="lg" icon={<IconPlus />} render={<Link to="/settings/libraries" />}>
+              Add library
+            </ButtonLink>
           }
           className="max-w-lg"
         />
@@ -77,7 +76,7 @@ export function HomePage() {
           </MediaRow>
         </Section>
       ) : null),
-    libraries: (<Section title="Libraries" bleed trailing={<Link to="/libraries" className="nav-focus rounded hover:text-foreground">See all</Link>}>
+    libraries: (<Section title="Libraries" bleed trailing={<Link to="/libraries" className="nav-focus rounded hover:text-foreground" data-tv-skip>See all</Link>}>
         <MediaRow ariaLabel="Libraries">
           {booting && libraryList.length === 0
             ? [0, 1, 2].map((index) => <SkeletonBlock key={index} className="h-40 w-64 shrink-0 rounded-card" />)

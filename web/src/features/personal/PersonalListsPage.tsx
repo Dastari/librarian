@@ -4,7 +4,7 @@ import { createDataTableColumns, RelativeTime, TextCell } from "glass-ux/data-ta
 import { IconPlus } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
 import { errorMessage } from "@/lib/graphql/errors";
-import { Button, ErrorState, PosterCard, ViewToggle, type ViewMode } from "@/components/ui";
+import { Button, ErrorState, PosterCard, PosterInTable, ViewToggle, type ViewMode } from "@/components/ui";
 import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
 import { TableToolbar } from "@/components/ui/TableToolbar";
 import { useSession } from "@/lib/auth/useSession";
@@ -50,7 +50,9 @@ export function PersonalListsPage() {
   return <div className="page-gutter flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-clip py-4 md:py-6">
     <h1 className="sr-only">Playlists</h1>
     {lists.error ? <ErrorState error={lists.error} onRetry={() => void lists.refetch()} /> : null}
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+    {/* A poster gallery like a library's: each card is one stop, its ring padded clear of the clip. */}
+    <div className="media-browser flex min-h-0 min-w-0 flex-1 flex-col" data-view={view}>
+      <PosterInTable.Provider value={true}>
       <LoadedDataTable<Playlist>
         id={`librarian.${user?.id ?? "session"}.lists`}
         label="Playlists"
@@ -79,6 +81,7 @@ export function PersonalListsPage() {
           </TableToolbar>
         )}
       />
+      </PosterInTable.Provider>
     </div>
     {editing ? <ListEditor open={editing} onOpenChange={setEditing} /> : null}
     {dialogs}

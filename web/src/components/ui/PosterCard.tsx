@@ -111,7 +111,8 @@ export function PosterCard({ title, meta, image, aspect = "poster", contain, tin
         {status ? <ToneDot overlay label={status.label} tone={status.tone === "default" ? "neutral" : status.tone} className="absolute end-2 top-2" /> : null}
         {onPlay || actions ? (
           <div data-print="hide" className="over-imagery absolute inset-0 z-20 flex items-end justify-end gap-1 p-[max(var(--space-2),var(--focus-reach))]">
-            {actions ? <div className="pointer-events-auto flex gap-1">{actions}</div> : null}
+            {/* Pointer shortcuts on a card that opens: a remote reaches them from the page it opens. */}
+            {actions ? <div className="pointer-events-auto flex gap-1" data-nav-skip={navigation ? "" : undefined}>{actions}</div> : null}
             {onPlay ? <Button variant="primary" shape="circle" icon={<IconPlay />} aria-label={`Play ${title}`} onClick={onPlay} className="pointer-events-auto" tabIndex={-1} data-nav-skip data-tv-skip /> : null}
           </div>
         ) : null}

@@ -328,13 +328,17 @@ const OWNS_AXIS = '[role="tablist"], [role="radiogroup"], .fa-segmented, .fa-swa
 function compositeOwns(active: HTMLElement, direction: Direction): boolean {
   const role = active.getAttribute("role");
   // A seek bar takes Left/Right for scrubbing; Up and Down leave it (design.md Q125).
-  if (role === "slider" && active.hasAttribute("data-owns-horizontal")) return direction === "ArrowLeft" || direction === "ArrowRight";
+  if (role === "slider" && active.closest("[data-owns-horizontal]")) return direction === "ArrowLeft" || direction === "ArrowRight";
+  if (role === "gridcell" && active.closest('[role="grid"][data-nav-group]')) return false;
   if (role === "slider" || role === "menuitem" || role === "option" || role === "listbox" || role === "combobox" || role === "treeitem" || role === "gridcell") return true;
   // A data table moves between its lines with Up/Down (and across a grid of cards, where it takes
   // Left/Right itself); sideways keys it doesn't use leave it. Its edges are `leavesTable`'s.
   // Controls inside a line or a detail panel don't belong to its keys: the arrows are ours there.
   if (active.closest(TABLE_GRID)) return active.matches(TABLE_LINE) && (direction === "ArrowUp" || direction === "ArrowDown");
-  if (active.closest(OWNS_ALL)) return true;
+  // A grid that is a navigation group (the guide's month of days) is a grid of buttons that
+  // spatial navigation walks; other grids and trees handle their own arrows.
+  const owner = active.closest(OWNS_ALL);
+  if (owner && !(owner.getAttribute("role") === "grid" && owner.hasAttribute("data-nav-group"))) return true;
   if (active.matches(OWNS_VERTICAL)) return direction === "ArrowUp" || direction === "ArrowDown";
   const strip = active.closest<HTMLElement>(OWNS_AXIS);
   if (!strip) return false;
@@ -362,6 +366,15 @@ function leavesField(active: HTMLElement, direction: Direction): boolean {
  */
 function leavesClosedTagField(active: HTMLElement, direction: string): boolean {
   return (direction === "ArrowUp" || direction === "ArrowDown") && active instanceof HTMLInputElement && active.getAttribute("aria-expanded") !== "true" && Boolean(active.closest(".fa-tag-input"));
+}
+
+/** A ⋯ menu button or a select's trigger (not a typing combobox): OK opens it on a TV. */
+const POPUP_TRIGGER = '[aria-haspopup="menu"]:not([role="menuitem"]), [aria-haspopup="listbox"]:not(input)';
+
+function isHorizontalSlider(active: HTMLElement): boolean {
+  if (active.getAttribute("role") !== "slider" && !(active instanceof HTMLInputElement && active.type === "range")) return false;
+  const orientation = active.getAttribute("aria-orientation") ?? active.closest("[data-orientation]")?.getAttribute("data-orientation");
+  return orientation !== "vertical";
 }
 
 /** Glass NumberField's input (Base UI steps its value with Up/Down and stops the event). */
@@ -578,7 +591,9 @@ export function useSpatialNavigation(enabled = true, tv = false, onBack: () => b
         moveFirst(event, active);
         return;
       }
-      if (tv && active?.matches('[aria-haspopup="menu"]:not([role="menuitem"])') && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+      // The same for a select (OK opens its list) and a horizontal slider (Left/Right change it):
+      // walking down a settings page never opens or nudges what it passes.
+      if (tv && active && plain && (event.key === "ArrowUp" || event.key === "ArrowDown") && (active.matches(POPUP_TRIGGER) || isHorizontalSlider(active))) {
         moveFirst(event, active);
         return;
       }

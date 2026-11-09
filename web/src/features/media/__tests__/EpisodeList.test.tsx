@@ -9,6 +9,7 @@ import { renderWithProviders } from "@/test";
 
 import { EpisodeList } from "../EpisodeList";
 import type { EpisodeRow } from "../ShowPage";
+import { isRemoteStop } from "@/lib/input-mode";
 
 let isAdmin = true;
 vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => isAdmin, useSession: () => ({ status: "authenticated", user: { id: "episode-user", role: isAdmin ? "admin" : "member" }, expiresAt: null }) }));
@@ -413,7 +414,9 @@ describe("EpisodeList row view", () => {
     isAdmin = false;
     await mount([episode(1, 1, { title: "Later" })], [], vi.fn(), { view: "row" });
     const tile = screen.getByRole("button", { name: /^S01E01 · Later/ });
-    expect(tile).toHaveAttribute("aria-disabled", "true");
+    // A card to read on a remote, not a disabled control: it stays a stop (design.md Q141).
+    expect(tile).not.toHaveAttribute("aria-disabled");
+    expect(isRemoteStop(tile, true)).toBe(true);
     expect(tile).not.toHaveAttribute("aria-haspopup");
   });
 });

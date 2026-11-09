@@ -11,6 +11,7 @@ import { LibrarySettingsDialog, type LibrarySettingsTab } from "./LibrarySetting
 import { useLibraryActions } from "./useLibraryActions";
 import { useCompleteConnection } from "./browser/useCompleteConnection";
 import { useLibraryPreferences } from "@/features/personal/usePersonalLibrary";
+import { ButtonLink } from "glass-ux/button-link";
 import { IconPlus, IconStar } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
 import { errorMessage } from "@/lib/graphql/errors";
@@ -47,11 +48,9 @@ export function LibrariesPage() {
         title="Libraries"
         actions={
           isAdmin ? (
-            <Link to="/settings/libraries">
-              <Button variant="primary">
-                <IconPlus size="md" /> Add library
-              </Button>
-            </Link>
+            <ButtonLink variant="primary" icon={<IconPlus />} render={<Link to="/settings/libraries" />}>
+              Add library
+            </ButtonLink>
           ) : null
         }
       />

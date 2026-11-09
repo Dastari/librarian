@@ -490,7 +490,7 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
       />
       {showTitle ? (
       <div className={cn("over-imagery pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center gap-3 bg-linear-to-b from-black/70 to-transparent ps-[calc(var(--safe-inline-start)+1rem)] pe-[calc(var(--safe-inline-end)+1rem)] pb-12 pt-[calc(var(--safe-top)+0.75rem)] transition-opacity duration-base", !showChrome && "opacity-0")}>
-        <Button variant="secondary" className={showChrome ? "pointer-events-auto" : undefined} tabIndex={showChrome ? undefined : -1} data-spatial-start aria-label="Back" onClick={onBack} icon={<IconArrowLeft className="rtl:rotate-180" />} />
+        <Button variant="secondary" className={showChrome ? "pointer-events-auto" : undefined} tabIndex={showChrome ? undefined : -1} data-nav-skip={showChrome ? undefined : ""} data-spatial-start aria-label="Back" onClick={onBack} icon={<IconArrowLeft className="rtl:rotate-180" />} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-title-md text-white text-shadow-hero">{item.title}</p>
           {item.subtitle ? <p className="truncate text-label text-white/70">{item.subtitle}</p> : null}
