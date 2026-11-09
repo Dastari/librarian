@@ -681,3 +681,305 @@ impl LibraryScanService {
         Ok(())
     }
 }
+
+/// An album the owner already has, as far as telling it from a download's files needs.
+#[derive(Debug, Clone)]
+pub(super) struct HeldAlbum {
+    pub title: String,
+    pub artist: Option<String>,
+}
+
+/// `Disc 2, track 6: Title`, from what a file's tags and name say. The disc is left out of a
+/// single-disc release.
+fn track_line(file: &ReleaseFile, with_disc: bool) -> String {
+    let title = file
+        .tags
+        .title
+        .clone()
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or_else(|| {
+            let name = file.path.rsplit(['/', '\\']).next().unwrap_or(&file.path);
+            name.rsplit_once('.')
+                .map_or(name, |(stem, _)| stem)
+                .to_string()
+        });
+    let place = match (
+        with_disc.then_some(file.tags.disc).flatten(),
+        file.tags.track,
+    ) {
+        (Some(disc), Some(track)) => format!("Disc {disc}, track {track}: "),
+        (None, Some(track)) => format!("Track {track}: "),
+        (Some(disc), None) => format!("Disc {disc}: "),
+        (None, None) => String::new(),
+    };
+    format!("{place}{title}")
+}
+
+/// What a download of music looks like against the albums the owner holds: each file is a track
+/// of an album (named with its disc and track), and each album is either held or new. This is the
+/// music counterpart of the book plan, which has no meaning for albums.
+pub(super) fn describe_music_release(
+    files: &[ReleaseFile],
+    held: &[HeldAlbum],
+) -> TorrentMatchPreview {
+    let groups = music_rules::group_release_files(files);
+    let folder_name = |index: usize| -> String {
+        let mut parts: Vec<&str> = files[index].path.split(['/', '\\']).collect();
+        parts.pop();
+        parts.pop().unwrap_or("Unnamed release").to_string()
+    };
+    let mut previews = Vec::with_capacity(files.len());
+    let mut described = Vec::with_capacity(groups.len());
+    let mut held_count = 0usize;
+    for (number, group) in groups.iter().enumerate() {
+        let label = group
+            .title
+            .clone()
+            .unwrap_or_else(|| folder_name(group.files[0]));
+        let in_library = group.title.as_deref().is_some_and(|title| {
+            held.iter().any(|album| {
+                music_rules::same_album_title(title, &album.title)
+                    && match (&group.artist, &album.artist) {
+                        (Some(a), Some(b)) => music_rules::same_artist(a, b),
+                        _ => true,
+                    }
+            })
+        });
+        held_count += usize::from(in_library);
+        let with_disc = group
+            .files
+            .iter()
+            .any(|index| files[*index].tags.disc.is_some_and(|disc| disc > 1));
+        let key = format!("album-{number}");
+        let mut members: Vec<usize> = group.files.clone();
+        members.sort_by_key(|index| {
+            (
+                files[*index].tags.disc.unwrap_or(1),
+                files[*index].tags.track.unwrap_or(i32::MAX),
+                files[*index].path.to_lowercase(),
+            )
+        });
+        for index in &members {
+            previews.push(PreviewFile {
+                path: files[*index].key.clone(),
+                group_key: Some(key.clone()),
+                status: if in_library { "album" } else { "new" },
+                target: Some(label.clone()),
+                detail: Some(track_line(&files[*index], with_disc)),
+                warning: None,
+            });
+        }
+        described.push(PreviewGroup {
+            key,
+            label,
+            file_count: group.files.len() as i32,
+            seconds: group
+                .files
+                .iter()
+                .map(|index| files[*index].duration)
+                .sum::<Option<f64>>(),
+            is_target: false,
+            book_id: None,
+            book_title: None,
+            author: group.artist.clone(),
+        });
+    }
+    let summary = match described.as_slice() {
+        [only] => format!(
+            "{} by {}: {} {}, {}.",
+            only.label,
+            only.author.as_deref().unwrap_or("an unknown artist"),
+            only.file_count,
+            if only.file_count == 1 {
+                "track"
+            } else {
+                "tracks"
+            },
+            if held_count == 1 {
+                "already in the library"
+            } else {
+                "not in the library yet"
+            }
+        ),
+        many => format!(
+            "{} albums, {held_count} already in the library.",
+            many.len()
+        ),
+    };
+    TorrentMatchPreview {
+        status: "unlinked",
+        summary: Some(summary),
+        complete_facts: files.iter().all(|file| file.duration.is_some()),
+        groups: described,
+        files: previews,
+        ..Default::default()
+    }
+}
+
+impl LibraryScanService {
+    /// The albums an owner holds, for telling a download's albums from new ones.
+    pub(super) async fn held_albums(&self, owner_id: &str) -> Result<Vec<HeldAlbum>> {
+        let database = self.database().await?;
+        let pool = database.pool().pool();
+        let owner = || {
+            Some(StringFilter {
+                eq: Some(owner_id.to_string()),
+                ..Default::default()
+            })
+        };
+        let albums = Album::query(pool)
+            .filter(AlbumWhereInput {
+                user_id: owner(),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await?;
+        let artists: HashMap<String, String> = Artist::query(pool)
+            .filter(ArtistWhereInput {
+                user_id: owner(),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await?
+            .into_iter()
+            .map(|artist| (artist.id, artist.name))
+            .collect();
+        Ok(albums
+            .into_iter()
+            .map(|album| HeldAlbum {
+                artist: artists.get(&album.artist_id).cloned(),
+                title: album.name,
+            })
+            .collect())
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+    use crate::services::release_match::FileTags;
+
+    fn file(path: &str, album: &str, disc: Option<i32>, track: i32, title: &str) -> ReleaseFile {
+        ReleaseFile {
+            key: path.to_string(),
+            path: path.to_string(),
+            size: 1,
+            duration: Some(200.0),
+            tags: FileTags {
+                album: Some(album.to_string()),
+                album_artist: Some("Foo Fighters".to_string()),
+                title: Some(title.to_string()),
+                track: Some(track),
+                disc,
+                ..Default::default()
+            },
+            embedded: Vec::new(),
+        }
+    }
+
+    fn held(title: &str) -> Vec<HeldAlbum> {
+        vec![HeldAlbum {
+            title: title.to_string(),
+            artist: Some("Foo Fighters".to_string()),
+        }]
+    }
+
+    #[test]
+    fn music_files_are_tracks_of_an_album_never_other_books() {
+        let files = vec![
+            file(
+                "Wasting Light/02 Rope.flac",
+                "Wasting Light",
+                None,
+                2,
+                "Rope",
+            ),
+            file(
+                "Wasting Light/01 Bridge Burning.flac",
+                "Wasting Light",
+                None,
+                1,
+                "Bridge Burning",
+            ),
+        ];
+        let preview = describe_music_release(&files, &held("Wasting Light"));
+        assert_eq!(preview.status, "unlinked");
+        assert_eq!(preview.files.len(), 2);
+        assert!(preview.files.iter().all(|file| file.status == "album"));
+        assert!(
+            preview
+                .files
+                .iter()
+                .all(|file| file.target.as_deref() == Some("Wasting Light"))
+        );
+        // In track order, with the track and title as the detail and no disc on a single disc.
+        assert_eq!(
+            preview.files[0].detail.as_deref(),
+            Some("Track 1: Bridge Burning")
+        );
+        assert_eq!(preview.files[1].detail.as_deref(), Some("Track 2: Rope"));
+        assert_eq!(
+            preview.summary.as_deref(),
+            Some("Wasting Light by Foo Fighters: 2 tracks, already in the library.")
+        );
+        assert_eq!(preview.groups[0].author.as_deref(), Some("Foo Fighters"));
+        assert!(preview.complete_facts);
+    }
+
+    #[test]
+    fn a_two_disc_album_names_the_disc_and_a_new_album_says_so() {
+        let files = vec![
+            file("Album/CD1/01 A.flac", "Echoes", Some(1), 1, "A"),
+            file("Album/CD2/01 B.flac", "Echoes", Some(2), 1, "B"),
+        ];
+        let preview = describe_music_release(&files, &[]);
+        // One album in one folder tree stays two groups only if folders differ; both read as
+        // tracks of an album that is not held yet.
+        assert!(preview.files.iter().all(|file| file.status == "new"));
+        let details: Vec<_> = preview
+            .files
+            .iter()
+            .filter_map(|file| file.detail.as_deref())
+            .collect();
+        assert!(details.contains(&"Disc 1, track 1: A") || details.contains(&"Track 1: A"));
+        assert!(
+            preview
+                .summary
+                .as_deref()
+                .unwrap()
+                .contains("not in the library yet")
+                || preview.summary.as_deref().unwrap().contains("0 already")
+        );
+    }
+
+    #[test]
+    fn several_albums_are_counted_and_each_file_names_its_own() {
+        let files = vec![
+            file("Pack/One/01 A.flac", "One", None, 1, "A"),
+            file("Pack/Two/01 B.flac", "Two", None, 1, "B"),
+        ];
+        let preview = describe_music_release(&files, &held("Two"));
+        assert_eq!(
+            preview.summary.as_deref(),
+            Some("2 albums, 1 already in the library.")
+        );
+        assert_eq!(
+            preview
+                .files
+                .iter()
+                .find(|f| f.target.as_deref() == Some("One"))
+                .unwrap()
+                .status,
+            "new"
+        );
+        assert_eq!(
+            preview
+                .files
+                .iter()
+                .find(|f| f.target.as_deref() == Some("Two"))
+                .unwrap()
+                .status,
+            "album"
+        );
+    }
+}
