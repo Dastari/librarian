@@ -1810,3 +1810,14 @@ the file records of downloads), sets `torrent.download_dir`, clears the marker a
 to the new folder. Every step skips what is done, so a stopped move is finished by the server at its next start. *New
 downloads only* changes the folder for new torrents and leaves the existing ones seeding where they are. The old files are
 never deleted.
+
+### Q102: Can the torrent session folder be on a share?
+**Answer:** No, and it is not worth building. In librqbit 9.1 the session store is chosen by `SessionPersistenceConfig`,
+which is `Json { folder }` or `Postgres { connection_string }` only; the `SessionPersistenceStore` trait is public but
+`SessionOptions` has no way to pass an implementation (`persistence_factory` in `session.rs` matches the enum), and the JSON
+store writes with `tokio::fs` (`session.json` through a temporary file and a rename, the `.torrent` files, the fast-resume
+bitfields) to a local path. DHT state (`dht.json`) is a local file name too. A share path would need a fork of librqbit,
+and the client must start while the share is down, which a store on the share cannot do; a local copy mirrored to the share
+would only be a backup of a few small files that Librarian can already rebuild (every torrent is in the database with its
+magnet link and save path, and `restore_from_database` re-adds what the session lost). So the session folder stays on this
+machine (`torrent.session_dir`), and only payloads go to a share.
