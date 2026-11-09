@@ -2007,3 +2007,22 @@ whole film across the network, and decoding every frame of a 4K HEVC film costs 
 Per-tile seeks read a few hundred kilobytes each. The keyframe found may be a few seconds before the tile's moment, which a
 preview tolerates. Fill is a view of the same stream: cropping in the transcode would need a second rendition per file and
 would break direct play, while a CSS transform costs nothing and can be turned off at once.
+
+**Added later to Q125 — remote control of the players.** *Media keys* are handled in one place
+(`web/src/features/player/mediaKeys.ts`), a window capture listener, so they work without focusing
+anything: the video player while it holds the screen, else the audio player; the Android TV shell
+dispatches these same `KeyboardEvent.key` values, and the audio Media Session handlers (play, pause,
+next/previous track, seek, stop) call the same commands; Glass publishes the video's. *Scrubbing*
+(`scrub.ts`) moves a target, not the playhead: 10 s a press, 30 s from the fourth press in a row
+(presses within half a second, or a held key's repeats, throttled to one step per 150 ms), then a
+minute (two for items over an hour); a lone tap is 10 s. The player seeks once, on OK or 0.7 s after the
+last press, so HLS sees one seek; Back cancels. The video player scrubs from its picture, its seek bar,
+or anywhere while its controls are hidden (TV mode; elsewhere Glass's own arrows stay), showing the
+target time, the delta, the storyboard tile (Q122) and the chapter; it takes the keys before Glass
+does rather than reconfiguring it, since Glass has no option for step size or deferred seeking. The
+audio seek bar scrubs the same way and names the audiobook chapter. *Now playing*
+(`nowPlaying.tsx`): on a TV a rail entry at the top while anything plays, the Info key and N open it;
+starting audio on a TV opens the drawer (Q125's maximised form) with Play/Pause focused, counted by
+`audioStarts`, which only a new queue increments, so Add to queue, Play next into a playing queue and
+the queue moving on never take over the screen. Back collapses it and focus returns to the opener.
+

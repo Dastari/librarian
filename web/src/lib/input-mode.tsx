@@ -76,6 +76,11 @@ export function useInputMode(): InputModeContextValue {
   return context;
 }
 
+/** Whether the app is in TV mode; false outside the provider (components used on their own). */
+export function useIsTvMode(): boolean {
+  return useContext(InputModeContext)?.mode === "tv";
+}
+
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [data-focusable]';
 
@@ -87,6 +92,11 @@ type Direction = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
 /** webOS (461) and Tizen (10009) report their remote's Back key only as a key code. */
 const BACK_KEY_CODES = new Set([461, 10009]);
 const OPEN_OVERLAY = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]';
+/**
+ * Arrows stay inside a modal dialog. A non-modal one (the now playing drawer above the dock)
+ * does not hold them, so the dock's controls under it stay reachable.
+ */
+const ARROW_SCOPE = '[role="dialog"]:not([aria-modal="false"]), [role="alertdialog"]';
 
 function isVisible(element: HTMLElement): boolean {
   const rect = element.getBoundingClientRect();
@@ -272,6 +282,8 @@ const OWNS_AXIS = '[role="tablist"], [role="radiogroup"], .fa-segmented, .fa-swa
  */
 function compositeOwns(active: HTMLElement, direction: Direction): boolean {
   const role = active.getAttribute("role");
+  // A seek bar takes Left/Right for scrubbing; Up and Down leave it (design.md Q125).
+  if (role === "slider" && active.hasAttribute("data-owns-horizontal")) return direction === "ArrowLeft" || direction === "ArrowRight";
   if (role === "slider" || role === "menuitem" || role === "option" || role === "listbox" || role === "combobox" || role === "treeitem" || role === "gridcell") return true;
   if (active.closest(OWNS_ALL)) return true;
   if (active.matches(OWNS_VERTICAL)) return direction === "ArrowUp" || direction === "ArrowDown";
@@ -336,7 +348,7 @@ export function useSpatialNavigation(enabled = true, tv = false, onBack: () => v
       }
       if ((editing && !(tv && leavesField(active, direction))) || compositeOwns(active, direction)) return;
       if (active.closest("[data-spatial-ignore]")) return;
-      const scope = active.closest<HTMLElement>('[role="dialog"], [role="alertdialog"]') ?? document;
+      const scope = active.closest<HTMLElement>(ARROW_SCOPE) ?? document;
       const next = findNext(active, direction, scope);
       if (!next) return;
       event.preventDefault();
@@ -351,7 +363,7 @@ export function useSpatialNavigation(enabled = true, tv = false, onBack: () => v
       const active = document.activeElement as HTMLElement | null;
       // Base UI's combobox takes Up/Down to open its list before a bubbling handler could run.
       if (tv && active && !event.defaultPrevented && !event.altKey && !event.ctrlKey && !event.metaKey && leavesClosedTagField(active, event.key)) {
-        const scope = active.closest<HTMLElement>('[role="dialog"], [role="alertdialog"]') ?? document;
+        const scope = active.closest<HTMLElement>(ARROW_SCOPE) ?? document;
         const next = findNext(active, event.key as Direction, scope);
         if (next) {
           event.preventDefault();
@@ -362,7 +374,7 @@ export function useSpatialNavigation(enabled = true, tv = false, onBack: () => v
         return;
       }
       if (tv && active?.matches('[aria-haspopup="menu"]:not([role="menuitem"])') && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-        const scope = active.closest<HTMLElement>('[role="dialog"], [role="alertdialog"]') ?? document;
+        const scope = active.closest<HTMLElement>(ARROW_SCOPE) ?? document;
         const next = findNext(active, event.key, scope);
         if (next) {
           event.preventDefault();
@@ -372,7 +384,7 @@ export function useSpatialNavigation(enabled = true, tv = false, onBack: () => v
         }
         return;
       }
-      if (active?.closest('[role="dialog"], [role="alertdialog"]')) onKeyDown(event);
+      if (active?.closest(ARROW_SCOPE)) onKeyDown(event);
     };
     window.addEventListener("keydown", onModalKeyDown, true);
     window.addEventListener("keydown", onKeyDown);

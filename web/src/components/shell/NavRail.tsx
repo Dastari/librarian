@@ -3,6 +3,7 @@ import { CountBadge } from "glass-ux/badge";
 import { Separator } from "glass-ux/separator";
 import { Rail } from "glass-ux/shell";
 
+import { NowPlayingRailItem } from "@/features/player/nowPlaying";
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
 import { useLibraryPreferences } from "@/features/personal/usePersonalLibrary";
 import { EntityLibraryListDocument } from "@/graphql/generated/graphql";
@@ -47,6 +48,8 @@ export function NavRail() {
 
   return (
     <Rail.Root aria-label="Primary" className={cn("app-shell-rail", overArt && "over-imagery")} data-nav-zone="rail" data-nav-side="" data-print="hide">
+      {/* On a TV, what is playing is the first stop on the rail (design.md Q125). */}
+      <NowPlayingRailItem />
       {items.filter((item) => item.key !== "settings").map(entry)}
       {libraryRows.length ? <li aria-hidden className="app-rail-divider"><Separator /></li> : null}
       {libraryRows.map((node) => {

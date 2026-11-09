@@ -1,4 +1,4 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -57,15 +57,41 @@ describe("Glass player controls", () => {
     expect(slider).toHaveAttribute("aria-valuenow", "0");
   });
 
-  it("retains the specialized seek keys and commits a drag once after showing its preview", async () => {
+  it("puts a scrub back on Back, and seeks after a pause otherwise", async () => {
+    vi.useFakeTimers();
+    try {
+      const seek = vi.fn();
+      await renderWithProviders(<SeekBar position={60} duration={180} onSeek={seek} labelAt={(at) => (at >= 60 ? "Chapter three" : "Chapter two")} />, { router: false });
+      const slider = screen.getByRole("slider", { name: "Seek" });
+      fireEvent.keyDown(slider, { key: "ArrowLeft" });
+      expect(screen.getByText("Chapter two · 0:50")).toBeInTheDocument();
+      const back = fireEvent.keyDown(slider, { key: "Escape" });
+      expect(back).toBe(false); // consumed: the page does not go back
+      act(() => { vi.advanceTimersByTime(2000); });
+      expect(seek).not.toHaveBeenCalled();
+      fireEvent.keyDown(slider, { key: "ArrowRight" });
+      act(() => { vi.advanceTimersByTime(800); });
+      expect(seek.mock.calls).toEqual([[70]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("scrubs with the arrows, seeking once on OK, and keeps Home and End", async () => {
     const seek = vi.fn();
     await renderWithProviders(<SeekBar position={60} duration={180} buffered={120} chapters={[{ start: 30, title: "Chapter two" }]} onSeek={seek} />, { router: false });
     const slider = screen.getByRole("slider", { name: "Seek" });
     fireEvent.keyDown(slider, { key: "ArrowRight" });
-    fireEvent.keyDown(slider, { key: "ArrowLeft", shiftKey: true });
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    // The preview names the target and how far it is; nothing has seeked yet.
+    expect(screen.getByText("Chapter two · 1:20")).toBeInTheDocument();
+    expect(screen.getByText("+0:20")).toBeInTheDocument();
+    expect(seek).not.toHaveBeenCalled();
+    fireEvent.keyDown(slider, { key: "Enter" });
+    expect(seek.mock.calls).toEqual([[80]]);
     fireEvent.keyDown(slider, { key: "Home" });
     fireEvent.keyDown(slider, { key: "End" });
-    expect(seek.mock.calls).toEqual([[65], [30], [0], [180]]);
+    expect(seek.mock.calls).toEqual([[80], [0], [180]]);
     seek.mockClear();
     slider.getBoundingClientRect = () => ({ width: 180, height: 24, x: 0, y: 0, top: 0, left: 0, right: 180, bottom: 24, toJSON: () => ({}) });
     fireEvent.pointerDown(slider, { clientX: 45, pointerId: 1, pointerType: "mouse" });

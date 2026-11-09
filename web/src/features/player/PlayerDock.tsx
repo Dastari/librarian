@@ -3,14 +3,16 @@ import { Button } from "glass-ux/button";
 import { ListRow } from "glass-ux/list-row";
 import { Notice } from "glass-ux/notice";
 import { IconChevronUp, IconList, IconClose } from "glass-ux/icons";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { Artwork } from "@/components/ui";
 import { useIsDesktop } from "@/hooks/useMediaQuery";
+import { useIsTvMode } from "@/lib/input-mode";
 import { cn } from "@/lib/utils";
 
 import { PlayPauseButton, SeekBar, SkipButton, VolumeControl } from "./controls";
 import { NowPlayingDrawer, NowPlayingSheet } from "./NowPlayingSheet";
+import { drawerFocus, nowPlayingReturn } from "./nowPlaying";
 import { CastButton } from "./CastButton";
 import { currentChapterTitle, seekSpan } from "./chapterNav";
 import { audioCommands, canSkipAudio, skipAudio } from "./usePlayer";
@@ -158,6 +160,7 @@ export function PlayerDock() {
       ["seekto", (details) => details.seekTime !== undefined && audioCommands.seek?.(details.seekTime)],
       ["seekbackward", () => audioCommands.seek?.(Math.max(0, (audioRef.current?.currentTime ?? 0) - 15))],
       ["seekforward", () => audioCommands.seek?.((audioRef.current?.currentTime ?? 0) + 30)],
+      ["stop", () => playerStore.stopAudio()],
     ];
     for (const [action, handler] of handlers) {
       try {
@@ -180,6 +183,54 @@ export function PlayerDock() {
 
   const desktop = useIsDesktop();
   const bodyHeight = useShellBodyHeight(desktop && state.sheetOpen);
+
+  // On a TV, audio a person starts opens now playing in full, with Play/Pause focused; Back
+  // collapses it to the bar and focus goes back to what started it (design.md Q125). Add to queue,
+  // and Play next while something plays, leave the screen alone: they do not start anything.
+  const tv = useIsTvMode();
+  const starts = useRef(state.audioStarts);
+  useEffect(() => {
+    if (state.audioStarts === starts.current) return;
+    starts.current = state.audioStarts;
+    if (!tv || !currentAudioItem(playerStore.getSnapshot())) return;
+    const opener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+    if (opener && !opener.closest("[data-dock]")) nowPlayingReturn.current = opener;
+    drawerFocus.current = "transport";
+    playerStore.setSheetOpen(true);
+  }, [state.audioStarts, tv]);
+
+  // The bar is never a trap: Back collapses an open drawer, and Back or Up from the bar returns
+  // focus to the page control it came from.
+  const dockKeys = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (target?.closest('[role="menu"], [role="listbox"], input, textarea')) return;
+    const back = event.key === "Escape" || event.key === "GoBack" || event.keyCode === 461 || event.keyCode === 10009 || (tv && event.key === "Backspace");
+    // A focused icon button's tooltip takes Escape first (it prevents the default); on a TV that
+    // would make Back do nothing, so Back is still ours. Anything else already handled is not.
+    if (event.defaultPrevented && !back) return;
+    const open = playerStore.getSnapshot().sheetOpen;
+    if (back && open) {
+      event.preventDefault();
+      event.stopPropagation();
+      playerStore.setSheetOpen(false);
+      return;
+    }
+    const inBar = Boolean(target?.closest("[data-dock-bar]")) && target?.getAttribute("role") !== "slider";
+    if (!open && (back || (event.key === "ArrowUp" && inBar))) {
+      const previous = nowPlayingReturn.current;
+      if (previous?.isConnected && !previous.closest("[data-dock]")) {
+        event.preventDefault();
+        event.stopPropagation();
+        nowPlayingReturn.current = null;
+        previous.focus({ preventScroll: true });
+      }
+    }
+  };
+  const rememberEntry = (event: ReactFocusEvent<HTMLDivElement>) => {
+    const from = event.relatedTarget;
+    if (from instanceof HTMLElement && !event.currentTarget.contains(from)) nowPlayingReturn.current = from;
+  };
   const audioElement = <audio ref={audioRef} preload="metadata" crossOrigin="use-credentials" className="hidden" />;
   if (!item) return audioElement;
   const drawerOpen = desktop && state.sheetOpen;
@@ -201,9 +252,12 @@ export function PlayerDock() {
         style={desktop ? { height: drawerOpen && bodyHeight > 0 ? `calc(${bodyHeight}px - 2 * var(--space-3))` : "var(--dock-height)" } : undefined}
         role="region"
         aria-label="Now playing"
+        data-dock
+        onKeyDownCapture={dockKeys}
+        onFocusCapture={rememberEntry}
       >
         {desktop ? <NowPlayingDrawer open={drawerOpen} onClose={() => playerStore.setSheetOpen(false)} onOpenEntity={(href) => { playerStore.setSheetOpen(false); void navigate({ href }); }} /> : null}
-      <div className={cn("relative flex shrink-0 items-center gap-3 px-3 h-dock md:px-4", "max-md:h-16")}>
+      <div className={cn("relative flex shrink-0 items-center gap-3 px-3 h-dock md:px-4", "max-md:h-16")} data-dock-bar>
         {transport.error ? (
           <Notice tone="danger" compact role="alert" className="absolute inset-x-0 bottom-full mb-2" action={<Button size="sm" onClick={() => audioCommands.retry?.()}>Retry</Button>}>
             {transport.error}
@@ -224,18 +278,18 @@ export function PlayerDock() {
         <div className="hidden min-w-0 flex-1 flex-col items-center gap-1 md:flex">
           <div className="flex items-center gap-1">
             <SkipButton direction="back" onPress={() => skipAudio(-1)} disabled={!canSkipAudio(state.queue, state.index, transport.position, -1)} />
-            <PlayPauseButton playing={transport.playing} onToggle={() => playerStore.updateTransport({ playing: !transport.playing })} size="sm" />
+            <PlayPauseButton playing={transport.playing} onToggle={() => playerStore.updateTransport({ playing: !transport.playing })} size="sm" start={desktop} />
             <SkipButton direction="forward" onPress={() => skipAudio(1)} disabled={!canSkipAudio(state.queue, state.index, transport.position, 1)} />
           </div>
           <div className="flex w-full max-w-2xl items-center gap-3 text-label-sm text-muted">
             <span className="text-numeric w-10 text-right">{formatTime(transport.position - span.start)}</span>
-            <SeekBar thin position={transport.position - span.start} duration={span.end - span.start} buffered={Math.max(0, transport.buffered - span.start)} onSeek={(position) => audioCommands.seek?.(span.start + position)} />
+            <SeekBar thin mediaKeys position={transport.position - span.start} duration={span.end - span.start} buffered={Math.max(0, transport.buffered - span.start)} onSeek={(position) => audioCommands.seek?.(span.start + position)} labelAt={(position) => currentChapterTitle(item, span.start + position)} />
             <span className="text-numeric w-10">{formatTime(span.end - span.start)}</span>
           </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-1 md:w-auto md:justify-end lg:w-72">
-          <PlayPauseButton playing={transport.playing} onToggle={() => playerStore.updateTransport({ playing: !transport.playing })} size="sm" className="md:hidden" />
+          <PlayPauseButton playing={transport.playing} onToggle={() => playerStore.updateTransport({ playing: !transport.playing })} size="sm" className="md:hidden" start={!desktop} />
           <VolumeControl volume={transport.volume} muted={transport.muted} onVolume={(volume) => playerStore.updateTransport({ volume, muted: volume === 0 })} onMuted={(muted) => playerStore.updateTransport({ muted })} className="hidden md:flex" />
           <CastButton item={item} activationKey={activationKey} position={transport.position} onStarted={() => {
             if (playerStore.getSnapshot().audioActivation === activationKey) playerStore.updateTransport({ playing: false });
