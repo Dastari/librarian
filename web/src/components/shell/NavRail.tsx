@@ -7,12 +7,14 @@ import { useCompleteConnection } from "@/features/libraries/browser/useCompleteC
 import { useLibraryPreferences } from "@/features/personal/usePersonalLibrary";
 import { EntityLibraryListDocument } from "@/graphql/generated/graphql";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
+import { useInputMode } from "@/lib/input-mode";
 import { libraryType } from "@/lib/library-types";
 import { cn } from "@/lib/utils";
 
 import { PRIMARY_NAV, isNavActive, type NavItem } from "./nav";
 import { useHasShellArt } from "./shellArt";
 import { useShellCounts } from "./useShellCounts";
+import { UserMenu } from "./UserMenu";
 
 /**
  * Level-one navigation: Glass UX's icon rail on the canvas, each item named by its tooltip,
@@ -25,6 +27,7 @@ export function NavRail() {
   const isAdmin = useIsAdmin();
   const { status } = useSession();
   const overArt = useHasShellArt();
+  const tv = useInputMode().mode === "tv";
   const libraries = useCompleteConnection(EntityLibraryListDocument, {}, (data) => data.libraries, { skip: status !== "authenticated" });
   const preferences = useLibraryPreferences();
   const favouriteIds = new Set(preferences.rows.filter((row) => row.favourite).map((row) => row.libraryId));
@@ -46,7 +49,7 @@ export function NavRail() {
   };
 
   return (
-    <Rail.Root aria-label="Primary" className={cn("app-shell-rail", overArt && "over-imagery")} data-nav-zone="rail" data-nav-side="" data-print="hide">
+    <Rail.Root aria-label="Primary" overflow={tv ? "scroll" : undefined} className={cn("app-shell-rail", overArt && "over-imagery")} data-nav-zone="rail" data-nav-side="" data-print="hide">
       {items.filter((item) => item.key !== "settings").map(entry)}
       {libraryRows.length ? <li aria-hidden className="app-rail-divider"><Separator /></li> : null}
       {libraryRows.map((node) => {
@@ -64,6 +67,7 @@ export function NavRail() {
       })}
       <Rail.Spacer />
       {items.filter((item) => item.key === "settings").map(entry)}
+      {tv ? <UserMenu placement="rail" /> : null}
     </Rail.Root>
   );
 }

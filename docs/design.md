@@ -1967,6 +1967,16 @@ caret is at that end). OK on a number field in TV mode therefore no longer submi
 Upstream suggestion for Glass UX: a `NumberField` prop (or a TV-mode default) that lets ArrowUp/ArrowDown propagate unless the field
 is in an explicit edit state, and focusable steppers in `data-input-mode="tv"`.
 
+**TV app chrome (same entry):** In TV mode (the input-mode flag, which the Android TV app forces) the top bar keeps only the breadcrumbs: the
+search field, the Commands button, the Cast button, the Back button and the account are not rendered, so nothing hidden
+can take focus. The row stays because the brand mark shares it and the shell grid needs it. Search is the rail's own
+Search destination (it was already there); the Search page keeps its type-to-search. Casting stays in the players: the
+video player's cast control and the audio dock's Cast button; what is lost is the top bar's list of active cast sessions.
+The account becomes the last item of the side rail, a rail item with the unread count, opening the same account menu
+beside the rail; Escape returns focus to it. In TV mode the rail scrolls instead of folding items into a More menu, so
+the account item is always in the column. The rail list is inset by the focus reach so the first and last items' rings are
+never clipped. Outside TV mode nothing changes.
+
 ### Q108: What does a playlist entry's menu offer?
 **Answer:** The entry's own actions plus its target's. A playlist row (a movie, show, album or book entry) shows the
 playlist's actions (Play from here, Shuffle from here, Play next, Add to queue, Add to playlist, Move up and down, Remove from

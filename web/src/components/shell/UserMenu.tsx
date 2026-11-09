@@ -1,7 +1,8 @@
 import { useNavigate } from "@tanstack/react-router";
-import { IconBell, IconDisplays, IconLogOut, IconPalette, IconSettings } from "glass-ux/icons";
+import { CountBadge } from "glass-ux/badge";
+import { IconBell, IconDisplays, IconLogOut, IconPalette, IconSettings, IconUser } from "glass-ux/icons";
 import { Menu } from "glass-ux/menu";
-import { AccountButton } from "glass-ux/shell";
+import { AccountButton, Rail } from "glass-ux/shell";
 
 import { session } from "@/lib/auth/session";
 import { useSession } from "@/lib/auth/useSession";
@@ -10,19 +11,27 @@ import { THEMES, useTheme, type ThemePreference } from "@/lib/theme";
 
 import { useShellCounts } from "./useShellCounts";
 
-/** The signed-in account: its avatar carries the unread count, so there is no separate bell. */
-export function UserMenu() {
+/**
+ * The signed-in account: its avatar carries the unread count, so there is no separate bell. In TV
+ * mode it lives at the foot of the side rail as a rail item (`placement="rail"`), opening the same
+ * menu beside the rail; a remote reaches it with the rest of the rail, and closing the menu
+ * returns focus to that item.
+ */
+export function UserMenu({ placement = "top" }: { placement?: "top" | "rail" }) {
   const { user } = useSession();
   const { preference, setPreference } = useTheme();
   const { forced, setForced } = useInputMode();
   const counts = useShellCounts();
   const navigate = useNavigate();
+  const rail = placement === "rail";
   if (!user) return null;
 
   return (
     <Menu.Root>
-      <Menu.Trigger render={<AccountButton name={user.displayName ?? user.username} unread={counts.notifications} className="nav-focus" data-focusable />} />
-      <Menu.Popup align="end" aria-label="Account menu">
+      <Menu.Trigger render={rail
+        ? <Rail.Item className="nav-focus" label={user.displayName ?? user.username} icon={<IconUser />} badge={counts.notifications > 0 ? <CountBadge value={counts.notifications} overlay /> : undefined} data-focusable />
+        : <AccountButton name={user.displayName ?? user.username} unread={counts.notifications} className="nav-focus" data-focusable />} />
+      <Menu.Popup side={rail ? "right" : undefined} align={rail ? "end" : "end"} aria-label="Account menu">
         <Menu.Group>
           <Menu.GroupLabel>{user.displayName ?? user.username}</Menu.GroupLabel>
           <Menu.Item icon={<IconBell />} onClick={() => void navigate({ to: "/activity" })}>{counts.notifications > 0 ? `Activity (${counts.notifications})` : "Activity"}</Menu.Item>

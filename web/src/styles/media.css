@@ -419,6 +419,15 @@
  * the home indicator but its scroll ends above it. */
 .app-top { padding-inline-end: max(var(--page-gutter), var(--safe-inline-end)); }
 .app-shell-scroll { padding-block-end: var(--safe-bottom); }
+/* The rail's list scrolls (it clips on both axes), and Glass gives it only a hair of padding, so the
+ * focus ring of the first and last item (Home, the account) was cut off, most of all in TV mode where
+ * the ring is wide. Inset it by the focus reach (the convention of snap-row and the poster grids) and
+ * keep scrolled-to items clear of the edge too. */
+.app-shell-rail .fa-shell-rail-list {
+  padding-block: max(var(--space-1), var(--focus-reach));
+  padding-inline: max(0px, var(--focus-reach));
+  scroll-padding-block: var(--focus-reach);
+}
 .app-rail-divider { flex: none; align-self: stretch; inline-size: auto; padding-block: var(--space-2); padding-inline: var(--space-2); list-style: none; }
 
 @media (width < 48rem) {
