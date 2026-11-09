@@ -342,6 +342,9 @@ pub(super) async fn media_file(
             matched_by_user_id: None,
             match_confirmed_at: None,
             quality_status: None,
+            picture_crop: None,
+            storyboard: None,
+            previews_checked_at: None,
         },
     )
     .await

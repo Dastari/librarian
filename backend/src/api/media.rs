@@ -45,6 +45,10 @@ pub fn router() -> Router<AppState> {
         .route("/media/{file_id}/subtitles/{subtitle}", get(subtitle_vtt))
         .route("/media/{file_id}/hls/playlist.m3u8", get(hls_playlist))
         .route("/media/{file_id}/hls/{segment}", get(hls_segment))
+        .route(
+            "/media/{file_id}/storyboard/{key}/{sheet}",
+            get(storyboard_sheet),
+        )
 }
 
 /// Query params for stream endpoint
@@ -77,6 +81,7 @@ struct MediaFileRecord {
     duration: Option<i32>,
     is_hdr: bool,
     hdr_type: Option<String>,
+    storyboard: Option<crate::graphql::entities::VideoStoryboard>,
 }
 
 /// Stream a media file with Range header support
@@ -93,6 +98,7 @@ async fn stream_media(
     } else {
         authorize_browser_media(&state, &headers, &media_file).await?;
     }
+    queue_previews_for_playback(&file_id).await;
     let storage = library_storage();
 
     match storage.exists(&media_file.path).await {
@@ -321,6 +327,7 @@ async fn hls_playlist(
     } else {
         authorize_browser_media(&state, &headers, &media_file).await?;
     }
+    queue_previews_for_playback(&file_id).await;
     if !library_storage()
         .exists(&media_file.path)
         .await
@@ -888,6 +895,64 @@ async fn subtitle_vtt(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+/// The first play of a file without previews makes them next (design.md Q124). Cheap to call
+/// on every request: the service looks a file up at most once every few minutes.
+async fn queue_previews_for_playback(media_file_id: &str) {
+    if let Some(previews) = crate::services::video_preview::video_previews() {
+        previews.queue_for_playback(media_file_id).await;
+    }
+}
+
+/// One storyboard sheet (design.md Q122). The key in the URL names one set of sheets for one
+/// version of the file, so a sheet never changes under its URL and may be cached for good.
+async fn storyboard_sheet(
+    State(state): State<AppState>,
+    AxumPath((file_id, key, sheet)): AxumPath<(String, String, String)>,
+    headers: HeaderMap,
+) -> Result<Response, StatusCode> {
+    let media_file = fetch_media_file(&state, &file_id).await?;
+    authorize_browser_media(&state, &headers, &media_file).await?;
+    let board = media_file
+        .storyboard
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if !crate::services::video_preview::valid_storyboard_key(&key) || board.key != key {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let sheet = sheet
+        .strip_suffix(".jpg")
+        .and_then(|number| number.parse::<u32>().ok())
+        .filter(|number| i64::from(*number) < i64::from(board.sheet_count))
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let previews =
+        crate::services::video_preview::video_previews().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let path = crate::services::video_preview::sheet_path(
+        previews.cache_path(),
+        &media_file.id,
+        &key,
+        sheet,
+    );
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // The cache was cleared: make the sheets again on the next play.
+            debug!(media_file_id = %file_id, sheet = %path.display(), "Storyboard sheet missing from the cache");
+            return Err(StatusCode::NOT_FOUND);
+        }
+        Err(error) => {
+            warn!(media_file_id = %file_id, sheet = %path.display(), %error, "Could not read a storyboard sheet");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "image/jpeg")
+        .header(CONTENT_LENGTH, bytes.len())
+        .header(CACHE_CONTROL, "private, max-age=31536000, immutable")
+        .body(Body::from(bytes))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 fn subtitle_storage_error(error: crate::services::library_storage::StorageError) -> StatusCode {
     match error.kind() {
         StorageErrorKind::NotFound => StatusCode::NOT_FOUND,
@@ -948,6 +1013,7 @@ async fn fetch_media_file(state: &AppState, file_id: &str) -> Result<MediaFileRe
         duration: media_file.duration,
         is_hdr: media_file.is_hdr,
         hdr_type: media_file.hdr_type,
+        storyboard: media_file.storyboard,
     })
 }
 

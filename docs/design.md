@@ -1953,3 +1953,57 @@ and the client must start while the share is down, which a store on the share ca
 would only be a backup of a few small files that Librarian can already rebuild (every torrent is in the database with its
 magnet link and save path, and `restore_from_database` re-adds what the session lost). So the session folder stays on this
 machine (`torrent.session_dir`), and only payloads go to a share.
+
+### Q122: How are seek-bar previews made and served?
+**Answer:** As JPEG sprite sheets made after analysis by the preview queue (Q124), from one keyframe per tile. A tile is
+taken every 10 seconds, or less often for a long file so no file needs more than 360 (a two-hour film gets one every 20 s);
+tiles are 240 px wide (at most 180 px tall), shaped like the picture inside any black bars (Q123), which are cropped away
+first, and use the stream's display aspect ratio, so anamorphic files are not squashed. Ten by ten tiles make a sheet, so a
+film has a few sheets and the last may have fewer rows. Each frame is one ffmpeg run with a fast seek (`-ss` before `-i`,
+`-noaccurate_seek`) that decodes one keyframe (`-skip_frame nokey`) near the middle of its tile's stretch, single-threaded at
+the lowest CPU priority, so a film on a share is never read end to end; HDR frames are tone-mapped when ffmpeg has `zscale`.
+The raw frames are drawn into sheets in the backend (`image`); a missing frame repeats the one before, and more than a quarter
+missing gives no storyboard. Sheets are cached at `<CACHE_PATH>/storyboards/<file>/<key>/<n>.jpg`, where the key hashes the
+file's id, size, modification time, layout and crop, and older sets for the file are removed. `MediaFile.storyboard`
+(`key`, `interval`, tile size, `columns`, `rows`, `frameCount`, `sheetCount`) describes them, and
+`GET /api/media/{file}/storyboard/{key}/{n}.jpg` serves them to the file's owner or an admin, like the other media routes,
+with `Cache-Control: private, max-age=31536000, immutable` because a key never names other pictures. The player gives Glass's
+`storyboard` for one sheet and its `thumbnail` callback, which also picks the sheet, for several. If the cache is cleared,
+the sheets 404 until the file changes or its `previewsCheckedAt` is cleared.
+
+### Q123: How are black bars baked into a video found and used?
+**Answer:** With ffmpeg `cropdetect` in the preview job (Q124), at ten points from 10% to 90% of the file (intros, logos and
+credits are often full frame or black), six consecutive frames each after a fast seek, with a fractional `limit=0.1` so 8-bit
+and 10-bit video read alike, `skip=0` and `reset=0`, so each point gives the union of its frames. The edges (`x1 x2 y1 y2`) are
+read, not the rounded `crop=`, and black frames (inverted edges) are skipped. A reading smaller than a quarter of the frame
+either way is a dark scene and is dropped. At least three readings must remain; the biggest group that agrees within 1% (at
+least 8 px) must hold 60% of them, and if 20% or more show a bigger picture than the group (IMAX scenes, a long full-frame
+intro) nothing is kept, because zooming would cut real picture. The group's union, snapped outwards to even pixels, is the
+picture; bars thinner than 2% of the frame are ignored. It is stored as `MediaFile.pictureCrop` (`left`, `top`, `width`,
+`height`, and the `frameWidth`/`frameHeight` it was measured in), and is `null` for a full frame or an inconclusive file.
+**In the player:** a *Picture size* menu (only for a file with a crop) offers *Fit the whole frame* (as before) or *Fill the
+screen*, remembered per device (`librarian.pref.player.pictureMode`). Fill scales the `<video>` with a CSS transform, about its
+centre, until the picture meets the box on one side, and re-centres it; the box clips the rest. It is worked out from the
+crop as a share of the frame, so direct play and HLS renditions of any size zoom alike, and it follows resizes and view
+modes. On a box no wider (letterbox) or taller (pillarbox) than the picture it changes nothing. Nothing is re-encoded.
+
+### Q124: When does the preview job run, and what does it cost?
+**Answer:** One file at a time, on its own queue (`services::video_preview`), every ffmpeg run single-threaded at nice 19.
+A job reads the record, skips anything not a video (content type `video`, a video codec that is not cover art, a length and a
+size), runs crop detection (Q123) then the storyboard (Q122), and records both with `previewsCheckedAt` through the generated
+`updateMediaFile` mutation, unless the file's size or modification time changed meanwhile. Files on a share are read through
+one loopback tool URL per job (Q87). Jobs come from: **playback**, as the stream or HLS playlist of a file without previews is
+first requested, at the front of the queue (a file is looked up at most every ten minutes); **analysis**, at the back, after
+each successful analysis; and **backfill**, when the queue has been empty for two minutes, five files at a time that were
+analysed but never done, with a 20-second pause after each. Backfill is controlled by `playback.video_preview_backfill`
+(Settings › General › Playback, *Make previews for existing videos*, on by default); playback and analysis queue files
+either way. A failed job (a share offline, ffmpeg missing) is not tried again for six hours. When a scan sees a file change,
+its `pictureCrop`, `storyboard` and `previewsCheckedAt` are cleared with its analysis, so it is done again. Schema: the three
+`media_files` columns are additive (`picture_crop` and `storyboard` JSON text, `previews_checked_at`).
+
+### Q125: Why not generate previews in one ffmpeg pass, or re-encode for fill?
+**Answer:** A single pass (`fps=1/10,tile=10x10` or a `select` on keyframes) reads the whole file, which over a share is the
+whole film across the network, and decoding every frame of a 4K HEVC film costs far more CPU than a few hundred keyframes.
+Per-tile seeks read a few hundred kilobytes each. The keyframe found may be a few seconds before the tile's moment, which a
+preview tolerates. Fill is a view of the same stream: cropping in the transcode would need a second rendition per file and
+would break direct play, while a CSS transform costs nothing and can be turned off at once.

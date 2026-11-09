@@ -527,6 +527,9 @@ impl Harness {
                 matched_by_user_id: None,
                 match_confirmed_at: None,
                 quality_status: Some("optimal".to_string()),
+                picture_crop: None,
+                storyboard: None,
+                previews_checked_at: None,
             },
         )
         .await?)

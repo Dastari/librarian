@@ -2711,7 +2711,11 @@ impl LibraryScanService {
                         "audioChannels": null,
                         "metadata": null,
                         "analyzedAt": null,
-                        "qualityStatus": null
+                        "qualityStatus": null,
+                        // design.md Q122/Q123: the previews were made from the old contents.
+                        "pictureCrop": null,
+                        "storyboard": null,
+                        "previewsCheckedAt": null
                     }
                 }),
             )
@@ -5632,6 +5636,10 @@ impl LibraryScanService {
                     e
                 );
             } else {
+                // design.md Q124: black bars and the storyboard follow analysis, on their own queue.
+                if let Some(previews) = crate::services::video_preview::video_previews() {
+                    previews.queue_after_analysis(&job.media_file_id).await;
+                }
                 info!(
                     worker = worker_idx,
                     media_file_id = %job.media_file_id,
@@ -18459,6 +18467,9 @@ mod tests {
             matched_by_user_id: None,
             match_confirmed_at: None,
             quality_status: None,
+            picture_crop: None,
+            storyboard: None,
+            previews_checked_at: None,
         };
         let path_text = |path: PathBuf| path.to_string_lossy().to_string();
         let gone_from_trash = path_text(trash.join("emptied.flac"));
@@ -19353,6 +19364,9 @@ mod atomic_analysis_tests {
                 matched_by_user_id: None,
                 match_confirmed_at: None,
                 quality_status: None,
+                picture_crop: None,
+                storyboard: None,
+                previews_checked_at: None,
             },
         )
         .await
