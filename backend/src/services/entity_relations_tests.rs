@@ -277,6 +277,9 @@ async fn movie_stream_hears_file_torrent_cast_changes_once_and_deletes_directly(
             matched_by_user_id: None,
             match_confirmed_at: None,
             quality_status: None,
+            picture_crop: None,
+            storyboard: None,
+            previews_checked_at: None,
         },
     )
     .await

@@ -3,6 +3,8 @@ import { AppShell as GlassAppShell, ShellBrand } from "glass-ux/shell";
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 
 import { FileDialogHost } from "@/features/files/FileDetailDialog";
+import { useGlobalMediaKeys } from "@/features/player/mediaKeys";
+import { useNowPlayingShortcut } from "@/features/player/nowPlaying";
 import { PlayerDock } from "@/features/player/PlayerDock";
 import { currentAudioItem, playerStore } from "@/features/player/store";
 import "@/lib/glass/brand";
@@ -34,6 +36,9 @@ export function AppShell() {
     else if (router.state.location.pathname !== "/") void router.navigate({ to: "/" });
   }, [router]);
   useSpatialNavigation(true, mode === "tv", back);
+  // Media keys and the now playing shortcut work from anywhere (design.md Q125).
+  useGlobalMediaKeys();
+  useNowPlayingShortcut();
   const resolvedPath = useRouterState({ select: (state) => state.resolvedLocation?.pathname ?? state.location.pathname });
   useRouteFocus(resolvedPath, mode === "tv");
   const audioActive = useSyncExternalStore(playerStore.subscribe, hasAudio, hasAudio);

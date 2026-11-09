@@ -12,6 +12,7 @@ import { usePref } from "@/lib/prefs";
 
 import { PlayPauseButton, SeekBar, SkipButton, VolumeControl } from "./controls";
 import { LyricsPanel } from "./LyricsPanel";
+import { drawerFocus, focusDock } from "./nowPlaying";
 import { QueuePanel } from "./QueuePanel";
 import { audioCommands, canSkipAudio, skipAudio } from "./usePlayer";
 import { currentChapterTitle, seekSpan } from "./chapterNav";
@@ -147,7 +148,11 @@ export function NowPlayingDrawer({ open, onClose, onOpenEntity }: NowPlayingShee
   useEffect(() => {
     if (!open || !hasItem) return;
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    panel.current?.querySelector<HTMLElement>("[data-drawer-close]")?.focus();
+    // Opened for a remote (playback just started on a TV, or "Now playing"): Play/Pause first.
+    if (drawerFocus.current === "transport") {
+      drawerFocus.current = null;
+      if (!focusDock()) panel.current?.querySelector<HTMLElement>("[data-drawer-close]")?.focus();
+    } else panel.current?.querySelector<HTMLElement>("[data-drawer-close]")?.focus();
     return () => {
       if (opener?.isConnected) opener.focus();
     };

@@ -2,11 +2,15 @@ import { Button } from "glass-ux/button";
 import { IconArrowLeft, IconCaptions, IconSkipForward, IconVolume } from "glass-ux/icons";
 import { VideoPlayer as GlassVideoPlayer, type MediaAttach, type MediaPlayerController, type MediaStreamContext, type MediaViewMode, type MediaViewModeChangeDetails } from "glass-ux/media-player";
 import { Menu } from "glass-ux/menu";
+import { IconAspectRatio } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { useSettingsConnection } from "@/features/settings/useSettingsConnection";
-import { EntityAudioStreamListDocument, EntityMediaChapterListDocument, EntitySubtitleListDocument } from "@/graphql/generated/graphql";
+import { EntityAudioStreamListDocument, EntityMediaChapterListDocument, EntitySubtitleListDocument, MediaFilePreviewsDocument } from "@/graphql/generated/graphql";
+import { formatClock } from "@/lib/format";
+import { useLiveQuery } from "@/lib/graphql/live/hooks";
 import { useInputMode } from "@/lib/input-mode";
+import { usePref } from "@/lib/prefs";
 import { cn } from "@/lib/utils";
 
 import { CastButton } from "./CastButton";
@@ -16,6 +20,11 @@ import { usePlayerState, type PlayItem } from "./store";
 import { useCastAdapter } from "./useCastAdapter";
 import { useMediaSource } from "./useMediaSource";
 import { useProgressSync } from "./useProgressSync";
+import { videoKeyTarget, type PlayerKeyTarget } from "./mediaKeys";
+import { formatScrubDelta } from "./scrub";
+import { usePictureFill } from "./usePictureFill";
+import { useScrubber } from "./useScrubber";
+import { PICTURE_MODE_PREF, storyboardFrame, storyboardProps, type PictureMode } from "./videoPreviews";
 import { readMiniRect, saveMiniRect, saveVideoSession } from "./videoSession";
 
 const VIEW_MODES: readonly MediaViewMode[] = ["inline", "windowed", "fullscreen", "pip"];
@@ -26,6 +35,7 @@ const CHROME_DELAY_MS = 3000;
 /** webOS (461) and Tizen (10009) report their remote's Back key only as a key code. */
 const BACK_KEY_CODES = new Set([461, 10009]);
 export { subtitleTracks } from "./subtitles";
+const isBackKey = (event: { key: string; keyCode: number }) => event.key === "Escape" || event.key === "Backspace" || event.key === "GoBack" || BACK_KEY_CODES.has(event.keyCode);
 
 interface VideoPlayerProps {
   item: PlayItem;
@@ -75,6 +85,16 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
   const audioRows = useSettingsConnection(EntityAudioStreamListDocument, { where: { mediaFileId: { eq: item.mediaFileId } }, orderBy: [{ streamIndex: "ASC" }] }, (data) => data.audioStreams);
   const subtitleRows = useSettingsConnection(EntitySubtitleListDocument, { where: { mediaFileId: { eq: item.mediaFileId } }, orderBy: [{ createdAt: "ASC" }] }, (data) => data.subtitles);
   const chapterRows = useSettingsConnection(EntityMediaChapterListDocument, { where: { mediaFileId: { eq: item.mediaFileId } }, orderBy: [{ chapterIndex: "ASC" }] }, (data) => data.mediaChapters);
+
+  // Seek-bar previews and the picture inside any black bars (design.md Q122/Q123).
+  const previews = useLiveQuery(MediaFilePreviewsDocument, { variables: { id: item.mediaFileId } });
+  const previewFile = (previews.data ?? previews.previousData)?.mediaFile;
+  const previewsForFile = previewFile?.id === item.mediaFileId ? previewFile : null;
+  const seekPreview = useMemo(() => storyboardProps(item.mediaFileId, previewsForFile?.storyboard), [item.mediaFileId, previewsForFile?.storyboard]);
+  const pictureCrop = previewsForFile?.pictureCrop ?? null;
+  // Fit or fill is remembered on this device, for every file.
+  const [pictureMode, setPictureMode] = usePref<PictureMode>(PICTURE_MODE_PREF, "fit");
+  const fillZoom = usePictureFill(video, pictureMode === "fill" ? pictureCrop : null);
 
   const chapters = useMemo(() => chapterRows.rows.map((row) => ({ start: row.startSecs, title: row.title ?? `Chapter ${row.chapterIndex + 1}` })), [chapterRows.rows]);
   const tracks = useMemo(() => subtitleTracks(item.mediaFileId, subtitleRows.rows, offsetMs), [item.mediaFileId, subtitleRows.rows, offsetMs]);
@@ -194,6 +214,33 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
 
   // Progress follows the element, and ignores the events a source change makes.
   const fullDuration = useCallback(() => media.duration && video && media.duration > video.duration ? media.duration : video?.duration ?? 0, [media.duration, video]);
+
+  // Remote scrubbing (design.md Q125): Left/Right on the picture or the seek bar, and the media
+  // keys' Rewind/Fast-forward, move a target with a preview; the player seeks once, on OK or a
+  // short pause, and Back leaves playback where it was.
+  const { scrub, scrubber } = useScrubber({
+    position: () => controller.current?.getTime().currentTime ?? 0,
+    duration: () => fullDuration() || controller.current?.getTime().duration || 0,
+    commit: (target) => controller.current?.seek(target),
+  });
+  const scrubFrame = scrub && previewsForFile?.storyboard ? storyboardFrame(item.mediaFileId, previewsForFile.storyboard, scrub.target) : null;
+  const scrubChapter = scrub ? chapters.filter((chapter) => chapter.start <= scrub.target).at(-1)?.title : undefined;
+  // The media keys reach this player wherever focus is (`mediaKeys.ts`).
+  const nextRef = useRef(onNext);
+  nextRef.current = onNext;
+  useEffect(() => {
+    const target: PlayerKeyTarget = {
+      toggle: () => controller.current?.toggle(),
+      play: () => controller.current?.play(),
+      pause: () => controller.current?.pause(),
+      stop: () => controller.current?.pause(),
+      next: () => nextRef.current?.(),
+      previous: () => controller.current?.seek(0),
+      scrub: (direction, repeat) => { scrubber.step(direction, repeat); },
+    };
+    videoKeyTarget.current = target;
+    return () => { if (videoKeyTarget.current === target) videoKeyTarget.current = null; };
+  }, [scrubber]);
   useEffect(() => {
     if (!video) return;
     const onTime = () => {
@@ -267,10 +314,8 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
       const target = event.target instanceof Element ? event.target : null;
       if (event.defaultPrevented || target?.closest('[role="menu"], [role="dialog"], [role="listbox"], input, textarea')) return;
       const player = controller.current;
-      if (event.key === "MediaPlayPause") player?.toggle();
-      else if (event.key === "MediaRewind") player?.seekBy(-10);
-      else if (event.key === "MediaFastForward") player?.seekBy(10);
-      else if ((event.key === "Escape" || event.key === "Backspace" || event.key === "GoBack" || BACK_KEY_CODES.has(event.keyCode)) && !document.fullscreenElement) onBack();
+      // Media keys are handled once, for the whole app (`mediaKeys.ts`).
+      if (isBackKey(event) && !document.fullscreenElement) onBack();
       else if (document.activeElement === document.body && player) {
         if (event.key === " " || event.key === "k") { event.preventDefault(); player.toggle(); }
         else if (event.key === "ArrowLeft") { event.preventDefault(); player.seekBy(-5); }
@@ -295,13 +340,34 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
     const target = event.target instanceof HTMLElement ? event.target : null;
     if (!target || target.closest('[role="menu"], [role="dialog"], [role="listbox"]')) return;
     const controls = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[data-kind="video"] button')).filter((button) => button.offsetParent !== null && button.tabIndex >= 0 && !button.disabled);
-    const move = (next: HTMLElement | undefined) => {
-      if (!next) return;
+    const consume = () => {
       event.preventDefault();
       event.stopPropagation();
+    };
+    const move = (next: HTMLElement | undefined) => {
+      if (!next) return;
+      if (scrubber.active) scrubber.commit();
+      consume();
       next.focus();
       wake();
     };
+    // While scrubbing, OK seeks and Back puts it back; neither reaches Glass or the page.
+    if (scrubber.active && event.key === "Enter") { consume(); scrubber.commit(); return; }
+    if (scrubber.active && isBackKey(event)) { consume(); scrubber.cancel(); return; }
+    const onPicture = target === element.current;
+    const onSeekBar = target.classList.contains("fa-media-seek-input");
+    const controlsHidden = event.currentTarget.querySelector(".fa-media-stage")?.getAttribute("data-controls") === "hidden";
+    if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && (onPicture || onSeekBar || controlsHidden) && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      // Glass's own arrows would seek on every press; scrubbing seeks once.
+      if (scrubber.step(event.key === "ArrowRight" ? 1 : -1, event.repeat)) consume();
+      return;
+    }
+    if (onSeekBar) {
+      // Up and Down leave the seek bar instead of nudging it.
+      if (event.key === "ArrowUp") move(element.current ?? undefined);
+      else if (event.key === "ArrowDown") move(controls[0]);
+      return;
+    }
     if (target === element.current) {
       if (event.key === "ArrowDown") move(controls[0]);
       return;
@@ -337,8 +403,21 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
         onWindowRectChange={saveMiniRect}
         castAdapter={cast.adapter}
         loading={progress.loading}
+        storyboard={seekPreview.storyboard}
+        thumbnail={seekPreview.thumbnail}
         controlsEnd={
           <>
+            {pictureCrop ? (
+              <Menu.Root>
+                <Menu.Trigger render={<Button variant={pictureMode === "fill" ? "secondary" : "ghost"} size="sm" shape="circle" icon={<IconAspectRatio />} aria-label="Picture size" tooltip={fillZoom > 1 ? "Picture size: filling the screen" : "Picture size"} />} />
+                <Menu.Popup side="top" align="end">
+                  <Menu.RadioGroup aria-label="Picture size" value={pictureMode} onValueChange={(value) => setPictureMode(value === "fill" ? "fill" : "fit")}>
+                    <Menu.RadioItem closeOnClick value="fit">Fit the whole frame</Menu.RadioItem>
+                    <Menu.RadioItem closeOnClick value="fill">Fill the screen (zoom past black bars)</Menu.RadioItem>
+                  </Menu.RadioGroup>
+                </Menu.Popup>
+              </Menu.Root>
+            ) : null}
             {onNext ? <Button variant="ghost" size="sm" shape="circle" icon={<IconSkipForward />} aria-label={nextLabel ?? "Next episode"} tooltip={nextLabel ?? "Next episode"} onClick={onNext} /> : null}
             <Menu.Root>
               <Menu.Trigger render={<Button variant="ghost" size="sm" shape="circle" icon={<IconCaptions />} aria-label="Subtitle options" tooltip="Subtitle options" />} />
@@ -388,6 +467,17 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
           {media.error || failed ? <p role="status" className="truncate text-label-sm text-white/80">{media.error ?? "Some playback options could not be loaded."}</p> : null}
         </div>
       </div>
+      ) : null}
+      {scrub ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-[calc(var(--safe-bottom)+6rem)] z-20 flex justify-center" role="status" aria-live="polite" data-scrub-preview>
+          <div className="over-imagery flex flex-col items-center gap-2 rounded-card bg-black/70 p-2 text-white shadow-dock">
+            {scrubFrame ? <span aria-hidden className="block rounded-md bg-no-repeat" style={{ width: scrubFrame.width, height: scrubFrame.height, backgroundImage: `url("${scrubFrame.src}")`, backgroundPosition: `${-(scrubFrame.x ?? 0)}px ${-(scrubFrame.y ?? 0)}px` }} /> : null}
+            <p className="text-numeric text-title-md">
+              {formatClock(scrub.target)} <span className="text-white/70">{formatScrubDelta(scrub.target - scrub.origin)}</span>
+            </p>
+            {scrubChapter ? <p className="max-w-64 truncate text-label-sm text-white/70">{scrubChapter}</p> : null}
+          </div>
+        </div>
       ) : null}
       <CastButton item={item} position={castPosition} open={cast.pickerOpen} onOpenChange={cast.setPickerOpen} hideTrigger onStarted={cast.refresh} />
       <FindSubtitlesDialog

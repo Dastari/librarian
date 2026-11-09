@@ -12,13 +12,16 @@ import { useInputMode } from "@/lib/input-mode";
 
 import { DurationRow, TextRow, settingsFormBehaviour } from "./SettingFields";
 import { SettingsPage, SettingsSection } from "./SettingsSection";
-import { asNumber, useAppSettings } from "./useAppSettings";
+import { asBool, asList, asNumber, useAppSettings } from "./useAppSettings";
 
 const schema = z.object({
   playbackSyncInterval: numberRule({ required: true, integer: true, min: 5, max: 300, requiredMessage: "Enter a progress interval", rangeMessage: "Enter a whole number from 5 to 300" }),
+  previewBackfill: z.boolean(),
   preferredLanguage: z.string().trim().max(10),
 });
 type Values = z.infer<typeof schema>;
+/** Seek-bar previews and black-bar detection for files that predate them (design.md Q124). */
+const PREVIEW_BACKFILL_KEY = "playback.video_preview_backfill";
 
 /** Per-device appearance plus a few server-wide playback defaults (admins). */
 export function GeneralSettings() {
@@ -28,6 +31,7 @@ export function GeneralSettings() {
   const metadata = useAppSettings("metadata");
   const storedValues = useMemo<Values>(() => ({
     playbackSyncInterval: asNumber(playback.values.get("playback_sync_interval"), 15),
+    previewBackfill: asBool(playback.values.get(PREVIEW_BACKFILL_KEY), true),
     preferredLanguage: metadata.values.get("metadata.preferred_language") ?? "en",
   }), [playback.values, metadata.values]);
   const loading = playback.loading || metadata.loading;
@@ -42,7 +46,7 @@ export function GeneralSettings() {
     onSubmit: async ({ value, formApi }) => {
       // TanStack validates but does not apply schema transforms to the submitted value.
       const saved = schema.parse(value);
-      await playback.save({ playback_sync_interval: String(saved.playbackSyncInterval) });
+      await playback.save({ playback_sync_interval: String(saved.playbackSyncInterval), [PREVIEW_BACKFILL_KEY]: saved.previewBackfill });
       await metadata.save({ "metadata.preferred_language": saved.preferredLanguage });
       setBaseline(saved);
       formApi.reset(saved);
@@ -76,6 +80,9 @@ export function GeneralSettings() {
               <SettingsSection title="Playback" width="readable">
                 <form.AppField name="playbackSyncInterval">
                   {() => <DurationRow label="Save progress every" description="How often the position in what you are watching is saved." units={["m", "s"]} defaultUnit="s" disabled={loading || submitting} />}
+                </form.AppField>
+                <form.AppField name="previewBackfill">
+                  {(field) => <field.SwitchRow label="Make previews for existing videos" description="Seek-bar previews and black-bar detection for videos added before them, a few at a time in the background. New and played videos always get them." disabled={loading || submitting} />}
                 </form.AppField>
               </SettingsSection>
               <SettingsSection title="Language" width="readable">

@@ -273,6 +273,24 @@ results that are not in the library keep their remote URLs.
 - A number field (Glass `NumberField`) never traps Up/Down in TV mode either; OK on it starts an
   adjusting state (`data-tv-adjusting`) in which Up/Down step the value, and OK or Back ends it
   (design.md Q107).
+- **Media keys** (`MediaPlayPause`, `MediaPlay`, `MediaPause`, `MediaStop`, `MediaTrackNext`,
+  `MediaTrackPrevious`, `MediaFastForward`, `MediaRewind`) are handled once, in
+  `features/player/mediaKeys.ts`, on the window before any control: they work wherever focus is.
+  They go to the video player while it holds the screen, otherwise to the audio player. Do not
+  handle them in a component; a player registers what it offers (`videoKeyTarget`, `audioScrub`).
+- **Now playing:** on a TV the rail's first entry is what is playing (artwork and title) while
+  anything is playing or paused. It, the remote's **Info** key and **N** on a keyboard
+  (`nowPlaying.tsx`) open the video player, or the now playing drawer with Play/Pause focused.
+  Starting audio on a TV (an album, a track, a book, a playlist, Play next with nothing playing)
+  opens the drawer the same way; Add to queue does not. Back (Escape) collapses it and returns
+  focus to the control that opened it; Back or Up from the bar returns to the page control focus
+  came from. The bar is never a trap.
+- **Scrubbing:** on a seek bar, or the video picture with its controls hidden, Left/Right (and
+  Rewind/Fast-forward from anywhere) move a target with a preview (time, delta, storyboard tile,
+  chapter), faster while held: 10 s, then 30 s, then a minute or two. OK seeks, a pause of 0.7 s
+  seeks, Back puts it back; it is one seek, however many presses. Up/Down leave the bar (mark a
+  slider `data-owns-horizontal` for that). A non-modal dialog (`aria-modal="false"`) does not hold
+  the arrows.
 
 ## Motion
 

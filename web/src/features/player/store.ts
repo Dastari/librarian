@@ -81,6 +81,11 @@ export interface PlayerState {
   transport: AudioTransport;
   /** Expanded now-playing sheet on phones. */
   sheetOpen: boolean;
+  /**
+   * Counts audio a person started (a new queue: play an album, a track, a book, a playlist, or
+   * Play next with nothing playing), not the queue moving on. On a TV each one opens now playing.
+   */
+  audioStarts: number;
 }
 
 const VOLUME_KEY = "librarian.player.volume";
@@ -105,6 +110,7 @@ let state: PlayerState = {
   audioActivation: 0,
   transport: { playing: false, position: 0, duration: 0, buffered: 0, volume: initialVolume, muted: false, rate: 1, loading: false, error: null },
   sheetOpen: false,
+  audioStarts: 0,
 };
 
 const listeners = new Set<() => void>();
@@ -177,7 +183,7 @@ export const playerStore = {
       playerStore.stopAudio();
       return;
     }
-    set((previous) => select(previous, tag(items), index));
+    set((previous) => ({ ...select(previous, tag(items), index), audioStarts: previous.audioStarts + (isVideoItem(items[index]!) ? 0 : 1) }));
   },
   /** Puts `items` right after the playing entry. With nothing playing, plays them. */
   playNext(items: PlayItem[]) {

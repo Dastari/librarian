@@ -48,3 +48,29 @@ query PlaybackSyncInterval {
     }
   }
 }
+
+# design.md Q122/Q123: what the player needs for seek-bar previews and black-bar fill.
+query MediaFilePreviews($id: String!) {
+  mediaFile(id: $id) {
+    id
+    previewsCheckedAt
+    pictureCrop {
+      left
+      top
+      width
+      height
+      frameWidth
+      frameHeight
+    }
+    storyboard {
+      key
+      interval
+      tileWidth
+      tileHeight
+      columns
+      rows
+      frameCount
+      sheetCount
+    }
+  }
+}

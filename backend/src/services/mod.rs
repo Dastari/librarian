@@ -63,6 +63,7 @@ pub mod subtitles;
 pub mod tool_url;
 pub mod torrent;
 pub mod transcode;
+pub mod video_preview;
 pub mod whisper;
 pub mod write_rules;
 

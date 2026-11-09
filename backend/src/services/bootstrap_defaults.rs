@@ -216,6 +216,12 @@ const APP_SETTINGS: &[AppSettingSeed] = &[
         category: "playback",
     },
     AppSettingSeed {
+        key: "playback.video_preview_backfill",
+        value: "true",
+        description: "Make seek-bar previews and detect black bars for videos that have none yet, slowly in the background (design.md Q124)",
+        category: "playback",
+    },
+    AppSettingSeed {
         key: "metadata.tmdb_api_key",
         value: "null",
         description: "TMDB API key for movie/TV metadata",

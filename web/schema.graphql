@@ -1928,6 +1928,9 @@ input CreateMediaFileInput {
   matchedByUserId: String
   matchConfirmedAt: String
   qualityStatus: String
+  pictureCrop: JSON
+  storyboard: JSON
+  previewsCheckedAt: String
 }
 
 input CreateMetadataCacheInput {
@@ -4610,6 +4613,37 @@ input MediaChapterWhereInput {
   not: MediaChapterWhereInput
 }
 
+"""The picture's rectangle inside a frame with black bars, in the source's pixels."""
+type PictureCrop {
+  left: Int!
+  top: Int!
+  width: Int!
+  height: Int!
+
+  """The frame the rectangle was measured in (the stream's coded size)."""
+  frameWidth: Int!
+  frameHeight: Int!
+}
+
+"""Sprite sheets of evenly spaced frames for the seek bar's preview."""
+type VideoStoryboard {
+  """Names this set of sheets in their URLs; changes whenever they are made again."""
+  key: String!
+
+  """Seconds of video per tile. Tile `n` shows the picture near `(n + 0.5) * interval`."""
+  interval: Float!
+  tileWidth: Int!
+  tileHeight: Int!
+
+  """Tiles per row and rows per sheet."""
+  columns: Int!
+  rows: Int!
+
+  """Tiles in all, across every sheet."""
+  frameCount: Int!
+  sheetCount: Int!
+}
+
 type MediaFile {
   """
   General data revision, including stream/marker relation changes. Managed
@@ -4665,6 +4699,25 @@ type MediaFile {
   recomputed when the assigned profile changes (design.md Q23/Q24).
   """
   qualityStatus: String
+
+  """
+  The picture inside black bars baked into the video (letterbox or pillarbox), found with
+  ffmpeg `cropdetect` after analysis (design.md Q123). `null` when the picture fills the
+  frame, when detection was inconclusive, or before it has run.
+  """
+  pictureCrop: PictureCrop
+
+  """
+  Seek-bar preview sprite sheets, made after analysis (design.md Q122). Sheets are served
+  at `/api/media/{id}/storyboard/{key}/{sheet}.jpg`.
+  """
+  storyboard: VideoStoryboard
+
+  """
+  When the preview job (crop detection and storyboard) last finished for this version of
+  the file, whatever it found. Cleared when the file changes, so the job runs again.
+  """
+  previewsCheckedAt: String
 
   """Library"""
   library: Library
@@ -4733,6 +4786,7 @@ input MediaFileOrderByInput {
   analyzedAt: OrderDirection
   fileModifiedAt: OrderDirection
   matchConfirmedAt: OrderDirection
+  previewsCheckedAt: OrderDirection
 }
 
 """Result type for #struct_name mutations"""
@@ -4771,6 +4825,7 @@ input MediaFileWhereInput {
   matchedByUserId: StringFilter
   matchConfirmedAt: DateFilter
   qualityStatus: StringFilter
+  previewsCheckedAt: DateFilter
 
   """Logical AND of conditions"""
   and: [MediaFileWhereInput!]
@@ -15373,6 +15428,9 @@ input UpdateMediaFileInput {
   matchedByUserId: String
   matchConfirmedAt: String
   qualityStatus: String
+  pictureCrop: JSON
+  storyboard: JSON
+  previewsCheckedAt: String
 }
 
 """Result of bulk update by Where filter"""

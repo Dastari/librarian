@@ -294,6 +294,17 @@ async fn async_main() -> anyhow::Result<()> {
                 ),
             }
         }
+        // Storyboards and black-bar detection, one file at a time (design.md Q124).
+        crate::services::video_preview::install(
+            services.clone(),
+            crate::services::video_preview::VideoPreviewConfig {
+                cache_path: PathBuf::from(&config.cache_path),
+                ffmpeg_path: config
+                    .ffmpeg_path
+                    .clone()
+                    .unwrap_or_else(|| "ffmpeg".to_string()),
+            },
+        );
         // A move of the download folder that a stopped server left half done is finished.
         if let Some(torrent) = services.get_torrent().await {
             tokio::spawn(async move { torrent.resume_downloads_move().await });
@@ -347,6 +358,9 @@ async fn async_main() -> anyhow::Result<()> {
         wait_for_shutdown_signal().await?;
     }
 
+    if let Some(previews) = crate::services::video_preview::video_previews() {
+        previews.stop();
+    }
     services.stop_all().await?;
     Ok(())
 }
