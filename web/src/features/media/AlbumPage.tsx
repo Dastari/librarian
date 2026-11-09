@@ -1,4 +1,5 @@
 import { RecommendedRelease } from "@/features/recommendations/RecommendedRelease";
+import { CastAndCrew, useTitleCredits } from "@/features/people/CastAndCrew";
 import { copyText } from "glass-ux/copy-button";
 import { useApolloClient, useMutation } from "@apollo/client/react";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
@@ -225,6 +226,8 @@ export function AlbumPage({ albumId }: { albumId: string }) {
   const playAlbum = queue.length > 0 ? { label: "Play", run: () => playFrom(), disabledReason: !pages.complete ? "Load all tracks to play the album" : undefined } : undefined;
   const { actions: albumActions, dialogs: albumDialogs, openSettings } = useAlbumEntity<NonNullable<typeof album>>({ open: false, play: playAlbum, artist: tracks[0]?.artistName, reset: albumReset, onChanged: pages.refresh });
 
+  const { credits } = useTitleCredits({ albumId: { eq: albumId } });
+
   if (error && !album) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!album) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Album not found" description="This item may have been removed from the library." className="page-gutter my-8" />;
 
@@ -274,6 +277,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
           emptyMessage="No tracks" onRowOpen={(track) => { if (track.mediaFileId) playFrom(track); }}
         />
       </AlbumTableContext.Provider>
+      <CastAndCrew credits={credits} castTitle="Performers" crewTitle="Credits" />
       {albumDialogs}
       {trackPlaylist.dialog}
     </DetailShell>

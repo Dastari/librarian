@@ -14,6 +14,8 @@ import { Artwork } from "@/components/ui/Artwork";
 import { MediaRow } from "@/components/ui/MediaRow";
 import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { useTitleCredits } from "@/features/people/CastAndCrew";
+import { castOf, crewLine } from "@/features/people/credits";
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { RecommendedRelease } from "@/features/recommendations/RecommendedRelease";
 import type { RecommendationTarget } from "@/features/recommendations/recommendations";
@@ -492,12 +494,21 @@ function EpisodeTile({ episode, onPlay, tint, active, nextUp, onActive }: { epis
 function EpisodeSummary({ episode }: { episode: EpisodeRow }) {
   const runtime = episode.runtime || (episode.mediaFile?.duration ? Math.round(episode.mediaFile.duration / 60) : null);
   return (
-    <div aria-live="polite" className="min-h-[calc(var(--type-body-size)*1.5*3+var(--type-label-size)*1.5*2+var(--space-2))] max-w-3xl">
+    <div aria-live="polite" className="min-h-[calc(var(--type-body-size)*1.5*3+var(--type-label-size)*1.5*3+var(--space-2)*2)] max-w-3xl">
       <p className="text-numeric text-label-sm text-muted">{[episodeCode(episode), formatDate(episode.airDate), runtime ? `${runtime} min` : null].filter(Boolean).join(" · ")}</p>
       <p className="text-title-sm text-foreground">{episode.title ?? `Episode ${episode.episode}`}</p>
       <p className="mt-1 line-clamp-3 text-body text-muted">{episode.overview ?? "No summary yet."}</p>
+      <EpisodeCreditsLine episodeId={episode.id} />
     </div>
   );
+}
+
+/** The episode's director, writers and guest stars in one line (Q130); empty until read. */
+function EpisodeCreditsLine({ episodeId }: { episodeId: string }) {
+  const { credits } = useTitleCredits({ episodeId: { eq: episodeId } });
+  const guests = castOf(credits, { guest: true }).slice(0, 4).map((entry) => entry.person.name);
+  const line = [crewLine(credits, 2), guests.length ? `Guest stars ${guests.join(", ")}` : ""].filter(Boolean).join(" · ");
+  return <p className="mt-2 line-clamp-1 text-label-sm text-muted">{line || "\u00a0"}</p>;
 }
 
 function EpisodeRowSkeleton() {

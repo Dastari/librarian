@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 import { Button, EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, PosterCard, Section, SkeletonHero, ViewToggle, type ViewMode } from "@/components/ui";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
 import { autoDownloadMeta } from "@/features/acquisition/mode";
+import { CastAndCrew, CastRow, useTitleCredits } from "@/features/people/CastAndCrew";
 import { episodePlayItem } from "@/features/player/playItems";
 import type { PlayItem } from "@/features/player/store";
 import { usePlayer } from "@/features/player/usePlayer";
@@ -22,6 +23,7 @@ import { filesWithProgress, type ProgressReset } from "./progressReset";
 import { useMediaProgress } from "./useMediaProgress";
 import { useShowEpisodes } from "./useShowEpisodes";
 import { MediaActions } from "./MediaActions";
+import { useTitleDetailFacts } from "./titleDetailFacts";
 import { useShowEntity } from "./useShowEntity";
 import { DetailShell } from "./DetailShell";
 import { EpisodeList } from "./EpisodeList";
@@ -55,6 +57,10 @@ export function ShowPage({ showId, initialSeason, focusEpisodeId }: {
   const seasonEpisodes = useMemo(() => list.filter((episode) => episode.season === activeSeason), [list, activeSeason]);
 
   const ids = useMemo(() => seasonEpisodes.map((episode) => episode.id), [seasonEpisodes]);
+  const { credits } = useTitleCredits({ showId: { eq: showId } });
+  // The chosen season's guest stars, across its episodes.
+  const guests = useTitleCredits({ episodeId: { inList: ids }, guest: { eq: true } }, ids.length === 0);
+  const details = useTitleDetailFacts({ showId: { eq: showId } }, { networks: true });
   const statuses = useContentStatuses("EPISODE", ids);
   const fileIds = useMemo(() => list.map((episode) => episode.mediaFileId).filter((id): id is string => Boolean(id)), [list]);
   const progress = useMediaProgress(fileIds, user?.id);
@@ -109,6 +115,7 @@ export function ShowPage({ showId, initialSeason, focusEpisodeId }: {
         description: show.overview,
         facts: <HeroFacts items={[
           { label: "Genres", value: show.genres.join(", ") },
+          ...details.facts.filter((fact) => !(fact.label === "Network" && show.network) && !(fact.label === "Rated" && show.contentRating)),
           { label: "Links", value: show.tvmazeId || show.imdbId ? <ProviderLinks tvmazeId={show.tvmazeId} imdbId={show.imdbId} /> : null },
         ]} />,
         actions: (
@@ -145,6 +152,10 @@ export function ShowPage({ showId, initialSeason, focusEpisodeId }: {
             onPlay={play} showId={show.id} showName={show.name} libraryId={show.libraryId} ownerId={show.userId} onChanged={() => { void episodes.refetch().catch(() => {}); }} />
         </section>
       </div>
+
+      <CastAndCrew credits={credits} castTitle="Cast" showEpisodes />
+
+      <CastRow credits={guests.credits} guest title={activeSeason === 0 ? "Guest stars in the specials" : `Guest stars in season ${activeSeason}`} />
 
       {dialogs}
     </DetailShell>

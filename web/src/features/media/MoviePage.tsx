@@ -1,21 +1,21 @@
-import { IconImage, IconInfo } from "glass-ux/icons";
+import { IconInfo } from "glass-ux/icons";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
 import { RecommendedRelease } from "@/features/recommendations/RecommendedRelease";
-import { Artwork, EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, Panel, PosterCard, Section, SkeletonHero, StatusChip } from "@/components/ui";
+import { EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, Panel, PosterCard, Section, SkeletonHero, StatusChip } from "@/components/ui";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
 import { movieAcquisitionMeta } from "@/features/acquisition/mode";
 import { usePlayer } from "@/features/player/usePlayer";
+import { CastAndCrew, useTitleCredits } from "@/features/people/CastAndCrew";
 import {
-  MovieCastCreditsDocument,
   MovieCollectionDetailsDocument,
   MovieDetailDocument,
   PlaybackProgressForFileDocument,
 } from "@/graphql/generated/graphql";
 import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
-import { movieBackdrop, moviePoster, personProfile } from "@/lib/artwork";
+import { movieBackdrop, moviePoster } from "@/lib/artwork";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { formatClock, formatRuntime } from "@/lib/format";
 import { LIBRARY_TYPES } from "@/lib/library-types";
@@ -24,6 +24,7 @@ import { MediaActions } from "./MediaActions";
 import { DetailShell } from "./DetailShell";
 import { FileDetails } from "./FileDetails";
 import { filesWithProgress, type ProgressReset } from "./progressReset";
+import { useTitleDetailFacts } from "./titleDetailFacts";
 import { useMovieEntity } from "./useMovieEntity";
 
 export function MoviePage({ movieId }: { movieId: string }) {
@@ -34,7 +35,8 @@ export function MoviePage({ movieId }: { movieId: string }) {
   const { data, previousData, loading, error, refetch } = useQuery(MovieDetailDocument, { variables: { id: movieId } });
   const candidate = (data ?? previousData)?.movie;
   const movie = candidate?.id === movieId ? candidate : null;
-  const cast = useQuery(MovieCastCreditsDocument, { variables: { movieId } });
+  const { credits } = useTitleCredits({ movieId: { eq: movieId } });
+  const details = useTitleDetailFacts({ movieId: { eq: movieId } });
   const collection = useQuery(MovieCollectionDetailsDocument, { variables: { collectionId: movie?.collectionId ?? 0, libraryId: movie?.libraryId ?? "" }, skip: !movie?.collectionId || !movie.libraryId });
   const progress = useQuery(PlaybackProgressForFileDocument, { variables: { userId: user?.id ?? "", mediaFileId: movie?.mediaFileId ?? "" }, skip: !user || !movie?.mediaFileId });
   const statuses = useContentStatuses("MOVIE", movie ? [movie.id] : []);
@@ -57,7 +59,6 @@ export function MoviePage({ movieId }: { movieId: string }) {
 
   const status = contentStatusMeta(statuses, movie.id);
 
-  const castList = cast.data?.movieCastCredits.edges.map((edge) => edge.node) ?? [];
   const collectionMovies = collection.data?.movieCollectionDetails.movies ?? [];
 
   return (
@@ -74,7 +75,7 @@ export function MoviePage({ movieId }: { movieId: string }) {
         title: movie.title,
         meta: (
           <>
-            <MetaLine items={[movie.year, movie.runtime ? formatRuntime(movie.runtime, "minutes") : null, movie.certification, movie.tmdbRating ? `★ ${Number(movie.tmdbRating).toFixed(1)}` : null]} />
+            <MetaLine items={[movie.year, movie.runtime ? formatRuntime(movie.runtime, "minutes") : null, movie.certification ?? details.rating, movie.tmdbRating ? `★ ${Number(movie.tmdbRating).toFixed(1)}` : null]} />
             <StatusChip status={status} />
             <AcquisitionChip status={movieAcquisitionMeta(movie)} onPress={isAdmin ? () => openSettings(movie, "downloads") : undefined} />
           </>
@@ -92,6 +93,7 @@ export function MoviePage({ movieId }: { movieId: string }) {
         facts: <HeroFacts items={[
           { label: "Director", value: movie.director },
           { label: "Genres", value: movie.genres.join(", ") },
+          ...details.facts.filter((fact) => fact.label !== "Rated"),
           { label: "Original title", value: movie.originalTitle !== movie.title ? movie.originalTitle : null },
           { label: "Links", value: movie.tmdbId || movie.imdbId ? (
             <span className="inline-flex gap-3">
@@ -102,19 +104,7 @@ export function MoviePage({ movieId }: { movieId: string }) {
         ]} />,
       }}
     >
-      {castList.length > 0 ? (
-        <Section title="Cast" bleed>
-          <MediaRow ariaLabel="Cast">
-            {castList.map((credit) => (
-              <Link key={credit.id} to="/search" search={{ q: credit.person?.name ?? "" }} data-focusable className="tv-lift nav-focus group w-28 shrink-0 rounded-tile p-1 text-center" aria-label={[credit.person?.name, credit.characterName].filter(Boolean).join(" as ")}>
-                <Artwork src={personProfile(credit.person)} alt="" aspect="square" displayWidth={96} className="tv-lift-target mx-auto w-24 overflow-clip rounded-full" fallback={<IconImage size="xl" />} />
-                <p className="mt-2 truncate text-label text-foreground">{credit.person?.name}</p>
-                <p className="truncate text-label-sm text-muted">{credit.characterName}</p>
-              </Link>
-            ))}
-          </MediaRow>
-        </Section>
-      ) : null}
+      <CastAndCrew credits={credits} />
 
       {collectionMovies.length > 1 ? (
         <Section title={collection.data?.movieCollectionDetails.name ?? movie.collectionName ?? "Collection"} bleed trailing={<span>{collectionMovies.filter((item) => item.libraryMovieId).length} of {collectionMovies.length} in library</span>}>
