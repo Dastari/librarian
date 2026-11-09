@@ -13,7 +13,7 @@ import {
 } from "@/graphql/generated/graphql";
 import { renderWithProviders } from "@/test";
 
-import { DownloadsSettings } from "../DownloadsSettings";
+import { DownloadsSettings, minutesToSeconds, secondsToMinutes } from "../DownloadsSettings";
 
 vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => true, useSession: () => ({ status: "authenticated", user: null, expiresAt: null }) }));
 
@@ -72,6 +72,14 @@ const mountFresh = (extra: unknown[] = []) => renderWithProviders(<DownloadsSett
   mocks: [categoryMock("torrent", TORRENT), categoryMock("auto_download", []), blocklistMock, ...extra] as never,
 });
 
+/** Duration and size fields read what was typed and commit on blur. */
+const setText = async (label: string, value: string) => {
+  const input = screen.getByRole("textbox", { name: label });
+  await userEvent.clear(input);
+  await userEvent.type(input, value);
+  await userEvent.tab();
+};
+
 /** Number fields commit on blur, so every edit ends with a Tab out of the field. */
 const setNumber = async (label: string, value: string) => {
   // The label text is on both the <label> and the group, so pick the input itself.
@@ -81,12 +89,21 @@ const setNumber = async (label: string, value: string) => {
   await userEvent.tab();
 };
 
+describe("interval conversion", () => {
+  it("moves between the stored minutes and the form's seconds", () => {
+    expect(minutesToSeconds(90)).toBe(5400);
+    expect(secondsToMinutes(5400)).toBe(90);
+    expect(secondsToMinutes(minutesToSeconds(10080))).toBe(10080);
+    expect(minutesToSeconds(0)).toBe(0);
+  });
+});
+
 describe("DownloadsSettings", () => {
   it("fills the form from the stored settings", async () => {
     await mount();
     expect(await screen.findByDisplayValue("/data/downloads")).toBeInTheDocument();
     expect(screen.getByDisplayValue("/data/session")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("6,881")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Listen port" })).toHaveValue("6881");
     expect(screen.getByRole("switch", { name: /Enable DHT/ })).toBeChecked();
     expect(screen.getByRole("switch", { name: /Search and download automatically/ })).toBeChecked();
   });
@@ -96,8 +113,9 @@ describe("DownloadsSettings", () => {
     await screen.findByDisplayValue("/data/downloads");
     // The server does nothing without `auto_download.enabled`, so the switch must not claim otherwise.
     expect(screen.getByRole("switch", { name: /Search and download automatically/ })).not.toBeChecked();
-    expect(screen.getAllByDisplayValue("60").length).toBeGreaterThan(0);
-    expect(screen.getAllByDisplayValue("360").length).toBeGreaterThan(0);
+    // Stored as 60 and 360 minutes, shown as durations.
+    expect(screen.getByRole("textbox", { name: "Check everything every" })).toHaveValue("1h");
+    expect(screen.getByRole("textbox", { name: "Search a missing item again after" })).toHaveValue("6h");
     expect(screen.getByText("Nothing has run yet.")).toBeInTheDocument();
   });
 
@@ -106,8 +124,8 @@ describe("DownloadsSettings", () => {
     const window = createMock("auto_download.air_window_days", "3", "auto_download");
     const cap = createMock("auto_download.max_concurrent_grabs", "2", "auto_download");
     await mount([grace.mock, window.mock, cap.mock]);
-    await setNumber("Wait after an episode airs (minutes)", "120");
-    await setNumber("Watch new episodes for (days)", "3");
+    await setText("Wait after an episode airs", "2h");
+    await setNumber("Watch new episodes for", "3");
     await setNumber("Most automatic downloads at once", "2");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Settings saved")).toBeInTheDocument();
@@ -129,7 +147,7 @@ describe("DownloadsSettings", () => {
     const budget = createMock("auto_download.hourly_search_budget", "10", "auto_download");
     const partial = createMock("auto_download.only_missing_files", "false", "auto_download");
     await mountFresh([budget.mock, partial.mock]);
-    await setNumber("Indexer searches for recommendations per hour", "10");
+    await setNumber("Indexer searches for recommendations", "10");
     await userEvent.click(screen.getByRole("switch", { name: /Download only the missing files from packs/ }));
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Settings saved")).toBeInTheDocument();
@@ -170,7 +188,7 @@ describe("DownloadsSettings", () => {
     await mount([ratio.mock, time.mock, remove.mock]);
 
     await setNumber("Seed until ratio", "2");
-    await setNumber("Seed for (minutes)", "120");
+    await setText("Seed for", "2h");
     await userEvent.click(screen.getByRole("switch", { name: /Remove the torrent and its files after import/ }));
 
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -223,7 +241,7 @@ describe("DownloadsSettings", () => {
     const update = updateMock("set-torrent.download_limit", "0");
     await mount([update.mock]);
     await screen.findByDisplayValue("/data/downloads");
-    const input = screen.getAllByLabelText("Download limit (KB/s, 0 = unlimited)").find((node) => node.tagName === "INPUT")!;
+    const input = screen.getByRole("textbox", { name: "Download speed limit" });
     await userEvent.clear(input);
     await userEvent.tab();
     expect(input).toHaveValue("");
@@ -260,16 +278,16 @@ describe("DownloadsSettings", () => {
     }
     await renderWithProviders(<SettingsWithSnapshot />, { mocks: base() as never });
     const folder = await screen.findByDisplayValue("/data/downloads");
-    await screen.findAllByDisplayValue("360");
+    await screen.findByDisplayValue("6h");
     await userEvent.clear(folder);
     act(() => receiveSnapshot());
-    await screen.findAllByDisplayValue("480");
+    await screen.findByDisplayValue("8h");
     expect(folder).toHaveValue("");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Choose a download folder")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(folder).toHaveValue("/data/downloads");
-    expect(screen.getAllByDisplayValue("480")).not.toHaveLength(0);
+    expect(screen.getByDisplayValue("8h")).toBeInTheDocument();
   });
   it("retains the folder draft on a failed save and can discard it", async () => {
     await mount([{
@@ -284,6 +302,51 @@ describe("DownloadsSettings", () => {
     expect(folder).toHaveValue("/new/downloads");
     await userEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(folder).toHaveValue("/data/downloads");
+  });
+
+  it("shows stored minutes as durations and writes edited ones back as minutes", async () => {
+    const interval = updateMock("set-auto_download.interval_minutes", "90");
+    const backoff = updateMock("set-auto_download.search_backoff_minutes", "1440");
+    const untouched = updateMock("set-torrent.seed_time_minutes", "0");
+    await mount([interval.mock, backoff.mock, untouched.mock]);
+    expect(await screen.findByRole("textbox", { name: "Check everything every" })).toHaveValue("1h");
+    await setText("Check everything every", "1.5 hours");
+    await setText("Search a missing item again after", "1 day");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Settings saved")).toBeInTheDocument();
+    expect(interval.called).toHaveBeenCalled();
+    expect(backoff.called).toHaveBeenCalled();
+    expect(untouched.called).not.toHaveBeenCalled();
+  });
+
+  it("reads a bare number in an interval as minutes, the unit the setting was in", async () => {
+    const grace = createMock("auto_download.air_grace_minutes", "45", "auto_download");
+    await mountFresh([grace.mock]);
+    await setText("Wait after an episode airs", "45");
+    expect(screen.getByRole("textbox", { name: "Wait after an episode airs" })).toHaveValue("45m");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Settings saved")).toBeInTheDocument();
+    expect(grace.called).toHaveBeenCalled();
+  });
+
+  it("refuses an interval outside what the server accepts", async () => {
+    await mount();
+    await setText("Check everything every", "1m");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(screen.getByRole("textbox", { name: "Check everything every" })).toHaveAttribute("aria-invalid", "true"));
+  });
+
+  it("writes speed limits in bytes per second", async () => {
+    const down = updateMock("set-torrent.download_limit", "2000000");
+    const up = updateMock("set-torrent.upload_limit", "500000");
+    await mount([down.mock, up.mock]);
+    expect(await screen.findByRole("textbox", { name: "Download speed limit" })).toBeInTheDocument();
+    await setText("Download speed limit", "2 MB");
+    await setText("Upload speed limit", "500 kB");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Settings saved")).toBeInTheDocument();
+    expect(down.called).toHaveBeenCalled();
+    expect(up.called).toHaveBeenCalled();
   });
 
   it("keeps stored values across an unrelated rerender", async () => {

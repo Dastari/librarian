@@ -47,18 +47,21 @@ function describe(kind: string, pass: PassRecord): string {
   return parts.join(", ");
 }
 
-/** When automatic downloading last did something, so "On" can be told from "On but never ran". */
+/**
+ * When automatic downloading last did something, so "On" can be told from "On but never ran".
+ * It is the description of a settings row, so each pass is a line of inline text rather than a list.
+ */
 export function AutoDownloadStatus({ settings }: { settings: Map<string, string> }) {
   const status = parseStatus(settings.get("auto_download.status"));
   const shown = PASSES.filter(({ key }) => status[key]?.at);
-  if (!shown.length) return <p className="text-label-sm text-muted">Nothing has run yet.</p>;
+  if (!shown.length) return <span>Nothing has run yet.</span>;
   return (
-    <ul className="flex flex-col gap-1 text-label-sm text-muted" aria-label="Recent automatic downloads">
+    <>
       {shown.map(({ key, label }) => (
-        <li key={key}>
+        <span key={key} className="block">
           {label} <RelativeTime value={parseTimestamp(status[key]!.at)} />: {describe(key, status[key]!)}
-        </li>
+        </span>
       ))}
-    </ul>
+    </>
   );
 }
