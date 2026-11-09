@@ -11,13 +11,14 @@ import { errorMessage } from "@/lib/graphql/errors";
 import { useInputMode } from "@/lib/input-mode";
 import { isTvApp } from "@/lib/tv-app";
 
-import { DurationRow, TextRow, settingsFormBehaviour } from "./SettingFields";
+import { DurationRow, NumberRow, TextRow, settingsFormBehaviour } from "./SettingFields";
 import { SettingsPage, SettingsSection } from "./SettingsSection";
 import { asBool, asNumber, useAppSettings } from "./useAppSettings";
 
 const schema = z.object({
   playbackSyncInterval: numberRule({ required: true, integer: true, min: 5, max: 300, requiredMessage: "Enter a progress interval", rangeMessage: "Enter a whole number from 5 to 300" }),
   previewBackfill: z.boolean(),
+  historyRetentionDays: numberRule({ required: true, integer: true, min: 0, max: 36500, requiredMessage: "Enter a number of days, or 0 to keep everything", rangeMessage: "Enter a whole number of days from 0 to 36500" }),
   preferredLanguage: z.string().trim().max(10),
   // The LAN announcement for TV apps (docs/design.md Q138); the server checks the address too.
   advertise: z.boolean(),
@@ -37,6 +38,7 @@ export function GeneralSettings() {
   const storedValues = useMemo<Values>(() => ({
     playbackSyncInterval: asNumber(playback.values.get("playback_sync_interval"), 15),
     previewBackfill: asBool(playback.values.get(PREVIEW_BACKFILL_KEY), true),
+    historyRetentionDays: asNumber(playback.values.get("play_history.retention_days"), 0),
     preferredLanguage: metadata.values.get("metadata.preferred_language") ?? "en",
     advertise: asBool(discovery.values.get("discovery.advertise"), true),
     webUrl: discovery.values.get("discovery.web_url") ?? "",
@@ -53,7 +55,7 @@ export function GeneralSettings() {
     onSubmit: async ({ value, formApi }) => {
       // TanStack validates but does not apply schema transforms to the submitted value.
       const saved = schema.parse(value);
-      await playback.save({ playback_sync_interval: String(saved.playbackSyncInterval), [PREVIEW_BACKFILL_KEY]: saved.previewBackfill });
+      await playback.save({ playback_sync_interval: String(saved.playbackSyncInterval), [PREVIEW_BACKFILL_KEY]: saved.previewBackfill, "play_history.retention_days": String(saved.historyRetentionDays) });
       await metadata.save({ "metadata.preferred_language": saved.preferredLanguage });
       await discovery.save({ "discovery.advertise": saved.advertise, "discovery.web_url": JSON.stringify(saved.webUrl) });
       setBaseline(saved);
@@ -91,6 +93,8 @@ export function GeneralSettings() {
                 </form.AppField>
                 <form.AppField name="previewBackfill">
                   {(field) => <field.SwitchRow label="Make previews for existing videos" description="Seek-bar previews and black-bar detection for videos added before them, a few at a time in the background. New and played videos always get them." disabled={loading || submitting} />}
+                <form.AppField name="historyRetentionDays">
+                  {() => <NumberRow label="Keep play history for" description="Everyone's plays older than this are deleted, a few times a day. 0 keeps them all." unit="days" min={0} max={36500} disabled={loading || submitting} />}
                 </form.AppField>
               </SettingsSection>
               <SettingsSection title="Language" width="readable">

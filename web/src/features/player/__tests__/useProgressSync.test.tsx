@@ -28,7 +28,10 @@ vi.mock("@/lib/auth/session", () => ({ session: { getEpoch: () => runtime.sessio
 vi.mock("@/lib/auth/useSession", () => ({ useSession: () => ({ user: runtime.userId ? { id: runtime.userId } : null }) }));
 vi.mock("@/lib/graphql/live/hooks", () => ({
   useLiveEpoch: () => runtime.epoch,
-  useLiveInvalidation: (_document: unknown, _variables: unknown, refresh: () => Promise<void>) => { runtime.refresh = refresh; },
+  // The hook also watches its own session for stop requests; these tests drive the checkpoint read.
+  useLiveInvalidation: (document: { definitions?: Array<{ name?: { value?: string } }> }, _variables: unknown, refresh: () => Promise<void>) => {
+    if (document?.definitions?.[0]?.name?.value === "PlaybackProgressForFile") runtime.refresh = refresh;
+  },
   useLiveQuery: (_document: unknown, options?: { variables: { userId: string; mediaFileId: string } }) => {
     if (!options) return { data: { appSettings: { edges: [{ node: { value: "15" } }] } } };
     const key = `${options.variables.userId}:${options.variables.mediaFileId}`;

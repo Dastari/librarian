@@ -1,0 +1,179 @@
+# Devices, now playing, play history and statistics (design.md Q133–Q136).
+
+mutation CheckInDevice($input: CheckInDeviceInput!) {
+  checkInDevice(input: $input) {
+    success
+    error
+    device {
+      ...DeviceFields
+    }
+  }
+}
+
+mutation SignOutDevice($id: String!) {
+  signOutDevice(id: $id) {
+    success
+    error
+    revokedSessions
+  }
+}
+
+mutation ImportPlayHistory($allUsers: Boolean! = false) {
+  importPlayHistory(allUsers: $allUsers) {
+    success
+    error
+    imported
+    skipped
+  }
+}
+
+query DashboardDevices($where: DeviceWhereInput, $page: PageInput) {
+  devices(where: $where, orderBy: [{ lastSeenAt: DESC }], page: $page) {
+    edges {
+      node {
+        ...DeviceFields
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+# Open sessions updated since $since: the live "now playing" list. Members see their own,
+# administrators everyone's (row policy).
+query NowPlaying($since: String!) {
+  playbackSessions(
+    where: { endedAt: { isNull: true }, lastUpdatedAt: { gt: $since } }
+    orderBy: [{ startedAt: DESC }]
+    page: { limit: 50, offset: 0 }
+  ) {
+    edges {
+      node {
+        ...PlaybackSessionFields
+        device { id name formFactor platform product }
+        movie { id title year }
+        episode {
+          id showId season episode title
+          show { id name }
+        }
+        track {
+          id albumId title artistName
+          album { id name }
+        }
+        audiobook { id title authorName }
+      }
+    }
+  }
+}
+
+mutation StopPlaybackSession($id: String!, $at: String!) {
+  updatePlaybackSession(id: $id, input: { stopRequestedAt: $at }) {
+    success
+    error
+  }
+}
+
+# The player watches its own session for a stop request.
+query PlaybackSessionStop($id: String!) {
+  playbackSession(id: $id) {
+    id
+    stopRequestedAt
+    endedAt
+  }
+}
+
+query PlayHistoryPage($where: PlayHistoryWhereInput, $orderBy: [PlayHistoryOrderByInput!], $page: PageInput) {
+  playHistories(where: $where, orderBy: $orderBy, page: $page) {
+    edges {
+      node {
+        ...PlayHistoryFields
+      }
+    }
+    pageInfo {
+      hasNextPage
+      totalCount
+    }
+  }
+}
+
+mutation ClearPlayHistory($where: PlayHistoryWhereInput!) {
+  deletePlayHistories(where: $where) {
+    success
+    error
+    deletedCount
+  }
+}
+
+fragment PlayStatisticsTopItemFields on PlayStatisticsTopItem {
+  key
+  kind
+  entityId
+  title
+  subtitle
+  seconds
+  plays
+}
+
+fragment PlayStatisticsBucketFields on PlayStatisticsBucket {
+  date
+  secondsWatched
+  secondsListened
+  plays
+}
+
+query PlayStatistics($userId: String, $allUsers: Boolean! = false, $from: String, $to: String, $utcOffsetMinutes: Int! = 0, $top: Int! = 10) {
+  playStatistics(userId: $userId, allUsers: $allUsers, from: $from, to: $to, utcOffsetMinutes: $utcOffsetMinutes, top: $top) {
+    userId
+    userName
+    from
+    to
+    complete
+    totals { secondsWatched secondsListened plays completedPlays importedPlays items activeDays }
+    streak { current longest longestEndedOn }
+    days { ...PlayStatisticsBucketFields }
+    weeks { ...PlayStatisticsBucketFields }
+    hours
+    topShows { ...PlayStatisticsTopItemFields }
+    topMovies { ...PlayStatisticsTopItemFields }
+    topArtists { ...PlayStatisticsTopItemFields }
+    topAlbums { ...PlayStatisticsTopItemFields }
+    topAudiobooks { ...PlayStatisticsTopItemFields }
+    topAuthors { ...PlayStatisticsTopItemFields }
+    topGenres { ...PlayStatisticsTopItemFields }
+    devices { deviceId name seconds plays lastPlayedAt }
+    users { userId name seconds plays }
+    recent {
+      id contentType title parentTitle subtitle movieId episodeId showId trackId albumId artistId audiobookId
+      startedAt endedAt secondsPlayed completed imported deviceName playMethod
+    }
+  }
+}
+
+query StatisticsPeople {
+  statisticsPeople { userId name isSelf shared }
+}
+
+query StatisticsSharing($userId: String!) {
+  statisticsShareCandidates { userId name isSelf shared }
+  statsShares(where: { userId: { eq: $userId } }, page: { limit: 100, offset: 0 }) {
+    edges {
+      node {
+        ...StatsShareFields
+      }
+    }
+  }
+}
+
+query PlayHistorySettings {
+  appSettings(where: { key: { inList: ["play_history.retention_days"] } }, page: { limit: 1, offset: 0 }) {
+    edges {
+      node {
+        id
+        key
+        value
+      }
+    }
+  }
+}

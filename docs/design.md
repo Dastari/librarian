@@ -2737,3 +2737,64 @@ entity's current artwork locks (`withArtworkLocks`), so a picture chosen while t
 Browsers kept a picture for a day under one address, so a changed picture would not show: the device that changed it adds
 a revision to the address (`?v=`, kept for a week in local storage), and an address without one is reused for five
 minutes and then checked again in the background (`stale-while-revalidate`), so other devices follow within one view.
+
+### Q133: How is a device identified, and what can be done to it?
+**Answer:** Each browser, installed app or TV keeps a stable id of its own (`librarian.device.v1` in local storage) and
+checks in with it (`checkInDevice`) when the app starts, on sign-in, when it comes back to the foreground, when TV mode
+changes and every ten minutes. It says what it can tell about itself: a suggested name ("Safari on iPad", "Chrome on
+Windows", "webOS TV", or "TV" in TV mode), its form factor, platform, browser and app version. The server records what it
+saw of the request: the user agent and the address (a forwarded address only from a configured trusted proxy), the time,
+and the login session (`session_id`, private, never a GraphQL field). `Device` is one row per person and client id
+(`unique (user_id, client_id)`), owner scope: members see their own, administrators everyone's. Clients cannot create
+devices through the generated create, and the generated update changes the name only; renaming sets `nameIsCustom`, after
+which check-ins keep the name. *Sign out* (`signOutDevice`, the owner or an administrator) revokes every live refresh token
+of the device's login session in one transaction, ends its open playback sessions and marks it signed out; its access
+tokens stop working at their next request because session authority is rechecked. *Forget* is the generated
+`deleteDevice`, whose Before hook does the same and detaches its sessions; plays keep the device's name. A playback
+session names its device (`deviceId`, an owned link, so another person's device is dropped), and starting one ends the
+device's other open sessions. UI: `DeviceIdentity` (TV, phone, tablet or computer glyph; "This device", "Active now",
+"Signed out", last seen), `useDeviceActions` and `DeviceSettingsDialog` (General, Details, Forget), listed under
+Dashboard › Devices.
+
+### Q134: How is play history recorded?
+**Answer:** From the existing progress pipeline, server-side. The player already updates its `PlaybackSession` every few
+seconds (now also with its device, chapter, state, play method, quality, bitrate and `endedAt` on close; the server
+replaces the client's timestamps with its own). The session's After Updated hook compares each report with the one before
+and credits only time spent playing to a `PlayHistory` row in the same transaction: moving forward by about the wall time
+between reports counts the smaller of the two (so 2x speech counts real minutes); a seek counts the wall time between the
+reports, at most a minute, never the distance jumped; paused or stalled time counts nothing. Nothing is written until
+something has played. A play continues while it is resumed within 30 minutes of its last activity on the same device:
+pausing and resuming, or closing and reopening the same title, is one play; a longer gap starts a new one, even in the same
+session. A play is complete by the watched rule (the session's `completedAt`, or 92% of the duration), and a finished play
+is never continued: watching it again is a new play. Each play keeps title, parent (show, artist, author) and subtitle
+snapshots and the content ids as plain references, not relations, so history outlives deleted titles and files. Plays are
+read and deleted through the generated roots (owner and administrators); the generated create and update refuse public
+callers. Clearing your history is `deletePlayHistories(where: {userId})`. Administrators set
+`play_history.retention_days` (Settings › General › Playback, 0 keeps everything); a service prunes older plays every six
+hours. Existing watch progress seeds history once at startup (`play_history.imported_at`) and on demand
+(`importPlayHistory`): one completed play per watched checkpoint, with no time claimed, marked `imported` and keyed by
+`sourceProgressId` so it never imports twice. Deleting a user removes their plays, devices and shares.
+
+### Q135: What do statistics show, and how are they computed?
+**Answer:** `playStatistics` is a computed read: after authorization it reads the period's plays through the typed entity
+layer (at most 50,000; `complete` says when more were left out) and sums them in Rust (`play_history::stats`). Local days
+follow the viewer's `utcOffsetMinutes`; a play counts on the day it started; weeks start on Monday. It returns time watched
+(movies, episodes) and listened (tracks, audiobooks) per day and per week, by hour of day, totals (plays, finished,
+imported, different titles, active days), the current and longest streak of consecutive days within the period, top shows,
+movies, artists, albums, audiobooks, authors and genres (genres from the movie, show or album, ranked by time, then plays),
+devices used, the 20 most recent plays without device addresses, and, in an administrator's everyone view, time per person.
+Imported plays count as plays with no time. Dashboard › Statistics shows them with Glass charts: metrics with sparklines,
+stacked columns per day (per week past three months), ranked bars and time of day, with a period choice (7, 30, 90 days, a
+year) and a person choice in the URL. Dashboard › Now playing lists open sessions that reported in the last three minutes
+(members their own, administrators everyone's) with poster, title, person, device, progress, play method, quality and
+state, live over the session subscription; the owner or an administrator can *Stop* one (`stopRequestedAt`), and the
+player pauses as soon as its session changes.
+
+### Q136: Who can see someone else's statistics?
+**Answer:** Statistics are private by default. A person shares them with chosen people or with everyone on this server
+(`StatsShare`: `audience` `user` with a `viewerUserId`, or `everyone`); the share is the owner's row, validated in the
+create hook (an active other user, once) and never updated, only removed. `playStatistics(userId)` answers the owner, an
+administrator, or a viewer granted by a share while both accounts are active; anyone else gets the same "not found or not
+shared with you" as for an unknown user. Viewers read the computed statistics only: they cannot list the shares, the raw
+`PlayHistory` rows or the devices. `statisticsPeople` lists whose statistics the caller can open and
+`statisticsShareCandidates` the other active people to share with (names only). Sharing between servers is out of scope.

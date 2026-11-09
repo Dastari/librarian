@@ -12,14 +12,14 @@ use graphql_orm::schema_roots;
 use crate::db::Database;
 use crate::services::graphql::entities::*;
 use crate::services::graphql::mutations::{
-    ArtworkMutations, AuthMutations, AutoDownloadMutations, BackupMutations,
+    ArtworkMutations, AuthMutations, AutoDownloadMutations, BackupMutations, DeviceActionMutations,
     DownloadsMoveMutations, DownloadsMoveQueries, FeedMutations, FilesystemMutations,
     LibraryScanMutations, MaintenanceMutations, NotificationFeedMutations, QualityMutations,
     RecommendationMutations, ServerConnectionMutations, ServerConnectionQueries, SubtitleMutations,
 };
 use crate::services::graphql::queries::{
     ArtworkQueries, BackupQueries, ContentStatusQueries, FilesystemQueries, GenreQueries,
-    ResumeQueries, SourceCapabilityQueries,
+    ResumeQueries, SourceCapabilityQueries, StatisticsQueries,
 };
 use crate::services::graphql::subscriptions::filesystem::FilesystemChangeBroker;
 use crate::services::graphql::subscriptions::{
@@ -72,6 +72,9 @@ macro_rules! librarian_schema_roots {
         MediaChapter,
         PlaybackSession,
         PlaybackProgress,
+        Device,
+        PlayHistory,
+        StatsShare,
         PersonalList,
         ListEntry,
         SavedView,
@@ -121,8 +124,8 @@ macro_rules! librarian_schema_roots {
         ReleaseRecommendation,
         TorrentContents,
     ],
-    extra_query_types: [ArtworkQueries, FilesystemQueries, ServerConnectionQueries, DownloadsMoveQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries],
-    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, PersonMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations, ServerConnectionMutations, DownloadsMoveMutations, SubtitleMutations],
+    extra_query_types: [ArtworkQueries, FilesystemQueries, ServerConnectionQueries, DownloadsMoveQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries, StatisticsQueries],
+    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, PersonMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations, ServerConnectionMutations, DownloadsMoveMutations, SubtitleMutations, DeviceActionMutations],
     extra_subscription_types: [BackupSubscriptions, FilesystemSubscriptions, TorrentRuntimeSubscriptions, SessionSubscriptions, SourceCapabilitySubscriptions],
         }
     };
@@ -421,6 +424,9 @@ mod tests {
             MediaChapter,
             PlaybackSession,
             PlaybackProgress,
+            Device,
+            PlayHistory,
+            StatsShare,
             PersonalList,
             ListEntry,
             SavedView,

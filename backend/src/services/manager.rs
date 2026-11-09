@@ -164,6 +164,7 @@ enum ServiceRegistrationKind {
     ScheduleSync(ScheduleSyncConfig),
     CreditFill(CreditFillConfig),
     LanAdvertise(LanAdvertiseConfig),
+    PlayHistory(crate::services::play_history::service::PlayHistoryConfig),
     Transcode(TranscodeServiceConfig),
     Service(Arc<dyn Service>),
 }
@@ -260,6 +261,12 @@ impl IntoServiceRegistration for CreditFillConfig {
 impl IntoServiceRegistration for LanAdvertiseConfig {
     fn into_registration(self) -> ServiceRegistration {
         ServiceRegistration(ServiceRegistrationKind::LanAdvertise(self))
+    }
+}
+
+impl IntoServiceRegistration for crate::services::play_history::service::PlayHistoryConfig {
+    fn into_registration(self) -> ServiceRegistration {
+        ServiceRegistration(ServiceRegistrationKind::PlayHistory(self))
     }
 }
 
@@ -419,6 +426,16 @@ impl ServicesManagerBuilder {
                 ServiceRegistrationKind::LanAdvertise(config) => {
                     manager
                         .register(Arc::new(LanAdvertiseService::new(manager.clone(), config)))
+                        .await;
+                }
+                ServiceRegistrationKind::PlayHistory(config) => {
+                    manager
+                        .register(Arc::new(
+                            crate::services::play_history::service::PlayHistoryService::new(
+                                manager.clone(),
+                                config,
+                            ),
+                        ))
                         .await;
                 }
                 ServiceRegistrationKind::AutoDownload(config) => {

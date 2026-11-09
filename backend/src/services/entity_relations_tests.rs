@@ -512,6 +512,14 @@ async fn deleting_a_target_clears_the_ids_that_pointed_at_it() {
             started_at: now.clone(),
             last_updated_at: now.clone(),
             completed_at: None,
+            chapter_id: None,
+            device_id: None,
+            state: None,
+            play_method: None,
+            quality: None,
+            bitrate: None,
+            ended_at: None,
+            stop_requested_at: None,
         },
     )
     .await

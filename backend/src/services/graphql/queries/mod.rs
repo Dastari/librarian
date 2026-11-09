@@ -7,6 +7,7 @@ pub mod filesystem;
 pub mod genres;
 pub mod resume;
 pub mod source_capabilities;
+pub mod statistics;
 
 pub use artwork::ArtworkQueries;
 pub use backup::BackupQueries;
@@ -15,3 +16,4 @@ pub use filesystem::FilesystemQueries;
 pub use genres::GenreQueries;
 pub use resume::ResumeQueries;
 pub use source_capabilities::SourceCapabilityQueries;
+pub use statistics::StatisticsQueries;

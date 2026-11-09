@@ -83,4 +83,7 @@ impl_string_pk_batch_load!(super::QualityProfile);
 impl_string_pk_batch_load!(super::ReleaseBlocklist);
 impl_string_pk_batch_load!(super::ReleaseRecommendation);
 impl_string_pk_batch_load!(super::NetworkServer);
+impl_string_pk_batch_load!(super::Device);
+impl_string_pk_batch_load!(super::PlayHistory);
+impl_string_pk_batch_load!(super::StatsShare);
 impl_string_pk_batch_load!(super::TorrentContents);

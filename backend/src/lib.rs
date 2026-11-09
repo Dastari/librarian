@@ -243,6 +243,7 @@ async fn async_main() -> anyhow::Result<()> {
             config.port,
             config.host.clone(),
         ))
+        .add_service(crate::services::play_history::service::PlayHistoryConfig)
         .add_service(TranscodeServiceConfig {
             cache_path: PathBuf::from(&config.cache_path),
             ffmpeg_path: config

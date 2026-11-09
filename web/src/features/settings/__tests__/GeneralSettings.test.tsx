@@ -91,7 +91,7 @@ describe("GeneralSettings bound form", () => {
     await edit("Metadata language", " fr ");
     await userEvent.click(save());
     expect(await screen.findByText("Settings saved")).toBeInTheDocument();
-    expect(settings.playback.save).toHaveBeenCalledWith({ playback_sync_interval: "45", "playback.video_preview_backfill": true });
+    expect(settings.playback.save).toHaveBeenCalledWith({ playback_sync_interval: "45", "playback.video_preview_backfill": true, "play_history.retention_days": "0" });
     expect(settings.metadata.save).toHaveBeenCalledWith({ "metadata.preferred_language": "fr" });
     await userEvent.click(screen.getByRole("switch", { name: /TV mode/ }));
     expect(screen.getByRole("textbox", { name: "Save progress every" })).toHaveValue("45s");

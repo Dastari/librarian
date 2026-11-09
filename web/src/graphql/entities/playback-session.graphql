@@ -21,6 +21,14 @@ fragment PlaybackSessionFields on PlaybackSession {
   completedAt
   createdAt
   updatedAt
+  chapterId
+  deviceId
+  state
+  playMethod
+  quality
+  bitrate
+  endedAt
+  stopRequestedAt
 }
 
 query EntityPlaybackSessionList($where: PlaybackSessionWhereInput, $orderBy: [PlaybackSessionOrderByInput!], $page: PageInput) {
