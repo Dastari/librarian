@@ -18,6 +18,25 @@ query PlaybackProgressForFiles($userId: String!, $mediaFileIds: [String!]!) {
   }
 }
 
+# A person's progress rows with the title each file belongs to: library grids use it to offer
+# "Mark as unwatched" on the titles that have progress. Read a page at a time, oldest first.
+query PlaybackProgressOwners($userId: String!, $page: PageInput!) {
+  playbackProgresses(where: { userId: { eq: $userId } }, orderBy: [{ createdAt: ASC }], page: $page) {
+    edges {
+      node {
+        ...PlaybackProgressFields
+        mediaFile {
+          id
+          movieId
+          episode { id showId }
+          track { id albumId }
+          chapter { id audiobookId }
+        }
+      }
+    }
+  }
+}
+
 query PlaybackSyncInterval {
   appSettings(where: { key: { eq: "playback_sync_interval" } }, page: { limit: 1, offset: 0 }) {
     edges {

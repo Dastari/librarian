@@ -42,7 +42,7 @@ export function resetWhere(userId: string, mediaFileIds: readonly string[]) {
   return { userId: { eq: userId }, mediaFileId: { inList: [...mediaFileIds] } };
 }
 
-const PROGRESS_READERS = new Set(["PlaybackProgressForFile", "PlaybackProgressForFiles", "ResumeShelf", "ContentStatuses"]);
+const PROGRESS_READERS = new Set(["PlaybackProgressForFile", "PlaybackProgressForFiles", "PlaybackProgressOwners", "ResumeShelf", "ContentStatuses"]);
 
 /** Refetch every reader of progress that is on screen: the per-file queries, the home shelf and computed statuses. */
 export function refetchProgressReaders(client: ApolloClient): Promise<unknown> {

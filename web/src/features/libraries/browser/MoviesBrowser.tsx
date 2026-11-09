@@ -8,6 +8,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Button, PosterCard } from "@/components/ui";
 import { MovieIdentity } from "@/features/media/MovieIdentity";
 import { useMovieEntity } from "@/features/media/useMovieEntity";
+import { useGridReset } from "@/features/media/useProgressOwners";
 import { ProviderSearchDialog } from "@/features/library-add/ProviderSearchDialog";
 import { usePlayer } from "@/features/player/usePlayer";
 import { LibraryMoviesDocument, type LibraryMoviesQuery, type MovieOrderByInput, type MovieWhereInput } from "@/graphql/generated/graphql";
@@ -67,7 +68,8 @@ export function MoviesBrowser({ libraryId }: { libraryId: string }) {
   });
   const ids = useMemo(() => list.rows.map((row) => row.id), [list.rows]);
   const statuses = useContentStatuses("MOVIE", ids);
-  const { actions, dialogs } = useMovieEntity<MovieRow>();
+  const reset = useGridReset<MovieRow>("movie");
+  const { actions, dialogs } = useMovieEntity<MovieRow>({ reset });
   const columns = useMemo(() => column.columns([
     column.accessor("title", { header: "Movie", width: 30, priority: 1, cardRole: "title", sortable: true, cell: ({ row }) => <MovieIdentity movie={row.original} status={contentStatusMeta(statuses, row.original.id)} /> }),
     column.accessor("year", { header: "Year", width: 6, priority: 2, grow: false, sortable: true, sortDescFirst: true, cell: ({ row }) => <TextCell muted>{row.original.year ?? ""}</TextCell> }),
