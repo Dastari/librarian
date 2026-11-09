@@ -3,6 +3,8 @@ import { useNavigate } from "@tanstack/react-router";
 import { EntitySettingsDialog, type EntitySettingsTab } from "glass-ux/entity-settings";
 import { formBehaviour, useAppForm } from "glass-ux/form";
 import { IconClock, IconFile, IconFolder, IconHistory, IconSettings, IconTrash, IconWarning } from "glass-ux/icons";
+import { Badge } from "glass-ux/badge";
+import { SettingRow } from "glass-ux/setting-row";
 import { Surface } from "glass-ux/surface";
 import { toast } from "glass-ux/toast";
 import { useEffect, useMemo, useState } from "react";
@@ -24,6 +26,7 @@ import { withoutAction } from "@/lib/actions/withoutAction";
 import { FilesBrowser } from "./browser/FilesBrowser";
 import { LibraryLocationField } from "./LibraryLocationField";
 import { libraryIdentityProps } from "./LibraryIdentity";
+import { libraryWatch } from "./libraryWatch";
 import { MoveLibraryPanel } from "./MoveLibraryPanel";
 import { previewNamingPattern } from "./namingPreview";
 import { ScansPanel } from "./ScansPanel";
@@ -58,6 +61,18 @@ const valuesOf = (library: LibraryFieldsFragment) => ({
   namingPattern: library.namingPattern || "",
   qualityProfileId: library.qualityProfileId ?? "",
 });
+
+/** What the saved watch is doing now, as the backend last said. */
+function WatchStatusRow({ library }: { library: LibraryFieldsFragment }) {
+  const watch = libraryWatch(library);
+  return (
+    <SettingRow
+      label="Folder watch"
+      description={watch.detail}
+      control={<Badge size="sm" marker="dot" tone={watch.tone}>{watch.label}</Badge>}
+    />
+  );
+}
 
 /** A library's settings and its scanning record, with its identity and actions in the header. */
 export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosenTab, onTabChange, items, issues = 0, fileCount }: {
@@ -129,7 +144,8 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosen
         <div className="flex flex-col gap-3">
           <form.AppField name="autoScan">{(field) => <field.SwitchRow label="Scan on a schedule" description="Look for new, changed and missing files automatically." />}</form.AppField>
           <form.AppField name="scanIntervalMinutes">{(field) => <field.NumberField label="Scan every (minutes)" min={5} max={10080} step={5} />}</form.AppField>
-          <form.AppField name="watchForChanges">{(field) => <field.SwitchRow label="Watch the folder" description="React to file changes between scans." />}</form.AppField>
+          <form.AppField name="watchForChanges">{(field) => <field.SwitchRow label="Watch the folder" description="Pick up new, changed and removed files within seconds, scanning only what changed. A full scan still runs at least hourly." />}</form.AppField>
+          {library.watchForChanges ? <WatchStatusRow library={library} /> : null}
         </div>
       ),
     },

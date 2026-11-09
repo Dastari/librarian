@@ -32,7 +32,7 @@ function expectValidWhere(name: string, value: unknown) {
 const library = (id: string): LibraryFieldsFragment => ({
   id, userId: OWNER, name: id, path: `/media/${id}`, libraryType: "movies", icon: null, color: null,
   autoScan: false, autoOrganize: false, autoResolveDuplicates: null, namingPattern: "", scanIntervalMinutes: 60,
-  watchForChanges: false, scanning: false, lastScannedAt: null, qualityProfileId: null, createdAt: STAMP, updatedAt: STAMP,
+  watchForChanges: false, watchStatus: null, watchDetail: null, watchStatusSince: null, scanning: false, lastScannedAt: null, qualityProfileId: null, createdAt: STAMP, updatedAt: STAMP,
 });
 
 describe("smartRule server query contract", () => {
