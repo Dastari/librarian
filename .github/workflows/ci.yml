@@ -36,7 +36,8 @@ jobs:
         with:
           workspaces: backend
       - run: cargo fmt --check
-      - run: cargo check --locked --all-targets
+      # One crate at a time: checking the library and its test targets together outgrew the runner's memory.
+      - run: cargo check --locked --all-targets -j 1
       - run: cargo clippy --locked --all-targets -- -D warnings
       # tests/media_playback.rs generates real fixtures and checks delivery with FFmpeg.
       - name: Install FFmpeg

@@ -102,7 +102,7 @@ describe("DownloadsSettings", () => {
   it("fills the form from the stored settings", async () => {
     await mount();
     expect(await screen.findByText("/data/downloads")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("/data/session")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("/data/session")).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Listen port" })).toHaveValue("6881");
     expect(screen.getByRole("switch", { name: /Enable DHT/ })).toBeChecked();
     expect(screen.getByRole("switch", { name: /Search and download automatically/ })).toBeChecked();
