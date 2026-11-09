@@ -119,6 +119,25 @@ describe("the remote's Back", () => {
     expect(handleBack(deps("/"))).toBe("exit");
   });
 
+  it("lets Home take Back first (clearing a search field) before the app exits", () => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "GoBack") event.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    expect(handleBack(deps("/"))).toBe("handled");
+    window.removeEventListener("keydown", onKey);
+    expect(handleBack(deps("/"))).toBe("exit");
+  });
+
+  it("aims Escape at the topmost overlay", () => {
+    document.body.innerHTML = '<div role="dialog" id="below"></div><div role="menu" id="top"></div>';
+    const hits: string[] = [];
+    for (const id of ["below", "top"]) document.getElementById(id)!.addEventListener("keydown", (event) => { if (event.key === "Escape" && event.currentTarget === event.target) hits.push(id); });
+    expect(handleBack(deps("/movies/1"))).toBe("handled");
+    expect(hits).toEqual(["top"]);
+    document.body.innerHTML = "";
+  });
+
   it("goes back in the app when the page takes GoBack, and hands it back otherwise", () => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "GoBack") event.preventDefault();

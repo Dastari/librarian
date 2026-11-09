@@ -32,10 +32,13 @@ export function AppShell() {
   const { mode } = useInputMode();
   const router = useRouter();
   useDeviceCheckIn();
-  // The remote's Back never leaves the app: it walks in-app history, then returns Home.
+  // The remote's Back walks in-app history, then returns Home. On Home there is nowhere further:
+  // the key is left unhandled, and the TV app exits (design.md Q142).
   const back = useCallback(() => {
+    if (router.state.location.pathname === "/") return false;
     if (router.history.canGoBack()) router.history.back();
-    else if (router.state.location.pathname !== "/") void router.navigate({ to: "/" });
+    else void router.navigate({ to: "/" });
+    return true;
   }, [router]);
   useSpatialNavigation(true, mode === "tv", back);
   // Media keys and the now playing shortcut work from anywhere (design.md Q125).

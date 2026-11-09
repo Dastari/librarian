@@ -93,6 +93,7 @@ export function GeneralSettings() {
                 </form.AppField>
                 <form.AppField name="previewBackfill">
                   {(field) => <field.SwitchRow label="Make previews for existing videos" description="Seek-bar previews and black-bar detection for videos added before them, a few at a time in the background. New and played videos always get them." disabled={loading || submitting} />}
+                </form.AppField>
                 <form.AppField name="historyRetentionDays">
                   {() => <NumberRow label="Keep play history for" description="Everyone's plays older than this are deleted, a few times a day. 0 keeps them all." unit="days" min={0} max={36500} disabled={loading || submitting} />}
                 </form.AppField>

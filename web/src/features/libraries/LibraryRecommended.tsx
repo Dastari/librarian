@@ -66,7 +66,7 @@ function MoviesRecommended({ library }: { library: LibraryDetail }) {
     player.playVideo({ mediaFileId: movie.mediaFileId, title: movie.title, subtitle: movie.year ? String(movie.year) : undefined, artwork: moviePoster(movie.id), backdrop: movieBackdrop(movie.id), entity: { kind: "movie", id: movie.id }, href: `/movies/${movie.id}` });
     void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: movie.mediaFileId } });
   };
-  const browse = <Link to="/libraries/$libraryId/movies" params={{ libraryId }} className="nav-focus rounded hover:text-foreground">See all</Link>;
+  const browse = <Link to="/libraries/$libraryId/movies" params={{ libraryId }} className="nav-focus rounded hover:text-foreground" data-tv-skip>See all</Link>;
   const poster = (movie: MovieTile) => (
     <PosterCard key={movie.id} width="row" title={movie.title} meta={[movie.year, movie.runtime ? formatRuntime(movie.runtime, "minutes") : null].filter(Boolean).join(" · ")}
       image={moviePoster(movie.id)} tint={LIBRARY_TYPES.movies.tintVar} to="/movies/$movieId" params={{ movieId: movie.id }} onPlay={movie.mediaFileId ? () => play(movie) : undefined}
@@ -90,7 +90,7 @@ function MoviesRecommended({ library }: { library: LibraryDetail }) {
         unwatched.length > 0 ? <Section key="unwatched" title="Not watched yet" bleed><MediaRow ariaLabel="Not watched yet">{unwatched.map(poster)}</MediaRow></Section> : null,
         releasedList.length > 1 ? <Section key="released" title="Newest releases" bleed><MediaRow ariaLabel="Newest releases">{releasedList.map(poster)}</MediaRow></Section> : null,
         collectionList.length > 0 ? (
-          <Section key="collections" title="Collections" bleed trailing={<Link to="/libraries/$libraryId/collections" params={{ libraryId }} className="nav-focus rounded hover:text-foreground">See all</Link>}>
+          <Section key="collections" title="Collections" bleed trailing={<Link to="/libraries/$libraryId/collections" params={{ libraryId }} className="nav-focus rounded hover:text-foreground" data-tv-skip>See all</Link>}>
             <MediaRow ariaLabel="Collections">
               {collectionList.map((collection) => (
                 <PosterCard key={collection.id} width="row" title={collection.name} meta={`${collection.movieCount} films`} image={collectionPoster(collection)} tint={LIBRARY_TYPES.movies.tintVar} to="/collections/$collectionId" params={{ collectionId: collection.id }} />
@@ -122,7 +122,7 @@ function ShowsRecommended({ library }: { library: LibraryDetail }) {
     <PosterCard key={show.id} width="row" title={show.name} meta={[show.year, show.network].filter(Boolean).join(" · ")} image={showPoster(show)} tint={LIBRARY_TYPES.tv.tintVar} to="/shows/$showId" params={{ showId: show.id }}
       onFocus={previewOnFocus(showSpotlight(show))} />
   );
-  const browse = <Link to="/libraries/$libraryId/shows" params={{ libraryId }} className="nav-focus rounded hover:text-foreground">See all</Link>;
+  const browse = <Link to="/libraries/$libraryId/shows" params={{ libraryId }} className="nav-focus rounded hover:text-foreground" data-tv-skip>See all</Link>;
   return (
     <RecommendedPage
       loading={recent.loading && !recent.data}

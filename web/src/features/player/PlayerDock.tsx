@@ -9,6 +9,7 @@ import { useEffect, useRef, useState, type FocusEvent as ReactFocusEvent, type K
 import { Artwork } from "@/components/ui";
 import { useIsDesktop } from "@/hooks/useMediaQuery";
 import { useIsTvMode } from "@/lib/input-mode";
+import { backHandled, isBackKey } from "@/lib/remote-back";
 import { holdScreenOn } from "@/lib/tv-app";
 import { cn } from "@/lib/utils";
 
@@ -233,10 +234,9 @@ export function PlayerDock() {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     const target = event.target instanceof HTMLElement ? event.target : null;
     if (target?.closest('[role="menu"], [role="listbox"], input, textarea')) return;
-    const back = event.key === "Escape" || event.key === "GoBack" || event.keyCode === 461 || event.keyCode === 10009 || (tv && event.key === "Backspace");
-    // A focused icon button's tooltip takes Escape first (it prevents the default); on a TV that
-    // would make Back do nothing, so Back is still ours. Anything else already handled is not.
-    if (event.defaultPrevented && !back) return;
+    const back = isBackKey(event, { tv });
+    // A tooltip closing on Escape doesn't take Back (`backHandled`); a control that did, does.
+    if (back ? backHandled(event) : event.defaultPrevented) return;
     const open = playerStore.getSnapshot().sheetOpen;
     if (back && open) {
       event.preventDefault();

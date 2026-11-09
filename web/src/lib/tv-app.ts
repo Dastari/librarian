@@ -132,20 +132,23 @@ export interface TvAppDeps {
 
 /** What the remote's Back does here; exported for tests. */
 export function handleBack(deps: TvAppDeps): BackResult {
-  if (document.querySelector(OPEN_OVERLAY)) {
+  // The topmost overlay first (portals append to the body, so the last one open).
+  const overlays = document.querySelectorAll<HTMLElement>(OPEN_OVERLAY);
+  const overlay = overlays.item(overlays.length - 1);
+  if (overlay) {
     // Dialogs and menus close on Escape; aim it at the overlay so it is the one that closes.
-    const overlay = document.querySelector<HTMLElement>(OPEN_OVERLAY);
-    const target = overlay?.contains(document.activeElement) ? focusTarget() : (overlay ?? focusTarget());
-    sendKey("Escape", target);
+    sendKey("Escape", overlay.contains(document.activeElement) ? focusTarget() : overlay);
     return "handled";
   }
   if (document.fullscreenElement) {
     void document.exitFullscreen?.().catch(() => undefined);
     return "handled";
   }
-  if (deps.pathname() === "/") return "exit";
-  // The shell's remote focus (useSpatialNavigation) and the video player both go back on GoBack.
-  return sendKey("GoBack") ? "handled" : "unhandled";
+  // The page gets the press first: it leaves an edit state (a search field's text), closes the
+  // video player or goes back a page (useSpatialNavigation, the player). Only when nothing on
+  // Home took it does the app exit (design.md Q142).
+  if (sendKey("GoBack")) return "handled";
+  return deps.pathname() === "/" ? "exit" : "unhandled";
 }
 
 /** Open the focused item's actions, as a right-click would. */

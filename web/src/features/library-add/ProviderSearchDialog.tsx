@@ -257,7 +257,10 @@ export function ProviderSearchDialog({ kind, libraryId, isOpen, onOpenChange, on
                       const owned = !added && ownedIds.has(item.key.slice(item.key.indexOf("-") + 1));
                       return (
                         <li key={item.key} className="flex min-w-0 flex-col gap-2">
-                          <PosterCard width="fill" wrapTitle title={item.title} meta={item.subtitle} image={item.image} aspect={aspect} tint={meta.tintVar} to={item.link?.to as never} params={item.link?.params as never} />
+                          {/* One stop per result on a TV: Add, which names the title. The poster's link is the pointer's. */}
+                          <div data-tv-skip className="contents">
+                            <PosterCard width="fill" wrapTitle title={item.title} meta={item.subtitle} image={item.image} aspect={aspect} tint={meta.tintVar} to={item.link?.to as never} params={item.link?.params as never} />
+                          </div>
                           <Button
                             size="sm"
                             variant={added || owned ? "ghost" : "secondary"}

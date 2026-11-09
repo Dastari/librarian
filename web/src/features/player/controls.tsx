@@ -5,6 +5,7 @@ import { Slider } from "glass-ux/slider";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 
 import { formatClock } from "@/lib/format";
+import { isBackKey } from "@/lib/remote-back";
 import { setTvMuted, setTvVolume } from "@/lib/tv-app";
 import { clamp, cn } from "@/lib/utils";
 
@@ -74,7 +75,7 @@ export function SeekBar({ position, duration, buffered = 0, onSeek, chapters, cl
       if (event.altKey || event.ctrlKey || event.metaKey) return;
       scrubber.step(event.key === "ArrowRight" ? 1 : -1, event.repeat);
     } else if (event.key === "Enter" && scrubber.active) scrubber.commit();
-    else if ((event.key === "Escape" || event.key === "Backspace" || event.key === "GoBack" || event.keyCode === 461 || event.keyCode === 10009) && scrubber.active) scrubber.cancel();
+    else if (isBackKey(event, { tv: true }) && scrubber.active) scrubber.cancel();
     else if (event.key === "Home") onSeek(0);
     else if (event.key === "End") onSeek(safeDuration);
     else return;

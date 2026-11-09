@@ -162,7 +162,7 @@ export function SearchPage() {
           {isAdmin && debounced ? <Button variant="secondary" size="sm" className="shrink-0" onPress={() => setReleases(true)}><IconDownload /> Find releases</Button> : null}
         </div>
       </div>
-      <PageScroller className="search-results page-gutter flex flex-1 flex-col gap-3 pb-8 pt-1">
+      <PageScroller className="search-results page-gutter flex flex-1 flex-col gap-3 pb-8 pt-(--focus-reach)">
         {scope === "library" ? <p className="text-overline min-h-4 shrink-0 text-muted">{heading}</p> : null}
         {body}
       </PageScroller>

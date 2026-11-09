@@ -12,6 +12,7 @@ import { formatClock } from "@/lib/format";
 import { useLiveQuery } from "@/lib/graphql/live/hooks";
 import { bindTvVolume, holdScreenOn } from "@/lib/tv-app";
 import { useInputMode } from "@/lib/input-mode";
+import { backHandled, isBackKey } from "@/lib/remote-back";
 import { usePref } from "@/lib/prefs";
 import { cn } from "@/lib/utils";
 
@@ -36,9 +37,7 @@ const TV_VIEW_MODES: readonly MediaViewMode[] = ["inline", "fullscreen"];
 const SESSION_SAVE_MS = 5000;
 const CHROME_DELAY_MS = 3000;
 /** webOS (461) and Tizen (10009) report their remote's Back key only as a key code. */
-const BACK_KEY_CODES = new Set([461, 10009]);
 export { subtitleTracks } from "./subtitles";
-const isBackKey = (event: { key: string; keyCode: number }) => event.key === "Escape" || event.key === "Backspace" || event.key === "GoBack" || BACK_KEY_CODES.has(event.keyCode);
 
 interface VideoPlayerProps {
   item: PlayItem;
@@ -69,6 +68,7 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
   const playIntent = useRef(!item.startPaused);
   const [viewMode, setViewMode] = useState<MediaViewMode>(mini ? "windowed" : "inline");
   const miniRef = useRef(mini);
+  const tvRef = useRef(false);
   miniRef.current = mini;
   const audioPlaying = usePlayerState().transport.playing;
   const [video, setVideo] = useState<HTMLMediaElement | null>(null);
@@ -322,10 +322,12 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
       if (miniRef.current) return;
       wake();
       const target = event.target instanceof Element ? event.target : null;
-      if (event.defaultPrevented || target?.closest('[role="menu"], [role="dialog"], [role="listbox"], input, textarea')) return;
+      // Backspace is Back only on a TV. A tooltip closing on Escape doesn't count as taking it.
+      const back = isBackKey(event, { tv: tvRef.current });
+      if ((back ? backHandled(event) : event.defaultPrevented) || target?.closest('[role="menu"], [role="dialog"], [role="listbox"], input, textarea')) return;
       const player = controller.current;
       // Media keys are handled once, for the whole app (`mediaKeys.ts`).
-      if (isBackKey(event) && !document.fullscreenElement) {
+      if (back && !document.fullscreenElement) {
         // Taken here, so the TV app does not also step back through the WebView's history.
         event.preventDefault();
         onBack();
@@ -360,9 +362,10 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
   // A remote has no Tab: Down reaches the controls, Left and Right walk them, Up returns to the
   // picture, where Left and Right seek. Menus and the seek bar's own keys stay theirs.
   const tv = useInputMode().mode === "tv";
+  tvRef.current = tv;
   const showTitle = !mini;
   const remoteKeys = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (!tv || event.defaultPrevented) return;
+    if (!tv || (isBackKey(event, { tv }) ? backHandled(event) : event.defaultPrevented)) return;
     const target = event.target instanceof HTMLElement ? event.target : null;
     if (!target || target.closest('[role="menu"], [role="dialog"], [role="listbox"]')) return;
     const controls = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[data-kind="video"] button')).filter((button) => button.offsetParent !== null && button.tabIndex >= 0 && !button.disabled);
@@ -379,7 +382,7 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
     };
     // While scrubbing, OK seeks and Back puts it back; neither reaches Glass or the page.
     if (scrubber.active && event.key === "Enter") { consume(); scrubber.commit(); return; }
-    if (scrubber.active && isBackKey(event)) { consume(); scrubber.cancel(); return; }
+    if (scrubber.active && isBackKey(event, { tv })) { consume(); scrubber.cancel(); return; }
     const onPicture = target === element.current;
     const onSeekBar = target.classList.contains("fa-media-seek-input");
     const controlsHidden = event.currentTarget.querySelector(".fa-media-stage")?.getAttribute("data-controls") === "hidden";
@@ -487,7 +490,7 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
       />
       {showTitle ? (
       <div className={cn("over-imagery pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center gap-3 bg-linear-to-b from-black/70 to-transparent ps-[calc(var(--safe-inline-start)+1rem)] pe-[calc(var(--safe-inline-end)+1rem)] pb-12 pt-[calc(var(--safe-top)+0.75rem)] transition-opacity duration-base", !showChrome && "opacity-0")}>
-        <Button variant="secondary" className={showChrome ? "pointer-events-auto" : undefined} tabIndex={showChrome ? undefined : -1} data-spatial-start aria-label="Back" onClick={onBack} icon={<IconArrowLeft className="rtl:rotate-180" />} />
+        <Button variant="secondary" className={showChrome ? "pointer-events-auto" : undefined} tabIndex={showChrome ? undefined : -1} data-nav-skip={showChrome ? undefined : ""} data-spatial-start aria-label="Back" onClick={onBack} icon={<IconArrowLeft className="rtl:rotate-180" />} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-title-md text-white text-shadow-hero">{item.title}</p>
           {item.subtitle ? <p className="truncate text-label text-white/70">{item.subtitle}</p> : null}

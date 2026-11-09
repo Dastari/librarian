@@ -13,7 +13,7 @@ vi.mock("@/lib/input-mode", async (importOriginal) => ({ ...await importOriginal
 vi.mock("@/hooks/useMediaQuery", async (importOriginal) => ({ ...await importOriginal<typeof import("@/hooks/useMediaQuery")>(), useIsDesktop: () => view.desktop }));
 vi.mock("../CastButton", () => ({ CastButton: () => null }));
 vi.mock("../useMediaSource", () => ({ useMediaSource: () => ({ source: null, loading: false, error: null, duration: 180, hls: null, retry: vi.fn(), isTransitioning: () => false }) }));
-vi.mock("../useProgressSync", () => ({ useProgressSync: () => ({ loading: false, resumePosition: 0, report: vi.fn(), flush: vi.fn().mockResolvedValue(undefined) }) }));
+vi.mock("../useProgressSync", async (importOriginal) => ({ ...await importOriginal<typeof import("../useProgressSync")>(), useProgressSync: () => ({ loading: false, resumePosition: 0, report: vi.fn(), describe: vi.fn(), flush: vi.fn().mockResolvedValue(undefined) }) }));
 vi.mock("glass-ux/shell", () => ({ Rail: { Item: ({ label, icon: _icon, active: _active, ...rest }: Record<string, unknown> & { label: string }) => <button type="button" aria-label={label} {...rest} /> } }));
 
 const album: PlayItem[] = [

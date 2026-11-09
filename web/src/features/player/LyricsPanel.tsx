@@ -91,7 +91,7 @@ export function LyricsPanel({ mediaFileId, position, onSeek, fill = false }: Lyr
           ref={list}
           aria-label="Lyrics"
           data-nav-group
-          className={cn("relative overflow-y-auto overscroll-contain py-[30%] [scrollbar-width:thin]", height)}
+          className={cn("relative overflow-y-auto overscroll-contain px-(--focus-reach) py-[30%] [scrollbar-width:thin]", height)}
           onWheel={noteManual}
           onTouchMove={noteManual}
           onKeyDown={(event) => { if (event.key === "PageUp" || event.key === "PageDown") noteManual(); }}

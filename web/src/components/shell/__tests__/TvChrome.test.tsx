@@ -19,7 +19,7 @@ vi.mock("../Breadcrumbs", () => ({ Breadcrumbs: () => <nav aria-label="Breadcrum
 vi.mock("@/features/libraries/browser/useCompleteConnection", () => ({ useCompleteConnection: () => ({ rows: [] }) }));
 vi.mock("@/features/personal/usePersonalLibrary", () => ({ useLibraryPreferences: () => ({ rows: [] }) }));
 vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => true, useSession: () => ({ status: "authenticated", user: { id: "u1", username: "toby", displayName: "Toby" } }) }));
-vi.mock("@/lib/auth/session", () => ({ session: { logout: vi.fn(async () => undefined) } }));
+vi.mock("@/lib/auth/session", () => ({ session: { logout: vi.fn(async () => undefined), onChange: () => () => undefined } }));
 vi.mock("@/lib/theme", () => ({ THEMES: [{ id: "dark", label: "Dark" }], useTheme: () => ({ preference: "dark", setPreference: vi.fn() }) }));
 vi.mock("../useShellCounts", () => ({ useShellCounts: () => ({ downloads: 0, notifications: 2 }) }));
 

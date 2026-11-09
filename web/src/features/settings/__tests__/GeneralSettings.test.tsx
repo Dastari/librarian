@@ -4,6 +4,7 @@ import { useReducer } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithProviders } from "@/test";
+import { layoutColumn, RemoteNavigation, remoteStopElements, remoteStops, walkRemote } from "@/test/remote";
 
 import { GeneralSettings } from "../GeneralSettings";
 
@@ -82,7 +83,7 @@ describe("GeneralSettings bound form", () => {
     await userEvent.click(toggle);
     await userEvent.click(save());
     expect(await screen.findByText("Settings saved")).toBeInTheDocument();
-    expect(settings.playback.save).toHaveBeenCalledWith({ playback_sync_interval: "30", "playback.video_preview_backfill": false });
+    expect(settings.playback.save).toHaveBeenCalledWith({ playback_sync_interval: "30", "playback.video_preview_backfill": false, "play_history.retention_days": "0" });
   });
 
   it("saves all categories using the existing string and JSON contracts, then adopts the baseline", async () => {
@@ -207,5 +208,18 @@ describe("GeneralSettings network announcement", () => {
     await userEvent.click(save());
     expect(await screen.findByText(/Enter a full address/)).toBeInTheDocument();
     expect(settings.discovery.save).not.toHaveBeenCalled();
+  });
+});
+
+describe("GeneralSettings on a TV remote", () => {
+  it("walks every row's control once, down and back up, past the number fields' steppers and the disabled Save", async () => {
+    localStorage.setItem("librarian.inputMode", "tv");
+    await renderWithProviders(<><RemoteNavigation /><main id="main"><Harness /></main></>, { shell: true, router: false });
+    layoutColumn(document.body);
+    const rows = ["Blur", "Animated backgrounds", "TV mode", "Save progress every", "Make previews for existing videos", "Keep play history for", "Metadata language", "Announce on the local network", "Address for TV apps"];
+    expect(remoteStops(document.body)).toEqual(["Dark", "Light", ...rows]);
+    const down = walkRemote(remoteStopElements(document.body)[0]!);
+    expect(down).toEqual(["Dark", ...rows]);
+    expect(walkRemote(document.activeElement as HTMLElement, "ArrowUp")).toEqual([...down].reverse());
   });
 });

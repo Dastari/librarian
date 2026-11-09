@@ -387,7 +387,15 @@
 /* Search results scroll under still controls. The gutter keeps the columns the same width whether
  * or not there are enough results to scroll; the row of suggestions scrolls sideways, not wraps. */
 .search-results { scrollbar-gutter: stable; }
-.search-terms { overflow-x: auto; scrollbar-width: none; }
+.search-terms {
+  overflow-x: auto;
+  scrollbar-width: none;
+  /* The strip clips; its chips' focus rings need room inside it (--focus-reach). */
+  padding: var(--focus-reach);
+  margin: calc(-1 * var(--focus-reach));
+  scroll-padding-inline: var(--focus-reach);
+  box-sizing: content-box;
+}
 .search-tv { grid-template-rows: minmax(0, 1fr); }
 /* Room for a focused tile's lift and ring, without moving the first column off the heading. */
 .search-tv-scroll { scrollbar-gutter: stable; padding: 1rem 1.25rem 2rem; margin-inline: -1.25rem; }

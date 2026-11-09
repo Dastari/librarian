@@ -4,7 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
 import { useRecommended } from "@/features/recommendations/useRecommended";
-import { Artwork, EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, Panel, PosterCard, Section, SkeletonHero, StatusChip } from "@/components/ui";
+import { EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, Panel, PosterCard, Section, SkeletonHero, StatusChip } from "@/components/ui";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
 import { movieAcquisitionMeta } from "@/features/acquisition/mode";
 import { usePlayer } from "@/features/player/usePlayer";

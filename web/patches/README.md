@@ -31,3 +31,8 @@ archive if needed, and run the real Glass table/Logs/URL-history regressions plu
 populated browser scroll/focus check before removing it.
 
 `DataTable` also takes `expanderColumn`, the column that holds a row detail's expander (default: the first visible). The Identified table puts it near the end of the row. To ask upstream for.
+
+`DataTableRemoteContext` (exported from `glass-ux/data-table`) is true where a remote control drives the tables. A remote
+never stops on column headers, so the table's toolbar then carries the sort menu that its card view already offers, in
+table mode too. Nothing is folded into the header's settings menu there. `InputModeProvider` provides it in TV mode
+(design.md Q141). To ask upstream for.

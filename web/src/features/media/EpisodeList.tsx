@@ -1,6 +1,6 @@
 import { copyText } from "glass-ux/copy-button";
 import { useApolloClient, useMutation } from "@apollo/client/react";
-import { ActionBar, ActionMenu, defineActions, type ActionSet } from "glass-ux/actions";
+import { ActionBar, ActionContextMenu, ActionMenu, defineActions, type ActionSet } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, filters, NumericCell, TextCell, TwoLineCell } from "glass-ux/data-table";
 import { IconBookmark, IconCheck, IconCopy, IconDownload, IconEye, IconEyeOff, IconPlay } from "glass-ux/icons";
@@ -466,14 +466,18 @@ function EpisodeTile({ episode, onPlay, tint, active, nextUp, onActive }: { epis
   return (
     <article data-row-id={episode.id} data-active={active ? "true" : undefined} className="poster-card episode-tile relative flex w-[calc(var(--poster-min)*1.75)] shrink-0 flex-col xl:w-[calc(var(--poster-max)*1.6)]" {...focus}>
       {playable ? (
-        <button type="button" data-focusable data-nav-default={nextUp ? "" : undefined} className={targetClass} aria-label={`Play ${label}`} aria-disabled={playbackUnavailable ? true : undefined} aria-description={playbackUnavailable}
-          onClick={() => { if (!playbackUnavailable) onPlay(episode); }} />
+        // A card stays a stop when it can't play now (its summary is still worth reading), so it
+        // says why rather than being disabled. The Menu key opens the ⋯ menu's actions.
+        <ActionContextMenu set={actions} targets={[episode]} label={label}>
+          <button type="button" data-focusable data-nav-default={nextUp ? "" : undefined} className={targetClass} aria-label={`Play ${label}`} aria-description={playbackUnavailable}
+            onClick={() => { if (!playbackUnavailable) onPlay(episode); }} />
+        </ActionContextMenu>
       ) : isAdmin ? (
         <ActionMenu set={actions} targets={[episode]} label={label} align="start"
           trigger={<button type="button" data-focusable data-nav-default={nextUp ? "" : undefined} className={targetClass} aria-label={`${label} · ${state.label}`} />} />
       ) : (
         // Nothing to do yet, but a remote can still browse onto it to read its summary.
-        <button type="button" data-focusable aria-disabled data-nav-default={nextUp ? "" : undefined} className={targetClass} aria-label={`${label} · ${state.label}`} />
+        <button type="button" data-focusable data-nav-default={nextUp ? "" : undefined} className={targetClass} aria-label={`${label} · ${state.label}`} />
       )}
       <Surface material="card" radius="tile" padding="none" className="poster-art pointer-events-none relative overflow-clip">
         <Artwork src={episodeThumb(episode.id)} alt="" aspect="backdrop" tint={tint} className={playable ? undefined : "opacity-55"} displayWidth={360} />
@@ -490,7 +494,7 @@ function EpisodeTile({ episode, onPlay, tint, active, nextUp, onActive }: { epis
         ) : null}
       </Surface>
       {playable ? (
-        <span data-tv-skip className="absolute end-1 top-1 z-20" data-print="hide"><ActionMenu set={actions} targets={[episode]} label={label} /></span>
+        <span data-nav-skip className="absolute end-1 top-1 z-20" data-print="hide"><ActionMenu set={actions} targets={[episode]} label={label} /></span>
       ) : null}
       <div className="pointer-events-none min-w-0 px-0.5 pt-2">
         <p className="truncate text-title-sm text-foreground">{episode.episode} · {title}</p>
