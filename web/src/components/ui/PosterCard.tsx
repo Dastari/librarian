@@ -81,7 +81,8 @@ export function PosterCard({ title, meta, image, aspect = "poster", tint, to, pa
     ? { tabIndex: -1, onFocus: (event: FocusEvent<HTMLElement>) => { event.currentTarget.closest<HTMLElement>(".fa-dt-card")?.focus({ preventScroll: true }); onFocus?.(event); } }
     : { onFocus, "data-focusable": true };
   const morph = (event: MouseEvent<HTMLElement>) => claimMorph(event.currentTarget.nextElementSibling);
-  // A remote's Play key plays the focused tile; its on-screen play button is for pointers.
+  // A card is one stop: its on-screen play button is for pointers (the card's link opens the page
+  // with Play on it, the Play key plays the focused tile, and the menu has the rest).
   const playKey = onPlay ? (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== "MediaPlayPause" && event.key !== "MediaPlay") return;
     event.preventDefault();
@@ -109,7 +110,7 @@ export function PosterCard({ title, meta, image, aspect = "poster", tint, to, pa
         {onPlay || actions ? (
           <div data-print="hide" className="over-imagery absolute inset-0 z-20 flex items-end justify-end gap-1 p-[max(var(--space-2),var(--focus-reach))]">
             {actions ? <div className="pointer-events-auto flex gap-1">{actions}</div> : null}
-            {onPlay ? <Button variant="primary" shape="circle" icon={<IconPlay />} aria-label={`Play ${title}`} onClick={onPlay} className="pointer-events-auto" tabIndex={inTable ? -1 : undefined} data-focusable={inTable ? undefined : true} data-tv-skip /> : null}
+            {onPlay ? <Button variant="primary" shape="circle" icon={<IconPlay />} aria-label={`Play ${title}`} onClick={onPlay} className="pointer-events-auto" tabIndex={-1} data-nav-skip data-tv-skip /> : null}
           </div>
         ) : null}
         {watched !== null ? (

@@ -82,6 +82,12 @@ const FOCUSABLE_SELECTOR =
 /** The focusable selector scoped to the routed content (each list entry needs the prefix). */
 const IN_MAIN = FOCUSABLE_SELECTOR.split(",").map((selector) => `main ${selector.trim()}`).join(", ");
 
+/** The first match that is a stop for arrow keys: pointer-only controls (`data-nav-skip`) never are. */
+function firstStop(root: ParentNode, selector: string): HTMLElement | null {
+  for (const element of root.querySelectorAll<HTMLElement>(selector)) if (!element.closest("[data-nav-skip]")) return element;
+  return null;
+}
+
 type Direction = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
 
 /** webOS (461) and Tizen (10009) report their remote's Back key only as a key code. */
@@ -372,7 +378,7 @@ export function useSpatialNavigation(enabled = true, tv = false, onBack: () => v
       const direction = event.key as Direction;
       if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(direction)) return;
       if (!active || active === document.body) {
-        const first = document.querySelector<HTMLElement>("main [data-tv-autofocus]") ?? document.querySelector<HTMLElement>(`main [data-spatial-start], ${IN_MAIN}`);
+        const first = document.querySelector<HTMLElement>("main [data-tv-autofocus]") ?? firstStop(document, `main [data-spatial-start], ${IN_MAIN}`);
         first?.focus();
         if (first) event.preventDefault();
         return;
@@ -468,7 +474,7 @@ export function useRouteFocus(pathname: string, active: boolean) {
       const start = main.querySelector<HTMLElement>("[data-tv-autofocus]");
       const target = restore
         ?? (start && start.getAttribute("aria-disabled") !== "true" ? start : null)
-        ?? (elapsed > (start ? 3000 : 300) ? main.querySelector<HTMLElement>("[data-spatial-start], " + FOCUSABLE_SELECTOR) : null);
+        ?? (elapsed > (start ? 3000 : 300) ? firstStop(main, "[data-spatial-start], " + FOCUSABLE_SELECTOR) : null);
       if (target) {
         target.focus({ preventScroll: Boolean(restore) });
         if (!restore) revealFocused(target);

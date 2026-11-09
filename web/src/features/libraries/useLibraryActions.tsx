@@ -1,6 +1,6 @@
 import { useMutation } from "@apollo/client/react";
 import { defineActions, type ActionSet } from "glass-ux/actions";
-import { IconExternalLink, IconFile, IconFolder, IconPlus, IconRefresh, IconSettings, IconTrash, IconWarning } from "glass-ux/icons";
+import { IconExternalLink, IconFile, IconFolder, IconPlus, IconRefresh, IconSettings, IconStar, IconTrash, IconWarning } from "glass-ux/icons";
 import { parseAsString, useQueryState } from "nuqs";
 import { useCallback, useMemo } from "react";
 
@@ -16,10 +16,15 @@ import { isLibrarySettingsTab, type LibrarySettingsTab } from "./LibrarySettings
  * Everything that can be done to a library, wherever it's shown: its header, a table row's menu,
  * a card's right-click. `settings` opens its dialog at a section. `open` is left out on its page.
  */
-export function useLibraryActions<T extends LibraryEntity>({ settings, open = true, onChanged }: {
+export function useLibraryActions<T extends LibraryEntity>({ settings, open = true, onChanged, favourites }: {
   settings: (library: T, tab?: LibrarySettingsTab) => void;
   open?: boolean;
   onChanged?: () => void;
+  /**
+   * Where a person's favourite libraries are known (the Libraries page): adds Add to / Remove from
+   * favourites, which is how a card's star is toggled from a remote or the keyboard.
+   */
+  favourites?: { isFavourite: (library: T) => boolean; canChange: (library: T) => boolean; toggle: (library: T) => Promise<unknown> };
 }): ActionSet<T> {
   const isAdmin = useIsAdmin();
   const [scan] = useMutation(ScanLibraryDocument);
@@ -47,6 +52,11 @@ export function useLibraryActions<T extends LibraryEntity>({ settings, open = tr
       visible: (rows: readonly T[]) => rows.length === 1 && addHref(libraryType(rows[0]!.libraryType).type) !== null,
       run: (rows: readonly T[], context: { navigate: (href: string) => void }) => context.navigate(addHref(libraryType(rows[0]!.libraryType).type)!),
     }] : []),
+    ...(favourites ? [{
+      id: "favourite", label: (rows: readonly T[]) => (favourites.isFavourite(rows[0]!) ? "Remove from favourites" : "Add to favourites"), icon: IconStar, group: "open" as const, priority: 4,
+      visible: (rows: readonly T[]) => rows.length === 1 && favourites.canChange(rows[0]!),
+      run: (rows: readonly T[]) => favourites.toggle(rows[0]!),
+    }] : []),
     {
       id: "files", label: "Files", icon: IconFile, group: "open", priority: 2,
       visible: (rows) => rows.length === 1,
@@ -73,7 +83,7 @@ export function useLibraryActions<T extends LibraryEntity>({ settings, open = tr
       visible: (rows) => rows.length === 1 && isAdmin,
       run: (rows) => settings(rows[0]!, "remove"),
     },
-  ]), [isAdmin, open, scan, settings, onChanged]);
+  ]), [isAdmin, open, scan, settings, onChanged, favourites]);
 }
 
 /** The settings dialog's open section, in the URL so it can be linked. */

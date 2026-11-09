@@ -91,6 +91,16 @@ describe("PosterCard", () => {
     expect(screen.getByRole("button", { name: "Play Dune" })).toHaveAttribute("tabindex", "-1");
   });
 
+  it("keeps its play button out of the tab order and the arrow keys, so the card is one stop", async () => {
+    const onPlay = vi.fn();
+    await renderWithProviders(<PosterCard title="Dune" image={null} onPlay={onPlay} onPress={vi.fn()} />);
+    const play = screen.getByRole("button", { name: "Play Dune" });
+    expect(play).toHaveAttribute("tabindex", "-1");
+    expect(play).toHaveAttribute("data-nav-skip");
+    await userEvent.click(play);
+    expect(onPlay).toHaveBeenCalledTimes(1);
+  });
+
   describe("cover mosaic for a list or playlist", () => {
     const covers = ["/api/artwork/movie/m1/poster", "/api/artwork/album/a1/cover", "/api/artwork/show/s1/poster", "/api/artwork/audiobook/b1/cover"];
     const tile = () => document.querySelector<HTMLElement>("[data-mosaic]");
