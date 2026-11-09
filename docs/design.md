@@ -1980,5 +1980,15 @@ should not sit next to Remove from playlist. Episodes, tracks and chapters have 
 entries offer the playlist's actions and Open; giving those three entities sets would put theirs here with no change to
 this page.
 
-### Q109: What does a lone chapter do when it ends, and how is a list's picture made?
-**Answer:** See the commits for the audiobook chapter bound and the `/lists` mosaic; this entry is filled in below.
+### Q109: What does a lone chapter do when it ends, and how does a list card draw its picture?
+**Answer:** A chapter queued on its own (from a playlist or the queue) stops where it ends. When the file holds more than the
+chapter (a whole-book file, or a chapter placed inside a part), its queue entry carries `endPosition` (its start plus its
+length, `chapterEnd` in `features/personal/playlistPlayback.ts`), and the audio dock treats reaching it as the entry
+ending: it pauses and calls `playerStore.advance()`, which moves to the next queue item or asks the continuation resolver.
+A chapter that runs to its file's end, and every per-chapter file, carries none. Whole-book and by-part entries that
+play a book from the page still run through, with their chapter marks. The seek bar of a bounded entry still spans the
+whole file. On `/lists` a card shows up to four distinct covers from the list's first entries in one square tile
+(`mosaic` on `PosterCard`: two side by side, three with the third spanning the bottom, four in a 2×2 grid, the layout the
+identity's picture already uses); entries from one album or show make one tile, so a list built from a single album shows
+that cover alone, and with fewer than two covers, or when covers fail to load, the card falls back to the single cover and
+then to the playlist glyph.
