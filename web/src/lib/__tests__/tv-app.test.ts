@@ -4,9 +4,10 @@ import { sizedArtwork } from "@/lib/api/urls";
 import { hlsBufferConfig } from "@/features/player/useMediaSource";
 import { blurDefault, readBlur, readAnimatedBackgrounds, animatedBackgroundsUnavailable, BLUR_KEY } from "@/lib/glass/appearance";
 import {
-  DISPLAY_SIZE_KEY,
-  applyTvViewport,
+  TV_VOLUME_EVENT,
+  bindTvVolume,
   deviceMemory,
+  displaySizeStore,
   handleBack,
   holdScreenOn,
   installTvApp,
@@ -14,10 +15,12 @@ import {
   isLowMemoryDevice,
   isTvApp,
   openMenu,
+  quantizeVolume,
   readDisplaySize,
+  resetTvVolumeForTests,
   setDisplaySize,
   tvAppVersion,
-  tvViewportContent,
+  tvVolumeStore,
 } from "@/lib/tv-app";
 
 const TV_AGENT = "Mozilla/5.0 (Linux; Android 11; V8-R51AT01-LF1V126 Build/RP1A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/156.0.0.0 Safari/537.36 LibrarianTV/1.0.0";
@@ -162,53 +165,107 @@ describe("the shell bridge", () => {
   });
 });
 
-describe("the 10-foot canvas", () => {
-  beforeEach(() => {
-    document.head.innerHTML = '<meta name="viewport" content="width=device-width, initial-scale=1">';
-  });
-
-  it("lays out 1920 CSS px wide whatever density the TV reports", () => {
-    // 1080p at density 2 (screen.width 960), 1080p at density 1, 4K at density 4.
-    expect(tvViewportContent(100, 960)).toBe("width=1920, initial-scale=0.5, minimum-scale=0.5, maximum-scale=0.5, user-scalable=no");
-    expect(tvViewportContent(100, 1920)).toBe("width=1920, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no");
-    expect(tvViewportContent(100, 0)).toBe("width=1920, user-scalable=no");
-  });
-
-  it("narrows the canvas for a larger display size", () => {
-    expect(tvViewportContent(120, 960)).toBe("width=1600, initial-scale=0.6, minimum-scale=0.6, maximum-scale=0.6, user-scalable=no");
-    expect(tvViewportContent(80, 960)).toBe("width=2400, initial-scale=0.4, minimum-scale=0.4, maximum-scale=0.4, user-scalable=no");
-  });
-
-  it("leaves the viewport alone when the shell's density already made the canvas", () => {
-    Object.defineProperty(window.screen, "width", { configurable: true, get: () => 1920 });
-    expect(applyTvViewport(100)).toBe(false);
-    expect(document.querySelector<HTMLMetaElement>('meta[name="viewport"]')!.content).toBe("width=device-width, initial-scale=1");
-    Object.defineProperty(window.screen, "width", { configurable: true, get: () => 1600 });
-    expect(applyTvViewport(120)).toBe(false);
-  });
-
-  it("lets the shell keep the display size when it can", () => {
+describe("display size", () => {
+  it("is the shell's, and changing it goes to the shell", () => {
+    expect(readDisplaySize()).toBe(100);
     const setShellSize = vi.fn();
     (window as Window & { LibrarianTV?: unknown }).LibrarianTV = { setKeepScreenOn: () => {}, version: () => "1.0.0", openServerSettings: () => {}, serverUrl: () => "", displaySize: () => 110, setDisplaySize: setShellSize };
     expect(readDisplaySize()).toBe(110);
     setDisplaySize(120);
     expect(setShellSize).toHaveBeenCalledWith(120);
-    expect(window.localStorage.getItem(DISPLAY_SIZE_KEY)).toBeNull();
+    expect(displaySizeStore.getSnapshot()).toBe(120);
   });
 
-  it("falls back to its own viewport and storage without the shell's density", () => {
-    Object.defineProperty(window.screen, "width", { configurable: true, get: () => 960 });
+  it("never touches the viewport meta itself", () => {
+    document.head.innerHTML = '<meta name="viewport" content="width=1920, viewport-fit=cover">';
     setAgent(TV_AGENT);
-    expect(applyTvViewport()).toBe(true);
-    const meta = () => document.querySelector<HTMLMetaElement>('meta[name="viewport"]')!.content;
-    expect(meta()).toMatch(/^width=1920,/);
-    setDisplaySize(110);
-    expect(window.localStorage.getItem(DISPLAY_SIZE_KEY)).toBe("110");
-    expect(meta()).toMatch(/^width=1745,/);
-    expect(document.documentElement.style.getPropertyValue("--tv-display-size")).toBe("1.1");
-    setDisplaySize(100);
-    expect(window.localStorage.getItem(DISPLAY_SIZE_KEY)).toBeNull();
-    window.localStorage.setItem(DISPLAY_SIZE_KEY, "300");
-    expect(readDisplaySize()).toBe(100);
+    installTvApp({ pathname: () => "/" });
+    setDisplaySize(90);
+    expect(document.querySelector<HTMLMetaElement>('meta[name="viewport"]')!.content).toBe("width=1920, viewport-fit=cover");
+  });
+});
+
+describe("the TV's volume", () => {
+  let shell: { step: number; max: number; muted: boolean; fixed: boolean; canMute: boolean };
+  const setVolume = vi.fn();
+  const setMuted = vi.fn();
+
+  beforeEach(() => {
+    shell = { step: 6, max: 15, muted: false, fixed: false, canMute: true };
+    setVolume.mockReset().mockImplementation((level: number) => { shell.step = Math.round(level * shell.max); });
+    setMuted.mockReset().mockImplementation((muted: boolean) => {
+      if (shell.canMute) shell.muted = muted;
+      return shell.canMute;
+    });
+    (window as Window & { LibrarianTV?: unknown }).LibrarianTV = {
+      setKeepScreenOn: () => {}, version: () => "1.0.0", openServerSettings: () => {}, serverUrl: () => "",
+      volume: () => JSON.stringify({ ...shell, level: shell.step / shell.max }),
+      setVolume,
+      setMuted,
+    };
+    resetTvVolumeForTests();
+  });
+  afterEach(() => resetTvVolumeForTests());
+
+  const tvEvent = (patch: Partial<typeof shell>) => {
+    Object.assign(shell, patch);
+    window.dispatchEvent(new CustomEvent(TV_VOLUME_EVENT, { detail: { ...shell, level: shell.step / shell.max } }));
+  };
+
+  it("is null in a browser", () => {
+    delete (window as Window & { LibrarianTV?: unknown }).LibrarianTV;
+    resetTvVolumeForTests();
+    expect(tvVolumeStore.getSnapshot()).toBeNull();
+  });
+
+  it("rounds levels to the TV's steps without drift", () => {
+    expect(quantizeVolume(0.37, 15)).toBeCloseTo(6 / 15);
+    expect(quantizeVolume(1.3, 15)).toBe(1);
+    for (let step = 0; step <= 15; step += 1) expect(quantizeVolume(step / 15, 15)).toBe(step / 15);
+  });
+
+  it("keeps the element at full volume while its volume and mute drive the TV", () => {
+    const video = document.createElement("video");
+    const changes = vi.fn();
+    video.addEventListener("volumechange", changes);
+    const unbind = bindTvVolume(video);
+    expect(video.volume).toBeCloseTo(6 / 15);
+    video.volume = 0.5;
+    expect(setVolume).toHaveBeenCalledWith(8 / 15);
+    expect(video.volume).toBeCloseTo(8 / 15);
+    video.muted = true;
+    expect(setMuted).toHaveBeenCalledWith(true);
+    expect(video.muted).toBe(true);
+    // The element itself never left full volume.
+    const realVolume = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "volume")!.get!.call(video);
+    const realMuted = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "muted")!.get!.call(video);
+    expect(realVolume).toBe(1);
+    expect(realMuted).toBe(false);
+    changes.mockClear();
+    tvEvent({ step: 12, muted: false });
+    expect(video.volume).toBeCloseTo(12 / 15);
+    expect(video.muted).toBe(false);
+    expect(changes).toHaveBeenCalled();
+    unbind();
+    expect(Object.getOwnPropertyDescriptor(video, "volume")).toBeUndefined();
+  });
+
+  it("mutes the element when the TV will not mute", () => {
+    shell.canMute = false;
+    const video = document.createElement("video");
+    bindTvVolume(video);
+    video.muted = true;
+    expect(video.muted).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "muted")!.get!.call(video)).toBe(true);
+  });
+
+  it("leaves a fixed volume alone", () => {
+    shell.fixed = true;
+    resetTvVolumeForTests();
+    const video = document.createElement("video");
+    bindTvVolume(video);
+    expect(video.volume).toBe(1);
+    video.volume = 0.2;
+    expect(setVolume).not.toHaveBeenCalled();
   });
 });

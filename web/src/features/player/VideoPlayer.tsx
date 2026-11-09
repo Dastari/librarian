@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 import { useSettingsConnection } from "@/features/settings/useSettingsConnection";
 import { EntityAudioStreamListDocument, EntityMediaChapterListDocument, EntitySubtitleListDocument } from "@/graphql/generated/graphql";
 import { mediaSubtitleUrl } from "@/lib/api/urls";
-import { holdScreenOn } from "@/lib/tv-app";
+import { bindTvVolume, holdScreenOn } from "@/lib/tv-app";
 import { useInputMode } from "@/lib/input-mode";
 import { cn } from "@/lib/utils";
 
@@ -16,6 +16,7 @@ import { usePlayerState, type PlayItem } from "./store";
 import { useCastAdapter } from "./useCastAdapter";
 import { useMediaSource } from "./useMediaSource";
 import { useProgressSync } from "./useProgressSync";
+import { useTvVolume } from "./useTvVolume";
 import { readMiniRect, saveMiniRect, saveVideoSession } from "./videoSession";
 
 const VIEW_MODES: readonly MediaViewMode[] = ["inline", "windowed", "fullscreen", "pip"];
@@ -213,21 +214,10 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
       const target = event.target instanceof Element ? event.target : null;
       if (event.defaultPrevented || target?.closest('[role="menu"], [role="dialog"], [role="listbox"], input, textarea')) return;
       const player = controller.current;
-      // Remote and keyboard media keys (the TV app forwards its remote's keys as these).
-      const mediaKeys: Record<string, (() => void) | undefined> = {
-        MediaPlayPause: () => player?.toggle(),
-        MediaPlay: () => player?.play(),
-        MediaPause: () => player?.pause(),
-        MediaStop: () => player?.pause(),
-        MediaRewind: () => player?.seekBy(-10),
-        MediaFastForward: () => player?.seekBy(10),
-        MediaTrackNext: onNext,
-      };
-      const mediaKey = mediaKeys[event.key];
-      if (mediaKey) {
-        event.preventDefault();
-        mediaKey();
-      } else if ((event.key === "Escape" || event.key === "Backspace" || event.key === "GoBack" || BACK_KEY_CODES.has(event.keyCode)) && !document.fullscreenElement) {
+      if (event.key === "MediaPlayPause") player?.toggle();
+      else if (event.key === "MediaRewind") player?.seekBy(-10);
+      else if (event.key === "MediaFastForward") player?.seekBy(10);
+      else if ((event.key === "Escape" || event.key === "Backspace" || event.key === "GoBack" || BACK_KEY_CODES.has(event.keyCode)) && !document.fullscreenElement) {
         // Taken here, so the TV app does not also step back through the WebView's history.
         event.preventDefault();
         onBack();
@@ -241,7 +231,12 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onBack, onNext, wake]);
+  }, [onBack, wake]);
+
+  // In the TV app the player's volume and mute are the TV's own (Q137); the element stays at full.
+  const tvVolume = useTvVolume();
+  const tvVolumeBound = tvVolume !== null;
+  useEffect(() => (video && tvVolumeBound ? bindTvVolume(video) : undefined), [video, tvVolumeBound]);
 
   // The TV app keeps the screen on while the picture plays.
   const screenToken = useRef(Symbol("video"));
@@ -286,7 +281,7 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
 
   return (
     // Full screen, the picture and its controls keep clear of a landscape iPhone's notch.
-    <div className={cn("relative h-full w-full overflow-clip bg-black text-white", !mini && "ps-(--safe-inline-start) pe-(--safe-inline-end)")} onPointerMove={wake} onPointerDown={wake} onKeyDownCapture={remoteKeys}>
+    <div className={cn("relative h-full w-full overflow-clip bg-black text-white", !mini && "ps-(--safe-inline-start) pe-(--safe-inline-end)")} data-tv-volume={tvVolume ? (tvVolume.fixed ? "fixed" : "tv") : undefined} onPointerMove={wake} onPointerDown={wake} onKeyDownCapture={remoteKeys}>
       <GlassVideoPlayer
         fill
         className="h-full"
@@ -307,6 +302,7 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
         loading={progress.loading}
         controlsEnd={
           <>
+            {tvVolume?.fixed ? <span className="tv-volume-note text-label-sm text-white/70">Volume is controlled by your TV or sound system</span> : null}
             {onNext ? <Button variant="ghost" size="sm" shape="circle" icon={<IconSkipForward />} aria-label={nextLabel ?? "Next episode"} tooltip={nextLabel ?? "Next episode"} onClick={onNext} /> : null}
             {audioRows.rows.length > 1 ? (
               <Menu.Root>

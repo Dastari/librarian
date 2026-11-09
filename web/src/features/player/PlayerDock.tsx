@@ -18,6 +18,7 @@ import { audioCommands, canSkipAudio, skipAudio } from "./usePlayer";
 import { currentAudioItem, playerStore, usePlayerState } from "./store";
 import { useMediaSource } from "./useMediaSource";
 import { useProgressSync } from "./useProgressSync";
+import { useTvVolume } from "./useTvVolume";
 
 /**
  * Persistent audio player. Holds the single <audio> element for the whole app, mirrors its
@@ -27,6 +28,7 @@ export function PlayerDock() {
   const state = usePlayerState();
   const item = currentAudioItem(state);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const tvVolume = useTvVolume() !== null;
   const navigate = useNavigate();
   const activationKey = state.audioActivation;
   const progress = useProgressSync(item, activationKey);
@@ -142,10 +144,11 @@ export function PlayerDock() {
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    audio.volume = transport.volume;
+    // In the TV app the TV's own volume is the level (VolumeControl); the element stays at full.
+    audio.volume = tvVolume ? 1 : transport.volume;
     audio.muted = transport.muted;
     audio.playbackRate = transport.rate;
-  }, [transport.volume, transport.muted, transport.rate]);
+  }, [transport.volume, transport.muted, transport.rate, tvVolume]);
 
   // Media Session integration for lock screens, headsets and TV remotes.
   useEffect(() => {
@@ -178,31 +181,6 @@ export function PlayerDock() {
   useEffect(() => {
     if ("mediaSession" in navigator) navigator.mediaSession.playbackState = transport.playing ? "playing" : "paused";
   }, [transport.playing]);
-
-  // Media keys from a keyboard or the TV app's remote, while music or a book plays. A full-screen
-  // video player takes them first (it prevents the default).
-  useEffect(() => {
-    if (!item) return;
-    const seekBy = (seconds: number) => audioCommands.seek?.(Math.max(0, (audioRef.current?.currentTime ?? 0) + seconds));
-    const keys: Record<string, () => void> = {
-      MediaPlayPause: () => playerStore.updateTransport({ playing: !playerStore.getSnapshot().transport.playing }),
-      MediaPlay: () => playerStore.updateTransport({ playing: true }),
-      MediaPause: () => playerStore.updateTransport({ playing: false }),
-      MediaStop: () => playerStore.updateTransport({ playing: false }),
-      MediaTrackNext: () => skipAudio(1),
-      MediaTrackPrevious: () => skipAudio(-1),
-      MediaRewind: () => seekBy(-15),
-      MediaFastForward: () => seekBy(30),
-    };
-    const onKey = (event: KeyboardEvent) => {
-      const action = keys[event.key];
-      if (!action || event.defaultPrevented) return;
-      event.preventDefault();
-      action();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [item]);
 
   // The TV app keeps the screen on while something plays.
   const screenToken = useRef(Symbol("audio"));

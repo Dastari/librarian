@@ -32,3 +32,8 @@
   backdrop-filter: none;
   background-color: var(--canvas);
 }
+
+/* The TV's volume is fixed (or set by a sound system): the player keeps its mute button and shows a
+ * note in place of a slider that could not change anything (VideoPlayer, Q137). */
+[data-tv-volume="fixed"] .fa-media-volume-slider { display: none; }
+.tv-volume-note { white-space: nowrap; margin-inline-end: 0.5rem; }
