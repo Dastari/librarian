@@ -38,6 +38,7 @@ use crate::services::graphql::entities::{
     UpdateLibraryScanRunInput, User,
 };
 use crate::services::graphql::{AuthUser, LibrarianSchema};
+use crate::services::library_storage::own_writes::own_write;
 use crate::services::library_storage::{
     EntryKind, IntoStoragePath, PlaceMode, StorageErrorKind, StoragePath, TOOL_PROTOCOL_WHITELIST,
     WalkFilter, WalkOptions, is_smb_uri, is_tool_url, library_storage, place_no_clobber_blocking,
@@ -59,9 +60,12 @@ mod move_library;
 mod music;
 #[cfg(test)]
 mod organize_tests;
+mod watch;
 
 pub use identify::{IdentifiedChoice, IdentifyCandidate, IdentifyTrigger};
 pub use move_library::{LibraryMoveOutcome, LibraryMovePlan};
+use watch::describe_change_targets;
+pub use watch::nudge_library_watches;
 
 /// Transport success is not mutation success. These internal documents select a
 /// success/error payload for every mutation root, including compatibility aliases.
@@ -486,6 +490,85 @@ struct LinkedTrackRow {
 struct ScanJob {
     library_id: String,
     scan_run_id: String,
+    scope: ScanScope,
+}
+
+/// What one scan looks at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ScanScope {
+    /// The whole library.
+    Full,
+    /// Only these paths (files or folders, each one under the library's root) and the records
+    /// under them: what a folder watch saw change (`docs/design.md` Q116).
+    Changes(Vec<String>),
+}
+
+impl ScanScope {
+    fn is_full(&self) -> bool {
+        matches!(self, Self::Full)
+    }
+
+    /// Whether a catalogued path is one this scan looks at.
+    fn covers(&self, path: &str) -> bool {
+        match self {
+            Self::Full => true,
+            Self::Changes(targets) => targets
+                .iter()
+                .any(|target| path_is_at_or_under(path, target)),
+        }
+    }
+}
+
+/// `path` is `target` or something inside it.
+fn path_is_at_or_under(path: &str, target: &str) -> bool {
+    let target = target.trim_end_matches('/');
+    path == target
+        || path
+            .strip_prefix(target)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// Whether a scan takes a file of this name for media of the library: not hidden, and with one
+/// of its extensions. `name` may be a whole path; only its last part counts.
+fn is_reported_media_name(name: &str, allowed_extensions: &[&str]) -> bool {
+    let name = name.rsplit('/').next().unwrap_or(name);
+    if name.starts_with('.') {
+        return false;
+    }
+    let extension = Path::new(name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    allowed_extensions
+        .iter()
+        .any(|allowed| *allowed == extension)
+}
+
+/// A walked media file as the scan takes it, with its path relative to the library `root`.
+fn discovered_media_file(
+    path: StoragePath,
+    meta: Option<crate::services::library_storage::EntryMeta>,
+    root: &StoragePath,
+) -> DiscoveredMediaFile {
+    let extension = path
+        .extension()
+        .map(|extension| extension.to_ascii_lowercase())
+        .unwrap_or_default();
+    let relative_path = path.relative_to(root);
+    DiscoveredMediaFile {
+        absolute_path: path.into_string(),
+        relative_path,
+        extension,
+        size: meta
+            .as_ref()
+            .and_then(|meta| i64::try_from(meta.size).ok())
+            .unwrap_or(i64::MAX),
+        modified_at: meta
+            .and_then(|meta| meta.modified)
+            .map(DateTime::<Utc>::from)
+            .map(|value| value.to_rfc3339_opts(SecondsFormat::Nanos, true)),
+    }
 }
 
 /// Why the walk of a library could not read an entry.
@@ -669,6 +752,7 @@ struct Runtime {
     cancel: CancellationToken,
     scheduler_handle: JoinHandle<()>,
     scan_worker_handle: JoinHandle<()>,
+    watch_handle: JoinHandle<()>,
     analyze_worker_handles: Vec<JoinHandle<()>>,
 }
 
@@ -1890,6 +1974,18 @@ impl LibraryScanService {
         Ok(pattern)
     }
 
+    /// How often a library gets a whole-library scan: its own schedule, and for a watched library
+    /// at least hourly, the safety net for a change no notification told (Q116).
+    fn full_scan_interval_minutes(auto_scan: bool, watched: bool, interval: i32) -> Option<i32> {
+        const WATCH_SAFETY_NET_MINUTES: i32 = 60;
+        match (auto_scan && interval > 0, watched) {
+            (true, true) => Some(interval.min(WATCH_SAFETY_NET_MINUTES)),
+            (true, false) => Some(interval),
+            (false, true) => Some(WATCH_SAFETY_NET_MINUTES),
+            (false, false) => None,
+        }
+    }
+
     async fn get_due_autoscan_libraries(&self) -> Result<Vec<String>> {
         let Some(auth_user) = self.try_system_auth_user(None).await? else {
             debug!("Skipping autoscan schedule evaluation because no users exist yet");
@@ -1900,12 +1996,14 @@ impl LibraryScanService {
                 &auth_user,
                 r#"query DueAutoscanLibraries($page: PageInput) {
                     Libraries: libraries(
-                        where: { autoScan: { eq: true }, scanning: { eq: false } }
+                        where: { scanning: { eq: false } }
                         page: $page
                     ) {
                         Edges: edges {
                             Node: node {
                                 Id: id
+                                AutoScan: autoScan
+                                WatchForChanges: watchForChanges
                                 LastScannedAt: lastScannedAt
                                 ScanIntervalMinutes: scanIntervalMinutes
                             }
@@ -1939,9 +2037,19 @@ impl LibraryScanService {
                 .get("ScanIntervalMinutes")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0) as i32;
-            if interval_minutes <= 0 {
+            let auto_scan = node
+                .get("AutoScan")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let watched = node
+                .get("WatchForChanges")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let Some(interval_minutes) =
+                Self::full_scan_interval_minutes(auto_scan, watched, interval_minutes)
+            else {
                 continue;
-            }
+            };
 
             let Some(last) = last_scanned_at else {
                 due.push(id.to_string());
@@ -2277,20 +2385,8 @@ impl LibraryScanService {
             let prune: WalkFilter =
                 Arc::new(|entry| entry.depth == 1 && entry.name == LIBRARY_TRASH_DIR);
             let report: WalkFilter = Arc::new(move |entry| {
-                if entry.kind != EntryKind::File {
-                    return false;
-                }
-                if entry.name.starts_with('.') || entry.name.starts_with("._") {
-                    return false;
-                }
-                let extension = Path::new(entry.name)
-                    .extension()
-                    .and_then(|extension| extension.to_str())
-                    .map(str::to_ascii_lowercase)
-                    .unwrap_or_default();
-                allowed_extensions
-                    .iter()
-                    .any(|allowed| *allowed == extension)
+                entry.kind == EntryKind::File
+                    && is_reported_media_name(entry.name, allowed_extensions)
             });
             let walk = library_storage()
                 .walk(
@@ -2321,27 +2417,8 @@ impl LibraryScanService {
                 }
                 let sent = match result {
                     Ok(entry) => {
-                        let extension = entry
-                            .path
-                            .extension()
-                            .map(|extension| extension.to_ascii_lowercase())
-                            .unwrap_or_default();
-                        let relative_path = entry.path.relative_to(&root);
-                        let meta = entry.meta;
-                        tx.send(Ok(DiscoveredMediaFile {
-                            absolute_path: entry.path.into_string(),
-                            relative_path,
-                            extension,
-                            size: meta
-                                .as_ref()
-                                .and_then(|meta| i64::try_from(meta.size).ok())
-                                .unwrap_or(i64::MAX),
-                            modified_at: meta
-                                .and_then(|meta| meta.modified)
-                                .map(DateTime::<Utc>::from)
-                                .map(|value| value.to_rfc3339_opts(SecondsFormat::Nanos, true)),
-                        }))
-                        .await
+                        tx.send(Ok(discovered_media_file(entry.path, entry.meta, &root)))
+                            .await
                     }
                     Err(error) => {
                         tx.send(Err(DiscoveryError {
@@ -3196,7 +3273,13 @@ impl LibraryScanService {
                 });
             }
         }
+        self.queue_scan_with(library_id, ScanScope::Full).await
+    }
 
+    /// Queue a scan of `scope`. Unlike [`queue_scan`](Self::queue_scan) this also queues while
+    /// the library is being scanned: the one running may have walked past the change already, and
+    /// scans of one library run one after another.
+    async fn queue_scan_with(&self, library_id: &str, scope: ScanScope) -> Result<QueueScanResult> {
         let library = self.get_library(library_id).await?;
         if let Err(error) = self.compact_scan_history(library_id).await {
             warn!(
@@ -3205,12 +3288,13 @@ impl LibraryScanService {
                 "Failed to compact old library scan history"
             );
         }
-        let scan_run = self.create_scan_run(&library).await?;
+        let scan_run = self.create_scan_run(&library, &scope).await?;
         if let Err(error) = self
             .scan_tx
             .send(ScanJob {
                 library_id: library_id.to_string(),
                 scan_run_id: scan_run.id.clone(),
+                scope,
             })
             .await
         {
@@ -4252,7 +4336,11 @@ impl LibraryScanService {
         .await
     }
 
-    async fn create_scan_run(&self, library: &LibraryRow) -> Result<LibraryScanRun> {
+    async fn create_scan_run(
+        &self,
+        library: &LibraryRow,
+        scope: &ScanScope,
+    ) -> Result<LibraryScanRun> {
         let input = CreateLibraryScanRunInput {
             user_id: library.user_id.clone(),
             library_id: library.id.clone(),
@@ -4272,7 +4360,14 @@ impl LibraryScanService {
             organization_failed_count: 0,
             missing_count: 0,
             reconciled_count: 0,
-            summary: Some(format!("Scan queued for {}", library.name)),
+            summary: Some(match scope {
+                ScanScope::Full => format!("Scan queued for {}", library.name),
+                ScanScope::Changes(targets) => format!(
+                    "Changes queued for {}: {}",
+                    library.name,
+                    describe_change_targets(&library.path, targets)
+                ),
+            }),
             error_code: None,
         };
         self.owned_scan_write(library.id.clone(), library.user_id.clone(), move |tx| {
@@ -4551,6 +4646,7 @@ impl LibraryScanService {
         self: &Arc<Self>,
         library_id: &str,
         scan_run_id: &str,
+        scope: &ScanScope,
         cancel: CancellationToken,
     ) -> Result<()> {
         let scan_started = Instant::now();
@@ -4577,7 +4673,14 @@ impl LibraryScanService {
                 status: Some("RUNNING".to_string()),
                 current_stage: Some("DISCOVERY".to_string()),
                 started_at: Some(Some(Utc::now().to_rfc3339())),
-                summary: Some(Some(format!("Scanning {}", library.name))),
+                summary: Some(Some(match scope {
+                    ScanScope::Full => format!("Scanning {}", library.name),
+                    ScanScope::Changes(targets) => format!(
+                        "Checking changes in {}: {}",
+                        library.name,
+                        describe_change_targets(&library.path, targets)
+                    ),
+                })),
                 ..Default::default()
             },
         )
@@ -4593,13 +4696,18 @@ impl LibraryScanService {
             library_path = %library.path,
             auto_organize = library.auto_organize,
             scan_interval_minutes = library.scan_interval_minutes,
-            "Starting library scan: library_id={}, name={}, type={}, path={}, auto_organize={}, scan_interval_minutes={}",
+            full = scope.is_full(),
+            "Starting library scan: library_id={}, name={}, type={}, path={}, auto_organize={}, scan_interval_minutes={}, scope={}",
             library_id,
             library.name,
             library.library_type,
             library.path,
             library.auto_organize,
-            library.scan_interval_minutes
+            library.scan_interval_minutes,
+            match scope {
+                ScanScope::Full => "everything".to_string(),
+                ScanScope::Changes(targets) => describe_change_targets(&library.path, targets),
+            }
         );
 
         let root = PathBuf::from(&library.path);
@@ -4679,14 +4787,24 @@ impl LibraryScanService {
         let mut media_files_by_path = self.load_media_files_by_path(library_id).await?;
         let reconciliation_rows = media_files_by_path
             .values()
+            .filter(|file| scope.covers(&file.path))
             .map(|file| ExistingMediaFileRow {
                 id: file.id.clone(),
                 path: file.path.clone(),
             })
             .collect::<Vec<_>>();
 
-        let (mut discovered_rx, discovery_handle) =
-            Self::discover_media_files(root.clone(), allowed_ext, cancel.child_token());
+        let (mut discovered_rx, discovery_handle) = match scope {
+            ScanScope::Full => {
+                Self::discover_media_files(root.clone(), allowed_ext, cancel.child_token())
+            }
+            ScanScope::Changes(targets) => Self::discover_changed_media_files(
+                root.clone(),
+                targets.clone(),
+                allowed_ext,
+                cancel.child_token(),
+            ),
+        };
         let mut discovery_handle = Some(discovery_handle);
         loop {
             let discovered = tokio::select! {
@@ -5108,10 +5226,14 @@ impl LibraryScanService {
         // A catalogue is only trimmed to what a complete walk found. A share that stopped
         // answering, or answered with nothing for a library that had files, says nothing about
         // them: keep every record.
+        // A scan of changed paths finding nothing under a removed folder is the point of it, so
+        // only a whole-library walk counts "found nothing" as a failed walk.
         let keep_every_record = storage_unavailable
             || (remote_library
                 && (discovery_errors > 0
-                    || (discovered_paths.is_empty() && !reconciliation_rows.is_empty())));
+                    || (scope.is_full()
+                        && discovered_paths.is_empty()
+                        && !reconciliation_rows.is_empty())));
         let removed_count = if keep_every_record {
             if !storage_unavailable {
                 warn!(
@@ -5168,14 +5290,18 @@ impl LibraryScanService {
             0
         };
 
-        self.reconcile_movie_collections_for_library(&library).await;
+        // Library-wide tidying is left to whole-library scans; a scan of changes stays as small
+        // as the change.
+        if scope.is_full() {
+            self.reconcile_movie_collections_for_library(&library).await;
 
-        if Self::is_tv_library_type(&normalized_library_type) {
-            self.ensure_tv_folder_structure(&library).await?;
-        }
+            if Self::is_tv_library_type(&normalized_library_type) {
+                self.ensure_tv_folder_structure(&library).await?;
+            }
 
-        if library.auto_organize {
-            self.cleanup_empty_folders(&library).await?;
+            if library.auto_organize {
+                self.cleanup_empty_folders(&library).await?;
+            }
         }
 
         self.update_scan_run(
@@ -5203,7 +5329,9 @@ impl LibraryScanService {
             .await?;
         }
 
-        self.set_library_scanning(&auth_user, library_id, false, true)
+        // Only a whole-library walk counts as "scanned" for the schedule, which is the watch's
+        // safety net.
+        self.set_library_scanning(&auth_user, library_id, false, scope.is_full())
             .await?;
         let database = self.database().await?;
         let analysis_failed = LibraryScanRun::get(database.pool().pool(), &scan_run_id.to_string())
@@ -5251,7 +5379,19 @@ impl LibraryScanService {
                     0
                 }),
                 analysis_queued_count: Some(Self::usize_count(analysis_queued_count)),
-                summary: Some(Some(if completed_with_issues {
+                summary: Some(Some(if let (true, ScanScope::Changes(targets)) =
+                    (completed_with_issues, scope)
+                {
+                    format!(
+                        "Changes checked in {} with issues: {} found, {} matched, {} removed, {} analysis failures, {} byte-identical duplicates",
+                        describe_change_targets(&library.path, targets),
+                        scanned_count,
+                        matched_count,
+                        removed_count,
+                        analysis_failed,
+                        duplicate_count
+                    )
+                } else if completed_with_issues {
                     format!(
                         "Scan completed with issues: {} discovered, {} matched, {} unmatched, {} analysis failures, {} byte-identical duplicates",
                         scanned_count,
@@ -5259,6 +5399,14 @@ impl LibraryScanService {
                         provider_summary.unmatched_files,
                         analysis_failed,
                         duplicate_count
+                    )
+                } else if let ScanScope::Changes(targets) = scope {
+                    format!(
+                        "Changes checked in {}: {} found, {} matched, {} removed",
+                        describe_change_targets(&library.path, targets),
+                        scanned_count,
+                        matched_count,
+                        removed_count
                     )
                 } else {
                     format!(
@@ -5336,7 +5484,9 @@ impl LibraryScanService {
 
         self.close_stale_duplicates(&library).await;
         self.settle_duplicates_if_asked(&library).await;
-        if library.library_type == "music" {
+        if library.library_type == "music"
+            && (scope.is_full() || scanned_count > unchanged_skipped_count)
+        {
             self.backfill_album_covers(&library).await;
             self.backfill_artist_images(&library).await;
         }
@@ -5409,6 +5559,7 @@ impl LibraryScanService {
                     self.scan_library_inner(
                         &job.library_id,
                         &job.scan_run_id,
+                        &job.scope,
                         cancel.child_token(),
                     ),
                 )
@@ -10259,6 +10410,8 @@ impl LibraryScanService {
         let removed = if is_remote_path(&root) {
             remove_empty_folders_upward_remote(&root, old_dir, &protected).await
         } else {
+            // The folders above it are covered too: a folder watch ignores them (Q116).
+            let _own = own_write([&StoragePath::new(old_dir.to_string_lossy().into_owned())]);
             let (root, start, protected) = (root, old_dir.to_path_buf(), protected);
             tokio::task::spawn_blocking(move || {
                 remove_empty_folders_upward(&root, &start, &protected)
@@ -15530,6 +15683,13 @@ impl Service for LibraryScanService {
             move |worker_cancel| scan_worker.clone().run_scan_worker(worker_cancel),
         ));
 
+        let watcher = this.clone();
+        let watch_handle = tokio::spawn(supervise_worker(
+            "watch",
+            cancel.child_token(),
+            move |worker_cancel| watcher.clone().run_watch_supervisor(worker_cancel),
+        ));
+
         let mut analyze_worker_handles = Vec::new();
         for idx in 0..self.config.analyze_workers {
             let analyze_worker = this.clone();
@@ -15548,6 +15708,7 @@ impl Service for LibraryScanService {
             cancel,
             scheduler_handle,
             scan_worker_handle,
+            watch_handle,
             analyze_worker_handles,
         });
 
@@ -15570,6 +15731,7 @@ impl Service for LibraryScanService {
             runtime.cancel.cancel();
             let _ = runtime.scheduler_handle.await;
             let _ = runtime.scan_worker_handle.await;
+            let _ = runtime.watch_handle.await;
             for h in runtime.analyze_worker_handles {
                 let _ = h.await;
             }
@@ -15586,6 +15748,7 @@ impl Service for LibraryScanService {
             };
             runtime.scheduler_handle.is_finished()
                 || runtime.scan_worker_handle.is_finished()
+                || runtime.watch_handle.is_finished()
                 || runtime
                     .analyze_worker_handles
                     .iter()
@@ -16744,6 +16907,7 @@ async fn create_library_directory_in(root: &Path, directory: &Path) -> Result<Pa
             })?;
         return Ok(directory.to_path_buf());
     }
+    let _own = own_write([&StoragePath::new(directory.to_string_lossy().into_owned())]);
     let (root, directory) = (root.to_path_buf(), directory.to_path_buf());
     tokio::task::spawn_blocking(move || create_library_directory(&root, &directory))
         .await
@@ -16769,6 +16933,7 @@ async fn deletable_media_file(root: &Path, file: &Path) -> Result<Option<PathBuf
 
 /// `remove_media_file`, for either kind of library.
 async fn remove_media_file_in(root: &Path, target: &Path) -> Result<()> {
+    let _own = own_write([&StoragePath::new(target.to_string_lossy().into_owned())]);
     if !is_remote_path(root) {
         let (root, target) = (root.to_path_buf(), target.to_path_buf());
         return tokio::task::spawn_blocking(move || remove_media_file(&root, &target)).await?;
@@ -16954,6 +17119,11 @@ async fn place_in_library(
     remove_source: bool,
     source_is_library: bool,
 ) -> Result<NoClobberOutcome> {
+    // Imports and organize renames are Librarian's own: a folder watch must not scan them (Q116).
+    let _own = own_write([
+        &StoragePath::new(source.to_string_lossy().into_owned()),
+        &StoragePath::new(target.to_string_lossy().into_owned()),
+    ]);
     if is_remote_path(&root) || is_remote_path(&target) {
         return place_in_remote_library(root, source, target, remove_source, source_is_library)
             .await;
@@ -18044,6 +18214,9 @@ mod tests {
                 naming_pattern: String::new(),
                 scan_interval_minutes: 60,
                 watch_for_changes: false,
+                watch_status: None,
+                watch_detail: None,
+                watch_status_since: None,
                 scanning: false,
                 last_scanned_at: None,
                 quality_profile_id: None,
@@ -18423,6 +18596,9 @@ mod tests {
                 naming_pattern: String::new(),
                 scan_interval_minutes: 60,
                 watch_for_changes: false,
+                watch_status: None,
+                watch_detail: None,
+                watch_status_since: None,
                 scanning: false,
                 last_scanned_at: None,
                 quality_profile_id: None,
@@ -18620,6 +18796,9 @@ mod tests {
                 naming_pattern: String::new(),
                 scan_interval_minutes: 60,
                 watch_for_changes: false,
+                watch_status: None,
+                watch_detail: None,
+                watch_status_since: None,
                 scanning: false,
                 last_scanned_at: None,
                 quality_profile_id: None,
@@ -19305,6 +19484,9 @@ mod atomic_analysis_tests {
                 naming_pattern: "fixture naming_pattern".to_string(),
                 scan_interval_minutes: 0,
                 watch_for_changes: false,
+                watch_status: None,
+                watch_detail: None,
+                watch_status_since: None,
                 scanning: false,
                 last_scanned_at: None,
                 quality_profile_id: None,

@@ -92,6 +92,24 @@ pub struct Library {
     #[filterable(type = "boolean")]
     pub watch_for_changes: bool,
 
+    /// What the folder watch is doing (`docs/design.md` Q117): `starting`, `watching`,
+    /// `unavailable` (the share cannot be reached; it is retried), `failed` (the folder cannot be
+    /// watched; `watchDetail` says why), or empty while the library is not watched. Written by the
+    /// watch itself.
+    #[graphql(name = "watchStatus")]
+    #[graphql_orm(write_policy = "admin.write")]
+    pub watch_status: Option<String>,
+
+    /// Why the watch is in that state, in words a person can act on.
+    #[graphql(name = "watchDetail")]
+    #[graphql_orm(write_policy = "admin.write")]
+    pub watch_detail: Option<String>,
+
+    /// When the watch entered its current state.
+    #[graphql(name = "watchStatusSince")]
+    #[graphql_orm(write_policy = "admin.write")]
+    pub watch_status_since: Option<String>,
+
     #[graphql(name = "scanning")]
     #[filterable(type = "boolean")]
     pub scanning: bool,
