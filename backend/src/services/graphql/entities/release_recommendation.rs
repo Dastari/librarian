@@ -48,7 +48,8 @@ pub struct ReleaseRecommendation {
     #[filterable(type = "string")]
     pub library_id: String,
 
-    /// `episode`, `season_pack`, `series_pack`, `movie`, `album`, `track` or `book`.
+    /// `episode`, `season_pack`, `series_pack`, `movie`, `album`, `track`, `discography`, `book`,
+    /// or `plan` (a show's or an artist's coverage plan).
     #[graphql(name = "scope")]
     #[filterable(type = "string")]
     pub scope: String,
@@ -83,6 +84,11 @@ pub struct ReleaseRecommendation {
     #[graphql(name = "albumId")]
     #[filterable(type = "string")]
     pub album_id: Option<String>,
+
+    /// An artist's coverage plan (Q110): set on the plan's row and on each release in it.
+    #[graphql(name = "artistId")]
+    #[filterable(type = "string")]
+    pub artist_id: Option<String>,
 
     #[graphql(name = "trackId")]
     #[filterable(type = "string")]
@@ -185,6 +191,21 @@ pub struct ReleaseRecommendation {
     /// files were looked into before it was recommended (Q100). Used with "only the missing files".
     #[graphql(name = "fileIndices")]
     pub file_indices: Option<String>,
+
+    /// The albums the missing tracks this release covers are on, as a JSON array of ids (music
+    /// plans), so an album's Find a release can show its part of the artist's plan.
+    #[graphql(name = "coversAlbums")]
+    pub covers_albums: Option<String>,
+
+    /// Bytes downloaded for exactly the files it is taken for, when its files were read and only
+    /// some are wanted ("only the missing files").
+    #[graphql(name = "selectedSize")]
+    pub selected_size: Option<i64>,
+
+    /// What the grab downloads, when it is not the whole release: "Downloads 1 track (8 MB) from a
+    /// 600 MB album".
+    #[graphql(name = "downloadNote")]
+    pub download_note: Option<String>,
 
     /// The version of the rules that chose this answer (`jobs::recommend::RULES_VERSION`). An answer
     /// from older rules is not trusted: it is removed and looked up again (Q98).

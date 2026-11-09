@@ -113,6 +113,8 @@ describe("DownloadsSettings", () => {
     await screen.findByDisplayValue("/data/session");
     // The server does nothing without `auto_download.enabled`, so the switch must not claim otherwise.
     expect(screen.getByRole("switch", { name: /Search and download automatically/ })).not.toBeChecked();
+    // And it says what turning it on does: the hourly hunt and the searches after air time.
+    expect(screen.getByText(/searches every wanted title once an hour and also searches each new episode/)).toBeInTheDocument();
     // Stored as 60 and 360 minutes, shown as durations.
     expect(screen.getByRole("textbox", { name: "Check everything every" })).toHaveValue("1h");
     expect(screen.getByRole("textbox", { name: "Search a missing item again after" })).toHaveValue("6h");
@@ -147,7 +149,7 @@ describe("DownloadsSettings", () => {
     const budget = createMock("auto_download.hourly_search_budget", "10", "auto_download");
     const partial = createMock("auto_download.only_missing_files", "false", "auto_download");
     await mountFresh([budget.mock, partial.mock]);
-    await setNumber("Indexer searches for recommendations", "10");
+    await setNumber("Indexer searches for recommendations and new releases", "10");
     await userEvent.click(screen.getByRole("switch", { name: /Download only the missing files from packs/ }));
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Settings saved")).toBeInTheDocument();

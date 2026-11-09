@@ -127,7 +127,7 @@ export function DownloadsSettings() {
           width="readable"
           description="Librarian watches for what you want and sends the best match to the download client, on a schedule and from your RSS feeds. Feeds and sources are set up under Sources."
         >
-          <form.AppField name="autoEnabled">{(field) => <field.SwitchRow label="Search and download automatically" description="Off by default. While off, nothing searches or downloads on its own (feeds are still read into their catalogue, and recommendations are still looked up); Search now and Run now still work." />}</form.AppField>
+          <form.AppField name="autoEnabled">{(field) => <field.SwitchRow label="Search and download automatically" description="Off by default, and shows what the server does. Turned on, Librarian searches every wanted title once an hour and also searches each new episode, and each wanted movie out on digital or disc, shortly after it comes out: your feeds first, then your indexers within the hourly search limit, retrying less often over the following days. It downloads the best release your quality profile accepts. While off, nothing searches or downloads on its own (feeds are still read into their catalogue, and recommendations are still looked up); Search now and Run now still work." />}</form.AppField>
           <SettingRow
             label="Recent activity"
             description={<AutoDownloadStatus settings={auto.values} />}
@@ -137,9 +137,9 @@ export function DownloadsSettings() {
           <form.AppField name="autoBackoff">{() => <DurationRow label="Search a missing item again after" description="Keeps one missing item from being searched on every sweep." units={["d", "h", "m"]} defaultUnit="m" />}</form.AppField>
           <form.AppField name="airGrace">{() => <DurationRow label="Wait after an episode airs" description="Releases take a while to appear. Nothing is searched for before this has passed." units={["h", "m"]} defaultUnit="m" />}</form.AppField>
           <form.AppField name="airWindow">{() => <NumberRow label="Watch new episodes for" description="How long a new episode is searched for on the quicker schedule. 0 skips it." min={0} max={60} unit="days" />}</form.AppField>
-          <form.AppField name="airRetry">{() => <DurationRow label="Search a new episode again after" description="Used until the days above run out; the setting before it applies after." units={["h", "m"]} defaultUnit="m" />}</form.AppField>
+          <form.AppField name="airRetry">{() => <DurationRow label="Search a new episode again after" description="The first retries after it airs. The wait then grows with the time since it aired, up to the ordinary wait above, until the days above run out." units={["h", "m"]} defaultUnit="m" />}</form.AppField>
           <form.AppField name="maxGrabs">{() => <NumberRow label="Most automatic downloads at once" description="Anything more waits for a free slot. Searching by hand is not limited." min={1} max={100} />}</form.AppField>
-          <form.AppField name="hourlySearchBudget">{() => <NumberRow label="Indexer searches for recommendations" description="Looking up the best release for what is missing never exceeds this, so indexers are not hammered. Feeds are used first and cost nothing. 0 turns recommendations off." min={0} max={600} step={5} unit="per hour" />}</form.AppField>
+          <form.AppField name="hourlySearchBudget">{() => <NumberRow label="Indexer searches for recommendations and new releases" description="Looking up the best release for what is missing, and searching for new episodes and movies after they come out, never exceed this together, so indexers are not hammered. Feeds are used first and cost nothing. 0 turns recommendations and those searches off." min={0} max={600} step={5} unit="per hour" />}</form.AppField>
           <form.AppField name="onlyMissingFiles">{(field) => <field.SwitchRow label="Download only the missing files from packs" description="A season pack or album downloads just the episodes or tracks you are missing, not the whole thing. On a private tracker this can cost ratio: a partial download never completes the torrent, so it cannot be seeded to 100%, and some trackers count an unfinished torrent against your account. Turn it off to always take the whole pack." />}</form.AppField>
           <AutoDownloadGuide />
         </SettingsSection>
@@ -179,8 +179,8 @@ export function DownloadsSettings() {
 function AutoDownloadGuide() {
   const rows: Array<[string, string]> = [
     ["Shows, albums and audiobooks", `Set per title.  Off: ${MODE_HELP.NONE}  Wanted only: ${MODE_HELP.WANTED}  Everything missing: ${MODE_HELP.ALL}`],
-    ["Movies", "A movie is downloaded when it is monitored and wanted, once its release date has passed."],
-    ["New episodes", "Searched after they air plus the wait above, then on the quicker schedule for the days above, then on the ordinary one. Your RSS feeds are read as well and usually find them first."],
+    ["Movies", "A movie is downloaded when it is monitored and wanted. When its digital or disc release date is known it is searched from that day, like a new episode; otherwise once its release date has passed."],
+    ["New episodes", "Searched after they air plus the wait above: your feeds first, then your indexers within the hourly search limit, then more and more rarely for the days above, then on the ordinary schedule. Nothing tells you about a new episode that has not turned up until a day has passed, and a notice you dismiss is not raised again."],
     ["Always", "Only the best release your quality profile accepts is taken; blocklisted releases are never taken again. Each search, grab and reason for skipping appears under Activity."],
   ];
   return (

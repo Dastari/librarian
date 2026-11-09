@@ -26,6 +26,10 @@ pub enum WantedItems {
     },
     /// Missing tracks of an album, as `(track number, title)`.
     Tracks { tracks: Vec<(i32, String)> },
+    /// Missing tracks of an artist across albums, as `(album, track number, title)`: for a
+    /// discography pack, an album, an EP, a single or a compilation (Q110). A track is looked for
+    /// in its album's folder first (by title, then by a unique number), else anywhere by title.
+    ArtistTracks { tracks: Vec<(String, i32, String)> },
     /// A whole audiobook.
     Book,
     /// A movie.
@@ -47,6 +51,9 @@ pub struct ContentsVerdict {
     pub reject: Option<String>,
     /// A short line for the reasons: "contains 18 of 22 missing episodes".
     pub note: Option<String>,
+    /// The languages of the subtitles bundled with what it holds of what is wanted (Q114), English
+    /// first. A small tiebreak and a reason, never a reason to turn a release down.
+    pub subtitle_languages: Vec<String>,
 }
 
 impl ContentsVerdict {
@@ -115,19 +122,36 @@ fn selection(contents: &Contents, chosen: &HashSet<usize>) -> Vec<usize> {
     let mut out: BTreeSet<usize> = chosen.iter().copied().collect();
     for file in &contents.files {
         let companion = match file.kind {
-            FileKind::Subtitle => {
-                let stem = file.stem().to_ascii_lowercase();
-                stems
-                    .iter()
-                    .any(|selected| stem.starts_with(selected.as_str()))
-                    || file
-                        .episodes
+            FileKind::Subtitle => match file.belongs_to {
+                // Linked to its video (Q112): next to it, `Subs/<stem>/`, or a `Subs/` folder.
+                Some(owner) => chosen.contains(&owner),
+                None => {
+                    let stem = file.stem().to_ascii_lowercase();
+                    stems
                         .iter()
-                        .any(|episode| episodes.contains(&(file.season, *episode)))
-            }
+                        .any(|selected| stem.starts_with(selected.as_str()))
+                        || file
+                            .episodes
+                            .iter()
+                            .any(|episode| episodes.contains(&(file.season, *episode)))
+                }
+            },
             _ => release_wide(file),
         };
         if companion {
+            out.insert(file.index);
+        }
+    }
+    // A VobSub `.idx` is useless without its `.sub`, and the other way round.
+    let pairs: HashSet<String> = contents
+        .files
+        .iter()
+        .filter(|file| out.contains(&file.index) && file.kind == FileKind::Subtitle)
+        .map(|file| super::subtitles::pair_key(&file.path))
+        .collect();
+    for file in &contents.files {
+        if file.kind == FileKind::Subtitle && pairs.contains(&super::subtitles::pair_key(&file.path))
+        {
             out.insert(file.index);
         }
     }
@@ -140,6 +164,29 @@ fn selection(contents: &Contents, chosen: &HashSet<usize>) -> Vec<usize> {
 
 /// What the files hold of what is wanted.
 pub fn judge(contents: &Contents, wanted: &WantedItems) -> ContentsVerdict {
+    let mut verdict = judge_files(contents, wanted);
+    if verdict.reject.is_none() {
+        // The subtitles of the videos it is taken for: the selected ones, or all of them.
+        let chosen: Vec<usize> = verdict
+            .files
+            .iter()
+            .copied()
+            .filter(|index| {
+                contents
+                    .files
+                    .iter()
+                    .any(|file| file.index == *index && file.kind == FileKind::Video)
+            })
+            .collect();
+        verdict.subtitle_languages = super::subtitles::languages_for(
+            &contents.files,
+            (!chosen.is_empty()).then_some(chosen.as_slice()),
+        );
+    }
+    verdict
+}
+
+fn judge_files(contents: &Contents, wanted: &WantedItems) -> ContentsVerdict {
     match wanted {
         WantedItems::Episodes {
             show,
@@ -147,6 +194,7 @@ pub fn judge(contents: &Contents, wanted: &WantedItems) -> ContentsVerdict {
             default_season,
         } => judge_episodes(contents, show, episodes, *default_season),
         WantedItems::Tracks { tracks } => judge_tracks(contents, tracks),
+        WantedItems::ArtistTracks { tracks } => judge_artist_tracks(contents, tracks),
         WantedItems::Book => judge_whole(contents, true),
         WantedItems::Movie => judge_whole(contents, false),
     }
@@ -331,6 +379,89 @@ fn judge_tracks(contents: &Contents, wanted: &[(i32, String)]) -> ContentsVerdic
             verdict.note = Some("its files don't say which tracks they are".to_string());
             verdict.covers = (0..wanted.len()).collect();
         }
+        return verdict;
+    }
+    if wanted.len() > 1 || verdict.covers.len() < wanted.len() {
+        verdict.note = Some(format!(
+            "contains {} of {} missing track{}",
+            verdict.covers.len(),
+            wanted.len(),
+            if wanted.len() == 1 { "" } else { "s" }
+        ));
+    }
+    verdict.files = selection(contents, &chosen);
+    verdict
+}
+
+/// Whether a file sits in a folder named after `album` (`Artist - Album (1975) [FLAC]/`, or
+/// `Album/CD1/`).
+fn in_album_folder(file: &ContentFile, album: &str) -> bool {
+    let mut folders: Vec<&str> = file.path.split(['/', '\\']).collect();
+    folders.pop();
+    folders.iter().any(|folder| {
+        let facts = crate::services::feed_catalogue::read_music_title(folder);
+        let named = facts.album.as_deref().unwrap_or(folder);
+        music_rules::same_album_title(named, album) || music_rules::same_album_title(folder, album)
+    })
+}
+
+fn judge_artist_tracks(contents: &Contents, wanted: &[(String, i32, String)]) -> ContentsVerdict {
+    let mut verdict = ContentsVerdict::default();
+    if let Some(reason) = release_match::payload_mismatch(true, false, &names(contents)) {
+        verdict.reject = Some(
+            reason
+                .trim_end_matches(" Nothing was downloaded.")
+                .to_string(),
+        );
+        return verdict;
+    }
+    let main: Vec<&ContentFile> = contents
+        .files
+        .iter()
+        .filter(|file| file.kind == FileKind::Audio)
+        .collect();
+    if main.is_empty() {
+        // Archives: nothing can be said of which tracks it holds, so it covers nothing for sure.
+        verdict.reject = Some("its music is packed in archives, so its tracks can't be checked".to_string());
+        return verdict;
+    }
+    let mut chosen: HashSet<usize> = HashSet::new();
+    let mut covered: BTreeSet<usize> = BTreeSet::new();
+    for (index, (album, number, title)) in wanted.iter().enumerate() {
+        let in_album: Vec<&&ContentFile> = main
+            .iter()
+            .filter(|file| in_album_folder(file, album))
+            .collect();
+        let found = if in_album.is_empty() {
+            // A single, a compilation, or a flat pack: by title only (numbers mean nothing here).
+            main.iter()
+                .find(|file| music_rules::same_song_title(stem_title(file.stem()), title))
+                .copied()
+        } else {
+            in_album
+                .iter()
+                .find(|file| music_rules::same_song_title(stem_title(file.stem()), title))
+                .map(|file| **file)
+                .or_else(|| {
+                    let numbered: Vec<&&&ContentFile> = in_album
+                        .iter()
+                        .filter(|file| file.track == Some(*number))
+                        .collect();
+                    (numbered.len() == 1).then(|| **numbered[0])
+                })
+        };
+        if let Some(file) = found {
+            covered.insert(index);
+            chosen.insert(file.index);
+        }
+    }
+    verdict.covers = covered.into_iter().collect();
+    if verdict.covers.is_empty() {
+        verdict.reject = Some(format!(
+            "holds none of the {} missing track{}",
+            wanted.len(),
+            if wanted.len() == 1 { "" } else { "s" }
+        ));
         return verdict;
     }
     if wanted.len() > 1 || verdict.covers.len() < wanted.len() {

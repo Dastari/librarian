@@ -82,6 +82,19 @@ pub fn select_wanted_files(names: &[String], wanted: &WantedFiles) -> Option<Vec
     // the one inspected: fall back to the names rather than guess.
     if !wanted.indices.is_empty() && wanted.indices.iter().all(|index| *index < names.len()) {
         let mut chosen = wanted.indices.clone();
+        // An inspected selection already holds its subtitles; a VobSub half still brings its pair.
+        let pairs: HashSet<String> = chosen
+            .iter()
+            .filter(|index| super::subtitles::is_subtitle(&names[**index]))
+            .map(|index| super::subtitles::pair_key(&names[*index]))
+            .collect();
+        for (index, name) in names.iter().enumerate() {
+            if super::subtitles::is_subtitle(name)
+                && pairs.contains(&super::subtitles::pair_key(name))
+            {
+                chosen.push(index);
+            }
+        }
         chosen.sort_unstable();
         chosen.dedup();
         return (chosen.len() < names.len()).then_some(chosen);
@@ -119,11 +132,20 @@ pub fn select_wanted_files(names: &[String], wanted: &WantedFiles) -> Option<Vec
         return None;
     }
 
-    // Companions: files sharing a selected video's name (subtitles) and small release-wide files.
+    // Companions: a selected video's subtitles (next to it, in `Subs/<stem>/` or a `Subs/` folder
+    // beside it, `.idx` with its `.sub`, Q112), files sharing a selected file's name, and small
+    // release-wide files.
+    let mut described: Vec<super::inspect::ContentFile> = names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| super::inspect::describe_file(index, name, 0))
+        .collect();
+    super::subtitles::link_subtitles(&mut described);
     let selected_stems: HashSet<String> = chosen
         .iter()
         .map(|index| stem(&names[*index]).to_ascii_lowercase())
         .collect();
+    let videos_chosen = chosen.clone();
     for (index, name) in names.iter().enumerate() {
         if chosen.contains(&index) {
             continue;
@@ -132,6 +154,13 @@ pub fn select_wanted_files(names: &[String], wanted: &WantedFiles) -> Option<Vec
         let is_media = release_match::VIDEO_EXTENSIONS.contains(&ext.as_str())
             || release_match::AUDIO_EXTENSIONS.contains(&ext.as_str());
         if is_media {
+            continue;
+        }
+        if described[index]
+            .belongs_to
+            .is_some_and(|owner| videos_chosen.contains(&owner))
+        {
+            chosen.insert(index);
             continue;
         }
         let shares_name = selected_stems.contains(&stem(name).to_ascii_lowercase());
@@ -144,6 +173,19 @@ pub fn select_wanted_files(names: &[String], wanted: &WantedFiles) -> Option<Vec
         }
     }
 
+    // A VobSub `.idx` is useless without its `.sub`, and the other way round.
+    let pairs: HashSet<String> = chosen
+        .iter()
+        .filter(|index| super::subtitles::is_subtitle(&names[**index]))
+        .map(|index| super::subtitles::pair_key(&names[*index]))
+        .collect();
+    for (index, name) in names.iter().enumerate() {
+        if super::subtitles::is_subtitle(name)
+            && pairs.contains(&super::subtitles::pair_key(name))
+        {
+            chosen.insert(index);
+        }
+    }
     if chosen.len() >= names.len() {
         return None;
     }

@@ -150,6 +150,17 @@ pub struct Movie {
     #[filterable(type = "string")]
     pub certification: Option<String>,
 
+    /// The earliest digital release (TMDB release type 4), `YYYY-MM-DD`. Automatic downloading
+    /// searches for a wanted movie from this date (or the physical one), not its cinema date (Q113).
+    #[graphql(name = "digitalReleaseDate")]
+    #[filterable(type = "date")]
+    pub digital_release_date: Option<String>,
+
+    /// The earliest physical release (TMDB release type 5), `YYYY-MM-DD`.
+    #[graphql(name = "physicalReleaseDate")]
+    #[filterable(type = "date")]
+    pub physical_release_date: Option<String>,
+
     #[graphql(name = "monitored")]
     #[filterable(type = "boolean")]
     pub monitored: bool,
@@ -314,6 +325,8 @@ impl Movie {
                 collection_poster_url: details.collection_poster_url.clone(),
                 release_date: details.release_date.clone(),
                 certification: details.certification.clone(),
+                digital_release_date: details.digital_release_date.clone(),
+                physical_release_date: details.physical_release_date.clone(),
                 monitored: options.monitored,
                 tmdb_status: details.tmdb_status.clone(),
                 wanted: options.monitored,

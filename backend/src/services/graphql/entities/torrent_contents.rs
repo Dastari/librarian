@@ -9,7 +9,8 @@
 //! keyed by info hash. `infoBytes` keeps the bencoded info dictionary of a public torrent so a
 //! later grab of a magnet does not have to ask peers for it again; it is never kept for a private
 //! torrent, whose `.torrent` is fetched from its tracker at grab time anyway. The info dictionary
-//! never holds a tracker address, so no passkey is stored here.
+//! never holds a tracker address, so no passkey is stored here; `trackers` keeps a public torrent's
+//! announce addresses, never a private one's.
 
 use crate::graphql::entities::*;
 use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
@@ -87,6 +88,12 @@ pub struct TorrentContents {
     /// Base64 of the bencoded info dictionary, public torrents only.
     #[graphql(name = "infoBytes")]
     pub info_bytes: Option<String>,
+
+    /// A public torrent's tracker addresses, as a JSON array, so a grab from `infoBytes` can be
+    /// given its trackers and its `Torrent` row a magnet to restore from (Q111). Never kept for a
+    /// private torrent, whose announce address holds the account's passkey.
+    #[graphql(name = "trackers")]
+    pub trackers: Option<String>,
 
     #[graphql(name = "fetchedAt")]
     #[filterable(type = "date")]

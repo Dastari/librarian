@@ -1111,6 +1111,8 @@ async fn movie(db: &Database, library: &Library) -> Movie {
             collection_poster_url: None,
             release_date: None,
             certification: None,
+            digital_release_date: None,
+            physical_release_date: None,
             monitored: false,
             tmdb_status: None,
             wanted: true,

@@ -55,6 +55,10 @@ use super::auto_download::{
 };
 use super::auto_schedule::{Expectation, Timing};
 use super::auto_settings::AutoDownloadSettings;
+use super::recommend_music::{
+    MissingTrack, MusicClaim, albums_of, claimed_tracks, describe_tracks, download_note,
+    music_claim, release_kind,
+};
 use super::recommend_plan::{
     Claim, CoverPlan, MissingEpisode, PlanOption, claim_of, claimed_cover, describe_items,
     plan_cover, seasons_of,
@@ -69,8 +73,9 @@ pub const TTL: Duration = Duration::hours(24);
 /// answers may be wrong: rows from an older version are removed on the next pass and looked up
 /// again, instead of standing for up to a day. 2: titles are matched word for word (Q98), so
 /// `Babylon Berlin` is no longer recommended for `Babylon 5`. 3: a show's answer is a coverage
-/// plan (Q101), and releases are judged by their files (Q100).
-pub const RULES_VERSION: i32 = 3;
+/// plan (Q101), and releases are judged by their files (Q100). 4: music is an artist's coverage
+/// plan (Q110), and bundled subtitles are a reason and a tiebreak (Q114).
+pub const RULES_VERSION: i32 = 4;
 
 /// Whether a stored answer was chosen by the current rules.
 pub fn is_current(row: &ReleaseRecommendation) -> bool {
@@ -140,6 +145,52 @@ fn budget_spend(requests: u32) {
     }
 }
 
+/// Spend `requests` from the hourly search budget if they fit, for searches made outside a lookup:
+/// the air-time pass (Q113). One budget covers recommendations and air-time searches, so neither
+/// can burst past `auto_download.hourly_search_budget`.
+pub(crate) fn take_search_budget(requests: u32, per_hour: u32) -> bool {
+    let Ok(mut budget) = BUDGET.lock() else {
+        return false;
+    };
+    let now = Utc::now();
+    if budget.remaining(per_hour, now) < requests {
+        return false;
+    }
+    budget.spend(requests, now);
+    true
+}
+
+/// What the owner's feeds already list for a hunt target (a show's episode or pack, a movie), for
+/// the air-time pass to try before any indexer is asked (Q113).
+pub(crate) async fn catalogue_for_candidate(
+    db: &Database,
+    candidate: &WantedCandidate,
+    blocklist: &Blocklist,
+) -> Collected {
+    let target = CatalogueTarget {
+        show_id: candidate.linkage.show_id.clone(),
+        movie_id: candidate.linkage.movie_id.clone(),
+        ..Default::default()
+    };
+    if target.show_id.is_none() && target.movie_id.is_none() {
+        return Collected::default();
+    }
+    let Some(owner) = Library::get(db.pool(), &candidate.library_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|library| library.user_id)
+    else {
+        return Collected::default();
+    };
+    catalogue_releases(db, &owner, &target, blocklist).await.0
+}
+
+/// Add `more` to `collected`, without repeating a release.
+pub(crate) fn merge_collected(collected: &mut Collected, more: Collected) {
+    merge(collected, more)
+}
+
 // ===========================================================================
 // The queue of lookups people asked for
 // ===========================================================================
@@ -154,6 +205,9 @@ pub struct LookupRequest {
     pub album_id: Option<String>,
     pub track_id: Option<String>,
     pub audiobook_id: Option<String>,
+    /// An artist: answered by the artist's coverage plan (Q110). Album and track lookups are
+    /// asked as their artist's.
+    pub artist_id: Option<String>,
 }
 
 static QUEUE: Lazy<StdMutex<VecDeque<LookupRequest>>> =
@@ -395,7 +449,7 @@ fn merge(collected: &mut Collected, more: Collected) {
 // ===========================================================================
 
 /// One row to store.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct Row {
     scope: &'static str,
     status: &'static str,
@@ -418,6 +472,14 @@ struct Row {
     /// A plan row's own reasons (a release row's come with its release).
     plan_reasons: Vec<String>,
     note: Option<String>,
+    /// An artist's plan and its releases (Q110).
+    artist_id: Option<String>,
+    /// Albums of the missing tracks covered (music plans).
+    covers_albums: Vec<String>,
+    /// Bytes of exactly the files to download, when only some are wanted.
+    selected_size: Option<i64>,
+    /// "Downloads 1 track (8 MB) from a 600 MB album".
+    download_note: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -522,16 +584,6 @@ async fn resolve_profile(
     )
     .await
     .unwrap_or_else(|_| profile::builtin_any_profile())
-}
-
-fn ids_of(
-    candidates: &[&WantedCandidate],
-    pick: impl Fn(&CandidateLinkage) -> Option<&String>,
-) -> Vec<String> {
-    candidates
-        .iter()
-        .filter_map(|candidate| pick(&candidate.linkage).cloned())
-        .collect()
 }
 
 // ---- TV ------------------------------------------------------------------
@@ -761,6 +813,10 @@ async fn evaluate_show(
             seeders: option.scored.release.seeders,
             size: option.scored.release.size,
             rank: rank_of(&option.scored.release.guid),
+            subtitles: option
+                .verdict
+                .as_ref()
+                .is_some_and(|verdict| !verdict.subtitle_languages.is_empty()),
         })
         .collect();
     evaluation.plan = plan_cover(missing.len(), &plan_options);
@@ -910,6 +966,7 @@ async fn look_up_show(
         plan_position: None,
         plan_reasons: Vec::new(),
         note: None,
+        ..Default::default()
     };
     let budget_note = "the hourly search budget is used up, so some seasons were not searched";
     if plan.releases.is_empty() {
@@ -984,10 +1041,15 @@ async fn look_up_show(
             reasons.push(format!("{seeders} seeders"));
         }
         match &option.verdict {
-            Some(verdict) => reasons.push(match &verdict.note {
-                Some(note) => format!("Files checked: {note}"),
-                None => "Files checked".to_string(),
-            }),
+            Some(verdict) => {
+                reasons.push(match &verdict.note {
+                    Some(note) => format!("Files checked: {note}"),
+                    None => "Files checked".to_string(),
+                });
+                reasons.extend(crate::services::torrent::subtitles::describe_languages(
+                    &verdict.subtitle_languages,
+                ));
+            }
             None if option.claim.is_pack() => {
                 reasons.push("Files not checked: judged by its name".to_string())
             }
@@ -1042,6 +1104,7 @@ async fn look_up_show(
             plan_position: Some(position as i32),
             plan_reasons: Vec::new(),
             note: None,
+            ..Default::default()
         });
     }
     let mut summary = Vec::new();
@@ -1124,6 +1187,7 @@ async fn look_up_single(
         plan_position: None,
         plan_reasons: Vec::new(),
         note: None,
+        ..Default::default()
     };
     match ranked {
         Ok(mut ranked) => {
@@ -1165,6 +1229,11 @@ async fn look_up_single(
                     Some(note) => format!("Files checked: {note}"),
                     None => "Files checked".to_string(),
                 });
+                chosen
+                    .reasons
+                    .extend(crate::services::torrent::subtitles::describe_languages(
+                        &verdict.subtitle_languages,
+                    ));
                 chosen.file_indices = verdict.files;
                 break Some(chosen);
             };
@@ -1230,6 +1299,552 @@ fn album_candidate(tracks: &[&WantedCandidate]) -> Option<(WantedCandidate, Stri
     );
     candidate.fallbacks = Vec::new();
     Some((candidate, term))
+}
+
+// ---- Music: an artist's coverage plan (Q110) ---------------------------------
+
+/// One album of an artist with missing tracks.
+struct AlbumGroup<'a> {
+    album_id: String,
+    name: String,
+    /// Tracks the album has in all (to tell a whole album from part of one).
+    track_count: Option<i32>,
+    tracks: Vec<&'a WantedCandidate>,
+}
+
+/// Most releases looked into (Q99) for one artist's plan.
+const MUSIC_INSPECT_PER_PLAN: usize = 6;
+/// Most single-track searches one artist's plan makes, for tracks nothing else covers.
+const MAX_TRACK_SEARCHES: usize = 6;
+
+/// A release that could go into an artist's plan.
+#[derive(Debug, Clone)]
+struct MusicOption {
+    scored: ScoredRelease,
+    claim: MusicClaim,
+    /// Indexes of the missing tracks it covers: by name, or by its files once inspected.
+    covers: Vec<usize>,
+    verdict: Option<ContentsVerdict>,
+}
+
+#[derive(Debug, Default)]
+struct MusicEvaluation {
+    options: Vec<MusicOption>,
+    plan: CoverPlan,
+    rejected_by_files: Vec<String>,
+}
+
+fn artist_tracks(missing: &[MissingTrack], items: &[usize]) -> WantedItems {
+    WantedItems::ArtistTracks {
+        tracks: items
+            .iter()
+            .filter_map(|index| missing.get(*index))
+            .map(|track| (track.album.clone(), track.number, track.title.clone()))
+            .collect(),
+    }
+}
+
+/// Say what each gathered release covers, look into the most promising ones, and plan.
+#[allow(clippy::too_many_arguments)]
+async fn evaluate_artist(
+    env: &Env<'_>,
+    artist: &str,
+    artist_title: &WantedTitle,
+    quality: &crate::graphql::entities::QualityProfile,
+    collected: &Collected,
+    albums: &[String],
+    missing: &[MissingTrack],
+    inspected: &mut HashMap<String, Inspection>,
+) -> MusicEvaluation {
+    let mut evaluation = MusicEvaluation::default();
+    let mut options: Vec<MusicOption> = Vec::new();
+    for release in &collected.releases {
+        if artist_title.mismatch(&release.title).is_some() {
+            continue;
+        }
+        let Some(claim) = music_claim(&release.title, artist, albums, missing) else {
+            continue;
+        };
+        let covers = claimed_tracks(&claim, albums, missing);
+        if covers.is_empty() && !claim.needs_files() {
+            continue;
+        }
+        let count = if claim.needs_files() {
+            missing.len()
+        } else {
+            covers.len()
+        };
+        let Some(scored) =
+            profile::filter_and_rank(artist_title, vec![release.clone()], quality, count.max(1) as i32)
+                .into_iter()
+                .next()
+        else {
+            continue;
+        };
+        options.push(MusicOption {
+            scored,
+            claim,
+            covers,
+            verdict: None,
+        });
+    }
+    let mut ranked: Vec<ScoredRelease> =
+        options.iter().map(|option| option.scored.clone()).collect();
+    profile::sort_by_profile(&mut ranked, quality);
+    let rank_of = |guid: &str| {
+        ranked
+            .iter()
+            .position(|scored| scored.release.guid == guid)
+            .unwrap_or(usize::MAX)
+    };
+
+    // Look into what would cover most first: discographies, then albums, then other releases (an
+    // EP or a compilation says what it holds only by its files), then singles; best ranked first.
+    let mut order: Vec<&MusicOption> = options.iter().collect();
+    order.sort_by_key(|option| {
+        let kind = match option.claim {
+            MusicClaim::Discography => 0,
+            MusicClaim::Album(_) => 1,
+            MusicClaim::Other => 2,
+            MusicClaim::Tracks(_) => 3,
+        };
+        (
+            kind,
+            std::cmp::Reverse(option.covers.len()),
+            rank_of(&option.scored.release.guid),
+        )
+    });
+    for option in order {
+        if inspected.len() >= MUSIC_INSPECT_PER_PLAN {
+            break;
+        }
+        let guid = option.scored.release.guid.clone();
+        if inspected.contains_key(&guid) {
+            continue;
+        }
+        let reading = match env.manager {
+            Some(manager) => {
+                inspect::inspect_release(
+                    manager,
+                    env.db,
+                    &option.scored.release,
+                    env.settings.hourly_search_budget,
+                )
+                .await
+            }
+            None => Inspection::Unavailable("the torrent client is not available".to_string()),
+        };
+        inspected.insert(guid, reading);
+    }
+
+    // Files beat names.
+    let everything: Vec<usize> = (0..missing.len()).collect();
+    let wanted_all = artist_tracks(missing, &everything);
+    let mut kept: Vec<MusicOption> = Vec::new();
+    for mut option in options {
+        match inspected
+            .get(&option.scored.release.guid)
+            .and_then(Inspection::contents)
+        {
+            Some(contents) => {
+                let verdict = judge::judge(contents, &wanted_all);
+                if let Some(why) = &verdict.reject {
+                    debug!(release = %option.scored.release.title, reason = %why, "Recommendations: '{}' turned down by its files: {why}", option.scored.release.title);
+                    evaluation
+                        .rejected_by_files
+                        .push(format!("'{}' {why}", option.scored.release.title));
+                    continue;
+                }
+                option.covers = verdict.covers.clone();
+                option.verdict = Some(verdict);
+            }
+            // A discography or an EP is used only once its files say what it holds.
+            None if option.claim.needs_files() => continue,
+            None => {}
+        }
+        if !option.covers.is_empty() {
+            kept.push(option);
+        }
+    }
+    let plan_options: Vec<PlanOption> = kept
+        .iter()
+        .map(|option| PlanOption {
+            covers: option.covers.clone(),
+            tier: profile::resolution_tier(&option.scored.parsed, quality),
+            seeders: option.scored.release.seeders,
+            size: option.scored.release.size,
+            rank: rank_of(&option.scored.release.guid),
+            subtitles: false,
+        })
+        .collect();
+    evaluation.plan = plan_cover(missing.len(), &plan_options);
+    evaluation.options = kept;
+    evaluation
+}
+
+/// The candidate a discography search is made with.
+fn discography_search(base: &WantedCandidate, artist: &str, missing: usize) -> WantedCandidate {
+    let mut candidate = base.clone();
+    candidate.label = format!("discography '{artist}'");
+    candidate.queries = vec![SourceQuery {
+        query_type: QueryType::MusicSearch,
+        search_term: Some(format!("{artist} discography")),
+        artist: Some(artist.to_string()),
+        cache: true,
+        ..Default::default()
+    }];
+    candidate.match_title = WantedTitle::Music {
+        artist: artist.to_string(),
+        album: None,
+        track: None,
+    };
+    candidate.expectation = Expectation::Unchecked;
+    candidate.episode_count = missing as i32;
+    candidate
+}
+
+/// The coverage plan for an artist's missing tracks (Q110): the feed catalogue first, then a
+/// discography search (two or more albums missing something), each album's search for albums still
+/// uncovered, and the single-track searches for tracks still uncovered, within the hourly budget,
+/// looking into the most promising releases on the way. Returns the plan's row and one row per
+/// release in it.
+async fn look_up_artist(
+    env: &Env<'_>,
+    artist_id: &str,
+    artist: &str,
+    groups: &[AlbumGroup<'_>],
+) -> Option<(Row, Vec<Row>)> {
+    use crate::graphql::entities::Track;
+    let mut missing: Vec<MissingTrack> = Vec::new();
+    let mut track_searches: Vec<(usize, &WantedCandidate)> = Vec::new();
+    for group in groups {
+        for candidate in &group.tracks {
+            let Some(id) = &candidate.linkage.track_id else {
+                continue;
+            };
+            if missing.iter().any(|track| &track.id == id) {
+                continue;
+            }
+            let Ok(Some(track)) = Track::get(env.db.pool(), id).await else {
+                continue;
+            };
+            track_searches.push((missing.len(), *candidate));
+            missing.push(MissingTrack {
+                id: id.clone(),
+                album_id: group.album_id.clone(),
+                album: group.name.clone(),
+                number: track.track_number,
+                title: track.title,
+            });
+        }
+    }
+    if missing.is_empty() {
+        return None;
+    }
+    let albums: Vec<String> = groups.iter().map(|group| group.name.clone()).collect();
+    let mut by_size: Vec<&AlbumGroup<'_>> = groups.iter().collect();
+    by_size.sort_by_key(|group| std::cmp::Reverse(group.tracks.len()));
+    let (base, _) = album_candidate(&by_size[0].tracks)?;
+    let quality = resolve_profile(env, &base).await;
+    let artist_title = WantedTitle::Music {
+        artist: artist.to_string(),
+        album: None,
+        track: None,
+    };
+
+    // The catalogue: whatever the owner's feeds list for any of the albums.
+    let mut collected = Collected::default();
+    let mut feeds: HashMap<String, String> = HashMap::new();
+    for group in groups {
+        let target = CatalogueTarget {
+            album_id: Some(group.album_id.clone()),
+            ..Default::default()
+        };
+        let (more, names) = catalogue_releases(env.db, &env.owner_id, &target, env.blocklist).await;
+        merge(&mut collected, more);
+        feeds.extend(names);
+    }
+
+    // Searches, cheapest coverage first.
+    enum Search<'a> {
+        Discography(WantedCandidate),
+        Album(usize, WantedCandidate),
+        Track(usize, &'a WantedCandidate),
+    }
+    let mut searches: Vec<Search<'_>> = Vec::new();
+    if groups.len() >= 2 {
+        searches.push(Search::Discography(discography_search(
+            &base,
+            artist,
+            missing.len(),
+        )));
+    }
+    for group in &by_size {
+        if let Some((candidate, _)) = album_candidate(&group.tracks)
+            && let Some(index) = albums.iter().position(|name| name == &group.name)
+        {
+            searches.push(Search::Album(index, candidate));
+        }
+    }
+    for (index, candidate) in track_searches.iter().take(MAX_TRACK_SEARCHES * 4) {
+        searches.push(Search::Track(*index, *candidate));
+    }
+
+    let mut inspected: HashMap<String, Inspection> = HashMap::new();
+    let mut ran_out = false;
+    let mut track_searches_made = 0usize;
+    let mut evaluation = evaluate_artist(
+        env,
+        artist,
+        &artist_title,
+        &quality,
+        &collected,
+        &albums,
+        &missing,
+        &mut inspected,
+    )
+    .await;
+    for search in &searches {
+        if evaluation.plan.uncovered.is_empty() {
+            break;
+        }
+        let candidate = match search {
+            Search::Discography(candidate) => candidate,
+            Search::Album(index, candidate) => {
+                let album = &albums[*index];
+                let open = evaluation
+                    .plan
+                    .uncovered
+                    .iter()
+                    .any(|item| missing.get(*item).is_some_and(|track| &track.album == album));
+                if !open {
+                    continue;
+                }
+                candidate
+            }
+            Search::Track(index, candidate) => {
+                if !evaluation.plan.uncovered.contains(index)
+                    || track_searches_made >= MAX_TRACK_SEARCHES
+                {
+                    continue;
+                }
+                track_searches_made += 1;
+                *candidate
+            }
+        };
+        let requests = candidate.queries.len().max(1) as u32;
+        match env.sources {
+            Some(sources) if budget_remaining(env.settings.hourly_search_budget) >= requests => {
+                budget_spend(requests);
+                let searched = collect_releases_from(sources, env.blocklist, candidate).await;
+                merge(&mut collected, searched);
+            }
+            Some(_) => {
+                ran_out = true;
+                break;
+            }
+            None => break,
+        }
+        evaluation = evaluate_artist(
+            env,
+            artist,
+            &artist_title,
+            &quality,
+            &collected,
+            &albums,
+            &missing,
+            &mut inspected,
+        )
+        .await;
+    }
+
+    let plan = &evaluation.plan;
+    let all: Vec<usize> = (0..missing.len()).collect();
+    let mut header = Row {
+        scope: "plan",
+        status: if plan.releases.is_empty() {
+            "none"
+        } else {
+            "ready"
+        },
+        target_label: artist.to_string(),
+        artist_id: Some(artist_id.to_string()),
+        covers_ids: plan
+            .releases
+            .iter()
+            .flat_map(|planned| planned.adds.iter().map(|index| missing[*index].id.clone()))
+            .collect(),
+        covers_count: plan.covered() as i32,
+        missing_count: missing.len() as i32,
+        covers_albums: albums_of(&missing, &all),
+        ..Default::default()
+    };
+    let budget_note = "the hourly search budget is used up, so some albums were not searched";
+    if plan.releases.is_empty() {
+        let mut note = if collected.seen == 0 {
+            "no release found".to_string()
+        } else {
+            format!(
+                "{} release(s) found, none usable for the missing tracks",
+                collected.seen
+            )
+        };
+        if !evaluation.rejected_by_files.is_empty() {
+            note = format!(
+                "{note}; {} turned down by their files (e.g. {})",
+                evaluation.rejected_by_files.len(),
+                evaluation.rejected_by_files[0]
+            );
+        }
+        if ran_out {
+            note = format!("{note}; {budget_note}");
+        }
+        header.note = Some(note);
+        return Some((header, Vec::new()));
+    }
+
+    let mut members: Vec<Row> = Vec::new();
+    let (mut packs, mut whole_albums, mut singles) = (0usize, 0usize, 0usize);
+    for (position, planned) in plan.releases.iter().take(MAX_PLAN_RELEASES).enumerate() {
+        let option = &evaluation.options[planned.option];
+        let adds = &planned.adds;
+        let release = &option.scored.release;
+        match option.claim {
+            MusicClaim::Discography => packs += 1,
+            MusicClaim::Album(_) => whole_albums += 1,
+            _ => singles += 1,
+        }
+        let contents = inspected
+            .get(&release.guid)
+            .and_then(Inspection::contents);
+        // Exactly the files for what this release adds, when its files were read.
+        let (file_indices, selected_size) = match contents {
+            Some(contents) => {
+                let files = judge::judge(contents, &artist_tracks(&missing, adds)).files;
+                let size: i64 = contents
+                    .files
+                    .iter()
+                    .filter(|file| files.contains(&file.index))
+                    .map(|file| file.size as i64)
+                    .sum();
+                let some = !files.is_empty();
+                (files, some.then_some(size))
+            }
+            None => (Vec::new(), None),
+        };
+        let kind = release_kind(&option.claim, &release.title);
+        let total = release.size.or(contents.map(|contents| contents.total_size));
+        // Whether the grab takes only part of the release.
+        let partial = match (contents, &option.claim) {
+            (Some(_), _) => selected_size.is_some(),
+            (None, MusicClaim::Album(index)) => groups
+                .iter()
+                .find(|group| group.name == albums[*index])
+                .and_then(|group| group.track_count)
+                .is_some_and(|count| (adds.len() as i32) < count),
+            (None, _) => false,
+        };
+        let download_note = partial.then(|| {
+            download_note(
+                adds.len(),
+                selected_size,
+                total,
+                kind,
+                env.settings.only_missing_files,
+            )
+        });
+        let mut reasons = vec![format!(
+            "{} fits the '{}' profile",
+            quality_label(&option.scored.parsed),
+            quality.name
+        )];
+        if let Some(seeders) = release.seeders {
+            reasons.push(format!("{seeders} seeders"));
+        }
+        match &option.verdict {
+            Some(verdict) => reasons.push(match &verdict.note {
+                Some(note) => format!("Files checked: {note}"),
+                None => "Files checked".to_string(),
+            }),
+            None => reasons.push("Files not checked: judged by its name".to_string()),
+        }
+        if let Some(note) = &download_note {
+            reasons.push(note.clone());
+        }
+        if let Some(feed) = feeds.get(&release.guid) {
+            reasons.push(format!("Already listed by feed '{feed}': no search needed"));
+        }
+        reasons.push(format!("Adds {} of {} missing tracks", adds.len(), missing.len()));
+        let adds_albums = albums_of(&missing, adds);
+        let label = match &option.claim {
+            MusicClaim::Discography => format!("{artist} discography"),
+            MusicClaim::Album(index) => format!("{artist} – {}", albums[*index]),
+            _ if adds.len() == 1 => format!("{artist} – {}", missing[adds[0]].title),
+            _ => format!("{artist} – {} tracks", adds.len()),
+        };
+        members.push(Row {
+            scope: option.claim.scope(),
+            status: "ready",
+            target_label: label,
+            artist_id: Some(artist_id.to_string()),
+            album_id: (adds_albums.len() == 1).then(|| adds_albums[0].clone()),
+            track_id: (adds.len() == 1).then(|| missing[adds[0]].id.clone()),
+            chosen: Some(Chosen {
+                release: release.clone(),
+                parsed: option.scored.parsed.clone(),
+                reasons,
+                feed_item_id: release
+                    .guid
+                    .strip_prefix(FEED_ITEM_GUID_PREFIX)
+                    .map(str::to_string),
+                source_name: release.source_name.clone(),
+                file_indices,
+            }),
+            covers_ids: adds.iter().map(|index| missing[*index].id.clone()).collect(),
+            covers_count: adds.len() as i32,
+            missing_count: missing.len() as i32,
+            covers_albums: adds_albums,
+            plan_position: Some(position as i32),
+            selected_size,
+            download_note,
+            ..Default::default()
+        });
+    }
+    let mut summary = Vec::new();
+    for (count, one, many) in [
+        (packs, "discography pack", "discography packs"),
+        (whole_albums, "album", "albums"),
+        (singles, "single release", "single releases"),
+    ] {
+        if count > 0 {
+            summary.push(format!("{count} {}", if count == 1 { one } else { many }));
+        }
+    }
+    let mut reasons = vec![format!(
+        "{} cover {} of {} missing tracks at the best quality found",
+        summary.join(" and "),
+        plan.covered(),
+        missing.len()
+    )];
+    if !evaluation.rejected_by_files.is_empty() {
+        reasons.push(format!(
+            "{} turned down by their files (e.g. {})",
+            evaluation.rejected_by_files.len(),
+            evaluation.rejected_by_files[0]
+        ));
+    }
+    header.plan_reasons = reasons;
+    if !plan.uncovered.is_empty() {
+        let mut note = format!(
+            "Still missing: {} (no usable release found)",
+            describe_tracks(&missing, &plan.uncovered)
+        );
+        if ran_out {
+            note = format!("{note}; {budget_note}");
+        }
+        header.note = Some(note);
+    }
+    Some((header, members))
 }
 
 // ===========================================================================
@@ -1378,6 +1993,12 @@ fn to_input(
             .then(|| serde_json::to_string(&row.covers_seasons).ok())
             .flatten(),
         file_indices,
+        artist_id: row.artist_id.clone(),
+        covers_albums: (!row.covers_albums.is_empty())
+            .then(|| serde_json::to_string(&row.covers_albums).ok())
+            .flatten(),
+        selected_size: row.selected_size,
+        download_note: row.download_note.clone(),
         rules_version: Some(RULES_VERSION),
         found_at: now.to_rfc3339(),
         expires_at: expires.to_rfc3339(),
@@ -1388,7 +2009,7 @@ fn to_input(
 async fn clear_for(db: &Database, row: &Row) {
     let mut filters = Vec::new();
     match row.scope {
-        "season_pack" | "episode" => {
+        "season_pack" | "episode" if row.show_id.is_some() => {
             for scope in ["season_pack", "episode"] {
                 filters.push(ReleaseRecommendationWhereInput {
                     show_id: row.show_id.as_deref().map(string_eq),
@@ -1403,16 +2024,36 @@ async fn clear_for(db: &Database, row: &Row) {
                 });
             }
         }
+        // An artist's plan replaces everything stored for the artist, and the per-album answers of
+        // older rules for its albums.
+        "plan" if row.artist_id.is_some() => {
+            filters.push(ReleaseRecommendationWhereInput {
+                artist_id: row.artist_id.as_deref().map(string_eq),
+                ..Default::default()
+            });
+            for album in &row.covers_albums {
+                filters.push(ReleaseRecommendationWhereInput {
+                    album_id: Some(string_eq(album)),
+                    plan_id: Some(StringFilter {
+                        is_null: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                });
+            }
+        }
         // A show's plan replaces everything stored for the show, older per-season answers too.
-        "plan" | "series_pack" => filters.push(ReleaseRecommendationWhereInput {
-            show_id: row.show_id.as_deref().map(string_eq),
-            ..Default::default()
-        }),
-        "movie" => filters.push(ReleaseRecommendationWhereInput {
+        "plan" | "series_pack" if row.show_id.is_some() => {
+            filters.push(ReleaseRecommendationWhereInput {
+                show_id: row.show_id.as_deref().map(string_eq),
+                ..Default::default()
+            })
+        }
+        "movie" if row.movie_id.is_some() => filters.push(ReleaseRecommendationWhereInput {
             movie_id: row.movie_id.as_deref().map(string_eq),
             ..Default::default()
         }),
-        "album" | "track" => {
+        "album" | "track" if row.album_id.is_some() => {
             for scope in ["album", "track"] {
                 filters.push(ReleaseRecommendationWhereInput {
                     album_id: row.album_id.as_deref().map(string_eq),
@@ -1421,7 +2062,7 @@ async fn clear_for(db: &Database, row: &Row) {
                 });
             }
         }
-        "book" => filters.push(ReleaseRecommendationWhereInput {
+        "book" if row.audiobook_id.is_some() => filters.push(ReleaseRecommendationWhereInput {
             audiobook_id: row.audiobook_id.as_deref().map(string_eq),
             ..Default::default()
         }),
@@ -1705,16 +2346,45 @@ pub async fn look_up(
         summary.none += part.none;
     }
 
-    // Albums (whole), then nothing per track unless the scope names a track.
-    for (album_id, tracks) in albums {
-        if left == 0 || existing.contains(&format!("album:{album_id}")) {
-            continue;
-        }
-        let Some((candidate, term)) = album_candidate(&tracks) else {
+    // Music: one coverage plan per artist, over every album of theirs missing tracks (Q110).
+    let mut artists: HashMap<String, Vec<AlbumGroup<'_>>> = HashMap::new();
+    let mut album_ids: Vec<&String> = albums.keys().collect();
+    album_ids.sort();
+    for album_id in album_ids {
+        let Ok(Some(album)) = crate::graphql::entities::Album::get(db.pool(), album_id).await else {
             continue;
         };
-        let Some(owner) = library_owner(&db, &mut owners, &candidate.library_id).await else {
+        artists
+            .entry(album.artist_id.clone())
+            .or_default()
+            .push(AlbumGroup {
+                album_id: album.id.clone(),
+                name: album.name.clone(),
+                track_count: album.track_count,
+                tracks: albums[album_id].clone(),
+            });
+    }
+    let mut artist_ids: Vec<String> = artists.keys().cloned().collect();
+    artist_ids.sort();
+    for artist_id in artist_ids {
+        if left == 0 || existing.contains(&format!("artist:{artist_id}")) {
             continue;
+        }
+        let groups = &artists[&artist_id];
+        let Some(first) = groups.first().and_then(|group| group.tracks.first()) else {
+            continue;
+        };
+        let library_id = first.library_id.clone();
+        let Some(owner) = library_owner(&db, &mut owners, &library_id).await else {
+            continue;
+        };
+        let artist_name = match crate::graphql::entities::Artist::get(db.pool(), &artist_id).await
+        {
+            Ok(Some(artist)) => artist.name,
+            _ => match &first.match_title {
+                WantedTitle::Music { artist, .. } => artist.clone(),
+                _ => continue,
+            },
         };
         let env = Env {
             db: &db,
@@ -1726,31 +2396,11 @@ pub async fn look_up(
         };
         left -= 1;
         summary.targets += 1;
-        let covers = ids_of(&tracks, |linkage| linkage.track_id.as_ref());
-        let mut wanted_tracks = Vec::new();
-        for id in &covers {
-            if let Ok(Some(track)) = crate::graphql::entities::Track::get(db.pool(), id).await {
-                wanted_tracks.push((track.track_number, track.title));
-            }
-        }
-        let target = CatalogueTarget {
-            album_id: Some(album_id.clone()),
-            ..Default::default()
+        let Some((header, members)) = look_up_artist(&env, &artist_id, &artist_name, groups).await
+        else {
+            continue;
         };
-        let row = look_up_single(
-            &env,
-            &candidate,
-            "album",
-            target,
-            term,
-            &candidate.linkage,
-            covers,
-            (!wanted_tracks.is_empty()).then_some(WantedItems::Tracks {
-                tracks: wanted_tracks,
-            }),
-        )
-        .await;
-        let part = store(&db, &[row], &owner, &candidate.library_id).await;
+        let part = store_plan(&db, header, &members, &owner, &library_id).await;
         summary.ready += part.ready;
         summary.none += part.none;
     }
@@ -1791,6 +2441,11 @@ async fn fresh_targets(db: &Database, now: DateTime<Utc>) -> HashSet<String> {
             && let Some(show) = &row.show_id
         {
             keys.insert(format!("plan:{show}"));
+        }
+        if row.scope == "plan"
+            && let Some(artist) = &row.artist_id
+        {
+            keys.insert(format!("artist:{artist}"));
         }
         if let Some(movie) = &row.movie_id {
             keys.insert(format!("movie:{movie}"));
@@ -1978,18 +2633,27 @@ pub async fn prune(db: &Database) -> usize {
 /// torrent that has not failed was grabbed for exactly what it is (that episode, that season's
 /// pack, or a pack of the whole show).
 async fn plan_release_is_settled(db: &Database, row: &ReleaseRecommendation) -> bool {
-    use crate::graphql::entities::Episode;
+    use crate::graphql::entities::{Episode, Track};
+    let music = row.artist_id.is_some();
     if let Some(json) = &row.covers_ids
         && let Ok(ids) = serde_json::from_str::<Vec<String>>(json)
         && !ids.is_empty()
     {
         let mut all_filled = true;
         for id in &ids {
-            let filled = Episode::get(db.pool(), id)
-                .await
-                .ok()
-                .flatten()
-                .is_none_or(|episode| episode.media_file_id.is_some());
+            let filled = if music {
+                Track::get(db.pool(), id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_none_or(|track| track.media_file_id.is_some())
+            } else {
+                Episode::get(db.pool(), id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_none_or(|episode| episode.media_file_id.is_some())
+            };
             if !filled {
                 all_filled = false;
                 break;
@@ -1998,6 +2662,29 @@ async fn plan_release_is_settled(db: &Database, row: &ReleaseRecommendation) -> 
         if all_filled {
             return true;
         }
+    }
+    if music {
+        // A torrent that has not failed was grabbed for exactly its track or album.
+        let filter = match (&row.track_id, &row.album_id) {
+            (Some(track), _) => TorrentWhereInput {
+                track_id: Some(string_eq(track)),
+                ..Default::default()
+            },
+            (None, Some(album)) if row.scope == "album" => TorrentWhereInput {
+                album_id: Some(string_eq(album)),
+                ..Default::default()
+            },
+            _ => return false,
+        };
+        return Torrent::query(db.pool())
+            .filter(filter)
+            .fetch_all()
+            .await
+            .map(|rows| {
+                rows.iter()
+                    .any(|torrent| torrent.post_process_status.as_deref() != Some("failed"))
+            })
+            .unwrap_or(false);
     }
     let Some(show) = &row.show_id else {
         return false;
@@ -2134,6 +2821,9 @@ fn request_scope(request: &LookupRequest) -> Option<&'static str> {
         Some("movie")
     } else if request.audiobook_id.is_some() {
         Some("book")
+    } else if request.artist_id.is_some() {
+        // An artist, an album or a track: the answer is the artist's coverage plan.
+        Some("plan")
     } else if request.album_id.is_some() {
         Some("album")
     } else if request.show_id.is_some() {
@@ -2155,19 +2845,25 @@ pub async fn request_lookup(
     request: LookupRequest,
 ) -> Result<Requested> {
     let scope = request_scope(&request).context("a lookup needs a season, movie, album or book")?;
-    // A season or an episode of a show is answered by the show's plan.
-    let request = match &request.show_id {
-        Some(show_id) => LookupRequest {
+    // A season or an episode of a show is answered by the show's plan, an album or a track by its
+    // artist's.
+    let request = match (&request.show_id, &request.artist_id) {
+        (Some(show_id), _) => LookupRequest {
             show_id: Some(show_id.clone()),
             ..Default::default()
         },
-        None => request,
+        (None, Some(artist_id)) => LookupRequest {
+            artist_id: Some(artist_id.clone()),
+            ..Default::default()
+        },
+        _ => request,
     };
     let existing = ReleaseRecommendation::query(db.pool())
         .filter(ReleaseRecommendationWhereInput {
             show_id: request.show_id.as_deref().map(string_eq),
             movie_id: request.movie_id.as_deref().map(string_eq),
             album_id: request.album_id.as_deref().map(string_eq),
+            artist_id: request.artist_id.as_deref().map(string_eq),
             audiobook_id: request.audiobook_id.as_deref().map(string_eq),
             scope: (scope == "plan").then(|| string_eq("plan")),
             expires_at: Some(DateFilter {
@@ -2198,6 +2894,7 @@ pub async fn request_lookup(
         album_id: request.album_id.clone(),
         track_id: None,
         audiobook_id: request.audiobook_id.clone(),
+        artist_id: request.artist_id.clone(),
         chosen: None,
         covers_ids: Vec::new(),
         covers_count: 0,
@@ -2206,6 +2903,7 @@ pub async fn request_lookup(
         plan_position: None,
         plan_reasons: Vec::new(),
         note: None,
+        ..Default::default()
     };
     store(db, &[row], owner_id, library_id).await;
     Ok(Requested::Queued)
@@ -2225,7 +2923,9 @@ async fn drop_placeholders(db: &Database, request: &LookupRequest) {
         movie_id: request.movie_id.as_deref().map(string_eq),
         album_id: request.album_id.as_deref().map(string_eq),
         audiobook_id: request.audiobook_id.as_deref().map(string_eq),
-        scope: request.show_id.is_some().then(|| string_eq("plan")),
+        artist_id: request.artist_id.as_deref().map(string_eq),
+        scope: (request.show_id.is_some() || request.artist_id.is_some())
+            .then(|| string_eq("plan")),
         status: Some(string_eq("searching")),
         ..Default::default()
     };
@@ -2251,7 +2951,10 @@ async fn wanted_files_for(
     use crate::graphql::entities::{Episode, Track};
     use crate::services::torrent::partial::WantedFiles;
     if !settings.only_missing_files
-        || !matches!(rec.scope.as_str(), "season_pack" | "series_pack" | "album")
+        || !matches!(
+            rec.scope.as_str(),
+            "season_pack" | "series_pack" | "album" | "track" | "discography"
+        )
     {
         return None;
     }
@@ -2267,9 +2970,15 @@ async fn wanted_files_for(
     let ids: Vec<String> = serde_json::from_str(rec.covers_ids.as_deref()?).ok()?;
     let mut wanted = WantedFiles::default();
     for id in ids {
-        if rec.scope == "album" {
+        if matches!(rec.scope.as_str(), "album" | "track" | "discography") {
             if let Ok(Some(track)) = Track::get(db.pool(), &id).await {
-                wanted.tracks.push((track.track_number, track.title));
+                // Track numbers repeat across a discography's albums: match those by title only.
+                let number = if rec.scope == "album" {
+                    track.track_number
+                } else {
+                    -1
+                };
+                wanted.tracks.push((number, track.title));
             }
         } else if let Ok(Some(episode)) = Episode::get(db.pool(), &id).await {
             wanted.episodes.push((episode.season, episode.episode));
@@ -2460,6 +3169,7 @@ async fn grab_row(
         search_key: format!("recommendation:{}", rec.id),
         episode_count: rec.covers_count.unwrap_or(1).max(1),
         timing: Timing::Back,
+        released_at: None,
         expectation: Expectation::Unchecked,
         feed_name: None,
         fallbacks: Vec::new(),
@@ -2530,6 +3240,7 @@ pub async fn work(manager: &Arc<ServicesManager>) -> Result<()> {
             season: request.season,
             movie_id: request.movie_id.clone(),
             album_id: request.album_id.clone(),
+            artist_id: request.artist_id.clone(),
             audiobook_id: request.audiobook_id.clone(),
             ignore_backoff: true,
             ..Default::default()

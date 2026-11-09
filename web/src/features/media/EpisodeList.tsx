@@ -15,8 +15,8 @@ import { MediaRow } from "@/components/ui/MediaRow";
 import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
-import { RecommendedRelease } from "@/features/recommendations/RecommendedRelease";
-import type { RecommendationTarget } from "@/features/recommendations/recommendations";
+import { FindReleasesButton } from "@/features/recommendations/FindReleasesButton";
+import { useRecommended } from "@/features/recommendations/useRecommended";
 import { EntityEpisodeUpdateDocument, EntityEpisodeUpdateManyDocument, type PlaybackProgressFieldsFragment, type UpdateEpisodeInput } from "@/graphql/generated/graphql";
 import { episodeThumb } from "@/lib/artwork";
 import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
@@ -200,8 +200,9 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
   const groups = useMemo(() => groupBySeason(episodes), [episodes]);
   // The show's coverage plan is shown whole above the seasons when several seasons are missing
   // something; each season then shows its part. With one season missing, that season shows it whole.
-  const seriesMissing = groups.filter((group) => group.missing > 0).length >= 2 ? groups.reduce((total, group) => total + group.missing, 0) : 0;
-  const seasonTarget = (season: number) => (seriesMissing > 0 ? { showId, season } : { showId, series: true });
+  // Find releases for a whole season, from its header; recommendations are listed in that dialog.
+  const [seasonSearch, setSeasonSearch] = useState<number | null>(null);
+  const findSeason = isAdmin ? (season: number) => { setSearching(null); setSeasonSearch(season); } : undefined;
   const tableScope = `episodes:${user?.id ?? "anonymous"}:${libraryId}:${showId}`;
 
   // The shared action runner owns error feedback. Reject unsuccessful payloads before
@@ -317,12 +318,11 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
     return (
       <EpisodePresentationContext.Provider value={presentation}>
         <div className="flex min-w-0 flex-col gap-3">
-          <RecommendedRelease target={{ showId, series: true }} missing={seriesMissing} />
           {loading ? <EpisodeRowSkeleton /> : episodes.length === 0 ? <p className="text-body-sm text-muted">No episodes in this season</p> : groups.map((group) => (
-            <EpisodeShelf key={`${group.season}:${focusEpisodeId ?? ""}`} recommendation={seasonTarget(group.season)} focusEpisodeId={focusEpisodeId} group={group} isAdmin={isAdmin} onBulk={bulk} onPlay={onPlay} tint={tint} headerExtra={headerExtra} />
+            <EpisodeShelf key={`${group.season}:${focusEpisodeId ?? ""}`} showId={showId} onFind={findSeason} focusEpisodeId={focusEpisodeId} group={group} isAdmin={isAdmin} onBulk={bulk} onPlay={onPlay} tint={tint} headerExtra={headerExtra} />
           ))}
           {status ? <div className="text-label-sm text-muted">{status}</div> : null}
-          <ReleaseSearchDialog isOpen={Boolean(searching)} onOpenChange={(open) => !open && setSearching(null)} query={showName} season={searching?.season} episode={searching?.episode} libraryId={libraryId} target={{ showId, episodeId: searching?.id }} />
+          <ReleaseSearchDialog isOpen={Boolean(searching) || seasonSearch !== null} onOpenChange={(open) => { if (!open) { setSearching(null); setSeasonSearch(null); } }} query={showName} season={searching?.season ?? seasonSearch} episode={searching?.episode} libraryId={libraryId} target={{ showId, episodeId: searching?.id }} />
           {episodePlaylist.dialog}
         </div>
       </EpisodePresentationContext.Provider>
@@ -336,11 +336,9 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
   return (
     <EpisodePresentationContext.Provider value={presentation}>
     <div className="flex min-w-0 flex-col gap-6">
-      <RecommendedRelease target={{ showId, series: true }} missing={seriesMissing} />
       {groups.map((group) => (
         <section key={group.season} aria-label={`${group.label} episodes`} className="flex min-w-0 flex-col gap-2">
-          <SeasonHeader group={group} isAdmin={isAdmin} onBulk={bulk} extra={headerExtra} />
-          <RecommendedRelease target={seasonTarget(group.season)} missing={group.missing} />
+          <SeasonHeader showId={showId} group={group} isAdmin={isAdmin} onBulk={bulk} onFind={findSeason} extra={headerExtra} />
           <LoadedDataTable
             id={`${tableScope}:season:${group.season}`}
             label={`${group.label} episodes`}
@@ -359,7 +357,7 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
           />
         </section>
       ))}
-      <ReleaseSearchDialog isOpen={Boolean(searching)} onOpenChange={(open) => !open && setSearching(null)} query={showName} season={searching?.season} episode={searching?.episode} libraryId={libraryId} target={{ showId, episodeId: searching?.id }} />
+      <ReleaseSearchDialog isOpen={Boolean(searching) || seasonSearch !== null} onOpenChange={(open) => { if (!open) { setSearching(null); setSeasonSearch(null); } }} query={showName} season={searching?.season ?? seasonSearch} episode={searching?.episode} libraryId={libraryId} target={{ showId, episodeId: searching?.id }} />
       {episodePlaylist.dialog}
     </div>
     </EpisodePresentationContext.Provider>
@@ -367,14 +365,19 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
 }
 
 interface SeasonHeaderProps {
+  showId: string;
   group: SeasonGroup<EpisodeRow>;
+  /** Open Find releases for this season. */
+  onFind?: (season: number) => void;
   isAdmin: boolean;
   onBulk: (season: number, input: UpdateEpisodeInput, missingOnly: boolean, message: string) => Promise<void>;
   extra?: ReactNode;
 }
 
-function SeasonHeader({ group, isAdmin, onBulk, extra }: SeasonHeaderProps) {
+function SeasonHeader({ showId, group, isAdmin, onBulk, onFind, extra }: SeasonHeaderProps) {
   const { seasonReset, resetFiles } = useEpisodePresentation();
+  // The badge counts the releases of the show's plan that cover this season.
+  const recommended = useRecommended({ showId, season: group.season }, onFind ? group.missing : 0);
   const actions: ActionSet<SeasonGroup<EpisodeRow>> = useMemo(() => defineActions<SeasonGroup<EpisodeRow>>("season", [
     {
       id: "want-missing", label: "Want all missing", icon: IconBookmark, group: "manage", priority: 1,
@@ -405,17 +408,20 @@ function SeasonHeader({ group, isAdmin, onBulk, extra }: SeasonHeaderProps) {
         {group.wanted > 0 ? ` · ${group.wanted} wanted` : ""}
         {group.ignored > 0 ? ` · ${group.ignored} ignored` : ""}
       </span>
+      <span className="ms-auto flex min-w-0 max-w-full items-center gap-2">
+      {onFind && group.missing > 0 ? <FindReleasesButton size="sm" count={recommended.forTarget} onPress={() => onFind(group.season)} /> : null}
       {/* Season management is for pointer and keyboard; the remote moves straight to episodes. */}
-      <span data-tv-skip className="ms-auto flex min-w-0 max-w-full items-center gap-2">
+      <span data-tv-skip className="flex min-w-0 max-w-full items-center gap-2">
         {showBar ? <ActionBar set={actions} targets={[group]} label={group.label} className="min-w-0 max-w-full" /> : null}
         {extra}
+      </span>
       </span>
     </header>
   );
 }
 
 /** A season's episodes as a row of stills with the focused episode's summary underneath. */
-function EpisodeShelf({ recommendation, focusEpisodeId, group, isAdmin, onBulk, onPlay, tint, headerExtra }: { recommendation: RecommendationTarget; focusEpisodeId?: string; group: SeasonGroup<EpisodeRow>; isAdmin: boolean; onBulk: SeasonHeaderProps["onBulk"]; onPlay: (episode: EpisodeRow) => void; tint?: string; headerExtra?: ReactNode }) {
+function EpisodeShelf({ showId, onFind, focusEpisodeId, group, isAdmin, onBulk, onPlay, tint, headerExtra }: { showId: string; onFind?: (season: number) => void; focusEpisodeId?: string; group: SeasonGroup<EpisodeRow>; isAdmin: boolean; onBulk: SeasonHeaderProps["onBulk"]; onPlay: (episode: EpisodeRow) => void; tint?: string; headerExtra?: ReactNode }) {
   const { progressByFile } = useEpisodePresentation();
   // Start on the next episode to watch; the summary follows remote focus and the pointer.
   const nextUp = group.episodes.find((episode) => episode.mediaFileId && !progressByFile.get(episode.mediaFileId)?.isWatched) ?? group.episodes[0];
@@ -423,8 +429,7 @@ function EpisodeShelf({ recommendation, focusEpisodeId, group, isAdmin, onBulk, 
   const active = group.episodes.find((episode) => episode.id === activeId) ?? nextUp;
   return (
     <section aria-label={`${group.label} episodes`} className="flex min-w-0 flex-col gap-3">
-      <SeasonHeader group={group} isAdmin={isAdmin} onBulk={onBulk} extra={headerExtra} />
-      <RecommendedRelease target={recommendation} missing={group.missing} />
+      <SeasonHeader showId={showId} group={group} isAdmin={isAdmin} onBulk={onBulk} onFind={onFind} extra={headerExtra} />
       <div className="detail-bleed">
         <MediaRow ariaLabel={`${group.label} episodes`}>
           {group.episodes.map((episode) => <EpisodeTile key={episode.id} episode={episode} onPlay={onPlay} tint={tint} active={episode.id === active?.id} nextUp={episode.id === nextUp?.id} onActive={setActiveId} />)}

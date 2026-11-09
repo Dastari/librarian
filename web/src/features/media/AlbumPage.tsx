@@ -1,4 +1,4 @@
-import { RecommendedRelease } from "@/features/recommendations/RecommendedRelease";
+import { useRecommended } from "@/features/recommendations/useRecommended";
 import { copyText } from "glass-ux/copy-button";
 import { useApolloClient, useMutation } from "@apollo/client/react";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
@@ -225,6 +225,8 @@ export function AlbumPage({ albumId }: { albumId: string }) {
   const playAlbum = queue.length > 0 ? { label: "Play", run: () => playFrom(), disabledReason: !pages.complete ? "Load all tracks to play the album" : undefined } : undefined;
   const { actions: albumActions, dialogs: albumDialogs, openSettings } = useAlbumEntity<NonNullable<typeof album>>({ open: false, play: playAlbum, artist: tracks[0]?.artistName, reset: albumReset, onChanged: pages.refresh });
 
+  // An album is answered by its artist's plan; the badge counts the releases for this album.
+  const recommended = useRecommended({ albumId, artistId: album?.artistId }, album ? tracks.filter((track) => !track.mediaFileId).length : 0, Boolean(album));
   if (error && !album) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!album) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Album not found" description="This item may have been removed from the library." className="page-gutter my-8" />;
 
@@ -258,12 +260,11 @@ export function AlbumPage({ albumId }: { albumId: string }) {
           </>
         ),
         actions: (
-          <MediaActions target={album} label={album.name} actions={albumActions} play={playAlbum} />
+          <MediaActions target={album} label={album.name} actions={albumActions} play={playAlbum} recommended={recommended.forTarget} />
         ),
       }}
     >
       <AlbumTableContext.Provider value={{ actions, statuses, currentItemId, discs, fractionOf, playStateOf, press, want: isAdmin ? toggleWanted : undefined }}>
-        <RecommendedRelease target={{ albumId: album.id }} missing={tracks.filter((track) => !track.mediaFileId).length} />
         <LoadedDataTable
           id={`album-tracks:${user?.id ?? "anonymous"}:${album.libraryId}:${album.id}`}
           label={`${album.name} tracks`} columns={trackColumns} rows={tracks} getRowId={(track) => track.id} getRowLabel={(track) => track.title}

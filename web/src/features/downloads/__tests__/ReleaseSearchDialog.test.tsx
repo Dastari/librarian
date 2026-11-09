@@ -2,10 +2,16 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AddTorrentDocument, HasEnabledSourcesDocument, SearchSourcesDocument } from "@/graphql/generated/graphql";
+import { AddTorrentDocument, GrabRecommendationDocument, GrabRecommendationPlanDocument, HasEnabledSourcesDocument, SearchSourcesDocument } from "@/graphql/generated/graphql";
 import { renderWithProviders } from "@/test";
 
 import { ReleaseSearchDialog } from "../ReleaseSearchDialog";
+
+// What the server recommends for the target; nothing unless a test says otherwise.
+const recommendedState = vi.hoisted(() => ({ value: null as unknown }));
+vi.mock("@/features/recommendations/useRecommended", () => ({
+  useRecommended: () => recommendedState.value ?? { plan: null, releases: [], forTarget: 0, searching: false, none: null, rows: [], loaded: true, refetch: () => {} },
+}));
 
 // The public Glass table uses measured viewport geometry to render its rows.
 beforeEach(() => {
@@ -15,7 +21,10 @@ beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1200);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(700);
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  recommendedState.value = null;
+});
 
 type Parsed = Partial<{
   resolution: string | null;
@@ -503,5 +512,68 @@ describe("ReleaseSearchDialog feed releases", () => {
     expect(screen.getByText("From feed")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /Grab/ }));
     await vi.waitFor(() => expect(add).toHaveBeenCalled());
+  });
+});
+
+describe("ReleaseSearchDialog recommended releases", () => {
+  const rec = (id: string, extra: Record<string, unknown> = {}) => ({
+    __typename: "ReleaseRecommendation", id, userId: "me", libraryId: "lib-1", scope: "season_pack", status: "ready", targetLabel: "Andor Season 2", showId: "show-1", season: 2,
+    episodeId: null, movieId: null, albumId: null, trackId: null, audiobookId: null, artistId: null, title: `Andor.S02.${id}.1080p.WEB-DL`, sourceKind: "indexer", sourceId: "src-1", sourceName: "Tracker",
+    feedItemId: null, infoHash: `hash-${id}`, guid: `guid-${id}`, size: 12_000_000_000, seeders: 40, quality: "1080p WEB-DL", coversCount: 6, missingCount: 8, coversIds: "[]",
+    reasons: ["1080p WEB-DL fits the 'HD' profile", "40 seeders"], note: null, planId: "plan-1", planPosition: 0, coversSeasons: "[2]", coversAlbums: null, fileIndices: null,
+    selectedSize: null, downloadNote: null, rulesVersion: 4, foundAt: "2026-11-09T00:00:00Z", expiresAt: "2026-11-10T00:00:00Z", createdAt: "2026-11-09T00:00:00Z", updatedAt: "2026-11-09T00:00:00Z", ...extra,
+  });
+  const plan = rec("plan-1", { scope: "plan", planId: null, title: null, coversCount: 8, missingCount: 10, note: "Still missing: S03E01–E02 (no usable release found)" });
+  const withPlan = (releases: unknown[], planRow: unknown = plan) => {
+    recommendedState.value = { plan: planRow, releases, forTarget: releases.length, searching: false, none: null, rows: [planRow, ...releases], loaded: true, refetch: () => {} };
+  };
+
+  it("pins the recommended releases first, as ordinary rows that say Recommended and what they cover", async () => {
+    withPlan([rec("a"), rec("b", { scope: "episode", targetLabel: "Andor S02E07", coversCount: 1, planPosition: 1 })]);
+    // The live search also returned release a: it is shown once, as the recommended row.
+    await mount([searchMock([release("live", { title: "Andor.S02E05.720p" }), release("dupe", { infoHash: "hash-a", title: "Andor.S02.a.1080p.WEB-DL" })])]);
+    const row = await releaseRow("Andor.S02.a.1080p.WEB-DL");
+    expect(within(row).getByText("Recommended")).toBeInTheDocument();
+    expect(within(row).getByText("S02 · adds 6")).toBeInTheDocument();
+    expect(row).toHaveTextContent("Tracker");
+    expect(screen.getAllByText("Andor.S02.a.1080p.WEB-DL")).toHaveLength(1);
+    expect(within(await releaseRow("Andor.S02.b.1080p.WEB-DL")).getByText("S02E07")).toBeInTheDocument();
+    // Pinned above the search results.
+    const rows = screen.getAllByRole("row").map((node) => node.textContent ?? "");
+    const first = rows.findIndex((text) => text.includes("Andor.S02.a.1080p.WEB-DL"));
+    const live = rows.findIndex((text) => text.includes("Andor.S02E05.720p"));
+    expect(first).toBeGreaterThan(-1);
+    expect(first).toBeLessThan(live);
+    // What the plan leaves uncovered is a quiet line, not a panel.
+    expect(screen.getByText("Still missing: S03E01–E02 (no usable release found)")).toBeInTheDocument();
+  });
+
+  it("downloads the whole plan from the table's Download recommended action, after confirming", async () => {
+    withPlan([rec("a"), rec("b", { planPosition: 1 })]);
+    const grabbedPlan = vi.fn(() => ({ data: { grabRecommendationPlan: { __typename: "GrabRecommendationPlanPayload", success: true, error: null, started: 2, failed: [], torrentIds: ["t1", "t2"] } } }));
+    await mount([searchMock([]), { request: { query: GrabRecommendationPlanDocument, variables: { id: "plan-1" } }, result: grabbedPlan }]);
+    await userEvent.click(await screen.findByRole("button", { name: /Download recommended: 2 releases cover 8 of 10 missing/ }));
+    const confirmation = await screen.findByRole("alertdialog");
+    expect(grabbedPlan).not.toHaveBeenCalled();
+    await userEvent.click(within(confirmation).getByRole("button", { name: "Download recommended" }));
+    await vi.waitFor(() => expect(grabbedPlan).toHaveBeenCalledOnce());
+    expect(await screen.findByText("Downloading 2 recommended releases")).toBeInTheDocument();
+  });
+
+  it("grabs one recommended row through its recommendation, never through a link", async () => {
+    withPlan([rec("a")]);
+    const grabbedOne = vi.fn(() => ({ data: { grabRecommendation: { __typename: "GrabRecommendationPayload", success: true, error: null, torrentId: "t1", torrentName: "Andor S02" } } }));
+    await mount([searchMock([]), { request: { query: GrabRecommendationDocument, variables: { id: "a" } }, result: grabbedOne }]);
+    const row = await releaseRow("Andor.S02.a.1080p.WEB-DL");
+    await userEvent.click(within(row).getByRole("button", { name: /Grab/ }));
+    await vi.waitFor(() => expect(grabbedOne).toHaveBeenCalledOnce());
+    expect(await screen.findByText("Downloading Andor S02")).toBeInTheDocument();
+  });
+
+  it("offers no Download recommended without a plan", async () => {
+    recommendedState.value = { plan: null, releases: [rec("movie", { scope: "movie", planId: null, showId: null, season: null, coversSeasons: null })], forTarget: 1, searching: false, none: null, rows: [], loaded: true, refetch: () => {} };
+    await mount([searchMock([release("x")])]);
+    expect(within(await releaseRow("Andor.S02.movie.1080p.WEB-DL")).getByText("Recommended")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Download recommended/ })).toBeNull();
   });
 });

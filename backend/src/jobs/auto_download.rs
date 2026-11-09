@@ -71,8 +71,9 @@ use crate::services::torrent::judge::{self, ContentsVerdict, WantedItems};
 use crate::services::torrent::partial::WantedFiles;
 
 use super::auto_schedule::{
-    Expectation, SearchState, Timing, backoff_elapsed, backoff_for, classify_episode,
-    classify_release, grab_budget, next_search_at, release_instant,
+    Expectation, SearchState, Timing, backoff_at, backoff_elapsed, classify_episode,
+    classify_release, grab_budget, home_release_instant, movie_timing, next_search_at,
+    release_instant,
 };
 use super::auto_settings::AutoDownloadSettings;
 use super::auto_trail::{GrabRecord, Trail, Trigger};
@@ -141,6 +142,9 @@ pub struct WantedCandidate {
     pub episode_count: i32,
     /// Where the target stands relative to its release: decides which backoff applies.
     pub timing: Timing,
+    /// When it aired or was released for home viewing, when known: how long it has been out
+    /// decides how often a fresh target is searched again (`auto_schedule::backoff_at`).
+    pub released_at: Option<DateTime<Utc>>,
     /// What a release must be to count as this target (right episode, season, year).
     pub expectation: Expectation,
     /// The show or movie title an RSS item has to be named after. `None` for music and
@@ -162,6 +166,8 @@ pub struct HuntScope {
     pub season: Option<i32>,
     pub movie_id: Option<String>,
     pub album_id: Option<String>,
+    /// Every album of one artist (an artist's coverage plan, Q110).
+    pub artist_id: Option<String>,
     pub audiobook_id: Option<String>,
     /// Manual searches ignore the per-target backoff.
     pub ignore_backoff: bool,
@@ -185,6 +191,7 @@ impl HuntScope {
         self.show_id.is_some()
             || self.movie_id.is_some()
             || self.album_id.is_some()
+            || self.artist_id.is_some()
             || self.audiobook_id.is_some()
             || self.library_id.is_some()
     }
@@ -198,7 +205,8 @@ impl HuntScope {
     }
 
     fn wants_albums(&self) -> bool {
-        self.album_id.is_some() || !self.names_other_kind(self.album_id.is_some())
+        let named = self.album_id.is_some() || self.artist_id.is_some();
+        named || !self.names_other_kind(named)
     }
 
     fn wants_audiobooks(&self) -> bool {
@@ -211,6 +219,7 @@ impl HuntScope {
         let any_named = self.show_id.is_some()
             || self.movie_id.is_some()
             || self.album_id.is_some()
+            || self.artist_id.is_some()
             || self.audiobook_id.is_some();
         any_named && !this_kind_named
     }
@@ -227,6 +236,8 @@ pub struct AutoDownloadRunSummary {
     pub backoff_skipped: usize,
     /// Left for later because the limit on automatic downloads was reached.
     pub capped: usize,
+    /// Left for the next tick because the hourly search budget was used up (air-time pass).
+    pub budget_skipped: usize,
     pub errors: Vec<String>,
 }
 
@@ -335,42 +346,49 @@ impl Blocklist {
 // Search backoff state
 // ===========================================================================
 
-async fn find_search_state_setting(db: &Database) -> Result<Option<AppSetting>> {
+async fn find_map_setting(db: &Database, key: &str) -> Result<Option<AppSetting>> {
     Ok(AppSetting::query(db.pool())
         .filter(AppSettingWhereInput {
-            key: Some(string_eq(SEARCH_STATE_SETTING)),
+            key: Some(string_eq(key)),
             ..Default::default()
         })
         .fetch_all()
         .await
-        .context("failed to query the auto-download search state setting")?
+        .with_context(|| format!("failed to query the {key} setting"))?
         .into_iter()
         .next())
 }
 
-pub(crate) async fn load_search_state(db: &Database) -> SearchState {
-    match find_search_state_setting(db).await {
+/// A `key -> RFC3339 time` map kept in an app setting (search backoff, opened notifications).
+pub(crate) async fn load_time_map(db: &Database, key: &str) -> SearchState {
+    match find_map_setting(db, key).await {
         Ok(Some(setting)) => serde_json::from_str(&setting.value).unwrap_or_else(|error| {
             warn!(
-                setting = SEARCH_STATE_SETTING,
+                setting = key,
                 error = %error,
-                "Auto-download: search state is not valid JSON; starting from an empty map"
+                "Auto-download: {key} is not valid JSON; starting from an empty map"
             );
             SearchState::new()
         }),
         Ok(None) => SearchState::new(),
         Err(error) => {
             warn!(
-                setting = SEARCH_STATE_SETTING,
+                setting = key,
                 error = %error,
-                "Auto-download: could not read search state; backoff is disabled for this pass"
+                "Auto-download: could not read {key}; starting from an empty map"
             );
             SearchState::new()
         }
     }
 }
 
-pub(crate) async fn save_search_state(db: &Database, state: &SearchState) -> Result<()> {
+/// Save a time map, dropping entries older than the retention period.
+pub(crate) async fn save_time_map(
+    db: &Database,
+    key: &str,
+    description: &str,
+    state: &SearchState,
+) -> Result<()> {
     let cutoff = Utc::now() - chrono::Duration::days(SEARCH_STATE_RETENTION_DAYS);
     let pruned: SearchState = state
         .iter()
@@ -383,7 +401,7 @@ pub(crate) async fn save_search_state(db: &Database, state: &SearchState) -> Res
         .collect();
     let value = serde_json::to_string(&pruned)?;
 
-    match find_search_state_setting(db).await? {
+    match find_map_setting(db, key).await? {
         Some(existing) => {
             AppSetting::update_by_id(
                 db,
@@ -394,25 +412,37 @@ pub(crate) async fn save_search_state(db: &Database, state: &SearchState) -> Res
                 },
             )
             .await
-            .context("failed to update the auto-download search state")?;
+            .with_context(|| format!("failed to update {key}"))?;
         }
         None => {
             AppSetting::insert(
                 db,
                 CreateAppSettingInput {
-                    key: SEARCH_STATE_SETTING.to_string(),
+                    key: key.to_string(),
                     value,
-                    description: Some(
-                        "Auto-download hunt: last search time per wanted target".to_string(),
-                    ),
+                    description: Some(description.to_string()),
                     category: "auto_download".to_string(),
                 },
             )
             .await
-            .context("failed to create the auto-download search state")?;
+            .with_context(|| format!("failed to create {key}"))?;
         }
     }
     Ok(())
+}
+
+pub(crate) async fn load_search_state(db: &Database) -> SearchState {
+    load_time_map(db, SEARCH_STATE_SETTING).await
+}
+
+pub(crate) async fn save_search_state(db: &Database, state: &SearchState) -> Result<()> {
+    save_time_map(
+        db,
+        SEARCH_STATE_SETTING,
+        "Auto-download hunt: last search time per wanted target",
+        state,
+    )
+    .await
 }
 
 // ===========================================================================
@@ -499,6 +529,7 @@ fn episode_candidate(
     episode: &Episode,
     profile_override: Option<String>,
     timing: Timing,
+    released_at: Option<DateTime<Utc>>,
 ) -> WantedCandidate {
     let term = format!(
         "{} S{:02}E{:02}",
@@ -530,6 +561,7 @@ fn episode_candidate(
         search_key: format!("episode:{}", episode.id),
         episode_count: 1,
         timing,
+        released_at,
         expectation: Expectation::Episode {
             season: episode.season,
             episode: episode.episode,
@@ -583,6 +615,7 @@ fn season_pack_candidate(
         search_key: format!("show:{}:s{}", show.id, season),
         episode_count: episode_count.max(1),
         timing: Timing::Back,
+        released_at: None,
         expectation: Expectation::SeasonPack { season },
         feed_name: Some(show.name.clone()),
         fallbacks,
@@ -749,6 +782,7 @@ async fn discover_episode_candidates(
                     episode,
                     show.quality_profile_id.clone(),
                     timing_of(episode),
+                    release_instant(episode.air_date.as_deref(), episode.air_stamp.as_deref()),
                 ));
             }
 
@@ -804,6 +838,9 @@ async fn discover_track_candidates(
     }
     if let Some(album_id) = &scope.album_id {
         filter.id = Some(string_eq(album_id));
+    }
+    if let Some(artist_id) = &scope.artist_id {
+        filter.artist_id = Some(string_eq(artist_id));
     }
     let albums = Album::query(db.pool()).filter(filter).fetch_all().await?;
 
@@ -916,6 +953,7 @@ async fn discover_track_candidates(
                 search_key: format!("track:{}", track.id),
                 episode_count: 1,
                 timing,
+                released_at: None,
                 expectation: Expectation::Unchecked,
                 feed_name: None,
                 fallbacks: Vec::new(),
@@ -1066,6 +1104,7 @@ async fn discover_audiobook_candidates(
             search_key: format!("audiobook:{}", audiobook.id),
             episode_count: 1,
             timing,
+            released_at: None,
             expectation: Expectation::Unchecked,
             feed_name: None,
             fallbacks: Vec::new(),
@@ -1082,6 +1121,7 @@ async fn discover_movie_candidates(
     db: &Database,
     scope: &HuntScope,
     blocklist: &Blocklist,
+    settings: &AutoDownloadSettings,
     now: DateTime<Utc>,
 ) -> Result<Vec<WantedCandidate>> {
     let mut filter = MovieWhereInput {
@@ -1106,7 +1146,16 @@ async fn discover_movie_candidates(
         if is_ignored(movie.ignored) || movie.media_file_id.is_some() {
             continue;
         }
-        let timing = dated_timing(movie.release_date.as_deref(), now);
+        let home_release = home_release_instant(
+            movie.digital_release_date.as_deref(),
+            movie.physical_release_date.as_deref(),
+        );
+        let timing = movie_timing(
+            movie.release_date.as_deref(),
+            home_release,
+            now,
+            settings,
+        );
         if not_yet(timing) {
             continue;
         }
@@ -1153,6 +1202,7 @@ async fn discover_movie_candidates(
             search_key: format!("movie:{}", movie.id),
             episode_count: 1,
             timing,
+            released_at: home_release,
             expectation: Expectation::Movie {
                 year: movie
                     .year
@@ -1185,7 +1235,7 @@ pub async fn discover_candidates(
         out.extend(discover_audiobook_candidates(db, scope, blocklist, now).await?);
     }
     if scope.wants_movies() {
-        out.extend(discover_movie_candidates(db, scope, blocklist, now).await?);
+        out.extend(discover_movie_candidates(db, scope, blocklist, settings, now).await?);
     }
     Ok(out)
 }
@@ -1259,28 +1309,49 @@ pub async fn grab_release_with(
         wanted_files,
     };
 
-    let file = match (release.magnet_uri.as_deref(), release.source_id.as_deref()) {
-        (None, Some(source_id)) => crate::services::graphql::entities::fetch_torrent_from_source(
-            &env.manager,
-            source_id,
-            &uri,
-        )
-        .await
-        .map_err(redacted_error)?,
-        _ => None,
-    };
-
     let actor = crate::services::torrent::system_auth_user();
-    let outcome = match file {
-        Some(bytes) => {
-            env.torrent
-                .add_torrent_file_for_actor_with_outcome(bytes, &actor, metadata)
+    // A public torrent read before it was grabbed (Q99) is added from what was kept: no peer is
+    // asked for its metadata again and no `.torrent` is fetched again (Q111). Its row still keeps a
+    // magnet for restoring.
+    let outcome = if let Some(stored) = inspect::stored_torrent(&env.db, release).await {
+        tracing::debug!(
+            candidate = %candidate.label,
+            info_hash = %stored.info_hash,
+            "Auto-download: adding '{}' from its kept metadata, without resolving it again",
+            release.title
+        );
+        env.torrent
+            .add_stored_torrent_for_actor_with_outcome(
+                stored.torrent_file,
+                stored.magnet,
+                &actor,
+                metadata,
+            )
+            .await
+    } else {
+        let file = match (release.magnet_uri.as_deref(), release.source_id.as_deref()) {
+            (None, Some(source_id)) => {
+                crate::services::graphql::entities::fetch_torrent_from_source(
+                    &env.manager,
+                    source_id,
+                    &uri,
+                )
                 .await
-        }
-        None => {
-            env.torrent
-                .add_magnet_for_actor_with_outcome(&uri, &actor, metadata)
-                .await
+                .map_err(redacted_error)?
+            }
+            _ => None,
+        };
+        match file {
+            Some(bytes) => {
+                env.torrent
+                    .add_torrent_file_for_actor_with_outcome(bytes, &actor, metadata)
+                    .await
+            }
+            None => {
+                env.torrent
+                    .add_magnet_for_actor_with_outcome(&uri, &actor, metadata)
+                    .await
+            }
         }
     }
     .map_err(redacted_error)?;
@@ -1377,6 +1448,9 @@ struct HuntContext {
     fetches_per_hour: u32,
     /// Select only the files an inspected pack holds for what is missing.
     only_missing_files: bool,
+    /// Search keys not searched after all (the hourly budget was used up): their backoff is not
+    /// spent, so they are tried again on the next tick.
+    unsearched: Vec<String>,
 }
 
 /// What searching the sources for one candidate turned up.
@@ -1661,14 +1735,18 @@ async fn resolve_candidate_profile(
 /// Whether a search with no result opens a "Waiting for …" notification. Everything does except the
 /// long tail, back-catalogue episodes and individual tracks (a manual search always does): a first
 /// sweep of a show with two hundred missing old episodes must not open two hundred notifications.
-fn opens_notification(candidate: &WantedCandidate, trigger: &Trigger) -> bool {
-    let long_tail = candidate.linkage.track_id.is_some()
-        || (candidate.timing == Timing::Back
-            && matches!(
-                candidate.expectation,
-                Expectation::Episode { .. } | Expectation::SeasonPack { .. }
-            ));
-    *trigger == Trigger::Manual || !long_tail
+fn opens_notification(candidate: &WantedCandidate, trigger: &Trigger, now: DateTime<Utc>) -> bool {
+    super::auto_trail::opens_waiting(
+        trigger,
+        candidate.linkage.track_id.is_some(),
+        candidate.timing,
+        matches!(
+            candidate.expectation,
+            Expectation::Episode { .. } | Expectation::SeasonPack { .. }
+        ),
+        candidate.released_at,
+        now,
+    )
 }
 
 /// The release a candidate would be taken as, from what was collected: verified to be the right
@@ -1798,9 +1876,14 @@ async fn choose_by_contents(
                     turned_down.push(format!("'{}' {why}", scored.release.title));
                     continue;
                 }
-                let better = checked
-                    .as_ref()
-                    .is_none_or(|(_, best)| verdict.covers.len() > best.covers.len());
+                // More of what is missing wins; between equals, bundled subtitles are the
+                // tiebreak (Q114), never a reason to turn one down.
+                let better = checked.as_ref().is_none_or(|(_, best)| {
+                    verdict.covers.len() > best.covers.len()
+                        || (verdict.covers.len() == best.covers.len()
+                            && !verdict.subtitle_languages.is_empty()
+                            && best.subtitle_languages.is_empty())
+                });
                 if better {
                     checked = Some((scored, verdict));
                 }
@@ -1839,6 +1922,38 @@ async fn choose_by_contents(
     ))
 }
 
+/// The releases to choose from for a candidate. The air-time pass (Q113) tries the owner's feed
+/// catalogue first and asks the indexers only when it holds nothing acceptable, and only inside the
+/// hourly search budget (`None` when that is used up). Every other trigger searches as before.
+async fn collect_for_trigger(
+    ctx: &HuntContext,
+    candidate: &WantedCandidate,
+    quality_profile: &QualityProfile,
+) -> Option<Collected> {
+    if ctx.trigger != Trigger::AirTime {
+        return Some(collect_releases(ctx, candidate).await);
+    }
+    let mut collected =
+        super::recommend::catalogue_for_candidate(&ctx.env.db, candidate, &ctx.blocklist).await;
+    // Feeds list everything: a title must say which episode or year it is.
+    if !collected.releases.is_empty()
+        && rank_for_candidate(candidate, &collected, quality_profile, true).is_ok()
+    {
+        tracing::debug!(
+            candidate = %candidate.label,
+            "Auto-download: the feed catalogue already lists a release for {}; no search needed",
+            candidate.label
+        );
+        return Some(collected);
+    }
+    let requests = candidate.queries.len().max(1) as u32;
+    if !super::recommend::take_search_budget(requests, ctx.fetches_per_hour) {
+        return None;
+    }
+    super::recommend::merge_collected(&mut collected, collect_releases(ctx, candidate).await);
+    Some(collected)
+}
+
 /// Search for and grab the best release for one candidate.
 /// Returns `Ok(true)` when a release was grabbed.
 async fn try_candidate(
@@ -1847,9 +1962,20 @@ async fn try_candidate(
     summary: &mut AutoDownloadRunSummary,
     next_search: Option<DateTime<Utc>>,
 ) -> Result<bool> {
-    summary.searched += 1;
-    let collected = collect_releases(ctx, candidate).await;
     let quality_profile = resolve_candidate_profile(ctx, candidate).await;
+    let Some(collected) = collect_for_trigger(ctx, candidate, &quality_profile).await else {
+        // Out of the hourly budget: not searched, so it is searched again on the next tick.
+        ctx.unsearched.push(candidate.search_key.clone());
+        summary.budget_skipped += 1;
+        tracing::debug!(
+            candidate = %candidate.label,
+            trigger = ctx.trigger.tag(),
+            "Auto-download: not searching {} now, the hourly search budget is used up",
+            candidate.label
+        );
+        return Ok(false);
+    };
+    summary.searched += 1;
 
     // A search narrowed by season and episode may return a title that does not say which episode
     // it is; one that names another episode is never accepted.
@@ -1871,7 +1997,7 @@ async fn try_candidate(
                     &why,
                     next_search,
                     &ctx.trigger,
-                    opens_notification(candidate, &ctx.trigger),
+                    opens_notification(candidate, &ctx.trigger, Utc::now()),
                 )
                 .await;
             return Ok(false);
@@ -1896,7 +2022,7 @@ async fn try_candidate(
                     &why,
                     next_search,
                     &ctx.trigger,
-                    opens_notification(candidate, &ctx.trigger),
+                    opens_notification(candidate, &ctx.trigger, Utc::now()),
                 )
                 .await;
             return Ok(false);
@@ -2078,6 +2204,7 @@ pub async fn run_pass(
     };
 
     let mut state = load_search_state(&db).await;
+    let previous = state.clone();
     let now_iso = now.to_rfc3339();
 
     info!(
@@ -2103,6 +2230,7 @@ pub async fn run_pass(
         budget,
         fetches_per_hour: settings.hourly_search_budget,
         only_missing_files: settings.only_missing_files,
+        unsearched: Vec::new(),
     };
 
     let mut libraries: HashSet<String> = HashSet::new();
@@ -2125,7 +2253,7 @@ pub async fn run_pass(
 
         let mut grabbed = false;
         if due(&state, &candidate, scope, &settings, now) {
-            let backoff = backoff_for(candidate.timing, &settings);
+            let backoff = candidate_backoff(&candidate, now, &settings);
             state.insert(candidate.search_key.clone(), now_iso.clone());
             grabbed = try_candidate(
                 &mut ctx,
@@ -2143,7 +2271,7 @@ pub async fn run_pass(
                 next_search_at(
                     &state,
                     &candidate.search_key,
-                    backoff_for(candidate.timing, &settings)
+                    candidate_backoff(&candidate, now, &settings)
                 )
             );
         }
@@ -2164,7 +2292,7 @@ pub async fn run_pass(
                 summary.backoff_skipped += 1;
                 continue;
             }
-            let backoff = backoff_for(fallback.timing, &settings);
+            let backoff = candidate_backoff(fallback, now, &settings);
             state.insert(fallback.search_key.clone(), now_iso.clone());
             let _ = try_candidate(
                 &mut ctx,
@@ -2200,11 +2328,28 @@ pub async fn run_pass(
         }
     }
 
+    // Not searched after all (out of budget): restore "due" so the next tick tries again.
+    for key in &ctx.unsearched {
+        match previous.get(key) {
+            Some(at) => state.insert(key.clone(), at.clone()),
+            None => state.remove(key),
+        };
+    }
     if let Err(error) = save_search_state(&db, &state).await {
         warn!(error = %error, "Auto-download: failed to persist search backoff state");
     }
 
     Ok(summary)
+}
+
+/// How long a candidate waits after a search: growing with the time since it came out while it is
+/// fresh (Q113), the ordinary backoff after.
+fn candidate_backoff(
+    candidate: &WantedCandidate,
+    now: DateTime<Utc>,
+    settings: &AutoDownloadSettings,
+) -> Duration {
+    backoff_at(candidate.timing, candidate.released_at, now, settings)
 }
 
 /// Whether a candidate may be searched in this pass.
@@ -2220,7 +2365,7 @@ fn due(
             state,
             &candidate.search_key,
             now,
-            backoff_for(candidate.timing, settings),
+            candidate_backoff(candidate, now, settings),
         )
 }
 

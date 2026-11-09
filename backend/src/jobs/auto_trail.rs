@@ -80,6 +80,40 @@ pub struct Trail {
     db: Database,
     /// `library id -> owner`, looked up once per pass.
     owners: HashMap<String, Option<String>>,
+    /// `owner:title -> first opened at` for "Waiting for …" notifications, loaded on first use.
+    opened: Option<HashMap<String, String>>,
+}
+
+/// App setting remembering which "Waiting for …" notifications were opened (Q113), so one the
+/// owner dismissed or deleted is not opened again by the next automatic search.
+pub const OPENED_SETTING: &str = "auto_download.waiting_opened";
+
+/// How long after it aired or came out a fresh target can go unfound before a "Waiting for …"
+/// notification is opened: releases often take most of a day to appear, and a person does not need
+/// telling about each hour of that.
+pub const QUIET_AFTER_RELEASE: chrono::Duration = chrono::Duration::hours(24);
+
+/// Whether a search that found nothing may open a new "Waiting for …" notification (an open one is
+/// always kept up to date). A manual search always may. Automatic searches never do for single
+/// tracks or back-catalogue episodes (Q84), nor for a fresh target in its first day out (Q113).
+pub fn opens_waiting(
+    trigger: &Trigger,
+    is_track: bool,
+    timing: super::auto_schedule::Timing,
+    is_episode_or_pack: bool,
+    released_at: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> bool {
+    use super::auto_schedule::Timing;
+    if *trigger == Trigger::Manual {
+        return true;
+    }
+    let long_tail = is_track || (timing == Timing::Back && is_episode_or_pack);
+    if long_tail {
+        return false;
+    }
+    !(timing == Timing::Fresh
+        && released_at.is_some_and(|released| now - released < QUIET_AFTER_RELEASE))
 }
 
 fn string_eq(value: &str) -> StringFilter {
@@ -94,6 +128,7 @@ impl Trail {
         Self {
             db: db.clone(),
             owners: HashMap::new(),
+            opened: None,
         }
     }
 
@@ -259,6 +294,9 @@ impl Trail {
         .await;
         self.resolve(grab.library_id, &waiting_title(grab.label), "grabbed")
             .await;
+        // Grabbed: a later wait for the same target may be told about again.
+        self.set_opened(format!("{owner}:{}", waiting_title(grab.label)), false)
+            .await;
         self.resolve(grab.library_id, &failed_title(grab.label), "grabbed")
             .await;
     }
@@ -288,15 +326,63 @@ impl Trail {
             Utc::now().format("%Y-%m-%d %H:%M UTC"),
             trigger.describe()
         );
-        self.upsert_open(
-            library_id,
-            "INFO",
-            &waiting_title(label),
-            message,
-            None,
-            create,
+        let title = waiting_title(label);
+        // Opened once already and no longer open: the owner dismissed or deleted it. An automatic
+        // search does not open it again; a manual one does.
+        let mut create = create;
+        let mut remember: Option<String> = None;
+        if create && let Some(owner) = self.owner(library_id).await {
+            let key = format!("{owner}:{title}");
+            let seen = self.opened_map().await.contains_key(&key);
+            if seen
+                && *trigger != Trigger::Manual
+                && self.open_notification(&owner, &title).await.is_none()
+            {
+                create = false;
+            } else if !seen {
+                remember = Some(key);
+            }
+        }
+        self.upsert_open(library_id, "INFO", &title, message, None, create)
+            .await;
+        if let Some(key) = remember {
+            self.set_opened(key, true).await;
+        }
+    }
+
+    async fn opened_map(&mut self) -> &HashMap<String, String> {
+        if self.opened.is_none() {
+            self.opened = Some(super::auto_download::load_time_map(&self.db, OPENED_SETTING).await);
+        }
+        self.opened.get_or_insert_with(HashMap::new)
+    }
+
+    /// Remember (or forget) that a target's "Waiting for …" notification was opened.
+    async fn set_opened(&mut self, key: String, opened: bool) {
+        let _ = self.opened_map().await;
+        let Some(map) = self.opened.as_mut() else {
+            return;
+        };
+        let changed = if opened {
+            map.insert(key, Utc::now().to_rfc3339());
+            true
+        } else {
+            map.remove(&key).is_some()
+        };
+        if !changed {
+            return;
+        }
+        let snapshot = map.clone();
+        if let Err(error) = super::auto_download::save_time_map(
+            &self.db,
+            OPENED_SETTING,
+            "Auto-download: when each \"Waiting for\" notification was first opened",
+            &snapshot,
         )
-        .await;
+        .await
+        {
+            warn!(error = %error, "Auto-download: could not remember an opened notification");
+        }
     }
 
     /// A grab that never came to anything was put on the blocklist.
@@ -388,6 +474,27 @@ pub fn failed_title(label: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fresh_target_opens_no_notification_in_its_first_day() {
+        use crate::jobs::auto_schedule::Timing;
+        let now = DateTime::parse_from_rfc3339("2026-11-09T20:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let aired = |hours: i64| Some(now - chrono::Duration::hours(hours));
+        // An episode that aired three hours ago and has no release yet: quiet.
+        assert!(!opens_waiting(&Trigger::AirTime, false, Timing::Fresh, true, aired(3), now));
+        assert!(!opens_waiting(&Trigger::Sweep, false, Timing::Fresh, true, aired(23), now));
+        // A day on with nothing: one notification.
+        assert!(opens_waiting(&Trigger::AirTime, false, Timing::Fresh, true, aired(25), now));
+        // A person searching is always told.
+        assert!(opens_waiting(&Trigger::Manual, false, Timing::Fresh, true, aired(1), now));
+        // Back-catalogue episodes and single tracks never open one automatically.
+        assert!(!opens_waiting(&Trigger::Sweep, false, Timing::Back, true, None, now));
+        assert!(!opens_waiting(&Trigger::Sweep, true, Timing::Back, false, None, now));
+        // A movie with no home release date keeps the old rule.
+        assert!(opens_waiting(&Trigger::Sweep, false, Timing::Back, false, None, now));
+    }
 
     #[test]
     fn titles_are_stable_keys_per_target() {

@@ -486,6 +486,11 @@ pub struct MovieDetails {
     pub collection_name: Option<String>,
     pub collection_poster_url: Option<String>,
     pub release_date: Option<String>,
+    /// Earliest digital and physical release dates (TMDB release types 4 and 5), `YYYY-MM-DD`.
+    #[serde(default)]
+    pub digital_release_date: Option<String>,
+    #[serde(default)]
+    pub physical_release_date: Option<String>,
 }
 
 /// Cast member details from provider credits.
@@ -2385,6 +2390,12 @@ impl MetadataService {
         // Fetch release dates for certification
         let release_dates = tmdb.get_release_dates(tmdb_id as i32).await.ok();
         let certification = release_dates.as_ref().and_then(|r| r.us_certification());
+        let digital_release_date = release_dates
+            .as_ref()
+            .and_then(|r| r.earliest_of_type(super::tmdb::RELEASE_TYPE_DIGITAL));
+        let physical_release_date = release_dates
+            .as_ref()
+            .and_then(|r| r.earliest_of_type(super::tmdb::RELEASE_TYPE_PHYSICAL));
 
         // Build collection info if available
         let (collection_id, collection_name, collection_poster_url) =
@@ -2424,6 +2435,8 @@ impl MetadataService {
             collection_name,
             collection_poster_url,
             release_date: movie.release_date.clone(),
+            digital_release_date,
+            physical_release_date,
         };
 
         if let Err(error) = self
@@ -2854,6 +2867,8 @@ impl MetadataService {
                 "collectionId": details.collection_id, "collectionName": details.collection_name,
                 "collectionPosterUrl": details.collection_poster_url, "releaseDate": details.release_date,
                 "certification": details.certification, "monitored": options.monitored,
+                "digitalReleaseDate": details.digital_release_date,
+                "physicalReleaseDate": details.physical_release_date,
                 "tmdbStatus": details.tmdb_status, "wanted": options.monitored,
                 "hasFile": false
             }})).await?;
@@ -4472,6 +4487,8 @@ impl MetadataService {
                         "tmdbVoteCount": details.vote_count,
                         "releaseDate": details.release_date,
                         "certification": details.certification,
+                        "digitalReleaseDate": details.digital_release_date,
+                        "physicalReleaseDate": details.physical_release_date,
                         "collectionId": details.collection_id,
                         "collectionName": details.collection_name,
                         "collectionPosterUrl": cached_collection_poster_url,
@@ -5287,6 +5304,8 @@ mod timestamp_notification_tests {
                 collection_poster_url: None,
                 release_date: None,
                 certification: None,
+                digital_release_date: None,
+                physical_release_date: None,
                 monitored: false,
                 tmdb_status: None,
                 wanted: true,

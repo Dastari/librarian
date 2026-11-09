@@ -41,6 +41,7 @@ fn episode_target(show: &str, season: i32, episode: i32) -> WantedCandidate {
         search_key: format!("episode:{show}:{season}:{episode}"),
         episode_count: 1,
         timing: Timing::Fresh,
+        released_at: None,
         expectation: Expectation::Episode { season, episode },
         feed_name: Some(show.to_string()),
         fallbacks: Vec::new(),
@@ -51,6 +52,7 @@ fn pack_target(show: &str, season: i32) -> WantedCandidate {
     WantedCandidate {
         label: format!("season pack '{show} S{season:02}'"),
         timing: Timing::Back,
+        released_at: None,
         expectation: Expectation::SeasonPack { season },
         episode_count: 8,
         ..episode_target(show, season, 1)

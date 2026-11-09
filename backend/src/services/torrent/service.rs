@@ -279,7 +279,9 @@ fn authorize_existing_add(
 /// What `addTorrent` was given: a magnet or URL the client can fetch, or the file itself.
 enum TorrentAddRequest<'a> {
     Uri(&'a str),
-    File(Vec<u8>),
+    /// A `.torrent` file, and the magnet to keep on its `Torrent` row for restoring (a public
+    /// torrent added from kept metadata, Q111); `None` keeps no magnet, as for a private torrent.
+    File(Vec<u8>, Option<String>),
 }
 
 impl TorrentService {
@@ -368,8 +370,25 @@ impl TorrentService {
         actor: &AuthUser,
         metadata: TorrentAddMetadata,
     ) -> Result<TorrentAddOutcome> {
-        self.add_for_actor(TorrentAddRequest::File(torrent_file), actor, metadata)
+        self.add_for_actor(TorrentAddRequest::File(torrent_file, None), actor, metadata)
             .await
+    }
+
+    /// Add a public torrent from metadata read before (Q99, Q111): its rebuilt `.torrent`, so no
+    /// peer is asked for the metadata again, keeping `magnet` on the row for restoring.
+    pub async fn add_stored_torrent_for_actor_with_outcome(
+        &self,
+        torrent_file: Vec<u8>,
+        magnet: String,
+        actor: &AuthUser,
+        metadata: TorrentAddMetadata,
+    ) -> Result<TorrentAddOutcome> {
+        self.add_for_actor(
+            TorrentAddRequest::File(torrent_file, Some(magnet)),
+            actor,
+            metadata,
+        )
+        .await
     }
 
     /// A torrent's `.torrent` bytes without adding it (Q99): a magnet's metadata is asked of peers,
@@ -405,10 +424,16 @@ impl TorrentService {
         actor: &AuthUser,
         metadata: TorrentAddMetadata,
     ) -> Result<TorrentAddOutcome> {
-        let stored_uri = match &add {
-            TorrentAddRequest::Uri(uri) => Some(*uri),
-            TorrentAddRequest::File(_) => None,
+        let kept_magnet = match &add {
+            TorrentAddRequest::File(_, magnet) => magnet.clone(),
+            TorrentAddRequest::Uri(_) => None,
         };
+        let request_uri = match &add {
+            TorrentAddRequest::Uri(uri) => Some(*uri),
+            TorrentAddRequest::File(..) => None,
+        };
+        // What the row keeps for restoring: the address added from, or the magnet a file came with.
+        let stored_uri = request_uri.or(kept_magnet.as_deref());
         let _add_guard = self.add_lock.lock().await;
         let r = self
             .runtime()
@@ -439,12 +464,12 @@ impl TorrentService {
         let deadline = tokio::time::Instant::now() + ADD_TORRENT_TIMEOUT;
         // A URL can hide an already-owned hash. Resolve its metadata in list-only mode,
         // which the pinned client returns before creating storage or a managed handle.
-        let magnet_hash = stored_uri
+        let magnet_hash = request_uri
             .and_then(|uri| librqbit::Magnet::parse(uri).ok())
             .and_then(|magnet| magnet.as_id20());
         let (request, hash) = match magnet_hash {
             Some(hash) => (
-                AddTorrent::from_url(stored_uri.unwrap_or_default()),
+                AddTorrent::from_url(request_uri.unwrap_or_default()),
                 hash.0
                     .iter()
                     .map(|byte| format!("{byte:02x}"))
@@ -455,7 +480,7 @@ impl TorrentService {
                 options.list_only = true;
                 let source = match add {
                     TorrentAddRequest::Uri(uri) => AddTorrent::from_url(uri),
-                    TorrentAddRequest::File(bytes) => AddTorrent::from_bytes(bytes),
+                    TorrentAddRequest::File(bytes, _) => AddTorrent::from_bytes(bytes),
                 };
                 let resolved =
                     tokio::time::timeout_at(deadline, r.session.add_torrent(source, Some(options)))

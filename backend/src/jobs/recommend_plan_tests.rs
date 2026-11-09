@@ -34,6 +34,7 @@ fn option(
         seeders: Some(seeders),
         size: Some(gb * 1_000_000_000),
         rank,
+        subtitles: false,
     }
 }
 
@@ -145,4 +146,22 @@ fn what_is_left_is_said_plainly() {
         "S01E01–E03, S01E08, all 10 of season 3"
     );
     assert_eq!(seasons_of(&missing, &items), vec![1, 3]);
+}
+
+#[test]
+fn bundled_subtitles_settle_a_tie_but_never_beat_health() {
+    let missing: Vec<MissingEpisode> = babylon_missing()
+        .into_iter()
+        .filter(|item| item.season == 1)
+        .collect();
+    let mut plain = option("Show.S01.1080p.WEB-A", &missing, 0, 50, 10, 0);
+    let mut subbed = option("Show.S01.1080p.WEB-B", &missing, 0, 50, 12, 1);
+    subbed.subtitles = true;
+    let plan = plan_cover(missing.len(), &[plain.clone(), subbed.clone()]);
+    assert_eq!(plan.releases[0].option, 1, "the subtitled pack wins the tie");
+    // Fewer seeders (a worse health band) is not made up for by subtitles.
+    subbed.seeders = Some(3);
+    plain.seeders = Some(50);
+    let plan = plan_cover(missing.len(), &[plain, subbed]);
+    assert_eq!(plan.releases[0].option, 0);
 }

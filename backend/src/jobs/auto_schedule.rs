@@ -84,6 +84,65 @@ pub fn classify_episode(
     )
 }
 
+/// How long a searched target waits before it is searched again, given when it was released
+/// (Q113). A fresh target is retried on a growing backoff: every `air_retry_minutes` at first, then
+/// a quarter of the time since it came out, up to the ordinary `search_backoff_minutes`. An episode
+/// that aired an hour ago is searched hourly; a day later, every six hours. Without a release time
+/// a fresh target keeps the quick retry.
+pub fn backoff_at(
+    timing: Timing,
+    released_at: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+    settings: &AutoDownloadSettings,
+) -> Duration {
+    let quick = Duration::minutes(settings.air_retry_minutes);
+    let slow = Duration::minutes(settings.search_backoff_minutes).max(quick);
+    match (timing, released_at) {
+        (Timing::Fresh, Some(released_at)) => {
+            let grown = (now - released_at) / 4;
+            grown.clamp(quick, slow)
+        }
+        _ => backoff_for(timing, settings),
+    }
+}
+
+/// The earliest of a movie's home releases (digital or physical), when either is known.
+pub fn home_release_instant(
+    digital: Option<&str>,
+    physical: Option<&str>,
+) -> Option<DateTime<Utc>> {
+    [digital, physical]
+        .into_iter()
+        .filter_map(|date| release_instant(date, None))
+        .min()
+}
+
+/// When a movie may be searched (Q113). With a digital or physical release date it is treated like
+/// an episode that aired on that day: not before it (plus the grace period), then on the quick,
+/// growing schedule for the window, then the ordinary backoff. Without one, from its primary release
+/// date on, on the ordinary backoff, as before.
+pub fn movie_timing(
+    release_date: Option<&str>,
+    home_release: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+    settings: &AutoDownloadSettings,
+) -> Timing {
+    match home_release {
+        Some(at) => classify_release(
+            Some(at),
+            now,
+            Duration::minutes(settings.air_grace_minutes),
+            Duration::days(settings.air_window_days),
+        ),
+        None => classify_release(
+            release_instant(release_date, None),
+            now,
+            Duration::zero(),
+            Duration::zero(),
+        ),
+    }
+}
+
 /// How long a searched target waits before it is searched again.
 pub fn backoff_for(timing: Timing, settings: &AutoDownloadSettings) -> Duration {
     match timing {
@@ -333,6 +392,83 @@ mod tests {
             ),
             Timing::Back
         );
+    }
+
+    #[test]
+    fn after_air_time_the_retry_grows_from_hourly_to_the_ordinary_backoff() {
+        let settings = settings();
+        let aired = at("2026-11-08T02:00:00Z");
+        let backoff = |hours: i64| {
+            backoff_at(
+                Timing::Fresh,
+                Some(aired),
+                aired + Duration::hours(hours),
+                &settings,
+            )
+        };
+        // The first hours: every `air_retry_minutes` (60).
+        assert_eq!(backoff(1), Duration::minutes(60));
+        assert_eq!(backoff(4), Duration::minutes(60));
+        // Then a quarter of the time since it aired.
+        assert_eq!(backoff(12), Duration::hours(3));
+        // A day on and after: the ordinary six hours, never more.
+        assert_eq!(backoff(24), Duration::hours(6));
+        assert_eq!(backoff(24 * 6), Duration::hours(6));
+        // Back-catalogue and undated fresh targets keep their old backoffs.
+        assert_eq!(
+            backoff_at(Timing::Back, Some(aired), aired + Duration::days(30), &settings),
+            Duration::minutes(360)
+        );
+        assert_eq!(
+            backoff_at(Timing::Fresh, None, aired, &settings),
+            Duration::minutes(60)
+        );
+    }
+
+    #[test]
+    fn a_week_of_air_time_retries_is_a_few_dozen_searches_not_one_an_hour() {
+        // Simulate the scheduler: searched whenever the backoff has elapsed, for the window.
+        let settings = settings();
+        let aired = at("2026-11-08T02:00:00Z");
+        let mut now = aired + Duration::minutes(settings.air_grace_minutes);
+        let end = aired + Duration::days(settings.air_window_days);
+        let mut searches = 0;
+        while now <= end {
+            searches += 1;
+            now += backoff_at(Timing::Fresh, Some(aired), now, &settings);
+        }
+        assert!((25..=45).contains(&searches), "{searches} searches");
+    }
+
+    #[test]
+    fn a_movie_with_a_digital_date_is_searched_from_it_on_the_quick_schedule() {
+        let settings = settings();
+        let digital = home_release_instant(Some("2026-11-10"), Some("2026-12-01"));
+        assert_eq!(digital, Some(at("2026-11-10T00:00:00Z")));
+        // In cinemas since October, but not out at home: not searched yet.
+        assert!(matches!(
+            movie_timing(Some("2026-10-01"), digital, at("2026-11-09T12:00:00Z"), &settings),
+            Timing::NotYet { .. }
+        ));
+        // Out at home an hour and a minute: fresh, retried quickly.
+        assert_eq!(
+            movie_timing(Some("2026-10-01"), digital, at("2026-11-10T01:01:00Z"), &settings),
+            Timing::Fresh
+        );
+        // Weeks later: the ordinary schedule.
+        assert_eq!(
+            movie_timing(Some("2026-10-01"), digital, at("2026-12-10T00:00:00Z"), &settings),
+            Timing::Back
+        );
+        // No home release known: from its release date, on the ordinary schedule, as before.
+        assert_eq!(
+            movie_timing(Some("2026-10-01"), None, at("2026-10-02T00:00:00Z"), &settings),
+            Timing::Back
+        );
+        assert!(matches!(
+            movie_timing(Some("2026-12-01"), None, at("2026-11-09T00:00:00Z"), &settings),
+            Timing::NotYet { .. }
+        ));
     }
 
     #[test]

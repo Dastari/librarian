@@ -383,6 +383,8 @@ impl Harness {
                 collection_poster_url: None,
                 release_date: None,
                 certification: None,
+                digital_release_date: None,
+                physical_release_date: None,
                 monitored: true,
                 tmdb_status: None,
                 wanted: false,
