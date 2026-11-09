@@ -7,6 +7,8 @@ type HlsInstance = import("hls.js").default;
 
 export interface MediaSourceOptions {
   audioStreamIndex?: number;
+  /** A picture subtitle to burn into the picture: the server encodes a variant with it. */
+  burnSubtitleId?: string;
   retryKey?: number;
   /** A new playback activation restarts even when it uses the same file. */
   activationKey?: string | number;
@@ -41,10 +43,10 @@ export function useMediaSource(
   startRef.current = startPosition;
   const transition = useRef(true);
   const previous = useRef<{ fileId: string; activationKey?: string | number; position: number } | null>(null);
-  const { audioStreamIndex, retryKey, activationKey } = options ?? {};
+  const { audioStreamIndex, burnSubtitleId, retryKey, activationKey } = options ?? {};
   // Used as well as effect cancellation: a render for another item must never expose
   // the previous item's source or let its event handlers write the new transport.
-  const key = JSON.stringify([mediaFileId, activationKey, audioStreamIndex, retryKey, attempt]);
+  const key = JSON.stringify([mediaFileId, activationKey, audioStreamIndex, burnSubtitleId, retryKey, attempt]);
   const currentKey = useRef(key);
   currentKey.current = key;
   const attachedKey = useRef<string | null>(null);
@@ -119,7 +121,7 @@ export function useMediaSource(
 
     void (async () => {
       try {
-        const source = await resolvePlaybackSource(mediaFileId, controller.signal, { audioStreamIndex });
+        const source = await resolvePlaybackSource(mediaFileId, controller.signal, { audioStreamIndex, burnSubtitleId });
         if (!active() || terminal) return;
         if (!source.isHls) {
           setState({ source, loading: true, error: null, duration: source.duration, hls: null });
@@ -204,7 +206,7 @@ export function useMediaSource(
       media.removeAttribute("src");
       media.load();
     };
-  }, [mediaFileId, element, activationKey, audioStreamIndex, retryKey, attempt, key]);
+  }, [mediaFileId, element, activationKey, audioStreamIndex, burnSubtitleId, retryKey, attempt, key]);
 
   const snapshot = attachedKey.current === key ? state : { ...emptySource, loading: Boolean(mediaFileId) };
   return { ...snapshot, retry, isTransitioning };

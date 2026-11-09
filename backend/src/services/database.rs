@@ -171,6 +171,7 @@ pub(crate) fn entity_metadata() -> Vec<&'static graphql_orm::graphql::orm::Entit
         <VideoStream as Entity>::metadata(),
         <AudioStream as Entity>::metadata(),
         <Subtitle as Entity>::metadata(),
+        <Lyric as Entity>::metadata(),
         <MediaChapter as Entity>::metadata(),
         <PlaybackSession as Entity>::metadata(),
         <PlaybackProgress as Entity>::metadata(),
@@ -1289,6 +1290,17 @@ impl WriteInputTransform for AppWriteInputTransform {
             {
                 self.prepare_network_server_create(ctx, db, input).await?;
             }
+            if entity_name == "AppSetting"
+                && let Some(input) = input.downcast_mut::<CreateAppSettingInput>()
+                && crate::services::subtitles::provider::SECRET_SETTING_KEYS
+                    .contains(&input.key.as_str())
+                && !matches!(input.value.trim(), "" | "null")
+            {
+                // A provider password is stored encrypted, like a source's credentials.
+                input.value = self
+                    .encrypt_source_credentials(ctx, std::mem::take(&mut input.value))
+                    .await?;
+            }
             if entity_name == "MatchingAssistant"
                 && let Some(input) = input.downcast_mut::<CreateMatchingAssistantInput>()
             {
@@ -1359,6 +1371,23 @@ impl WriteInputTransform for AppWriteInputTransform {
                 let existing = existing_row.and_then(|row| row.downcast_ref::<NetworkServer>());
                 self.prepare_network_server_update(ctx, db, existing, input)
                     .await?;
+            }
+            if entity_name == "AppSetting"
+                && let Some(input) = input.downcast_mut::<UpdateAppSettingInput>()
+                && existing_row
+                    .and_then(|row| row.downcast_ref::<AppSetting>())
+                    .is_some_and(|row| {
+                        crate::services::subtitles::provider::SECRET_SETTING_KEYS
+                            .contains(&row.key.as_str())
+                    })
+                && let Some(value) = input.value.take()
+            {
+                // Clearing it stores nothing to encrypt.
+                input.value = Some(if matches!(value.trim(), "" | "null") {
+                    value
+                } else {
+                    self.encrypt_source_credentials(ctx, value).await?
+                });
             }
             if entity_name == "MatchingAssistant"
                 && let Some(input) = input.downcast_mut::<UpdateMatchingAssistantInput>()
@@ -2309,6 +2338,12 @@ impl AppMutationHook {
         })
         .await
         .map_err(Self::db_error)?;
+        tx.delete_where::<Lyric>(LyricWhereInput {
+            media_file_id: Some(Self::string_eq(id)),
+            ..Default::default()
+        })
+        .await
+        .map_err(Self::db_error)?;
         tx.delete_where::<MediaChapter>(MediaChapterWhereInput {
             media_file_id: Some(Self::string_eq(id)),
             ..Default::default()
@@ -2732,6 +2767,7 @@ impl AppMutationHook {
             "VideoStream" => edge!(VideoStream, media_file_id, "MediaFile"),
             "AudioStream" => edge!(AudioStream, media_file_id, "MediaFile"),
             "Subtitle" => edge!(Subtitle, media_file_id, "MediaFile"),
+            "Lyric" => edge!(Lyric, media_file_id, "MediaFile"),
             "MediaChapter" => edge!(MediaChapter, media_file_id, "MediaFile"),
             _ => {}
         }
@@ -4736,6 +4772,7 @@ mod lifecycle_tests {
                 resolution: None,
                 is_hdr: false,
                 hdr_type: None,
+                closed_captions: None,
                 audio_channels: None,
                 metadata: None,
                 content_type: Some("movie".to_string()),

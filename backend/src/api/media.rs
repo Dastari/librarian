@@ -60,6 +60,9 @@ pub struct StreamParams {
     /// Absolute ffprobe stream index, not an ordinal in the audio list.
     #[serde(rename = "audioStream")]
     pub audio_stream: Option<i32>,
+    /// A picture subtitle (`Subtitle` id) to burn into a transcoded variant (Q120).
+    #[serde(rename = "burnSubtitle")]
+    pub burn_subtitle: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -263,14 +266,32 @@ async fn media_info(
     if params.audio_stream.is_some() && transcode_decision == TranscodeDecision::None {
         transcode_decision = TranscodeDecision::Remux;
     }
+    // Burning a subtitle in means encoding every picture.
+    let burn = selected_burn(&state, &media_file, params.burn_subtitle.as_deref()).await?;
+    if burn.is_some() {
+        if media_file.duration.is_none_or(|duration| duration <= 0) {
+            return Err(StatusCode::UNPROCESSABLE_ENTITY);
+        }
+        transcode_decision = TranscodeDecision::Transcode;
+    }
     let needs_hls = transcode_decision != TranscodeDecision::None;
     let mut playback_url = if needs_hls {
         format!("/api/media/{}/hls/playlist.m3u8", media_file.id)
     } else {
         format!("/api/media/{}/stream", media_file.id)
     };
+    let mut query = Vec::new();
     if let Some(index) = params.audio_stream {
-        playback_url.push_str(&format!("?audioStream={index}"));
+        query.push(format!("audioStream={index}"));
+    }
+    if burn.is_some()
+        && let Some(id) = params.burn_subtitle.as_deref()
+    {
+        query.push(format!("burnSubtitle={}", urlencoding::encode(id)));
+    }
+    if !query.is_empty() {
+        playback_url.push('?');
+        playback_url.push_str(&query.join("&"));
     }
 
     let info = serde_json::json!({
@@ -337,7 +358,8 @@ async fn hls_playlist(
     }
 
     let selected_audio = selected_audio_stream(&state, &file_id, params.audio_stream).await?;
-    let kind = hls_kind(&media_file, &params, selected_audio.as_ref())?;
+    let burn = selected_burn(&state, &media_file, params.burn_subtitle.as_deref()).await?;
+    let kind = hls_kind(&media_file, &params, selected_audio.as_ref(), burn.as_ref())?;
 
     let transcode = state.services.get_transcode().await.ok_or_else(|| {
         error!(
@@ -447,7 +469,8 @@ async fn hls_segment(
     }
 
     let selected_audio = selected_audio_stream(&state, &file_id, params.audio_stream).await?;
-    let kind = hls_kind(&media_file, &params, selected_audio.as_ref())?;
+    let burn = selected_burn(&state, &media_file, params.burn_subtitle.as_deref()).await?;
+    let kind = hls_kind(&media_file, &params, selected_audio.as_ref(), burn.as_ref())?;
 
     let Some(segment_name) = sanitize_segment_name(&segment) else {
         warn!(
@@ -472,10 +495,15 @@ async fn hls_segment(
             &media_file,
             kind,
             params.audio_stream,
+            burn.as_ref(),
             segment_name,
             duration,
         )
         .await;
+    }
+    if burn.is_some() {
+        // A burned-in variant is only ever encoded on demand.
+        return Err(StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     let Some(output_dir) = transcode
@@ -557,6 +585,7 @@ async fn on_demand_segment_response(
     media_file: &MediaFileRecord,
     kind: TranscodeKind,
     audio_stream: Option<i32>,
+    burn: Option<&ffmpeg::BurnIn>,
     segment_name: &str,
     duration: u32,
 ) -> Result<Response, StatusCode> {
@@ -588,6 +617,7 @@ async fn on_demand_segment_response(
             audio_stream,
             segment,
             is_audio_only(media_file),
+            burn,
         )
         .await
         .map_err(|e| {
@@ -683,11 +713,80 @@ async fn selected_audio_stream(
         .ok_or(StatusCode::NOT_FOUND)
 }
 
+/// The picture subtitle to burn in, checked against the file (only after authorizing it): an
+/// embedded PGS/VobSub/DVB stream, or a VobSub sidecar on this machine inside the library.
+async fn selected_burn(
+    state: &AppState,
+    media_file: &MediaFileRecord,
+    subtitle_id: Option<&str>,
+) -> Result<Option<ffmpeg::BurnIn>, StatusCode> {
+    let Some(subtitle_id) = subtitle_id.filter(|id| !id.is_empty()) else {
+        return Ok(None);
+    };
+    let row = Subtitle::get(state.db.pool(), &subtitle_id.to_owned())
+        .await
+        .map_err(|error| {
+            error!(media_file_id = %media_file.id, %subtitle_id, %error, "Failed querying the subtitle to burn in");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .filter(|row| row.media_file_id == media_file.id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if !row
+        .codec
+        .as_deref()
+        .is_some_and(crate::services::subtitles::is_bitmap_codec)
+    {
+        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    if row.source_type.eq_ignore_ascii_case("embedded") {
+        return row
+            .stream_index
+            .filter(|index| *index >= 0)
+            .map(|index| Some(ffmpeg::BurnIn::Stream(index)))
+            .ok_or(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    // ffmpeg opens a VobSub's pictures by name beside its index, which a loopback URL for a
+    // file on a share cannot give it.
+    let path = row.file_path.as_deref().ok_or(StatusCode::NOT_FOUND)?;
+    if is_smb_uri(path) || !path.to_ascii_lowercase().ends_with(".idx") {
+        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let library_id = media_file
+        .library_id
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let library = Library::get(state.db.pool(), library_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if is_smb_uri(&library.path) {
+        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let root = tokio::fs::canonicalize(&library.path)
+        .await
+        .map_err(subtitle_path_error)?;
+    let index = tokio::fs::canonicalize(path)
+        .await
+        .map_err(subtitle_path_error)?;
+    if !index.starts_with(&root) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    Ok(Some(ffmpeg::BurnIn::VobSub(index)))
+}
+
 fn hls_kind(
     media_file: &MediaFileRecord,
     params: &StreamParams,
     selected: Option<&AudioStream>,
+    burn: Option<&ffmpeg::BurnIn>,
 ) -> Result<TranscodeKind, StatusCode> {
+    if burn.is_some() {
+        // Receivers get what their cast session decided; burning in is for this browser.
+        if params.cast_grant.is_some() {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        return Ok(TranscodeKind::Transcode);
+    }
     match (
         params.cast_grant.as_deref(),
         params.cast_mode.as_deref().map(str::to_ascii_lowercase),
@@ -714,6 +813,9 @@ fn rewrite_playlist(bytes: &[u8], params: &StreamParams) -> Result<Vec<u8>, Stat
     let mut query = Vec::new();
     if let Some(index) = params.audio_stream {
         query.push(format!("audioStream={index}"));
+    }
+    if let Some(id) = params.burn_subtitle.as_deref().filter(|id| !id.is_empty()) {
+        query.push(format!("burnSubtitle={}", urlencoding::encode(id)));
     }
     if let Some(grant) = params.cast_grant.as_deref() {
         query.push(format!("castGrant={}", urlencoding::encode(grant)));
@@ -744,13 +846,28 @@ fn rewrite_playlist(bytes: &[u8], params: &StreamParams) -> Result<Vec<u8>, Stat
     Ok(rewritten.into_bytes())
 }
 
+/// Query of the subtitle route.
+#[derive(Debug, Default, Deserialize)]
+pub struct SubtitleParams {
+    /// Move every cue by this many milliseconds (positive is later), for a subtitle out of step.
+    #[serde(rename = "offsetMs")]
+    pub offset_ms: Option<i64>,
+}
+
 /// The URL suffix is parsed explicitly because Axum does not support a
 /// partial capture such as `{subtitle_id}.vtt`.
+///
+/// Sidecar and downloaded subtitles are read through the storage layer and converted here
+/// (`services::subtitles::cues`); embedded text streams come out of ffmpeg as WebVTT and are
+/// rewritten the same way, so the offset and the markup rules apply to every kind (Q119).
+/// Picture subtitles cannot be text: they are burned in by the HLS route instead (Q120).
 async fn subtitle_vtt(
     State(state): State<AppState>,
     AxumPath((file_id, subtitle)): AxumPath<(String, String)>,
     headers: HeaderMap,
+    Query(params): Query<SubtitleParams>,
 ) -> Result<Response, StatusCode> {
+    use crate::services::subtitles::{self, TextFormat, cues};
     let media_file = fetch_media_file(&state, &file_id).await?;
     authorize_browser_media(&state, &headers, &media_file).await?;
     let subtitle_id = subtitle
@@ -764,6 +881,13 @@ async fn subtitle_vtt(
     if row.media_file_id != file_id {
         return Err(StatusCode::NOT_FOUND);
     }
+    if row.codec.as_deref().is_some_and(subtitles::is_bitmap_codec) {
+        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let offset_ms = params
+        .offset_ms
+        .unwrap_or(0)
+        .clamp(-subtitles::MAX_OFFSET_MS, subtitles::MAX_OFFSET_MS);
     let library_id = media_file
         .library_id
         .as_ref()
@@ -787,7 +911,7 @@ async fn subtitle_vtt(
             .map_err(subtitle_path_error)?
     };
     let embedded = row.source_type.eq_ignore_ascii_case("embedded");
-    let (source, index, format) = if embedded {
+    if embedded {
         if !text_subtitle_codec(row.codec.as_deref()) {
             return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
         }
@@ -795,42 +919,66 @@ async fn subtitle_vtt(
             .stream_index
             .filter(|index| *index >= 0)
             .ok_or(StatusCode::UNSUPPORTED_MEDIA_TYPE)?;
-        (
-            std::path::PathBuf::from(&media_file.path),
-            Some(index),
-            None,
-        )
-    } else {
-        if !matches!(
-            row.source_type.to_ascii_lowercase().as_str(),
-            "external" | "sidecar" | "downloaded"
-        ) {
-            return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
-        }
-        let path = Path::new(row.file_path.as_deref().ok_or(StatusCode::NOT_FOUND)?);
-        if row.codec.is_some() && !text_subtitle_codec(row.codec.as_deref()) {
-            return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
-        }
-        let format = match path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(str::to_ascii_lowercase)
-            .as_deref()
-        {
-            Some("srt") => "srt",
-            Some("vtt") => "webvtt",
-            Some("ass" | "ssa") => "ass",
-            _ => return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE),
+        let source = std::path::PathBuf::from(&media_file.path);
+        let source = if remote {
+            crate::services::library_scan::checked_library_path(&root, &source)
+                .map_err(|_| StatusCode::FORBIDDEN)?
+        } else {
+            tokio::fs::canonicalize(source)
+                .await
+                .map_err(subtitle_path_error)?
         };
-        (
-            if path.is_absolute() {
-                path.to_owned()
-            } else {
-                root.join(path)
-            },
-            None,
-            Some(format),
-        )
+        if !source.starts_with(&root) {
+            return Err(StatusCode::FORBIDDEN);
+        }
+        // ffmpeg reads a file on a share through a loopback URL.
+        let source = tool_input_path(&source)
+            .await
+            .map_err(subtitle_storage_error)?;
+        let transcode = state
+            .services
+            .get_transcode()
+            .await
+            .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        let bytes = transcode.subtitle_webvtt(&source, Some(index), None).await.map_err(|error| {
+            warn!(media_file_id = %file_id, %subtitle_id, ?error, "Subtitle WebVTT conversion failed");
+            match error {
+                SubtitleError::Busy | SubtitleError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+                SubtitleError::Timeout => StatusCode::GATEWAY_TIMEOUT,
+                SubtitleError::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+                SubtitleError::Conversion => StatusCode::UNPROCESSABLE_ENTITY,
+            }
+        })?;
+        let text = String::from_utf8_lossy(&bytes);
+        // A stream with no cues at all is still a valid, empty track.
+        let body = match cues::parse(TextFormat::Vtt, &text, None) {
+            Ok(list) => subtitles::to_vtt(&list, offset_ms),
+            Err(_) => "WEBVTT\n".to_owned(),
+        };
+        return vtt_response(body);
+    }
+
+    if !matches!(
+        row.source_type.to_ascii_lowercase().as_str(),
+        "external" | "sidecar" | "downloaded"
+    ) {
+        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let path = Path::new(row.file_path.as_deref().ok_or(StatusCode::NOT_FOUND)?);
+    let format = row
+        .codec
+        .as_deref()
+        .and_then(TextFormat::from_codec)
+        .or_else(|| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .and_then(TextFormat::from_extension)
+        })
+        .ok_or(StatusCode::UNSUPPORTED_MEDIA_TYPE)?;
+    let source = if path.is_absolute() || is_smb_uri(&path.to_string_lossy()) {
+        path.to_owned()
+    } else {
+        root.join(path)
     };
     let source = if remote {
         // Containment on a share is the name check: the path must lie under the root, with no `..`.
@@ -844,48 +992,68 @@ async fn subtitle_vtt(
     if !source.starts_with(&root) {
         return Err(StatusCode::FORBIDDEN);
     }
-    let (is_file, size) = if remote {
-        let meta = library_storage()
-            .stat(&source)
-            .await
-            .map_err(subtitle_storage_error)?;
-        (meta.is_file(), meta.size)
-    } else {
-        let metadata = tokio::fs::metadata(&source)
-            .await
-            .map_err(subtitle_path_error)?;
-        (metadata.is_file(), metadata.len())
-    };
-    if !is_file {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    if !embedded && size > MAX_SUBTITLE_BYTES {
-        return Err(StatusCode::PAYLOAD_TOO_LARGE);
-    }
-    // ffmpeg reads a file on a share through a loopback URL.
-    let source = tool_input_path(&source)
+    let meta = library_storage()
+        .stat(&source)
         .await
         .map_err(subtitle_storage_error)?;
-    let transcode = state
-        .services
-        .get_transcode()
+    if !meta.is_file() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    if meta.size > MAX_SUBTITLE_BYTES {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
+    }
+    let bytes = library_storage()
+        .read_all(&source)
         .await
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let bytes = transcode.subtitle_webvtt(&source, index, format).await.map_err(|error| {
-        warn!(media_file_id = %file_id, %subtitle_id, ?error, "Subtitle WebVTT conversion failed");
-        match error {
-            SubtitleError::Busy | SubtitleError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
-            SubtitleError::Timeout => StatusCode::GATEWAY_TIMEOUT,
-            SubtitleError::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
-            SubtitleError::Conversion => StatusCode::UNPROCESSABLE_ENTITY,
-        }
+        .map_err(subtitle_storage_error)?;
+    let fps = if format == TextFormat::MicroDvd {
+        video_frame_rate(&state, &file_id).await
+    } else {
+        None
+    };
+    let body = subtitles::file_to_vtt(&bytes, format, fps, offset_ms).map_err(|_| {
+        warn!(media_file_id = %file_id, %subtitle_id, "A subtitle file holds no subtitles that could be read");
+        StatusCode::UNPROCESSABLE_ENTITY
     })?;
+    vtt_response(body)
+}
+
+fn vtt_response(body: String) -> Result<Response, StatusCode> {
     Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "text/vtt; charset=utf-8")
         .header(CACHE_CONTROL, "private, no-store")
-        .body(Body::from(bytes))
+        .body(Body::from(body))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+/// The first video stream's frame rate, for MicroDVD's frame-numbered cues.
+async fn video_frame_rate(state: &AppState, file_id: &str) -> Option<f64> {
+    use crate::graphql::entities::{VideoStream, VideoStreamWhereInput};
+    let streams = VideoStream::query(state.db.pool())
+        .filter(VideoStreamWhereInput {
+            media_file_id: Some(StringFilter {
+                eq: Some(file_id.to_owned()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .fetch_all()
+        .await
+        .ok()?;
+    let rate = streams
+        .iter()
+        .find_map(|stream| stream.avg_frame_rate.clone().or(stream.frame_rate.clone()))?;
+    parse_frame_rate(&rate)
+}
+
+/// `24000/1001`, `25/1` or `23.976`.
+fn parse_frame_rate(raw: &str) -> Option<f64> {
+    let value = match raw.split_once('/') {
+        Some((num, den)) => num.trim().parse::<f64>().ok()? / den.trim().parse::<f64>().ok()?,
+        None => raw.trim().parse::<f64>().ok()?,
+    };
+    (value.is_finite() && value > 1.0 && value < 200.0).then_some(value)
 }
 
 fn subtitle_storage_error(error: crate::services::library_storage::StorageError) -> StatusCode {
@@ -1307,11 +1475,35 @@ mod tests {
     }
 
     #[test]
+    fn frame_rates_read_as_ffprobe_writes_them() {
+        assert_eq!(parse_frame_rate("25/1"), Some(25.0));
+        assert!((parse_frame_rate("24000/1001").unwrap() - 23.976).abs() < 0.001);
+        assert_eq!(parse_frame_rate("0/0"), None);
+        assert_eq!(parse_frame_rate("29.97"), Some(29.97));
+    }
+
+    #[test]
+    fn playlist_carries_the_burned_in_subtitle() {
+        let params = StreamParams {
+            audio_stream: None,
+            cast_grant: None,
+            cast_mode: None,
+            burn_subtitle: Some("sub-1".to_owned()),
+        };
+        let rewritten = rewrite_playlist(b"#EXTM3U\nseg_000.ts\n", &params).unwrap();
+        assert_eq!(
+            String::from_utf8(rewritten).unwrap(),
+            "#EXTM3U\nseg_000.ts?burnSubtitle=sub-1\n"
+        );
+    }
+
+    #[test]
     fn playlist_retains_audio_and_both_cast_parameters() {
         let params = StreamParams {
             audio_stream: Some(3),
             cast_grant: Some("a+b&c".to_owned()),
             cast_mode: Some("remux".to_owned()),
+            burn_subtitle: None,
         };
         let rewritten = rewrite_playlist(b"#EXTM3U\n#EXTINF:6,\nseg_000.ts\n", &params).unwrap();
         assert_eq!(

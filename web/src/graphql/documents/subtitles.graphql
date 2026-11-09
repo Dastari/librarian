@@ -1,0 +1,54 @@
+mutation SearchSubtitles($mediaFileId: String!, $languages: [String!]) {
+  searchSubtitles(mediaFileId: $mediaFileId, languages: $languages) {
+    success
+    error
+    languages
+    autoSkipReason
+    candidates {
+      fileId
+      language
+      languageName
+      release
+      fileName
+      hearingImpaired
+      forced
+      hashMatch
+      downloads
+      rating
+      votes
+      trusted
+      machineTranslated
+      uploader
+      uploadDate
+    }
+  }
+}
+
+mutation DownloadSubtitle($input: DownloadSubtitleInput!) {
+  downloadSubtitle(input: $input) {
+    success
+    error
+    remainingDownloads
+    resetsAt
+    subtitle {
+      ...SubtitleFields
+    }
+  }
+}
+
+mutation TestOpenSubtitles($input: TestOpenSubtitlesInput!) {
+  testOpenSubtitles(input: $input) {
+    success
+    message
+  }
+}
+
+mutation FetchLyrics($mediaFileId: String!, $refresh: Boolean) {
+  fetchLyrics(mediaFileId: $mediaFileId, refresh: $refresh) {
+    success
+    error
+    lyric {
+      ...LyricFields
+    }
+  }
+}

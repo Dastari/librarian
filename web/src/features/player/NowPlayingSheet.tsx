@@ -3,12 +3,15 @@ import { Dialog } from "glass-ux/dialog";
 import { Button as GlassButton } from "glass-ux/button";
 import { Notice } from "glass-ux/notice";
 import { IconChevronDown, IconExternalLink } from "glass-ux/icons";
+import { Segmented } from "glass-ux/segmented";
 
 import { Artwork, Button } from "@/components/ui";
 import { useDialogReturnFocus } from "@/components/ui/Dialog";
 import { formatClock } from "@/lib/format";
+import { usePref } from "@/lib/prefs";
 
 import { PlayPauseButton, SeekBar, SkipButton, VolumeControl } from "./controls";
+import { LyricsPanel } from "./LyricsPanel";
 import { QueuePanel } from "./QueuePanel";
 import { audioCommands, canSkipAudio, skipAudio } from "./usePlayer";
 import { currentChapterTitle, seekSpan } from "./chapterNav";
@@ -21,6 +24,7 @@ interface NowPlayingSheetProps {
 }
 
 type PlayerState = ReturnType<typeof usePlayerState>;
+type SidePane = "queue" | "lyrics";
 
 const BODY_LAYOUT = "now-playing grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)] md:overflow-hidden";
 
@@ -31,6 +35,7 @@ const BODY_LAYOUT = "now-playing grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0
 function NowPlayingBody({ state, withTransport, onOpenEntity, queueRef, fillQueue }: { state: PlayerState; withTransport: boolean; onOpenEntity: (href: string) => void; queueRef: RefObject<HTMLDivElement | null>; fillQueue: boolean }) {
   const item = currentAudioItem(state);
   const { transport } = state;
+  const [pane, setPane] = usePref<SidePane>("player.nowPlaying.pane", "queue");
   if (!item) return null;
   const span = seekSpan(item, transport.position, transport.duration);
   const chapterLine = span.chapter !== null ? `Chapter ${span.chapter + 1} of ${span.chapters} · ${formatClock(Math.max(0, transport.duration - transport.position))} left in all` : null;
@@ -71,9 +76,23 @@ function NowPlayingBody({ state, withTransport, onOpenEntity, queueRef, fillQueu
           </>
         ) : null}
       </div>
-      {/* Beside the player, only the queue scrolls: the controls stay where they are. */}
-      <div className="flex min-h-0 flex-col">
-        <QueuePanel state={state} listRef={queueRef} fill={fillQueue} />
+      {/* Beside the player, only the queue (or the lyrics) scrolls: the controls stay put. */}
+      <div className="flex min-h-0 flex-col gap-3">
+        {item.entity.kind === "track" ? (
+          <Segmented<SidePane>
+            size="sm"
+            aria-label="Beside the artwork"
+            className="self-start"
+            options={[{ value: "queue", label: "Up next" }, { value: "lyrics", label: "Lyrics" }]}
+            value={pane}
+            onValueChange={setPane}
+          />
+        ) : null}
+        {item.entity.kind === "track" && pane === "lyrics" ? (
+          <LyricsPanel mediaFileId={item.mediaFileId} position={transport.position} onSeek={(seconds) => audioCommands.seek?.(seconds)} fill={fillQueue} />
+        ) : (
+          <QueuePanel state={state} listRef={queueRef} fill={fillQueue} />
+        )}
       </div>
     </>
   );

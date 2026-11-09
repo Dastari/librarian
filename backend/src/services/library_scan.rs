@@ -34,8 +34,8 @@ use crate::services::graphql::entities::common::AutoDownloadMode;
 use crate::services::graphql::entities::{
     Chapter, ChapterWhereInput, CreateLibraryScanIssueInput, CreateLibraryScanRunInput, Episode,
     EpisodeWhereInput, LibraryScanIssue, LibraryScanIssueWhereInput, LibraryScanRun, MediaFile,
-    MediaFileWhereInput, Track, TrackWhereInput, UpdateLibraryScanIssueInput,
-    UpdateLibraryScanRunInput, User,
+    MediaFileWhereInput, Subtitle, SubtitleWhereInput, Track, TrackWhereInput,
+    UpdateLibraryScanIssueInput, UpdateLibraryScanRunInput, User,
 };
 use crate::services::graphql::{AuthUser, LibrarianSchema};
 use crate::services::library_storage::own_writes::own_write;
@@ -2370,6 +2370,18 @@ impl LibraryScanService {
         }
     }
 
+    /// What a scan walk reports: the library's media, and for video libraries their sidecar
+    /// subtitles too (Q118), which are kept apart from media files.
+    fn walk_extensions_for_library(library_type: &str) -> &'static [&'static str] {
+        match Self::normalize_library_type(library_type).as_str() {
+            "music" | "audiobooks" => Self::extensions_for_library(library_type),
+            _ => &[
+                "mkv", "mp4", "avi", "m4v", "mov", "wmv", "flv", "webm", "mpeg", "mpg", "ts",
+                "m2ts", "srt", "vtt", "ass", "ssa", "sub", "idx",
+            ],
+        }
+    }
+
     fn discover_media_files(
         root: PathBuf,
         allowed_extensions: &'static [&'static str],
@@ -2438,6 +2450,185 @@ impl LibraryScanService {
             let _ = walk.task.await;
         });
         (rx, handle)
+    }
+
+    /// Store the sidecar subtitles a scan walked past (Q118): each placed with its video, and
+    /// rows of files no longer there removed. Failures are logged; they never fail a scan.
+    async fn sync_scan_sidecars(
+        &self,
+        library: &LibraryRow,
+        videos: &[(String, String)],
+        subtitles: &[String],
+    ) {
+        use crate::services::subtitles::{sidecar, store};
+        let Ok(schema) = self.graphql_schema().await else {
+            return;
+        };
+        let Ok(database) = self.database().await else {
+            return;
+        };
+        let db = database.pool();
+        let ids_by_path: HashMap<&str, &str> = videos
+            .iter()
+            .map(|(path, id)| (path.as_str(), id.as_str()))
+            .collect();
+        let index = sidecar::VideoIndex::new(videos.iter().map(|(path, _)| path.as_str()));
+        let mut found: HashMap<String, Vec<sidecar::SidecarFile>> = HashMap::new();
+        for (video, file) in sidecar::assign(&index, subtitles) {
+            if let Some(id) = ids_by_path.get(video.as_str()) {
+                found.entry((*id).to_owned()).or_default().push(file);
+            }
+        }
+        // Files that had sidecar rows but none now, as well as files with sidecars.
+        let mut with_rows: HashSet<String> = HashSet::new();
+        let ids = videos.iter().map(|(_, id)| id.clone()).collect::<Vec<_>>();
+        for chunk in ids.chunks(500) {
+            match Subtitle::query(db.pool())
+                .filter(SubtitleWhereInput {
+                    media_file_id: Some(StringFilter {
+                        in_list: Some(chunk.to_vec()),
+                        ..Default::default()
+                    }),
+                    source_type: Some(StringFilter {
+                        in_list: Some(vec![
+                            store::SOURCE_SIDECAR.to_owned(),
+                            store::SOURCE_DOWNLOADED.to_owned(),
+                        ]),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                .fetch_all()
+                .await
+            {
+                Ok(rows) => with_rows.extend(rows.into_iter().map(|row| row.media_file_id)),
+                Err(error) => {
+                    warn!(library_id = %library.id, %error, "Could not read sidecar subtitles");
+                    return;
+                }
+            }
+        }
+        let mut counts = store::SyncCounts::default();
+        let mut files = found.keys().cloned().collect::<HashSet<_>>();
+        files.extend(with_rows);
+        for media_file_id in files {
+            let list = found.remove(&media_file_id).unwrap_or_default();
+            match store::sync_rows(db, &schema, &media_file_id, &list).await {
+                Ok(changed) => counts.add(changed),
+                Err(error) => {
+                    warn!(library_id = %library.id, %media_file_id, %error, "Could not store sidecar subtitles");
+                }
+            }
+        }
+        if counts != store::SyncCounts::default() {
+            info!(
+                library_id = %library.id,
+                library_name = %library.name,
+                created = counts.created,
+                updated = counts.updated,
+                removed = counts.removed,
+                "Sidecar subtitles updated"
+            );
+        }
+    }
+
+    /// Store one video's sidecars, found on disk now (after analysis, an import or a move).
+    async fn sync_video_sidecars(&self, media_file_id: &str, video_path: &str) {
+        let (Ok(schema), Ok(database)) = (self.graphql_schema().await, self.database().await)
+        else {
+            return;
+        };
+        if let Err(error) = crate::services::subtitles::store::sync_video(
+            database.pool(),
+            &schema,
+            media_file_id,
+            video_path,
+        )
+        .await
+        {
+            debug!(%media_file_id, %error, "Could not look for sidecar subtitles");
+        }
+    }
+
+    /// Move or copy a video's sidecars to sit beside it at `new_video`, renamed after it (Q118).
+    /// `rows` are the sidecar rows to point at the new files after a move; on a copy (an import)
+    /// there are none, and the rows come from the next look at the new file.
+    async fn carry_sidecars(
+        &self,
+        library_root: &Path,
+        old_video: &Path,
+        new_video: &Path,
+        sidecars: Vec<(
+            Option<String>,
+            crate::services::subtitles::sidecar::SidecarFile,
+        )>,
+        remove_source: bool,
+        source_is_library: bool,
+    ) {
+        use crate::services::subtitles::sidecar::{carry_names, file_stem};
+        let schema = self.graphql_schema().await.ok();
+        let (Some(old_name), Some(new_name), Some(new_folder)) = (
+            old_video
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned()),
+            new_video
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned()),
+            new_video.parent(),
+        ) else {
+            return;
+        };
+        let (old_stem, new_stem) = (
+            file_stem(&old_name).to_owned(),
+            file_stem(&new_name).to_owned(),
+        );
+        let files = sidecars
+            .iter()
+            .map(|(_, file)| file.clone())
+            .collect::<Vec<_>>();
+        let names = carry_names(&old_stem, &new_stem, &files);
+        for ((row_id, sidecar), target_name) in sidecars.into_iter().zip(names) {
+            let from = PathBuf::from(&sidecar.path);
+            let to = new_folder.join(&target_name);
+            if to == from {
+                continue;
+            }
+            let mut pairs = vec![(from.clone(), to.clone())];
+            if sidecar.bitmap {
+                // A VobSub index travels with its pictures.
+                pairs.push((from.with_extension("sub"), to.with_extension("sub")));
+            }
+            let mut placed = true;
+            for (source, target) in pairs {
+                match place_in_library(
+                    library_root.to_path_buf(),
+                    source.clone(),
+                    target.clone(),
+                    remove_source,
+                    source_is_library,
+                )
+                .await
+                {
+                    Ok(NoClobberOutcome::Placed) => {}
+                    Ok(NoClobberOutcome::TargetExists) => {
+                        debug!(source = %source.display(), target = %target.display(), "A subtitle is already there; left as it is");
+                        placed = false;
+                    }
+                    Err(error) => {
+                        warn!(source = %source.display(), target = %target.display(), %error, "Could not carry a subtitle with its video");
+                        placed = false;
+                    }
+                }
+            }
+            if placed
+                && let (Some(id), Some(schema)) = (row_id.as_deref(), schema.as_ref())
+                && let Err(error) =
+                    crate::services::subtitles::store::move_row(schema, id, &to.to_string_lossy())
+                        .await
+            {
+                warn!(subtitle_id = %id, %error, "Could not record a moved subtitle");
+            }
+        }
     }
 
     async fn hash_duplicate_candidate(
@@ -4771,7 +4962,10 @@ impl LibraryScanService {
             anyhow::bail!("Library root is unavailable");
         }
 
-        let allowed_ext = Self::extensions_for_library(&normalized_library_type);
+        let allowed_ext = Self::walk_extensions_for_library(&normalized_library_type);
+        let wants_sidecars = !matches!(normalized_library_type.as_str(), "music" | "audiobooks");
+        let mut sidecar_paths: Vec<String> = Vec::new();
+        let mut scanned_videos: Vec<(String, String)> = Vec::new();
         let mut scanned_count: usize = 0;
         let mut match_pipeline_error_count: usize = 0;
         let mut existing_count: usize = 0;
@@ -4866,6 +5060,12 @@ impl LibraryScanService {
             };
 
             let abs_path = discovered.absolute_path;
+            if wants_sidecars
+                && crate::services::subtitles::sidecar::is_sidecar_extension(&discovered.extension)
+            {
+                sidecar_paths.push(abs_path);
+                continue;
+            }
             discovered_paths.insert(abs_path.clone());
             let rel_path = discovered.relative_path;
             let match_source = rel_path.clone().unwrap_or_else(|| {
@@ -4959,6 +5159,9 @@ impl LibraryScanService {
                 )
             };
 
+            if wants_sidecars {
+                scanned_videos.push((abs_path.clone(), media_file_id.clone()));
+            }
             duplicate_candidates.push(DuplicateCandidate {
                 media_file_id: media_file_id.clone(),
                 path: abs_path.clone(),
@@ -5150,6 +5353,11 @@ impl LibraryScanService {
         }
         if let Some(handle) = discovery_handle.take() {
             handle.await.context("Library discovery worker failed")?;
+        }
+        // Only a complete walk says a sidecar is gone.
+        if wants_sidecars && !storage_unavailable && discovery_errors == 0 {
+            self.sync_scan_sidecars(&library, &scanned_videos, &sidecar_paths)
+                .await;
         }
         let duplicate_count = self
             .detect_duplicate_files(
@@ -5669,6 +5877,34 @@ impl LibraryScanService {
         let analysis = ffprobe_analyze(path).await?;
         let database = self.database().await?;
         replace_media_analysis(database.pool(), &actor, target, analysis.clone()).await?;
+        if analysis.video_codec.is_some()
+            && crate::services::subtitles::store::is_video_extension(
+                path.rsplit_once('.')
+                    .map(|(_, ext)| ext)
+                    .unwrap_or_default(),
+            )
+        {
+            self.sync_video_sidecars(media_file_id, path).await;
+            // Preferred languages it still lacks, when automatic downloads are on (Q119).
+            let manager = self.manager.clone();
+            let schema = self.graphql_schema().await.ok();
+            let file = MediaFile::get(database.pool().pool(), &media_file_id.to_owned())
+                .await
+                .ok()
+                .flatten();
+            if let (Some(schema), Some(file)) = (schema, file) {
+                let database = database.clone();
+                tokio::spawn(async move {
+                    crate::services::subtitles::provider::auto_fetch(
+                        database.pool(),
+                        &schema,
+                        &manager,
+                        &file,
+                    )
+                    .await;
+                });
+            }
+        }
 
         // design.md Q23/Q24: the MediaFile hook (`requalify_media_file`) recomputes
         // `quality_status` against the resolved profile as this write commits, so the
@@ -10519,6 +10755,9 @@ impl LibraryScanService {
             });
         }
 
+        // The video's subtitles go with it (Q118): what is on disk now, as rows to repoint.
+        let sidecars = self.sidecars_to_carry(media_file_id, &old_path).await;
+
         // Atomic no-clobber move (audit #4): `hard_link` + `remove` instead of the
         // previous `exists()`-then-`rename()`, which races under concurrent
         // organize/import and can silently replace an existing target file.
@@ -10716,12 +10955,80 @@ impl LibraryScanService {
             }
         }
 
+        if !sidecars.is_empty() {
+            self.carry_sidecars(
+                Path::new(&library.path),
+                &old_path,
+                &target_path,
+                sidecars,
+                true,
+                true,
+            )
+            .await;
+        }
+
         Ok(OrganizeResult {
             success: true,
             old_path: Some(old_path.to_string_lossy().to_string()),
             new_path: Some(target_path.to_string_lossy().to_string()),
             reason: None,
         })
+    }
+
+    /// A video's sidecar and downloaded subtitles, looked for on disk first so ones no scan has
+    /// seen yet are carried too. Nothing for audio.
+    async fn sidecars_to_carry(
+        &self,
+        media_file_id: &str,
+        video: &Path,
+    ) -> Vec<(
+        Option<String>,
+        crate::services::subtitles::sidecar::SidecarFile,
+    )> {
+        use crate::services::subtitles::{is_bitmap_codec, sidecar, store};
+        let video = video.to_string_lossy().into_owned();
+        let extension = video
+            .rsplit_once('.')
+            .map(|(_, ext)| ext)
+            .unwrap_or_default();
+        if !store::is_video_extension(extension) {
+            return Vec::new();
+        }
+        self.sync_video_sidecars(media_file_id, &video).await;
+        let Ok(database) = self.database().await else {
+            return Vec::new();
+        };
+        store::file_rows(database.pool(), media_file_id)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|row| {
+                let path = row.file_path.clone()?;
+                let codec = row.codec.clone().unwrap_or_default();
+                Some((
+                    Some(row.id.clone()),
+                    sidecar::SidecarFile {
+                        path,
+                        codec: "subrip",
+                        bitmap: is_bitmap_codec(&codec),
+                        facts: sidecar::NameFacts {
+                            language: row
+                                .language
+                                .as_deref()
+                                .and_then(crate::services::subtitles::language::normalize),
+                            forced: row.is_forced,
+                            hearing_impaired: row.is_hearing_impaired,
+                            default: row.is_default,
+                            title: if row.source_type == store::SOURCE_SIDECAR {
+                                row.title.clone()
+                            } else {
+                                None
+                            },
+                        },
+                    },
+                ))
+            })
+            .collect()
     }
 
     pub async fn process_torrent_source_files(
@@ -14267,6 +14574,34 @@ impl LibraryScanService {
             anyhow::bail!("Target path already exists; skipped to avoid overwrite");
         }
 
+        // A downloaded video's subtitles come with it, renamed after it (Q118). The download's
+        // own files are never moved, so its torrent keeps seeding.
+        let source = source_path.to_string_lossy().into_owned();
+        let extension = source
+            .rsplit_once('.')
+            .map(|(_, ext)| ext)
+            .unwrap_or_default();
+        if crate::services::subtitles::store::is_video_extension(extension) {
+            match crate::services::subtitles::store::discover(&source).await {
+                Ok(found) if !found.is_empty() => {
+                    let sidecars = found.into_iter().map(|file| (None, file)).collect();
+                    self.carry_sidecars(
+                        Path::new(&library.path),
+                        source_path,
+                        target_path,
+                        sidecars,
+                        allow_move,
+                        false,
+                    )
+                    .await;
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    debug!(source = %source_path.display(), %error, "Could not look for a download's subtitles");
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -15852,6 +16187,9 @@ struct FfprobeStream {
     disposition: Option<FfprobeDisposition>,
     #[serde(default)]
     tags: Option<HashMap<String, String>>,
+    /// `1` when the video carries EIA-608/708 captions in its picture stream.
+    #[serde(default)]
+    closed_captions: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -15942,6 +16280,8 @@ struct ChapterAnalysis {
 
 #[derive(Debug, Clone, Default)]
 struct ProbeAnalysis {
+    /// Closed captions inside a video stream (Q119): counted as subtitles that are present.
+    closed_captions: bool,
     container: Option<String>,
     video_codec: Option<String>,
     audio_codec: Option<String>,
@@ -16162,6 +16502,7 @@ async fn replace_media_analysis(
                     resolution: Some(analysis.resolution),
                     is_hdr: Some(analysis.is_hdr),
                     hdr_type: Some(analysis.hdr_type),
+                    closed_captions: Some(Some(analysis.closed_captions)),
                     audio_channels: Some(analysis.audio_channels),
                     metadata: Some(analysis.metadata),
                     analyzed_at: Some(Some(Utc::now().to_rfc3339())),
@@ -16410,6 +16751,16 @@ fn parse_ffprobe_output(stdout: &[u8]) -> Result<ProbeAnalysis> {
 
         match stream.codec_type.as_deref() {
             Some("video") => {
+                // ffprobe flags EIA-608/708 captions with `closed_captions=1`, and names them in
+                // the stream's description ("…, Closed Captions").
+                if stream.closed_captions == Some(1)
+                    || stream
+                        .codec_long_name
+                        .as_deref()
+                        .is_some_and(|name| name.to_ascii_lowercase().contains("closed captions"))
+                {
+                    analysis.closed_captions = true;
+                }
                 let stream_hdr_type = stream.color_transfer.as_ref().and_then(|transfer| {
                     let t = transfer.to_ascii_lowercase();
                     if t.contains("smpte2084") {
@@ -17696,6 +18047,29 @@ mod tests {
         assert!(partitioned.ignored_extensions.contains(".nfo"));
     }
     #[test]
+    fn ffprobe_closed_captions_are_noticed() {
+        let flagged = super::parse_ffprobe_output(br#"{
+            "streams": [{"index": 0, "codec_type": "video", "codec_name": "h264", "closed_captions": 1}],
+            "chapters": []
+        }"#).unwrap();
+        assert!(flagged.closed_captions);
+        let described = super::parse_ffprobe_output(
+            br#"{
+            "streams": [{"index": 0, "codec_type": "video", "codec_name": "mpeg2video",
+                "codec_long_name": "MPEG-2 video, Closed Captions"}],
+            "chapters": []
+        }"#,
+        )
+        .unwrap();
+        assert!(described.closed_captions);
+        let plain = super::parse_ffprobe_output(br#"{
+            "streams": [{"index": 0, "codec_type": "video", "codec_name": "h264", "closed_captions": 0}],
+            "chapters": []
+        }"#).unwrap();
+        assert!(!plain.closed_captions);
+    }
+
+    #[test]
     fn notification_audit_ffprobe_accepts_large_opaque_chapter_ids() {
         let analysis = super::parse_ffprobe_output(br#"{
             "streams": [],
@@ -18651,6 +19025,7 @@ mod tests {
             resolution: None,
             is_hdr: false,
             hdr_type: None,
+            closed_captions: None,
             audio_channels: None,
             metadata: None,
             content_type: None,
@@ -19551,6 +19926,7 @@ mod atomic_analysis_tests {
                 resolution: None,
                 is_hdr: false,
                 hdr_type: None,
+                closed_captions: None,
                 audio_channels: None,
                 metadata: None,
                 content_type: None,

@@ -9,14 +9,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
 import { Button, KeyValueList } from "@/components/ui";
-import { ListeningStatusDocument, TestLlmParserDocument, TestOllamaConnectionDocument, TestTmdbConnectionDocument } from "@/graphql/generated/graphql";
+import { ListeningStatusDocument, TestLlmParserDocument, TestOllamaConnectionDocument, TestOpenSubtitlesDocument, TestTmdbConnectionDocument } from "@/graphql/generated/graphql";
 import { errorMessage } from "@/lib/graphql/errors";
+import { LANGUAGES } from "@/lib/languages";
 import { LIBRARY_TYPE_OPTIONS } from "@/lib/library-types";
 
-import { NumberRow, PercentRow, DurationRow, TextRow, UrlRow, settingsFormBehaviour } from "./SettingFields";
+import { NumberRow, PercentRow, DurationRow, SelectRow, TagsRow, TextRow, UrlRow, settingsFormBehaviour } from "./SettingFields";
 import { SettingsPage, SettingsSection } from "./SettingsSection";
 import { SmartMatchingPanel } from "./SmartMatchingPanel";
-import { asBool, asNumber, useAppSettings } from "./useAppSettings";
+import { asBool, asList, asNumber, useAppSettings } from "./useAppSettings";
 
 const requiredNumber = (rule: z.ZodNumber) => z.number().nullable().transform((value, context) => {
   if (value === null) {
@@ -48,12 +49,29 @@ const schema = z.object({
   llmConfidence: requiredNumber(z.number().min(0).max(1)),
   llmTimeout: requiredNumber(z.number().int().min(1).max(600)),
   llmUseForAmbiguous: z.boolean(),
+  /** Typed only to set or replace it: the saved key is never sent back. */
+  opensubtitlesApiKey: z.string().trim(),
+  opensubtitlesUsername: z.string().trim(),
+  /** Typed only to change it: the saved password is never sent back. */
+  opensubtitlesPassword: z.string(),
+  subtitleLanguages: z.array(z.string().trim().min(1)).refine((languages) => languages.join(",").length <= 200, "Use at most 200 characters"),
+  subtitleHearingImpaired: z.enum(["include", "prefer", "avoid"]),
+  subtitleAutoDownload: z.boolean(),
+  lrclibEnabled: z.boolean(),
 });
+const HEARING_IMPAIRED_OPTIONS = [
+  { value: "include", label: "Either" },
+  { value: "prefer", label: "Prefer SDH", detail: "Subtitles that describe sounds for deaf and hard-of-hearing viewers" },
+  { value: "avoid", label: "Avoid SDH" },
+] as const;
 type Values = z.input<typeof schema>;
 
 export function MetadataSettings() {
   const metadata = useAppSettings("metadata");
   const llm = useAppSettings("llm");
+  const subtitles = useAppSettings("subtitles");
+  const lyrics = useAppSettings("lyrics");
+  const [testOpenSubtitles, openSubtitlesTest] = useMutation(TestOpenSubtitlesDocument);
   const listening = useQuery(ListeningStatusDocument);
   const [testTmdb, tmdbTest] = useMutation(TestTmdbConnectionDocument);
   const [testOllama, ollamaTest] = useMutation(TestOllamaConnectionDocument);
@@ -85,10 +103,19 @@ export function MetadataSettings() {
       llmConfidence: asNumber(l.get("llm.confidence_threshold"), 0.7),
       llmTimeout: asNumber(l.get("llm.timeout_seconds"), 30),
       llmUseForAmbiguous: asBool(l.get("llm.use_for_ambiguous"), true),
+      opensubtitlesApiKey: "",
+      opensubtitlesUsername: subtitles.values.get("subtitles.opensubtitles.username") ?? "",
+      opensubtitlesPassword: "",
+      subtitleLanguages: asList(subtitles.values.get("subtitles.preferred_languages")),
+      subtitleHearingImpaired: (["include", "prefer", "avoid"] as const).find((value) => value === subtitles.values.get("subtitles.hearing_impaired")) ?? "include",
+      subtitleAutoDownload: asBool(subtitles.values.get("subtitles.auto_download"), false),
+      lrclibEnabled: asBool(lyrics.values.get("lyrics.lrclib_enabled"), true),
     };
-  }, [metadata.values, llm.values]);
+  }, [metadata.values, llm.values, subtitles.values, lyrics.values]);
+  const passwordSaved = Boolean(subtitles.values.get("subtitles.opensubtitles.password"));
+  const keySaved = Boolean(subtitles.values.get("subtitles.opensubtitles.api_key"));
   const defaults = useRef(storedValues);
-  const loading = metadata.loading || llm.loading;
+  const loading = metadata.loading || llm.loading || subtitles.loading || lyrics.loading;
   const form = useAppForm({
     ...settingsFormBehaviour,
     defaultValues: defaults.current,
@@ -120,8 +147,19 @@ export function MetadataSettings() {
         "llm.timeout_seconds": values.llmTimeout,
         "llm.use_for_ambiguous": values.llmUseForAmbiguous,
       });
-      defaults.current = values;
-      formApi.reset(values);
+      await subtitles.save({
+        // The key and password are encrypted by the server as they are written, and only sent when typed.
+        ...(values.opensubtitlesApiKey ? { "subtitles.opensubtitles.api_key": values.opensubtitlesApiKey } : {}),
+        "subtitles.opensubtitles.username": values.opensubtitlesUsername || null,
+        ...(values.opensubtitlesPassword ? { "subtitles.opensubtitles.password": values.opensubtitlesPassword } : {}),
+        "subtitles.preferred_languages": JSON.stringify(values.subtitleLanguages),
+        "subtitles.hearing_impaired": values.subtitleHearingImpaired,
+        "subtitles.auto_download": values.subtitleAutoDownload,
+      });
+      await lyrics.save({ "lyrics.lrclib_enabled": values.lrclibEnabled });
+      const saved = { ...values, opensubtitlesApiKey: "", opensubtitlesPassword: "" };
+      defaults.current = saved;
+      formApi.reset(saved);
       toast.success("Settings saved");
     },
   });
@@ -139,6 +177,24 @@ export function MetadataSettings() {
       const { data } = await testTmdb({ variables: { input: { apiKey: form.state.values.tmdbApiKey } } });
       if (data?.testTmdbConnection.success) toast.success(data.testTmdbConnection.message);
       else toast.warning(data?.testTmdbConnection.message ?? "TMDB test failed");
+    } catch (error) {
+      toast.danger(errorMessage(error));
+    }
+  };
+  const runOpenSubtitlesTest = async () => {
+    const values = form.state.values;
+    try {
+      const { data } = await testOpenSubtitles({ variables: { input: { apiKey: values.opensubtitlesApiKey || null, username: values.opensubtitlesUsername, password: values.opensubtitlesPassword || null } } });
+      if (data?.testOpenSubtitles.success) toast.success(data.testOpenSubtitles.message);
+      else toast.warning(data?.testOpenSubtitles.message ?? "OpenSubtitles test failed");
+    } catch (error) {
+      toast.danger(errorMessage(error));
+    }
+  };
+  const forgetOpenSubtitles = async () => {
+    try {
+      await subtitles.save({ "subtitles.opensubtitles.api_key": null, "subtitles.opensubtitles.password": null });
+      toast.success("The OpenSubtitles key and password were removed");
     } catch (error) {
       toast.danger(errorMessage(error));
     }
@@ -178,6 +234,20 @@ export function MetadataSettings() {
                 <form.AppField name="audnexusEnabled">{(field) => <field.SwitchRow label="Audnexus" description="Chapter lists for Audible's books. Cached with Audible." disabled={off} />}</form.AppField>
                 <form.AppField name="openlibraryEnabled">{(field) => <field.SwitchRow label="Open Library" description="Audiobooks, when Audible has nothing." disabled={off} />}</form.AppField>
                 <form.AppField name="cacheOpenlibrary">{() => <NumberRow label="Cache Open Library results for" unit="days" min={0} max={365} disabled={off} />}</form.AppField>
+              </SettingsSection>
+              <SettingsSection title="Subtitles · OpenSubtitles" width="readable" description="Find subtitles… in the player searches OpenSubtitles.com." actions={<>
+                {keySaved || passwordSaved ? <Button size="sm" variant="ghost" onPress={() => void forgetOpenSubtitles()} isDisabled={off}>Forget key</Button> : null}
+                <Button size="sm" variant="ghost" onPress={() => void runOpenSubtitlesTest()} isPending={openSubtitlesTest.loading}><IconPlug size="md" /> Test</Button>
+              </>}>
+                <form.AppField name="opensubtitlesApiKey">{() => <TextRow label="API key" type="password" autoComplete="off" mono placeholder={keySaved ? "Set; type to replace it" : "Not set"} description="Create a consumer in your OpenSubtitles.com profile under API consumers. Stored encrypted." disabled={off} />}</form.AppField>
+                <form.AppField name="opensubtitlesUsername">{() => <TextRow label="Username" autoComplete="off" description="Optional. Signs in to download on your account's allowance when the key alone is not enough." disabled={off} />}</form.AppField>
+                <form.AppField name="opensubtitlesPassword">{() => <TextRow label="Password" type="password" autoComplete="off" placeholder={passwordSaved ? "Saved; type to change it" : undefined} description="Stored encrypted." disabled={off} />}</form.AppField>
+                <form.AppField name="subtitleLanguages">{() => <TagsRow label="Preferred subtitle languages" description="In order of preference." suggestions={LANGUAGES.map((language) => ({ value: language.code, label: language.name }))} disabled={off} />}</form.AppField>
+                <form.AppField name="subtitleHearingImpaired">{() => <SelectRow label="Hearing-impaired subtitles" options={[...HEARING_IMPAIRED_OPTIONS]} disabled={off} />}</form.AppField>
+                <form.AppField name="subtitleAutoDownload">{(field) => <field.SwitchRow label="Download missing subtitles after an import" description="Only for a new movie or episode with no subtitles or captions in a preferred language: built in, beside it or downloaded. Uses the daily downloads." disabled={off} />}</form.AppField>
+              </SettingsSection>
+              <SettingsSection title="Lyrics" width="readable" description="Lyrics come from an .lrc file beside a track, then its tags.">
+                <form.AppField name="lrclibEnabled">{(field) => <field.SwitchRow label="Look up lyrics on LRCLIB" description="Free synced lyrics from lrclib.net, found by artist, title, album and length. Only those details leave this server." disabled={off} />}</form.AppField>
               </SettingsSection>
               <SettingsSection title="Fetching and listening" width="readable">
                 <form.AppField name="autoFetch">{(field) => <field.SwitchRow label="Fetch metadata automatically for scanned files" disabled={off} />}</form.AppField>

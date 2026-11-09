@@ -26,7 +26,7 @@ tower-http = { version = "0.7.1", features = ["cors", "trace", "fs", "compressio
 # Async runtime
 tokio = { version = "1.54.1", features = ["full"] }
 tokio-stream = "0.1.19"
-tokio-util = { version = "0.7.20", features = ["io"] }
+tokio-util = { version = "0.7.20", features = ["io", "io-util"] }
 
 # GraphQL with subscriptions
 async-graphql = { version = "7.2.1", features = ["uuid", "time", "tracing", "chrono", "dataloader"] }
@@ -101,6 +101,11 @@ dotenvy = "0.15.7"
 dirs = "7.0.0"
 mime_guess = "2.0.5"
 chrono = { version = "0.4.45", features = ["serde"] }
+# Subtitle files in the author's code page (old SubRip files), decoded without ffmpeg.
+encoding_rs = "0.8.44"
+chardetng = "1.0.0"
+# Lyrics tags (USLT/SYLT, LYRICS, ©lyr), read through the storage layer.
+lofty = "0.25.5"
 sha2 = "0.11.1"
 hmac = "0.13.0"
 hex = "0.4.3"

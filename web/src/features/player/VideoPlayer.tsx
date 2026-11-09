@@ -1,16 +1,17 @@
 import { Button } from "glass-ux/button";
-import { IconArrowLeft, IconSkipForward, IconVolume } from "glass-ux/icons";
-import { VideoPlayer as GlassVideoPlayer, type MediaAttach, type MediaPlayerController, type MediaStreamContext, type MediaTextTrack, type MediaViewMode, type MediaViewModeChangeDetails } from "glass-ux/media-player";
+import { IconArrowLeft, IconCaptions, IconSkipForward, IconVolume } from "glass-ux/icons";
+import { VideoPlayer as GlassVideoPlayer, type MediaAttach, type MediaPlayerController, type MediaStreamContext, type MediaViewMode, type MediaViewModeChangeDetails } from "glass-ux/media-player";
 import { Menu } from "glass-ux/menu";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { useSettingsConnection } from "@/features/settings/useSettingsConnection";
 import { EntityAudioStreamListDocument, EntityMediaChapterListDocument, EntitySubtitleListDocument } from "@/graphql/generated/graphql";
-import { mediaSubtitleUrl } from "@/lib/api/urls";
 import { useInputMode } from "@/lib/input-mode";
 import { cn } from "@/lib/utils";
 
 import { CastButton } from "./CastButton";
+import { FindSubtitlesDialog } from "./FindSubtitlesDialog";
+import { OFFSET_STEP_MS, choiceOf, clampOffset, formatOffset, isBitmapSubtitle, pickSubtitle, readShowChoice, subtitleLabel, subtitleTracks, writeShowChoice } from "./subtitles";
 import { usePlayerState, type PlayItem } from "./store";
 import { useCastAdapter } from "./useCastAdapter";
 import { useMediaSource } from "./useMediaSource";
@@ -24,14 +25,7 @@ const SESSION_SAVE_MS = 5000;
 const CHROME_DELAY_MS = 3000;
 /** webOS (461) and Tizen (10009) report their remote's Back key only as a key code. */
 const BACK_KEY_CODES = new Set([461, 10009]);
-const SUBTITLE_CODECS = new Set(["subrip", "srt", "webvtt", "vtt", "ass", "ssa", "mov_text", "text"]);
-
-/** The subtitles the server can deliver as WebVTT; image formats (PGS, VobSub) it cannot. */
-export function subtitleTracks(mediaFileId: string, rows: ReadonlyArray<{ id: string; codec?: string | null; title?: string | null; language?: string | null }>): MediaTextTrack[] {
-  return rows
-    .filter((row) => SUBTITLE_CODECS.has(row.codec?.toLowerCase() ?? ""))
-    .map((row) => ({ id: row.id, src: mediaSubtitleUrl(mediaFileId, row.id), label: row.title || row.language || "Subtitles", language: row.language || "en" }));
-}
+export { subtitleTracks } from "./subtitles";
 
 interface VideoPlayerProps {
   item: PlayItem;
@@ -69,17 +63,78 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
   const [paused, setPaused] = useState(false);
   const [chromeAwake, setChromeAwake] = useState(true);
   const [castPosition, setCastPosition] = useState<number>();
+  // Subtitles: a picture one burned in (a new stream), the timing offset, and the search dialog.
+  const [burned, setBurned] = useState<string>();
+  const [offsetMs, setOffsetMs] = useState(0);
+  const [findOpen, setFindOpen] = useState(false);
+  useEffect(() => { setBurned(undefined); setOffsetMs(0); }, [item.mediaFileId]);
 
   const progress = useProgressSync(item);
-  const media = useMediaSource(progress.loading ? null : item.mediaFileId, element, progress.resumePosition, { audioStreamIndex: selectedAudio });
+  const media = useMediaSource(progress.loading ? null : item.mediaFileId, element, progress.resumePosition, { audioStreamIndex: selectedAudio, burnSubtitleId: burned });
   const cast = useCastAdapter(item.mediaFileId);
   const audioRows = useSettingsConnection(EntityAudioStreamListDocument, { where: { mediaFileId: { eq: item.mediaFileId } }, orderBy: [{ streamIndex: "ASC" }] }, (data) => data.audioStreams);
   const subtitleRows = useSettingsConnection(EntitySubtitleListDocument, { where: { mediaFileId: { eq: item.mediaFileId } }, orderBy: [{ createdAt: "ASC" }] }, (data) => data.subtitles);
   const chapterRows = useSettingsConnection(EntityMediaChapterListDocument, { where: { mediaFileId: { eq: item.mediaFileId } }, orderBy: [{ chapterIndex: "ASC" }] }, (data) => data.mediaChapters);
 
   const chapters = useMemo(() => chapterRows.rows.map((row) => ({ start: row.startSecs, title: row.title ?? `Chapter ${row.chapterIndex + 1}` })), [chapterRows.rows]);
-  const tracks = useMemo(() => subtitleTracks(item.mediaFileId, subtitleRows.rows), [item.mediaFileId, subtitleRows.rows]);
+  const tracks = useMemo(() => subtitleTracks(item.mediaFileId, subtitleRows.rows, offsetMs), [item.mediaFileId, subtitleRows.rows, offsetMs]);
+  const bitmapRows = useMemo(() => subtitleRows.rows.filter(isBitmapSubtitle), [subtitleRows.rows]);
   const currentAudio = selectedAudio ?? audioRows.rows.find((row) => row.isDefault)?.streamIndex ?? audioRows.rows[0]?.streamIndex;
+
+  // The caption showing, as Glass's own captions menu sets it.
+  const [caption, setCaption] = useState<string | null>(null);
+  useEffect(() => {
+    const player = controller.current;
+    if (!player) return;
+    const read = () => setCaption(player.getState().caption);
+    read();
+    return player.subscribe(read);
+  }, [video]);
+  // A show remembers its subtitles (Q120): applied once a file's tracks are known, saved when the
+  // person changes them. Per person, on this device.
+  const showId = item.showId;
+  const applied = useRef<string | null>(null);
+  const pendingCaption = useRef<string | null>(null);
+  // What this player itself last selected, so only a person's change is remembered.
+  const selectedByPlayer = useRef<string | null>(null);
+  useEffect(() => {
+    const player = controller.current;
+    if (!player || !video || applied.current === item.mediaFileId || subtitleRows.loading) return;
+    applied.current = item.mediaFileId;
+    const row = pickSubtitle(subtitleRows.rows, readShowChoice(userId, showId));
+    selectedByPlayer.current = row?.id ?? null;
+    if (!row) return;
+    if (isBitmapSubtitle(row)) setBurned(row.id);
+    else player.setCaption(row.id);
+  }, [item.mediaFileId, showId, subtitleRows.loading, subtitleRows.rows, userId, video]);
+  useEffect(() => {
+    if (applied.current !== item.mediaFileId) return;
+    const chosen = burned ?? caption;
+    // Settling on what the player chose, or a track id left from the previous file, says nothing.
+    if (chosen === selectedByPlayer.current) return;
+    const row = subtitleRows.rows.find((candidate) => candidate.id === chosen);
+    if (chosen && !row) return;
+    selectedByPlayer.current = chosen;
+    writeShowChoice(userId, showId, choiceOf(row, Boolean(burned)));
+  }, [burned, caption, item.mediaFileId, showId, subtitleRows.rows, userId]);
+  // A new track (just downloaded) or a moved offset reloads the tracks; keep showing the one chosen.
+  useEffect(() => {
+    const player = controller.current;
+    const wanted = pendingCaption.current ?? caption;
+    if (!player || !wanted || !tracks.some((track) => track.id === wanted)) return;
+    pendingCaption.current = null;
+    if (player.getState().caption !== wanted) player.setCaption(wanted);
+  }, [tracks, caption]);
+  const changeBurn = (id: string | undefined) => {
+    playIntent.current = element.current ? !element.current.paused : true;
+    if (id) controller.current?.setCaption(null);
+    setBurned(id);
+  };
+  const openFind = () => {
+    // A dialog cannot show over a full-screen element.
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    setFindOpen(true);
+  };
 
   // The player hands over its element here; a second call is its Retry button.
   const attach = useCallback<MediaAttach>((node, context) => {
@@ -285,6 +340,29 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
         controlsEnd={
           <>
             {onNext ? <Button variant="ghost" size="sm" shape="circle" icon={<IconSkipForward />} aria-label={nextLabel ?? "Next episode"} tooltip={nextLabel ?? "Next episode"} onClick={onNext} /> : null}
+            <Menu.Root>
+              <Menu.Trigger render={<Button variant="ghost" size="sm" shape="circle" icon={<IconCaptions />} aria-label="Subtitle options" tooltip="Subtitle options" />} />
+              <Menu.Popup side="top" align="end">
+                {bitmapRows.length ? (
+                  <Menu.Group>
+                    <Menu.GroupLabel>Burned into the picture</Menu.GroupLabel>
+                    <Menu.RadioGroup aria-label="Burned-in subtitles" value={burned ?? "none"} onValueChange={(value) => changeBurn(value === "none" ? undefined : String(value))}>
+                      <Menu.RadioItem closeOnClick value="none">None</Menu.RadioItem>
+                      {bitmapRows.map((row) => <Menu.RadioItem closeOnClick key={row.id} value={row.id}>{subtitleLabel(row)}</Menu.RadioItem>)}
+                    </Menu.RadioGroup>
+                  </Menu.Group>
+                ) : null}
+                {bitmapRows.length ? <Menu.Separator /> : null}
+                <Menu.Group>
+                  <Menu.GroupLabel>Timing</Menu.GroupLabel>
+                  <Menu.Item closeOnClick={false} disabledReason={tracks.length ? null : "No text subtitles"} onClick={() => setOffsetMs((value) => clampOffset(value - OFFSET_STEP_MS))}>Earlier by ¼ s</Menu.Item>
+                  <Menu.Item closeOnClick={false} disabledReason={tracks.length ? null : "No text subtitles"} onClick={() => setOffsetMs((value) => clampOffset(value + OFFSET_STEP_MS))}>Later by ¼ s</Menu.Item>
+                  <Menu.Item closeOnClick={false} disabledReason={offsetMs ? null : "Already in sync"} trail={formatOffset(offsetMs)} onClick={() => setOffsetMs(0)}>Reset timing</Menu.Item>
+                </Menu.Group>
+                <Menu.Separator />
+                <Menu.Item onClick={openFind}>Find subtitles…</Menu.Item>
+              </Menu.Popup>
+            </Menu.Root>
             {audioRows.rows.length > 1 ? (
               <Menu.Root>
                 <Menu.Trigger render={<Button variant="ghost" size="sm" shape="circle" icon={<IconVolume />} aria-label="Audio track" tooltip="Audio track" />} />
@@ -312,6 +390,17 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
       </div>
       ) : null}
       <CastButton item={item} position={castPosition} open={cast.pickerOpen} onOpenChange={cast.setPickerOpen} hideTrigger onStarted={cast.refresh} />
+      <FindSubtitlesDialog
+        open={findOpen}
+        onOpenChange={setFindOpen}
+        mediaFileId={item.mediaFileId}
+        title={item.subtitle ? `${item.title} · ${item.subtitle}` : item.title}
+        onDownloaded={(id) => {
+          // Shown as soon as its row arrives.
+          pendingCaption.current = id;
+          if (burned) changeBurn(undefined);
+        }}
+      />
     </div>
   );
 }

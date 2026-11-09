@@ -306,8 +306,9 @@ The system must optimize for these real user expectations:
 - **Streaming**: direct play when possible, otherwise HLS via FFmpeg
 - **Track selection**: analyzed audio streams use their absolute FFprobe index. Selecting another
   language prepares an independent HLS variant and preserves the current position and pause state.
-  Supported embedded/sidecar text subtitles are delivered as authorized WebVTT; bitmap subtitles
-  require a future OCR/burn-in path and are not offered as working text tracks.
+  Embedded, sidecar and downloaded text subtitles are delivered as authorized WebVTT with an
+  optional timing offset; picture subtitles (PGS, VobSub) are burned into an on-demand transcode
+  (Q118–Q120). Lyrics: Q121.
 - **Resume**: checkpoints are personal and tied to the media file. Playback sessions retain the
   actual episode or audiobook parent identity; switching sources must not copy another file's position.
 - **Receiver access**: Cast grants bind the issuing login session, media owner and receiver
@@ -850,13 +851,13 @@ WHERE id = $correct_track_id;
 - **Audio**: Artist, album, title, track number, disc number, year, genre
 - **Video**: Show name, season, episode (from container metadata)
 - **Album art**: Base64-encoded cover image with MIME type
-- **Lyrics**: Extracted from FLAC/MP3 tags if present
+- **Lyrics**: Read on demand from an `.lrc` sidecar, the tags (`lofty`) or LRCLIB, and cached as `Lyric` rows (Q121)
 - **Timestamps**: `ffprobe_analyzed_at`, `metadata_extracted_at`, `matched_at`
 
 ### Q36f: What tools are used for metadata extraction?
 **Answer:**
 - **FFprobe** - Video analysis (resolution, codecs, chapters, container metadata)
-- **lofty** - Audio tag reading (ID3, Vorbis, FLAC, MP3, etc.) including album art and lyrics
+- **lofty** - Lyrics tags (ID3 USLT/SYLT, Vorbis/FLAC LYRICS, MP4 ©lyr), read through the storage layer (Q121). Other audio tags still come from ffprobe
 - Extraction happens in `queues.rs` via `extract_audio_metadata_with_art()`
 
 ---
@@ -2160,3 +2161,158 @@ whole file. On `/lists` a card shows up to four distinct covers from the list's 
 identity's picture already uses); entries from one album or show make one tile, so a list built from a single album shows
 that cover alone, and with fewer than two covers, or when covers fail to load, the card falls back to the single cover and
 then to the playlist glyph.
+
+### Q118: Which subtitle files belong to a video, and how do they move with it?
+**Answer:** Files next to the video that are named after it, or kept in a `Subs` folder beside it
+(`services::subtitles::sidecar`). Each one becomes a `Subtitle` row with `sourceType` `sidecar` and its full path. Paths
+are strings, so local paths and `smb://` addresses work the same way.
+- **Where to look:** `Film (2020).srt`, `Film (2020).en.forced.srt` and `Show.S01E01.eng.sdh.srt` in the video's own
+  folder. In `Subs/` (or `Subtitles/`, `Sub/`), files named after the video, or named only by language (`Subs/2_English.srt`)
+  when that folder's parent holds one video. Season packs use `Subs/<video name>/3_French.srt`. When two videos' names both
+  start a subtitle's name (`Film.mkv` and `Film.Extended.mkv`), the longer name wins. `Aliens.en.srt` does not belong to
+  `Alien.mkv`, because the video's name must end at a separator.
+- **What a name says** (`parse_name_tokens`): a language as a code (`en`, `eng`, `fre`, `pt-BR`) or a name (`English`,
+  `Français`), stored as ISO 639-2/B like ffprobe's `eng`. Flags: `forced`/`foreign`, `sdh`/`hi`/`cc` for hearing
+  impaired, and `default`. Leading numbers are ignored. Any other words become the title (`Commentary`). Two-letter codes
+  that are also common words (`it`, `no`, `is`) only count when nothing else in the name is a language.
+- **Formats:** `.srt`, `.vtt`, `.ass`/`.ssa`, and `.sub`. A `.sub` with an `.idx` beside it is one VobSub picture
+  subtitle (codec `dvd_subtitle`), listed by its `.idx`. A `.sub` on its own is MicroDVD text.
+- **When:** the library scan walk now reports subtitle extensions for movie and TV libraries. They are never made into
+  media files. After a complete walk (no unreadable entries, share not down), each video's rows are made to match what
+  was found: new ones are created, renamed flags are updated, and rows for files that are gone are removed. A walk that did
+  not finish changes nothing. After ffprobe analyses a video (a new file, an import, a changed file), its folder is looked
+  at again for that one video. A `downloaded` row keeps its kind and is never listed a second time as a sidecar.
+- **Imports** (`materialize_torrent_file`): a downloaded video's sidecars are copied next to its new library path and
+  renamed after it, like the video. They are never moved, so the torrent keeps seeding. The rows come from the analysis
+  that follows.
+- **Organize** (`move_media_file_to_pattern`): the video's folder is looked at first, so sidecars no scan has seen yet are
+  included. After the video's move is recorded, each sidecar is moved with no-clobber placement to
+  `<new name><what followed the old name>` (`film.en.forced.srt` becomes `Film (2020).en.forced.srt`). One not named after
+  the video takes `<new name>.<lang>[.forced][.sdh].<ext>`, with `.2` added when the name is already taken. A VobSub's
+  `.sub` goes with its `.idx`. The row is then pointed at the new path. If a target already exists, that sidecar is left
+  where it was.
+
+### Q119: How are subtitles downloaded?
+**Answer:** From OpenSubtitles.com's REST API (`services::subtitles::opensubtitles`, `provider`), in the player
+("Find subtitles…"), or automatically after an import when that is turned on.
+- **Settings** (Settings › Metadata, *Subtitles · OpenSubtitles*, next to the other metadata providers): the API key
+  (`subtitles.opensubtitles.api_key`), and an optional username and password. The key and password are encrypted as they
+  are written: the `AppSetting` write hook encrypts the keys in `SECRET_SETTING_KEYS` with the source-credential envelope.
+  They are write-only: the page shows whether each is set, sends one only when it is typed, and *Forget key* clears both.
+  Also here: preferred subtitle languages (the existing `subtitles.preferred_languages`, moved from Settings › General,
+  English when empty), hearing-impaired preference (`subtitles.hearing_impaired`: either, prefer, avoid) and the automatic
+  fetch (`subtitles.auto_download`, off by default). Nothing is seeded: the key is saved through the normal admin setting
+  path (`createAppSetting`/`updateAppSetting`, or this page). *Test* signs in when an account is given, and otherwise
+  checks the key with one small search.
+- **Matching:** one search per request, using the file's OpenSubtitles hash (the size plus the 64-bit words of the first
+  and last 64 KiB, read through storage, so a share costs 128 KiB) together with the movie's IMDb or TMDB id, or the show's
+  ids plus season and episode. When there is no id, the title is searched. Parameters are sent sorted and in lower case,
+  as the API asks.
+- **Ranking** (`opensubtitles::rank`): a hash match first, then the preferred languages in order, full subtitles before
+  forced-only ones, the hearing-impaired preference, human over machine or AI translation, and trusted uploaders. After
+  that comes `log10(downloads) + rating / 2`, where the rating only counts with three or more votes.
+- **Downloading:** with an account saved, Librarian signs in (`/login`), keeps the token for 12 hours, uses the host the
+  API names for VIP accounts, and downloads on that account's allowance. With only a key, it calls `/download` with the
+  key alone. If the API wants a signed-in user for that key, the person is told to add the account. The file is asked for
+  as SubRip, checked to parse, and saved as UTF-8 next to the video as `<video>.<lang>[.forced][.sdh].srt`, adding `.2`
+  when the name is taken. A `downloaded` row records the provider's file id (the `opensubtitlesId` column, unused until
+  now), `downloadedAt`, and the release, uploader and remaining allowance in `metadata`. Because the file sits next to the
+  video, it moves when the video is organized and works in other players.
+- **Limits:** requests are capped at 4 per second, shared by every user. A 429 says "slow down, try again in N seconds".
+  The daily download allowance (406 from `/download`) is reported as "OpenSubtitles download limit reached: You have
+  downloaded your allowed 20 subtitles for 24h. Your quota will be renewed in …". Neither is retried in a loop. After each
+  download the player shows how many downloads are left today.
+- **Automatic, only for files without subtitles.** Many videos come with subtitles, so after a movie's or episode's video
+  is analysed (when the automatic fetch is on and a key is saved), it is left alone if it already has any of these
+  (`provider::auto_skip_reason`):
+  - a subtitle in a preferred language, embedded (text or picture), sidecar or downloaded;
+  - an embedded track with no language marked (`und`);
+  - closed captions inside the video stream (EIA-608/708). Analysis records these in the additive `MediaFile.closedCaptions`
+    column, from ffprobe's `closed_captions=1` or "Closed Captions" in the stream description.
+
+  Forced-only tracks (just the foreign parts) do not count. A file that is not skipped gets one search and one download:
+  the best human-made, full subtitle in the most preferred language that has one. This happens once per file per server
+  run. "Find subtitles…" in the player stays available for every file, and shows why the automatic fetch skipped it
+  ("Has English subtitles built in", from `searchSubtitles.autoSkipReason`).
+- **Closed captions in the player: not built.** ffmpeg can only pull EIA-608 out by decoding the picture
+  (`movie=…[out0+subcc]`), which takes about as long as the film for a whole file. That is far beyond the 20-second
+  subtitle route. It would need a background extraction job caching a `.vtt`, like the read-along transcript below.
+  Untested lead: libx264 passes A53 captions through (`a53cc`, on by default), and hls.js shows CEA-608 in HLS
+  segments, so transcoded playback may already carry them.
+- **Subtitles bundled in a torrent** are handled on import (Q118): the same placement rules find a video's files
+  (`Movie.en.srt` next to it; `Subs/English.srt`, `Subs/2_English.srt` for a single-video torrent; `Subs/<episode>/2_English.srt`
+  in a season pack; `.idx`+`.sub`; `.ass`/`.ssa`). They are copied next to the imported video with library names
+  (`sidecar::carry_names`: `<video>.en.srt`, `<video>.en.forced.srt`, `<video>.en.2.srt` for a second English file). The
+  names are deterministic and copies are no-clobber, so importing the torrent again adds nothing. They then count as
+  present for the rule above.
+- **Access:** `searchSubtitles`, `downloadSubtitle` and `fetchLyrics` are actions for members who can read the file
+  (`authorized_media_file`). `testOpenSubtitles` is for administrators. The search is a mutation rather than a query
+  because each call spends the provider's allowance. Credentials are never logged, and `Credentials` debug-prints with
+  them redacted.
+- **Tests** use a recorded search response (`tests/fixtures/opensubtitles/search.json`) and a loopback server that copies
+  the API's login, download, quota and error answers. The real API is never called in tests.
+
+### Q120: How does the player show subtitles, and what about picture subtitles?
+**Answer:** Glass UX's captions menu lists every text subtitle: embedded, sidecar and downloaded. Each label gives the
+language, its flags and where it came from ("English · SDH · Downloaded"). SDH tracks are given `kind: captions`.
+- **One way to WebVTT** (`/api/media/{file}/subtitles/{id}.vtt`, `services::subtitles::cues`): sidecar and downloaded
+  files are read through storage (a share needs no ffmpeg) and converted without ffmpeg. UTF-8 and UTF-16 are read by their
+  byte order mark; other files are guessed by `chardetng`, since old SubRip files use Windows code pages. SubRip, ASS/SSA
+  (`Dialogue:` lines read by the `Format:` line; italic, bold and underline kept; `\an7–9` becomes `line:0`; drawings
+  dropped; other styling lost), MicroDVD (at its declared or the video's frame rate) and WebVTT are supported. Embedded
+  text streams still go through ffmpeg, and its WebVTT is parsed again by the same code. Cue text keeps only balanced
+  `<i>`, `<b>` and `<u>`. Everything else is escaped, so a subtitle file cannot inject markup or forge a timing line.
+- **Timing offset:** Glass's player (0.19.1) has no subtitle delay, so the route takes `?offsetMs=` (±10 minutes) and
+  shifts every cue. Cues that end before zero are dropped. The player's *Subtitle options* menu moves the timing ¼ s
+  earlier or later and can reset it. Changing the offset changes the track URLs, and the chosen track is shown again.
+  The offset lasts for the file being played.
+- **Remembered per show:** the language and flags chosen (or Off, or a burned-in picture subtitle) are saved for the
+  signed-in user and the show, and applied to the show's next episode (`pickSubtitle`: same language, then same flags,
+  then text over pictures). They are stored on the device (`librarian.pref.subtitles.show.<user>.<show>`), not on the
+  server: a per-user entity would need its own personal-policy wiring for one small preference. Movies start with
+  subtitles off, as before.
+- **Picture subtitles (PGS, VobSub, DVB): burned in.** OCR would need a new external tool and gets text wrong. Listing
+  them as "needs transcoding" would still leave them unwatchable. The on-demand HLS encoder already re-encodes every
+  frame with libx264, so an overlay adds little cost: `burnSubtitle=<subtitle id>` on `/info`, the playlist and the
+  segments makes the variant an on-demand transcode, with `-filter_complex [0:v:0][0:<index>]overlay=eof_action=pass`. A
+  local VobSub sidecar is added as a second, equally seeked input (`[1:s:0]`). The burn-in is part of the session key, so
+  it is its own variant, and seeking and resuming work as with any other transcode. Limits: only for files with a known
+  length (others answer 422). Not for casting (a receiver plays what its session chose). Not for a VobSub sidecar on a
+  share, because ffmpeg opens its `.sub` by name next to the `.idx`, which a loopback URL cannot provide. Embedded picture
+  streams on a share do work. The player lists picture subtitles under "Burned into the picture", and choosing one
+  restarts the stream from the same position.
+
+### Q121: Where do lyrics come from, and how are they shown?
+**Answer:** From an `.lrc` file beside the track, the track's tags, or LRCLIB, in that order of trust. They are cached in
+one `Lyric` row per media file (an additive entity, table `lyrics`). The row holds: `mediaFileId`, `trackId`, `source`
+(`sidecar`, `embedded`, `lrclib` or `none`), `synced`, `syncedLyrics`, `plainLyrics`, `language`, `instrumental`,
+`providerId` and `fetchedAt`. It is readable by whoever can read the file and written only by the server, through the
+generated mutations. It is deleted with its file (`cleanup_media_file_dependents`).
+- **Tags** (`services::lyrics::embedded`): read with `lofty` 0.25, now a real dependency (this document claimed it before
+  it was). The file is opened through `library_storage` and read through a blocking bridge with a 64 KiB buffer, so a
+  track on a share is read in place, and only the tag blocks are fetched (no audio properties, no pictures). Supported:
+  ID3v2 `SYLT` in milliseconds (one entry per line, or word pieces joined at their line breaks) and `USLT`; Vorbis/FLAC
+  `LYRICS`/`UNSYNCEDLYRICS`; APE `Lyrics`; MP4 `©lyr`. A tag holding LRC counts as synced.
+- **Sidecar:** `<audio name>.lrc` (or `.LRC`) next to the file, up to 1 MiB. `[offset:]` is applied, `[la:]` is kept, and
+  enhanced-LRC word times are dropped.
+- **LRCLIB** (`lrclib.net`, free and keyless, setting `lyrics.lrclib_enabled`, on by default): `/api/get` is called with
+  artist, title, album and duration, then `/api/search` by artist and title. A search result is only taken within two
+  seconds of the track's length, or, when the length is unknown, when the names match exactly. Requests are limited to 2
+  per second. Only those four details leave the server.
+- **Choosing:** this server's synced lyrics, then LRCLIB's synced lyrics (keeping this server's plain words when it has
+  them), then this server's plain lyrics, then LRCLIB's plain lyrics or its "instrumental". With nothing, a `none` row is
+  kept and the track is not looked up again for 30 days, unless someone presses *Look again* (`fetchLyrics(refresh:
+  true)`). If LRCLIB is down, that is not recorded as a miss.
+- **Stored form:** synced lyrics are normalised to one `[mm:ss.cc]text` line per time, sorted, so the web reads them by
+  splitting lines (`features/player/lyrics.ts`).
+- **In the player** (`LyricsPanel`, beside the artwork in Now playing, chosen with *Up next | Lyrics*): the line being sung
+  is highlighted and kept centred. Scrolling by hand holds the view for 4 s. Every line is a button that seeks to it, so a
+  remote walks the lines with its arrows (`data-nav-group`, the sung line is the group's default) and presses OK to jump
+  there. Plain lyrics are shown as stanzas. The source is credited ("Lyrics from LRCLIB").
+- **Read-along for audiobooks (not built).** `services::whisper` already transcribes the opening of a book and chapter
+  boundaries. A transcript would mean running whisper.cpp over the whole book, which takes tens of minutes of CPU for a
+  long book, as a queued low-priority job like analysis, and writing its segments (`-osrt`/`-oj` timestamps) as synced
+  lines. The `Lyric` row cannot hold this as it is: a book's text is long, and per-file rows break for a chapter that
+  spans files. A `Transcript` entity (audiobook, file, start, end, text, per segment, written in batches) would feed the
+  same `LyricsPanel` (lines, tap to seek, auto-scroll) with the chapter's segments. It should be opt-in per book, because
+  of the cost and because a book's text is copyrighted material kept on the server.

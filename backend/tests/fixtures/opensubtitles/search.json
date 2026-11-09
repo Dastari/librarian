@@ -1,0 +1,107 @@
+{
+  "total_pages": 1,
+  "total_count": 5,
+  "per_page": 60,
+  "page": 1,
+  "data": [
+    {
+      "id": "9000004",
+      "type": "subtitle",
+      "attributes": {
+        "subtitle_id": "9000004",
+        "language": "es",
+        "download_count": 99999,
+        "new_download_count": 120,
+        "hearing_impaired": false,
+        "hd": true,
+        "fps": 23.976,
+        "votes": 10,
+        "ratings": 9.0,
+        "from_trusted": true,
+        "foreign_parts_only": false,
+        "upload_date": "2021-03-01T10:00:00Z",
+        "ai_translated": false,
+        "machine_translated": false,
+        "moviehash_match": false,
+        "release": "Film.2020.1080p.WEB-DL",
+        "uploader": { "uploader_id": 1, "name": "uploader-es", "rank": "trusted" },
+        "feature_details": { "feature_id": 1, "feature_type": "Movie", "year": 2020, "title": "Film", "movie_name": "2020 - Film", "imdb_id": 1234567, "tmdb_id": 7654321 },
+        "url": "https://www.opensubtitles.com/es/subtitles/legacy/9000004",
+        "files": [ { "file_id": 1004, "cd_number": 1, "file_name": "Film.2020.es.srt" } ]
+      }
+    },
+    {
+      "id": "9000002",
+      "type": "subtitle",
+      "attributes": {
+        "subtitle_id": "9000002",
+        "language": "en",
+        "download_count": 9000,
+        "hearing_impaired": false,
+        "fps": 23.976,
+        "votes": 2,
+        "ratings": 10.0,
+        "from_trusted": true,
+        "foreign_parts_only": false,
+        "ai_translated": false,
+        "machine_translated": false,
+        "moviehash_match": false,
+        "release": "Film.2020.720p.BluRay",
+        "uploader": { "name": "trusted-uploader", "rank": "trusted" },
+        "files": [ { "file_id": 1002, "cd_number": 1, "file_name": "Film.2020.720p.BluRay.srt" } ]
+      }
+    },
+    {
+      "id": "9000003",
+      "type": "subtitle",
+      "attributes": {
+        "subtitle_id": "9000003",
+        "language": "en",
+        "download_count": 3000,
+        "hearing_impaired": true,
+        "votes": 0,
+        "ratings": 0.0,
+        "from_trusted": false,
+        "foreign_parts_only": false,
+        "moviehash_match": false,
+        "release": "Film.2020.SDH",
+        "uploader": { "name": "someone" },
+        "files": [ { "file_id": 1003, "cd_number": 1, "file_name": "Film.2020.SDH.srt" } ]
+      }
+    },
+    {
+      "id": "9000001",
+      "type": "subtitle",
+      "attributes": {
+        "subtitle_id": "9000001",
+        "language": "en",
+        "download_count": 500,
+        "hearing_impaired": false,
+        "votes": 1,
+        "ratings": 6.0,
+        "from_trusted": false,
+        "foreign_parts_only": false,
+        "moviehash_match": true,
+        "release": "Film.2020.1080p.BluRay.x264-GROUP",
+        "uploader": { "name": "matcher" },
+        "files": [ { "file_id": 1001, "cd_number": 1, "file_name": "Film.2020.1080p.BluRay.x264-GROUP.srt" } ]
+      }
+    },
+    {
+      "id": "9000005",
+      "type": "subtitle",
+      "attributes": {
+        "subtitle_id": "9000005",
+        "language": "fr",
+        "download_count": 10,
+        "hearing_impaired": false,
+        "from_trusted": false,
+        "foreign_parts_only": false,
+        "machine_translated": true,
+        "moviehash_match": false,
+        "release": "Film 2020",
+        "files": [ { "file_id": 1005, "cd_number": 1, "file_name": "Film.2020.fr.srt" } ]
+      }
+    }
+  ]
+}

@@ -520,6 +520,7 @@ impl Harness {
                 resolution: None,
                 is_hdr: false,
                 hdr_type: None,
+                closed_captions: None,
                 audio_channels: None,
                 metadata: None,
                 content_type: None,

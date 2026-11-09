@@ -125,6 +125,11 @@ pub struct MediaFile {
     #[filterable(type = "string")]
     pub hdr_type: Option<String>,
 
+    /// The video carries closed captions (EIA-608/708) inside its picture stream, as ffprobe
+    /// reports them. Unknown until the file is analysed. See `docs/design.md` Q119.
+    #[graphql(name = "closedCaptions")]
+    pub closed_captions: Option<bool>,
+
     #[graphql(name = "audioChannels")]
     #[filterable(type = "string")]
     pub audio_channels: Option<String>,

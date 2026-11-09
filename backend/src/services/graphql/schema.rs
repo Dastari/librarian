@@ -15,7 +15,7 @@ use crate::services::graphql::mutations::{
     ArtworkMutations, AuthMutations, AutoDownloadMutations, BackupMutations,
     DownloadsMoveMutations, DownloadsMoveQueries, FeedMutations, FilesystemMutations,
     LibraryScanMutations, MaintenanceMutations, NotificationFeedMutations, QualityMutations,
-    RecommendationMutations, ServerConnectionMutations, ServerConnectionQueries,
+    RecommendationMutations, ServerConnectionMutations, ServerConnectionQueries, SubtitleMutations,
 };
 use crate::services::graphql::queries::{
     BackupQueries, ContentStatusQueries, FilesystemQueries, GenreQueries, ResumeQueries,
@@ -68,6 +68,7 @@ macro_rules! librarian_schema_roots {
         VideoStream,
         AudioStream,
         Subtitle,
+        Lyric,
         MediaChapter,
         PlaybackSession,
         PlaybackProgress,
@@ -121,7 +122,7 @@ macro_rules! librarian_schema_roots {
         TorrentContents,
     ],
     extra_query_types: [FilesystemQueries, ServerConnectionQueries, DownloadsMoveQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries],
-    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, PersonMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations, ServerConnectionMutations, DownloadsMoveMutations],
+    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, PersonMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations, ServerConnectionMutations, DownloadsMoveMutations, SubtitleMutations],
     extra_subscription_types: [BackupSubscriptions, FilesystemSubscriptions, TorrentRuntimeSubscriptions, SessionSubscriptions, SourceCapabilitySubscriptions],
         }
     };
@@ -416,6 +417,7 @@ mod tests {
             VideoStream,
             AudioStream,
             Subtitle,
+            Lyric,
             MediaChapter,
             PlaybackSession,
             PlaybackProgress,

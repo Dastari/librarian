@@ -66,12 +66,16 @@ export interface PlaybackSource {
 }
 
 /** Resolve the authorised playback decision before attaching a media element. */
-export async function resolvePlaybackSource(mediaFileId: string, signal?: AbortSignal, options?: { audioStreamIndex?: number }): Promise<PlaybackSource> {
-  const query = options?.audioStreamIndex === undefined ? "" : `?audioStream=${encodeURIComponent(options.audioStreamIndex)}`;
+export async function resolvePlaybackSource(mediaFileId: string, signal?: AbortSignal, options?: { audioStreamIndex?: number; burnSubtitleId?: string }): Promise<PlaybackSource> {
+  const params = new URLSearchParams();
+  if (options?.audioStreamIndex !== undefined) params.set("audioStream", String(options.audioStreamIndex));
+  if (options?.burnSubtitleId) params.set("burnSubtitle", options.burnSubtitleId);
+  const query = params.size ? `?${params.toString()}` : "";
   const response = await fetch(`${mediaInfoUrl(mediaFileId)}${query}`, { credentials: "include", signal });
   if (!response.ok) {
     if (response.status === 401) throw new Error("Your session ended. Sign in to continue playback.");
     if (response.status === 403 || response.status === 404) throw new Error("This media file is unavailable or you no longer have access to it.");
+    if (response.status === 415 || response.status === 422) throw new Error("That subtitle cannot be burned into this file. Choose another or turn it off.");
     throw new Error("The server could not prepare this file. Retry playback.");
   }
   const info = (await response.json()) as MediaInfo;

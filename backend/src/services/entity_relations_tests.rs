@@ -266,6 +266,7 @@ async fn movie_stream_hears_file_torrent_cast_changes_once_and_deletes_directly(
             resolution: None,
             is_hdr: false,
             hdr_type: None,
+            closed_captions: None,
             audio_channels: None,
             metadata: None,
             content_type: None,
