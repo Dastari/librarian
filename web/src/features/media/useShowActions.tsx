@@ -4,6 +4,7 @@ import { defineActions, type ActionSet } from "glass-ux/actions";
 import { IconDownload, IconExternalLink, IconPlay, IconRefresh, IconSettings, IconTrash } from "glass-ux/icons";
 import { useMemo, useState, type ReactNode } from "react";
 
+import { useArtworkAction } from "@/features/artwork/useArtworkAction";
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
 import { useQueueActions } from "@/features/player/queueActions";
@@ -14,7 +15,7 @@ import { assertSuccess } from "@/lib/graphql/errors";
 import type { ShowEntity } from "./ShowIdentity";
 import { resetProgressAction, useResetProgress, type ProgressReset } from "./progressReset";
 
-export const SHOW_SETTINGS_TABS = ["general", "downloads", "files", "info", "remove"] as const;
+export const SHOW_SETTINGS_TABS = ["general", "artwork", "downloads", "files", "info", "remove"] as const;
 export type ShowSettingsTab = (typeof SHOW_SETTINGS_TABS)[number];
 
 /**
@@ -45,6 +46,7 @@ export function useShowActions<T extends ShowEntity>({ settings, open = true, pl
   // Play next / Add to queue (the play queue): every playable episode of each selected show, in order.
   const queueActions = useQueueActions<T>((rows) => rows.map((show) => ({ kind: "show" as const, id: show.id })));
   const [finding, setFinding] = useState<T | null>(null);
+  const artwork = useArtworkAction<T>({ targetOf: (row) => ({ entityType: "SHOW", entityId: row.id, title: row.name }), allowed: () => isAdmin, priority: 4 });
 
   const actions = useMemo(() => {
     const one = (rows: readonly T[]) => rows.length === 1;
@@ -79,6 +81,7 @@ export function useShowActions<T extends ShowEntity>({ settings, open = true, pl
           successMessage: () => "Metadata refreshed",
         },
       ] : []),
+      artwork.action,
       {
         id: "settings", label: isAdmin ? "Show settings" : "Details", icon: IconSettings, group: "manage", priority: 4,
         visible: one,
@@ -90,11 +93,12 @@ export function useShowActions<T extends ShowEntity>({ settings, open = true, pl
         run: (rows: readonly T[]) => settings(rows[0]!, "remove"),
       }] : []),
     ]);
-  }, [isAdmin, navigate, onRefreshed, open, play, queueActions, refresh, refreshing, reset, resetProgress, settings, user?.id]);
+  }, [artwork.action, isAdmin, navigate, onRefreshed, open, play, queueActions, refresh, refreshing, reset, resetProgress, settings, user?.id]);
 
   const dialogs = (
     <>
       {playlist.dialog}
+      {artwork.dialog}
       {finding ? <ReleaseSearchDialog isOpen onOpenChange={(next) => { if (!next) setFinding(null); }} query={finding.name} imdbId={finding.imdbId} season={season} libraryId={finding.libraryId} target={{ showId: finding.id }} /> : null}
     </>
   );

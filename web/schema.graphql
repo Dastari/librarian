@@ -148,6 +148,7 @@ type Album {
 
   """Quality Profile"""
   qualityProfile: QualityProfile
+  lockedFields: [String!]
 }
 
 """Event for #struct_name changes (subscriptions)"""
@@ -470,6 +471,7 @@ type Artist {
 
   """Tracks"""
   tracks(where: TrackWhereInput, orderBy: TrackOrderByInput, page: PageInput): TrackConnection!
+  lockedFields: [String!]
 }
 
 """Event for #struct_name changes (subscriptions)"""
@@ -1558,6 +1560,7 @@ input CreateAlbumInput {
   hasFiles: Boolean!
   sizeBytes: Int
   path: String
+  lockedFields: JSON
 }
 
 input CreateAppLogInput {
@@ -1589,6 +1592,7 @@ input CreateArtistInput {
   albumCount: Int
   trackCount: Int
   totalDurationSecs: Int
+  lockedFields: JSON
 }
 
 input CreateAudioStreamInput {
@@ -1761,6 +1765,7 @@ input CreateEpisodeInput {
   wanted: Boolean!
   ignored: Boolean
   mediaFileId: String
+  lockedFields: JSON
 }
 
 type CreateFullBackupResult {
@@ -2074,6 +2079,7 @@ input CreatePersonalListInput {
   description: String
   kind: PersonalListKind!
   savedViewId: String
+  coverUrl: String
 }
 
 input CreatePlaybackProgressInput {
@@ -2220,6 +2226,7 @@ input CreateSeasonInput {
   endDate: String
   episodeOrder: Int
   posterUrl: String
+  lockedFields: JSON
 }
 
 input CreateShowInput {
@@ -3007,6 +3014,7 @@ type Episode {
 
   """Media File"""
   mediaFile: MediaFile
+  lockedFields: [String!]
 }
 
 """Event for #struct_name changes (subscriptions)"""
@@ -8111,6 +8119,8 @@ type Mutation {
     """Where"""
     where: NetworkServerWhereInput
   ): DeleteNetworkServersResult!
+  chooseArtwork(entityType: ArtworkEntityKind!, entityId: String!, kind: ArtworkKind!, url: String!): ArtworkChangeResult!
+  revertArtwork(entityType: ArtworkEntityKind!, entityId: String!, kind: ArtworkKind!): ArtworkChangeResult!
 }
 
 """Naming Pattern"""
@@ -8813,6 +8823,7 @@ type PersonalList {
 
   """Entries"""
   entries(where: ListEntryWhereInput, orderBy: ListEntryOrderByInput, page: PageInput): ListEntryConnection!
+  coverUrl: String
 }
 
 """Event for #struct_name changes (subscriptions)"""
@@ -10964,6 +10975,8 @@ type Query {
     """Id"""
     id: String!
   ): TorrentContents
+  artworkSlots(entityType: ArtworkEntityKind!, entityId: String!): [ArtworkSlotState!]!
+  artworkOptions(entityType: ArtworkEntityKind!, entityId: String!, kind: ArtworkKind!): ArtworkOptions!
 }
 
 """Refresh Token"""
@@ -12119,6 +12132,7 @@ type Season {
   Episodes of this season: episodes carry the show id and season number, not a season id.
   """
   episodes(where: EpisodeWhereInput, orderBy: EpisodeOrderByInput, page: PageInput): EpisodeConnection!
+  lockedFields: [String!]
 }
 
 """Event for #struct_name changes (subscriptions)"""
@@ -14914,6 +14928,7 @@ input UpdateAlbumInput {
   hasFiles: Boolean
   sizeBytes: Int
   path: String
+  lockedFields: JSON
 }
 
 """Result of bulk update by Where filter"""
@@ -14966,6 +14981,7 @@ input UpdateArtistInput {
   albumCount: Int
   trackCount: Int
   totalDurationSecs: Int
+  lockedFields: JSON
 }
 
 """Result of bulk update by Where filter"""
@@ -15197,6 +15213,7 @@ input UpdateEpisodeInput {
   wanted: Boolean
   ignored: Boolean
   mediaFileId: String
+  lockedFields: JSON
 }
 
 """Result of bulk update by Where filter"""
@@ -15637,6 +15654,7 @@ input UpdatePersonalListInput {
   description: String
   kind: PersonalListKind
   savedViewId: String
+  coverUrl: String
 }
 
 """Result of bulk update by Where filter"""
@@ -15837,6 +15855,7 @@ input UpdateSeasonInput {
   endDate: String
   episodeOrder: Int
   posterUrl: String
+  lockedFields: JSON
 }
 
 """Result of bulk update by Where filter"""
@@ -16735,3 +16754,57 @@ type FetchLyricsPayload {
   lyric: Lyric
 }
 
+enum ArtworkEntityKind {
+  MOVIE
+  SHOW
+  SEASON
+  EPISODE
+  ALBUM
+  ARTIST
+  AUDIOBOOK
+  PLAYLIST
+}
+
+enum ArtworkKind {
+  POSTER
+  BACKDROP
+  LOGO
+  THUMBNAIL
+  COVER
+}
+
+type ArtworkSlotState {
+  entityType: ArtworkEntityKind!
+  entityId: String!
+  kind: ArtworkKind!
+  hasArtwork: Boolean!
+  locked: Boolean!
+  uploaded: Boolean!
+  hasProvider: Boolean!
+  lockedFields: [String!]!
+}
+
+type ArtworkOption {
+  url: String!
+  previewUrl: String!
+  source: String!
+  language: String
+  width: Int
+  height: Int
+  voteAverage: Float
+  voteCount: Int
+  label: String
+  isDefault: Boolean!
+  isCurrent: Boolean!
+}
+
+type ArtworkOptions {
+  slot: ArtworkSlotState!
+  options: [ArtworkOption!]!
+  unavailable: [String!]!
+}
+
+type ArtworkChangeResult {
+  success: Boolean!
+  error: String
+}

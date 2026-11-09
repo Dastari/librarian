@@ -9,6 +9,7 @@ fragment PersonalListFields on PersonalList {
   savedViewId
   createdAt
   updatedAt
+  coverUrl
 }
 
 query EntityPersonalListList($where: PersonalListWhereInput, $orderBy: [PersonalListOrderByInput!], $page: PageInput) {

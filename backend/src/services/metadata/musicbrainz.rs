@@ -635,6 +635,11 @@ impl MusicBrainzClient {
                     .map(|medium| medium.track_count.max(0) as usize)
                     .sum(),
                 id: release.id,
+                date: release.date.filter(|date| !date.is_empty()),
+                country: release.country.filter(|country| !country.is_empty()),
+                disambiguation: release
+                    .disambiguation
+                    .filter(|disambiguation| !disambiguation.is_empty()),
             })
             .collect())
     }
@@ -807,6 +812,10 @@ pub struct MusicBrainzEdition {
     pub id: String,
     pub official: bool,
     pub track_count: usize,
+    /// When and where it came out, and how MusicBrainz tells it apart (the artwork picker's labels).
+    pub date: Option<String>,
+    pub country: Option<String>,
+    pub disambiguation: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -816,6 +825,10 @@ struct ReleaseSummary {
     status: Option<String>,
     #[serde(default)]
     date: Option<String>,
+    #[serde(default)]
+    country: Option<String>,
+    #[serde(default)]
+    disambiguation: Option<String>,
     #[serde(default)]
     media: Vec<MediumSummary>,
 }

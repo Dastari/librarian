@@ -93,6 +93,9 @@ pub struct PersonalList {
     #[sortable]
     pub name: String,
     pub description: Option<String>,
+    /// An uploaded cover (`upload:<hash>`), in place of the mosaic of its entries' artwork.
+    /// Clients show `/api/artwork/playlist/{id}/cover`; only the upload route sets it.
+    pub cover_url: Option<String>,
     pub kind: PersonalListKind,
     #[filterable(type = "string")]
     #[graphql_orm(write_policy = "owned.link")]

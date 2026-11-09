@@ -854,6 +854,15 @@ impl AppWriteInputTransform {
                         .downcast_ref::<UpdateArtistInput>()
                         .is_some_and(|input| input.image_url.is_some())
             }
+            // A playlist's cover comes from its owner's upload (`PUT /api/artwork/playlist/…`).
+            "PersonalList" => {
+                input
+                    .downcast_ref::<CreatePersonalListInput>()
+                    .is_some_and(|input| input.cover_url.is_some())
+                    || input
+                        .downcast_ref::<UpdatePersonalListInput>()
+                        .is_some_and(|input| input.cover_url.is_some())
+            }
             _ => false,
         };
 
@@ -1361,6 +1370,7 @@ impl WriteInputTransform for AppWriteInputTransform {
             Self::reject_owner_update(ctx, entity_name, input)?;
             Self::validate_upsert_link_workaround(ctx, db, entity_name, input, false).await?;
             Self::reject_member_artwork_source_write(ctx, entity_name, input)?;
+            crate::services::artwork_choice::keep_locked_artwork(entity_name, existing_row, input);
             Self::prepare_cast_update(entity_name, existing_row, input)?;
             Self::prepare_content_update(ctx, entity_name, existing_row, input)?;
             if entity_name == "AppSetting"
@@ -3694,6 +3704,7 @@ impl AppMutationHook {
             "Artist" => "artist",
             "Audiobook" => "audiobook",
             "Person" => "person",
+            "PersonalList" => "playlist",
             _ => "unknown",
         }
     }
@@ -4469,6 +4480,7 @@ impl MutationHook for AppMutationHook {
                         | "Artist"
                         | "Audiobook"
                         | "Person"
+                        | "PersonalList"
                         | "Collection"
                 )
             {

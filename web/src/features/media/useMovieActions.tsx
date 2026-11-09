@@ -4,6 +4,7 @@ import { defineActions, type ActionSet } from "glass-ux/actions";
 import { IconBookmark, IconDownload, IconExternalLink, IconPlay, IconRefresh, IconSettings, IconTrash } from "glass-ux/icons";
 import { useMemo, useState, type ReactNode } from "react";
 
+import { useArtworkAction } from "@/features/artwork/useArtworkAction";
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
 import { useQueueActions } from "@/features/player/queueActions";
@@ -17,7 +18,7 @@ import { assertSuccess } from "@/lib/graphql/errors";
 import type { MovieEntity } from "./MovieIdentity";
 import { resetProgressAction, useResetProgress, type ProgressReset } from "./progressReset";
 
-export const MOVIE_SETTINGS_TABS = ["general", "tags", "downloads", "files", "info", "remove"] as const;
+export const MOVIE_SETTINGS_TABS = ["general", "tags", "artwork", "downloads", "files", "info", "remove"] as const;
 export type MovieSettingsTab = (typeof MOVIE_SETTINGS_TABS)[number];
 
 /**
@@ -52,6 +53,7 @@ export function useMovieActions<T extends MovieEntity>({ settings, open = true, 
   // Play next / Add to queue (the play queue): one movie, or every selected movie that has a file.
   const queueActions = useQueueActions<T>((rows) => rows.filter((movie) => movie.mediaFileId).map((movie) => ({ kind: "movie" as const, id: movie.id })), { visible: (rows) => rows.some((movie) => movie.mediaFileId) });
   const [finding, setFinding] = useState<T | null>(null);
+  const artwork = useArtworkAction<T>({ targetOf: (movie) => ({ entityType: "MOVIE", entityId: movie.id, title: movie.title }), allowed: () => isAdmin, priority: 4 });
 
   const actions = useMemo(() => {
     const one = (rows: readonly T[]) => rows.length === 1;
@@ -99,6 +101,7 @@ export function useMovieActions<T extends MovieEntity>({ settings, open = true, 
           },
           successMessage: () => "Metadata refreshed",
         },
+        artwork.action,
       ] : []),
       {
         id: "settings", label: isAdmin ? "Movie settings" : "Details", icon: IconSettings, group: "manage", priority: 4,
@@ -111,11 +114,12 @@ export function useMovieActions<T extends MovieEntity>({ settings, open = true, 
         run: (rows: readonly T[]) => settings(rows[0]!, "remove"),
       }] : []),
     ]);
-  }, [isAdmin, navigate, open, play, playLabel, player, queueActions, recache, refresh, refreshing, reset, resetProgress, settings, update, user?.id]);
+  }, [artwork.action, isAdmin, navigate, open, play, playLabel, player, queueActions, recache, refresh, refreshing, reset, resetProgress, settings, update, user?.id]);
 
   const dialogs = (
     <>
       {playlist.dialog}
+      {artwork.dialog}
       {finding ? <ReleaseSearchDialog isOpen onOpenChange={(next) => { if (!next) setFinding(null); }} query={finding.title} year={finding.year} imdbId={finding.imdbId} libraryId={finding.libraryId} target={{ movieId: finding.id }} /> : null}
     </>
   );

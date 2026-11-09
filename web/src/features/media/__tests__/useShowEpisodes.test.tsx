@@ -10,7 +10,7 @@ type Episode = ShowEpisodesQuery["episodes"]["edges"][number]["node"];
 const episode = (number: number, showId = "show-a"): Episode => ({
   id: `${showId}-${number}`, showId, season: Math.ceil(number / 20), episode: number,
   title: `Episode ${number}`, absoluteNumber: null, overview: null, airDate: null, airStamp: null,
-  runtime: null, stillUrl: null, tvmazeId: null, tmdbId: null, tvdbId: null, wanted: false, ignored: false,
+  runtime: null, stillUrl: null, lockedFields: null, tvmazeId: null, tmdbId: null, tvdbId: null, wanted: false, ignored: false,
   mediaFileId: null, mediaFile: null, createdAt: "2026-01-01", updatedAt: "2026-01-01",
 });
 const page = (rows: Episode[], hasNextPage = false, totalCount = rows.length) => ({

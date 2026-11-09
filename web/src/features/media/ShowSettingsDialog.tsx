@@ -2,15 +2,17 @@ import { useMutation } from "@apollo/client/react";
 import { useNavigate } from "@tanstack/react-router";
 import { EntitySettingsDialog, type EntitySettingsTab } from "glass-ux/entity-settings";
 import { formBehaviour, useAppForm } from "glass-ux/form";
-import { IconClock, IconDownload, IconFile, IconInfo, IconSettings, IconTrash } from "glass-ux/icons";
+import { IconClock, IconDownload, IconFile, IconImage, IconInfo, IconSettings, IconTrash } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
 import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { DetailGrid, DetailTile } from "@/components/entities/EntityDetailDialog";
+import { ArtworkSettings } from "@/features/artwork/ArtworkSettings";
+import { withArtworkLocks } from "@/features/artwork/slots";
 import { Button, ConfirmDialog } from "@/components/ui";
 import { FilesBrowser } from "@/features/libraries/browser/FilesBrowser";
-import { EntityShowDeleteDocument, EntityShowUpdateDocument, ShowDetailDocument, type ShowDetailQuery } from "@/graphql/generated/graphql";
+import { EntitySeasonListDocument, EntityShowDeleteDocument, EntityShowUpdateDocument, ShowDetailDocument, type ShowDetailQuery } from "@/graphql/generated/graphql";
 import { useIsAdmin } from "@/lib/auth/useSession";
 import { formatDateTime, formatRuntime } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
@@ -74,6 +76,12 @@ function LoadedShowSettings({ show, open, onOpenChange, chosenTab, onTabChange, 
   const tab = isAdmin || READ_ONLY_TABS.includes(chosenTab) ? chosenTab : READ_ONLY_TABS[0]!;
   const files = useTitleFiles("show", show.id, !open);
   const [update] = useMutation(EntityShowUpdateDocument);
+  // Each season's poster is changed from here too: the show's page shows them as compact tiles.
+  const seasonRows = useQuery(EntitySeasonListDocument, { variables: { where: { showId: { eq: show.id } }, orderBy: [{ season: "ASC" }], page: { limit: 100, offset: 0 } }, skip: !open || tab !== "artwork" });
+  const seasonArtwork = useMemo(() => (seasonRows.data?.seasons.edges ?? []).map(({ node }) => {
+    const label = node.season === 0 ? "Specials" : `Season ${node.season}`;
+    return { target: { entityType: "SEASON" as const, entityId: node.id, title: `${show.name} ${label}` }, label };
+  }), [seasonRows.data, show.name]);
   const [remove, { loading: removing }] = useMutation(EntityShowDeleteDocument);
   const [confirmRemove, setConfirmRemove] = useState(false);
 
@@ -90,6 +98,8 @@ function LoadedShowSettings({ show, open, onOpenChange, chosenTab, onTabChange, 
             ...input,
             ...(year !== undefined ? { year: yearValue(value.year) } : {}),
             ...(autoDownloadMode ? { autoDownloadMode, autoDownload: autoDownloadMode !== "NONE" } : {}),
+            // A picture chosen while the form was open keeps its lock.
+            ...(input.lockedFields !== undefined ? { lockedFields: withArtworkLocks(value.lockedFields, show.lockedFields) } : {}),
           },
         },
       });
@@ -129,6 +139,10 @@ function LoadedShowSettings({ show, open, onOpenChange, chosenTab, onTabChange, 
           <form.AppField name="genres">{() => <MetadataTagsField label="Genres" placeholder="Add a genre" />}</form.AppField>
         </div>
       ),
+    },
+    {
+      value: "artwork", label: "Artwork", icon: <IconImage />,
+      content: <ArtworkSettings target={{ entityType: "SHOW", entityId: show.id, title: show.name }} active={open && tab === "artwork"} related={seasonArtwork} />,
     },
     {
       value: "downloads", label: "Downloads", icon: <IconDownload />, fields: ["autoDownloadMode", "qualityProfileId"],

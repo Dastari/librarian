@@ -18,8 +18,8 @@ use crate::services::graphql::mutations::{
     RecommendationMutations, ServerConnectionMutations, ServerConnectionQueries, SubtitleMutations,
 };
 use crate::services::graphql::queries::{
-    BackupQueries, ContentStatusQueries, FilesystemQueries, GenreQueries, ResumeQueries,
-    SourceCapabilityQueries,
+    ArtworkQueries, BackupQueries, ContentStatusQueries, FilesystemQueries, GenreQueries,
+    ResumeQueries, SourceCapabilityQueries,
 };
 use crate::services::graphql::subscriptions::filesystem::FilesystemChangeBroker;
 use crate::services::graphql::subscriptions::{
@@ -121,7 +121,7 @@ macro_rules! librarian_schema_roots {
         ReleaseRecommendation,
         TorrentContents,
     ],
-    extra_query_types: [FilesystemQueries, ServerConnectionQueries, DownloadsMoveQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries],
+    extra_query_types: [ArtworkQueries, FilesystemQueries, ServerConnectionQueries, DownloadsMoveQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries],
     extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, PersonMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations, ServerConnectionMutations, DownloadsMoveMutations, SubtitleMutations],
     extra_subscription_types: [BackupSubscriptions, FilesystemSubscriptions, TorrentRuntimeSubscriptions, SessionSubscriptions, SourceCapabilitySubscriptions],
         }

@@ -1205,6 +1205,7 @@ async fn new_relations_resolve_through_the_generated_schema() {
     let season = Season::insert(
         &db,
         CreateSeasonInput {
+            locked_fields: None,
             show_id: series.id.clone(),
             season: ep.season,
             tvmaze_id: None,

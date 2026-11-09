@@ -88,6 +88,12 @@ pub struct Episode {
     #[filterable(type = "number")]
     pub runtime: Option<i32>,
 
+    /// Fields a metadata refresh must leave alone, by their GraphQL names. Chosen artwork locks
+    /// its own field (`stillUrl`), so a refresh keeps the picture someone picked.
+    #[graphql(name = "lockedFields")]
+    #[json_field]
+    pub locked_fields: Option<Vec<String>>,
+
     /// Provider still image URL: the source the artwork cache downloads the episode
     /// thumbnail from. Clients use `/api/artwork/episode/{id}/thumbnail`.
     #[graphql(name = "stillUrl")]

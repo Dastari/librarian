@@ -3,6 +3,7 @@ import { defineActions, type ActionSet } from "glass-ux/actions";
 import { IconDownload, IconExternalLink, IconPlay, IconSettings, IconTrash } from "glass-ux/icons";
 import { useMemo, useState, type ReactNode } from "react";
 
+import { useArtworkAction } from "@/features/artwork/useArtworkAction";
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
 import { useQueueActions } from "@/features/player/queueActions";
@@ -12,7 +13,7 @@ import type { AlbumEntity } from "./AlbumIdentity";
 import { resetProgressAction, useResetProgress, type ProgressReset } from "./progressReset";
 import { useWantMissing, wantMissingActions } from "./wantMissing";
 
-export const ALBUM_SETTINGS_TABS = ["general", "downloads", "files", "info", "remove"] as const;
+export const ALBUM_SETTINGS_TABS = ["general", "artwork", "downloads", "files", "info", "remove"] as const;
 export type AlbumSettingsTab = (typeof ALBUM_SETTINGS_TABS)[number];
 
 /** Everything that can be done to an album, wherever it's shown. `play` needs its page's tracks. */
@@ -42,6 +43,7 @@ export function useAlbumActions<T extends AlbumEntity>({ settings, open = true, 
   // Play next / Add to queue (the play queue): every track of each selected album, in order.
   const queueActions = useQueueActions<T>((rows) => rows.map((album) => ({ kind: "album" as const, id: album.id })));
   const [finding, setFinding] = useState<T | null>(null);
+  const artwork = useArtworkAction<T>({ targetOf: (row) => ({ entityType: "ALBUM", entityId: row.id, title: row.name }), allowed: () => isAdmin, priority: 4 });
 
   const actions = useMemo(() => {
     const one = (rows: readonly T[]) => rows.length === 1;
@@ -65,6 +67,7 @@ export function useAlbumActions<T extends AlbumEntity>({ settings, open = true, 
         visible: one,
         run: (rows: readonly T[]) => setFinding(rows[0]!),
       }, ...wantMissingActions<T>("tracks", wantMissing, onChanged)] : []),
+      artwork.action,
       {
         id: "settings", label: isAdmin ? "Album settings" : "Details", icon: IconSettings, group: "manage", priority: 4,
         visible: one,
@@ -76,11 +79,12 @@ export function useAlbumActions<T extends AlbumEntity>({ settings, open = true, 
         run: (rows: readonly T[]) => settings(rows[0]!, "remove"),
       }] : []),
     ]);
-  }, [isAdmin, navigate, onChanged, open, play, queueActions, reset, resetProgress, settings, user?.id, wantMissing]);
+  }, [artwork.action, isAdmin, navigate, onChanged, open, play, queueActions, reset, resetProgress, settings, user?.id, wantMissing]);
 
   const dialogs = (
     <>
       {playlist.dialog}
+      {artwork.dialog}
       {finding ? <ReleaseSearchDialog isOpen onOpenChange={(next) => { if (!next) setFinding(null); }} query={[artist, finding.name].filter(Boolean).join(" ")} year={finding.year} libraryId={finding.libraryId} artist={artist} album={finding.name} target={{ albumId: finding.id }} /> : null}
     </>
   );

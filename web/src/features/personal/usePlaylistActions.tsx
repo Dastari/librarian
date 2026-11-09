@@ -1,6 +1,6 @@
 import { useMutation } from "@apollo/client/react";
 import { defineActions, type ActionSet } from "glass-ux/actions";
-import { IconEdit, IconExternalLink, IconPin, IconPlay, IconSettings, IconShuffle, IconTrash } from "glass-ux/icons";
+import { IconEdit, IconExternalLink, IconImage, IconPin, IconPlay, IconSettings, IconShuffle, IconTrash } from "glass-ux/icons";
 import { useMemo } from "react";
 
 import { useQueueActions } from "@/features/player/queueActions";
@@ -61,6 +61,10 @@ export function usePlaylistActions<T extends PlaylistEntity>({ settings, open = 
       {
         id: "rules", label: "Edit rules…", icon: IconEdit, group: "manage", priority: 4,
         visible: (rows) => one(rows) && rows[0]!.kind === "SMART", run: (rows) => settings(rows[0]!, "rules"),
+      },
+      {
+        id: "artwork", label: "Change cover…", icon: IconImage, group: "manage", priority: 5,
+        visible: one, run: (rows) => settings(rows[0]!, "artwork"),
       },
       {
         id: "settings", label: "Playlist settings", icon: IconSettings, group: "manage", priority: 5,

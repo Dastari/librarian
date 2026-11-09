@@ -2690,3 +2690,50 @@ from `evaluateJavascript`.
     indexes, so the page can show them before Media3 has parsed the file;
   - a capability-aware decision: the shell sends its `canPlay` answer as `?client=tv&decoders=…`, so
     the server remuxes only what the TV cannot decode instead of following the browser matrix.
+
+### Q126: How is a title's artwork changed, and where do the choices come from?
+**Answer:** Every picture is a *slot* (`services/artwork_choice`): a movie's poster, backdrop and logo, a show's poster and
+backdrop, a season's poster, an episode's still, an album's cover, an artist's picture, an audiobook's cover and a
+playlist's cover. *Change artwork…* is an action in each entity's action set (a season's from its tile's menu on the show
+page) and an Artwork tab in its settings dialog (a show's lists its seasons too); both open one picker. The picker asks for
+the slot's provider pictures when it opens (`artworkOptions`), and keeps a list for ten minutes in memory (a list with a
+provider that failed is not kept): TMDB's posters, backdrops, logos and stills in every language with size and votes
+(`tmdb::images`, movies always, shows, seasons and episodes when the show has a TMDB id); TVmaze's posters and backgrounds,
+its season poster and episode still; Cover Art Archive for the release group and its first eight editions (official first),
+front, back and the rest, labelled by side, year, country and MusicBrainz's note; for artists every Commons photo
+Wikidata's `P18` names and Deezer's pictures for artists of exactly that name (there is no Fanart.tv key, so it is not
+asked); for audiobooks the provider record's cover, the Open Library work's covers and the covers of Open Library's
+editions found by title and author. Each option says which picture a refresh would choose (`isDefault`) and which is shown
+now (`isCurrent`, by `same_image`, which treats one TMDB file at any size and Cover Art Archive over http or https as one
+picture). `chooseArtwork` takes only a picture the list holds, downloads it through the artwork cache's guarded fetch
+(allowed hosts, size and type checks), and writes the slot's field and its lock in one update. Previews in the grid are
+the providers' own small copies, like other provider results not in a library. Changing artwork is for administrators,
+as other metadata edits are; a playlist's owner changes its cover. A movie's logo has no field: only a choice fills it, so
+its artwork cache row is the whole record, and the hero shows it in place of the title (`artworkSlots`).
+
+### Q127: How do uploads work?
+**Answer:** `PUT /api/artwork/{entity}/{id}/{kind}` with the picture as the body and its `image/*` type (which a
+cross-site form cannot send), for whoever may change the slot. JPEG, PNG and WebP up to 20 MiB, at least 100 pixels on
+each side and at most 100 megapixels decoded, are decoded and encoded again (JPEG at quality 90, or PNG when it has
+transparency), which drops camera and location metadata and anything that only claims to be an image; wider than 3840
+pixels is scaled down to that. The original goes into object storage as the slot's artwork cache row, replacing what was
+there (its resized copies are dropped by the existing hook), and the sizes the app shows below its width (185 to 1920) are
+made straight away. The slot's field becomes `upload:<first 16 hex of its SHA-256>`: a marker, never a URL, so nothing
+downloads it and no provider URL can equal it. A playlist gains `coverUrl` for it, which members cannot write through
+GraphQL; its identity shows the upload instead of the mosaic of its entries.
+
+### Q128: How do artwork locks hold, and how are they undone?
+**Answer:** Chosen and uploaded artwork is locked through the entity's `lockedFields` with the field's GraphQL name
+(`posterUrl`, `backdropUrl`, `stillUrl`, `coverUrl`, `imageUrl`). Season, Episode, Album and Artist gained `locked_fields`
+(additive JSON columns) for it. Two rules keep a lock without changing any provider code: the write transform
+(`keep_locked_artwork`, for generated and repository updates alike) leaves a locked artwork field out of any update that
+does not also write `lockedFields`, which is every refresh and backfill; and `ArtworkService::cache_image`, which every
+refresh path calls, keeps the cached picture of a locked slot unless the requested source is the chosen one. Unlocking is
+the entity's own generated update of `lockedFields` without the field: the picture stays until the next refresh replaces
+it. *Revert to provider* (`revertArtwork`) unlocks and puts back the option marked as the refresh's choice now; with
+nothing to go back to (a playlist, a logo, a provider without a picture) it empties the slot, and when a provider could
+not be asked it changes nothing, so a choice is never lost to an outage. A metadata form saving its own locks keeps the
+entity's current artwork locks (`withArtworkLocks`), so a picture chosen while the form was open is not unlocked by it.
+Browsers kept a picture for a day under one address, so a changed picture would not show: the device that changed it adds
+a revision to the address (`?v=`, kept for a week in local storage), and an address without one is reused for five
+minutes and then checked again in the background (`stale-while-revalidate`), so other devices follow within one view.

@@ -2,12 +2,13 @@ import { useMutation } from "@apollo/client/react";
 import { useNavigate } from "@tanstack/react-router";
 import { EntitySettingsDialog, type EntitySettingsTab } from "glass-ux/entity-settings";
 import { formBehaviour, useAppForm } from "glass-ux/form";
-import { IconClock, IconDownload, IconFile, IconInfo, IconSettings, IconTrash } from "glass-ux/icons";
+import { IconClock, IconDownload, IconFile, IconImage, IconInfo, IconSettings, IconTrash } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
 import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { DetailGrid, DetailTile } from "@/components/entities/EntityDetailDialog";
+import { ArtworkSettings } from "@/features/artwork/ArtworkSettings";
 import { Button, ConfirmDialog } from "@/components/ui";
 import { FilesBrowser } from "@/features/libraries/browser/FilesBrowser";
 import { AlbumDetailDocument, EntityAlbumDeleteDocument, EntityAlbumUpdateDocument, type AlbumDetailQuery } from "@/graphql/generated/graphql";
@@ -34,7 +35,7 @@ const schema = z.object({
   releaseDate: z.string().trim().regex(/^(\d{4}(-\d{2}(-\d{2})?)?)?$/, "As YYYY or YYYY-MM-DD"),
 });
 
-// No lockedFields: nothing refreshes an album's details yet, so a lock would protect nothing.
+// No lockedFields here: nothing refreshes an album's details yet. Its cover's lock is on the Artwork tab.
 const valuesOf = (album: Album) => ({
   name: album.name,
   sortName: album.sortName ?? "",
@@ -134,6 +135,10 @@ function LoadedAlbumSettings({ album, open, onOpenChange, chosenTab, onTabChange
           <form.AppField name="genres">{() => <MetadataTagsField label="Genres" placeholder="Add a genre" />}</form.AppField>
         </div>
       ),
+    },
+    {
+      value: "artwork", label: "Artwork", icon: <IconImage />,
+      content: <ArtworkSettings target={{ entityType: "ALBUM", entityId: album.id, title: album.name }} active={open && tab === "artwork"} />,
     },
     {
       value: "downloads", label: "Downloads", icon: <IconDownload />, fields: ["autoDownloadMode", "qualityProfileId"],

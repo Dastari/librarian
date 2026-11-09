@@ -1,3 +1,4 @@
+import { ActionContextMenu, defineActions } from "glass-ux/actions";
 import { IconInfo } from "glass-ux/icons";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -5,6 +6,7 @@ import { useMemo, useState } from "react";
 
 import { Button, EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, PosterCard, Section, SkeletonHero, ViewToggle, type ViewMode } from "@/components/ui";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
+import { useArtworkAction } from "@/features/artwork/useArtworkAction";
 import { autoDownloadMeta } from "@/features/acquisition/mode";
 import { CastAndCrew, CastRow, useTitleCredits } from "@/features/people/CastAndCrew";
 import { episodePlayItem } from "@/features/player/playItems";
@@ -87,6 +89,10 @@ export function ShowPage({ showId, initialSeason, focusEpisodeId }: {
     files: () => filesWithProgress(fileIds, progressByFile),
     disabledReason: () => (!episodes.complete ? "Loading the complete episode list" : progress.loading ? "Loading watch progress" : progress.error ? "Watch progress could not be loaded" : undefined),
   }), [fileIds, progressByFile, episodes.complete, progress.loading, progress.error]);
+  // A season's poster is changed from its tile's menu (and from the show's settings, Artwork).
+  type SeasonInfo = NonNullable<ReturnType<typeof seasonMeta.get>>;
+  const seasonArtwork = useArtworkAction<SeasonInfo>({ targetOf: (info) => ({ entityType: "SEASON", entityId: info.id, title: `${show?.name ?? ""} ${info.season === 0 ? "Specials" : `Season ${info.season}`}` }), allowed: () => isAdmin });
+  const seasonActions = useMemo(() => defineActions<SeasonInfo>("season", [seasonArtwork.action]), [seasonArtwork.action]);
   const { actions, dialogs, openSettings } = useShowEntity<NonNullable<typeof show>>({ open: false, play: playNext, season: activeSeason, onRefreshed: () => { void episodes.refetch().catch(() => {}); }, reset });
 
   if (error && !show) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
@@ -133,12 +139,13 @@ export function ShowPage({ showId, initialSeason, focusEpisodeId }: {
                 const info = seasonMeta.get(value);
                 const label = value === 0 ? "Specials" : `Season ${value}`;
                 const year = info?.premiereDate?.slice(0, 4);
-                return (
+                const card = (
                   <PosterCard key={value} width="compact" title={info?.name ? `${label} · ${info.name}` : label} selected={value === activeSeason}
                     meta={[year, `${inSeason.filter((episode) => episode.mediaFileId).length} of ${info?.episodeOrder ?? inSeason.length} episodes`].filter(Boolean).join(" · ")}
                     image={seasonPoster(info, show)} tint={LIBRARY_TYPES.tv.tintVar} badge={info?.posterUrl ? undefined : value === 0 ? "SP" : `S${value}`}
                     onPress={() => setSeason({ showId, value })} />
                 );
+                return info && isAdmin ? <ActionContextMenu key={value} set={seasonActions} targets={[info]} label={`Actions for ${label}`}>{card}</ActionContextMenu> : card;
               })}
             </MediaRow>
           </Section>
@@ -158,6 +165,7 @@ export function ShowPage({ showId, initialSeason, focusEpisodeId }: {
       <CastRow credits={guests.credits} guest title={activeSeason === 0 ? "Guest stars in the specials" : `Guest stars in season ${activeSeason}`} />
 
       {dialogs}
+      {seasonArtwork.dialog}
     </DetailShell>
   );
 }

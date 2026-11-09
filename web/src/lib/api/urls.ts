@@ -5,11 +5,19 @@ import { isConstrainedDevice } from "@/lib/tv-app";
  * The browser always talks to the same origin; the dev server proxies to the backend.
  */
 
-export type ArtworkEntity = "movie" | "show" | "season" | "episode" | "album" | "artist" | "audiobook" | "collection" | "person" | "guide" | "provider-movie" | "provider-show" | "provider-audiobook" | "provider-episode";
-export type ArtworkKind = "poster" | "backdrop" | "banner" | "cover" | "profile" | "thumbnail";
+import { artworkRevision } from "@/lib/artworkRevisions";
 
+export type ArtworkEntity = "movie" | "show" | "season" | "episode" | "album" | "artist" | "audiobook" | "playlist" | "collection" | "person" | "guide" | "provider-movie" | "provider-show" | "provider-audiobook" | "provider-episode";
+export type ArtworkKind = "poster" | "backdrop" | "banner" | "cover" | "profile" | "thumbnail" | "logo";
+
+/**
+ * A cached picture's address. A picture changed on this device (chosen or uploaded) carries its
+ * revision (`?v=`), so the browser fetches the new one at once instead of its cached copy.
+ */
 export function artworkUrl(entity: ArtworkEntity, id: string | number, kind: ArtworkKind): string {
-  return `/api/artwork/${entity}/${encodeURIComponent(String(id))}/${kind}`;
+  const url = `/api/artwork/${entity}/${encodeURIComponent(String(id))}/${kind}`;
+  const revision = artworkRevision(entity, String(id));
+  return revision ? `${url}?v=${revision}` : url;
 }
 
 /** Widest artwork a constrained device asks for (a full-screen backdrop on a 1080p TV). */
@@ -25,11 +33,11 @@ export const CONSTRAINED_MAX_ARTWORK_WIDTH = 1280;
  * backdrop) gets that cap too (Q139).
  */
 export function sizedArtwork(url: string | undefined, displayWidth: number | undefined, constrained: boolean = isConstrainedDevice()): string | undefined {
-  if (!url || !url.startsWith("/api/artwork/") || url.includes("?")) return url;
-  if (constrained) return `${url}?w=${Math.min(CONSTRAINED_MAX_ARTWORK_WIDTH, Math.round(displayWidth ?? CONSTRAINED_MAX_ARTWORK_WIDTH))}`;
+  if (!url || !url.startsWith("/api/artwork/") || /[?&]w=/.test(url)) return url;
+  if (constrained) return `${url}${url.includes("?") ? "&" : "?"}w=${Math.min(CONSTRAINED_MAX_ARTWORK_WIDTH, Math.round(displayWidth ?? CONSTRAINED_MAX_ARTWORK_WIDTH))}`;
   if (!displayWidth) return url;
   const density = typeof window === "undefined" ? 1 : Math.min(window.devicePixelRatio || 1, 2);
-  return `${url}?w=${Math.round(displayWidth * density)}`;
+  return `${url}${url.includes("?") ? "&" : "?"}w=${Math.round(displayWidth * density)}`;
 }
 
 /**

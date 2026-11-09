@@ -1,0 +1,123 @@
+[
+ {
+  "id": 581,
+  "type": "poster",
+  "main": false,
+  "resolutions": {
+   "original": {
+    "url": "https://static.tvmaze.com/uploads/images/original_untouched/0/581.jpg",
+    "width": 680,
+    "height": 1000
+   },
+   "medium": {
+    "url": "https://static.tvmaze.com/uploads/images/medium_portrait/0/581.jpg",
+    "width": 210,
+    "height": 295
+   }
+  }
+ },
+ {
+  "id": 104271,
+  "type": "poster",
+  "main": false,
+  "resolutions": {
+   "original": {
+    "url": "https://static.tvmaze.com/uploads/images/original_untouched/42/105372.jpg",
+    "width": 680,
+    "height": 1000
+   },
+   "medium": {
+    "url": "https://static.tvmaze.com/uploads/images/medium_portrait/42/105372.jpg",
+    "width": 210,
+    "height": 295
+   }
+  }
+ },
+ {
+  "id": 104272,
+  "type": "poster",
+  "main": false,
+  "resolutions": {
+   "original": {
+    "url": "https://static.tvmaze.com/uploads/images/original_untouched/42/105373.jpg",
+    "width": 680,
+    "height": 1000
+   },
+   "medium": {
+    "url": "https://static.tvmaze.com/uploads/images/medium_portrait/42/105373.jpg",
+    "width": 210,
+    "height": 295
+   }
+  }
+ },
+ {
+  "id": 1230408,
+  "type": "poster",
+  "main": true,
+  "resolutions": {
+   "original": {
+    "url": "https://static.tvmaze.com/uploads/images/original_untouched/498/1245274.jpg",
+    "width": 2030,
+    "height": 3000
+   },
+   "medium": {
+    "url": "https://static.tvmaze.com/uploads/images/medium_portrait/498/1245274.jpg",
+    "width": 210,
+    "height": 295
+   }
+  }
+ },
+ {
+  "id": 530046,
+  "type": "background",
+  "main": false,
+  "resolutions": {
+   "original": {
+    "url": "https://static.tvmaze.com/uploads/images/original_untouched/213/533549.jpg",
+    "width": 1920,
+    "height": 1080
+   }
+  }
+ },
+ {
+  "id": 967056,
+  "type": "background",
+  "main": false,
+  "resolutions": {
+   "original": {
+    "url": "https://static.tvmaze.com/uploads/images/original_untouched/389/973562.jpg",
+    "width": 3840,
+    "height": 2160
+   }
+  }
+ },
+ {
+  "id": 967656,
+  "type": "background",
+  "main": false,
+  "resolutions": {
+   "original": {
+    "url": "https://static.tvmaze.com/uploads/images/original_untouched/389/974169.jpg",
+    "width": 3840,
+    "height": 2160
+   }
+  }
+ },
+ {
+  "id": 491958,
+  "type": "banner",
+  "main": false,
+  "resolutions": {
+   "original": {
+    "url": "https://static.tvmaze.com/uploads/images/original_untouched/198/495237.jpg",
+    "width": 820,
+    "height": 312
+   },
+   "medium": {
+    "url": "https://static.tvmaze.com/uploads/images/medium_leaderboard/198/495237.jpg",
+    "width": 758,
+    "height": 140
+   }
+  }
+ }
+]

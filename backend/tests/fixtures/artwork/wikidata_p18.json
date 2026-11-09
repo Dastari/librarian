@@ -1,0 +1,36 @@
+{
+ "claims": {
+  "P18": [
+   {
+    "mainsnak": {
+     "snaktype": "value",
+     "property": "P18",
+     "hash": "424cacb3576e7527f2cb9c490d67890b34696aed",
+     "datavalue": {
+      "value": "Axl Rose 2018 (cropped).jpg",
+      "type": "string"
+     },
+     "datatype": "commonsMedia"
+    },
+    "type": "statement",
+    "id": "Q11885$a83518a6-901a-46ad-8da4-8e8ad990b8b3",
+    "rank": "normal"
+   },
+   {
+    "mainsnak": {
+     "snaktype": "value",
+     "property": "P18",
+     "hash": "076166005f2b885c68f5a84fd3f8b04639169c47",
+     "datavalue": {
+      "value": "Glasto2023 (239 of 468) (53009325175) (cropped).jpg",
+      "type": "string"
+     },
+     "datatype": "commonsMedia"
+    },
+    "type": "statement",
+    "id": "Q11885$742e511f-40a1-132c-4d68-8b2df3b4cf71",
+    "rank": "preferred"
+   }
+  ]
+ }
+}

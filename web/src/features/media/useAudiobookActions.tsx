@@ -6,6 +6,7 @@ import { toast } from "glass-ux/toast";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { ChooseListingDialog, type Listing } from "@/features/downloads/ChooseListingDialog";
+import { useArtworkAction } from "@/features/artwork/useArtworkAction";
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
 import { useQueueActions } from "@/features/player/queueActions";
@@ -17,7 +18,7 @@ import type { AudiobookEntity } from "./AudiobookIdentity";
 import { resetProgressAction, useResetProgress, type ProgressReset } from "./progressReset";
 import { useWantMissing, wantMissingActions } from "./wantMissing";
 
-export const AUDIOBOOK_SETTINGS_TABS = ["general", "downloads", "files", "info", "remove"] as const;
+export const AUDIOBOOK_SETTINGS_TABS = ["general", "artwork", "downloads", "files", "info", "remove"] as const;
 export type AudiobookSettingsTab = (typeof AUDIOBOOK_SETTINGS_TABS)[number];
 
 /** Everything that can be done to a book, wherever it's shown. `play` is where its page would resume. */
@@ -48,6 +49,7 @@ export function useAudiobookActions<T extends AudiobookEntity>({ settings, open 
   // Play next / Add to queue (the play queue): every chapter (or file) of each selected book, in order.
   const queueActions = useQueueActions<T>((rows) => rows.map((book) => ({ kind: "audiobook" as const, id: book.id })));
   const [finding, setFinding] = useState<T | null>(null);
+  const artwork = useArtworkAction<T>({ targetOf: (row) => ({ entityType: "AUDIOBOOK", entityId: row.id, title: row.title }), allowed: () => isAdmin, priority: 4 });
   const [choosing, setChoosing] = useState<T | null>(null);
 
   const actions = useMemo(() => {
@@ -98,6 +100,7 @@ export function useAudiobookActions<T extends AudiobookEntity>({ settings, open 
           successMessage: () => "Chapters restored",
         },
       ] : []),
+      artwork.action,
       {
         id: "settings", label: isAdmin ? "Audiobook settings" : "Details", icon: IconSettings, group: "manage", priority: 6,
         visible: one,
@@ -109,7 +112,7 @@ export function useAudiobookActions<T extends AudiobookEntity>({ settings, open 
         run: (rows: readonly T[]) => settings(rows[0]!, "remove"),
       }] : []),
     ]);
-  }, [isAdmin, listen, navigate, onChanged, open, play, queueActions, reset, resetProgress, restore, settings, user?.id, wantMissing]);
+  }, [artwork.action, isAdmin, listen, navigate, onChanged, open, play, queueActions, reset, resetProgress, restore, settings, user?.id, wantMissing]);
 
   const useEdition = async (listing: Listing) => {
     if (!listing.providerId || !choosing) return;
@@ -126,6 +129,7 @@ export function useAudiobookActions<T extends AudiobookEntity>({ settings, open 
   const dialogs = (
     <>
       {playlist.dialog}
+      {artwork.dialog}
       {finding ? <ReleaseSearchDialog isOpen onOpenChange={(next) => { if (!next) setFinding(null); }} query={[finding.authorName, finding.title].filter(Boolean).join(" ")} libraryId={finding.libraryId} author={finding.authorName} target={{ audiobookId: finding.id }} /> : null}
       {choosing ? (
         <ChooseListingDialog

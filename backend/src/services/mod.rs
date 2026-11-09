@@ -31,6 +31,7 @@
 #![allow(unused_imports)]
 
 pub mod artwork;
+pub mod artwork_choice;
 pub mod auth;
 pub mod backup;
 pub mod bootstrap_defaults;

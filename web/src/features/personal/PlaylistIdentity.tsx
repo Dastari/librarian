@@ -3,13 +3,13 @@ import { EntityIdentity, type EntityIdentityProps, type EntityState, type Entity
 import { useState, type ReactNode } from "react";
 
 import type { PersonalListKind, PlaylistSummaryFragment } from "@/graphql/generated/graphql";
-import { sizedArtwork } from "@/lib/api/urls";
+import { artworkUrl, sizedArtwork } from "@/lib/api/urls";
 import { ENTITY_KINDS } from "@/lib/entities/kinds";
 import { pluralize } from "@/lib/format";
 
 import { playlistCovers } from "./playlistArt";
 
-export type PlaylistEntity = Pick<PlaylistSummaryFragment, "id" | "name" | "kind" | "description"> & Partial<Pick<PlaylistSummaryFragment, "entries">>;
+export type PlaylistEntity = Pick<PlaylistSummaryFragment, "id" | "name" | "kind" | "description"> & Partial<Pick<PlaylistSummaryFragment, "entries" | "coverUrl">>;
 
 const Glyph = ENTITY_KINDS.playlist.icon;
 
@@ -45,7 +45,8 @@ export function playlistIdentityProps<T extends PlaylistEntity>(list: T, { actio
   /** How long it runs, where its entries are loaded: "3h 20m". */
   duration?: string;
 } = {}): EntityIdentityProps<T> {
-  const covers = playlistCovers(list.entries?.edges.map((edge) => edge.node));
+  // An uploaded cover stands in for the mosaic of its entries' artwork.
+  const covers = list.coverUrl ? [artworkUrl("playlist", list.id, "cover")] : playlistCovers(list.entries?.edges.map((edge) => edge.node));
   const count = list.entries?.pageInfo.totalCount;
   return {
     kind: ENTITY_KINDS.playlist.noun,
