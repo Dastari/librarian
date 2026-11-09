@@ -1474,7 +1474,7 @@ filesystem gives and ask `StorageCapabilities` instead, so a bucket can say no:
 - **No file identity.** `EntryMeta.identity` (device and inode locally, the file id on SMB) is optional; "are these the same
   file" falls back to path equality, size and time.
 - **No path for other programs.** `tools_need_url` says external tools cannot open the file (see below).
-Torrent downloads stay local (`torrent.download_dir`), as does extraction staging, HLS scratch output and database backups. An
+Torrent downloads stayed local at first (`torrent.download_dir`; since Q99 they can be on a share too), as do extraction staging, HLS scratch output and database backups. An
 import from a download **copies onto the library's storage** (`put_from_local`, `NoClobber`) and never moves out of the download
 folder, so a seeding source is never touched, exactly as with a local library.
 
@@ -1739,3 +1739,58 @@ settings dialog (Connection, Shares, Remove).
 servers at startup (`carry_over_saved_sign_ins`), once each, with the stored envelope copied as it is: the password is
 never decrypted for this, and the old record is left in place as a fallback until a server exists for that host.
 `connectShare` now saves into the server too.
+
+### Q99: Can downloads be on a share, and what reads them there?
+**Answer:** Yes. `torrent.download_dir` is a folder on this machine or an `smb://` folder on a saved server, and torrents are
+written there by Librarian itself (Q100). Everything that reads a download goes through `library_storage`, as library files
+do (Q85): identification reads text files and ffprobe facts through `Storage` and the tool URL (Q87), and the stream and
+analysis paths already did. What had assumed a local download path, and does now:
+- *Import into a library* never moves a download. A download on a share is copied: into a library on the same share with an
+  SMB server-side copy (`FSCTL_SRV_COPYCHUNK`, `Storage::copy_within`: no bytes cross the network, to a temporary name and
+  then renamed without replacing), into a library on another share by streaming it through Librarian, and into a local
+  library by copying it down to a temporary name beside the target and linking it into place without replacing
+  (`LibraryStorage::copy`). A missing-file check that cannot reach the share says so instead of "does not exist".
+- *Archives* on a share are unpacked on this machine: the entry volume and its own other volumes (`extract::archive_set`)
+  are copied to `CACHE_PATH/share-extract/<hash>/archive` (refused with a clear message when local space is short),
+  unpacked into `…/unpacked`, and the copies removed; the output is imported from there as before. An archive unpacked
+  completely once is not copied again.
+- *Quality upgrades* are not offered from a download on a share (they prove the better copy by device, inode and change time,
+  as they do for a library on a share), and the log says why; the copy stays in the downloads.
+- *Creating a folder* (`createDirectory`) for an `smb://` path makes it on the share.
+- *The startup check* of the download folder probes a share by making the folder and writing and removing a probe file
+  through it. A share that is down at start is not a broken setting: the client starts, its torrents wait (Q100), and adding a
+  torrent is refused while the share stays down ("The download folder is on a share that cannot be reached now").
+- *Partial packs* (`only_files`) and deleting a torrent with its files go through the torrent storage, so they work on a share.
+Torrents already in `/data/downloads` keep their folder until they are moved (Q101).
+
+### Q100: How does the torrent client read and write a share, and what happens when the share goes away?
+**Answer:** librqbit 9.1 has pluggable, synchronous storage (`StorageFactory`/`TorrentStorage`: positioned reads and writes,
+file length, removal, called from blocking threads). The session's `default_storage_factory` is `LibrarianStorageFactory`
+(`services::torrent::share_storage`): a torrent whose folder is `smb://` gets a `ShareStorage`, every other one librqbit's
+filesystem storage. Two things librqbit does not offer are worked around: the factory is not shown the torrent's folder, so
+it is worked out as the session does (the folder its JSON persistence stored for that info hash, read from `session.json` at
+start and registered on every add; else the download folder plus the torrent's name when it has several files), and
+persistence only saves torrents of the filesystem factory, so the factory reports the filesystem type it wraps, as
+librqbit's own middlewares do (its files are laid out the same way).
+
+*I/O:* each file is opened once (`SmbStorage::open_file`, read-write, created if missing) on its own clone of a pooled
+connection, so reads and writes from several threads are pipelined over the one signed-in session. Reads and writes are raw
+SMB2 READ/WRITE requests at an offset (`SmbFile`, up to 1 MiB each), and the file length is set with SET_INFO
+end-of-file. *Writes are gathered:* peers send 16 KiB blocks; they are kept in memory per file, joined while contiguous,
+and written as one run when it reaches 4 MiB, when the torrent holds more than 32 MiB unwritten, when a read touches them, and
+when the torrent pauses. The read that checks a finished piece writes that piece's blocks first and is answered from them, so
+a piece is only marked complete once the server has acknowledged it; unchecked blocks lost to a crash are downloaded again,
+as they would be anyway. Handles are closed when a torrent pauses or goes, so the server can delete or rename the files. The
+dev profile's optimised `smb2` and crypto crates (Q85) keep signing from being the limit. Measured against a local Samba
+(loopback, debug build): a 9.7 MB two-file torrent in 256 KiB pieces downloaded onto the share in 0.21 s, checked after a
+pause and resume, re-added over the files with nothing downloaded again, and deleted with its files
+(`tests/smb_torrent.rs`).
+
+*Outages:* a storage call that cannot reach the share fails with "The download share is unavailable: …" and reports the
+share to the watcher (`share_watch`). Every 20 s the watcher pauses the running torrents on a share that is down (their
+status says "Waiting for the download share …, unreachable since …"; `LiveTorrent.statusDetail`) and tries the share again;
+when it answers, the torrents it paused are resumed and any that librqbit had stopped with that error are started again.
+librqbit then checks what is on the share, so nothing is downloaded twice, and nothing is ever deleted. The torrents it
+paused are kept in `torrent.share_paused`, so a restart during an outage still resumes them, and a torrent a person paused
+is left alone. Imports of a finished download wait too: a copy that cannot read the share fails without touching the
+library, and library scans of a share never mark files missing on a walk that did not finish (Q86).

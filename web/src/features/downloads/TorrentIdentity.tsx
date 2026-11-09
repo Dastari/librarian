@@ -21,6 +21,12 @@ export function TorrentIdentity({ row, actions, tier = "row", facts, className }
 }) {
   const rawState = (row.live?.state ?? row.record.state).toLowerCase();
   const state = torrentStatus(rawState);
+  // Why it is stopped, in the client's words; a download share that is down outranks the rest.
+  const detail = row.live?.statusDetail ?? null;
+  const waitingForShare = detail?.startsWith("Waiting for the download share") ?? false;
+  const shown = waitingForShare
+    ? { id: "waiting-share", label: "Waiting for share", tone: "warning" as const, paused: true }
+    : { id: rawState, label: state.label, tone: rawState === "error" ? "danger" as const : rawState === "seeding" || rawState === "completed" ? "success" as const : rawState === "downloading" || rawState === "checking" || rawState === "initializing" ? "info" as const : "neutral" as const, paused: rawState === "paused" };
   return (
     <EntityIdentity
       tier={tier}
@@ -29,8 +35,8 @@ export function TorrentIdentity({ row, actions, tier = "row", facts, className }
       kind={ENTITY_KINDS.torrent.noun}
       name={row.record.name}
       icon={<TorrentGlyph />}
-      state={{ id: rawState, label: state.label, tone: rawState === "error" ? "danger" : rawState === "seeding" || rawState === "completed" ? "success" : rawState === "downloading" || rawState === "checking" || rawState === "initializing" ? "info" : "neutral", paused: rawState === "paused" }}
-      facts={facts ?? [...(tier === "row" ? [state.label] : []), formatBytes(row.record.totalBytes), row.record.library?.name ?? "No library"]}
+      state={shown}
+      facts={facts ?? (detail && (waitingForShare || rawState === "error") ? [detail] : [...(tier === "row" ? [shown.label] : []), formatBytes(row.record.totalBytes), row.record.library?.name ?? "No library"])}
       target={row}
       actions={actions}
     />

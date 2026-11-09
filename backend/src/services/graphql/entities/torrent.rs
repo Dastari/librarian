@@ -451,6 +451,10 @@ pub struct LiveTorrent {
     pub save_path: String,
     #[graphql(name = "files")]
     pub files: Vec<LiveTorrentFile>,
+    /// Why the torrent is stopped or waiting: the client's error, or that its download share is
+    /// unreachable (it resumes by itself when the share answers).
+    #[graphql(name = "statusDetail")]
+    pub status_detail: Option<String>,
 }
 
 fn service_state_to_string(s: ServiceTorrentState) -> &'static str {
@@ -478,6 +482,7 @@ fn service_torrent_to_live(t: ServiceTorrentInfo) -> LiveTorrent {
         upload_speed: t.upload_speed as i64,
         peers: t.peers as i32,
         save_path: t.save_path,
+        status_detail: t.status_detail,
         files: t
             .files
             .into_iter()

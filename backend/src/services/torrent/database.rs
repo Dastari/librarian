@@ -1405,7 +1405,11 @@ pub async fn restore_from_database(
                 ))
             });
             match add {
-                Ok(AddTorrentResponse::Added(_, _)) => {
+                Ok(AddTorrentResponse::Added(_, handle)) => {
+                    super::share_storage::register_folder(
+                        &record.info_hash,
+                        handle.output_folder(),
+                    );
                     if start_paused {
                         queued.push(record.info_hash.clone());
                     } else {

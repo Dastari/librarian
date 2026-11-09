@@ -11,6 +11,7 @@ fragment LiveTorrentFields on LiveTorrent {
   uploadSpeed
   peers
   savePath
+  statusDetail
 }
 
 query LiveTorrents {

@@ -3,6 +3,8 @@ pub mod database;
 pub mod partial;
 pub mod seeding;
 pub mod service;
+pub mod share_storage;
+pub mod share_watch;
 
 pub use client::*;
 pub use database::*;

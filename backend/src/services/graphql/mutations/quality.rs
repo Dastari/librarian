@@ -512,6 +512,11 @@ async fn verify_upgrade_plan(
     let target = checked_library_path(Path::new(&library.path), Path::new(&file.path))?;
     let (source, source_torrent, source_file) =
         verified_pending_source(db, &pending, &library).await?;
+    if crate::services::library_scan::is_remote_path(&source) {
+        anyhow::bail!(
+            "Quality upgrades are not supported from a download on a network share: the better copy is checked against local file identity"
+        );
+    }
     if UpgradeFileProof::capture(&source)?.same_file(&UpgradeFileProof::capture(&target)?) {
         anyhow::bail!("Upgrade source and target are the same file");
     }

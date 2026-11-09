@@ -41,7 +41,7 @@ function download(): DownloadRow {
     live: {
       id: 1, infoHash: "99cbe573f0d0bf8c219584fba6e90dff0913daae", name, state: "seeding", progress: 1,
       size: 492096000, downloaded: 492096000, uploaded: 123024000, downloadSpeed: 0, uploadSpeed: 1024,
-      peers: 3, savePath: `/data/downloads/${name}`,
+      peers: 3, savePath: `/data/downloads/${name}`, statusDetail: null,
       files: Array.from({ length: 30 }, (_, index) => ({ index, path: `${name}/folder/${index ? `screen${index}.png` : `${name}.mkv`}`, size: index ? 1024 : 480000000, progress: 1 })),
     },
   };

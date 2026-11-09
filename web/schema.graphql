@@ -4013,6 +4013,12 @@ type LiveTorrent {
   peers: Int!
   savePath: String!
   files: [LiveTorrentFile!]!
+
+  """
+  Why the torrent is stopped or waiting: the client's error, or that its download share is
+  unreachable (it resumes by itself when the share answers).
+  """
+  statusDetail: String
 }
 
 """Live torrent file (from torrent client)"""

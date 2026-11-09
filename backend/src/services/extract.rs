@@ -330,6 +330,47 @@ pub async fn extract_archive(
     }
 }
 
+/// Whether `archive` was already unpacked completely under `staging_root` (its marker is there and
+/// every file it lists is present), so a copy of the archive need not be fetched again.
+pub fn has_completed_extraction(archive: &Path, staging_root: &Path) -> bool {
+    reuse_completed_extraction(&staging_root.join(staging_subdir_name(archive))).is_some()
+}
+
+/// The files of the archive set that `entry` starts, among the names in its folder: the entry
+/// itself and, for RAR, its other volumes (`name.r00`…, or `name.part02.rar`…). Extracting an
+/// archive that sits on a share copies exactly these to this machine first.
+pub fn archive_set(entry: &str, siblings: &[String]) -> Vec<String> {
+    let lower = entry.to_ascii_lowercase();
+    let base = if let Some(stripped) = lower.strip_suffix(".rar") {
+        match stripped.rfind(".part") {
+            Some(index)
+                if !stripped[index + 5..].is_empty()
+                    && stripped[index + 5..].chars().all(|c| c.is_ascii_digit()) =>
+            {
+                stripped[..index].to_string()
+            }
+            _ => stripped.to_string(),
+        }
+    } else {
+        return vec![entry.to_string()];
+    };
+    let mut set: Vec<String> = siblings
+        .iter()
+        .filter(|name| {
+            let name = name.to_ascii_lowercase();
+            name == lower
+                || (name.starts_with(&format!("{base}."))
+                    && archive_kind(Path::new(&name)) == Some(ArchiveKind::Rar))
+        })
+        .cloned()
+        .collect();
+    if !set.iter().any(|name| name.eq_ignore_ascii_case(entry)) {
+        set.push(entry.to_string());
+    }
+    set.sort();
+    set
+}
+
 /// Blocking implementation of [`extract_archive`].
 pub fn extract_archive_blocking(
     archive: &Path,
@@ -1195,6 +1236,35 @@ mod tests {
         }
         writer.finish().unwrap();
         path
+    }
+
+    #[test]
+    fn an_archive_set_is_the_entry_and_its_own_volumes() {
+        let names: Vec<String> = [
+            "Movie.rar",
+            "Movie.r00",
+            "Movie.r01",
+            "Movie.nfo",
+            "Other.rar",
+            "Other.r00",
+            "Show.part01.rar",
+            "Show.part02.rar",
+            "Show.part10.rar",
+            "Sample.mkv",
+            "pack.zip",
+        ]
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+        assert_eq!(
+            archive_set("Movie.rar", &names),
+            vec!["Movie.r00", "Movie.r01", "Movie.rar"]
+        );
+        assert_eq!(
+            archive_set("Show.part01.rar", &names),
+            vec!["Show.part01.rar", "Show.part02.rar", "Show.part10.rar"]
+        );
+        assert_eq!(archive_set("pack.zip", &names), vec!["pack.zip"]);
     }
 
     #[test]

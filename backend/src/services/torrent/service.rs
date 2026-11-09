@@ -84,6 +84,7 @@ struct TorrentRuntime {
     reconcile_handle: tokio::task::JoinHandle<()>,
     maintenance_handle: tokio::task::JoinHandle<()>,
     upnp_handle: tokio::task::JoinHandle<()>,
+    share_watch_handle: tokio::task::JoinHandle<()>,
 }
 
 impl TorrentRuntime {
@@ -95,6 +96,7 @@ impl TorrentRuntime {
         let _ = self.reconcile_handle.await;
         let _ = self.maintenance_handle.await;
         let _ = self.upnp_handle.await;
+        let _ = self.share_watch_handle.await;
         // session dropped here
     }
 }
@@ -397,6 +399,16 @@ impl TorrentService {
         if let Some(problem) = &r.download_dir_error {
             anyhow::bail!("{problem}");
         }
+        let download_dir = r.config.download_dir.to_string_lossy().into_owned();
+        if crate::services::library_storage::is_smb_uri(&download_dir)
+            && let Err(error) = crate::services::library_storage::library_storage()
+                .stat(download_dir.as_str())
+                .await
+        {
+            anyhow::bail!(
+                "The download folder is on a share that cannot be reached now ({error}). Try again when the share is back."
+            );
+        }
         let deadline = tokio::time::Instant::now() + ADD_TORRENT_TIMEOUT;
         // A URL can hide an already-owned hash. Resolve its metadata in list-only mode,
         // which the pinned client returns before creating storage or a managed handle.
@@ -466,6 +478,7 @@ impl TorrentService {
             }
             AddTorrentResponse::Added(id, handle) => {
                 let info_hash = get_info_hash_hex(&handle);
+                super::share_storage::register_folder(&info_hash, handle.output_folder());
                 let name = handle.name().unwrap_or_else(|| "Unknown".to_string());
                 // Still paused, so nothing has downloaded. A release with no usable files for what
                 // it was grabbed for stops here, not after a download and a failed import.
@@ -1014,8 +1027,21 @@ impl Service for TorrentService {
         // and the setting can be fixed from the UI) but refuses to add
         // torrents until the directory works.
         let effective_download_dir = config.download_dir.clone();
+        let download_on_share =
+            crate::services::library_storage::is_smb_uri(&config.download_dir.to_string_lossy());
         let download_dir_error = match ensure_writable_dir(&config.download_dir).await {
             Ok(()) => None,
+            // A share that is down now is not a broken setting: its torrents wait for it (the
+            // share watcher), and adds are refused only while it stays down.
+            Err(e) if download_on_share && is_unavailable_text(&e.to_string()) => {
+                warn!(
+                    service = "torrent",
+                    path = %config.download_dir.display(),
+                    error = %e,
+                    "The download share cannot be reached now; torrents on it wait for it"
+                );
+                None
+            }
             Err(e) => {
                 let message = format!(
                     "Torrent download directory '{}' is not usable: {}. Set `torrent.download_dir` to a writable path; torrents cannot be added until this is fixed.",
@@ -1080,7 +1106,25 @@ impl Service for TorrentService {
             None
         };
 
+        // The session restores its torrents before the server finishes starting, so torrents on a
+        // share need their sign-in now, not when the rest of the server installs it.
+        let storage = crate::services::library_storage::library_storage();
+        if !storage.has_share_provider() {
+            storage.install_share_provider(Arc::new(
+                crate::services::graphql::filesystem_network::NetworkShareProvider::new(
+                    db.clone(),
+                    self.manager.clone(),
+                ),
+            ));
+        }
+        // Torrents on a share are read and written through it (`share_storage`); the factory
+        // needs to know where each torrent lives before the session restores them.
+        super::share_storage::set_default_folder(&effective_download_dir);
+        super::share_storage::load_persisted_folders(&effective_session_dir);
         let session_opts = SessionOptions {
+            default_storage_factory: Some(librqbit::storage::StorageFactoryExt::boxed(
+                super::share_storage::LibrarianStorageFactory,
+            )),
             dht,
             persistence: Some(librqbit::SessionPersistenceConfig::Json {
                 folder: Some(effective_session_dir.clone()),
@@ -1307,6 +1351,13 @@ impl Service for TorrentService {
             .await;
         });
 
+        // Torrents on a share pause while it is down and resume when it is back.
+        let share_watch_handle = tokio::spawn(super::share_watch::watch_loop(
+            session.clone(),
+            db.clone(),
+            cancel_token.clone(),
+        ));
+
         let started_download_dir = config.download_dir.clone();
         let started_session_dir = config.session_dir.clone();
         let started_listen_port = config.listen_port;
@@ -1332,6 +1383,7 @@ impl Service for TorrentService {
             reconcile_handle,
             maintenance_handle,
             upnp_handle,
+            share_watch_handle,
         });
 
         *self.inner.write().await = Some(runtime);
@@ -2158,7 +2210,11 @@ async fn get_torrent_info_impl(session: &Session, id: usize) -> Result<TorrentIn
         .unwrap_or((0, 0, 0));
 
     let files = get_torrent_files_list(&handle);
+    let folder = handle.output_folder().to_string_lossy().into_owned();
+    let status_detail =
+        super::share_watch::waiting_message(&info_hash, &folder).or_else(|| stats.error.clone());
     Ok(TorrentInfo {
+        status_detail,
         id,
         info_hash,
         name,
@@ -2186,6 +2242,12 @@ async fn get_torrent_info_impl(session: &Session, id: usize) -> Result<TorrentIn
 /// directory, so the probe file is what catches a mounted-but-not-writable
 /// download path.
 async fn ensure_writable_dir(dir: &Path) -> Result<()> {
+    let text = dir.to_string_lossy();
+    if crate::services::library_storage::is_smb_uri(&text) {
+        return ensure_writable_share_dir(&text)
+            .await
+            .map_err(|error| anyhow::anyhow!("{error}"));
+    }
     tokio::fs::create_dir_all(dir)
         .await
         .with_context(|| format!("could not create directory '{}'", dir.display()))?;
@@ -2194,6 +2256,47 @@ async fn ensure_writable_dir(dir: &Path) -> Result<()> {
         .await
         .with_context(|| format!("directory '{}' is not writable", dir.display()))?;
     let _ = tokio::fs::remove_file(&probe).await;
+    Ok(())
+}
+
+fn is_unavailable_text(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    [
+        "could not reach",
+        "not connected",
+        "does not resolve",
+        "unavailable",
+        "timed out",
+        "connection",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
+}
+
+/// The same check for a download folder on a share: make it, then write and remove a probe file
+/// through the share.
+pub async fn ensure_writable_share_dir(
+    dir: &str,
+) -> crate::services::library_storage::StorageResult<()> {
+    use crate::services::library_storage::{PlaceMode, Storage, StorageLocation, library_storage};
+    let location = StorageLocation::parse(dir).map_err(|error| {
+        crate::services::library_storage::StorageError::new(
+            crate::services::library_storage::StorageErrorKind::Other,
+            format!("'{dir}' is not a valid share folder: {error}"),
+        )
+    })?;
+    let root = location.root_path();
+    let storage = library_storage().for_path(&root).await?;
+    storage.create_dir_all(&root).await?;
+    let probe = root.join(&format!(".librarian-write-test-{}", Uuid::new_v4()));
+    storage
+        .put_from_reader(
+            Box::new(std::io::Cursor::new(Vec::<u8>::new())),
+            &probe,
+            PlaceMode::NoClobber,
+        )
+        .await?;
+    let _ = storage.remove_file(&probe).await;
     Ok(())
 }
 

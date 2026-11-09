@@ -101,6 +101,7 @@ pub(crate) fn live(hash: &str, id: usize) -> ServiceTorrentInfo {
         seeds: 2,
         save_path: "/test/live".into(),
         files: vec![],
+        status_detail: None,
     }
 }
 

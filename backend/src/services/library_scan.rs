@@ -10863,8 +10863,35 @@ impl LibraryScanService {
                     );
                     continue;
                 }
-                let staging_root = Self::extraction_staging_root(&archive_path, info_hash);
-                match extract::extract_archive(&archive_path, &staging_root, limits).await {
+                // An archive on a share is unpacked on this machine: its volumes are copied to a
+                // local scratch folder first (the tools read local files), the output stays local,
+                // and the copies are removed afterwards. The download itself is never changed.
+                let (extracted, fetched) = if is_remote_path(&archive_path) {
+                    match Self::fetch_share_archive(&archive_path, info_hash).await {
+                        Ok((local, staging_root, fetched)) => (
+                            extract::extract_archive(&local, &staging_root, limits).await,
+                            Some(fetched),
+                        ),
+                        Err(reason) => (
+                            Err(extract::ExtractError::Io {
+                                archive: Self::display_file_name(&archive.source_path),
+                                path: archive.source_path.clone(),
+                                reason,
+                            }),
+                            None,
+                        ),
+                    }
+                } else {
+                    let staging_root = Self::extraction_staging_root(&archive_path, info_hash);
+                    (
+                        extract::extract_archive(&archive_path, &staging_root, limits).await,
+                        None,
+                    )
+                };
+                if let Some(fetched) = fetched {
+                    let _ = tokio::fs::remove_dir_all(&fetched).await;
+                }
+                match extracted {
                     Ok(outcome) => {
                         let mut usable = 0usize;
                         for extracted in &outcome.files {
@@ -11608,6 +11635,74 @@ impl LibraryScanService {
 
     /// Staging root for archives belonging to one torrent:
     /// `<archive dir>/.librarian-extract/<info hash>/`.
+    /// Where archives from a share are unpacked: a scratch folder on this machine, per torrent.
+    fn share_extraction_root(info_hash: &str) -> PathBuf {
+        let cache = std::env::var("CACHE_PATH").unwrap_or_else(|_| "./data/cache".to_string());
+        let short_hash: String = info_hash.chars().take(40).collect();
+        PathBuf::from(cache).join("share-extract").join(short_hash)
+    }
+
+    /// Copy an archive set on a share (the entry volume and its other volumes) to a local scratch
+    /// folder. Returns the local entry volume, the local staging root to unpack into, and the
+    /// folder of copies to remove afterwards. Nothing is copied when the archive was unpacked
+    /// completely before.
+    async fn fetch_share_archive(
+        archive_path: &Path,
+        info_hash: &str,
+    ) -> std::result::Result<(PathBuf, PathBuf, PathBuf), String> {
+        let root = Self::share_extraction_root(info_hash);
+        let staging_root = root.join("unpacked");
+        let fetched = root.join("archive");
+        let name = archive_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .ok_or_else(|| "The archive has no file name".to_string())?;
+        let local_entry = fetched.join(&name);
+        if extract::has_completed_extraction(&local_entry, &staging_root) {
+            return Ok((local_entry, staging_root, fetched));
+        }
+        let folder = archive_path
+            .parent()
+            .ok_or_else(|| "The archive has no folder".to_string())?;
+        let storage = library_storage();
+        let listing = storage.list_dir(folder).await.map_err(|error| {
+            format!("The archive's folder on the share cannot be read: {error}")
+        })?;
+        let siblings: Vec<String> = listing.iter().map(|entry| entry.name.clone()).collect();
+        let set = extract::archive_set(&name, &siblings);
+        let bytes: u64 = listing
+            .iter()
+            .filter(|entry| set.contains(&entry.name))
+            .filter_map(|entry| entry.meta.as_ref().map(|meta| meta.size))
+            .sum();
+        let _ = tokio::fs::remove_dir_all(&fetched).await;
+        tokio::fs::create_dir_all(&fetched)
+            .await
+            .map_err(|error| format!("Could not make '{}': {error}", fetched.display()))?;
+        if let Some(free) = extract::available_space_bytes(&fetched)
+            && free < bytes.saturating_mul(2)
+        {
+            return Err(format!(
+                "Not enough space on this server to unpack an archive from the share: it needs about {} GB free in '{}' (the archive and what it holds), and {} GB are",
+                bytes.saturating_mul(2) / 1_000_000_000 + 1,
+                root.display(),
+                free / 1_000_000_000
+            ));
+        }
+        for volume in &set {
+            if let Err(error) = storage
+                .download_to_local(folder.join(volume), &fetched.join(volume))
+                .await
+            {
+                let _ = tokio::fs::remove_dir_all(&fetched).await;
+                return Err(format!(
+                    "Could not copy '{volume}' from the share to unpack it: {error}"
+                ));
+            }
+        }
+        Ok((local_entry, staging_root, fetched))
+    }
+
     fn extraction_staging_root(archive_path: &Path, info_hash: &str) -> PathBuf {
         let parent = archive_path
             .parent()
@@ -13849,8 +13944,15 @@ impl LibraryScanService {
         allow_move: bool,
     ) -> Result<()> {
         self.ensure_library_not_moving(&library.id).await?;
-        if !source_path.exists() {
-            anyhow::bail!("Source file does not exist: {}", source_path.display());
+        // Through storage: a download can be on a share, and a share that is down is not a
+        // missing file.
+        match library_storage().exists(source_path).await {
+            Ok(true) => {}
+            Ok(false) => anyhow::bail!("Source file does not exist: {}", source_path.display()),
+            Err(error) => anyhow::bail!(
+                "The download '{}' cannot be read now: {error}",
+                source_path.display()
+            ),
         }
 
         // No-clobber placement (audit #4): for torrent payload files `allow_move`
@@ -13938,6 +14040,17 @@ impl LibraryScanService {
                 library_name = %library.name,
                 target_path = %target_path.display(),
                 "Not offering a quality upgrade for '{}': libraries on a network share do not support in-place upgrades",
+                target_path.display()
+            );
+            return;
+        }
+        if is_remote_path(source_path) {
+            // The same proof is taken of the better copy, which a download on a share cannot give.
+            info!(
+                library_id = %library.id,
+                source_path = %source_path.display(),
+                target_path = %target_path.display(),
+                "Not offering a quality upgrade for '{}': the better copy is a download on a network share, which in-place upgrades do not support",
                 target_path.display()
             );
             return;
@@ -16729,6 +16842,9 @@ async fn place_in_library(
         return place_in_remote_library(root, source, target, remove_source, source_is_library)
             .await;
     }
+    if is_remote_path(&source) {
+        return place_from_share_in_local_library(root, source, target, remove_source).await;
+    }
     tokio::task::spawn_blocking(move || {
         if source_is_library {
             checked_library_path(&root, &source)?;
@@ -16771,6 +16887,54 @@ async fn place_in_library(
     .context("Contained library placement task failed")?
 }
 
+/// `place_in_library` for a download on a share going into a library on this server: the file
+/// is copied down (to a temporary name, then linked into place without replacing anything), and
+/// the download is never touched, so its torrent keeps seeding.
+async fn place_from_share_in_local_library(
+    root: PathBuf,
+    source: PathBuf,
+    target: PathBuf,
+    remove_source: bool,
+) -> Result<NoClobberOutcome> {
+    if remove_source {
+        anyhow::bail!(
+            "A file on a share is copied into a library on this server, never moved: '{}'",
+            source.display()
+        );
+    }
+    let mut attempts = 0;
+    loop {
+        let (root_for_dir, target_for_dir) = (root.clone(), target.clone());
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            checked_library_path(&root_for_dir, &target_for_dir)?;
+            let parent = target_for_dir
+                .parent()
+                .context("Library destination has no parent")?;
+            create_library_directory(&root_for_dir, parent)?;
+            Ok(())
+        })
+        .await
+        .context("Library folder task failed")??;
+        let placed = library_storage()
+            .copy(&source, &target, PlaceMode::NoClobber)
+            .await
+            .map_err(anyhow::Error::from);
+        match placed {
+            // The new folder was tidied away between making it and copying into it.
+            Err(error)
+                if attempts < 3
+                    && error
+                        .downcast_ref::<crate::services::library_storage::StorageError>()
+                        .is_some_and(|error| error.is_not_found())
+                    && library_storage().exists(&source).await.unwrap_or(false) =>
+            {
+                attempts += 1;
+            }
+            other => return other,
+        }
+    }
+}
+
 /// `place_in_library` for a library on a share. There are no hard links there: a file arriving
 /// from a download is copied (the download is left alone, so a torrent keeps seeding), and a file
 /// already on the share is renamed, both without replacing anything that is there.
@@ -16796,21 +16960,23 @@ async fn place_in_remote_library(
     loop {
         create_library_directory_in(&root, parent).await?;
         let outcome = if is_remote_path(&source) {
-            if !source_is_library && !source.starts_with(&root) {
-                anyhow::bail!(
-                    "Copying between two shares is not supported: '{}' to '{}'",
-                    source.display(),
-                    target.display()
-                );
-            }
-            checked_library_path(&root, &source)?;
             if remove_source {
+                // Organizing: a rename on the library's own share.
+                checked_library_path(&root, &source)?;
                 storage
                     .rename(&source, &target, PlaceMode::NoClobber)
                     .await
                     .map_err(anyhow::Error::from)
             } else {
-                anyhow::bail!("Copying a file within a share is not supported yet")
+                // A download on a share: a server-side copy when it is the library's share,
+                // streamed through Librarian from another one. The download is left alone.
+                if source_is_library {
+                    checked_library_path(&root, &source)?;
+                }
+                storage
+                    .copy(&source, &target, PlaceMode::NoClobber)
+                    .await
+                    .map_err(anyhow::Error::from)
             }
         } else {
             let placed = storage

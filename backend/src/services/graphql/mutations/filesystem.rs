@@ -443,7 +443,16 @@ async fn run_create_directory(
             "Path must not be empty",
         )));
     }
-    match fs::create_dir_all(&path).await {
+    // A folder on a share is made through it, not as a local folder named `smb:`.
+    let made = if crate::services::library_storage::is_smb_uri(input.path.trim()) {
+        crate::services::library_storage::library_storage()
+            .create_dir_all(input.path.trim())
+            .await
+            .map_err(|error| std::io::Error::other(error.to_string()))
+    } else {
+        fs::create_dir_all(&path).await
+    };
+    match made {
         Ok(_) => {
             use crate::services::graphql::subscriptions::filesystem::{
                 FilesystemChangeBroker, FilesystemChangeEvent,
