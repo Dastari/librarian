@@ -37,6 +37,7 @@ use crate::services::cast::{CastService, CastServiceConfig};
 use crate::services::database::{DatabaseService, DatabaseServiceConfig};
 use crate::services::graphql::{GraphqlService, GraphqlServiceConfig};
 use crate::services::http_server::{HttpServerConfig, HttpServerService};
+use crate::services::lan_advertise::{LanAdvertiseConfig, LanAdvertiseService};
 use crate::services::library_scan::{LibraryScanService, LibraryScanServiceConfig};
 use crate::services::logging::{LoggingService, LoggingServiceConfig};
 use crate::services::sources::service::{SourcesService, SourcesServiceConfig};
@@ -162,6 +163,7 @@ enum ServiceRegistrationKind {
     AutoDownload(AutoDownloadServiceConfig),
     ScheduleSync(ScheduleSyncConfig),
     CreditFill(CreditFillConfig),
+    LanAdvertise(LanAdvertiseConfig),
     Transcode(TranscodeServiceConfig),
     Service(Arc<dyn Service>),
 }
@@ -252,6 +254,12 @@ impl IntoServiceRegistration for ScheduleSyncConfig {
 impl IntoServiceRegistration for CreditFillConfig {
     fn into_registration(self) -> ServiceRegistration {
         ServiceRegistration(ServiceRegistrationKind::CreditFill(self))
+    }
+}
+
+impl IntoServiceRegistration for LanAdvertiseConfig {
+    fn into_registration(self) -> ServiceRegistration {
+        ServiceRegistration(ServiceRegistrationKind::LanAdvertise(self))
     }
 }
 
@@ -406,6 +414,11 @@ impl ServicesManagerBuilder {
                 ServiceRegistrationKind::CreditFill(config) => {
                     manager
                         .register(Arc::new(CreditFillService::new(manager.clone(), config)))
+                        .await;
+                }
+                ServiceRegistrationKind::LanAdvertise(config) => {
+                    manager
+                        .register(Arc::new(LanAdvertiseService::new(manager.clone(), config)))
                         .await;
                 }
                 ServiceRegistrationKind::AutoDownload(config) => {

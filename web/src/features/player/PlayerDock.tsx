@@ -8,6 +8,7 @@ import { useEffect, useRef, useState, type FocusEvent as ReactFocusEvent, type K
 import { Artwork } from "@/components/ui";
 import { useIsDesktop } from "@/hooks/useMediaQuery";
 import { useIsTvMode } from "@/lib/input-mode";
+import { holdScreenOn } from "@/lib/tv-app";
 import { cn } from "@/lib/utils";
 
 import { PlayPauseButton, SeekBar, SkipButton, VolumeControl } from "./controls";
@@ -19,6 +20,7 @@ import { audioCommands, canSkipAudio, skipAudio } from "./usePlayer";
 import { currentAudioItem, playerStore, usePlayerState } from "./store";
 import { useMediaSource } from "./useMediaSource";
 import { useProgressSync } from "./useProgressSync";
+import { useTvVolume } from "./useTvVolume";
 
 /**
  * Persistent audio player. Holds the single <audio> element for the whole app, mirrors its
@@ -28,6 +30,7 @@ export function PlayerDock() {
   const state = usePlayerState();
   const item = currentAudioItem(state);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const tvVolume = useTvVolume() !== null;
   const navigate = useNavigate();
   const activationKey = state.audioActivation;
   const progress = useProgressSync(item, activationKey);
@@ -151,10 +154,11 @@ export function PlayerDock() {
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    audio.volume = transport.volume;
+    // In the TV app the TV's own volume is the level (VolumeControl); the element stays at full.
+    audio.volume = tvVolume ? 1 : transport.volume;
     audio.muted = transport.muted;
     audio.playbackRate = transport.rate;
-  }, [transport.volume, transport.muted, transport.rate]);
+  }, [transport.volume, transport.muted, transport.rate, tvVolume]);
 
   // Media Session integration for lock screens, headsets and TV remotes.
   useEffect(() => {
@@ -188,6 +192,14 @@ export function PlayerDock() {
   useEffect(() => {
     if ("mediaSession" in navigator) navigator.mediaSession.playbackState = transport.playing ? "playing" : "paused";
   }, [transport.playing]);
+
+  // The TV app keeps the screen on while something plays.
+  const screenToken = useRef(Symbol("audio"));
+  useEffect(() => {
+    const token = screenToken.current;
+    holdScreenOn(token, Boolean(item) && transport.playing);
+    return () => holdScreenOn(token, false);
+  }, [item, transport.playing]);
 
   const desktop = useIsDesktop();
   const bodyHeight = useShellBodyHeight(desktop && state.sheetOpen);

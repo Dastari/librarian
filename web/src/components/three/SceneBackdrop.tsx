@@ -1,5 +1,6 @@
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy } from "react";
 
+import { useAnimatedBackdrop } from "@/lib/animated-backdrop";
 import { cn } from "@/lib/utils";
 
 const AmbientScene = lazy(() => import("./AmbientScene"));
@@ -12,18 +13,12 @@ interface SceneBackdropProps {
 }
 
 /**
- * Wraps the 3D scene with a gradient that always paints first, and skips WebGL entirely for
- * reduced-motion users, very small screens and devices that report low memory.
+ * Wraps the 3D scene with a gradient that always paints first. WebGL (and its chunk) is skipped
+ * entirely in the TV app, on 2 GB devices, for reduced motion, on small screens and when this
+ * device turned animated backgrounds off (`useAnimatedBackdrop`).
  */
 export function SceneBackdrop({ className, density, images }: SceneBackdropProps) {
-  const [enabled, setEnabled] = useState(false);
-
-  useEffect(() => {
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const small = window.innerWidth < 640;
-    const lowMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory !== undefined && (navigator as Navigator & { deviceMemory?: number }).deviceMemory! < 2;
-    setEnabled(!reduced && !small && !lowMemory);
-  }, []);
+  const enabled = useAnimatedBackdrop();
 
   return (
     <div className={cn("pointer-events-none absolute inset-0 -z-10 overflow-hidden", className)} aria-hidden>

@@ -9,6 +9,7 @@ import { useSettingsConnection } from "@/features/settings/useSettingsConnection
 import { EntityAudioStreamListDocument, EntityMediaChapterListDocument, EntitySubtitleListDocument, MediaFilePreviewsDocument } from "@/graphql/generated/graphql";
 import { formatClock } from "@/lib/format";
 import { useLiveQuery } from "@/lib/graphql/live/hooks";
+import { bindTvVolume, holdScreenOn } from "@/lib/tv-app";
 import { useInputMode } from "@/lib/input-mode";
 import { usePref } from "@/lib/prefs";
 import { cn } from "@/lib/utils";
@@ -25,6 +26,7 @@ import { formatScrubDelta } from "./scrub";
 import { usePictureFill } from "./usePictureFill";
 import { useScrubber } from "./useScrubber";
 import { PICTURE_MODE_PREF, storyboardFrame, storyboardProps, type PictureMode } from "./videoPreviews";
+import { useTvVolume } from "./useTvVolume";
 import { readMiniRect, saveMiniRect, saveVideoSession } from "./videoSession";
 
 const VIEW_MODES: readonly MediaViewMode[] = ["inline", "windowed", "fullscreen", "pip"];
@@ -315,8 +317,11 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
       if (event.defaultPrevented || target?.closest('[role="menu"], [role="dialog"], [role="listbox"], input, textarea')) return;
       const player = controller.current;
       // Media keys are handled once, for the whole app (`mediaKeys.ts`).
-      if (isBackKey(event) && !document.fullscreenElement) onBack();
-      else if (document.activeElement === document.body && player) {
+      if (isBackKey(event) && !document.fullscreenElement) {
+        // Taken here, so the TV app does not also step back through the WebView's history.
+        event.preventDefault();
+        onBack();
+      } else if (document.activeElement === document.body && player) {
         if (event.key === " " || event.key === "k") { event.preventDefault(); player.toggle(); }
         else if (event.key === "ArrowLeft") { event.preventDefault(); player.seekBy(-5); }
         else if (event.key === "ArrowRight") { event.preventDefault(); player.seekBy(5); }
@@ -327,6 +332,19 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onBack, wake]);
+
+  // In the TV app the player's volume and mute are the TV's own (Q137); the element stays at full.
+  const tvVolume = useTvVolume();
+  const tvVolumeBound = tvVolume !== null;
+  useEffect(() => (video && tvVolumeBound ? bindTvVolume(video) : undefined), [video, tvVolumeBound]);
+
+  // The TV app keeps the screen on while the picture plays.
+  const screenToken = useRef(Symbol("video"));
+  useEffect(() => {
+    const token = screenToken.current;
+    holdScreenOn(token, Boolean(video) && !paused);
+    return () => holdScreenOn(token, false);
+  }, [video, paused]);
 
   // The receiver starts from where this player is when the picker opens.
   useEffect(() => { if (cast.pickerOpen) setCastPosition(controller.current?.getTime().currentTime); }, [cast.pickerOpen]);
@@ -384,7 +402,7 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
 
   return (
     // Full screen, the picture and its controls keep clear of a landscape iPhone's notch.
-    <div className={cn("relative h-full w-full overflow-clip bg-black text-white", !mini && "ps-(--safe-inline-start) pe-(--safe-inline-end)")} onPointerMove={wake} onPointerDown={wake} onKeyDownCapture={remoteKeys}>
+    <div className={cn("relative h-full w-full overflow-clip bg-black text-white", !mini && "ps-(--safe-inline-start) pe-(--safe-inline-end)")} data-tv-volume={tvVolume ? (tvVolume.fixed ? "fixed" : "tv") : undefined} onPointerMove={wake} onPointerDown={wake} onKeyDownCapture={remoteKeys}>
       <GlassVideoPlayer
         fill
         className="h-full"
@@ -418,6 +436,7 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
                 </Menu.Popup>
               </Menu.Root>
             ) : null}
+            {tvVolume?.fixed ? <span className="tv-volume-note text-label-sm text-white/70">Volume is controlled by your TV or sound system</span> : null}
             {onNext ? <Button variant="ghost" size="sm" shape="circle" icon={<IconSkipForward />} aria-label={nextLabel ?? "Next episode"} tooltip={nextLabel ?? "Next episode"} onClick={onNext} /> : null}
             <Menu.Root>
               <Menu.Trigger render={<Button variant="ghost" size="sm" shape="circle" icon={<IconCaptions />} aria-label="Subtitle options" tooltip="Subtitle options" />} />

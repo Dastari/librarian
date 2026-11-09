@@ -209,8 +209,10 @@ describe("blur", () => {
     expect(root).toHaveAttribute("data-glass-rendering", "none");
   });
 
-  it("offers only colour mode and blur", () => {
+  it("offers only colour mode, blur and animated backgrounds (display size is the TV app's)", () => {
     render(<ThemeProvider><ThemePicker /></ThemeProvider>);
+    expect(screen.getByRole("switch", { name: "Animated backgrounds" })).toBeChecked();
+    expect(screen.queryByText("Display size")).toBeNull();
     expect(screen.getByRole("button", { name: "Dark" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Light" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.queryByRole("button", { name: "System" })).toBeNull();

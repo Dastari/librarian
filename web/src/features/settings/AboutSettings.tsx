@@ -5,6 +5,7 @@ import { SettingRow } from "glass-ux/setting-row";
 import { Button } from "@/components/ui";
 import { useInputMode } from "@/lib/input-mode";
 import { applyUpdate, checkForUpdate, usePwa } from "@/lib/pwa";
+import { tvAppBridge, tvAppVersion } from "@/lib/tv-app";
 
 import { SettingsPage, SettingsSection } from "./SettingsSection";
 
@@ -18,6 +19,8 @@ export function AboutSettings() {
   const { offlineReady, updateAvailable } = usePwa();
   const [checking, setChecking] = useState(false);
   const [installed, setInstalled] = useState(false);
+  const tvApp = tvAppVersion();
+  const bridge = tvAppBridge();
   useEffect(() => {
     setInstalled(window.matchMedia("(display-mode: standalone)").matches || ("standalone" in navigator && Boolean((navigator as Navigator & { standalone?: boolean }).standalone)));
   }, []);
@@ -45,7 +48,7 @@ export function AboutSettings() {
           { label: "Build", value: __BUILD_ID__, mono: true },
           { label: "Built", value: __BUILD_TIME__ },
           { label: "Updates", value: update },
-          { label: "Installed as app", value: installed ? "Yes" : "No, open in a browser" },
+          tvApp ? { label: "Installed as app", value: `Android TV app ${tvApp}` } : { label: "Installed as app", value: installed ? "Yes" : "No, open in a browser" },
           { label: "Offline ready", value: offlineReady ? "Yes" : "Caches after first load" },
           { label: "Input mode", value: mode },
           { label: "Backend", value: `${window.location.origin}/graphql`, mono: true },
@@ -62,6 +65,22 @@ export function AboutSettings() {
           { label: "M", value: "Mute" },
         ].map((fact) => <Fact key={fact.label} {...fact} />)}
       </SettingsSection>
+      {tvApp ? (
+        <SettingsSection title="TV app" width="readable">
+          <SettingRow
+            label="Server"
+            description={`${bridge?.serverUrl() ?? window.location.origin}. Holding Back or Menu on the remote opens this too.`}
+            control={<Button size="sm" variant="secondary" isDisabled={!bridge} onPress={() => bridge?.openServerSettings()}>Change server</Button>}
+          />
+          {[
+            // Which canvas took effect: 1920 × 1080 at 1× when the shell's density works (Q137).
+            { label: "Screen", value: `${window.innerWidth} × ${window.innerHeight} CSS px at ${window.devicePixelRatio}×` },
+            { label: "Back", value: "Close, then go back; leaves the app from Home" },
+            { label: "Menu or Info", value: "Actions for the focused item" },
+            { label: "Play / pause, rewind, fast-forward", value: "Control playback" },
+          ].map((fact) => <Fact key={fact.label} {...fact} />)}
+        </SettingsSection>
+      ) : null}
     </SettingsPage>
   );
 }

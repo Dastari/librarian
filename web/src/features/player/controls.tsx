@@ -5,11 +5,13 @@ import { Slider } from "glass-ux/slider";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 
 import { formatClock } from "@/lib/format";
+import { setTvMuted, setTvVolume } from "@/lib/tv-app";
 import { clamp, cn } from "@/lib/utils";
 
 import { audioScrub } from "./mediaKeys";
 import { formatScrubDelta } from "./scrub";
 import { useScrubber } from "./useScrubber";
+import { useTvVolume } from "./useTvVolume";
 
 const SNAP_PIXELS = 6;
 
@@ -166,24 +168,37 @@ interface VolumeControlProps {
   className?: string;
 }
 
-export function VolumeControl({ volume, muted, onVolume, onMuted, className }: VolumeControlProps) {
+/**
+ * Mute and a volume slider. In the TV app they are the TV's own volume, live from the remote too
+ * (Q137): the player's `volume` stays at full (PlayerDock), and `onMuted` is used only when the TV
+ * will not mute. A fixed TV volume shows a note instead of the slider.
+ */
+export function VolumeControl({ volume: ownVolume, muted: ownMuted, onVolume, onMuted, className }: VolumeControlProps) {
+  const tv = useTvVolume();
+  const volume = tv ? tv.level : ownVolume;
+  const muted = tv ? tv.muted || ownMuted : ownMuted;
+  const changeVolume = tv ? (level: number) => setTvVolume(level) : onVolume;
+  const changeMuted = tv ? (next: boolean) => {
+    // The TV muted: make sure the element is not muted as well. Otherwise mute the element.
+    if (setTvMuted(next)) { if (ownMuted) onMuted(false); } else onMuted(next);
+  } : onMuted;
   const effective = muted ? 0 : volume;
   const Icon = effective === 0 ? IconVolumeOff : effective < 0.5 ? IconVolume2 : IconVolume;
   return (
     <div className={cn("flex min-w-0 items-center gap-1", className)}>
-      <Button type="button" variant="ghost" shape="circle" aria-label={muted ? "Unmute" : "Mute"} onClick={() => onMuted(!muted)} icon={<Icon />} data-focusable />
-      <Slider
+      <Button type="button" variant="ghost" shape="circle" aria-label={muted ? "Unmute" : "Mute"} onClick={() => changeMuted(!muted)} icon={<Icon />} data-focusable />
+      {tv?.fixed ? <span className="tv-volume-note text-label-sm text-muted">Volume is controlled by your TV or sound system</span> : <Slider
         min={0}
         max={1}
-        step={0.02}
+        step={tv ? 1 / tv.max : 0.02}
         largeStep={0.2}
         value={effective}
         aria-label="Volume"
         size="sm"
         format={(value) => `${Math.round(value * 100)}%`}
-        onValueChange={(value) => { if (typeof value === "number") onVolume(value); }}
+        onValueChange={(value) => { if (typeof value === "number") changeVolume(value); }}
         className="w-24 shrink-0"
-      />
+      />}
     </div>
   );
 }

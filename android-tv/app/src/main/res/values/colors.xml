@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cinema, dark (web/src/assets/brand/pwa-colors.json). -->
+<resources>
+    <color name="brand">#F6AD3B</color>
+    <color name="canvas">#0E0E19</color>
+    <color name="surface">#1A1A28</color>
+    <color name="surface_focused">#2A2A3C</color>
+    <color name="foreground">#F3F3F8</color>
+    <color name="muted">#B4B4C2</color>
+    <color name="danger">#FF8A80</color>
+    <color name="on_brand">#1A1206</color>
+</resources>

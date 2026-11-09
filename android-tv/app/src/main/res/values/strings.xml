@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Librarian</string>
+    <string name="server_title">Connect to your Librarian server</string>
+    <string name="server_searching">Looking for Librarian servers on your network…</string>
+    <string name="server_found_none">No server found on this network yet. Type its address below.</string>
+    <string name="server_found_some">Servers on your network</string>
+    <string name="server_discovery_failed">Network discovery is not available here. Type the address below.</string>
+    <string name="server_address_label">Or type the address</string>
+    <string name="server_address_hint">192.168.1.20:3001 or https://media.example.com</string>
+    <string name="server_connect">Connect</string>
+    <string name="server_checking">Checking %1$s…</string>
+    <string name="server_unreachable">Could not reach %1$s. Check the address and that the server is running.</string>
+    <string name="server_use_anyway">Use it anyway</string>
+    <string name="server_invalid">That does not look like a server address.</string>
+    <string name="server_current">Now using %1$s</string>
+    <string name="server_help">Hold Back (or Menu) at any time to come back here.</string>
+    <string name="load_failed_title">Reconnecting…</string>
+    <string name="load_failed_body">Reconnecting to %1$s. Trying again in %2$s s.</string>
+    <string name="retry">Try again</string>
+    <string name="change_server">Change server</string>
+</resources>

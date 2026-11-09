@@ -1,0 +1,39 @@
+/*
+ * The Android TV app (`data-tv-app` on <html>, set by lib/tv-app.ts). Budget TVs have a weak GPU
+ * and a few hundred MB for everything, and most of a WebView's memory is composited layers
+ * (docs/design.md Q139). Blur and the animated backgrounds are already off there; these rules drop
+ * the remaining full-screen effects that each cost an offscreen texture or a repaint per frame.
+ * They change no layout.
+ */
+
+/* The page backdrop: no blurred wash of the picture, no masks (each is a full-screen offscreen
+ * pass), and the picture fades in without the scale-down. The scrim still fades it into the canvas. */
+:root[data-tv-app] .media-backdrop-wash { display: none; }
+:root[data-tv-app] .media-backdrop,
+:root[data-tv-app] .media-backdrop-tint { mask-image: none; }
+:root[data-tv-app] .media-backdrop-image {
+  transform: none;
+  transition: opacity calc(var(--duration-slow) * var(--motion-scale)) var(--ease-glide);
+}
+
+/* Focused tiles still grow and carry the ring, but without a large soft shadow repainted on every move. */
+:root[data-tv-app] .poster-card:is(:focus-within, :hover) .poster-art,
+:root[data-tv-app] .tv-lift:focus-within > .tv-lift-target,
+:root[data-tv-app] .tv-lift:is(:focus-visible, [data-focus-visible="true"]) {
+  box-shadow: none;
+}
+
+/* Rows appear at once instead of rising in one after another. */
+:root[data-tv-app] .media-rise { animation: none; }
+
+/* The guide's sticky headings: an opaque fill instead of frosting what scrolls under them. */
+:root[data-tv-app] :is(.guide-grid-corner, .guide-grid-day, .guide-grid-service) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background-color: var(--canvas);
+}
+
+/* The TV's volume is fixed (or set by a sound system): the player keeps its mute button and shows a
+ * note in place of a slider that could not change anything (VideoPlayer, Q137). */
+[data-tv-volume="fixed"] .fa-media-volume-slider { display: none; }
+.tv-volume-note { white-space: nowrap; margin-inline-end: 0.5rem; }
