@@ -4,11 +4,13 @@ pub mod common;
 
 // Base entities (no relations to other entities)
 pub mod audio_stream;
+pub mod credit;
 pub mod media_chapter;
 pub mod media_file;
 pub mod movie_cast_credit;
 pub mod person;
 pub mod subtitle;
+pub mod title_detail;
 pub mod torrent_file;
 pub mod video_stream;
 
@@ -93,6 +95,7 @@ pub use cast_setting::*;
 pub use chapter::*;
 pub use collection::*;
 pub use common::*;
+pub use credit::*;
 pub use episode::*;
 pub use identification::*;
 pub use invite_token::*;
@@ -127,6 +130,7 @@ pub use source::*;
 pub use source_priority_rule::*;
 pub use storage_object::*;
 pub use subtitle::*;
+pub use title_detail::*;
 pub use torrent::*;
 pub use torrent_contents::*;
 pub use torrent_file::*;

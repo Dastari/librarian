@@ -238,6 +238,12 @@ fn audible_search_results(mut products: Vec<AudibleProduct>) -> Vec<AudiobookSea
 fn audible_details(product: AudibleProduct) -> AudiobookDetails {
     let cover_url = audible_cover(&product);
     let author_name = first_contributor(&product.authors);
+    let authors = product
+        .authors
+        .iter()
+        .flatten()
+        .filter_map(|person| person.name.clone())
+        .collect();
     let narrators = product
         .narrators
         .iter()
@@ -281,6 +287,7 @@ fn audible_details(product: AudibleProduct) -> AudiobookDetails {
         chapters: Vec::new(),
         series_name,
         series_position,
+        authors,
     }
 }
 
@@ -486,6 +493,10 @@ pub struct MovieDetails {
     pub collection_name: Option<String>,
     pub collection_poster_url: Option<String>,
     pub release_date: Option<String>,
+    /// Every credit and fact of the TMDB document (Q129–Q130). `None` in details cached before
+    /// they were kept; those titles are filled by the credits job.
+    #[serde(default)]
+    pub extras: Option<super::credits::ProviderTitle>,
 }
 
 /// Cast member details from provider credits.
@@ -604,6 +615,9 @@ pub struct AudiobookDetails {
     pub series_name: Option<String>,
     #[serde(default)]
     pub series_position: Option<String>,
+    /// Every author the provider lists (`authorName` keeps the first).
+    #[serde(default)]
+    pub authors: Vec<String>,
 }
 
 /// One chapter of an audiobook, where the provider publishes them.
@@ -1475,7 +1489,7 @@ impl MetadataService {
     ///
     /// This ensures that if the user updates the API key via settings,
     /// the next request will use the new key without requiring a server restart.
-    async fn get_tmdb_client(&self) -> Result<TmdbClient> {
+    pub(crate) async fn get_tmdb_client(&self) -> Result<TmdbClient> {
         let settings = MetadataSettings::load(&self.db).await?;
         let Some(key) = settings.tmdb_api_key else {
             anyhow::bail!("TMDB API key not configured. Add tmdb_api_key to settings.")
@@ -2357,11 +2371,23 @@ impl MetadataService {
 
         let tmdb = self.get_tmdb_client().await?;
 
-        // Fetch movie details
-        let movie = tmdb.get_movie(tmdb_id as i32).await?;
+        // One document with everything TMDB has on the film (Q130): the details, credits,
+        // certifications, keywords, alternative titles, videos and external ids.
+        let document = tmdb
+            .get_value(
+                &format!("/movie/{tmdb_id}"),
+                &[("append_to_response", MOVIE_APPEND)],
+            )
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Movie not found on TMDB"))?;
+        let movie: super::tmdb::TmdbMovie = serde_json::from_value(document.clone())
+            .map_err(|error| anyhow::anyhow!("Failed to parse TMDB movie {tmdb_id}: {error}"))?;
+        let extras = Some(super::credits::parse_tmdb_movie(&document));
 
-        // Fetch credits for director and cast
-        let credits = tmdb.get_credits(tmdb_id as i32).await.ok();
+        // Credits for director and cast
+        let credits: Option<super::tmdb::TmdbCredits> = document
+            .get("credits")
+            .and_then(|credits| serde_json::from_value(credits.clone()).ok());
         let director = credits.as_ref().and_then(|c| c.director());
         let cast_names = credits.as_ref().map(|c| c.top_cast(10)).unwrap_or_default();
         let cast_members = credits
@@ -2382,8 +2408,10 @@ impl MetadataService {
             })
             .unwrap_or_default();
 
-        // Fetch release dates for certification
-        let release_dates = tmdb.get_release_dates(tmdb_id as i32).await.ok();
+        // Release dates for certification
+        let release_dates: Option<super::tmdb::TmdbReleaseDates> = document
+            .get("release_dates")
+            .and_then(|dates| serde_json::from_value(dates.clone()).ok());
         let certification = release_dates.as_ref().and_then(|r| r.us_certification());
 
         // Build collection info if available
@@ -2424,6 +2452,7 @@ impl MetadataService {
             collection_name,
             collection_poster_url,
             release_date: movie.release_date.clone(),
+            extras,
         };
 
         if let Err(error) = self
@@ -2786,6 +2815,7 @@ impl MetadataService {
             None
         };
 
+        let authors: Vec<String> = author_name.iter().cloned().collect();
         let details = AudiobookDetails {
             provider: MetadataProvider::OpenLibrary,
             provider_id: openlibrary_id.to_string(),
@@ -2803,6 +2833,7 @@ impl MetadataService {
             isbn: None,
             published_date: work.first_publish_date,
             cover_url,
+            authors,
             narrators: Vec::new(),
             total_duration_secs: None,
             chapters: Vec::new(),
@@ -2976,8 +3007,7 @@ impl MetadataService {
                 "Failed to ensure collection entity after movie creation"
             );
         }
-        let _ = self
-            .sync_movie_cast_credits(&auth_user, &movie.id, &movie_details.cast_members)
+        self.store_movie_extras(&movie, movie_details.extras.as_ref())
             .await;
 
         // Cache artwork, then emit a lightweight entity update so library routes
@@ -3447,6 +3477,8 @@ impl MetadataService {
         .await?;
         self.sync_show_seasons_best_effort(&auth_user, &show.id, options.provider_id)
             .await;
+        // A show's credits take a request per season; the credits job reads them (Q132).
+        request_credit_fill();
 
         // Cache artwork, then emit a lightweight entity update so library routes
         // subscribed to change events refresh when artwork becomes available.
@@ -4123,6 +4155,11 @@ impl MetadataService {
             Some(listing) => Ok(listing),
             None => musicbrainz.get_release_group_tracks(release_group_id).await,
         };
+        let listing_release = listing
+            .as_ref()
+            .ok()
+            .and_then(|tracks| tracks.first())
+            .and_then(|track| track.release_id.clone());
         match listing {
             Ok(tracks) if !tracks.is_empty() => {
                 let created = self
@@ -4159,6 +4196,13 @@ impl MetadataService {
                 artist_name,
                 error
             ),
+        }
+
+        // Credits of the release the listing came from, already read with it (Q130).
+        if let Some(release_id) = listing_release
+            && let Some(credits) = musicbrainz.cached_release_credits(&release_id)
+        {
+            self.store_album_credits(&album, &credits).await;
         }
 
         // Cache artwork, then emit a lightweight entity update so library/media
@@ -4388,6 +4432,8 @@ impl MetadataService {
                 warn!(audiobook_id = %audiobook.id, chapter = index + 1, error = %error, "Could not create audiobook chapter");
             }
         }
+        self.store_audiobook_credits(&audiobook, &details.authors)
+            .await;
         if details.chapters.is_empty() {
             warn!(
                 audiobook_id = %audiobook.id,
@@ -4518,8 +4564,7 @@ impl MetadataService {
                 "Failed to ensure collection entity after movie refresh"
             );
         }
-        let _ = self
-            .sync_movie_cast_credits(&auth_user, &movie.id, &details.cast_members)
+        self.store_movie_extras(&movie, details.extras.as_ref())
             .await;
 
         // Refresh cached artwork, then emit a lightweight entity update so
@@ -4535,203 +4580,6 @@ impl MetadataService {
         }
 
         Ok(movie)
-    }
-
-    async fn sync_movie_cast_credits(
-        &self,
-        auth_user: &AuthUser,
-        movie_id: &str,
-        cast_members: &[MovieCastMemberDetails],
-    ) -> Result<()> {
-        if cast_members.is_empty() {
-            return Ok(());
-        }
-
-        let mut person_ids_for_movie: HashSet<String> = HashSet::new();
-
-        for member in cast_members {
-            let person_data = self
-                .execute_query(
-                    auth_user,
-                    r#"query PersonByTmdbId($where: PersonWhereInput, $page: PageInput) {
-                        People: people(where: $where, page: $page) {
-                            Edges: edges { Node: node { Id: id } }
-                        }
-                    }"#,
-                    serde_json::json!({
-                        "where": { "tmdbPersonId": { "eq": member.tmdb_person_id } },
-                        "page": { "limit": 1, "offset": 0 }
-                    }),
-                )
-                .await?;
-
-            let existing_person_id = person_data
-                .get("People")
-                .and_then(|v| v.get("Edges"))
-                .and_then(|v| v.as_array())
-                .and_then(|edges| edges.first())
-                .and_then(|edge| edge.get("Node"))
-                .and_then(|node| node.get("Id"))
-                .and_then(|id| id.as_str())
-                .map(|s| s.to_string());
-
-            let person_id = if let Some(existing_id) = existing_person_id {
-                let _ = self
-                    .execute_mutation(
-                        auth_user,
-                        r#"mutation UpdatePersonFromMovieCast($id: String!, $input: UpdatePersonInput!) {
-                            UpdatePerson: updatePerson(id: $id, input: $input) { Success: success Error: error }
-                        }"#,
-                        serde_json::json!({
-                            "id": existing_id,
-                            "input": {
-                                "name": member.name,
-                                "profileUrl": member.profile_url
-                            }
-                        }),
-                    )
-                    .await?;
-                existing_id
-            } else {
-                let created = self
-                    .execute_mutation(
-                        auth_user,
-                        r#"mutation CreatePersonFromMovieCast($input: CreatePersonInput!) {
-                            CreatePerson: createPerson(input: $input) { Success: success Error: error Person: person { Id: id } }
-                        }"#,
-                        serde_json::json!({
-                            "input": {
-                                "id": Uuid::new_v4().to_string(),
-                                "tmdbPersonId": member.tmdb_person_id,
-                                "name": member.name,
-                                "profileUrl": member.profile_url
-                            }
-                        }),
-                    )
-                    .await?;
-
-                created
-                    .get("CreatePerson")
-                    .and_then(|v| v.get("Person"))
-                    .and_then(|v| v.get("Id"))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("Person not found after creation"))?
-                    .to_string()
-            };
-
-            person_ids_for_movie.insert(person_id.clone());
-
-            let existing_credit_data = self
-                .execute_query(
-                    auth_user,
-                    r#"query MovieCastCreditByMovieAndPerson($where: MovieCastCreditWhereInput, $page: PageInput) {
-                        MovieCastCredits: movieCastCredits(where: $where, page: $page) {
-                            Edges: edges { Node: node { Id: id } }
-                        }
-                    }"#,
-                    serde_json::json!({
-                        "where": {
-                            "movieId": { "eq": movie_id },
-                            "personId": { "eq": person_id }
-                        },
-                        "page": { "limit": 1, "offset": 0 }
-                    }),
-                )
-                .await?;
-
-            let existing_credit_id = existing_credit_data
-                .get("MovieCastCredits")
-                .and_then(|v| v.get("Edges"))
-                .and_then(|v| v.as_array())
-                .and_then(|edges| edges.first())
-                .and_then(|edge| edge.get("Node"))
-                .and_then(|node| node.get("Id"))
-                .and_then(|id| id.as_str())
-                .map(|s| s.to_string());
-
-            if let Some(credit_id) = existing_credit_id {
-                let _ = self
-                    .execute_mutation(
-                        auth_user,
-                        r#"mutation UpdateMovieCastCreditFromMetadata($id: String!, $input: UpdateMovieCastCreditInput!) {
-                            UpdateMovieCastCredit: updateMovieCastCredit(id: $id, input: $input) { Success: success Error: error }
-                        }"#,
-                        serde_json::json!({
-                            "id": credit_id,
-                            "input": {
-                                "characterName": member.character_name,
-                                "castOrder": member.cast_order
-                            }
-                        }),
-                    )
-                    .await?;
-            } else {
-                let _ = self
-                    .execute_mutation(
-                        auth_user,
-                        r#"mutation CreateMovieCastCreditFromMetadata($input: CreateMovieCastCreditInput!) {
-                            CreateMovieCastCredit: createMovieCastCredit(input: $input) { Success: success Error: error }
-                        }"#,
-                        serde_json::json!({
-                            "input": {
-                                "id": Uuid::new_v4().to_string(),
-                                "movieId": movie_id,
-                                "personId": person_id,
-                                "characterName": member.character_name,
-                                "castOrder": member.cast_order
-                            }
-                        }),
-                    )
-                    .await?;
-            }
-        }
-
-        let existing_credits = self
-            .execute_query(
-                auth_user,
-                r#"query ExistingMovieCastCredits($where: MovieCastCreditWhereInput, $page: PageInput) {
-                    MovieCastCredits: movieCastCredits(where: $where, page: $page) {
-                        Edges: edges { Node: node { Id: id PersonId: personId } }
-                    }
-                }"#,
-                serde_json::json!({
-                    "where": { "movieId": { "eq": movie_id } },
-                    "page": { "limit": 200, "offset": 0 }
-                }),
-            )
-            .await?;
-
-        let existing_edges = existing_credits
-            .get("MovieCastCredits")
-            .and_then(|v| v.get("Edges"))
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-
-        for edge in existing_edges {
-            let node = edge.get("Node").unwrap_or(&serde_json::Value::Null);
-            let credit_id = node.get("Id").and_then(|v| v.as_str());
-            let person_id = node.get("PersonId").and_then(|v| v.as_str());
-            let (Some(credit_id), Some(person_id)) = (credit_id, person_id) else {
-                continue;
-            };
-
-            if person_ids_for_movie.contains(person_id) {
-                continue;
-            }
-
-            let _ = self
-                .execute_mutation(
-                    auth_user,
-                    r#"mutation DeleteStaleMovieCastCredit($id: String!) {
-                        DeleteMovieCastCredit: deleteMovieCastCredit(id: $id) { Success: success Error: error }
-                    }"#,
-                    serde_json::json!({ "id": credit_id }),
-                )
-                .await?;
-        }
-
-        Ok(())
     }
 
     async fn cache_collection_poster_artwork(
@@ -5055,6 +4903,18 @@ impl MetadataService {
         .await?;
         self.sync_show_seasons_best_effort(&auth_user, &show.id, tvmaze_id as u32)
             .await;
+        // Cast and crew of the show, its seasons and episodes, and its details (Q130).
+        if self.has_tmdb().await
+            && let Err(error) = self.sync_show_credits(&show).await
+        {
+            warn!(
+                show_id = %show.id,
+                show = %show.name,
+                error = %error,
+                "Could not refresh credits of show '{}': {error}",
+                show.name
+            );
+        }
 
         // Refresh cached artwork, then emit a lightweight entity update so
         // subscribers refresh once cached artwork is ready.
@@ -5091,6 +4951,13 @@ pub struct CreateMovieFromMetadataOptions {
     pub user_id: Uuid,
     pub monitored: bool,
 }
+
+/// Credits, people and title details for every kind of title (Q129–Q131).
+#[path = "title_credits.rs"]
+mod title_credits;
+pub use title_credits::{
+    CreditFillBudget, CreditFillReport, MOVIE_APPEND, credit_fill_requested, request_credit_fill,
+};
 
 /// Create a sharable metadata service
 pub fn create_metadata_service(

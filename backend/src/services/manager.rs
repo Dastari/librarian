@@ -13,6 +13,7 @@
 //!
 //! See `docs/design.md` (Background Services section) for how to implement and register services.
 
+use crate::jobs::credit_fill::{CreditFillConfig, CreditFillService};
 use crate::jobs::schedule_sync::{ScheduleSyncConfig, ScheduleSyncService};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -160,6 +161,7 @@ enum ServiceRegistrationKind {
     LibraryScan(LibraryScanServiceConfig),
     AutoDownload(AutoDownloadServiceConfig),
     ScheduleSync(ScheduleSyncConfig),
+    CreditFill(CreditFillConfig),
     Transcode(TranscodeServiceConfig),
     Service(Arc<dyn Service>),
 }
@@ -244,6 +246,12 @@ impl IntoServiceRegistration for LibraryScanServiceConfig {
 impl IntoServiceRegistration for ScheduleSyncConfig {
     fn into_registration(self) -> ServiceRegistration {
         ServiceRegistration(ServiceRegistrationKind::ScheduleSync(self))
+    }
+}
+
+impl IntoServiceRegistration for CreditFillConfig {
+    fn into_registration(self) -> ServiceRegistration {
+        ServiceRegistration(ServiceRegistrationKind::CreditFill(self))
     }
 }
 
@@ -393,6 +401,11 @@ impl ServicesManagerBuilder {
                 ServiceRegistrationKind::ScheduleSync(config) => {
                     manager
                         .register(Arc::new(ScheduleSyncService::new(manager.clone(), config)))
+                        .await;
+                }
+                ServiceRegistrationKind::CreditFill(config) => {
+                    manager
+                        .register(Arc::new(CreditFillService::new(manager.clone(), config)))
                         .await;
                 }
                 ServiceRegistrationKind::AutoDownload(config) => {

@@ -1,0 +1,33 @@
+{
+  "_id": "5256c89f19c2956ff6046d47",
+  "air_date": "2011-04-17",
+  "id": 3624,
+  "name": "Season 1",
+  "season_number": 1,
+  "episodes": [
+    {
+      "air_date": "2011-04-17", "episode_number": 1, "id": 63056, "name": "Winter Is Coming", "season_number": 1, "show_id": 1399,
+      "crew": [
+        {"department": "Directing", "job": "Director", "credit_id": "5256c8c019c2956ff6048371", "adult": false, "gender": 2, "id": 44797, "known_for_department": "Directing", "name": "Tim Van Patten", "original_name": "Tim Van Patten", "popularity": 2.1, "profile_path": "/MzSOFrd99HRdr6pkSRSctk3kBR.jpg"},
+        {"department": "Writing", "job": "Writer", "credit_id": "5256c8c219c2956ff604852a", "adult": false, "gender": 2, "id": 9813, "known_for_department": "Writing", "name": "David Benioff", "original_name": "David Benioff", "popularity": 2.3, "profile_path": "/bOlW5Ik89oJLTCoKvYqyPZtgaOl.jpg"}
+      ],
+      "guest_stars": [
+        {"character": "Septa Mordane", "credit_id": "5256c8b219c2956ff6047a6e", "order": 500, "adult": false, "gender": 1, "id": 1233781, "known_for_department": "Acting", "name": "Susan Brown", "original_name": "Susan Brown", "popularity": 1.1, "profile_path": null},
+        {"character": "Ser Waymar Royce", "credit_id": "5256c8b219c2956ff6047a8e", "order": 502, "adult": false, "gender": 2, "id": 1048692, "known_for_department": "Acting", "name": "Rob Ostlere", "original_name": "Rob Ostlere", "popularity": 0.9, "profile_path": "/a0BCTUOl5ro3mDz0M5vLBc2kGnu.jpg"}
+      ]
+    },
+    {
+      "air_date": "2011-04-24", "episode_number": 2, "id": 63057, "name": "The Kingsroad", "season_number": 1, "show_id": 1399,
+      "crew": [{"department": "Directing", "job": "Director", "credit_id": "5256c8c019c2956ff6048372", "adult": false, "gender": 2, "id": 44797, "known_for_department": "Directing", "name": "Tim Van Patten", "original_name": "Tim Van Patten", "popularity": 2.1, "profile_path": "/MzSOFrd99HRdr6pkSRSctk3kBR.jpg"}],
+      "guest_stars": []
+    }
+  ],
+  "aggregate_credits": {
+    "cast": [
+      {"adult": false, "gender": 2, "id": 22970, "known_for_department": "Acting", "name": "Peter Dinklage", "original_name": "Peter Dinklage", "popularity": 13.8, "profile_path": "/9CAd7wr8QZyIN0E7nm8v1B6WkGn.jpg", "roles": [{"credit_id": "5256c8b219c2956ff6047cd8", "character": "Tyrion Lannister", "episode_count": 10}], "total_episode_count": 10, "order": 0}
+    ],
+    "crew": [
+      {"adult": false, "gender": 2, "id": 44797, "known_for_department": "Directing", "name": "Tim Van Patten", "original_name": "Tim Van Patten", "popularity": 2.1, "profile_path": "/MzSOFrd99HRdr6pkSRSctk3kBR.jpg", "jobs": [{"credit_id": "5256c8c019c2956ff6048371", "job": "Director", "episode_count": 2}], "department": "Directing", "total_episode_count": 2}
+    ]
+  }
+}

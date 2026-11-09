@@ -42,6 +42,8 @@ macro_rules! librarian_schema_roots {
         Movie,
         Person,
         MovieCastCredit,
+        Credit,
+        TitleDetail,
         Collection,
         Show,
         Season,
@@ -119,7 +121,7 @@ macro_rules! librarian_schema_roots {
         TorrentContents,
     ],
     extra_query_types: [FilesystemQueries, ServerConnectionQueries, DownloadsMoveQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries],
-    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations, ServerConnectionMutations, DownloadsMoveMutations],
+    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, PersonMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations, ServerConnectionMutations, DownloadsMoveMutations],
     extra_subscription_types: [BackupSubscriptions, FilesystemSubscriptions, TorrentRuntimeSubscriptions, SessionSubscriptions, SourceCapabilitySubscriptions],
         }
     };
@@ -388,6 +390,8 @@ mod tests {
             Movie,
             Person,
             MovieCastCredit,
+            Credit,
+            TitleDetail,
             Collection,
             Show,
             Season,

@@ -19,7 +19,7 @@ pub(super) async fn database(hooks: bool) -> Database {
     }
 }
 
-pub(super) async fn user(db: &Database) -> User {
+pub(crate) async fn user(db: &Database) -> User {
     User::insert(
         db,
         CreateUserInput {
@@ -37,7 +37,7 @@ pub(super) async fn user(db: &Database) -> User {
     .unwrap()
 }
 
-pub(super) async fn library(db: &Database, user: &User) -> Library {
+pub(crate) async fn library(db: &Database, user: &User) -> Library {
     Library::insert(
         db,
         CreateLibraryInput {
@@ -259,7 +259,7 @@ pub(super) async fn episode(db: &Database, show: &Show, file_id: Option<&str>) -
     .unwrap()
 }
 
-pub(super) async fn movie(db: &Database, library: &Library) -> Movie {
+pub(crate) async fn movie(db: &Database, library: &Library) -> Movie {
     Movie::insert(
         db,
         CreateMovieInput {
@@ -355,6 +355,18 @@ pub(super) async fn person(db: &Database) -> Person {
             tmdb_person_id: 0,
             name: "fixture person".to_string(),
             profile_url: None,
+            imdb_id: None,
+            musicbrainz_artist_id: None,
+            wikidata_id: None,
+            name_key: None,
+            biography: None,
+            birthday: None,
+            deathday: None,
+            place_of_birth: None,
+            known_for_department: None,
+            also_known_as: None,
+            image_urls: None,
+            details_fetched_at: None,
         },
     )
     .await

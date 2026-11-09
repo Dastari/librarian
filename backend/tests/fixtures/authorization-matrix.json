@@ -5,6 +5,8 @@
   {"entity":"Movie","read":"member.read","write":"member.write","scope":"owner"},
   {"entity":"Person","read":"member.read","write":"admin.write","scope":"shared"},
   {"entity":"MovieCastCredit","read":"member.read","write":"admin.write","scope":"derived"},
+  {"entity":"Credit","read":"member.read","write":"admin.write","scope":"owner"},
+  {"entity":"TitleDetail","read":"member.read","write":"admin.write","scope":"owner"},
   {"entity":"Collection","read":"member.read","write":"member.write","scope":"owner"},
   {"entity":"Show","read":"member.read","write":"member.write","scope":"owner"},
   {"entity":"Season","read":"member.read","write":"admin.write","scope":"derived"},

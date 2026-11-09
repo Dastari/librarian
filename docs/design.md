@@ -1953,3 +1953,94 @@ and the client must start while the share is down, which a store on the share ca
 would only be a backup of a few small files that Librarian can already rebuild (every torrent is in the database with its
 magnet link and save path, and `restore_from_database` re-adds what the session lost). So the session folder stays on this
 machine (`torrent.session_dir`), and only payloads go to a share.
+
+### Q129: How are credits and people kept, for every kind of title?
+**Answer:** As `Credit` rows: one person's part in one title. A credit names its title through exactly one of `movieId`,
+`showId`, `seasonId`, `episodeId`, `albumId`, `trackId` or `audiobookId` (`targetKind` says which), and carries `kind`
+(`cast` or `crew`), `guest` (a guest star of one episode, a cast credit), the provider's `department` and `job`
+("Directing"/"Director", "Writing"/"Screenplay", "Production"/"Executive Producer"), `characterName`, `creditOrder` (billing
+order; crew gets an order too, directors and writers first), `episodeCount` (show and season credits), `source` (`tmdb`,
+`musicbrainz` or `audiobook`) and the provider's credit id. Each credit copies its title owner's `userId`, so the row policy
+scopes it directly (owner class) rather than through seven possible parents. The physical foreign keys cascade when a title is
+deleted; deleting a person deletes their credits through the hook, so each delete has its event.
+
+*Replacing, not adding:* a refresh calls `CreditStore::replace_credits(title, source, credits)`, which reads the title's
+credits from that source and matches each new credit on (person, kind, guest, job, character): a match is updated only if
+something changed, a new credit is created and anything left over is deleted. Running it twice changes nothing; credits from
+another source are a separate set. Writes are the generated `createCredit`/`updateCredit`/`deleteCredit` mutations, batched
+as aliased fields of one document (40 a request), each with its own hooks.
+
+*People* are `Person` rows, extended additively with `imdbId`, `musicbrainzArtistId`, `wikidataId`, `nameKey` (the name
+folded for comparison), `biography`, `birthday`, `deathday`, `placeOfBirth`, `knownForDepartment`, `alsoKnownAs`,
+`imageUrls` and `detailsFetchedAt`. A person is matched across providers by id, strongest first: TMDB, IMDb, MusicBrainz,
+Wikidata. A match gains the ids it lacked (and a real TMDB id replaces a stand-in); TMDB's name and picture win, another
+source only fills a gap. A name alone never matches a person who has ids; two people known by name only with the same
+`nameKey` are one person (a narrator of two books). `tmdbPersonId` was required and unique before people came from anywhere
+but TMDB, and making it nullable is not an additive step, so a person without a TMDB id holds a negative stand-in derived
+from their key (`mb:…`, `imdb:…`, `wd:…` or `name:…`; FNV-1a, retried on a collision). Zero and below mean "no TMDB id".
+
+*`MovieCastCredit` is frozen, not removed.* The schema can only grow, so the table and its generated API stay, but nothing
+writes it any more and the web reads `Credit`. Writing both would keep two copies of the cast that can disagree, for no reader.
+A movie whose TMDB document cannot be read (no API key) has its old cast copied into `Credit` once by the credits job, so it
+still shows.
+
+### Q130: What is fetched and kept for each title?
+**Answer:** Everything the provider has, in as few requests as before, whether a page shows it yet (`TitleDetail`, one row per
+title, beside its credits):
+- *Movies:* one TMDB request, `/movie/{id}?append_to_response=credits,release_dates,keywords,alternative_titles,videos,external_ids`,
+  which also replaces the two separate credits and release-date requests the details used to make. The parsed result rides on
+  the cached `MovieDetails` (`extras`), so adding and refreshing a movie save it without asking again; details cached before
+  that are read fresh. Kept: cast and crew (up to 150 each), production companies, origin countries, certifications for every
+  country (theatrical first), keywords, alternative titles, videos, external ids and the homepage.
+- *Shows:* TMDB `/tv/{id}` with aggregate credits, content ratings, keywords, alternative titles, videos and external ids; the
+  show's TMDB id is its own or found from its TheTVDB or IMDb id (`/find`), and is kept in the details, not written to the
+  show. Then one request per season it has here (`/tv/{id}/season/{n}` with aggregate credits) gives the season's credits and
+  every episode's crew and guest stars. Creators lead the crew. A refresh of the show reads them inline; adding a show wakes
+  the credits job (Q132) instead, so adding stays quick.
+- *Albums and tracks:* the release read that builds the track listing now asks MusicBrainz for its relationships too
+  (`inc=recordings+artist-rels+recording-level-rels+work-rels+work-level-rels+labels`, still one request). Release
+  relationships become album credits (producer, executive producer, engineers, mixing, mastering), recording relationships
+  track credits (performers, instruments and vocals as cast, credited names kept as `characterName`), and the recording's work
+  gives the writers (composer, lyricist). Labels are the album's studios. The client remembers the last 16 releases' credits so
+  adding an album saves them without asking again.
+- *Audiobooks:* the authors (every author the provider lists, `AudiobookDetails.authors`) are crew ("Writing"/"Author") and the
+  narrators cast ("Narration"/"Narrator"), as people known by name. `authorName`, `narratorName` and `narrators` stay filled.
+  The publisher and the ASIN, ISBN and Goodreads ids are the book's details.
+- *People:* `/person/{id}?append_to_response=external_ids,images` (biography, dates, place of birth, other names, ids and
+  every profile picture), read by the credits job and by the `refreshPersonDetails` action.
+
+`TitleDetail` keeps name lists as JSON string lists (`studios`, `networks`, `keywords`, `originCountries`) and structured
+lists as JSON text in a documented shape (`contentRatings`, `alternativeTitles`, `videos`, `externalIds`), read defensively by
+the web app's `lib/titleDetails.ts`. Videos are links only (YouTube, Vimeo); nothing is downloaded or embedded.
+
+*Locks:* a title whose `lockedFields` has `credits` or `castNames` keeps its credits on every refresh, and a locked
+`studios`, `networks`, `keywords`, `originCountries`, `contentRatings`, `alternativeTitles`, `videos`, `externalIds` or
+`homepage` keeps that detail. Nothing here writes the title's own fields.
+
+### Q131: Where are credits shown?
+**Answer:** Modestly, since keeping the data is the point. A movie page has **Cast** (portraits in billing order, each opening
+the person) and **Crew** (Directed by, Written by, Produced by, Music, with the rest of the crew behind *Full crew*), each person
+a `PersonIdentity` chip with the person's actions on right-click. Its hero facts add the studio and the trailer link, and the
+certification falls back to the stored ratings. A show page has the show's cast (with episode counts) and crew after the
+episodes, then **Guest stars in season N** for the chosen season; the focused episode's summary gains one reserved line,
+"Directed by … · Written by … · Guest stars …". Its facts add the network when the show has none, the studio and the trailer.
+Albums show **Performers** and **Credits**, audiobooks **Narrated by** and **Authors**. All of these read live root queries
+(`credits(where: …)`, `titleDetails(where: …)`), so a refresh or the credits job shows up without reloading.
+
+*A person* has their own page, `/people/{id}`: a hero with their portrait, what they are known for, when and where they were
+born, their biography and their actions, then shelves of what credits them in the viewer's libraries (Movies, TV, Music,
+Audiobooks, each title with their roles; a guest spot names its episode). The person is an entity like any other: its
+`EntityIdentity` (`PersonIdentity`: a portrait or initials, known-for and years as facts, a state badge for a death or for
+details not read yet) and its action set (`usePersonActions`: open, search the library, open on TMDB or IMDb, and for
+administrators *Refresh details*). Cast tiles and person shelves follow the media page conventions: `data-nav-section` per
+section, `data-nav-group` on each row and chip list, and portraits from the artwork cache.
+
+### Q132: How do existing titles get their credits?
+**Answer:** The `credit_fill` service. It waits 90 seconds after start, then runs a pass every 10 minutes, or 5 seconds after
+a show is added (`request_credit_fill`). A pass takes titles that have no `TitleDetail` yet (which is how a finished title is
+known) and people whose `detailsFetchedAt` is empty, within a budget: 50 audiobooks (no provider request), 30 movies (one
+TMDB request each), 3 shows (one plus one per season), 4 albums (two MusicBrainz requests each, at its one a second) and 120
+people (one TMDB request each). TMDB requests go through the client's 12-a-second limit and its back-off on HTTP 429. A title
+or person that fails is not tried again until the next start, so a missing provider record does not cost a request every
+pass. Titles are never written; locked credits and details stay as they are (Q130). Without a TMDB key the job still fills
+audiobooks and albums, and copies movies' old cast (Q129).

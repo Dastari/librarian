@@ -16,6 +16,8 @@ use uuid::Uuid;
 
 use crate::services::rate_limiter::{RateLimitConfig, RateLimitedClient, RetryConfig, retry_async};
 
+use super::credits::{ReleaseCredits, parse_musicbrainz_release};
+
 /// MusicBrainz API client with rate limiting
 #[derive(Clone)]
 pub struct MusicBrainzClient {
@@ -23,7 +25,18 @@ pub struct MusicBrainzClient {
     base_url: String,
     user_agent: String,
     retry_config: RetryConfig,
+    /// Credits of the releases read most recently (Q130), so the album that a listing came from
+    /// gets its credits without asking MusicBrainz again.
+    release_credits: Arc<std::sync::Mutex<std::collections::VecDeque<ReleaseCredits>>>,
 }
+
+/// How many releases' credits are remembered.
+const RELEASE_CREDITS_KEPT: usize = 16;
+
+/// What a release read asks MusicBrainz for: the tracks, and every credit on the release, its
+/// recordings and their works, and its labels. One request, as before.
+const RELEASE_INC: &str =
+    "recordings+artist-rels+recording-level-rels+work-rels+work-level-rels+labels";
 
 /// Artist from MusicBrainz
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,7 +146,38 @@ impl MusicBrainzClient {
                 max_interval: Duration::from_secs(10),
                 multiplier: 2.0,
             },
+            release_credits: Default::default(),
         }
+    }
+
+    /// Credits of a release this client read recently.
+    pub fn cached_release_credits(&self, release_id: &str) -> Option<ReleaseCredits> {
+        self.release_credits.lock().ok().and_then(|cache| {
+            cache
+                .iter()
+                .find(|credits| credits.release_id == release_id)
+                .cloned()
+        })
+    }
+
+    fn remember_release_credits(&self, credits: ReleaseCredits) {
+        if let Ok(mut cache) = self.release_credits.lock() {
+            cache.retain(|kept| kept.release_id != credits.release_id);
+            cache.push_back(credits);
+            while cache.len() > RELEASE_CREDITS_KEPT {
+                cache.pop_front();
+            }
+        }
+    }
+
+    /// The credits of a release group's most representative release (the one
+    /// [`Self::get_release_group_tracks`] reads): two requests.
+    pub async fn get_release_group_credits(&self, mbid: Uuid) -> Result<Option<ReleaseCredits>> {
+        let Some(release_id) = self.best_release_id(mbid).await? else {
+            return Ok(None);
+        };
+        self.get_release_tracks(&release_id).await?;
+        Ok(self.cached_release_credits(&release_id))
     }
 
     /// Escape special Lucene characters in search terms
@@ -535,26 +579,7 @@ impl MusicBrainzClient {
             "Fetching track listing for MusicBrainz release group {}",
             mbid
         );
-        let releases = self.browse_release_group(mbid).await?;
-        let Some(best) = releases.into_iter().max_by_key(|release| {
-            let official = i32::from(
-                release
-                    .status
-                    .as_deref()
-                    .map(|status| status.eq_ignore_ascii_case("official"))
-                    .unwrap_or(false),
-            );
-            let tracks: i32 = release.media.iter().map(|medium| medium.track_count).sum();
-            // Earlier dates win, so invert the date for the max_by_key.
-            let date_rank = release
-                .date
-                .as_deref()
-                .and_then(|date| date.split('-').next())
-                .and_then(|year| year.parse::<i32>().ok())
-                .map(|year| -year)
-                .unwrap_or(i32::MIN);
-            (official, date_rank, tracks)
-        }) else {
+        let Some(best) = self.best_release_id(mbid).await? else {
             debug!(
                 "MusicBrainz release group {} has no releases; no tracks available",
                 mbid
@@ -562,7 +587,35 @@ impl MusicBrainzClient {
             return Ok(Vec::new());
         };
 
-        self.get_release_tracks(&best.id).await
+        self.get_release_tracks(&best).await
+    }
+
+    /// The release a group's track listing is read from: `Official` first, then the earliest
+    /// date, then the most tracks.
+    async fn best_release_id(&self, mbid: Uuid) -> Result<Option<String>> {
+        let releases = self.browse_release_group(mbid).await?;
+        Ok(releases
+            .into_iter()
+            .max_by_key(|release| {
+                let official = i32::from(
+                    release
+                        .status
+                        .as_deref()
+                        .map(|status| status.eq_ignore_ascii_case("official"))
+                        .unwrap_or(false),
+                );
+                let tracks: i32 = release.media.iter().map(|medium| medium.track_count).sum();
+                // Earlier dates win, so invert the date for the max_by_key.
+                let date_rank = release
+                    .date
+                    .as_deref()
+                    .and_then(|date| date.split('-').next())
+                    .and_then(|year| year.parse::<i32>().ok())
+                    .map(|year| -year)
+                    .unwrap_or(i32::MIN);
+                (official, date_rank, tracks)
+            })
+            .map(|release| release.id))
     }
 
     /// A release group's editions, and how many tracks each has.
@@ -640,7 +693,7 @@ impl MusicBrainzClient {
         let client = self.client.clone();
         let user_agent = self.user_agent.clone();
         let retry_config = self.retry_config.clone();
-        let detail: ReleaseDetail = retry_async(
+        let document: serde_json::Value = retry_async(
             || {
                 let url = detail_url.clone();
                 let client = client.clone();
@@ -648,7 +701,7 @@ impl MusicBrainzClient {
                 async move {
                     let query_params = [
                         ("fmt", "json".to_string()),
-                        ("inc", "recordings".to_string()),
+                        ("inc", RELEASE_INC.to_string()),
                     ];
                     let response = client
                         .get_with_headers_and_query(&url, &[("User-Agent", &ua)], &query_params)
@@ -662,7 +715,7 @@ impl MusicBrainzClient {
                             response.status()
                         );
                     }
-                    let parsed: ReleaseDetail =
+                    let parsed: serde_json::Value =
                         crate::services::http_client::response_json_limited(
                             response,
                             crate::services::http_client::METADATA_RESPONSE_LIMIT,
@@ -677,7 +730,18 @@ impl MusicBrainzClient {
         )
         .await?;
 
-        Ok(Self::tracks_from_release(&detail))
+        let detail: ReleaseDetail = serde_json::from_value(document.clone())
+            .context("Failed to parse MusicBrainz release detail")?;
+        let mut credits = parse_musicbrainz_release(&document);
+        if credits.release_id.is_empty() {
+            credits.release_id = release_id.to_string();
+        }
+        self.remember_release_credits(credits);
+        let mut tracks = Self::tracks_from_release(&detail);
+        for track in &mut tracks {
+            track.release_id = Some(release_id.to_string());
+        }
+        Ok(tracks)
     }
 
     /// Flatten a release's media/tracks into ordered [`MusicBrainzTrack`]s.
@@ -704,6 +768,7 @@ impl MusicBrainzClient {
                     title,
                     duration_secs: length_ms.map(|ms| (ms / 1000) as i32),
                     recording_id: track.recording.as_ref().and_then(|r| r.id.clone()),
+                    release_id: None,
                 });
             }
         }
@@ -724,6 +789,10 @@ pub struct MusicBrainzTrack {
     pub duration_secs: Option<i32>,
     /// MusicBrainz recording MBID.
     pub recording_id: Option<String>,
+    /// The release (edition) this listing was read from; its credits are
+    /// [`MusicBrainzClient::cached_release_credits`].
+    #[serde(default)]
+    pub release_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -83,6 +83,8 @@ impl OwnershipRowPolicy {
             "LibraryScanRun" => direct!(LibraryScanRunWhereInput),
             "LibraryScanIssue" => direct!(LibraryScanIssueWhereInput),
             "Movie" => direct!(MovieWhereInput),
+            "Credit" => direct!(CreditWhereInput),
+            "TitleDetail" => direct!(TitleDetailWhereInput),
             "Collection" => direct!(CollectionWhereInput),
             "Show" => direct!(ShowWhereInput),
             "Artist" => direct!(ArtistWhereInput),
@@ -177,7 +179,9 @@ impl OwnershipRowPolicy {
             | "SourcePriorityRule"
             | "CastSession"
             | "IdentificationEvent"
-            | "IdentifiedItem" => ScopeClass::Owner,
+            | "IdentifiedItem"
+            | "Credit"
+            | "TitleDetail" => ScopeClass::Owner,
             "MovieCastCredit" | "Episode" | "Season" | "MediaFile" | "Track" | "Chapter"
             | "TorrentFile" | "RssFeedItem" | "VideoStream" | "AudioStream" | "Subtitle"
             | "MediaChapter" => ScopeClass::Derived,
@@ -205,6 +209,8 @@ impl OwnershipRowPolicy {
             "LibraryScanRun" => required!(LibraryScanRun),
             "LibraryScanIssue" => required!(LibraryScanIssue),
             "Movie" => required!(Movie),
+            "Credit" => required!(Credit),
+            "TitleDetail" => required!(TitleDetail),
             "Show" => required!(Show),
             "Collection" => required!(Collection),
             "Artist" => required!(Artist),

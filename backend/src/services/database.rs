@@ -145,6 +145,8 @@ pub(crate) fn entity_metadata() -> Vec<&'static graphql_orm::graphql::orm::Entit
         <Movie as Entity>::metadata(),
         <Person as Entity>::metadata(),
         <MovieCastCredit as Entity>::metadata(),
+        <Credit as Entity>::metadata(),
+        <TitleDetail as Entity>::metadata(),
         <Collection as Entity>::metadata(),
         <Show as Entity>::metadata(),
         <Episode as Entity>::metadata(),
@@ -1922,6 +1924,14 @@ impl AppMutationHook {
             // the credits here gives each one a delete event, which invalidates its movie.
             "Person" => {
                 tx.delete_where::<MovieCastCredit>(MovieCastCreditWhereInput {
+                    person_id: Some(Self::string_eq(&event.id)),
+                    ..Default::default()
+                })
+                .await
+                .map_err(Self::db_error)?;
+                // Credits on any title (Q129). A title's own delete leaves its credits and
+                // details to the physical cascade: the title's page goes with it.
+                tx.delete_where::<Credit>(CreditWhereInput {
                     person_id: Some(Self::string_eq(&event.id)),
                     ..Default::default()
                 })
@@ -4929,7 +4939,7 @@ mod lifecycle_tests {
 
 #[cfg(test)]
 #[path = "database_summary_tests.rs"]
-mod summary_tests;
+pub(crate) mod summary_tests;
 
 #[cfg(test)]
 #[path = "database_parent_summary_tests.rs"]

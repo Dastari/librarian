@@ -743,6 +743,65 @@ impl TmdbClient {
         )
         .await
     }
+
+    /// Any TMDB v3 document as JSON, through the same rate limit, adaptive back-off and retries
+    /// as the typed calls. `path` starts with `/` (`/movie/603`); `query` adds parameters such as
+    /// `append_to_response`. A 404 is `Ok(None)`.
+    pub async fn get_value(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<Option<serde_json::Value>> {
+        if !self.has_api_key() {
+            anyhow::bail!("TMDB API key not configured");
+        }
+        let url = format!("{}{}", self.base_url, path);
+        let mut params: Vec<(String, String)> = vec![("api_key".into(), self.api_key.clone())];
+        params.extend(query.iter().map(|(k, v)| (k.to_string(), v.to_string())));
+        let client = self.client.clone();
+        let retry_config = self.retry_config.clone();
+        let adaptive_client = self.clone();
+        let label = path.to_string();
+        retry_async(
+            || {
+                let url = url.clone();
+                let client = client.clone();
+                let params = params.clone();
+                let adaptive_client = adaptive_client.clone();
+                let label = label.clone();
+                async move {
+                    adaptive_client.wait_for_adaptive_delay().await;
+                    let response = client.get_with_query(&url, &params).await?;
+                    if response.status().as_u16() == 429 {
+                        let delay_ms = adaptive_client.increase_adaptive_delay_from_429(&response);
+                        warn!(
+                            "TMDB rate limit hit (HTTP 429) while fetching {}; retrying with adaptive delay={}ms",
+                            label, delay_ms
+                        );
+                        anyhow::bail!("Rate limited (429)");
+                    }
+                    if response.status().as_u16() == 404 {
+                        return Ok(None);
+                    }
+                    if !response.status().is_success() {
+                        anyhow::bail!("TMDB {} failed with status: {}", label, response.status());
+                    }
+                    adaptive_client.reduce_adaptive_delay_on_success();
+                    let value: serde_json::Value =
+                        crate::services::http_client::response_json_limited(
+                            response,
+                            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                        )
+                        .await
+                        .with_context(|| format!("Failed to parse TMDB {label}"))?;
+                    Ok(Some(value))
+                }
+            },
+            &retry_config,
+            "tmdb_get_value",
+        )
+        .await
+    }
 }
 
 impl TmdbMovie {

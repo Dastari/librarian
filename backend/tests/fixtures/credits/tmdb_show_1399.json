@@ -1,0 +1,49 @@
+{
+  "id": 1399,
+  "name": "Game of Thrones",
+  "homepage": "https://www.hbo.com/game-of-thrones",
+  "origin_country": ["US"],
+  "created_by": [
+    {"id": 9813, "credit_id": "5256c8c219c2956ff604858a", "name": "David Benioff", "original_name": "David Benioff", "gender": 2, "profile_path": "/bOlW5Ik89oJLTCoKvYqyPZtgaOl.jpg"},
+    {"id": 228068, "credit_id": "552e611e9251413fea000901", "name": "D. B. Weiss", "original_name": "D. B. Weiss", "gender": 2, "profile_path": "/2RMejaT793U9KRk2IEbFfteQntE.jpg"}
+  ],
+  "networks": [{"id": 49, "logo_path": "/tuomPhY2UtuPTqqFnKMVHvSb724.png", "name": "HBO", "origin_country": "US"}],
+  "production_companies": [
+    {"id": 76043, "logo_path": "/9RO2vbQ67otPrBLXCaC8UMp3Qat.png", "name": "Revolution Sun Studios", "origin_country": "US"},
+    {"id": 12525, "logo_path": null, "name": "Television 360", "origin_country": ""},
+    {"id": 5820, "logo_path": null, "name": "Generator Entertainment", "origin_country": ""}
+  ],
+  "seasons": [
+    {"air_date": "2010-12-05", "episode_count": 14, "id": 3627, "name": "Specials", "season_number": 0},
+    {"air_date": "2011-04-17", "episode_count": 10, "id": 3624, "name": "Season 1", "season_number": 1}
+  ],
+  "aggregate_credits": {
+    "cast": [
+      {"adult": false, "gender": 2, "id": 22970, "known_for_department": "Acting", "name": "Peter Dinklage", "original_name": "Peter Dinklage", "popularity": 13.8, "profile_path": "/9CAd7wr8QZyIN0E7nm8v1B6WkGn.jpg", "roles": [{"credit_id": "5256c8b219c2956ff6047cd8", "character": "Tyrion Lannister", "episode_count": 67}], "total_episode_count": 67, "order": 0},
+      {"adult": false, "gender": 2, "id": 239019, "known_for_department": "Acting", "name": "Kit Harington", "original_name": "Kit Harington", "popularity": 12.0, "profile_path": "/iCFQAQqb0SgvxEdVYhJtZLhM9kp.jpg", "roles": [{"credit_id": "5256c8af19c2956ff6047af6", "character": "Jon Snow", "episode_count": 62}], "total_episode_count": 62, "order": 1},
+      {"adult": false, "gender": 2, "id": 1223786, "known_for_department": "Acting", "name": "Ian McElhinney", "original_name": "Ian McElhinney", "popularity": 3.1, "profile_path": null, "roles": [
+        {"credit_id": "5256c8b419c2956ff6047ed2", "character": "Barristan Selmy", "episode_count": 20},
+        {"credit_id": "5256c8b419c2956ff6047ed3", "character": "Ser Barristan Selmy", "episode_count": 1}
+      ], "total_episode_count": 21, "order": 25}
+    ],
+    "crew": [
+      {"adult": false, "gender": 2, "id": 9813, "known_for_department": "Writing", "name": "David Benioff", "original_name": "David Benioff", "popularity": 2.3, "profile_path": "/bOlW5Ik89oJLTCoKvYqyPZtgaOl.jpg", "jobs": [
+        {"credit_id": "5256c8c219c2956ff6048530", "job": "Executive Producer", "episode_count": 73},
+        {"credit_id": "5256c8c219c2956ff6048531", "job": "Writer", "episode_count": 52}
+      ], "department": "Production", "total_episode_count": 73},
+      {"adult": false, "gender": 2, "id": 47005, "known_for_department": "Directing", "name": "Alan Taylor", "original_name": "Alan Taylor", "popularity": 1.9, "profile_path": null, "jobs": [{"credit_id": "5256c8c019c2956ff6048359", "job": "Director", "episode_count": 7}], "department": "Directing", "total_episode_count": 7},
+      {"adult": false, "gender": 2, "id": 10851, "known_for_department": "Sound", "name": "Ramin Djawadi", "original_name": "Ramin Djawadi", "popularity": 1.4, "profile_path": null, "jobs": [{"credit_id": "5256c8c619c2956ff6048a1d", "job": "Original Music Composer", "episode_count": 73}], "department": "Sound", "total_episode_count": 73}
+    ]
+  },
+  "content_ratings": {"results": [
+    {"descriptors": [], "iso_3166_1": "US", "rating": "TV-MA"},
+    {"descriptors": [], "iso_3166_1": "GB", "rating": "18"},
+    {"descriptors": [], "iso_3166_1": "DE", "rating": ""}
+  ]},
+  "keywords": {"results": [{"name": "based on novel or book", "id": 818}, {"name": "dragon", "id": 12554}]},
+  "alternative_titles": {"id": 1399, "results": [{"iso_3166_1": "FR", "title": "Le Trône de fer", "type": ""}]},
+  "videos": {"id": 1399, "results": [
+    {"iso_639_1": "en", "iso_3166_1": "US", "name": "Season 1 Trailer", "key": "BpJYNVhGf1s", "site": "YouTube", "size": 1080, "type": "Trailer", "official": true, "published_at": "2011-03-01T00:00:00.000Z", "id": "t1"}
+  ]},
+  "external_ids": {"imdb_id": "tt0944947", "freebase_mid": "/m/0524b41", "freebase_id": "/en/game_of_thrones", "tvdb_id": 121361, "tvrage_id": 24493, "wikidata_id": "Q23572", "facebook_id": "GameOfThrones", "instagram_id": "gameofthrones", "twitter_id": "GameOfThrones"}
+}

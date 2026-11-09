@@ -45,6 +45,8 @@ impl_string_pk_batch_load!(
     super::MetadataCache,
     super::Movie,
     super::MovieCastCredit,
+    super::Credit,
+    super::TitleDetail,
     super::NamingPattern,
     super::Notification,
     super::PendingFileMatch,
