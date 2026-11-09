@@ -47,7 +47,7 @@ const columns = column.columns([
   column.accessor("name", { header: "Name", width: 20, priority: 1, cardRole: "title", sortable: true }),
   column.accessor("size", { header: "Size", width: 8, priority: 2, sortable: true }),
 ]);
-const actions = defineActions<Row>("row", [{ id: "open", label: "Open", run: () => undefined }]);
+const actions = defineActions<Row>("row", [{ id: "open", label: "Open", group: "open", run: () => undefined }]);
 
 function Table() {
   return (
