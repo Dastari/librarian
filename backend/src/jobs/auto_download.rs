@@ -66,6 +66,9 @@ use crate::services::quality::scoring;
 use crate::services::quality::title_match::WantedTitle;
 use crate::services::sources::{QueryType, SourceQuery, SourceRelease};
 use crate::services::torrent::TorrentAddMetadata;
+use crate::services::torrent::inspect;
+use crate::services::torrent::judge::{self, ContentsVerdict, WantedItems};
+use crate::services::torrent::partial::WantedFiles;
 
 use super::auto_schedule::{
     Expectation, SearchState, Timing, backoff_elapsed, backoff_for, classify_episode,
@@ -1370,6 +1373,10 @@ struct HuntContext {
     trigger: Trigger,
     /// Automatic grabs that may still start in this pass.
     budget: usize,
+    /// `.torrent` downloads an inspection may make per hour (`hourly_search_budget`).
+    fetches_per_hour: u32,
+    /// Select only the files an inspected pack holds for what is missing.
+    only_missing_files: bool,
 }
 
 /// What searching the sources for one candidate turned up.
@@ -1725,6 +1732,113 @@ pub fn rank_for_candidate(
     }))
 }
 
+/// Most releases of one target looked into before a grab.
+pub const INSPECT_PER_TARGET: usize = 3;
+
+/// What a candidate's files must hold, when the hunt looks into its releases: a season pack's
+/// missing episodes. Other targets are grabbed by name (a single episode, a movie, a track, a
+/// book): looking into each would cost a request or a magnet resolution per grab.
+pub fn contents_wanted(candidate: &WantedCandidate) -> Option<WantedItems> {
+    let Expectation::SeasonPack { season } = candidate.expectation else {
+        return None;
+    };
+    let episodes: Vec<(i32, i32)> = candidate
+        .fallbacks
+        .iter()
+        .filter_map(|fallback| match fallback.expectation {
+            Expectation::Episode { season, episode } => Some((season, episode)),
+            _ => None,
+        })
+        .collect();
+    (!episodes.is_empty()).then(|| WantedItems::Episodes {
+        show: candidate.match_title.clone(),
+        episodes,
+        default_season: Some(season),
+    })
+}
+
+/// Of the best few ranked releases, the one whose files hold the most of what is missing; one
+/// whose files are another title's or hold none of it is turned down. A release that could not be
+/// read is taken by its name only if none could be. With "only the missing files" on, the files
+/// to download come with it. `Err` says why every one was turned down.
+async fn choose_by_contents(
+    ctx: &HuntContext,
+    candidate: &WantedCandidate,
+    ranked: Vec<scoring::ScoredRelease>,
+) -> Result<(scoring::ScoredRelease, Option<WantedFiles>), String> {
+    let Some(items) = contents_wanted(candidate) else {
+        return ranked
+            .into_iter()
+            .next()
+            .map(|best| (best, None))
+            .ok_or_else(|| "nothing usable".to_string());
+    };
+    let mut checked: Option<(scoring::ScoredRelease, ContentsVerdict)> = None;
+    let mut unread: Option<scoring::ScoredRelease> = None;
+    let mut turned_down: Vec<String> = Vec::new();
+    for scored in ranked.into_iter().take(INSPECT_PER_TARGET) {
+        match inspect::inspect_release(
+            &ctx.env.manager,
+            &ctx.env.db,
+            &scored.release,
+            ctx.fetches_per_hour,
+        )
+        .await
+        {
+            inspect::Inspection::Known(contents) => {
+                let verdict = judge::judge(&contents, &items);
+                if let Some(why) = &verdict.reject {
+                    info!(
+                        candidate = %candidate.label,
+                        release = %scored.release.title,
+                        "Auto-download: turned down '{}' for {}: {why}",
+                        scored.release.title,
+                        candidate.label
+                    );
+                    turned_down.push(format!("'{}' {why}", scored.release.title));
+                    continue;
+                }
+                let better = checked
+                    .as_ref()
+                    .is_none_or(|(_, best)| verdict.covers.len() > best.covers.len());
+                if better {
+                    checked = Some((scored, verdict));
+                }
+            }
+            inspect::Inspection::Unavailable(why) => {
+                tracing::debug!(
+                    candidate = %candidate.label,
+                    release = %scored.release.title,
+                    "Auto-download: could not look into '{}': {why}",
+                    scored.release.title
+                );
+                unread.get_or_insert(scored);
+            }
+        }
+    }
+    if let Some((scored, verdict)) = checked {
+        if let Some(note) = &verdict.note {
+            info!(
+                candidate = %candidate.label,
+                release = %scored.release.title,
+                "Auto-download: '{}' {note}",
+                scored.release.title
+            );
+        }
+        let files = (ctx.only_missing_files && !verdict.files.is_empty())
+            .then(|| WantedFiles::exactly(verdict.files));
+        return Ok((scored, files));
+    }
+    if let Some(scored) = unread {
+        return Ok((scored, None));
+    }
+    Err(format!(
+        "{} release(s) turned down by their files: {}",
+        turned_down.len(),
+        turned_down.join("; ")
+    ))
+}
+
 /// Search for and grab the best release for one candidate.
 /// Returns `Ok(true)` when a release was grabbed.
 async fn try_candidate(
@@ -1739,8 +1853,8 @@ async fn try_candidate(
 
     // A search narrowed by season and episode may return a title that does not say which episode
     // it is; one that names another episode is never accepted.
-    let best = match pick_for_candidate(candidate, &collected, &quality_profile, false) {
-        Ok(best) => best,
+    let ranked = match rank_for_candidate(candidate, &collected, &quality_profile, false) {
+        Ok(ranked) => ranked,
         Err(facts) => {
             let why = describe_no_grab(&facts);
             info!(
@@ -1764,6 +1878,30 @@ async fn try_candidate(
         }
     };
 
+    // A pack is looked into before it is grabbed: its files must be the show's and hold what is
+    // missing (Q100).
+    let (best, wanted_files) = match choose_by_contents(ctx, candidate, ranked).await {
+        Ok(choice) => choice,
+        Err(why) => {
+            info!(
+                candidate = %candidate.label,
+                trigger = ctx.trigger.tag(),
+                "Auto-download: searched for {}, nothing taken: {why}",
+                candidate.label
+            );
+            ctx.trail
+                .waiting(
+                    &candidate.library_id,
+                    &candidate.label,
+                    &why,
+                    next_search,
+                    &ctx.trigger,
+                    opens_notification(candidate, &ctx.trigger),
+                )
+                .await;
+            return Ok(false);
+        }
+    };
     let release = best.release;
     if release.magnet_uri.is_none() && release.link.is_none() {
         warn!(
@@ -1784,7 +1922,7 @@ async fn try_candidate(
         return Ok(false);
     }
 
-    match grab_release(&ctx.env, candidate, &release, None).await {
+    match grab_release_with(&ctx.env, candidate, &release, None, wanted_files).await {
         Ok(Some(grabbed)) => {
             summary.grabbed += 1;
             ctx.budget = ctx.budget.saturating_sub(1);
@@ -1963,6 +2101,8 @@ pub async fn run_pass(
         trail: Trail::new(&db),
         trigger,
         budget,
+        fetches_per_hour: settings.hourly_search_budget,
+        only_missing_files: settings.only_missing_files,
     };
 
     let mut libraries: HashSet<String> = HashSet::new();

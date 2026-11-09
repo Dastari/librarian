@@ -26,11 +26,22 @@ pub struct WantedFiles {
     pub episodes: Vec<(i32, i32)>,
     /// Tracks that are missing: `(track number, title)`.
     pub tracks: Vec<(i32, String)>,
+    /// The exact file indexes to download, when the torrent was inspected before the grab
+    /// (`torrent::judge`). Wins over matching names when every index is in range.
+    pub indices: Vec<usize>,
 }
 
 impl WantedFiles {
     pub fn is_empty(&self) -> bool {
-        self.episodes.is_empty() && self.tracks.is_empty()
+        self.episodes.is_empty() && self.tracks.is_empty() && self.indices.is_empty()
+    }
+
+    /// Exactly these files, from an inspection.
+    pub fn exactly(indices: Vec<usize>) -> Self {
+        Self {
+            indices,
+            ..Default::default()
+        }
     }
 }
 
@@ -66,6 +77,14 @@ fn leading_track_number(name: &str) -> Option<i32> {
 pub fn select_wanted_files(names: &[String], wanted: &WantedFiles) -> Option<Vec<usize>> {
     if wanted.is_empty() || names.is_empty() {
         return None;
+    }
+    // An inspected selection names the files outright. One out of range means the torrent is not
+    // the one inspected: fall back to the names rather than guess.
+    if !wanted.indices.is_empty() && wanted.indices.iter().all(|index| *index < names.len()) {
+        let mut chosen = wanted.indices.clone();
+        chosen.sort_unstable();
+        chosen.dedup();
+        return (chosen.len() < names.len()).then_some(chosen);
     }
     let mut chosen: HashSet<usize> = HashSet::new();
     let mut matched_media = 0usize;
@@ -139,6 +158,24 @@ mod tests {
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn an_inspected_selection_is_taken_as_it_is_when_it_fits_the_torrent() {
+        let files = names(&["a.mkv", "b.mkv", "c.mkv"]);
+        assert_eq!(
+            select_wanted_files(&files, &WantedFiles::exactly(vec![2, 0])),
+            Some(vec![0, 2])
+        );
+        // Everything is no selection; an index past the end falls back to names (here: none).
+        assert_eq!(
+            select_wanted_files(&files, &WantedFiles::exactly(vec![0, 1, 2])),
+            None
+        );
+        assert_eq!(
+            select_wanted_files(&files, &WantedFiles::exactly(vec![7])),
+            None
+        );
     }
 
     #[test]

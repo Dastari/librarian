@@ -1773,3 +1773,27 @@ use it yet, because a torrent added from a file loses the magnet its `Torrent` r
 private season pack whose announce holds a fake passkey, and a public album) and with a magnet resolved from a librqbit
 seeder on loopback, which checks that the reading session keeps no torrent and writes no file, and that a magnet nobody
 seeds gives up within its timeout. Never run against real indexers or the public DHT.
+
+### Q100: How do a release's files change whether it is taken?
+**Answer:** Its files beat its name. `services::torrent::judge` maps an inspected torrent (Q99) to what is wanted:
+- **Episodes** (a season or the whole show): video files that are not samples or extras, numbered by their names
+  (`S01E05`, `2x05`) or by a `Season N/` folder and a leading number (`Season 2/05 - Title.mkv`), and, for a single-season
+  pack, the pack's season for a file that gives only an episode. A pack whose numbered files mostly name another show is
+  **rejected** ("its files are 'babylon berlin', not 'Babylon 5'"); one that holds none of the missing episodes is rejected
+  ("holds none of the missing episodes (it has S01E01–E18)"); otherwise it counts for exactly what it holds ("contains 18 of
+  22 missing episodes"), which is how a vaguely named pack ("Babylon 5 Complete DVD Rip") covers the seasons its files show.
+- **Tracks**: audio files, by title first (numbers repeat across discs) and then by a unique track number.
+- **A book or a movie**: it must have audio (or video) files; an ebook-only release is rejected.
+- Files packed in archives, or videos that say no episode, cannot be checked: the release is judged by its name as before.
+
+The files that fill what is missing are named exactly: the matching videos or tracks, their subtitles (same name or same
+episode) and release-wide `.nfo`/artwork at the top level, never samples or extras. With `auto_download.only_missing_files`
+on they are passed to the grab as `WantedFiles::exactly` (indexes into the torrent), which `select_wanted_files` takes as
+they are when they fit the torrent, before falling back to matching names (Q95).
+
+**In the hunt** only season packs are looked into, the best three ranked releases at most (`INSPECT_PER_TARGET`): among
+those not rejected, the one holding most of what is missing is grabbed, with its files selected; a release that could not
+be read is taken by its name only when none of them could be read; if all are rejected nothing is grabbed, the reason
+("2 release(s) turned down by their files: ...") goes to the trail, and the per-episode fallbacks are searched as when no
+pack is found. Single episodes, movies, tracks and books are grabbed by name, as a look costs a request or a magnet
+resolution per grab. **Recommendations** use the same judge for their plans (Q101).

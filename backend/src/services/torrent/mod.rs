@@ -1,6 +1,7 @@
 pub mod client;
 pub mod database;
 pub mod inspect;
+pub mod judge;
 pub mod partial;
 pub mod seeding;
 pub mod service;
