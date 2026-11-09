@@ -12,6 +12,7 @@ fragment ReleaseRecommendationFields on ReleaseRecommendation {
   episodeId
   movieId
   albumId
+  artistId
   trackId
   audiobookId
   title
@@ -33,6 +34,9 @@ fragment ReleaseRecommendationFields on ReleaseRecommendation {
   planPosition
   coversSeasons
   fileIndices
+  coversAlbums
+  selectedSize
+  downloadNote
   rulesVersion
   foundAt
   expiresAt

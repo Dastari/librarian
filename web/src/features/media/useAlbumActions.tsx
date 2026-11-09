@@ -85,7 +85,7 @@ export function useAlbumActions<T extends AlbumEntity>({ settings, open = true, 
     <>
       {playlist.dialog}
       {artwork.dialog}
-      {finding ? <ReleaseSearchDialog isOpen onOpenChange={(next) => { if (!next) setFinding(null); }} query={[artist, finding.name].filter(Boolean).join(" ")} year={finding.year} libraryId={finding.libraryId} artist={artist} album={finding.name} target={{ albumId: finding.id }} /> : null}
+      {finding ? <ReleaseSearchDialog isOpen onOpenChange={(next) => { if (!next) setFinding(null); }} query={[artist, finding.name].filter(Boolean).join(" ")} year={finding.year} libraryId={finding.libraryId} artist={artist} album={finding.name} target={{ albumId: finding.id, artistId: finding.artistId }} /> : null}
     </>
   );
   return { actions, dialogs };

@@ -11,7 +11,8 @@
 //!   uncovered is taken next (a complete-series pack, then season packs, then episodes), so packs
 //!   and single episodes mix naturally: a pack for each season that has one, episodes for the gaps.
 //! - **Healthier, then smaller.** Ties go to the better-seeded release (by bands, so 99 and 100
-//!   seeders are the same), then the smaller one, then the profile's own order.
+//!   seeders are the same), then one that bundles subtitles (Q114), then the smaller one, then the
+//!   profile's own order.
 //! - A release made redundant by later picks is dropped, and each release in a plan is credited
 //!   only with what it adds, so the counts add up.
 
@@ -112,6 +113,8 @@ pub struct PlanOption {
     pub size: Option<i64>,
     /// Position in the profile's ranking: the last tiebreak.
     pub rank: usize,
+    /// Its files bundle subtitles for what it covers (Q114): a small tiebreak after health.
+    pub subtitles: bool,
 }
 
 /// A planned release: which option, and what it adds to the plan.
@@ -171,6 +174,7 @@ pub fn plan_cover(missing: usize, options: &[PlanOption]) -> CoverPlan {
                     (
                         std::cmp::Reverse(*gain),
                         health_band(option.seeders),
+                        !option.subtitles,
                         option.size.unwrap_or(i64::MAX),
                         option.rank,
                     )

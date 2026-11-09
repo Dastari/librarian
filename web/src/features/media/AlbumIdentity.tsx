@@ -18,6 +18,8 @@ export interface AlbumEntity {
   year?: number | null;
   albumType?: string | null;
   trackCount?: number | null;
+  /** Its artist, where known: music recommendations are the artist's plan. */
+  artistId?: string;
   hasFiles: boolean;
   autoDownloadMode: AutoDownloadMode;
   /** Missing parts someone wants, counted with the row (for Stop wanting). */

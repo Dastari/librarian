@@ -8,6 +8,7 @@ pub mod seeding;
 pub mod service;
 pub mod share_storage;
 pub mod share_watch;
+pub mod subtitles;
 
 pub use client::*;
 pub use database::*;

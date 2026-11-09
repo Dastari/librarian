@@ -2798,3 +2798,84 @@ administrator, or a viewer granted by a share while both accounts are active; an
 shared with you" as for an unknown user. Viewers read the computed statistics only: they cannot list the shares, the raw
 `PlayHistory` rows or the devices. `statisticsPeople` lists whose statistics the caller can open and
 `statisticsShareCandidates` the other active people to share with (names only). Sharing between servers is out of scope.
+
+### Q110: What does Recommended offer for music?
+**Answer:** An **artist's coverage plan**, built like a show's (Q101) and stored the same way (a `plan` row with `artistId`
+and one row per release with `planId`). Opening an album, a track or the artist asks for the same lookup: the whole artist.
+The missing tracks are every missing track of the artist's albums in the library (wanted only in the background).
+Releases are gathered cheapest first: the feed catalogue for each album, a discography search (`<artist> discography`,
+when two or more albums miss something), each album's search for albums still uncovered, and at most six single-track
+searches (the hunt's own per-track query) for tracks still uncovered, stopping as soon as everything is covered or the
+hourly budget (Q94) runs out. A release must name the artist (Q98) and pass the profile. Its name says what it claims
+(`recommend_music::music_claim`): a **discography** (`Discography`, `Complete Studio Albums`, `Anthology`), one of the
+artist's **albums**, a **single** named after a missing track, or **another release** (an EP, a compilation, a live
+album). Up to six releases are looked into (Q99), discographies first, then albums, then other releases, then singles;
+their files are judged track by track (`WantedItems::ArtistTracks`: in the album's own folder by title and then by a
+unique number, else anywhere by title, since numbers repeat across albums). A discography or another release counts only
+once its files are read; an album or a single counts by its name until then. `plan_cover` then picks quality first and,
+within a tier, the release adding the most tracks, so a discography beats albums and an album beats its tracks; between
+releases adding the same (one missing track on an album, a compilation and a single), the healthier and then the
+**smallest** wins. Rules version 4 retires the per-album answers.
+
+**Single tracks.** A track's release downloads only that track's files (and the release's own artwork and sheets) with
+"Download only the missing files" on: exactly by index when it was looked into (`WantedFiles::exactly`), else by title. Its
+row says so (`downloadNote`, with `selectedSize`): "Downloads 1 track (8 MB) from a 600 MB album", "Downloads only the 2
+missing tracks from a 4.0 GB discography pack", or, with the setting off, "Downloads the whole 600 MB album for 1 missing
+track". Grabbing a discography from a plan links the torrent to nothing narrower than its library; import identifies the
+albums by their tags, as for any music download.
+
+### Q111: Is a torrent read before it is grabbed read again at grab time?
+**Answer:** Not when it is public. `inspect` keeps a public torrent's info dictionary (`infoBytes`) and, since this
+answer, its tracker addresses (`TorrentContents.trackers`, public torrents only, and only addresses with nothing
+secret-looking in them: no passkey in the path or query). Every grab (`grab_release_with`: the hunt, recommendations,
+plans, feeds) first asks `inspect::stored_torrent`: if the release was read before, its `.torrent` is rebuilt from the kept
+info dictionary and trackers (`torrent_file_from_info`; the info hash is checked against the row before it is used) and
+added from those bytes, so no peer is asked for the metadata and no `.torrent` is fetched again. The `Torrent` row still
+keeps a magnet for restoring: the release's own magnet when it had one, else one built from the info hash, the name and the
+kept trackers (`magnet_for`). **Private torrents** keep no info dictionary and no trackers; they are fetched through their
+source at grab time as before, so the passkey stays only where it already lived (the encrypted source credentials, feed
+item link and recommendation link) and is never logged.
+
+### Q112: Which subtitle files does a torrent bring, and how are they kept with their video?
+**Answer:** Bundled `.srt`, `.ass`/`.ssa`, `.vtt`, `.sup` and VobSub `.idx`+`.sub` files are recognised by
+`torrent::subtitles` when a torrent is inspected (and again for readings kept from before). Each is given its **video**
+(`ContentFile.belongsTo`): by a shared name (`Video.en.srt`), by a `Subs/<video stem>/` folder (season packs:
+`Subs/Show.S01E02.1080p/2_English.srt`), by the same episode, by a `Subs/` folder beside a single video
+(`Movie/Subs/2_English.srt`), or, with one video in the torrent, that one; and a **language** (`ContentFile.language`)
+from a code or name in its file name or folder (`2_English`, `.en.forced`, `Subs/ger/`). Whenever only some files are
+downloaded (`judge` selections for inspected packs, exact `WantedFiles::exactly` indexes and the name-based fallback in
+`partial`), a chosen video's subtitles come with it, and one half of a VobSub pair brings the other. Importing subtitles
+into the library is not part of this; it belongs to the subtitles work.
+
+### Q113: When does automatic downloading search for new episodes and movies, and how does it stay quiet?
+**Answer:** The air-time pass (Q81) now looks in the owner's **feed catalogue first** and asks the indexers only when the
+catalogue has nothing acceptable for that episode or movie, and only **inside `auto_download.hourly_search_budget`**,
+shared with recommendations (a target the budget cannot cover is not searched and keeps its place for the next tick; its
+backoff is not spent). Retries **back off**: every `air_retry_minutes` at first, then a quarter of the time since it aired,
+up to the ordinary `search_backoff_minutes`, for `air_window_days` (`auto_schedule::backoff_at`), about thirty-five
+searches over a week instead of one an hour. **Movies** now keep TMDB's earliest digital and physical release dates
+(`Movie.digitalReleaseDate`, `Movie.physicalReleaseDate`, release types 4 and 5, any country); a wanted movie with either
+is searched from the earlier of them like a new episode (grace, quick and growing retries, then the ordinary schedule), and
+not before; without one it is searched from its release date on the ordinary schedule, as before. Everything else of the
+hunt applies unchanged: modes, the profile, the blocklist, the cap, contents judging, the per-target backoff.
+
+**Quiet.** A fresh episode or movie that has not turned up opens no "Waiting for …" notification in its first day
+(`auto_trail::QUIET_AFTER_RELEASE`): releases often take that long. After that it opens one, which later searches only
+rewrite. A notification that was opened and then dismissed or deleted is not opened again by automatic searches
+(`auto_download.waiting_opened` remembers it for thirty days, and forgets it when the target is grabbed); a manual search
+still opens one. `auto_download.enabled` stays off by default, and Settings › Downloads shows the server's value and says
+that turning it on starts the hourly sweep and the searches after air time.
+
+### Q114: Do bundled subtitles change which release is recommended?
+**Answer:** Only as a tiebreak, never as a reason to turn a release down. A judged release reports the languages of the
+subtitles that come with what it is taken for (`ContentsVerdict.subtitleLanguages`, English first), and its row lists
+"Includes English subtitles" (or the languages found) among its reasons. In a coverage plan, between releases of the same
+tier adding the same and in the same health band, one with subtitles goes before the smaller one; in the hunt, between two
+inspected packs holding as much of what is missing, the one with subtitles is taken.
+
+**Where recommendations show.** Only in Find a release: its button carries a count badge (Glass `CountBadge`, the count
+also in the button's name) wherever it appears (a show and each season header, a movie, an album, an artist, an
+audiobook), and the dialog's table lists the recommended releases as ordinary rows pinned at the top, with "Recommended"
+in the profile column (its reasons on the badge's tooltip), what each adds in the quality column ("S02 · adds 6"), and a
+release the live search also returned shown once. "Download recommended" in the table's toolbar downloads the whole plan
+after a confirmation; what the plan leaves uncovered is a quiet line under the table.

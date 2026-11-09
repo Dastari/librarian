@@ -1979,6 +1979,8 @@ input CreateMovieInput {
   collectionPosterUrl: String
   releaseDate: String
   certification: String
+  digitalReleaseDate: String
+  physicalReleaseDate: String
   monitored: Boolean!
   tmdbStatus: String
   wanted: Boolean!
@@ -4397,6 +4399,7 @@ input LookupRecommendationsInput {
   episodeId: String
   movieId: String
   albumId: String
+  artistId: String
   trackId: String
   audiobookId: String
 }
@@ -5040,6 +5043,8 @@ type Movie {
   collectionPosterUrl: String
   releaseDate: String
   certification: String
+  digitalReleaseDate: String
+  physicalReleaseDate: String
   monitored: Boolean!
   tmdbStatus: String
   wanted: Boolean!
@@ -5290,6 +5295,8 @@ input MovieWhereInput {
   collectionName: StringFilter
   releaseDate: DateFilter
   certification: StringFilter
+  digitalReleaseDate: DateFilter
+  physicalReleaseDate: DateFilter
   monitored: BoolFilter
   tmdbStatus: StringFilter
   wanted: BoolFilter
@@ -11583,6 +11590,7 @@ type ReleaseRecommendation {
 
   """Album Id"""
   albumId: String
+  artistId: String
 
   """Track Id"""
   trackId: String
@@ -11656,6 +11664,9 @@ type ReleaseRecommendation {
   The torrent's file indexes to download for exactly what it covers, as a JSON array, when its files were looked into before it was recommended (Q100). Used with "only the missing files".
   """
   fileIndices: String
+  coversAlbums: String
+  selectedSize: Int
+  downloadNote: String
 
   """
   The version of the rules that chose this answer (`jobs::recommend::RULES_VERSION`). An answer from older rules is not trusted: it is removed and looked up again (Q98).
@@ -11725,6 +11736,7 @@ input ReleaseRecommendationWhereInput {
   episodeId: StringFilter
   movieId: StringFilter
   albumId: StringFilter
+  artistId: StringFilter
   trackId: StringFilter
   audiobookId: StringFilter
   title: StringFilter
@@ -14791,6 +14803,7 @@ type TorrentContents {
 
   """Base64 of the bencoded info dictionary, public torrents only."""
   infoBytes: String
+  trackers: String
 
   """Fetched At"""
   fetchedAt: String!
@@ -15905,6 +15918,8 @@ input UpdateMovieInput {
   collectionPosterUrl: String
   releaseDate: String
   certification: String
+  digitalReleaseDate: String
+  physicalReleaseDate: String
   monitored: Boolean
   tmdbStatus: String
   wanted: Boolean

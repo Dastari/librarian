@@ -13,6 +13,7 @@ fragment TorrentContentsFields on TorrentContents {
   via
   files
   infoBytes
+  trackers
   fetchedAt
   createdAt
   updatedAt

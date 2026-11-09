@@ -29,6 +29,7 @@ import { useTitleDetailFacts } from "./titleDetailFacts";
 import { useShowEntity } from "./useShowEntity";
 import { DetailShell } from "./DetailShell";
 import { EpisodeList } from "./EpisodeList";
+import { useRecommended } from "@/features/recommendations/useRecommended";
 
 export type EpisodeRow = ShowEpisodesQuery["episodes"]["edges"][number]["node"];
 
@@ -95,6 +96,8 @@ export function ShowPage({ showId, initialSeason, focusEpisodeId }: {
   const seasonActions = useMemo(() => defineActions<SeasonInfo>("season", [seasonArtwork.action]), [seasonArtwork.action]);
   const { actions, dialogs, openSettings } = useShowEntity<NonNullable<typeof show>>({ open: false, play: playNext, season: activeSeason, onRefreshed: () => { void episodes.refetch().catch(() => {}); }, reset });
 
+  // Find releases carries a badge with the number of releases in the show's plan.
+  const recommended = useRecommended({ showId, series: true }, show ? list.filter((episode) => !episode.mediaFileId).length : 0);
   if (error && !show) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!show) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Show not found" description="This item may have been removed from the library." className="page-gutter my-8" />;
 
@@ -125,7 +128,7 @@ export function ShowPage({ showId, initialSeason, focusEpisodeId }: {
           { label: "Links", value: show.tvmazeId || show.imdbId ? <ProviderLinks tvmazeId={show.tvmazeId} imdbId={show.imdbId} /> : null },
         ]} />,
         actions: (
-          <MediaActions target={show} label={show.name} actions={actions} play={playNext} />
+          <MediaActions target={show} label={show.name} actions={actions} play={playNext} recommended={recommended.forTarget} />
         ),
       }}
     >

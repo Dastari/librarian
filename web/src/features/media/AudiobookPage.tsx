@@ -1,5 +1,5 @@
-import { RecommendedRelease } from "@/features/recommendations/RecommendedRelease";
 import { CastAndCrew, useTitleCredits } from "@/features/people/CastAndCrew";
+import { useRecommended } from "@/features/recommendations/useRecommended";
 import { copyText } from "glass-ux/copy-button";
 import { useApolloClient, useMutation } from "@apollo/client/react";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
@@ -320,6 +320,7 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
 
   const { credits } = useTitleCredits({ audiobookId: { eq: audiobookId } });
 
+  const recommended = useRecommended({ audiobookId }, book && chapters.some((chapter) => !chapter.mediaFileId) ? 1 : 0);
   if (error && !book) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!book) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Audiobook not found" description="This item may have been removed from the library." className="page-gutter my-8" />;
 
@@ -343,12 +344,11 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
         ),
         description: book.description,
         actions: (
-          <MediaActions target={book} label={book.title} actions={bookActions} play={playBook} />
+          <MediaActions target={book} label={book.title} actions={bookActions} play={playBook} recommended={recommended.forTarget} />
         ),
       }}
     >
       <AudiobookTableContext.Provider value={{ actions, statuses, currentItemId, fractionOf, playStateOf, press, want: isAdmin ? toggleWanted : undefined, unavailable: progressUnavailable }}>
-        <RecommendedRelease target={{ audiobookId: book.id }} missing={chapters.some((chapter) => !chapter.mediaFileId) ? 1 : 0} />
         <LoadedDataTable
           id={`audiobook-chapters:${user?.id ?? "anonymous"}:${book.libraryId}:${book.id}`}
           label={`${book.title} chapters`} columns={chapterColumns} rows={chapters} getRowId={(chapter) => chapter.id} getRowLabel={(chapter) => chapter.title ?? `Chapter ${chapter.chapterNumber}`}

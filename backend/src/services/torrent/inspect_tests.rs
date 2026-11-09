@@ -191,6 +191,137 @@ fn a_known_info_hash_comes_from_the_listing_or_the_magnet() {
     assert!(!link_key(&release).contains("SECRET"));
 }
 
+#[test]
+fn a_kept_info_dictionary_rebuilds_the_same_torrent_with_its_trackers() {
+    let public = parse_torrent_file(&fixture("queen_opera_public.torrent")).unwrap();
+    let trackers = vec![
+        "udp://tracker.example:1337/announce".to_string(),
+        "https://tracker.example/announce".to_string(),
+    ];
+    let rebuilt = torrent_file_from_info(&public.info_bytes, &trackers);
+    let parsed = parse_torrent_file(&rebuilt).unwrap();
+    assert_eq!(parsed.info_hash, public.info_hash);
+    assert_eq!(parsed.files, public.files);
+    assert_eq!(parsed.trackers, trackers);
+    // No trackers is still a valid torrent (DHT finds its peers).
+    let bare = parse_torrent_file(&torrent_file_from_info(&public.info_bytes, &[])).unwrap();
+    assert_eq!(bare.info_hash, public.info_hash);
+    assert!(bare.trackers.is_empty());
+}
+
+#[test]
+fn trackers_with_a_passkey_are_never_kept() {
+    let kept = public_trackers([
+        "udp://open.tracker.example:6969/announce".to_string(),
+        "https://tracker.example/announce.php?passkey=0123456789abcdef0123456789abcdef".to_string(),
+        "https://tracker.example/a/0123456789abcdef0123456789abcdef/announce".to_string(),
+        "http://tracker.example/announce?torrent_pass=SECRET".to_string(),
+        "udp://open.tracker.example:6969/announce".to_string(),
+        "javascript:alert(1)".to_string(),
+    ]);
+    assert_eq!(
+        kept,
+        vec!["udp://open.tracker.example:6969/announce".to_string()]
+    );
+    // A private torrent's announce (with its passkey) is not read at all.
+    let private = parse_torrent_file(&fixture("babylon5_s01_private.torrent")).unwrap();
+    assert!(private.trackers.is_empty());
+}
+
+#[test]
+fn a_magnet_is_built_from_the_hash_name_and_trackers() {
+    let magnet = magnet_for(
+        "963A21807274BB8202C9546A88322F032B84520E",
+        "Queen - A Night at the Opera",
+        &["udp://tracker.example:1337/announce".to_string()],
+    );
+    assert!(
+        magnet.starts_with("magnet:?xt=urn:btih:963a21807274bb8202c9546a88322f032b84520e&dn=Queen")
+    );
+    let parsed = librqbit::Magnet::parse(&magnet).unwrap();
+    assert_eq!(
+        parsed.trackers,
+        vec!["udp://tracker.example:1337/announce".to_string()]
+    );
+    assert_eq!(
+        parsed.as_id20().unwrap().as_string(),
+        "963a21807274bb8202c9546a88322f032b84520e"
+    );
+}
+
+#[tokio::test]
+async fn a_grab_finds_the_kept_torrent_and_keeps_a_magnet_for_restoring() {
+    let db = database().await;
+    let mut public = parse_torrent_file(&fixture("queen_opera_public.torrent")).unwrap();
+    public.trackers = vec!["udp://tracker.example:1337/announce".to_string()];
+    let mut release = SourceRelease::new(
+        "Queen - A Night at the Opera (1975) [FLAC]".into(),
+        "guid-queen".into(),
+        Utc::now(),
+    );
+    release.source_id = Some("source-1".into());
+    store(&db, &public, "torrent_file", Some(link_key(&release)))
+        .await
+        .unwrap();
+
+    // A `.torrent` link with no info hash in its listing: found by its link, magnet built.
+    let stored = stored_torrent(&db, &release).await.expect("kept");
+    assert_eq!(stored.info_hash, public.info_hash);
+    assert_eq!(
+        parse_torrent_file(&stored.torrent_file).unwrap().info_hash,
+        public.info_hash
+    );
+    assert!(stored.magnet.contains(&public.info_hash));
+    assert!(stored.magnet.contains("tracker.example"));
+
+    // The rebuilt file is enough for the client: no peer exists here, and it answers at once.
+    let root = tempfile::tempdir().unwrap();
+    let session = Session::new_with_opts(
+        root.path().to_owned(),
+        librqbit::SessionOptions {
+            dht: None,
+            disable_trackers: true,
+            disable_local_service_discovery: true,
+            listen: None,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let started = std::time::Instant::now();
+    let listed = list_only(
+        &session,
+        AddTorrent::from_bytes(stored.torrent_file.clone()),
+        None,
+        Duration::from_secs(5),
+    )
+    .await
+    .expect("a kept torrent needs no peer");
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert_eq!(
+        parse_torrent_file(&listed).unwrap().info_hash,
+        public.info_hash
+    );
+    session.stop().await;
+
+    // A magnet release keeps its own magnet on the row, and its trackers go into the file.
+    release.magnet_uri = Some(format!(
+        "magnet:?xt=urn:btih:{}&tr=udp%3A%2F%2Fother.example%3A80%2Fannounce",
+        public.info_hash
+    ));
+    let stored = stored_torrent(&db, &release).await.expect("kept");
+    assert_eq!(stored.magnet, release.magnet_uri.clone().unwrap());
+    let trackers = parse_torrent_file(&stored.torrent_file).unwrap().trackers;
+    assert!(trackers.contains(&"udp://other.example:80/announce".to_string()));
+
+    // A private torrent keeps no info bytes, so it is fetched from its tracker as before.
+    let private = parse_torrent_file(&fixture("babylon5_s01_private.torrent")).unwrap();
+    let mut private_release = SourceRelease::new("Babylon 5".into(), "guid-b5".into(), Utc::now());
+    private_release.info_hash = Some(private.info_hash.clone());
+    store(&db, &private, "torrent_file", None).await.unwrap();
+    assert!(stored_torrent(&db, &private_release).await.is_none());
+}
+
 /// A magnet resolved from a real librqbit seeder on loopback: the files come back, the reading
 /// session keeps no torrent, and nothing is written to its download folder.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

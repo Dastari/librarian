@@ -8,7 +8,7 @@ use crate::db::Database;
 use crate::jobs::recommend::{self, LookupRequest, Requested};
 use crate::services::ServicesManager;
 use crate::services::graphql::auth::AuthExt;
-use crate::services::graphql::entities::{Album, Audiobook, Episode, Movie, Show, Track};
+use crate::services::graphql::entities::{Album, Artist, Audiobook, Episode, Movie, Show, Track};
 
 /// What to look a recommendation up for: a season (or an episode of it), a movie, an album (or a
 /// track of it) or an audiobook.
@@ -23,6 +23,8 @@ pub struct LookupRecommendationsInput {
     pub album_id: Option<String>,
     pub track_id: Option<String>,
     pub audiobook_id: Option<String>,
+    /// An artist: answered, like an album or a track of theirs, by the artist's coverage plan.
+    pub artist_id: Option<String>,
 }
 
 #[derive(Debug, Clone, SimpleObject)]
@@ -111,17 +113,26 @@ async fn authorize(
         let track = Track::get(db.pool(), track_id).await?.ok_or_else(denied)?;
         album_id = Some(track.album_id);
     }
+    let mut artist_id = input.artist_id.clone();
     if let Some(id) = &album_id {
         let album = Album::get(db.pool(), id).await?.ok_or_else(denied)?;
         if !own(&album.user_id) {
             return Err(denied());
         }
+        artist_id = Some(album.artist_id);
+    }
+    if let Some(id) = &artist_id {
+        // An album or a track: all answered by the artist's coverage plan (Q110).
+        let artist = Artist::get(db.pool(), id).await?.ok_or_else(denied)?;
+        if !own(&artist.user_id) {
+            return Err(denied());
+        }
         return Ok((
-            album.user_id,
-            album.library_id,
-            album.name.clone(),
+            artist.user_id,
+            artist.library_id,
+            artist.name.clone(),
             LookupRequest {
-                album_id: Some(album.id),
+                artist_id: Some(artist.id),
                 ..Default::default()
             },
         ));

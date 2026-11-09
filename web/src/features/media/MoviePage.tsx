@@ -3,8 +3,8 @@ import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
-import { RecommendedRelease } from "@/features/recommendations/RecommendedRelease";
-import { EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, Panel, PosterCard, Section, SkeletonHero, StatusChip } from "@/components/ui";
+import { useRecommended } from "@/features/recommendations/useRecommended";
+import { Artwork, EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, Panel, PosterCard, Section, SkeletonHero, StatusChip } from "@/components/ui";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
 import { movieAcquisitionMeta } from "@/features/acquisition/mode";
 import { usePlayer } from "@/features/player/usePlayer";
@@ -55,6 +55,8 @@ export function MoviePage({ movieId }: { movieId: string }) {
   }), [resume]);
   const { actions, dialogs, openSettings } = useMovieEntity<NonNullable<typeof movie>>({ open: false, play, playLabel, reset });
 
+  // Find releases carries a badge when Librarian recommends a release for this missing movie.
+  const recommended = useRecommended({ movieId }, movie && !movie.mediaFileId ? 1 : 0);
   if (error && !movie) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!movie) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Movie not found" description="This item may have been removed from the library." className="page-gutter my-8" />;
 
@@ -87,6 +89,7 @@ export function MoviePage({ movieId }: { movieId: string }) {
             label={movie.title}
             actions={actions}
             play={movie.mediaFileId ? { label: playLabel, run: () => play(movie) } : undefined}
+            recommended={recommended.forTarget}
           />
         ),
         tagline: movie.tagline,
@@ -129,7 +132,6 @@ export function MoviePage({ movieId }: { movieId: string }) {
             <p className="inline-flex items-center gap-2 text-body-sm text-muted">
               <IconInfo size="md" /> No file is linked yet. {movie.wanted ? "Librarian is looking for a release." : "Mark it as wanted to search automatically."}
             </p>
-            <RecommendedRelease target={{ movieId: movie.id }} missing={1} />
           </Panel>
         )}
       </div>

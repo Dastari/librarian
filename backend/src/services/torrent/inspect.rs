@@ -88,6 +88,12 @@ pub struct ContentFile {
     pub track: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disc: Option<i32>,
+    /// A subtitle's language, from its name or folder (`2_English.srt`, `.en.srt`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    /// For a subtitle: the torrent file index of the video it belongs to (Q112).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub belongs_to: Option<usize>,
 }
 
 impl ContentFile {
@@ -110,7 +116,7 @@ fn extension(path: &str) -> String {
         .unwrap_or_default()
 }
 
-const SUBTITLE_EXTENSIONS: &[&str] = &["srt", "ass", "ssa", "sub", "idx", "vtt", "sup"];
+use super::subtitles::SUBTITLE_EXTENSIONS;
 const INFO_EXTENSIONS: &[&str] = &[
     "nfo", "txt", "sfv", "md5", "sha1", "cue", "log", "m3u", "m3u8", "url", "html", "exe",
 ];
@@ -213,6 +219,8 @@ pub fn describe_file(index: usize, path: &str, size: u64) -> ContentFile {
         episodes: Vec::new(),
         track: None,
         disc: None,
+        language: None,
+        belongs_to: None,
     };
     match kind {
         FileKind::Video | FileKind::Subtitle | FileKind::Sample | FileKind::Extra => {
@@ -260,6 +268,8 @@ pub struct Inspected {
     pub files: Vec<ContentFile>,
     /// The bencoded info dictionary.
     pub info_bytes: Vec<u8>,
+    /// Tracker addresses, public torrents only (a private one's announce holds the passkey).
+    pub trackers: Vec<String>,
 }
 
 /// Parse a `.torrent` file locally. Nothing is fetched or announced.
@@ -268,12 +278,22 @@ pub fn parse_torrent_file(bytes: &[u8]) -> Result<Inspected> {
         .map_err(|error| anyhow::anyhow!("not a valid torrent file: {error}"))?;
     let info_hash = meta.info_hash.as_string();
     let info_bytes = meta.info.raw_bytes.as_ref().to_vec();
+    let announced: Vec<String> = meta
+        .iter_announce()
+        .filter_map(|tracker| std::str::from_utf8(tracker.as_ref()).ok())
+        .map(str::to_string)
+        .collect();
     let info = meta
         .info
         .data
         .validate()
         .map_err(|error| anyhow::anyhow!("the torrent's file list is not valid: {error}"))?;
     let is_private = info.info().private;
+    let trackers = if is_private {
+        Vec::new()
+    } else {
+        public_trackers(announced)
+    };
     let piece_length = info.info().piece_length;
     let lengths = info.lengths();
     let total_size = lengths.total_length();
@@ -286,6 +306,7 @@ pub fn parse_torrent_file(bytes: &[u8]) -> Result<Inspected> {
         let path = details.filename.to_vec().join("/");
         files.push(describe_file(index, &path, details.len));
     }
+    super::subtitles::link_subtitles(&mut files);
     let name = info
         .name()
         .map(|name| name.into_owned())
@@ -300,7 +321,81 @@ pub fn parse_torrent_file(bytes: &[u8]) -> Result<Inspected> {
         is_private,
         files,
         info_bytes,
+        trackers,
     })
+}
+
+/// The tracker addresses that may be kept and handed on: `http(s)`/`udp`/`wss` announce URLs with
+/// nothing secret-looking in them (a passkey in the path or query), each once, in order.
+pub fn public_trackers(trackers: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tracker in trackers {
+        let tracker = tracker.trim().to_string();
+        let lower = tracker.to_ascii_lowercase();
+        let known_scheme = ["http://", "https://", "udp://", "ws://", "wss://"]
+            .iter()
+            .any(|scheme| lower.starts_with(scheme));
+        // `redact_url` hides opaque path segments and secret query values; a tracker it would
+        // change carries something that must not be stored.
+        let looks_secret = (lower.starts_with("http://") || lower.starts_with("https://"))
+            && crate::services::redact::redact_url(&tracker, false) != tracker;
+        let keyword = ["passkey", "torrent_pass", "authkey", "apikey"]
+            .iter()
+            .any(|word| lower.contains(word));
+        if known_scheme && !looks_secret && !keyword && !out.contains(&tracker) {
+            out.push(tracker);
+        }
+    }
+    out
+}
+
+/// A `.torrent` file built from a kept info dictionary and its trackers. The info hash is the hash
+/// of the info dictionary's bytes, which are copied as they are, so the file names the same torrent.
+pub fn torrent_file_from_info(info_bytes: &[u8], trackers: &[String]) -> Vec<u8> {
+    fn string(out: &mut Vec<u8>, value: &[u8]) {
+        out.extend_from_slice(value.len().to_string().as_bytes());
+        out.push(b':');
+        out.extend_from_slice(value);
+    }
+    // Keys in sorted order, as bencode requires: announce, announce-list, info.
+    let mut out = b"d".to_vec();
+    if let Some(first) = trackers.first() {
+        string(&mut out, b"announce");
+        string(&mut out, first.as_bytes());
+        string(&mut out, b"announce-list");
+        out.push(b'l');
+        for tracker in trackers {
+            out.push(b'l');
+            string(&mut out, tracker.as_bytes());
+            out.push(b'e');
+        }
+        out.push(b'e');
+    }
+    string(&mut out, b"info");
+    out.extend_from_slice(info_bytes);
+    out.push(b'e');
+    out
+}
+
+/// A magnet for a torrent: its info hash, its name and its public trackers.
+pub fn magnet_for(info_hash: &str, name: &str, trackers: &[String]) -> String {
+    let mut magnet = format!("magnet:?xt=urn:btih:{}", info_hash.to_ascii_lowercase());
+    if !name.is_empty() {
+        magnet.push_str("&dn=");
+        magnet.push_str(&urlencoding::encode(name));
+    }
+    for tracker in trackers {
+        magnet.push_str("&tr=");
+        magnet.push_str(&urlencoding::encode(tracker));
+    }
+    magnet
+}
+
+/// The trackers a magnet names.
+pub fn magnet_trackers(magnet: &str) -> Vec<String> {
+    librqbit::Magnet::parse(magnet)
+        .map(|parsed| parsed.trackers)
+        .unwrap_or_default()
 }
 
 /// Ask librqbit for a torrent's metadata in list-only mode, within `timeout`: a magnet's info
@@ -397,7 +492,13 @@ impl Contents {
             name: row.name.clone(),
             total_size: row.total_size,
             is_private: row.is_private,
-            files: serde_json::from_str(&row.files).unwrap_or_default(),
+            files: {
+                let mut files: Vec<ContentFile> =
+                    serde_json::from_str(&row.files).unwrap_or_default();
+                // Readings kept before subtitles were linked are linked now.
+                super::subtitles::link_subtitles(&mut files);
+                files
+            },
         }
     }
 
@@ -449,6 +550,93 @@ pub async fn cached_for(db: &Database, release: &SourceRelease) -> Option<Conten
     cached_by_link(db, &link_key(release)).await
 }
 
+/// A torrent read before (Q99) that can be added from what was kept, without asking peers for its
+/// metadata again: a `.torrent` rebuilt from its info dictionary and trackers, and the magnet its
+/// `Torrent` row keeps for restoring.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredTorrent {
+    pub info_hash: String,
+    pub torrent_file: Vec<u8>,
+    pub magnet: String,
+}
+
+/// [`StoredTorrent`] from a kept row: public torrents only (a private one keeps no info bytes).
+/// `magnet` is the release's own magnet when it has one (its trackers are what the listing gave);
+/// otherwise one is built from the info hash, the name and the kept trackers.
+pub fn stored_torrent_from_row(
+    row: &TorrentContents,
+    magnet: Option<&str>,
+) -> Option<StoredTorrent> {
+    if row.is_private {
+        return None;
+    }
+    let info_bytes = base64::engine::general_purpose::STANDARD
+        .decode(row.info_bytes.as_deref()?)
+        .ok()?;
+    if info_bytes.is_empty() {
+        return None;
+    }
+    let kept: Vec<String> = row
+        .trackers
+        .as_deref()
+        .and_then(|json| serde_json::from_str(json).ok())
+        .unwrap_or_default();
+    let mut trackers = kept;
+    if let Some(magnet) = magnet {
+        trackers.extend(magnet_trackers(magnet));
+    }
+    let trackers = public_trackers(trackers);
+    let torrent_file = torrent_file_from_info(&info_bytes, &trackers);
+    // Only a file that really is this torrent is used.
+    let parsed = librqbit::torrent_from_bytes(&torrent_file).ok()?;
+    if !parsed
+        .info_hash
+        .as_string()
+        .eq_ignore_ascii_case(&row.info_hash)
+    {
+        return None;
+    }
+    let magnet = match magnet {
+        Some(magnet) if magnet.to_ascii_lowercase().starts_with("magnet:") => magnet.to_string(),
+        _ => magnet_for(&row.info_hash, &row.name, &trackers),
+    };
+    Some(StoredTorrent {
+        info_hash: row.info_hash.to_ascii_lowercase(),
+        torrent_file,
+        magnet,
+    })
+}
+
+/// The kept torrent for a release, if it was read before and is public.
+pub async fn stored_torrent(db: &Database, release: &SourceRelease) -> Option<StoredTorrent> {
+    let by_hash = match known_info_hash(release) {
+        Some(hash) => TorrentContents::query(db.pool())
+            .filter(TorrentContentsWhereInput {
+                info_hash: Some(string_eq(&hash)),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await
+            .ok()
+            .and_then(|rows| rows.into_iter().next()),
+        None => None,
+    };
+    let row = match by_hash {
+        Some(row) => row,
+        None => TorrentContents::query(db.pool())
+            .filter(TorrentContentsWhereInput {
+                link_key: Some(string_eq(&link_key(release))),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await
+            .ok()?
+            .into_iter()
+            .next()?,
+    };
+    stored_torrent_from_row(&row, release.magnet_uri.as_deref())
+}
+
 /// Keep a reading. A row for the same info hash already there is kept as it is (metadata does not
 /// change), so two readers racing each other store one row.
 pub async fn store(
@@ -475,6 +663,9 @@ pub async fn store(
         // A private torrent's metadata is fetched from its tracker again when it is grabbed.
         info_bytes: (!inspected.is_private)
             .then(|| base64::engine::general_purpose::STANDARD.encode(&inspected.info_bytes)),
+        trackers: (!inspected.is_private && !inspected.trackers.is_empty())
+            .then(|| serde_json::to_string(&inspected.trackers).ok())
+            .flatten(),
         fetched_at: now,
     };
     if let Err(error) = TorrentContents::insert(db, input).await
@@ -649,7 +840,13 @@ async fn read_release(
             .await
             .context("magnet inspection is shutting down")?;
         let bytes = torrent.read_metadata_only(&link, MAGNET_TIMEOUT).await?;
-        return Ok(Some((parse_torrent_file(&bytes)?, "magnet")));
+        let mut inspected = parse_torrent_file(&bytes)?;
+        if !inspected.is_private {
+            let mut trackers = inspected.trackers.clone();
+            trackers.extend(magnet_trackers(&link));
+            inspected.trackers = public_trackers(trackers);
+        }
+        return Ok(Some((inspected, "magnet")));
     }
     if !take_fetch(fetches_per_hour) {
         return Ok(None);

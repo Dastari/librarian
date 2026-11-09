@@ -858,7 +858,24 @@ impl TmdbCredits {
     }
 }
 
+/// TMDB release types: 1 premiere, 2 limited theatrical, 3 theatrical, 4 digital, 5 physical, 6 TV.
+pub const RELEASE_TYPE_DIGITAL: i32 = 4;
+pub const RELEASE_TYPE_PHYSICAL: i32 = 5;
+
 impl TmdbReleaseDates {
+    /// The earliest release of one type in any country, as `YYYY-MM-DD`.
+    pub fn earliest_of_type(&self, release_type: i32) -> Option<String> {
+        self.results
+            .iter()
+            .flat_map(|result| result.release_dates.iter())
+            .filter(|date| date.release_type == Some(release_type))
+            .filter_map(|date| date.release_date.as_deref())
+            .filter_map(|date| date.get(..10))
+            .filter(|date| chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok())
+            .min()
+            .map(str::to_string)
+    }
+
     /// Get US certification (MPAA rating)
     pub fn us_certification(&self) -> Option<String> {
         self.results
@@ -890,6 +907,33 @@ pub fn normalize_movie_status(status: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_earliest_digital_and_physical_dates_are_read_across_countries() {
+        let dates: TmdbReleaseDates = serde_json::from_value(serde_json::json!({
+            "id": 1,
+            "results": [
+                {"iso_3166_1": "US", "release_dates": [
+                    {"certification": "PG-13", "release_date": "2024-03-01T00:00:00.000Z", "type": 3},
+                    {"certification": "", "release_date": "2024-04-16T00:00:00.000Z", "type": 4},
+                    {"certification": "", "release_date": "2024-05-14T00:00:00.000Z", "type": 5}
+                ]},
+                {"iso_3166_1": "GB", "release_dates": [
+                    {"certification": "12A", "release_date": "2024-04-12T00:00:00.000Z", "type": 4}
+                ]}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(
+            dates.earliest_of_type(RELEASE_TYPE_DIGITAL).as_deref(),
+            Some("2024-04-12")
+        );
+        assert_eq!(
+            dates.earliest_of_type(RELEASE_TYPE_PHYSICAL).as_deref(),
+            Some("2024-05-14")
+        );
+        assert_eq!(dates.earliest_of_type(6), None);
+    }
 
     #[test]
     fn test_image_url() {
