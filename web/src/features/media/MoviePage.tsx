@@ -4,7 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
 import { useRecommended } from "@/features/recommendations/useRecommended";
-import { EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, Panel, PosterCard, Section, SkeletonHero, StatusChip } from "@/components/ui";
+import { EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, PosterCard, Section, SkeletonHero, StatusChip } from "@/components/ui";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
 import { movieAcquisitionMeta } from "@/features/acquisition/mode";
 import { usePlayer } from "@/features/player/usePlayer";
@@ -23,7 +23,6 @@ import { LIBRARY_TYPES } from "@/lib/library-types";
 import { MediaActions } from "./MediaActions";
 import { DetailShell } from "./DetailShell";
 import { MovieTitle } from "@/features/artwork/TitleLogo";
-import { FileDetails } from "./FileDetails";
 import { filesWithProgress, type ProgressReset } from "./progressReset";
 import { useTitleDetailFacts } from "./titleDetailFacts";
 import { useMovieEntity } from "./useMovieEntity";
@@ -123,18 +122,6 @@ export function MoviePage({ movieId }: { movieId: string }) {
           </MediaRow>
         </Section>
       ) : null}
-
-      <div>
-        {movie.mediaFile ? (
-          <FileDetails file={movie.mediaFile} />
-        ) : (
-          <Panel title="File" tone="secondary">
-            <p className="inline-flex items-center gap-2 text-body-sm text-muted">
-              <IconInfo size="md" /> No file is linked yet. {movie.wanted ? "Librarian is looking for a release." : "Mark it as wanted to search automatically."}
-            </p>
-          </Panel>
-        )}
-      </div>
 
       {dialogs}
     </DetailShell>
