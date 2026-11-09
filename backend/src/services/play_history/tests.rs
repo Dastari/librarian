@@ -828,11 +828,22 @@ async fn history_is_read_and_deleted_by_its_owner_and_never_written_by_clients()
     );
     assert_eq!(f.plays(&f.user).await[0].seconds_played, 10.0);
 
-    // Clearing your history removes only yours, even with a filter naming everyone's.
+    // A filter naming someone else's plays deletes none of theirs: the generated bulk delete
+    // refuses a set that includes rows the requester may not write.
+    let _ = f
+        .execute_raw(
+            "mutation($where:PlayHistoryWhereInput!){deletePlayHistories(where:$where){success error deletedCount}}",
+            json!({"where":{"userId":{"inList":[f.user.user_id, f.other.user_id]}}}),
+            &f.user,
+        )
+        .await;
+    assert_eq!(f.plays(&f.other).await.len(), 1);
+
+    // "Clear my history", as the History page sends it, removes all of yours.
     let cleared = f
         .execute(
             "mutation($where:PlayHistoryWhereInput!){deletePlayHistories(where:$where){success error deletedCount}}",
-            json!({"where":{"userId":{"inList":[f.user.user_id, f.other.user_id]}}}),
+            json!({"where":{"userId":{"eq":f.user.user_id}}}),
             &f.user,
         )
         .await;

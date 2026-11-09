@@ -592,6 +592,7 @@ fn balance(markup: &str) -> String {
     let mut rest = markup;
     while let Some(at) = rest.find('<') {
         out.push_str(&rest[..at]);
+        rest = &rest[at..];
         let Some(close) = rest.find('>') else {
             out.push_str(rest);
             rest = "";

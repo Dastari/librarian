@@ -192,7 +192,7 @@ pub struct MediaFile {
     pub picture_crop: Option<PictureCrop>,
 
     /// Seek-bar preview sprite sheets, made after analysis (design.md Q122). Sheets are served
-    /// at `/api/media/{id}/storyboard/{key}/{sheet}.jpg`.
+    /// at `/api/media/<id>/storyboard/<key>/<sheet>.jpg`.
     #[graphql(name = "storyboard")]
     #[json_field]
     pub storyboard: Option<VideoStoryboard>,

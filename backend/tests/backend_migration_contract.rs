@@ -248,7 +248,9 @@ fn private_artwork_requires_auth_and_private_cache_headers() {
     let artwork_api = read(backend_root().join("src/api/artwork.rs"));
     assert!(artwork_api.contains("require_authenticated_user"));
     assert!(artwork_api.contains("can_access_artwork"));
-    assert!(artwork_api.contains("private, max-age=86400"));
+    // Versioned addresses (`?v=`) are immutable; plain ones revalidate after five minutes (Q127).
+    assert!(artwork_api.contains("private, max-age=31536000, immutable"));
+    assert!(artwork_api.contains("private, max-age=300, stale-while-revalidate"));
     assert!(artwork_api.contains("Cookie, Authorization"));
     assert!(!artwork_api.contains("public, max-age"));
 }

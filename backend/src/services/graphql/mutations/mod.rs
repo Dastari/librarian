@@ -28,7 +28,7 @@ pub use network_servers::{ServerConnectionMutations, ServerConnectionQueries};
 pub use notifications::NotificationFeedMutations;
 pub use quality::QualityMutations;
 pub use recommendations::RecommendationMutations;
-pub use subtitles::SubtitleMutations;
+pub use subtitles::SubtitleActionMutations;
 
 #[cfg(test)]
 mod auth_session_tests;

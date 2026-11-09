@@ -82,7 +82,8 @@ fn tvmaze_lists_posters_and_backgrounds_with_the_main_poster_first() {
 
     let posters = tvmaze_show_options(&images, ArtworkKind::Poster);
     assert_eq!(posters.len(), 4);
-    assert!(posters[0].url.ends_with("/1230408.jpg"), "{posters:?}");
+    // The main poster (image 1230408) is stored as file 1245274.
+    assert!(posters[0].url.ends_with("/1245274.jpg"), "{posters:?}");
     assert!(posters[0].preview_url.contains("medium_portrait"));
     assert!(posters.iter().all(|poster| poster.source == "TVmaze"));
     assert_eq!(

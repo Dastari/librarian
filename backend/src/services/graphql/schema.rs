@@ -15,7 +15,7 @@ use crate::services::graphql::mutations::{
     ArtworkMutations, AuthMutations, AutoDownloadMutations, BackupMutations, DeviceActionMutations,
     DownloadsMoveMutations, DownloadsMoveQueries, FeedMutations, FilesystemMutations,
     LibraryScanMutations, MaintenanceMutations, NotificationFeedMutations, QualityMutations,
-    RecommendationMutations, ServerConnectionMutations, ServerConnectionQueries, SubtitleMutations,
+    RecommendationMutations, ServerConnectionMutations, ServerConnectionQueries, SubtitleActionMutations,
 };
 use crate::services::graphql::queries::{
     ArtworkQueries, BackupQueries, ContentStatusQueries, FilesystemQueries, GenreQueries,
@@ -125,7 +125,7 @@ macro_rules! librarian_schema_roots {
         TorrentContents,
     ],
     extra_query_types: [ArtworkQueries, FilesystemQueries, ServerConnectionQueries, DownloadsMoveQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries, StatisticsQueries],
-    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, PersonMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations, ServerConnectionMutations, DownloadsMoveMutations, SubtitleMutations, DeviceActionMutations],
+    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, PersonMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations, ServerConnectionMutations, DownloadsMoveMutations, SubtitleActionMutations, DeviceActionMutations],
     extra_subscription_types: [BackupSubscriptions, FilesystemSubscriptions, TorrentRuntimeSubscriptions, SessionSubscriptions, SourceCapabilitySubscriptions],
         }
     };

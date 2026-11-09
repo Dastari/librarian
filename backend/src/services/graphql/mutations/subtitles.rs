@@ -129,10 +129,10 @@ pub struct FetchLyricsPayload {
 }
 
 #[derive(Default)]
-pub struct SubtitleMutations;
+pub struct SubtitleActionMutations;
 
 #[Object]
-impl SubtitleMutations {
+impl SubtitleActionMutations {
     /// Search OpenSubtitles for a file's subtitles, in `languages` or the preferred ones.
     #[graphql(name = "searchSubtitles")]
     async fn search_subtitles(
