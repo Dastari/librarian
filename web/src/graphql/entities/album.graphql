@@ -14,6 +14,7 @@ fragment AlbumFields on Album {
   label
   country
   releaseDate
+  lockedFields
   coverUrl
   trackCount
   discCount
@@ -26,7 +27,6 @@ fragment AlbumFields on Album {
   path
   createdAt
   updatedAt
-  lockedFields
 }
 
 query EntityAlbumList($where: AlbumWhereInput, $orderBy: [AlbumOrderByInput!], $page: PageInput) {

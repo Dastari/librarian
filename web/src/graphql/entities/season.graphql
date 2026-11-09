@@ -10,10 +10,10 @@ fragment SeasonFields on Season {
   premiereDate
   endDate
   episodeOrder
+  lockedFields
   posterUrl
   createdAt
   updatedAt
-  lockedFields
 }
 
 query EntitySeasonList($where: SeasonWhereInput, $orderBy: [SeasonOrderByInput!], $page: PageInput) {

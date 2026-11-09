@@ -9,13 +9,13 @@ fragment ArtistFields on Artist {
   musicbrainzId
   bio
   disambiguation
+  lockedFields
   imageUrl
   albumCount
   trackCount
   totalDurationSecs
   createdAt
   updatedAt
-  lockedFields
 }
 
 query EntityArtistList($where: ArtistWhereInput, $orderBy: [ArtistOrderByInput!], $page: PageInput) {
