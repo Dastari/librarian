@@ -20,7 +20,9 @@ use serde::{Deserialize, Serialize};
     table = "rss_feeds",
     plural = "RssFeeds",
     default_sort = "name",
-    write_policy = "admin.write"
+    write_policy = "admin.write",
+    // Kept from when `url` was filterable, so startup never has to drop it (only additive steps run there).
+    index(name = "idx_rss_feeds_url", columns = ["url"])
 )]
 pub struct RssFeed {
     #[graphql(name = "id")]
