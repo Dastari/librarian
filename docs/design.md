@@ -1966,3 +1966,19 @@ leaving the field ends it, and Back there does not leave the page. Left/Right ke
 caret is at that end). OK on a number field in TV mode therefore no longer submits its form; use the Save button.
 Upstream suggestion for Glass UX: a `NumberField` prop (or a TV-mode default) that lets ArrowUp/ArrowDown propagate unless the field
 is in an explicit edit state, and focusable steppers in `data-input-mode="tv"`.
+
+### Q108: What does a playlist entry's menu offer?
+**Answer:** The entry's own actions plus its target's. A playlist row (a movie, show, album or book entry) shows the
+playlist's actions (Play from here, Shuffle from here, Play next, Add to queue, Add to playlist, Move up and down, Remove from
+playlist, Copy titles) and then the target's own action set from `useMovieEntity`, `useShowEntity`, `useAlbumEntity`
+and `useAudiobookEntity`: Find releases, Refresh metadata, Add to or Remove from Wanted, its settings dialog and the
+rest. `liftActions` (`features/personal/entryActions.ts`) turns a target's set into entry actions: each runs on the
+entries' targets, shows only when every selected entry points at one of that kind, and its label, confirm,
+disabled reason and success message resolve for those targets. Left out because the entry already does them its own way:
+Play (the entry plays from its place in the list), Open, the queue pair, Add to playlist, and Remove from the library, which
+should not sit next to Remove from playlist. Episodes, tracks and chapters have no action set of their own yet, so their
+entries offer the playlist's actions and Open; giving those three entities sets would put theirs here with no change to
+this page.
+
+### Q109: What does a lone chapter do when it ends, and how is a list's picture made?
+**Answer:** See the commits for the audiobook chapter bound and the `/lists` mosaic; this entry is filled in below.

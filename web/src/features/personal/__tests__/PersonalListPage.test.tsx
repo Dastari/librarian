@@ -8,7 +8,7 @@ import { playerStore } from "@/features/player/store";
 import { PersonalListPage } from "../PersonalListPage";
 import { connection, expectValidOperation, installTableGeometry, movieFields, OWNER, personalEntry, personalHarness, playlist, respond, STAMP } from "./personalHarness";
 
-vi.mock("@/lib/auth/useSession", () => ({ useSession: () => ({ user: { id: "admin-self", role: "admin" }, status: "authenticated" }) }));
+vi.mock("@/lib/auth/useSession", () => ({ useSession: () => ({ user: { id: "admin-self", role: "admin" }, status: "authenticated" }), useIsAdmin: () => true }));
 
 beforeEach(() => installTableGeometry());
 afterEach(() => { vi.restoreAllMocks(); playerStore.stopAudio(); playerStore.setVideo(null); });
@@ -129,6 +129,21 @@ describe("playlist page playing", () => {
     await answerMovies(view, ["movie-2"], 1);
     await waitFor(() => expect(queueIds()).toEqual(["now", "movie-1", "later", "movie-2"]));
     expect(playerStore.getSnapshot().index).toBe(0);
+  });
+});
+
+describe("playlist entry menus", () => {
+  it("offers the movie's own actions beside the playlist's, and leaves library removal out", async () => {
+    await mountList();
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Second film" }));
+    const names = (await screen.findAllByRole("menuitem")).map((item) => item.textContent);
+    // The target's own.
+    expect(names).toContain("Refresh metadata");
+    expect(names).toContain("Movie settings");
+    expect(names.some((name) => name === "Add to Wanted" || name === "Remove from Wanted")).toBe(true);
+    // The entry's own, once each.
+    for (const own of ["Play from here", "Play next", "Add to queue", "Open movie", "Move up", "Move down", "Remove from playlist"]) expect(names.filter((name) => name === own)).toHaveLength(1);
+    expect(names).not.toContain("Remove from library…");
   });
 });
 
