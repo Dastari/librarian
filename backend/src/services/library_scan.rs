@@ -39,8 +39,9 @@ use crate::services::graphql::entities::{
 };
 use crate::services::graphql::{AuthUser, LibrarianSchema};
 use crate::services::library_storage::{
-    EntryKind, IntoStoragePath, PlaceMode, StorageErrorKind, WalkFilter, WalkOptions,
-    library_storage, place_no_clobber_blocking,
+    EntryKind, IntoStoragePath, PlaceMode, StorageErrorKind, TOOL_PROTOCOL_WHITELIST, WalkFilter,
+    WalkOptions, is_smb_uri, is_tool_url, library_storage, place_no_clobber_blocking,
+    tool_argument,
 };
 use crate::services::manager::{Service, ServiceHealth, ServicesManager};
 use crate::services::metadata::providers::{
@@ -54,11 +55,13 @@ use crate::services::release_match;
 
 mod identify;
 mod listen;
+mod move_library;
 mod music;
 #[cfg(test)]
 mod organize_tests;
 
 pub use identify::{IdentifiedChoice, IdentifyCandidate, IdentifyTrigger};
+pub use move_library::{LibraryMoveOutcome, LibraryMovePlan};
 
 /// Transport success is not mutation success. These internal documents select a
 /// success/error payload for every mutation root, including compatibility aliases.
@@ -483,6 +486,14 @@ struct LinkedTrackRow {
 struct ScanJob {
     library_id: String,
     scan_run_id: String,
+}
+
+/// Why the walk of a library could not read an entry.
+#[derive(Debug)]
+struct DiscoveryError {
+    message: String,
+    /// The storage itself could not be reached (a share that is down), not one entry unreadable.
+    unavailable: bool,
 }
 
 #[derive(Debug)]
@@ -2211,7 +2222,7 @@ impl LibraryScanService {
         allowed_extensions: &'static [&'static str],
         cancel: CancellationToken,
     ) -> (
-        mpsc::Receiver<std::result::Result<DiscoveredMediaFile, String>>,
+        mpsc::Receiver<std::result::Result<DiscoveredMediaFile, DiscoveryError>>,
         JoinHandle<()>,
     ) {
         let (tx, rx) = mpsc::channel(128);
@@ -2237,20 +2248,25 @@ impl LibraryScanService {
                     .iter()
                     .any(|allowed| *allowed == extension)
             });
-            let walk = library_storage().walk(
-                &root,
-                WalkOptions {
-                    prune: Some(prune),
-                    report: Some(report),
-                    with_metadata: true,
-                },
-                cancel.clone(),
-            );
+            let walk = library_storage()
+                .walk(
+                    &root,
+                    WalkOptions {
+                        prune: Some(prune),
+                        report: Some(report),
+                        with_metadata: true,
+                    },
+                    cancel.clone(),
+                )
+                .await;
             let mut walk = match walk {
                 Ok(walk) => walk,
                 Err(error) => {
                     let _ = tx
-                        .send(Err(format!("Unable to read library entry: {error}")))
+                        .send(Err(DiscoveryError {
+                            message: format!("Unable to read library entry: {error}"),
+                            unavailable: error.kind() == StorageErrorKind::Unavailable,
+                        }))
                         .await;
                     return;
                 }
@@ -2284,8 +2300,11 @@ impl LibraryScanService {
                         .await
                     }
                     Err(error) => {
-                        tx.send(Err(format!("Unable to read library entry: {error}")))
-                            .await
+                        tx.send(Err(DiscoveryError {
+                            message: format!("Unable to read library entry: {error}"),
+                            unavailable: error.kind() == StorageErrorKind::Unavailable,
+                        }))
+                        .await
                     }
                 };
                 if sent.is_err() {
@@ -3512,7 +3531,7 @@ impl LibraryScanService {
     /// earlier scans can't outlive the files they were about. Moves nothing.
     async fn close_stale_duplicates(&self, library: &LibraryRow) {
         // An unreachable library root says nothing about the files: leave the issues alone.
-        if tokio::fs::canonicalize(&library.path).await.is_err() {
+        if resolve_library_path(&library.path).await.is_err() {
             return;
         }
         let Ok(open) = self.open_duplicate_issues(&library.id).await else {
@@ -3873,7 +3892,7 @@ impl LibraryScanService {
         // A copy that has gone since the scan leaves nothing to settle: close the issue and move
         // nothing, as long as the library itself is reachable.
         let library = self.get_library(&issue.library_id).await?;
-        tokio::fs::canonicalize(&library.path)
+        resolve_library_path(&library.path)
             .await
             .context("Library root is unavailable")?;
         if let Some(reason) = self.duplicate_gone(&issue, &details, remove_keeper).await? {
@@ -3925,13 +3944,13 @@ impl LibraryScanService {
             anyhow::bail!("Duplicate file changed since it was verified; rescan before removal");
         }
         let media_file_id = media_file.id.as_str();
-        let root = tokio::fs::canonicalize(&library.path)
+        let root = resolve_library_path(&library.path)
             .await
             .context("Library root is unavailable")?;
-        let duplicate_path = tokio::fs::canonicalize(&details.duplicate_path)
+        let duplicate_path = resolve_library_path(&details.duplicate_path)
             .await
             .context("Duplicate path is unavailable")?;
-        let keeper_path = tokio::fs::canonicalize(&details.keeper_path)
+        let keeper_path = resolve_library_path(&details.keeper_path)
             .await
             .context("Keeper path is unavailable")?;
         if !duplicate_path.starts_with(&root) || !keeper_path.starts_with(&root) {
@@ -3969,7 +3988,8 @@ impl LibraryScanService {
             anyhow::bail!("Duplicate content changed since it was verified; rescan before removal");
         }
 
-        let trash_dir = create_library_directory(&root, &root.join(LIBRARY_TRASH_DIR))
+        let trash_dir = create_library_directory_in(&root, &root.join(LIBRARY_TRASH_DIR))
+            .await
             .context("Failed to create the contained library trash directory")?;
         let original_name = duplicate_path
             .file_name()
@@ -4492,6 +4512,8 @@ impl LibraryScanService {
         let scan_started = Instant::now();
         let library = self.get_library(library_id).await?;
         let normalized_library_type = Self::normalize_library_type(&library.library_type);
+        // A library being moved is not scanned: its records and its folder disagree until done.
+        self.ensure_library_not_moving(library_id).await?;
 
         if library.scanning {
             debug!(
@@ -4537,7 +4559,42 @@ impl LibraryScanService {
         );
 
         let root = PathBuf::from(&library.path);
-        if !root.exists() {
+        let remote_library = is_smb_uri(&library.path);
+        if remote_library {
+            // A library on a share: say why it cannot be read, and touch nothing in the catalogue.
+            if let Err(error) = library_storage().stat(&library.path).await {
+                let unavailable = error.kind() != StorageErrorKind::NotFound;
+                warn!(
+                    library_id = %library_id,
+                    library_name = %library.name,
+                    path = %library.path,
+                    error = %error,
+                    "Skipping library scan because its share cannot be read: library_id={}, name={}, path={}, error={}",
+                    library_id,
+                    library.name,
+                    library.path,
+                    error
+                );
+                self.record_scan_issue(
+                    scan_run_id,
+                    &library,
+                    None,
+                    "DISCOVERY",
+                    if unavailable {
+                        "LIBRARY_STORAGE_UNAVAILABLE"
+                    } else {
+                        "LIBRARY_ROOT_UNAVAILABLE"
+                    },
+                    "ERROR",
+                    &format!("The library's network share cannot be read: {error}"),
+                    Some(
+                        "No files were removed or marked missing. Check that the file server is reachable and the saved sign-in still works, then retry the scan.",
+                    ),
+                )
+                .await?;
+                anyhow::bail!("Library storage is unavailable");
+            }
+        } else if !root.exists() {
             warn!(
                 library_id = %library_id,
                 library_name = %library.name,
@@ -4570,6 +4627,8 @@ impl LibraryScanService {
         let mut unchanged_skipped_count: usize = 0;
         let mut run_analysis_ids: Vec<String> = Vec::new();
         let mut discovered_paths: HashSet<String> = HashSet::new();
+        let mut discovery_errors: usize = 0;
+        let mut storage_unavailable = false;
         let mut pending_provider_fallback: Vec<PendingProviderFallback> = Vec::new();
         let mut duplicate_candidates: Vec<DuplicateCandidate> = Vec::new();
         let mut organize_candidates: Vec<MatchedFile> = Vec::new();
@@ -4601,7 +4660,9 @@ impl LibraryScanService {
             };
             let discovered = match discovered {
                 Ok(discovered) => discovered,
-                Err(message) => {
+                Err(failure) => {
+                    let message = failure.message;
+                    discovery_errors += 1;
                     warn!(
                         library_id = %library_id,
                         library_name = %library.name,
@@ -4609,17 +4670,34 @@ impl LibraryScanService {
                         error = %message,
                         "Library traversal could not read an entry"
                     );
-                    self.record_scan_issue(
-                        scan_run_id,
-                        &library,
-                        None,
-                        "DISCOVERY",
-                        "FILE_DISCOVERY_ERROR",
-                        "WARNING",
-                        &message,
-                        Some("Check library filesystem permissions and retry the scan."),
-                    )
-                    .await?;
+                    if failure.unavailable {
+                        storage_unavailable = true;
+                        self.record_scan_issue(
+                            scan_run_id,
+                            &library,
+                            None,
+                            "DISCOVERY",
+                            "LIBRARY_STORAGE_UNAVAILABLE",
+                            "ERROR",
+                            &message,
+                            Some(
+                                "The share stopped answering during the scan. No files were removed or marked missing; retry the scan when it is back.",
+                            ),
+                        )
+                        .await?;
+                    } else {
+                        self.record_scan_issue(
+                            scan_run_id,
+                            &library,
+                            None,
+                            "DISCOVERY",
+                            "FILE_DISCOVERY_ERROR",
+                            "WARNING",
+                            &message,
+                            Some("Check library filesystem permissions and retry the scan."),
+                        )
+                        .await?;
+                    }
                     continue;
                 }
             };
@@ -4983,9 +5061,29 @@ impl LibraryScanService {
             },
         )
         .await?;
-        let removed_count = self
-            .reconcile_missing_media_files(&auth_user, &discovered_paths, &reconciliation_rows)
-            .await?;
+        // A catalogue is only trimmed to what a complete walk found. A share that stopped
+        // answering, or answered with nothing for a library that had files, says nothing about
+        // them: keep every record.
+        let keep_every_record = storage_unavailable
+            || (remote_library
+                && (discovery_errors > 0
+                    || (discovered_paths.is_empty() && !reconciliation_rows.is_empty())));
+        let removed_count = if keep_every_record {
+            if !storage_unavailable {
+                warn!(
+                    library_id = %library_id,
+                    library_name = %library.name,
+                    discovery_errors,
+                    catalogued_files = reconciliation_rows.len(),
+                    "Kept every file record of '{}': the walk of its share was incomplete or found nothing",
+                    library.name
+                );
+            }
+            0
+        } else {
+            self.reconcile_missing_media_files(&auth_user, &discovered_paths, &reconciliation_rows)
+                .await?
+        };
 
         let organized_misplaced_count = if library.auto_organize {
             self.organize_unchanged_matched_files(&library, &auth_user, organize_candidates)
@@ -9138,10 +9236,7 @@ impl LibraryScanService {
         let library = self.get_library(library_id).await?;
         let root = PathBuf::from(&library.path);
         let path = PathBuf::from(&file.path);
-        let target = {
-            let (root, path) = (root.clone(), path.clone());
-            tokio::task::spawn_blocking(move || deletable_media_file_path(&root, &path)).await??
-        };
+        let target = deletable_media_file(&root, &path).await?;
 
         let auth_user = self.system_auth_user(None).await?;
         let data = self
@@ -9170,8 +9265,8 @@ impl LibraryScanService {
         let Some(target) = target else {
             return Ok(());
         };
-        tokio::task::spawn_blocking(move || remove_media_file(&root, &target))
-            .await?
+        remove_media_file_in(&root, &target)
+            .await
             .with_context(|| {
                 format!(
                     "{} left the library, but the file could not be deleted from disk. The next scan will find it again",
@@ -10085,12 +10180,16 @@ impl LibraryScanService {
                 return;
             }
         };
-        let (root, start, protected) = (root, old_dir.to_path_buf(), protected);
-        let removed = tokio::task::spawn_blocking(move || {
-            remove_empty_folders_upward(&root, &start, &protected)
-        })
-        .await
-        .unwrap_or_default();
+        let removed = if is_remote_path(&root) {
+            remove_empty_folders_upward_remote(&root, old_dir, &protected).await
+        } else {
+            let (root, start, protected) = (root, old_dir.to_path_buf(), protected);
+            tokio::task::spawn_blocking(move || {
+                remove_empty_folders_upward(&root, &start, &protected)
+            })
+            .await
+            .unwrap_or_default()
+        };
         for folder in removed {
             debug!(
                 library_id = %library.id,
@@ -10112,11 +10211,12 @@ impl LibraryScanService {
             });
         };
         let library = self.get_library(&media_library_id).await?;
+        self.ensure_library_not_moving(&library.id).await?;
         let auth_user = self.system_auth_user(Some(&library.user_id)).await?;
 
         let old_path = PathBuf::from(&media_file.path);
         checked_library_path(Path::new(&library.path), &old_path)?;
-        if !old_path.exists() {
+        if !library_storage().exists(&old_path).await.unwrap_or(false) {
             return Ok(OrganizeResult {
                 success: false,
                 old_path: Some(media_file.path),
@@ -13748,6 +13848,7 @@ impl LibraryScanService {
         library: &LibraryRow,
         allow_move: bool,
     ) -> Result<()> {
+        self.ensure_library_not_moving(&library.id).await?;
         if !source_path.exists() {
             anyhow::bail!("Source file does not exist: {}", source_path.display());
         }
@@ -13828,6 +13929,19 @@ impl LibraryScanService {
         target_path: &Path,
         library: &LibraryRow,
     ) {
+        if is_remote_path(Path::new(&library.path)) {
+            // An upgrade replaces a file in place after proving, from its device, inode and change
+            // time, that it is the file that was approved. A share cannot give that proof, so the
+            // better copy is not offered as an upgrade there; it stays in the downloads.
+            info!(
+                library_id = %library.id,
+                library_name = %library.name,
+                target_path = %target_path.display(),
+                "Not offering a quality upgrade for '{}': libraries on a network share do not support in-place upgrades",
+                target_path.display()
+            );
+            return;
+        }
         let Some(db_service) = self.manager.get_database().await else {
             return;
         };
@@ -14203,7 +14317,10 @@ impl LibraryScanService {
     ) -> Result<usize> {
         let mut removed = 0;
         for row in rows {
-            if discovered_paths.contains(&row.path) || Path::new(&row.path).exists() {
+            // A file that cannot be checked is kept: only a storage that answers "not there" counts.
+            if discovered_paths.contains(&row.path)
+                || library_storage().exists(&row.path).await.unwrap_or(true)
+            {
                 continue;
             }
             removed += 1;
@@ -14300,7 +14417,7 @@ impl LibraryScanService {
 
         for (show_name, show_path, show_year, seasons) in shows {
             if let Some(path) = show_path {
-                create_library_directory(Path::new(&library.path), Path::new(&path))?;
+                create_library_directory_in(Path::new(&library.path), Path::new(&path)).await?;
             }
 
             if seasons.is_empty() {
@@ -14311,7 +14428,7 @@ impl LibraryScanService {
                     1,
                     show_year,
                 )?;
-                create_library_directory(Path::new(&library.path), &show_dir)?;
+                create_library_directory_in(Path::new(&library.path), &show_dir).await?;
                 continue;
             }
 
@@ -14323,8 +14440,8 @@ impl LibraryScanService {
                     season,
                     show_year,
                 )?;
-                create_library_directory(Path::new(&library.path), &show_dir)?;
-                create_library_directory(Path::new(&library.path), &season_dir)?;
+                create_library_directory_in(Path::new(&library.path), &show_dir).await?;
+                create_library_directory_in(Path::new(&library.path), &season_dir).await?;
             }
         }
 
@@ -14704,15 +14821,17 @@ impl LibraryScanService {
         let prune: WalkFilter =
             Arc::new(|entry| entry.depth > 0 && is_hidden_name(std::ffi::OsStr::new(entry.name)));
         let report: WalkFilter = Arc::new(|entry| entry.kind == EntryKind::Directory);
-        let mut walk = library_storage().walk(
-            library_root,
-            WalkOptions {
-                prune: Some(prune),
-                report: Some(report),
-                with_metadata: false,
-            },
-            CancellationToken::new(),
-        )?;
+        let mut walk = library_storage()
+            .walk(
+                library_root,
+                WalkOptions {
+                    prune: Some(prune),
+                    report: Some(report),
+                    with_metadata: false,
+                },
+                CancellationToken::new(),
+            )
+            .await?;
         let mut dirs = Vec::new();
         while let Some(entry) = walk.entries.recv().await {
             // An entry that cannot be read is left out, as it always was.
@@ -15720,15 +15839,24 @@ where
 }
 
 async fn ffprobe_analyze(path: &str) -> Result<ProbeAnalysis> {
-    let mut child = Command::new("ffprobe")
-        .arg("-v")
-        .arg("error")
+    // A file on a share is read by ffprobe through a loopback URL; a local file by its path.
+    let input = tool_argument(path)
+        .await
+        .with_context(|| format!("Cannot give ffprobe access to '{path}'"))?;
+    let mut command = Command::new("ffprobe");
+    command.arg("-v").arg("error");
+    if is_tool_url(&input) {
+        command
+            .arg("-protocol_whitelist")
+            .arg(TOOL_PROTOCOL_WHITELIST);
+    }
+    let mut child = command
         .arg("-show_streams")
         .arg("-show_chapters")
         .arg("-show_format")
         .arg("-print_format")
         .arg("json")
-        .arg(path)
+        .arg(&input)
         .kill_on_drop(true)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -16360,6 +16488,77 @@ pub(crate) fn validate_relative_library_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// A library path as it is held for comparing and moving: resolved through symlinks on this
+/// machine, or as written on a share once the share has answered that it is there.
+async fn resolve_library_path(path: &str) -> Result<PathBuf> {
+    if is_smb_uri(path) {
+        library_storage().stat(path).await?;
+        return Ok(PathBuf::from(path));
+    }
+    Ok(tokio::fs::canonicalize(path).await?)
+}
+
+/// Whether a path names a file or folder on a network share rather than on this machine.
+pub(crate) fn is_remote_path(path: &Path) -> bool {
+    path.to_str().is_some_and(is_smb_uri)
+}
+
+/// `create_library_directory`, for either kind of library.
+async fn create_library_directory_in(root: &Path, directory: &Path) -> Result<PathBuf> {
+    if is_remote_path(root) {
+        checked_library_path(root, directory)?;
+        library_storage()
+            .create_dir_all(directory)
+            .await
+            .with_context(|| {
+                format!("Cannot create library directory '{}'", directory.display())
+            })?;
+        return Ok(directory.to_path_buf());
+    }
+    let (root, directory) = (root.to_path_buf(), directory.to_path_buf());
+    tokio::task::spawn_blocking(move || create_library_directory(&root, &directory))
+        .await
+        .context("Library directory task failed")?
+}
+
+/// `deletable_media_file_path`, for either kind of library.
+async fn deletable_media_file(root: &Path, file: &Path) -> Result<Option<PathBuf>> {
+    if !is_remote_path(root) {
+        let (root, file) = (root.to_path_buf(), file.to_path_buf());
+        return tokio::task::spawn_blocking(move || deletable_media_file_path(&root, &file))
+            .await?;
+    }
+    let parent = file.parent().context("Media file path has no parent")?;
+    checked_library_path(root, parent)?;
+    match library_storage().stat(file).await {
+        Ok(meta) if meta.is_dir() => anyhow::bail!("Media file path is a directory, not a file"),
+        Ok(_) => Ok(Some(file.to_path_buf())),
+        Err(error) if error.is_not_found() => Ok(None),
+        Err(error) => Err(error).context("Cannot inspect the media file"),
+    }
+}
+
+/// `remove_media_file`, for either kind of library.
+async fn remove_media_file_in(root: &Path, target: &Path) -> Result<()> {
+    if !is_remote_path(root) {
+        let (root, target) = (root.to_path_buf(), target.to_path_buf());
+        return tokio::task::spawn_blocking(move || remove_media_file(&root, &target)).await?;
+    }
+    match library_storage().remove_file(target).await {
+        Ok(()) => {}
+        Err(error) if error.is_not_found() => return Ok(()),
+        Err(error) => return Err(error.into()),
+    }
+    if let Some(parent) = target.parent()
+        && parent != root
+        && parent.starts_with(root)
+    {
+        // Refused by the share while anything is left in the folder (subtitles, artwork).
+        let _ = library_storage().remove_dir(parent).await;
+    }
+    Ok(())
+}
+
 /// Resolve existing ancestors, including symlinks, without creating anything. Missing
 /// suffixes are allowed for planning; dangling links and escapes fail closed.
 pub(crate) fn checked_library_path(root: &Path, destination: &Path) -> Result<PathBuf> {
@@ -16368,6 +16567,11 @@ pub(crate) fn checked_library_path(root: &Path, destination: &Path) -> Result<Pa
         .context("Destination is outside the library root")?;
     if !relative.as_os_str().is_empty() {
         validate_relative_library_path(relative)?;
+    }
+    // A share has no symlinks to resolve and no working directory to canonicalize against: the
+    // containment that counts is the name check above, and `..` is refused there.
+    if is_remote_path(root) {
+        return Ok(destination.to_path_buf());
     }
     let canonical_root = std::fs::canonicalize(root).context("Library root is unavailable")?;
     if !canonical_root.is_dir() {
@@ -16465,6 +16669,34 @@ fn remove_empty_folders_upward(
     removed
 }
 
+/// `remove_empty_folders_upward` on a share: the share refuses to remove a folder that has
+/// anything in it, so a file that landed there a moment ago is never lost.
+async fn remove_empty_folders_upward_remote(
+    root: &Path,
+    start: &Path,
+    protected: &HashSet<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut removed = Vec::new();
+    let mut current = start.to_path_buf();
+    while current != root
+        && current.starts_with(root)
+        && !protected.contains(&current)
+        && !current.file_name().is_some_and(is_hidden_name)
+    {
+        match library_storage().remove_dir(&current).await {
+            Ok(()) => removed.push(current.clone()),
+            // Already gone: its parent may still be empty.
+            Err(error) if error.is_not_found() => {}
+            Err(_) => break,
+        }
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        current = parent.to_path_buf();
+    }
+    removed
+}
+
 fn create_library_directory(root: &Path, directory: &Path) -> Result<PathBuf> {
     checked_library_path(root, directory)?;
     let relative = directory.strip_prefix(root)?;
@@ -16493,6 +16725,10 @@ async fn place_in_library(
     remove_source: bool,
     source_is_library: bool,
 ) -> Result<NoClobberOutcome> {
+    if is_remote_path(&root) || is_remote_path(&target) {
+        return place_in_remote_library(root, source, target, remove_source, source_is_library)
+            .await;
+    }
     tokio::task::spawn_blocking(move || {
         if source_is_library {
             checked_library_path(&root, &source)?;
@@ -16535,6 +16771,79 @@ async fn place_in_library(
     .context("Contained library placement task failed")?
 }
 
+/// `place_in_library` for a library on a share. There are no hard links there: a file arriving
+/// from a download is copied (the download is left alone, so a torrent keeps seeding), and a file
+/// already on the share is renamed, both without replacing anything that is there.
+async fn place_in_remote_library(
+    root: PathBuf,
+    source: PathBuf,
+    target: PathBuf,
+    remove_source: bool,
+    source_is_library: bool,
+) -> Result<NoClobberOutcome> {
+    if !is_remote_path(&root) {
+        anyhow::bail!(
+            "A file cannot be placed on a share inside the local library '{}'",
+            root.display()
+        );
+    }
+    checked_library_path(&root, &target)?;
+    let parent = target
+        .parent()
+        .context("Library destination has no parent")?;
+    let storage = library_storage();
+    let mut attempts = 0;
+    loop {
+        create_library_directory_in(&root, parent).await?;
+        let outcome = if is_remote_path(&source) {
+            if !source_is_library && !source.starts_with(&root) {
+                anyhow::bail!(
+                    "Copying between two shares is not supported: '{}' to '{}'",
+                    source.display(),
+                    target.display()
+                );
+            }
+            checked_library_path(&root, &source)?;
+            if remove_source {
+                storage
+                    .rename(&source, &target, PlaceMode::NoClobber)
+                    .await
+                    .map_err(anyhow::Error::from)
+            } else {
+                anyhow::bail!("Copying a file within a share is not supported yet")
+            }
+        } else {
+            let placed = storage
+                .put_from_local(&source, &target, PlaceMode::NoClobber)
+                .await
+                .map_err(anyhow::Error::from);
+            if matches!(placed, Ok(NoClobberOutcome::Placed)) && remove_source {
+                tokio::fs::remove_file(&source).await.with_context(|| {
+                    format!(
+                        "failed to remove source file after move: {}",
+                        source.display()
+                    )
+                })?;
+            }
+            placed
+        };
+        match outcome {
+            // A scan tidying empty folders can remove the new folder between making it and
+            // placing into it; the source is still there, so make it again and retry.
+            Err(error)
+                if attempts < 3
+                    && error
+                        .downcast_ref::<crate::services::library_storage::StorageError>()
+                        .is_some_and(|error| error.is_not_found())
+                    && library_storage().exists(&source).await.unwrap_or(false) =>
+            {
+                attempts += 1;
+            }
+            other => return other,
+        }
+    }
+}
+
 async fn paths_refer_to_same_file(left: &Path, right: &Path) -> bool {
     let storage = library_storage();
     let (Ok(left_meta), Ok(right_meta)) = (storage.stat(left).await, storage.stat(right).await)
@@ -16543,7 +16852,15 @@ async fn paths_refer_to_same_file(left: &Path, right: &Path) -> bool {
     };
     match (left_meta.identity, right_meta.identity) {
         (Some(left), Some(right)) => left == right,
-        _ => tokio::fs::canonicalize(left).await.ok() == tokio::fs::canonicalize(right).await.ok(),
+        // No identity (a share, or a platform without one): the same file is the same path,
+        // or two local paths that resolve to one.
+        _ => match (
+            tokio::fs::canonicalize(left).await.ok(),
+            tokio::fs::canonicalize(right).await.ok(),
+        ) {
+            (Some(left), Some(right)) => left == right,
+            _ => left == right,
+        },
     }
 }
 
@@ -19453,5 +19770,189 @@ mod media_file_disk_deletion_tests {
                 .unwrap()
                 .is_none()
         );
+    }
+}
+
+/// Libraries on a network share: the path rules (always run) and the file operations against a
+/// real share (only when `LIBRARIAN_SMB_TEST_URL` and `LIBRARIAN_SMB_TEST_PASSWORD_FILE` name one;
+/// they work in a throwaway folder that is removed afterwards).
+#[cfg(test)]
+mod remote_library_tests {
+    use super::*;
+    use crate::services::library_storage::{
+        SmbCredentials, SmbLocation, SmbStorage, StoragePath, WalkOptions,
+    };
+
+    #[test]
+    fn a_share_path_is_contained_by_its_name_alone() {
+        let root = Path::new("smb://nas/media/Movies");
+        let inside = root.join("Film (2020)").join("Film.mkv");
+        assert_eq!(checked_library_path(root, &inside).unwrap(), inside);
+        assert_eq!(checked_library_path(root, root).unwrap(), root);
+        // Outside the root, or climbing out of it, is refused without touching the share.
+        assert!(checked_library_path(root, Path::new("smb://nas/media/Music/a.flac")).is_err());
+        assert!(checked_library_path(root, Path::new("smb://nas/other/Movies/a.mkv")).is_err());
+        assert!(checked_library_path(root, &root.join("..").join("Music")).is_err());
+        assert!(checked_library_path(root, &root.join("a").join("..").join("..")).is_err());
+        assert!(is_remote_path(root));
+        assert!(!is_remote_path(Path::new("/data/media")));
+    }
+
+    #[tokio::test]
+    async fn a_file_cannot_be_placed_on_a_share_inside_a_local_library() {
+        let error = place_in_library(
+            PathBuf::from("/data/media/Movies"),
+            PathBuf::from("/downloads/a.mkv"),
+            PathBuf::from("smb://nas/media/Movies/a.mkv"),
+            false,
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("local library"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_file_on_an_unconnected_share_is_unavailable_not_missing() {
+        // No provider knows this share: scans and deletes treat it as down, never as empty.
+        let missing = library_storage()
+            .exists("smb://unconnected.invalid/media/Movies/a.mkv")
+            .await;
+        assert!(missing.is_err(), "{missing:?}");
+        // So reconciliation keeps the record (an unanswerable check counts as present).
+        assert!(
+            library_storage()
+                .exists("smb://unconnected.invalid/media/Movies/a.mkv")
+                .await
+                .unwrap_or(true)
+        );
+    }
+
+    fn share_from_env() -> Option<(SmbLocation, SmbCredentials)> {
+        let url = std::env::var("LIBRARIAN_SMB_TEST_URL").ok()?;
+        let file = std::env::var("LIBRARIAN_SMB_TEST_PASSWORD_FILE").ok()?;
+        let password = std::fs::read_to_string(file)
+            .ok()?
+            .trim_end_matches(['\n', '\r'])
+            .to_string();
+        let user = std::env::var("LIBRARIAN_SMB_TEST_USER").unwrap_or_else(|_| "toby".into());
+        Some((
+            SmbLocation::parse(&url).ok()?,
+            SmbCredentials {
+                username: user,
+                password,
+            },
+        ))
+    }
+
+    #[tokio::test]
+    async fn placing_tidying_and_deleting_on_a_real_share() {
+        let Some((base, credentials)) = share_from_env() else {
+            eprintln!("skipped: no share named by LIBRARIAN_SMB_TEST_URL");
+            return;
+        };
+        let storage = Arc::new(SmbStorage::new(base.clone(), credentials));
+        library_storage().register_remote(&base.share_root().storage_path(), storage);
+        let work = base.join(&format!("librarian-unit-{}", Uuid::new_v4().simple()));
+        let root = PathBuf::from(work.to_uri());
+        library_storage()
+            .create_dir_all(&root)
+            .await
+            .expect("make the working folder");
+        let local = tempfile::tempdir().unwrap();
+        let source = local.path().join("download.mkv");
+        std::fs::write(&source, b"the downloaded bytes").unwrap();
+
+        let outcome = async {
+            // Import: copied in, the download untouched, never replacing.
+            let target = root.join("Film (2020)").join("Film (2020).mkv");
+            let placed =
+                place_in_library(root.clone(), source.clone(), target.clone(), false, false)
+                    .await?;
+            assert_eq!(placed, NoClobberOutcome::Placed);
+            assert!(
+                source.exists(),
+                "a download that keeps seeding is left alone"
+            );
+            assert_eq!(
+                library_storage().read_all(&target).await?,
+                b"the downloaded bytes"
+            );
+            let again =
+                place_in_library(root.clone(), source.clone(), target.clone(), false, false)
+                    .await?;
+            assert_eq!(again, NoClobberOutcome::TargetExists);
+
+            // Organize: a file already on the share is renamed, not copied.
+            let renamed = root.join("Renamed (2020)").join("Renamed (2020).mkv");
+            let moved =
+                place_in_library(root.clone(), target.clone(), renamed.clone(), true, true).await?;
+            assert_eq!(moved, NoClobberOutcome::Placed);
+            assert!(!library_storage().exists(&target).await?);
+            assert!(library_storage().exists(&renamed).await?);
+            // Not onto a file that is there.
+            library_storage()
+                .put_from_local(
+                    &source,
+                    &StoragePath::new(target.to_string_lossy()),
+                    PlaceMode::NoClobber,
+                )
+                .await?;
+            let refused =
+                place_in_library(root.clone(), target.clone(), renamed.clone(), true, true).await?;
+            assert_eq!(refused, NoClobberOutcome::TargetExists);
+            assert!(library_storage().exists(&target).await?, "nothing was lost");
+
+            // Tidy: the folder the move emptied goes; the one still in use stays.
+            library_storage().remove_file(&target).await?;
+            let removed = remove_empty_folders_upward_remote(
+                &root,
+                target.parent().unwrap(),
+                &HashSet::new(),
+            )
+            .await;
+            assert_eq!(removed, vec![target.parent().unwrap().to_path_buf()]);
+            let kept = remove_empty_folders_upward_remote(
+                &root,
+                renamed.parent().unwrap(),
+                &HashSet::new(),
+            )
+            .await;
+            assert!(kept.is_empty(), "{kept:?}");
+
+            // Delete from disk: the file, then its folder once empty; a missing file is fine.
+            let doomed = deletable_media_file(&root, &renamed)
+                .await?
+                .expect("the file is there");
+            remove_media_file_in(&root, &doomed).await?;
+            assert!(!library_storage().exists(&renamed).await?);
+            assert!(!library_storage().exists(renamed.parent().unwrap()).await?);
+            assert!(deletable_media_file(&root, &renamed).await?.is_none());
+            // The folder tidier finds nothing left to remove.
+            LibraryScanService::cleanup_empty_unprotected_folders(&root, &HashSet::new()).await?;
+            anyhow::Ok(())
+        }
+        .await;
+
+        // Remove the working folder whatever happened.
+        if let Ok(mut walk) = library_storage()
+            .walk(&root, WalkOptions::default(), CancellationToken::new())
+            .await
+        {
+            let mut folders = Vec::new();
+            while let Some(Ok(entry)) = walk.entries.recv().await {
+                if entry.kind == EntryKind::Directory {
+                    folders.push(entry.path);
+                } else {
+                    let _ = library_storage().remove_file(&entry.path).await;
+                }
+            }
+            let _ = walk.task.await;
+            folders.sort_by_key(|path| std::cmp::Reverse(path.as_str().len()));
+            for folder in folders {
+                let _ = library_storage().remove_dir(&folder).await;
+            }
+        }
+        outcome.unwrap();
     }
 }

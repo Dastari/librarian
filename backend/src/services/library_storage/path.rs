@@ -85,6 +85,15 @@ impl StoragePath {
         }
     }
 
+    /// This path with the `/`-separated components of `relative` below it. An empty `relative`
+    /// is this path itself.
+    pub fn join_relative(&self, relative: &str) -> StoragePath {
+        relative
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .fold(self.clone(), |path, part| path.join(part))
+    }
+
     /// The containing folder, or `None` at the root of a filesystem or share.
     pub fn parent(&self) -> Option<StoragePath> {
         match self.kind() {
@@ -260,6 +269,24 @@ mod tests {
         assert!(share.parent().is_none());
         assert!(share.file_name().is_none());
         assert!(file.as_local().is_none());
+    }
+
+    #[test]
+    fn a_relative_path_rejoins_its_root() {
+        for root in ["/data/media/Movies", "smb://nas/media/Movies"] {
+            let root = StoragePath::new(root);
+            let file = root.join("Film (2020)").join("Film.mkv");
+            let relative = file.relative_to(&root).unwrap();
+            assert_eq!(root.join_relative(&relative), file);
+            assert_eq!(root.join_relative(""), root);
+        }
+        // The same relative path moves a file between storages.
+        let moved =
+            StoragePath::new("smb://nas/media/Movies").join_relative("Film (2020)/Film.mkv");
+        assert_eq!(
+            moved.as_str(),
+            "smb://nas/media/Movies/Film (2020)/Film.mkv"
+        );
     }
 
     #[test]

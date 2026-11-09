@@ -18,12 +18,15 @@ mod local;
 mod location;
 mod path;
 mod registry;
+mod smb;
+mod smb_reader;
 mod types;
 
 pub use local::{LocalStorage, place_no_clobber_blocking};
 pub use location::{CredentialRef, LocationError, SmbLocation, StorageLocation};
 pub use path::{IntoStoragePath, StorageKind, StoragePath, is_smb_uri};
-pub use registry::{LibraryStorage, library_storage};
+pub use registry::{LibraryStorage, ShareProvider, ToolUrlIssuer, library_storage};
+pub use smb::{SmbCredentials, SmbStorage};
 pub use types::{
     DirEntry, EntryKind, EntryMeta, FileIdentity, PlaceMode, PlaceOutcome, StorageCapabilities,
     StorageError, StorageErrorKind, StorageResult, ToolInput, WalkCandidate, WalkEntry, WalkFilter,
@@ -130,4 +133,31 @@ pub trait Storage: Send + Sync {
 
     /// How an external program should read this file. See `docs/design.md` Q85.
     async fn tool_input(&self, path: &StoragePath) -> StorageResult<ToolInput>;
+}
+
+/// Path prefix of the loopback URLs that serve a file on a share to a tool.
+pub const TOOL_URL_MARKER: &str = "/internal/tool/";
+
+/// Whether a tool argument is a loopback tool URL rather than a path.
+pub fn is_tool_url(argument: &str) -> bool {
+    argument.starts_with("http://") && argument.contains(TOOL_URL_MARKER)
+}
+
+/// What ffmpeg and ffprobe must be allowed to open to read a tool URL (their default for a
+/// `-f`-forced or playlist-like input is file and pipe only).
+pub const TOOL_PROTOCOL_WHITELIST: &str = "file,pipe,http,tcp";
+
+/// What to put where a tool takes its input: the file's own path on this machine, or the loopback
+/// URL for a file on a share. The tool is told nothing else about the storage.
+pub async fn tool_argument(path: impl IntoStoragePath) -> StorageResult<String> {
+    Ok(match library_storage().tool_input(path).await? {
+        ToolInput::Path(path) => path.to_string_lossy().into_owned(),
+        ToolInput::Url(url) => url,
+    })
+}
+
+/// [`tool_argument`] as a `PathBuf`, for tool wrappers that take a path (a URL passed through
+/// `Command::arg` is just text, so a `PathBuf` carries it unchanged).
+pub async fn tool_input_path(path: impl IntoStoragePath) -> StorageResult<std::path::PathBuf> {
+    Ok(std::path::PathBuf::from(tool_argument(path).await?))
 }

@@ -6,19 +6,42 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::time::{Duration, Instant};
+
+use async_trait::async_trait;
 
 use tokio_util::sync::CancellationToken;
 
 use super::{
     DirEntry, EntryMeta, IntoStoragePath, LocalStorage, OpenedRead, PlaceMode, PlaceOutcome,
-    Storage, StorageError, StorageErrorKind, StorageKind, StoragePath, StorageResult, ToolInput,
-    WalkOptions, WalkStream,
+    SmbLocation, Storage, StorageError, StorageErrorKind, StorageKind, StoragePath, StorageResult,
+    ToolInput, WalkOptions, WalkStream,
 };
+
+/// Connects a share on first use, from whatever the host keeps its sign-ins in.
+#[async_trait]
+pub trait ShareProvider: Send + Sync {
+    async fn connect(&self, share: &SmbLocation) -> StorageResult<Arc<dyn Storage>>;
+}
+
+/// Hands out the loopback URL an external tool reads a remote file from (Q85).
+#[async_trait]
+pub trait ToolUrlIssuer: Send + Sync {
+    async fn issue(&self, path: &StoragePath) -> StorageResult<String>;
+}
+
+/// How long a share that failed to connect is not tried again, so a scan of a library on a share
+/// that is down does not wait out a connection timeout for every file.
+const FAILURE_MEMORY: Duration = Duration::from_secs(10);
 
 pub struct LibraryStorage {
     local: Arc<dyn Storage>,
     remotes: RwLock<HashMap<String, Arc<dyn Storage>>>,
+    provider: RwLock<Option<Arc<dyn ShareProvider>>>,
+    tool_urls: RwLock<Option<Arc<dyn ToolUrlIssuer>>>,
+    connecting: tokio::sync::Mutex<()>,
+    failures: Mutex<HashMap<String, (Instant, String)>>,
 }
 
 impl Default for LibraryStorage {
@@ -26,6 +49,10 @@ impl Default for LibraryStorage {
         Self {
             local: Arc::new(LocalStorage),
             remotes: RwLock::new(HashMap::new()),
+            provider: RwLock::new(None),
+            tool_urls: RwLock::new(None),
+            connecting: tokio::sync::Mutex::new(()),
+            failures: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -47,77 +74,133 @@ impl LibraryStorage {
         }
     }
 
-    /// The storage `path` lives on.
-    pub fn for_path(&self, path: &StoragePath) -> StorageResult<Arc<dyn Storage>> {
+    /// Where shares are connected from when a path on one is first used.
+    pub fn install_share_provider(&self, provider: Arc<dyn ShareProvider>) {
+        if let Ok(mut slot) = self.provider.write() {
+            *slot = Some(provider);
+        }
+    }
+
+    pub fn install_tool_url_issuer(&self, issuer: Arc<dyn ToolUrlIssuer>) {
+        if let Ok(mut slot) = self.tool_urls.write() {
+            *slot = Some(issuer);
+        }
+    }
+
+    /// Forget a share's connection (its sign-in changed): the next use connects afresh.
+    pub fn forget_share(&self, share: &SmbLocation) {
+        let key = share.share_root().to_uri();
+        if let Ok(mut remotes) = self.remotes.write() {
+            remotes.remove(&key);
+        }
+        if let Ok(mut failures) = self.failures.lock() {
+            failures.remove(&key);
+        }
+    }
+
+    fn registered(&self, key: &str) -> Option<Arc<dyn Storage>> {
+        self.remotes.read().ok()?.get(key).cloned()
+    }
+
+    /// The storage `path` lives on, connecting its share if this is the first use.
+    pub async fn for_path(&self, path: &StoragePath) -> StorageResult<Arc<dyn Storage>> {
         match path.kind() {
             StorageKind::Local => Ok(self.local.clone()),
             StorageKind::Smb => {
-                let key = path
-                    .as_smb()
-                    .map(|location| location.share_root().to_uri())
-                    .ok_or_else(|| {
-                        StorageError::new(
-                            StorageErrorKind::Other,
-                            format!("'{path}' is not a valid smb:// address"),
-                        )
-                    })?;
-                self.remotes
-                    .read()
+                let location = path.as_smb().ok_or_else(|| {
+                    StorageError::new(
+                        StorageErrorKind::Other,
+                        format!("'{path}' is not a valid smb:// address"),
+                    )
+                })?;
+                let key = location.share_root().to_uri();
+                if let Some(storage) = self.registered(&key) {
+                    return Ok(storage);
+                }
+                let provider = self.provider.read().ok().and_then(|slot| slot.clone());
+                let Some(provider) = provider else {
+                    return Err(StorageError::new(
+                        StorageErrorKind::Unavailable,
+                        format!("The share '{key}' is not connected"),
+                    ));
+                };
+                let _one_at_a_time = self.connecting.lock().await;
+                if let Some(storage) = self.registered(&key) {
+                    return Ok(storage);
+                }
+                if let Some((when, message)) = self
+                    .failures
+                    .lock()
                     .ok()
-                    .and_then(|remotes| remotes.get(&key).cloned())
-                    .ok_or_else(|| {
-                        StorageError::new(
-                            StorageErrorKind::Unavailable,
-                            format!("The share '{key}' is not connected"),
-                        )
-                    })
+                    .and_then(|failures| failures.get(&key).cloned())
+                    && when.elapsed() < FAILURE_MEMORY
+                {
+                    return Err(StorageError::new(StorageErrorKind::Unavailable, message));
+                }
+                match provider.connect(&location.share_root()).await {
+                    Ok(storage) => {
+                        if let Ok(mut remotes) = self.remotes.write() {
+                            remotes.insert(key.clone(), storage.clone());
+                        }
+                        if let Ok(mut failures) = self.failures.lock() {
+                            failures.remove(&key);
+                        }
+                        Ok(storage)
+                    }
+                    Err(error) => {
+                        if let Ok(mut failures) = self.failures.lock() {
+                            failures.insert(key, (Instant::now(), error.to_string()));
+                        }
+                        Err(error)
+                    }
+                }
             }
         }
     }
 
     pub async fn stat(&self, path: impl IntoStoragePath) -> StorageResult<EntryMeta> {
         let path = path.into_storage_path();
-        self.for_path(&path)?.stat(&path).await
+        self.for_path(&path).await?.stat(&path).await
     }
 
     pub async fn lstat(&self, path: impl IntoStoragePath) -> StorageResult<EntryMeta> {
         let path = path.into_storage_path();
-        self.for_path(&path)?.lstat(&path).await
+        self.for_path(&path).await?.lstat(&path).await
     }
 
     pub async fn exists(&self, path: impl IntoStoragePath) -> StorageResult<bool> {
         let path = path.into_storage_path();
-        self.for_path(&path)?.exists(&path).await
+        self.for_path(&path).await?.exists(&path).await
     }
 
     pub async fn list_dir(&self, dir: impl IntoStoragePath) -> StorageResult<Vec<DirEntry>> {
         let dir = dir.into_storage_path();
-        self.for_path(&dir)?.list_dir(&dir).await
+        self.for_path(&dir).await?.list_dir(&dir).await
     }
 
     pub async fn is_dir_empty(&self, dir: impl IntoStoragePath) -> StorageResult<bool> {
         let dir = dir.into_storage_path();
-        self.for_path(&dir)?.is_dir_empty(&dir).await
+        self.for_path(&dir).await?.is_dir_empty(&dir).await
     }
 
-    pub fn walk(
+    pub async fn walk(
         &self,
         root: impl IntoStoragePath,
         options: WalkOptions,
         cancel: CancellationToken,
     ) -> StorageResult<WalkStream> {
         let root = root.into_storage_path();
-        Ok(self.for_path(&root)?.walk(&root, options, cancel))
+        Ok(self.for_path(&root).await?.walk(&root, options, cancel))
     }
 
     pub async fn open_read(&self, path: impl IntoStoragePath) -> StorageResult<OpenedRead> {
         let path = path.into_storage_path();
-        self.for_path(&path)?.open_read(&path).await
+        self.for_path(&path).await?.open_read(&path).await
     }
 
     pub async fn read_all(&self, path: impl IntoStoragePath) -> StorageResult<Vec<u8>> {
         let path = path.into_storage_path();
-        self.for_path(&path)?.read_all(&path).await
+        self.for_path(&path).await?.read_all(&path).await
     }
 
     pub async fn put_from_local(
@@ -127,7 +210,10 @@ impl LibraryStorage {
         mode: PlaceMode,
     ) -> StorageResult<PlaceOutcome> {
         let dst = dst.into_storage_path();
-        self.for_path(&dst)?.put_from_local(src, &dst, mode).await
+        self.for_path(&dst)
+            .await?
+            .put_from_local(src, &dst, mode)
+            .await
     }
 
     /// Move within one storage. Moving between two storages is a copy and a delete the caller
@@ -144,27 +230,40 @@ impl LibraryStorage {
                 "renaming between two different storages",
             ));
         }
-        self.for_path(&from)?.rename(&from, &to, mode).await
+        self.for_path(&from).await?.rename(&from, &to, mode).await
     }
 
     pub async fn remove_file(&self, path: impl IntoStoragePath) -> StorageResult<()> {
         let path = path.into_storage_path();
-        self.for_path(&path)?.remove_file(&path).await
+        self.for_path(&path).await?.remove_file(&path).await
     }
 
     pub async fn create_dir_all(&self, dir: impl IntoStoragePath) -> StorageResult<()> {
         let dir = dir.into_storage_path();
-        self.for_path(&dir)?.create_dir_all(&dir).await
+        self.for_path(&dir).await?.create_dir_all(&dir).await
     }
 
     pub async fn remove_dir(&self, dir: impl IntoStoragePath) -> StorageResult<()> {
         let dir = dir.into_storage_path();
-        self.for_path(&dir)?.remove_dir(&dir).await
+        self.for_path(&dir).await?.remove_dir(&dir).await
     }
 
+    /// How an external program reads this file: by path where it can, else through a loopback
+    /// URL from the tool URL service.
     pub async fn tool_input(&self, path: impl IntoStoragePath) -> StorageResult<ToolInput> {
         let path = path.into_storage_path();
-        self.for_path(&path)?.tool_input(&path).await
+        let storage = self.for_path(&path).await?;
+        if !storage.capabilities().tools_need_url {
+            return storage.tool_input(&path).await;
+        }
+        let issuer = self.tool_urls.read().ok().and_then(|slot| slot.clone());
+        match issuer {
+            Some(issuer) => Ok(ToolInput::Url(issuer.issue(&path).await?)),
+            None => Err(StorageError::new(
+                StorageErrorKind::Unavailable,
+                "The tool URL service is not running, so tools cannot read this file",
+            )),
+        }
     }
 }
 
@@ -202,12 +301,216 @@ mod tests {
         assert!(
             registry
                 .for_path(&StoragePath::new("smb://NAS/Media/Movies/a.mkv"))
+                .await
                 .is_ok()
         );
         assert!(
             registry
                 .for_path(&StoragePath::new("smb://nas/other/a.mkv"))
+                .await
                 .is_err()
+        );
+    }
+
+    /// A provider that counts its connections and fails or succeeds as told.
+    struct CountingProvider {
+        connects: std::sync::atomic::AtomicUsize,
+        fail: std::sync::atomic::AtomicBool,
+    }
+
+    impl CountingProvider {
+        fn new(fail: bool) -> Arc<Self> {
+            Arc::new(Self {
+                connects: std::sync::atomic::AtomicUsize::new(0),
+                fail: std::sync::atomic::AtomicBool::new(fail),
+            })
+        }
+
+        fn connects(&self) -> usize {
+            self.connects.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl ShareProvider for CountingProvider {
+        async fn connect(&self, _share: &SmbLocation) -> StorageResult<Arc<dyn Storage>> {
+            self.connects
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(StorageError::new(
+                    StorageErrorKind::Unavailable,
+                    "Could not reach nas:445 (test)",
+                ));
+            }
+            Ok(Arc::new(LocalStorage))
+        }
+    }
+
+    /// Hand the registry a provider that is shared with the test.
+    struct Shared(Arc<CountingProvider>);
+
+    #[async_trait]
+    impl ShareProvider for Shared {
+        async fn connect(&self, share: &SmbLocation) -> StorageResult<Arc<dyn Storage>> {
+            self.0.connect(share).await
+        }
+    }
+
+    #[tokio::test]
+    async fn a_share_connects_once_however_many_ask_at_once() {
+        let provider = CountingProvider::new(false);
+        let registry = Arc::new(LibraryStorage::default());
+        registry.install_share_provider(Arc::new(Shared(provider.clone())));
+        let path = StoragePath::new("smb://nas/media/Movies/a.mkv");
+        let asks = (0..8).map(|_| {
+            let (registry, path) = (registry.clone(), path.clone());
+            tokio::spawn(async move { registry.for_path(&path).await.is_ok() })
+        });
+        for ask in futures::future::join_all(asks).await {
+            assert!(ask.unwrap());
+        }
+        assert_eq!(provider.connects(), 1);
+        // And later calls reuse the connection.
+        registry.for_path(&path).await.unwrap();
+        assert_eq!(provider.connects(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_share_that_failed_is_not_tried_again_at_once_and_is_when_forgotten() {
+        let provider = CountingProvider::new(true);
+        let registry = LibraryStorage::default();
+        registry.install_share_provider(Arc::new(Shared(provider.clone())));
+        let path = StoragePath::new("smb://nas/media/Movies/a.mkv");
+        for _ in 0..5 {
+            let error = registry.for_path(&path).await.err().expect("down");
+            assert_eq!(error.kind(), StorageErrorKind::Unavailable);
+            assert!(error.to_string().contains("Could not reach"), "{error}");
+        }
+        assert_eq!(
+            provider.connects(),
+            1,
+            "a scan does not wait out a timeout per file"
+        );
+        // The sign-in changed, or the share is back: forgetting it lets the next call try.
+        provider
+            .fail
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        registry.forget_share(&path.as_smb().unwrap());
+        registry.for_path(&path).await.expect("connected now");
+        assert_eq!(provider.connects(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_failure_does_not_stick_to_a_different_share() {
+        let provider = CountingProvider::new(true);
+        let registry = LibraryStorage::default();
+        registry.install_share_provider(Arc::new(Shared(provider.clone())));
+        assert!(
+            registry
+                .for_path(&StoragePath::new("smb://nas/media/a.mkv"))
+                .await
+                .is_err()
+        );
+        provider
+            .fail
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            registry
+                .for_path(&StoragePath::new("smb://nas/backups/a.mkv"))
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_file_on_a_share_needs_a_tool_url_and_a_local_one_does_not() {
+        struct FixedIssuer;
+        #[async_trait]
+        impl ToolUrlIssuer for FixedIssuer {
+            async fn issue(&self, path: &StoragePath) -> StorageResult<String> {
+                Ok(format!(
+                    "http://127.0.0.1:1/internal/tool/token/{}",
+                    path.file_name().unwrap()
+                ))
+            }
+        }
+        struct NeedsUrl;
+        #[async_trait]
+        impl Storage for NeedsUrl {
+            fn kind(&self) -> StorageKind {
+                StorageKind::Smb
+            }
+            fn capabilities(&self) -> crate::services::library_storage::StorageCapabilities {
+                crate::services::library_storage::StorageCapabilities {
+                    tools_need_url: true,
+                    ..LocalStorage.capabilities()
+                }
+            }
+            async fn stat(&self, _: &StoragePath) -> StorageResult<EntryMeta> {
+                Err(StorageError::unsupported("stat"))
+            }
+            async fn lstat(&self, _: &StoragePath) -> StorageResult<EntryMeta> {
+                Err(StorageError::unsupported("lstat"))
+            }
+            async fn list_dir(&self, _: &StoragePath) -> StorageResult<Vec<DirEntry>> {
+                Err(StorageError::unsupported("list"))
+            }
+            fn walk(&self, _: &StoragePath, _: WalkOptions, _: CancellationToken) -> WalkStream {
+                unreachable!()
+            }
+            async fn open_read(&self, _: &StoragePath) -> StorageResult<OpenedRead> {
+                Err(StorageError::unsupported("read"))
+            }
+            async fn put_from_local(
+                &self,
+                _: &Path,
+                _: &StoragePath,
+                _: PlaceMode,
+            ) -> StorageResult<PlaceOutcome> {
+                Err(StorageError::unsupported("put"))
+            }
+            async fn rename(
+                &self,
+                _: &StoragePath,
+                _: &StoragePath,
+                _: PlaceMode,
+            ) -> StorageResult<PlaceOutcome> {
+                Err(StorageError::unsupported("rename"))
+            }
+            async fn remove_file(&self, _: &StoragePath) -> StorageResult<()> {
+                Err(StorageError::unsupported("remove"))
+            }
+            async fn create_dir_all(&self, _: &StoragePath) -> StorageResult<()> {
+                Err(StorageError::unsupported("mkdir"))
+            }
+            async fn remove_dir(&self, _: &StoragePath) -> StorageResult<()> {
+                Err(StorageError::unsupported("rmdir"))
+            }
+            async fn tool_input(&self, _: &StoragePath) -> StorageResult<ToolInput> {
+                Err(StorageError::unsupported("tool input"))
+            }
+        }
+        let registry = LibraryStorage::default();
+        registry.register_remote(&StoragePath::new("smb://nas/media"), Arc::new(NeedsUrl));
+        // No issuer yet: tools cannot read it, and the answer says so.
+        let error = registry
+            .tool_input("smb://nas/media/a.mkv")
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), StorageErrorKind::Unavailable);
+        registry.install_tool_url_issuer(Arc::new(FixedIssuer));
+        assert_eq!(
+            registry
+                .tool_input("smb://nas/media/Film.mkv")
+                .await
+                .unwrap(),
+            ToolInput::Url("http://127.0.0.1:1/internal/tool/token/Film.mkv".to_string())
+        );
+        // A local file is passed by path, issuer or not.
+        assert_eq!(
+            registry.tool_input("/data/media/Film.mkv").await.unwrap(),
+            ToolInput::Path(std::path::PathBuf::from("/data/media/Film.mkv"))
         );
     }
 

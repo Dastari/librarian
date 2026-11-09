@@ -591,6 +591,29 @@ impl AppWriteInputTransform {
             .filter(|user| !user.is_admin())
     }
 
+    /// A library root on a network share is normalised (`smb://host/share/folder`, host and share
+    /// in lower case) and must be reachable and a folder: a library that cannot be read from the
+    /// start would only ever report itself unavailable. A local path is kept exactly as typed.
+    async fn checked_library_root(path: &str) -> async_graphql::Result<String> {
+        use crate::services::library_storage::{StorageKind, StorageLocation, library_storage};
+        let location = match StorageLocation::parse(path) {
+            Ok(location) if location.kind() == StorageKind::Smb => location,
+            _ => return Ok(path.to_string()),
+        };
+        let root = location.root_path();
+        let meta = library_storage().stat(&root).await.map_err(|error| {
+            async_graphql::Error::new(format!(
+                "The library folder on the share cannot be read: {error}"
+            ))
+        })?;
+        if !meta.is_dir() {
+            return Err(async_graphql::Error::new(
+                "The library location on the share is not a folder",
+            ));
+        }
+        Ok(location.to_path_string())
+    }
+
     fn assign_create_owner(
         ctx: Option<&async_graphql::Context<'_>>,
         entity_name: &str,
@@ -1078,6 +1101,11 @@ impl WriteInputTransform for AppWriteInputTransform {
             Self::reject_member_artwork_source_write(ctx, entity_name, input)?;
             Self::prepare_cast_create(entity_name, input)?;
             Self::prepare_content_create(entity_name, input)?;
+            if entity_name == "Library"
+                && let Some(input) = input.downcast_mut::<CreateLibraryInput>()
+            {
+                input.path = Self::checked_library_root(&input.path).await?;
+            }
             if entity_name == "Source"
                 && let Some(input) = input.downcast_mut::<CreateSourceInput>()
             {
@@ -1117,6 +1145,12 @@ impl WriteInputTransform for AppWriteInputTransform {
             Self::reject_member_artwork_source_write(ctx, entity_name, input)?;
             Self::prepare_cast_update(entity_name, existing_row, input)?;
             Self::prepare_content_update(ctx, entity_name, existing_row, input)?;
+            if entity_name == "Library"
+                && let Some(input) = input.downcast_mut::<UpdateLibraryInput>()
+                && let Some(path) = input.path.as_mut()
+            {
+                *path = Self::checked_library_root(path).await?;
+            }
             if entity_name == "Source"
                 && let Some(input) = input.downcast_mut::<UpdateSourceInput>()
                 && let Some(credentials) = input.credentials.take()

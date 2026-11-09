@@ -59,6 +59,8 @@ reqwest = { version = "0.13.5", features = ["json", "rustls", "cookies", "gzip",
 
 # File walking
 walkdir = "2.5.0"
+# SMB client for libraries on a network share (docs/design.md Q85). Pure Rust, no mounts.
+smb2 = "0.43.0"
 
 # GraphQL ORM
 # Optional direct edge unifies this host proc-macro feature with the git patch below.
@@ -157,6 +159,37 @@ async-graphql = { path = "../vendor/async-graphql" }
 [patch."https://github.com/Dastari/graphql-orm.git"]
 # Tooling only: the schema-export-only feature; see vendor/graphql-orm-macros/PATCH.md.
 graphql-orm-macros = { path = "../vendor/graphql-orm-macros" }
+
+# The live backend is a debug build. SMB signing and encryption run in these crates, and unoptimised
+# they cap a share at about 35 MiB/s (about 300 MiB/s optimised), so they are always optimised.
+[profile.dev.package.smb2]
+opt-level = 3
+[profile.dev.package.aes]
+opt-level = 3
+[profile.dev.package.aes-gcm]
+opt-level = 3
+[profile.dev.package.ghash]
+opt-level = 3
+[profile.dev.package.polyval]
+opt-level = 3
+[profile.dev.package.ctr]
+opt-level = 3
+[profile.dev.package.ccm]
+opt-level = 3
+[profile.dev.package.cmac]
+opt-level = 3
+[profile.dev.package.hmac]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.md-5]
+opt-level = 3
+[profile.dev.package.md4]
+opt-level = 3
+[profile.dev.package.pbkdf2]
+opt-level = 3
+[profile.dev.package.lz4_flex]
+opt-level = 3
 
 [profile.release]
 opt-level = 'z'

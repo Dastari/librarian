@@ -25,6 +25,7 @@ use tokio::process::{Child, Command};
 use tracing::warn;
 
 use super::session::TranscodeKind;
+use crate::services::library_storage::{TOOL_PROTOCOL_WHITELIST, is_tool_url};
 
 /// Playlist filename written into every session's output directory.
 pub const PLAYLIST_FILENAME: &str = "playlist.m3u8";
@@ -277,7 +278,14 @@ pub fn spawn_on_demand_transcode(
 /// ever dropped without an explicit kill (normal shutdown/reap paths always
 /// kill explicitly first).
 fn spawn_ffmpeg(ffmpeg_path: &str, args: &[String], session_id: &str) -> Result<Child> {
+    // An input read through a tool URL (a file on a share) needs the http protocol allowed.
+    let whitelist: &[&str] = if args.iter().any(|arg| is_tool_url(arg)) {
+        &["-protocol_whitelist", TOOL_PROTOCOL_WHITELIST]
+    } else {
+        &[]
+    };
     Command::new(ffmpeg_path)
+        .args(whitelist)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -372,6 +380,12 @@ pub async fn subtitle_webvtt(
     input_format: Option<&str>,
 ) -> std::result::Result<Vec<u8>, SubtitleError> {
     let mut command = Command::new(ffmpeg_path);
+    // Local input may only be a file or a pipe; a file on a share arrives as a loopback URL.
+    let whitelist = if is_tool_url(&input.to_string_lossy()) {
+        TOOL_PROTOCOL_WHITELIST
+    } else {
+        "file,pipe"
+    };
     command.args([
         "-nostdin",
         "-v",
@@ -379,7 +393,7 @@ pub async fn subtitle_webvtt(
         "-threads",
         "1",
         "-protocol_whitelist",
-        "file,pipe",
+        whitelist,
     ]);
     if let Some(format) = input_format {
         command.args(["-f", format]);

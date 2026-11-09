@@ -25,6 +25,49 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::db::Database;
+use crate::services::library_storage::{is_tool_url, library_storage, tool_argument};
+
+/// The most of a file copied to scratch space for a tool that cannot read it in place.
+const MAX_STAGED_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// A file copied from its storage to scratch space, removed when dropped.
+struct StagedCopy {
+    path: std::path::PathBuf,
+}
+
+impl StagedCopy {
+    async fn of(source: &Path) -> Result<Self> {
+        let extension = source
+            .extension()
+            .map(|extension| format!(".{}", extension.to_string_lossy()))
+            .unwrap_or_default();
+        let path = std::env::temp_dir().join(format!("librarian-staged-{}{extension}", Uuid::new_v4()));
+        let staged = Self { path };
+        let opened = library_storage()
+            .open_read(source)
+            .await
+            .with_context(|| format!("Cannot read '{}' to stage a copy", source.display()))?;
+        anyhow::ensure!(
+            opened.meta.size <= MAX_STAGED_BYTES,
+            "'{}' is too large to stage a copy for a tool",
+            source.display()
+        );
+        let mut file = tokio::fs::File::create(&staged.path)
+            .await
+            .context("Cannot create the staged copy")?;
+        let mut reader = opened.reader;
+        tokio::io::copy(&mut reader, &mut file)
+            .await
+            .with_context(|| format!("Cannot stage a copy of '{}'", source.display()))?;
+        Ok(staged)
+    }
+}
+
+impl Drop for StagedCopy {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
 
 /// Audio fingerprint result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +138,19 @@ impl FingerprintService {
             .unwrap_or(false)
     }
 
+    async fn run_fpcalc(&self, input: &str) -> Result<std::process::Output> {
+        Command::new(&self.fpcalc_path)
+            .arg("-json")
+            .arg("-length")
+            .arg("120") // Use up to 120 seconds for fingerprinting
+            .arg(input)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .context("Failed to run fpcalc")
+    }
+
     /// Generate an audio fingerprint for a file
     ///
     /// Uses fpcalc (Chromaprint) to generate a fingerprint from the audio content.
@@ -105,20 +161,24 @@ impl FingerprintService {
         path: P,
     ) -> Result<AudioFingerprint> {
         let path = path.as_ref();
-        
+
         debug!(path = %path.display(), "Generating audio fingerprint");
 
-        // Run fpcalc with JSON output
-        let output = Command::new(&self.fpcalc_path)
-            .arg("-json")
-            .arg("-length")
-            .arg("120") // Use up to 120 seconds for fingerprinting
-            .arg(path)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
+        // fpcalc reads a local file by its path and a file on a share through a loopback URL
+        // (it opens its input with ffmpeg's libraries, which speak http). Should this build of
+        // fpcalc refuse the URL, the file is copied to scratch space and read from there.
+        let input = tool_argument(path)
             .await
-            .context("Failed to run fpcalc")?;
+            .with_context(|| format!("Cannot give fpcalc access to '{}'", path.display()))?;
+        let mut output = self.run_fpcalc(&input).await?;
+        if !output.status.success() && is_tool_url(&input) {
+            debug!(
+                path = %path.display(),
+                "fpcalc could not read the tool URL; fingerprinting a staged copy instead"
+            );
+            let staged = StagedCopy::of(path).await?;
+            output = self.run_fpcalc(&staged.path.to_string_lossy()).await?;
+        }
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

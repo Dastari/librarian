@@ -28,7 +28,9 @@ use crate::graphql::AuthUser;
 use crate::graphql::entities::{
     AudioStream, AudioStreamWhereInput, CastSession, Library, MediaFile, Subtitle,
 };
-use crate::services::library_storage::{OpenedRead, StorageErrorKind, library_storage};
+use crate::services::library_storage::{
+    OpenedRead, StorageErrorKind, is_smb_uri, library_storage, tool_input_path,
+};
 use crate::services::transcode::ffmpeg::{
     self, MAX_SUBTITLE_BYTES, PLAYLIST_FILENAME, SubtitleError,
 };
@@ -319,8 +321,11 @@ async fn hls_playlist(
     } else {
         authorize_browser_media(&state, &headers, &media_file).await?;
     }
-    let path = Path::new(&media_file.path);
-    if !path.exists() {
+    if !library_storage()
+        .exists(&media_file.path)
+        .await
+        .unwrap_or(false)
+    {
         warn!(
             media_file_id = %file_id,
             media_file_path = %media_file.path,
@@ -356,8 +361,20 @@ async fn hls_playlist(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
     }
 
+    let input = tool_input_path(&media_file.path).await.map_err(|e| {
+        error!(
+            media_file_id = %file_id,
+            media_file_path = %media_file.path,
+            error = %e,
+            "Cannot give ffmpeg access to the source file: media_file_id={}, path={}, error={}",
+            file_id,
+            media_file.path,
+            e
+        );
+        StatusCode::SERVICE_UNAVAILABLE
+    })?;
     let output_dir = transcode
-        .get_or_start_session_with_audio(&file_id, path, kind, params.audio_stream)
+        .get_or_start_session_with_audio(&file_id, &input, kind, params.audio_stream)
         .await
         .map_err(|e| {
             error!(
@@ -546,13 +563,27 @@ async fn on_demand_segment_response(
     let segment = session::segment_number(segment_name)
         .filter(|segment| *segment < ffmpeg::segment_count(duration))
         .ok_or(StatusCode::NOT_FOUND)?;
-    if !Path::new(&media_file.path).exists() {
+    if !library_storage()
+        .exists(&media_file.path)
+        .await
+        .unwrap_or(false)
+    {
         return Err(StatusCode::NOT_FOUND);
     }
+    let input = tool_input_path(&media_file.path).await.map_err(|e| {
+        error!(
+            media_file_id = %media_file.id,
+            error = %e,
+            "Cannot give ffmpeg access to the source file: media_file_id={}, error={}",
+            media_file.id,
+            e
+        );
+        StatusCode::SERVICE_UNAVAILABLE
+    })?;
     let path = transcode
         .on_demand_segment(
             &media_file.id,
-            Path::new(&media_file.path),
+            &input,
             kind,
             audio_stream,
             segment,
@@ -742,9 +773,19 @@ async fn subtitle_vtt(
             error!(media_file_id = %file_id, %library_id, %error, "Failed querying subtitle library root");
             StatusCode::INTERNAL_SERVER_ERROR
         })?.ok_or(StatusCode::NOT_FOUND)?;
-    let root = tokio::fs::canonicalize(&library.path)
-        .await
-        .map_err(subtitle_path_error)?;
+    // A library on a share has no symlinks to resolve: its root is the address as written.
+    let remote = is_smb_uri(&library.path);
+    let root = if remote {
+        library_storage()
+            .stat(&library.path)
+            .await
+            .map_err(subtitle_storage_error)?;
+        std::path::PathBuf::from(&library.path)
+    } else {
+        tokio::fs::canonicalize(&library.path)
+            .await
+            .map_err(subtitle_path_error)?
+    };
     let embedded = row.source_type.eq_ignore_ascii_case("embedded");
     let (source, index, format) = if embedded {
         if !text_subtitle_codec(row.codec.as_deref()) {
@@ -791,21 +832,40 @@ async fn subtitle_vtt(
             Some(format),
         )
     };
-    let source = tokio::fs::canonicalize(source)
-        .await
-        .map_err(subtitle_path_error)?;
+    let source = if remote {
+        // Containment on a share is the name check: the path must lie under the root, with no `..`.
+        crate::services::library_scan::checked_library_path(&root, &source)
+            .map_err(|_| StatusCode::FORBIDDEN)?
+    } else {
+        tokio::fs::canonicalize(source)
+            .await
+            .map_err(subtitle_path_error)?
+    };
     if !source.starts_with(&root) {
         return Err(StatusCode::FORBIDDEN);
     }
-    let metadata = tokio::fs::metadata(&source)
-        .await
-        .map_err(subtitle_path_error)?;
-    if !metadata.is_file() {
+    let (is_file, size) = if remote {
+        let meta = library_storage()
+            .stat(&source)
+            .await
+            .map_err(subtitle_storage_error)?;
+        (meta.is_file(), meta.size)
+    } else {
+        let metadata = tokio::fs::metadata(&source)
+            .await
+            .map_err(subtitle_path_error)?;
+        (metadata.is_file(), metadata.len())
+    };
+    if !is_file {
         return Err(StatusCode::NOT_FOUND);
     }
-    if !embedded && metadata.len() > MAX_SUBTITLE_BYTES {
+    if !embedded && size > MAX_SUBTITLE_BYTES {
         return Err(StatusCode::PAYLOAD_TOO_LARGE);
     }
+    // ffmpeg reads a file on a share through a loopback URL.
+    let source = tool_input_path(&source)
+        .await
+        .map_err(subtitle_storage_error)?;
     let transcode = state
         .services
         .get_transcode()
@@ -826,6 +886,15 @@ async fn subtitle_vtt(
         .header(CACHE_CONTROL, "private, no-store")
         .body(Body::from(bytes))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+fn subtitle_storage_error(error: crate::services::library_storage::StorageError) -> StatusCode {
+    match error.kind() {
+        StorageErrorKind::NotFound => StatusCode::NOT_FOUND,
+        StorageErrorKind::PermissionDenied => StatusCode::FORBIDDEN,
+        StorageErrorKind::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    }
 }
 
 fn subtitle_path_error(error: std::io::Error) -> StatusCode {
@@ -946,7 +1015,7 @@ async fn authorize_cast_grant(
 /// Parse one byte range. Reject multipart requests deterministically (416 at
 /// the route), clamp overshooting ends, and support suffixes without empty-file
 /// subtraction or zero-suffix underflow.
-fn parse_range_header(header: &str, file_size: u64) -> Option<(u64, u64)> {
+pub(crate) fn parse_range_header(header: &str, file_size: u64) -> Option<(u64, u64)> {
     if file_size == 0 {
         return None;
     }

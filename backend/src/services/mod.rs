@@ -55,6 +55,7 @@ pub mod rate_limiter;
 pub mod release_match;
 pub mod sources;
 pub mod storage;
+pub mod tool_url;
 pub mod torrent;
 pub mod transcode;
 pub mod whisper;
