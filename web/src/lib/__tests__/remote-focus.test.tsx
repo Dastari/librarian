@@ -117,6 +117,26 @@ describe("what a remote stops on", () => {
   });
 });
 
+describe("a page with more to read below its last stop", () => {
+  it("scrolls the page instead of doing nothing", () => {
+    tv(
+      <div data-page-scroller data-testid="scroller">
+        <button type="button">Share</button>
+        <p>A long chart and summary with nothing to press.</p>
+      </div>,
+    );
+    layoutColumn(document.body);
+    const scroller = screen.getByTestId("scroller");
+    Object.defineProperties(scroller, { scrollHeight: { value: 3000 }, clientHeight: { value: 700, configurable: true }, scrollTop: { value: 0, writable: true } });
+    const scrollBy = vi.fn();
+    scroller.scrollBy = scrollBy as never;
+    screen.getByRole("button", { name: "Share" }).focus();
+    expect(fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" })).toBe(false);
+    expect(scrollBy).toHaveBeenCalledWith(expect.objectContaining({ top: 420 }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Share" }));
+  });
+});
+
 function Layers({ onBack }: { onBack: () => boolean }) {
   const [open, setOpen] = useState(false);
   return (

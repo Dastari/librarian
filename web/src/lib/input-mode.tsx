@@ -494,6 +494,17 @@ export function restoreFocus(): HTMLElement | null {
   return target;
 }
 
+/** Scroll the page's scroller a step up or down when it has more that way; false when it has none. */
+function scrollPage(active: HTMLElement, direction: Direction): boolean {
+  if (direction !== "ArrowUp" && direction !== "ArrowDown") return false;
+  const scroller = active.closest<HTMLElement>("[data-page-scroller]") ?? document.querySelector<HTMLElement>("main [data-page-scroller], [data-page-scroller]");
+  if (!scroller || !scroller.contains(active) && !active.closest("main")) return false;
+  const room = direction === "ArrowDown" ? scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop : scroller.scrollTop;
+  if (room < 1) return false;
+  scroller.scrollBy({ top: (direction === "ArrowDown" ? 1 : -1) * Math.round(scroller.clientHeight * 0.6), behavior: scrollBehavior() });
+  return true;
+}
+
 function overlayOpen(): boolean {
   return Boolean(document.querySelector(OPEN_OVERLAY));
 }
@@ -562,7 +573,12 @@ export function useSpatialNavigation(enabled = true, tv = false, onBack: () => b
       if (active.closest("[data-spatial-ignore]")) return;
       const scope = active.closest<HTMLElement>(ARROW_SCOPE) ?? document;
       const next = findNext(active, direction, scope);
-      if (!next) return;
+      if (!next) {
+        // Nothing further that way, but the page goes on (charts, a summary): a remote scrolls it,
+        // or what is below the last stop could never be read.
+        if (tv && scope === document && scrollPage(active, direction)) event.preventDefault();
+        return;
+      }
       event.preventDefault();
       next.focus({ preventScroll: true });
       revealFocused(next);

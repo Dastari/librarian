@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AddTorrentDocument, GrabRecommendationDocument, GrabRecommendationPlanDocument, HasEnabledSourcesDocument, SearchSourcesDocument } from "@/graphql/generated/graphql";
 import { renderWithProviders } from "@/test";
+import { layoutColumn, RemoteNavigation, remoteStopElements, walkRemote } from "@/test/remote";
 
 import { ReleaseSearchDialog } from "../ReleaseSearchDialog";
 
@@ -575,5 +576,30 @@ describe("ReleaseSearchDialog recommended releases", () => {
     await mount([searchMock([release("x")])]);
     expect(within(await releaseRow("Andor.S02.movie.1080p.WEB-DL")).getByText("Recommended")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Download recommended/ })).toBeNull();
+  });
+});
+
+describe("ReleaseSearchDialog on a TV remote", () => {
+  it("stops on the search controls and each release row, never on a column header or a row's own buttons", async () => {
+    window.localStorage.setItem("librarian.inputMode", "tv");
+    await renderWithProviders(
+      <>
+        <RemoteNavigation />
+        <ReleaseSearchDialog isOpen onOpenChange={() => {}} query="Andor" season={2} episode={5} libraryId="lib-1" target={{ showId: "show-1", episodeId: "ep-1" }} />
+      </>,
+      { mocks: [sourcesMock(true), searchMock([release("a"), release("b", { profileMatch: "rejected", rejectReasons: ["Blocked group"] })])] as never, shell: true },
+    );
+    await releaseRow("Release b");
+    const dialog = screen.getByRole("dialog");
+    layoutColumn(dialog);
+    const stops = remoteStopElements(dialog);
+    expect(stops.some((stop) => stop.closest('[role="columnheader"], .fa-dt-head'))).toBe(false);
+    const rows = stops.filter((stop) => stop.matches('.fa-dt-grid [role="row"][data-row-id]'));
+    expect(rows.map((row) => row.textContent)).toEqual([expect.stringContaining("Release a"), expect.stringContaining("Release b")]);
+    // The verdict's reasons button and the row's Grab and ⋯ are inside the row: not stops.
+    expect(stops.filter((stop) => stop.closest('.fa-dt-grid [role="row"]') && !rows.includes(stop))).toEqual([]);
+    // Walking down from the dialog's first stop reaches both releases.
+    const walk = walkRemote(stops[0]!);
+    expect(walk.filter((stop) => stop.startsWith("row:"))).toHaveLength(2);
   });
 });

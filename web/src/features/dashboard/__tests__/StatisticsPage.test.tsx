@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PlayStatisticsDocument, StatisticsPeopleDocument, StatisticsSharingDocument } from "@/graphql/generated/graphql";
 import { renderWithProviders } from "@/test";
+import { layoutColumn, RemoteNavigation, remoteStopElements, remoteStops, stopLabel, walkRemote } from "@/test/remote";
 
 import { StatisticsPage } from "../StatisticsPage";
 
@@ -81,5 +82,20 @@ describe("Statistics", () => {
     expect(await screen.findByText("Share your statistics")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Some people" }));
     expect(await screen.findByRole("checkbox", { name: "Amy" })).toBeInTheDocument();
+  });
+});
+
+describe("Statistics on a TV remote", () => {
+  it("stops only on its controls: the period, then Share; charts, totals and lists are for reading", async () => {
+    window.localStorage.setItem("librarian.inputMode", "tv");
+    await renderWithProviders(
+      <><RemoteNavigation /><main id="main"><StatisticsPage period="30d" /></main></>,
+      { shell: true, mocks: [people([{ userId: "me", name: "Toby", isSelf: true, shared: false }]), statsMock(stats())] },
+    );
+    await screen.findByText("Time per day");
+    layoutColumn(document.body);
+    expect(remoteStops(document.body)).toEqual(["7 days", "30 days", "90 days", "Year", "Share"]);
+    const period = remoteStopElements(document.body).find((stop) => stopLabel(stop) === "30 days")!;
+    expect(walkRemote(period)).toEqual(["30 days", "Share"]);
   });
 });

@@ -12,7 +12,7 @@
  */
 import { fireEvent } from "@testing-library/react";
 
-import { REMOTE_CANDIDATES, isRemoteStop } from "@/lib/input-mode";
+import { REMOTE_CANDIDATES, isRemoteStop, useSpatialNavigation } from "@/lib/input-mode";
 
 export interface Box {
   x: number;
@@ -37,8 +37,9 @@ function rendered(element: Element): boolean {
 
 export interface LayoutOptions {
   /**
-   * Elements with the same key share a line, left to right in document order; the default puts
-   * each element on its own line.
+   * Elements with the same key share a line, left to right in document order. The default puts
+   * a one-dimensional composite (segmented, tabs, radio group, toolbar) on one line and every
+   * other element on its own.
    */
   rowOf?: (element: HTMLElement) => string | null;
   /** The left edge of the column; the shell's rail sits left of it. */
@@ -50,7 +51,18 @@ export interface LayoutOptions {
  * in document order. Elements under a hidden ancestor get an empty box, as in a browser. Returns
  * the laid-out elements.
  */
-export function layoutColumn(root: ParentNode = document.body, { rowOf, left = 200 }: LayoutOptions = {}): HTMLElement[] {
+const COMPOSITE_ROW = '[role="radiogroup"], [role="tablist"], [role="toolbar"], .fa-segmented';
+const composites = new WeakMap<Element, string>();
+
+/** The default line: a composite's controls share one. */
+export function compositeRow(element: HTMLElement): string | null {
+  const composite = element.closest(COMPOSITE_ROW);
+  if (!composite) return null;
+  if (!composites.has(composite)) composites.set(composite, `composite-${Math.random()}`);
+  return composites.get(composite)!;
+}
+
+export function layoutColumn(root: ParentNode = document.body, { rowOf = compositeRow, left = 200 }: LayoutOptions = {}): HTMLElement[] {
   // The page scroller and navigation's own scrolling are no-ops here.
   for (const method of ["scrollTo", "scrollBy"] as const) {
     if (!(method in Element.prototype)) Object.defineProperty(Element.prototype, method, { configurable: true, writable: true, value: () => {} });
@@ -91,14 +103,23 @@ export function stopLabel(element: Element): string {
   return text || element.getAttribute("data-testid") || element.tagName.toLowerCase();
 }
 
-/** Every remote stop under `root` that has a box, in document order. */
+/** Every remote stop element under `root` that has a box, in document order. */
+export function remoteStopElements(root: ParentNode = document.body): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(REMOTE_CANDIDATES)).filter((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && isRemoteStop(element);
+  });
+}
+
+/** Every remote stop under `root` that has a box, in document order, by `stopLabel`. */
 export function remoteStops(root: ParentNode = document.body): string[] {
-  return Array.from(root.querySelectorAll<HTMLElement>(REMOTE_CANDIDATES))
-    .filter((element) => {
-      const rect = element.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0 && isRemoteStop(element);
-    })
-    .map(stopLabel);
+  return remoteStopElements(root).map(stopLabel);
+}
+
+/** Mount the shell's remote navigation (TV mode, Back as a no-op step) beside a component under test. */
+export function RemoteNavigation({ onBack = () => true }: { onBack?: () => boolean | void }): null {
+  useSpatialNavigation(true, true, onBack);
+  return null;
 }
 
 /**
