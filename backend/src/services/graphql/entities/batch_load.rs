@@ -78,3 +78,4 @@ impl_string_pk_batch_load!(
 impl_string_pk_batch_load!(super::TorznabCategory);
 impl_string_pk_batch_load!(super::QualityProfile);
 impl_string_pk_batch_load!(super::ReleaseBlocklist);
+impl_string_pk_batch_load!(super::ReleaseRecommendation);

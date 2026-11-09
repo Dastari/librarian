@@ -232,8 +232,13 @@ impl SourcesManager {
             Err(anyhow!("Source unavailable for this search"))
         };
         let (mut page, mut error) = match response {
-            Ok(page) => (page, None),
-            Err(_) => {
+            Ok(page) => {
+                self.usage.note(&plan.source_id, Ok(()));
+                (page, None)
+            }
+            Err(error) => {
+                // The caller gets a stable public error; the health check gets the real one.
+                self.usage.note(&plan.source_id, Err(error.to_string()));
                 // Provider errors can contain passkeys, API URLs, cookies, or
                 // response bodies. Keep the public error stable and redacted.
                 tracing::warn!(source_id = %plan.source_id, source_name = %name, "Source page failed; retry remains on the same page");

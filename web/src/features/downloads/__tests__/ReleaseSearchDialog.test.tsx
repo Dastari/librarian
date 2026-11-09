@@ -81,6 +81,8 @@ const release = (guid: string, overrides: Partial<Record<string, unknown>> = {})
   sourceName: "Tracker",
   profileMatch: "optimal",
   rejectReasons: [] as string[],
+  fromFeed: false,
+  feedItemId: null as string | null,
   ...overrides,
   parsed: parsed((overrides.parsed as Parsed) ?? {}),
 });
@@ -121,6 +123,7 @@ const searchMock = (releases: unknown[], sourceOverrides: Partial<Record<string,
             sourceName: "Tracker",
             elapsedMs: 120,
             fromCache: false,
+            fromFeed: false,
             error: null,
             pageInfo: { support: "UNSUPPORTED", state: "UNKNOWN", hasMore: null, nextCursor: null, retryCursor: null, returnedCount: releases.length },
             releases,
@@ -348,6 +351,7 @@ describe("ReleaseSearchDialog grabbing", () => {
             input: {
               magnet: "magnet:?xt=urn:btih:single",
               url: null,
+              feedItemId: null,
               libraryId: "lib-1",
               movieId: null,
               showId: "show-1",
@@ -381,6 +385,7 @@ describe("ReleaseSearchDialog grabbing", () => {
             input: {
               magnet: null,
               url: "https://tracker/pack.torrent",
+              feedItemId: null,
               libraryId: "lib-1",
               movieId: null,
               showId: "show-1",
@@ -413,6 +418,7 @@ describe("ReleaseSearchDialog grabbing", () => {
             input: {
               magnet: "magnet:?xt=urn:btih:single",
               url: null,
+              feedItemId: null,
               libraryId: "lib-1",
               movieId: null,
               showId: "show-1",
@@ -446,7 +452,7 @@ describe("release selection actions", () => {
   it("confirms a multi-release acquisition once and requests exactly the selected releases", async () => {
     const added = vi.fn(() => ({ data: { addTorrent: { __typename: "AddTorrentResult", success: true, error: null, torrent: null } } }));
     const addMock = (id: string) => ({
-      request: { query: AddTorrentDocument, variables: { input: { magnet: `magnet:?xt=urn:btih:${id}`, url: null, libraryId: "lib-1", movieId: null, showId: "show-1", episodeId: "ep-1", albumId: null, trackId: null, audiobookId: null, chapterId: null, season: null, sourceIndexerId: "src-1", sourceUrl: `https://tracker/details/${id}` } } }, result: added,
+      request: { query: AddTorrentDocument, variables: { input: { magnet: `magnet:?xt=urn:btih:${id}`, url: null, feedItemId: null, libraryId: "lib-1", movieId: null, showId: "show-1", episodeId: "ep-1", albumId: null, trackId: null, audiobookId: null, chapterId: null, season: null, sourceIndexerId: "src-1", sourceUrl: `https://tracker/details/${id}` } } }, result: added,
     });
     await mount([searchMock([release("one"), release("two"), release("unselected")]), addMock("one"), addMock("two")]);
     await userEvent.click(await screen.findByRole("checkbox", { name: "Select Release one" }));
@@ -459,5 +465,43 @@ describe("release selection actions", () => {
     await userEvent.click(within(confirmation).getByRole("button", { name: "Download" }));
     await vi.waitFor(() => expect(added).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  });
+});
+
+describe("ReleaseSearchDialog feed releases", () => {
+  it("grabs a feed release by its catalogue item and never sends a link", async () => {
+    const add = vi.fn(() => ({ data: { addTorrent: { __typename: "AddTorrentResult", success: true, error: null, torrent: null } } }));
+    const feedRelease = release("feed-1", { sourceId: "feed-a", sourceName: "TV feed (feed)", fromFeed: true, feedItemId: "item-9", link: null, magnetUri: null });
+    await mount([
+      searchMock([feedRelease], { sourceId: "feed-a", sourceName: "TV feed (feed)", fromFeed: true }),
+      {
+        request: {
+          query: AddTorrentDocument,
+          variables: {
+            input: {
+              magnet: null,
+              url: null,
+              feedItemId: "item-9",
+              libraryId: "lib-1",
+              movieId: null,
+              showId: "show-1",
+              episodeId: "ep-1",
+              albumId: null,
+              trackId: null,
+              audiobookId: null,
+              chapterId: null,
+              season: null,
+              sourceIndexerId: null,
+              sourceUrl: "https://tracker/details/feed-1",
+            },
+          },
+        },
+        result: add,
+      },
+    ]);
+    await screen.findByText("Release feed-1");
+    expect(screen.getByText("From feed")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Grab/ }));
+    await vi.waitFor(() => expect(add).toHaveBeenCalled());
   });
 });

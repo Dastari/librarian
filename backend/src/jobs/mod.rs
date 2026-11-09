@@ -16,7 +16,9 @@ pub mod auto_schedule;
 pub mod auto_settings;
 pub mod auto_trail;
 pub mod download_monitor;
+pub mod recommend;
 pub mod rss_poll;
+pub mod source_health;
 
 pub use download_monitor::AutoDownloadServiceConfig;
 

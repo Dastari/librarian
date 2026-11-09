@@ -40,7 +40,9 @@ use graphql_orm::graphql::filters::{DateFilter, StringFilter};
 use super::auto_download::{self, AutoDownloadRunSummary, HuntScope};
 use super::auto_settings::{AutoDownloadSettings, SETTING_STATUS};
 use super::auto_trail::Trigger;
+use super::recommend;
 use super::rss_poll;
+use super::source_health;
 
 /// The air-time pass runs this often between sweeps.
 const AIR_TIME_PASS_MINUTES: i64 = 5;
@@ -86,6 +88,8 @@ struct AutoDownloadRuntime {
     main_handle: tokio::task::JoinHandle<()>,
     retry_handle: tokio::task::JoinHandle<()>,
     rss_handle: tokio::task::JoinHandle<()>,
+    health_handle: tokio::task::JoinHandle<()>,
+    recommend_handle: tokio::task::JoinHandle<()>,
 }
 
 impl AutoDownloadRuntime {
@@ -94,6 +98,8 @@ impl AutoDownloadRuntime {
         let _ = self.main_handle.await;
         let _ = self.retry_handle.await;
         let _ = self.rss_handle.await;
+        let _ = self.health_handle.await;
+        let _ = self.recommend_handle.await;
     }
 }
 
@@ -180,6 +186,18 @@ impl Service for AutoDownloadService {
             rss_loop(manager_rss, token_rss, rhythm).await;
         });
 
+        let manager_health = self.manager.clone();
+        let token_health = cancel_token.clone();
+        let health_handle = tokio::spawn(async move {
+            health_loop(manager_health, token_health, rhythm).await;
+        });
+
+        let manager_recommend = self.manager.clone();
+        let token_recommend = cancel_token.clone();
+        let recommend_handle = tokio::spawn(async move {
+            recommend_loop(manager_recommend, token_recommend, rhythm).await;
+        });
+
         let manager_retry = self.manager.clone();
         let retry_sweep_interval = self.config.retry_sweep_interval_minutes;
         let default_retry_after = self.config.default_retry_after_minutes;
@@ -201,6 +219,8 @@ impl Service for AutoDownloadService {
             main_handle,
             retry_handle,
             rss_handle,
+            health_handle,
+            recommend_handle,
         }));
 
         info!(
@@ -230,6 +250,8 @@ impl Service for AutoDownloadService {
         if runtime.main_handle.is_finished()
             || runtime.retry_handle.is_finished()
             || runtime.rss_handle.is_finished()
+            || runtime.health_handle.is_finished()
+            || runtime.recommend_handle.is_finished()
         {
             return Ok(ServiceHealth::degraded(
                 "one or more auto-download workers exited unexpectedly",
@@ -459,17 +481,63 @@ async fn run_hunt(manager: &Arc<ServicesManager>, kind: &str, trigger: Trigger, 
     }
 }
 
+/// Tests every enabled source at least hourly (`source_health`). It runs whether or not automatic
+/// downloading is on: a source that has stopped working should be noticed either way.
+async fn health_loop(manager: Arc<ServicesManager>, cancel: CancellationToken, rhythm: Rhythm) {
+    tokio::select! {
+        _ = cancel.cancelled() => return,
+        // Let the rest of the server start, and the first searches go first.
+        _ = tokio::time::sleep(rhythm.startup_delay * 2) => {}
+    }
+    loop {
+        match source_health::run_due_checks(&manager).await {
+            Ok(summary) if summary.tested + summary.from_use > 0 => info!(
+                tested = summary.tested,
+                from_use = summary.from_use,
+                failing = summary.failing,
+                "Source health: checked {} source(s) ({} by their recent use), {} failing",
+                summary.tested + summary.from_use,
+                summary.from_use,
+                summary.failing
+            ),
+            Ok(_) => {}
+            Err(error) => warn!(error = %error, "Source health: the check pass failed"),
+        }
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            _ = tokio::time::sleep(rhythm.tick) => {}
+        }
+    }
+}
+
+/// Answers the lookups people queued and keeps what is flagged wanted looked up (`recommend`), all
+/// inside the hourly search budget.
+async fn recommend_loop(manager: Arc<ServicesManager>, cancel: CancellationToken, rhythm: Rhythm) {
+    tokio::select! {
+        _ = cancel.cancelled() => return,
+        _ = tokio::time::sleep(rhythm.startup_delay * 3) => {}
+    }
+    loop {
+        if let Err(error) = recommend::work(&manager).await {
+            warn!(error = %crate::services::redact::redact_text(&format!("{error:#}")), "Recommendations: the worker failed");
+        }
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            _ = tokio::time::sleep(rhythm.tick) => {}
+        }
+    }
+}
+
 async fn rss_loop(manager: Arc<ServicesManager>, cancel: CancellationToken, rhythm: Rhythm) {
     tokio::select! {
         _ = cancel.cancelled() => return,
         _ = tokio::time::sleep(rhythm.startup_delay) => {}
     }
     loop {
-        if load_settings(&manager)
-            .await
-            .is_some_and(|settings| settings.enabled)
-        {
-            match rss_poll::poll_due_feeds(&manager).await {
+        // Feeds are sources: their catalogue fills whether or not automatic downloading is on.
+        // Only grabbing from them waits for the switch.
+        if let Some(settings) = load_settings(&manager).await {
+            match rss_poll::poll_due_feeds(&manager, settings.enabled).await {
                 Ok(summary) if summary.feeds_polled > 0 => {
                     info!(
                         feeds = summary.feeds_polled,
@@ -603,6 +671,7 @@ fn rehunt_scope(torrent: &Torrent) -> Option<HuntScope> {
         album_id: torrent.album_id.clone(),
         audiobook_id: torrent.audiobook_id.clone(),
         ignore_backoff: true,
+        ..Default::default()
     };
     (scope.show_id.is_some()
         || scope.movie_id.is_some()

@@ -46,6 +46,7 @@ const entityDocuments = {
   QualityProfile: G.EntityQualityProfileChangedDocument,
   RefreshToken: G.EntityRefreshTokenChangedDocument,
   ReleaseBlocklist: G.EntityReleaseBlocklistChangedDocument,
+  ReleaseRecommendation: G.EntityReleaseRecommendationChangedDocument,
   RssFeedItem: G.EntityRssFeedItemChangedDocument,
   RssFeed: G.EntityRssFeedChangedDocument,
   ScheduleCache: G.EntityScheduleCacheChangedDocument,

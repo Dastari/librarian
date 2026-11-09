@@ -161,6 +161,10 @@ pub struct HuntScope {
     pub audiobook_id: Option<String>,
     /// Manual searches ignore the per-target backoff.
     pub ignore_backoff: bool,
+    /// Discovery for recommendations (`recommend`): every missing, un-ignored item counts, whether
+    /// or not it is flagged wanted or its show is on auto-download, and nothing is marked wanted.
+    /// Nothing is ever grabbed from such a pass.
+    pub include_unwanted: bool,
 }
 
 impl HuntScope {
@@ -340,7 +344,7 @@ async fn find_search_state_setting(db: &Database) -> Result<Option<AppSetting>> 
         .next())
 }
 
-async fn load_search_state(db: &Database) -> SearchState {
+pub(crate) async fn load_search_state(db: &Database) -> SearchState {
     match find_search_state_setting(db).await {
         Ok(Some(setting)) => serde_json::from_str(&setting.value).unwrap_or_else(|error| {
             warn!(
@@ -362,7 +366,7 @@ async fn load_search_state(db: &Database) -> SearchState {
     }
 }
 
-async fn save_search_state(db: &Database, state: &SearchState) -> Result<()> {
+pub(crate) async fn save_search_state(db: &Database, state: &SearchState) -> Result<()> {
     let cutoff = Utc::now() - chrono::Duration::days(SEARCH_STATE_RETENTION_DAYS);
     let pruned: SearchState = state
         .iter()
@@ -612,7 +616,7 @@ async fn discover_episode_candidates(
 
     for show in shows {
         let (enabled, mode) = normalize_auto_download(show.auto_download, show.auto_download_mode);
-        if !enabled {
+        if !enabled && !scope.include_unwanted {
             tracing::debug!(
                 show = %show.name,
                 mode = %mode,
@@ -651,13 +655,14 @@ async fn discover_episode_candidates(
 
         // ALL mode: everything missing and aired counts as wanted, and the row
         // is updated so status reflects that.
-        if mode == AutoDownloadMode::All {
+        if mode == AutoDownloadMode::All && !scope.include_unwanted {
             for episode in missing.iter().filter(|episode| !episode.wanted) {
                 mark_episode_wanted(db, episode, &show.name).await;
             }
         }
 
         let mut targets: Vec<Episode> = match mode {
+            _ if scope.include_unwanted => missing.clone(),
             AutoDownloadMode::All => missing.clone(),
             _ => missing.iter().filter(|e| e.wanted).cloned().collect(),
         };
@@ -803,7 +808,7 @@ async fn discover_track_candidates(
     for album in albums {
         let (enabled, mode) =
             normalize_auto_download(album.auto_download, album.auto_download_mode);
-        if !enabled {
+        if !enabled && !scope.include_unwanted {
             continue;
         }
         let timing = dated_timing(album.release_date.as_deref(), now);
@@ -825,7 +830,7 @@ async fn discover_track_candidates(
             .filter(|track| !is_ignored(track.ignored))
             .collect();
 
-        if mode == AutoDownloadMode::All {
+        if mode == AutoDownloadMode::All && !scope.include_unwanted {
             for track in missing.iter().filter(|track| !track.wanted) {
                 if let Err(error) = Track::update_by_id(
                     db,
@@ -848,6 +853,7 @@ async fn discover_track_candidates(
         }
 
         let targets: Vec<Track> = match mode {
+            _ if scope.include_unwanted => missing,
             AutoDownloadMode::All => missing,
             _ => missing.into_iter().filter(|track| track.wanted).collect(),
         };
@@ -942,7 +948,7 @@ async fn discover_audiobook_candidates(
     for audiobook in audiobooks {
         let (enabled, mode) =
             normalize_auto_download(audiobook.auto_download, audiobook.auto_download_mode);
-        if !enabled {
+        if !enabled && !scope.include_unwanted {
             continue;
         }
         let timing = dated_timing(audiobook.published_date.as_deref(), now);
@@ -964,7 +970,7 @@ async fn discover_audiobook_candidates(
             .filter(|chapter| !is_ignored(chapter.ignored))
             .collect();
 
-        if mode == AutoDownloadMode::All {
+        if mode == AutoDownloadMode::All && !scope.include_unwanted {
             for chapter in missing.iter().filter(|chapter| !chapter.wanted) {
                 if let Err(error) = Chapter::update_by_id(
                     db,
@@ -987,6 +993,7 @@ async fn discover_audiobook_candidates(
         }
 
         let has_target = match mode {
+            _ if scope.include_unwanted => !missing.is_empty(),
             AutoDownloadMode::All => !missing.is_empty(),
             _ => missing.iter().any(|chapter| chapter.wanted),
         };
@@ -1067,8 +1074,8 @@ async fn discover_movie_candidates(
     now: DateTime<Utc>,
 ) -> Result<Vec<WantedCandidate>> {
     let mut filter = MovieWhereInput {
-        monitored: Some(bool_eq(true)),
-        wanted: Some(bool_eq(true)),
+        monitored: (!scope.include_unwanted).then(|| bool_eq(true)),
+        wanted: (!scope.include_unwanted).then(|| bool_eq(true)),
         ..Default::default()
     };
     if let Some(library_id) = &scope.library_id {
@@ -1201,6 +1208,17 @@ pub async fn grab_release(
     release: &SourceRelease,
     feed_id: Option<&str>,
 ) -> Result<Option<GrabbedRelease>> {
+    grab_release_with(env, candidate, release, feed_id, None).await
+}
+
+/// [`grab_release`] for a pack that should download only the files filling what is missing.
+pub async fn grab_release_with(
+    env: &GrabEnv,
+    candidate: &WantedCandidate,
+    release: &SourceRelease,
+    feed_id: Option<&str>,
+    wanted_files: Option<crate::services::torrent::partial::WantedFiles>,
+) -> Result<Option<GrabbedRelease>> {
     let uri = release
         .magnet_uri
         .clone()
@@ -1209,10 +1227,12 @@ pub async fn grab_release(
 
     let metadata = TorrentAddMetadata {
         library_id: Some(candidate.library_id.clone()),
+        // A feed's guid is sometimes its download link, which carries the account's passkey.
         source_url: release
             .details
             .clone()
-            .or_else(|| Some(release.guid.clone())),
+            .or_else(|| Some(release.guid.clone()))
+            .map(|url| crate::services::redact::redact_url(&url, false)),
         source_indexer_id: release.source_id.clone(),
         source_feed_id: feed_id.map(ToString::to_string),
         episode_id: candidate.linkage.episode_id.clone(),
@@ -1222,17 +1242,17 @@ pub async fn grab_release(
         show_id: candidate.linkage.show_id.clone(),
         album_id: candidate.linkage.album_id.clone(),
         audiobook_id: candidate.linkage.audiobook_id.clone(),
+        wanted_files,
     };
 
     let file = match (release.magnet_uri.as_deref(), release.source_id.as_deref()) {
-        (None, Some(source_id)) => {
-            crate::services::graphql::entities::fetch_torrent_from_source(
-                &env.manager,
-                source_id,
-                &uri,
-            )
-            .await?
-        }
+        (None, Some(source_id)) => crate::services::graphql::entities::fetch_torrent_from_source(
+            &env.manager,
+            source_id,
+            &uri,
+        )
+        .await
+        .map_err(redacted_error)?,
         _ => None,
     };
 
@@ -1248,7 +1268,8 @@ pub async fn grab_release(
                 .add_magnet_for_actor_with_outcome(&uri, &actor, metadata)
                 .await
         }
-    }?;
+    }
+    .map_err(redacted_error)?;
     if !outcome.created {
         tracing::debug!(
             candidate = %candidate.label,
@@ -1258,6 +1279,8 @@ pub async fn grab_release(
         return Ok(None);
     }
     let info = outcome.info;
+    // Whatever was recommended for this target is settled now.
+    super::recommend::forget_for_linkage(&env.db, &candidate.linkage).await;
 
     // Season (for packs) and the tracker's seeding floors are not carried by
     // `TorrentAddMetadata`; stamp them on the row the torrent service just created.
@@ -1289,6 +1312,12 @@ pub async fn grab_release(
         torrent_name: info.name,
         torrent_id,
     }))
+}
+
+/// An error with any address in its text redacted: a failed grab of a feed item quotes the link,
+/// which holds the account's passkey, and the message reaches logs and notifications.
+fn redacted_error(error: impl std::fmt::Display) -> anyhow::Error {
+    anyhow::anyhow!(crate::services::redact::redact_text(&format!("{error:#}")))
 }
 
 /// Whether a torrent still counts against the cap on automatic grabs: it is linked to a wanted
@@ -1333,25 +1362,34 @@ struct HuntContext {
 }
 
 /// What searching the sources for one candidate turned up.
-#[derive(Default)]
-struct Collected {
-    releases: Vec<SourceRelease>,
+#[derive(Default, Clone)]
+pub struct Collected {
+    pub releases: Vec<SourceRelease>,
     /// Distinct releases returned, blocklisted ones included.
-    seen: usize,
-    blocklisted: usize,
+    pub seen: usize,
+    pub blocklisted: usize,
     /// How many sources could take the search.
-    sources: usize,
-    errors: Vec<String>,
+    pub sources: usize,
+    pub errors: Vec<String>,
 }
 
 /// Run every query variant for a candidate and merge the results,
 /// de-duplicating on info hash (falling back to guid) and dropping
 /// blocklisted releases.
 async fn collect_releases(ctx: &HuntContext, candidate: &WantedCandidate) -> Collected {
+    collect_releases_from(&ctx.sources, &ctx.blocklist, candidate).await
+}
+
+/// [`collect_releases`] without a hunt around it: the recommender searches the same way.
+pub async fn collect_releases_from(
+    sources: &crate::services::sources::manager::SourcesManager,
+    blocklist: &Blocklist,
+    candidate: &WantedCandidate,
+) -> Collected {
     let mut seen: HashSet<String> = HashSet::new();
     let mut collected = Collected::default();
     for query in &candidate.queries {
-        let results = ctx.sources.search_all(query).await;
+        let results = sources.search_all(query).await;
         collected.sources = collected.sources.max(results.len());
         for result in results {
             if let Some(error) = &result.error {
@@ -1397,7 +1435,7 @@ async fn collect_releases(ctx: &HuntContext, candidate: &WantedCandidate) -> Col
                     continue;
                 }
                 collected.seen += 1;
-                if ctx.blocklist.blocks(&release) {
+                if blocklist.blocks(&release) {
                     collected.blocklisted += 1;
                     tracing::debug!(
                         candidate = %candidate.label,
@@ -1425,7 +1463,11 @@ pub fn verify_releases(
     let mut example = None;
     for release in releases {
         let parsed = scoring::parse_release(&release.title);
-        match candidate.expectation.mismatch(&parsed, strict) {
+        let mismatch = candidate
+            .expectation
+            .mismatch(&parsed, strict)
+            .or_else(|| candidate.expectation.title_mismatch(&release.title, strict));
+        match mismatch {
             None => kept.push(release),
             Some(reason) => {
                 wrong += 1;
@@ -1584,6 +1626,66 @@ fn opens_notification(candidate: &WantedCandidate, trigger: &Trigger) -> bool {
     *trigger == Trigger::Manual || !long_tail
 }
 
+/// The release a candidate would be taken as, from what was collected: verified to be the right
+/// episode, season or year, then filtered and ranked by the quality profile. `strict` refuses a title
+/// that does not say which episode or year it is (feeds and season-wide results); a search narrowed to
+/// one episode may keep one that does not. On `Err`, everything known about why nothing was taken.
+///
+/// The hunt grabs what this returns and the recommender only shows it, so a recommendation is what
+/// automatic downloading would take.
+pub fn pick_for_candidate(
+    candidate: &WantedCandidate,
+    collected: &Collected,
+    quality_profile: &QualityProfile,
+    strict: bool,
+) -> Result<scoring::ScoredRelease, Box<NoGrabFacts>> {
+    rank_for_candidate(candidate, collected, quality_profile, strict).map(|ranked| {
+        ranked
+            .into_iter()
+            .next()
+            .expect("a successful ranking is never empty")
+    })
+}
+
+/// Every release the profile accepts for a candidate, best first. [`pick_for_candidate`] is its
+/// first. The recommender looks further down the list (the smallest release at the best quality).
+pub fn rank_for_candidate(
+    candidate: &WantedCandidate,
+    collected: &Collected,
+    quality_profile: &QualityProfile,
+    strict: bool,
+) -> Result<Vec<scoring::ScoredRelease>, Box<NoGrabFacts>> {
+    let (verified, wrong_target, wrong_example) =
+        verify_releases(candidate, collected.releases.clone(), strict);
+    let ranked = profile::filter_and_rank(
+        &candidate.match_title,
+        verified.clone(),
+        quality_profile,
+        candidate.episode_count,
+    );
+    if !ranked.is_empty() {
+        return Ok(ranked);
+    }
+    let (too_different, below_profile, profile_reasons) = explain_profile_rejections(
+        &candidate.match_title,
+        &verified,
+        quality_profile,
+        candidate.episode_count,
+    );
+    Err(Box::new(NoGrabFacts {
+        sources: collected.sources,
+        errors: collected.errors.clone(),
+        seen: collected.seen,
+        blocklisted: collected.blocklisted,
+        wrong_target,
+        wrong_example,
+        too_different,
+        below_profile,
+        profile: quality_profile.name.clone(),
+        profile_reasons,
+    }))
+}
+
 /// Search for and grab the best release for one candidate.
 /// Returns `Ok(true)` when a release was grabbed.
 async fn try_candidate(
@@ -1598,51 +1700,29 @@ async fn try_candidate(
 
     // A search narrowed by season and episode may return a title that does not say which episode
     // it is; one that names another episode is never accepted.
-    let (verified, wrong_target, wrong_example) =
-        verify_releases(candidate, collected.releases.clone(), false);
-
-    let Some(best) = profile::pick_best_for_profile(
-        &candidate.match_title,
-        verified.clone(),
-        &quality_profile,
-        candidate.episode_count,
-    ) else {
-        let (too_different, below_profile, profile_reasons) = explain_profile_rejections(
-            &candidate.match_title,
-            &verified,
-            &quality_profile,
-            candidate.episode_count,
-        );
-        let why = describe_no_grab(&NoGrabFacts {
-            sources: collected.sources,
-            errors: collected.errors.clone(),
-            seen: collected.seen,
-            blocklisted: collected.blocklisted,
-            wrong_target,
-            wrong_example,
-            too_different,
-            below_profile,
-            profile: quality_profile.name.clone(),
-            profile_reasons,
-        });
-        info!(
-            candidate = %candidate.label,
-            trigger = ctx.trigger.tag(),
-            profile = %quality_profile.name,
-            "Auto-download: searched for {}, nothing taken: {why}",
-            candidate.label
-        );
-        ctx.trail
-            .waiting(
-                &candidate.library_id,
-                &candidate.label,
-                &why,
-                next_search,
-                &ctx.trigger,
-                opens_notification(candidate, &ctx.trigger),
-            )
-            .await;
-        return Ok(false);
+    let best = match pick_for_candidate(candidate, &collected, &quality_profile, false) {
+        Ok(best) => best,
+        Err(facts) => {
+            let why = describe_no_grab(&facts);
+            info!(
+                candidate = %candidate.label,
+                trigger = ctx.trigger.tag(),
+                profile = %quality_profile.name,
+                "Auto-download: searched for {}, nothing taken: {why}",
+                candidate.label
+            );
+            ctx.trail
+                .waiting(
+                    &candidate.library_id,
+                    &candidate.label,
+                    &why,
+                    next_search,
+                    &ctx.trigger,
+                    opens_notification(candidate, &ctx.trigger),
+                )
+                .await;
+            return Ok(false);
+        }
     };
 
     let release = best.release;

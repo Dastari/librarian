@@ -88,10 +88,13 @@ query SearchSources($input: SearchSourcesInput!) {
       sourceName
       elapsedMs
       fromCache
+      fromFeed
       error
       pageInfo { support state hasMore nextCursor retryCursor returnedCount }
       releases {
         stableId
+        fromFeed
+        feedItemId
         format
         formatReason
         packHint

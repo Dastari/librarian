@@ -786,6 +786,9 @@ pub struct AddTorrentInput {
     pub source_url: Option<String>,
     pub source_indexer_id: Option<String>,
     pub source_feed_id: Option<String>,
+    /// Grab a release from an RSS feed's catalogue. The link carries the tracker's passkey and is
+    /// never sent to a client, so the server reads it; `magnet` and `url` are ignored.
+    pub feed_item_id: Option<String>,
 }
 
 /// Result of add torrent mutation
@@ -1300,12 +1303,23 @@ impl TorrentClientMutations {
     async fn add_torrent(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "input")] input: AddTorrentInput,
+        #[graphql(name = "input")] mut input: AddTorrentInput,
     ) -> Result<AddTorrentResult> {
         let db = ctx.data::<Database>()?;
         let user = current_torrent_user(db, ctx.require_member()?).await?;
-        let owner_id = authorize_add_torrent_targets(db, &user, &input).await?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
+        if let Some(item_id) = input.feed_item_id.take() {
+            let (link, feed) = resolve_feed_item_for_grab(db, manager, &user, &item_id).await?;
+            input.magnet = None;
+            input.url = None;
+            if link.to_ascii_lowercase().starts_with("magnet:") {
+                input.magnet = Some(link);
+            } else {
+                input.url = Some(link);
+            }
+            input.source_feed_id = Some(feed.id);
+        }
+        let owner_id = authorize_add_torrent_targets(db, &user, &input).await?;
         let service = manager
             .get_torrent()
             .await
@@ -1341,6 +1355,16 @@ impl TorrentClientMutations {
             }
             _ => None,
         };
+        let linkage = crate::jobs::auto_download::CandidateLinkage {
+            episode_id: input.episode_id.clone(),
+            movie_id: input.movie_id.clone(),
+            track_id: input.track_id.clone(),
+            chapter_id: input.chapter_id.clone(),
+            show_id: input.show_id.clone(),
+            album_id: input.album_id.clone(),
+            audiobook_id: input.audiobook_id.clone(),
+            season: input.season,
+        };
         let metadata = TorrentAddMetadata {
             library_id: input.library_id,
             movie_id: input.movie_id,
@@ -1353,6 +1377,7 @@ impl TorrentClientMutations {
             source_url: input.source_url,
             source_indexer_id: input.source_indexer_id,
             source_feed_id: input.source_feed_id,
+            wanted_files: None,
         };
         let result = match source_file {
             Some(file) => {
@@ -1386,6 +1411,10 @@ impl TorrentClientMutations {
                     input.minimum_ratio,
                     input.minimum_seed_time,
                 );
+                if outcome.created {
+                    // Anything recommended for this target is settled by a download of it.
+                    crate::jobs::recommend::forget_for_linkage(db, &linkage).await;
+                }
                 if outcome.created && !details.is_empty() {
                     let db = ctx.data::<crate::db::Database>()?;
                     if let Err(error) =
@@ -1405,10 +1434,11 @@ impl TorrentClientMutations {
                     error: None,
                 })
             }
+            // The error may quote the link, and a feed's links carry the account's passkey.
             Err(e) => Ok(AddTorrentResult {
                 success: false,
                 torrent: None,
-                error: Some(e.to_string()),
+                error: Some(crate::services::redact::redact_text(&e.to_string())),
             }),
         }
     }

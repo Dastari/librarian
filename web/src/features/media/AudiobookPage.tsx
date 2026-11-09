@@ -1,3 +1,4 @@
+import { RecommendedRelease } from "@/features/recommendations/RecommendedRelease";
 import { copyText } from "glass-ux/copy-button";
 import { useApolloClient, useMutation } from "@apollo/client/react";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
@@ -344,6 +345,7 @@ export function AudiobookPage({ audiobookId }: { audiobookId: string }) {
       }}
     >
       <AudiobookTableContext.Provider value={{ actions, statuses, currentItemId, fractionOf, playStateOf, press, want: isAdmin ? toggleWanted : undefined, unavailable: progressUnavailable }}>
+        <RecommendedRelease target={{ audiobookId: book.id }} missing={chapters.some((chapter) => !chapter.mediaFileId) ? 1 : 0} />
         <LoadedDataTable
           id={`audiobook-chapters:${user?.id ?? "anonymous"}:${book.libraryId}:${book.id}`}
           label={`${book.title} chapters`} columns={chapterColumns} rows={chapters} getRowId={(chapter) => chapter.id} getRowLabel={(chapter) => chapter.title ?? `Chapter ${chapter.chapterNumber}`}

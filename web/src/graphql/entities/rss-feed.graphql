@@ -5,7 +5,7 @@ fragment RssFeedFields on RssFeed {
   userId
   libraryId
   name
-  url
+  urlDisplay
   enabled
   pollIntervalMinutes
   postDownloadAction
@@ -13,6 +13,8 @@ fragment RssFeedFields on RssFeed {
   lastSuccessfulAt
   lastError
   consecutiveFailures
+  healthStatus
+  healthKind
   createdAt
   updatedAt
 }

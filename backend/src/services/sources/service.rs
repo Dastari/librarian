@@ -492,6 +492,10 @@ impl Service for SourcesService {
             return Ok(());
         };
         let sources_manager = Arc::new(SourcesManager::new(encryption_key)?);
+        // Sources that sign in with a username and password renew their sessions through this.
+        sources_manager.set_session_refresher(Arc::new(super::session::SourceSessions::new(
+            &self.services,
+        )));
         let legacy_key = self.legacy_database_key().await?;
         let legacy_encryption = legacy_key
             .as_deref()

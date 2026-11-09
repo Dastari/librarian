@@ -51,6 +51,7 @@
   {"entity":"MetadataCache","read":"admin.read","write":"admin.write","scope":"admin"},
   {"entity":"SourcePriorityRule","read":"admin.read","write":"admin.write","scope":"owner"},
   {"entity":"Notification","read":"member.read","write":"member.write","scope":"owner"},
+  {"entity":"ReleaseRecommendation","read":"member.read","write":"admin.write","scope":"owner"},
   {"entity":"TorznabCategory","read":"member.read","write":"admin.write","scope":"shared"},
   {"entity":"QualityProfile","read":"member.read","write":"admin.write","scope":"shared"},
   {"entity":"ReleaseBlocklist","read":"member.read","write":"admin.write","scope":"shared"}

@@ -249,6 +249,9 @@ mod tests {
             last_successful_at: None,
             last_error: None,
             consecutive_failures: None,
+            url_display: None,
+            health_status: None,
+            health_kind: None,
         }
     }
 

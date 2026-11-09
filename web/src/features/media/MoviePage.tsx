@@ -3,6 +3,7 @@ import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
+import { RecommendedRelease } from "@/features/recommendations/RecommendedRelease";
 import { Artwork, EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, Panel, PosterCard, Section, SkeletonHero, StatusChip } from "@/components/ui";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
 import { movieAcquisitionMeta } from "@/features/acquisition/mode";
@@ -137,6 +138,7 @@ export function MoviePage({ movieId }: { movieId: string }) {
             <p className="inline-flex items-center gap-2 text-body-sm text-muted">
               <IconInfo size="md" /> No file is linked yet. {movie.wanted ? "Librarian is looking for a release." : "Mark it as wanted to search automatically."}
             </p>
+            <RecommendedRelease target={{ movieId: movie.id }} missing={1} />
           </Panel>
         )}
       </div>

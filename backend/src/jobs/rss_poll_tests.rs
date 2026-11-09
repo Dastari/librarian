@@ -372,3 +372,53 @@ fn only_http_and_https_feeds_can_be_fetched() {
     assert!(feed_url_problem("nonsense").is_some());
     assert!(feed_url_problem("").is_some());
 }
+
+// ---------------------------------------------------------------------------
+// The catalogue
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_fixture_feed_is_read_into_the_catalogue_with_size_category_and_a_match() {
+    use crate::services::feed_catalogue::{MovieRef, TitleIndex};
+    let xml = include_str!("../../tests/fixtures/rss/iptorrents_movies.xml");
+    let items = crate::services::sources::definitions::torznab::parse_torznab_rss(xml).unwrap();
+    assert_eq!(items.len(), 2);
+    let index = TitleIndex::new(
+        vec![],
+        vec![MovieRef {
+            id: "red".into(),
+            library_id: "movies".into(),
+            title: "The Hunt for Red October".into(),
+            year: Some(1990),
+        }],
+        vec![],
+        vec![],
+    );
+
+    let (facts, matched) = describe_release(&items[0], &index);
+    assert_eq!(facts.category.as_deref(), Some("Movie/HD/Bluray"));
+    assert!(facts.size.is_some_and(|size| size > 12_000_000_000));
+    assert_eq!(facts.year(), Some(1990));
+    let hit = matched.expect("the first item is in the library");
+    assert_eq!(hit.movie_id.as_deref(), Some("red"));
+    assert_eq!(hit.confidence, 100);
+
+    // The second item is a different film, so it is kept with its identity and the reason.
+    let (other, unmatched) = describe_release(&items[1], &index);
+    assert_eq!(other.category.as_deref(), Some("Movie/4K"));
+    assert_eq!(other.parsed.resolution.as_deref(), Some("2160p"));
+    assert!(unmatched.is_err());
+    let columns = CatalogueColumns::new(&other, &unmatched);
+    assert_eq!(columns.parsed_scope.as_deref(), Some("movie"));
+    assert_eq!(columns.match_kind, None);
+    assert!(columns.match_reason.is_some());
+}
+
+#[test]
+fn a_feed_failure_never_quotes_the_address_or_its_key() {
+    // What the HTTP client prints for a failed request includes the whole URL.
+    let raw = "error sending request for url (https://iptorrents.com/t.rss?u=123456;tp=0123456789abcdef0123456789abcdef;48): connection reset";
+    let cleaned = redact_text(&format!("the feed could not be reached: {raw}"));
+    assert!(!cleaned.contains("0123456789abcdef"), "{cleaned}");
+    assert!(cleaned.contains("connection reset"));
+}

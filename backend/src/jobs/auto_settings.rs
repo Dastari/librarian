@@ -19,6 +19,11 @@ pub const SETTING_AIR_GRACE_MINUTES: &str = "auto_download.air_grace_minutes";
 pub const SETTING_AIR_WINDOW_DAYS: &str = "auto_download.air_window_days";
 pub const SETTING_AIR_RETRY_MINUTES: &str = "auto_download.air_retry_minutes";
 pub const SETTING_MAX_CONCURRENT_GRABS: &str = "auto_download.max_concurrent_grabs";
+/// How many indexer searches the recommendations may make in an hour (0 turns background and
+/// on-demand lookups off).
+pub const SETTING_HOURLY_SEARCH_BUDGET: &str = "auto_download.hourly_search_budget";
+/// Download only the files of the missing episodes or tracks from a pack.
+pub const SETTING_ONLY_MISSING_FILES: &str = "auto_download.only_missing_files";
 /// Written by the service after each pass so Settings can say when it last ran.
 pub const SETTING_STATUS: &str = "auto_download.status";
 
@@ -30,6 +35,8 @@ const ALL_KEYS: &[&str] = &[
     SETTING_AIR_WINDOW_DAYS,
     SETTING_AIR_RETRY_MINUTES,
     SETTING_MAX_CONCURRENT_GRABS,
+    SETTING_HOURLY_SEARCH_BUDGET,
+    SETTING_ONLY_MISSING_FILES,
 ];
 
 /// What the scheduler is told to do. Defaults are what a fresh install uses.
@@ -49,6 +56,13 @@ pub struct AutoDownloadSettings {
     pub air_retry_minutes: i64,
     /// Automatic grabs that may be downloading at once; more wait for a slot.
     pub max_concurrent_grabs: usize,
+    /// Indexer searches the recommendations may make per hour. Never a burst: lookups beyond it
+    /// wait for the next hour.
+    pub hourly_search_budget: u32,
+    /// For a pack, download only the files that fill what is missing. Default on. On a private
+    /// tracker this can cost ratio: a partial download never completes the torrent, so it cannot
+    /// be seeded to 100%.
+    pub only_missing_files: bool,
 }
 
 impl Default for AutoDownloadSettings {
@@ -61,6 +75,8 @@ impl Default for AutoDownloadSettings {
             air_window_days: 7,
             air_retry_minutes: 60,
             max_concurrent_grabs: 5,
+            hourly_search_budget: 30,
+            only_missing_files: true,
         }
     }
 }
@@ -112,6 +128,12 @@ impl AutoDownloadSettings {
                 .map_or(defaults.max_concurrent_grabs, |value| {
                     value.clamp(1, 100) as usize
                 }),
+            hourly_search_budget: number(values, SETTING_HOURLY_SEARCH_BUDGET)
+                .map_or(defaults.hourly_search_budget, |value| {
+                    value.clamp(0, 600) as u32
+                }),
+            only_missing_files: flag(values, SETTING_ONLY_MISSING_FILES)
+                .unwrap_or(defaults.only_missing_files),
         }
     }
 
@@ -189,5 +211,21 @@ mod tests {
         assert_eq!(settings.air_window_days, 60);
         assert_eq!(settings.air_retry_minutes, 5);
         assert_eq!(settings.max_concurrent_grabs, 1);
+    }
+
+    #[test]
+    fn recommendations_default_to_thirty_searches_an_hour_and_partial_pack_downloads() {
+        let settings = AutoDownloadSettings::from_values(&HashMap::new());
+        assert_eq!(settings.hourly_search_budget, 30);
+        assert!(settings.only_missing_files);
+        let tuned = AutoDownloadSettings::from_values(&values(&[
+            (SETTING_HOURLY_SEARCH_BUDGET, json!(5000)),
+            (SETTING_ONLY_MISSING_FILES, json!(false)),
+        ]));
+        assert_eq!(tuned.hourly_search_budget, 600);
+        assert!(!tuned.only_missing_files);
+        let off =
+            AutoDownloadSettings::from_values(&values(&[(SETTING_HOURLY_SEARCH_BUDGET, json!(0))]));
+        assert_eq!(off.hourly_search_budget, 0);
     }
 }

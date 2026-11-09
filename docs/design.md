@@ -188,8 +188,9 @@ The frontend sends plaintext JSON credentials in a single `CreateSource` mutatio
 Librarian's currently supported acquisition paths converge into the same pipeline:
 
 - **Torrent** (built-in client) with DHT, UPNP, seeding control
-- **RSS feeds** (`RssFeed`, admin-managed in Settings › Downloads) are polled by the auto-download worker
-  and matched exactly against wanted shows and movies (Q82); source definitions remain separate
+- **RSS feeds** (`RssFeed`, admin-managed in Settings › Sources beside the indexers) are polled by the
+  auto-download worker, kept as a catalogue of what is available (Q90–Q92) and matched exactly against wanted shows
+  and movies (Q82); source definitions remain separate
 - **Usenet/IRC:** not currently supported acquisition paths; settings or entities must not be presented
   as a working downloader
 - **Manual Download** and direct add
@@ -222,7 +223,8 @@ types reserved for future protocols are schema vocabulary, not a claim that thos
 - **Torrent Indexer** — Private/public torrent trackers (e.g., IPTorrents)
 - **Usenet Indexer** — reserved schema value; unavailable without an NNTP/NZB acquisition client
 - **RSS Feed** — an `RssFeed` row polled on its own interval (Q82); only admins may create or edit one, because
-  the server fetches its address. Separate from the `RssFeed` source-type vocabulary
+  the server fetches its address. Shown and added in Settings › Sources as a kind of source, but stored as its own
+  entity (Q90). Separate from the `RssFeed` source-type vocabulary
 
 #### Source Architecture
 - **`SourcesService`** — Lifecycle service registered with `ServicesManager`, depends on the database service. Manages encryption key creation and source loading.
@@ -1378,12 +1380,13 @@ hand-written `updateCastDevice` went unnoticed). It reads the same chunk list th
 
 ### Q80: What turns automatic downloading on, and what runs when it is?
 **Answer:** One setting, `auto_download.enabled`, default **off**, edited on Settings › Downloads. There is no environment
-fallback, so the switch always shows what the server does. While it is off nothing searches, polls a feed, grabs, or
-re-searches after blocklisting a dead grab. `triggerAutoDownload` ("Run now") and `searchMissing` ("Search now") still run: a
+fallback, so the switch always shows what the server does. While it is off nothing searches, grabs, or
+re-searches after blocklisting a dead grab (feeds are still read into their catalogue, Q91). `triggerAutoDownload` ("Run now") and `searchMissing` ("Search now") still run: a
 person pressed a button. When it is on, `AutoDownloadService` runs three workers, each re-reading the settings every minute so
 a change needs no restart: the **scheduler** (a full sweep of every wanted title every `auto_download.interval_minutes`,
 default 60, starting on the first tick after the switch is turned on; plus the air-time pass, Q81, every five minutes), the
-**RSS worker** (Q82), and the **retry sweep** (Q70). All settings are `auto_download.*` app settings; values the scheduler
+**RSS worker** (Q82), and the **retry sweep** (Q70). Feeds are sources, so their catalogue (Q91) is filled and sources are
+health-checked (Q96) whether or not the switch is on; only *grabbing* waits for it. All settings are `auto_download.*` app settings; values the scheduler
 cannot honour are clamped (`jobs::auto_settings`). What each pass did last is written to `auto_download.status` and shown on the
 Downloads screen. Per title: `NONE` never, `WANTED` only rows flagged wanted, `ALL` every missing row that has aired or been
 released (Q68); movies are downloaded when `monitored` and `wanted` and their release date has passed.
@@ -1437,3 +1440,132 @@ year, or a title too different. It resolves when the target is grabbed. Back-cat
 ("waiting for a free slot") and a blocklisted dead grab are likewise single notifications. Skipping a target because it is inside
 its backoff is not recorded per tick; it is visible as the "next search after" time on the waiting notification and in the debug
 log. Every search, grab and skip is also logged with the target, trigger and reason, per `logging.mdc`.
+
+### Q90: Is an RSS feed a `Source`?
+**Answer:** In the product, yes: Settings › Sources lists indexers and feeds in one table, "Add source" starts by choosing
+*Indexer* or *RSS feed*, and a feed's row has the same identity, state, "Test now" (for a feed, "Poll now") and priority-free
+actions as an indexer's. In storage, no: a feed stays its own `RssFeed` entity with `RssFeedItem` rows. Merging them into
+`Source` was weighed and refused. A `Source` is a *search adapter* (loaded into `SourcesManager`, queried on demand,
+admin-only, no owner); a feed is a *pull catalogue* with an owner (`userId`), an optional library, per-item rows kept 30 days,
+and `Torrent.sourceFeedId` pointing at it. Folding it in would have meant migrating `RssFeedItem.feedId`,
+`Torrent.sourceFeedId`, the ownership policies and the poller for no change the user sees. Where the two must behave alike
+they share code instead: the same credential encryption, the same health vocabulary (Q96) and the same Notification trail.
+
+**Secrets.** A feed address carries the tracker passkey (`...?u=123456;tp=<passkey>`). `RssFeed.url` is therefore an
+encrypted envelope written by the same write transform as `Source.credentials` (`v2:` AES-256-GCM, input-only, absent from
+the GraphQL object); `urlDisplay` holds the redacted form (host, path, parameter names, every value hidden) for the UI. Rows
+written before this are encrypted the next time the poller runs. A feed item's download link is stored the same way
+(`RssFeedItem.link`) and is never sent to a client. `services::redact` removes keys, passkeys, userinfo and magnet
+trackers from every address in an error, a log line, a notification and a grab; HTTP client errors are stripped of their
+URL before they are formatted.
+
+### Q91: What does Librarian keep of a feed's items?
+**Answer:** Every item, as a catalogue of torrents that exist right now (30 days, Q82), fully read by
+`services::feed_catalogue` with the parsers the hunt already trusts: `quality::scoring::parse_release` for title facts
+(year, season, episode, pack, resolution, source, codec, HDR, audio, group), the description's `12.1 GB; Movie/HD/Bluray`
+for size and category, Torznab numbers for the kind, and `read_music_title` for `Artist - Album (Year) [FLAC 24bit]`
+(artist, album, format, bitrate; audiobooks the same with author and title). A pack is one of `episode`, `season_pack`,
+`series_pack` (a multi-season range or "Complete Series"), `movie`, `album`, `book`.
+
+Each item is **pre-matched** to the owner's libraries with a confidence and a reason, or kept unmatched with the reason it did
+not match. The exactness rules are the hunt's: a show is found by `rss_poll::acceptable_names` ("The Office" is not "The
+Office US"; a bare name that fits two shows matches neither), a movie must agree on the year to within one, and an item
+that does not say which season or episode it is stays unmatched. Albums need the same artist and album
+(`music_rules::same_artist`/`same_album_title`); a book needs title and author and is never a multi-book pack. A match is a
+label (`matchKind`, `matchLabel`, `matchConfidence`, `matchReason`, and the show/movie/album/audiobook ids): it never
+authorises a grab, which still checks the target's `Expectation`. Unmatched items are matched again on later polls (a
+title may have been added), so the catalogue improves as the library grows.
+
+Feeds are read whether or not automatic downloading is on (Q80); only matching to *wanted* targets and grabbing need the
+switch. Music and audiobook items are matched for display and recommendations, never auto-grabbed (Q82).
+
+### Q92: Where do feed items show up?
+**Answer:** In **Find releases**: the catalogue answers a release search for the same target without a request to the
+tracker, as one result per feed (marked "From feed", source name `<feed> (feed)`), graded by the quality profile like any
+other result. A feed release has no link a client may see: it carries a `feedItemId`, and `addTorrent` reads the link
+server-side (the caller must own the feed or be an admin). In the **feed's table** (Settings › Sources › "What it has
+listed"): a bounded, server-side, batch-loaded table of its newest items with quality, size and what each one is in the
+library, filterable to matched or unmatched. Auto-grab from feeds is unchanged (Q82).
+
+### Q93: What is a Recommended release, and how is it chosen?
+**Answer:** For anything missing, the best release found ahead of time, shown as **Recommended** with a Download button on
+missing seasons (and their episodes), the series, movies, albums and audiobooks, and pinned at the top of Find releases. It
+is stored as a `ReleaseRecommendation` (target, scope `episode`/`season_pack`/`series_pack`/`movie`/`album`/`track`/`book`,
+the release, which missing items it covers, short reasons, `foundAt`, `expiresAt`).
+
+**One brain with auto-download.** `jobs::recommend` builds candidates with the hunt's own discovery
+(`discover_candidates`, run non-grabbing and, for on-demand lookups, with `include_unwanted`), the season-pack rule
+(`should_hunt_season_pack`), the per-episode candidates and `Expectation`; searches with the hunt's
+`collect_releases_from`; drops blocklisted releases; and ranks with `quality::profile::filter_and_rank` through
+`rank_for_candidate`, which is what `pick_for_candidate` (the hunt's pick) takes the first of. Two scopes are added
+because the hunt grabs neither: a complete-series pack (`Expectation::SeriesPack`) and a whole album
+(`Expectation::Album`). One deliberate difference: within the profile's best quality tier the recommendation prefers the
+**smallest** release (one with at least half the top release's seeders), so a recommendation can differ from the hunt's pick
+between two releases of equal quality.
+
+**What covers the gap.** For a season, one search (packs and episodes come back together) decides: a season pack if the hunt
+would look for one and an acceptable one exists, else the episodes that have acceptable releases. A show with two or more
+such seasons also gets a series-pack lookup. Albums are looked up whole; a track is looked up on request. Audiobooks are
+whole books. A row says how many missing items it covers ("covers 8 of 10 missing").
+
+**Inputs, cheapest first.** The feed catalogue (Q91) is tried first and settles a lookup when it has an acceptable release
+for every missing item or a pack; indexers are searched only if it did not.
+
+**Grabbing.** `grabRecommendation` goes through `grab_release_with`, the hunt's grab path, carrying the same wanted-target
+linkage (so it counts as downloading for the item), after taking the hunt lock. The download link is stored encrypted (an
+indexer release) or re-read from its catalogue item (a feed release) and is never readable.
+
+### Q94: How are recommendations kept from hammering indexers?
+**Answer:** Indexer requests for recommendations are counted against `auto_download.hourly_search_budget` (default **30** per
+rolling hour, 0 turns them off; Settings › Downloads); one request is one `search_all` round, so a season costs two (its
+"S02" and "Season 2" variants) and a feed-settled lookup costs none. **Background** lookups cover only items flagged wanted
+(or in `ALL` mode), every 30 minutes, at most 8 targets a pass. **Everything else is on demand**: opening a season, movie,
+album, audiobook or the show queues a lookup (`lookupRecommendations`), a worker answers it within the budget, and the page
+says "Looking for the best release…" meanwhile. An answer, and a "nothing found", is kept for a day (`expiresAt`), so it is
+not searched again. A row disappears when its release is blocklisted or gone from its feed, when what it covered is no
+longer missing, when anything for the target is grabbed (by anyone), or when it expires. The sources' own rate limiters and
+the hunt's backoff apply underneath, and the budget is in memory (a restart forgets it, which at worst repeats one hour's
+searches).
+
+### Q95: Does a pack download everything?
+**Answer:** Not by default. `auto_download.only_missing_files` (default **on**, Settings › Downloads): when a pack or album is
+grabbed from a recommendation, the torrent is added paused, its file names are read, and only the files that fill what was
+missing are selected (`torrent::partial`, librqbit's `update_only_files`): episodes by season and number with their
+subtitles, tracks by number or title, release-wide artwork and sheets. A selection that matches nothing or cannot tell
+files apart downloads everything, never fewer than were asked for. **Ratio:** on a private tracker a partial download never
+completes the torrent, so it cannot be seeded to 100%, and some trackers count an unfinished torrent against the account;
+the setting says so. **Import:** the client's totals count only the selected files, so the torrent completes when they do,
+and the import already skips files that are not fully downloaded. Not verified end to end against a real partial pack.
+
+### Q96: How is a source's health checked, and who is told?
+**Answer:** `jobs::source_health` tests every enabled source at least once an hour, one at a time with a random 5–45 second
+pause between (never a burst), with `SourcesManager::test_source`. A real search that succeeded since the last check is the
+check and nothing is requested; one that failed counts as a failed check. A feed's poll is its check. The result is
+`Source.healthStatus` (`ok`, `failing`, `auth_expired`), `healthKind` (`auth`, `unreachable`, `rate_limited`, `other`),
+`lastCheckedAt`, `nextCheckAt` and the existing `lastError`/`errorCount`/`lastSuccessAt`/`lastErrorAt` (feeds the same on
+`RssFeed`). Failures are classified from HTTP status and message (`sources::health`): 401/403 and "not logged in" are
+authentication; DNS, timeout and 5xx are unreachable; 429 is rate limiting. A source that keeps failing is tested hourly,
+then every 2, 4, 8, 16 and 24 hours; **Test now** (and Poll now for a feed) ignores that.
+
+**Alerts.** One `source_health` Notification per failing source or feed, for every admin and, for a feed, its owner (the same
+open-and-update, never-duplicate approach as the auto-download trail): "IPTorrents can't sign in: its login has expired.
+Update its credentials in Settings › Sources." A sign-in problem alerts at once; any other failure after two checks in a row.
+The notification is rewritten if the reason changes and resolved when the source recovers. Messages never contain
+credentials, cookies or addresses. In Sources, a failing row is red with the reason and when it last worked.
+
+### Q97: How does IPTorrents sign in?
+**Answer:** With a username and password (the default) or a pasted cookie (advanced). With a password, `iptorrents_login`
+reads the login page, finds its form (the one with a password field, with its action and hidden fields), posts the
+credentials and keeps the `uid`/`pass` session cookies from the answer, stored encrypted with the credentials. When a request
+finds the session ended, the source asks `SourceSessions` for a new one and retries once. **A sign-in is never attempted more
+than once an hour per source** (`Source.loginAttemptedAt`, written before the attempt; two requests in the same minute share
+one), so a wrong password cannot lock the account. A CAPTCHA, a Cloudflare challenge, a two-factor step, a missing form or an
+unrecognised answer is detected and reported as a failure that tells the user to use the cookie method, which raises the
+auth alert (Q96). Nothing logs the username, password or cookies. If signed in, "Create RSS feed from this account" reads the
+site's RSS page (`getrss.php`), takes the personal link, and creates a feed from it (Q90) whose address is redacted
+everywhere.
+
+**Unverified.** No request has been made to the real site. The flow (`login.php`, the `username`/`password` fields,
+`take_login.php`, the cookie names, the RSS page printing the link) is inferred from Jackett's and Prowlarr's definitions and
+reports; the parsers read the form from the page instead of assuming it, and are tested against hand-written fixtures in
+`backend/tests/fixtures/iptorrents/`.

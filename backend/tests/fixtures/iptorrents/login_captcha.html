@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<html><head><title>IPTorrents :: Login</title>
+<script src="https://www.google.com/recaptcha/api.js" async defer></script></head>
+<body>
+<form action="/take_login.php" method="post">
+  <input type="text" name="username" />
+  <input type="password" name="password" />
+  <div class="g-recaptcha" data-sitekey="sanitized-sitekey"></div>
+  <input type="submit" value="Log in" />
+</form>
+</body></html>

@@ -19,6 +19,11 @@ fragment SourceFields on Source {
   errorCount
   lastSuccessAt
   lastErrorAt
+  healthStatus
+  healthKind
+  lastCheckedAt
+  nextCheckAt
+  loginAttemptedAt
   createdAt
   updatedAt
 }
