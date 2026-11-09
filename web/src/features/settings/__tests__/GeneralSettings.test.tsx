@@ -76,6 +76,16 @@ describe("GeneralSettings bound form", () => {
     expect(settings.metadata.save).not.toHaveBeenCalled();
   });
 
+  it("turns the video preview backfill off", async () => {
+    await mount();
+    const toggle = screen.getByRole("switch", { name: /Make previews for existing videos/ });
+    expect(toggle).toBeChecked();
+    await userEvent.click(toggle);
+    await userEvent.click(save());
+    expect(await screen.findByText("Settings saved")).toBeInTheDocument();
+    expect(settings.playback.save).toHaveBeenCalledWith({ playback_sync_interval: "30", "playback.video_preview_backfill": false });
+  });
+
   it("saves all categories using the existing string and JSON contracts, then adopts the baseline", async () => {
     await mount();
     await edit("Save progress every", "45");
@@ -84,7 +94,7 @@ describe("GeneralSettings bound form", () => {
     await userEvent.keyboard("{Backspace}{Backspace}fr{Enter}de{Enter}");
     await userEvent.click(save());
     expect(await screen.findByText("Settings saved")).toBeInTheDocument();
-    expect(settings.playback.save).toHaveBeenCalledWith({ playback_sync_interval: "45" });
+    expect(settings.playback.save).toHaveBeenCalledWith({ playback_sync_interval: "45", "playback.video_preview_backfill": true });
     expect(settings.metadata.save).toHaveBeenCalledWith({ "metadata.preferred_language": "fr" });
     expect(settings.subtitles.save).toHaveBeenCalledWith({ "subtitles.preferred_languages": '["fr","de"]' });
     await userEvent.click(screen.getByRole("switch", { name: /TV mode/ }));

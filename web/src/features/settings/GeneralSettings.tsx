@@ -13,14 +13,17 @@ import { LANGUAGES } from "@/lib/languages";
 
 import { DurationRow, TagsRow, TextRow, settingsFormBehaviour } from "./SettingFields";
 import { SettingsPage, SettingsSection } from "./SettingsSection";
-import { asList, asNumber, useAppSettings } from "./useAppSettings";
+import { asBool, asList, asNumber, useAppSettings } from "./useAppSettings";
 
 const schema = z.object({
   playbackSyncInterval: numberRule({ required: true, integer: true, min: 5, max: 300, requiredMessage: "Enter a progress interval", rangeMessage: "Enter a whole number from 5 to 300" }),
+  previewBackfill: z.boolean(),
   preferredLanguage: z.string().trim().max(10),
   subtitleLanguages: z.array(z.string().trim().min(1)).refine((languages) => languages.join(",").length <= 200, "Use at most 200 characters"),
 });
 type Values = z.infer<typeof schema>;
+/** Seek-bar previews and black-bar detection for files that predate them (design.md Q124). */
+const PREVIEW_BACKFILL_KEY = "playback.video_preview_backfill";
 
 /** Per-device appearance plus a few server-wide playback defaults (admins). */
 export function GeneralSettings() {
@@ -31,6 +34,7 @@ export function GeneralSettings() {
   const subtitles = useAppSettings("subtitles");
   const storedValues = useMemo<Values>(() => ({
     playbackSyncInterval: asNumber(playback.values.get("playback_sync_interval"), 15),
+    previewBackfill: asBool(playback.values.get(PREVIEW_BACKFILL_KEY), true),
     preferredLanguage: metadata.values.get("metadata.preferred_language") ?? "en",
     subtitleLanguages: asList(subtitles.values.get("subtitles.preferred_languages")),
   }), [playback.values, metadata.values, subtitles.values]);
@@ -46,7 +50,7 @@ export function GeneralSettings() {
     onSubmit: async ({ value, formApi }) => {
       // TanStack validates but does not apply schema transforms to the submitted value.
       const saved = schema.parse(value);
-      await playback.save({ playback_sync_interval: String(saved.playbackSyncInterval) });
+      await playback.save({ playback_sync_interval: String(saved.playbackSyncInterval), [PREVIEW_BACKFILL_KEY]: saved.previewBackfill });
       await metadata.save({ "metadata.preferred_language": saved.preferredLanguage });
       await subtitles.save({ "subtitles.preferred_languages": JSON.stringify(saved.subtitleLanguages) });
       setBaseline(saved);
@@ -81,6 +85,9 @@ export function GeneralSettings() {
               <SettingsSection title="Playback" width="readable">
                 <form.AppField name="playbackSyncInterval">
                   {() => <DurationRow label="Save progress every" description="How often the position in what you are watching is saved." units={["m", "s"]} defaultUnit="s" disabled={loading || submitting} />}
+                </form.AppField>
+                <form.AppField name="previewBackfill">
+                  {(field) => <field.SwitchRow label="Make previews for existing videos" description="Seek-bar previews and black-bar detection for videos added before them, a few at a time in the background. New and played videos always get them." disabled={loading || submitting} />}
                 </form.AppField>
               </SettingsSection>
               <SettingsSection title="Language" width="readable">

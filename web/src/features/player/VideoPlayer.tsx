@@ -2,12 +2,15 @@ import { Button } from "glass-ux/button";
 import { IconArrowLeft, IconSkipForward, IconVolume } from "glass-ux/icons";
 import { VideoPlayer as GlassVideoPlayer, type MediaAttach, type MediaPlayerController, type MediaStreamContext, type MediaTextTrack, type MediaViewMode, type MediaViewModeChangeDetails } from "glass-ux/media-player";
 import { Menu } from "glass-ux/menu";
+import { IconAspectRatio } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { useSettingsConnection } from "@/features/settings/useSettingsConnection";
-import { EntityAudioStreamListDocument, EntityMediaChapterListDocument, EntitySubtitleListDocument } from "@/graphql/generated/graphql";
+import { EntityAudioStreamListDocument, EntityMediaChapterListDocument, EntitySubtitleListDocument, MediaFilePreviewsDocument } from "@/graphql/generated/graphql";
 import { mediaSubtitleUrl } from "@/lib/api/urls";
+import { useLiveQuery } from "@/lib/graphql/live/hooks";
 import { useInputMode } from "@/lib/input-mode";
+import { usePref } from "@/lib/prefs";
 import { cn } from "@/lib/utils";
 
 import { CastButton } from "./CastButton";
@@ -15,6 +18,8 @@ import { usePlayerState, type PlayItem } from "./store";
 import { useCastAdapter } from "./useCastAdapter";
 import { useMediaSource } from "./useMediaSource";
 import { useProgressSync } from "./useProgressSync";
+import { usePictureFill } from "./usePictureFill";
+import { PICTURE_MODE_PREF, storyboardProps, type PictureMode } from "./videoPreviews";
 import { readMiniRect, saveMiniRect, saveVideoSession } from "./videoSession";
 
 const VIEW_MODES: readonly MediaViewMode[] = ["inline", "windowed", "fullscreen", "pip"];
@@ -76,6 +81,16 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
   const audioRows = useSettingsConnection(EntityAudioStreamListDocument, { where: { mediaFileId: { eq: item.mediaFileId } }, orderBy: [{ streamIndex: "ASC" }] }, (data) => data.audioStreams);
   const subtitleRows = useSettingsConnection(EntitySubtitleListDocument, { where: { mediaFileId: { eq: item.mediaFileId } }, orderBy: [{ createdAt: "ASC" }] }, (data) => data.subtitles);
   const chapterRows = useSettingsConnection(EntityMediaChapterListDocument, { where: { mediaFileId: { eq: item.mediaFileId } }, orderBy: [{ chapterIndex: "ASC" }] }, (data) => data.mediaChapters);
+
+  // Seek-bar previews and the picture inside any black bars (design.md Q122/Q123).
+  const previews = useLiveQuery(MediaFilePreviewsDocument, { variables: { id: item.mediaFileId } });
+  const previewFile = (previews.data ?? previews.previousData)?.mediaFile;
+  const previewsForFile = previewFile?.id === item.mediaFileId ? previewFile : null;
+  const seekPreview = useMemo(() => storyboardProps(item.mediaFileId, previewsForFile?.storyboard), [item.mediaFileId, previewsForFile?.storyboard]);
+  const pictureCrop = previewsForFile?.pictureCrop ?? null;
+  // Fit or fill is remembered on this device, for every file.
+  const [pictureMode, setPictureMode] = usePref<PictureMode>(PICTURE_MODE_PREF, "fit");
+  const fillZoom = usePictureFill(video, pictureMode === "fill" ? pictureCrop : null);
 
   const chapters = useMemo(() => chapterRows.rows.map((row) => ({ start: row.startSecs, title: row.title ?? `Chapter ${row.chapterIndex + 1}` })), [chapterRows.rows]);
   const tracks = useMemo(() => subtitleTracks(item.mediaFileId, subtitleRows.rows), [item.mediaFileId, subtitleRows.rows]);
@@ -282,8 +297,21 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
         onWindowRectChange={saveMiniRect}
         castAdapter={cast.adapter}
         loading={progress.loading}
+        storyboard={seekPreview.storyboard}
+        thumbnail={seekPreview.thumbnail}
         controlsEnd={
           <>
+            {pictureCrop ? (
+              <Menu.Root>
+                <Menu.Trigger render={<Button variant={pictureMode === "fill" ? "secondary" : "ghost"} size="sm" shape="circle" icon={<IconAspectRatio />} aria-label="Picture size" tooltip={fillZoom > 1 ? "Picture size: filling the screen" : "Picture size"} />} />
+                <Menu.Popup side="top" align="end">
+                  <Menu.RadioGroup aria-label="Picture size" value={pictureMode} onValueChange={(value) => setPictureMode(value === "fill" ? "fill" : "fit")}>
+                    <Menu.RadioItem closeOnClick value="fit">Fit the whole frame</Menu.RadioItem>
+                    <Menu.RadioItem closeOnClick value="fill">Fill the screen (zoom past black bars)</Menu.RadioItem>
+                  </Menu.RadioGroup>
+                </Menu.Popup>
+              </Menu.Root>
+            ) : null}
             {onNext ? <Button variant="ghost" size="sm" shape="circle" icon={<IconSkipForward />} aria-label={nextLabel ?? "Next episode"} tooltip={nextLabel ?? "Next episode"} onClick={onNext} /> : null}
             {audioRows.rows.length > 1 ? (
               <Menu.Root>

@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import type { CastAdapter } from "glass-ux/media-player";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { MediaFilePreviewsDocument } from "@/graphql/generated/graphql";
+import { readPref } from "@/lib/prefs";
 import { renderWithProviders } from "@/test";
 
 import { subtitleTracks, VideoPlayer } from "../VideoPlayer";
@@ -58,6 +60,23 @@ describe("VideoPlayer", () => {
     await userEvent.click(await screen.findByRole("menuitemradio", { name: "French" }));
     expect(mocks.source).toHaveBeenLastCalledWith("file-1", 2);
     expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it("offers fill mode only for a file with black bars, and remembers it on this device", async () => {
+    window.localStorage.clear();
+    const previews = {
+      request: { query: MediaFilePreviewsDocument, variables: { id: "file-1" } },
+      result: { data: { mediaFile: { __typename: "MediaFile", id: "file-1", previewsCheckedAt: "2026-11-09T00:00:00Z", pictureCrop: { __typename: "PictureCrop", left: 0, top: 138, width: 1920, height: 804, frameWidth: 1920, frameHeight: 1080 }, storyboard: null } } },
+    };
+    await renderWithProviders(<VideoPlayer item={item} onBack={vi.fn()} />, { mocks: [previews] });
+    await userEvent.click(await screen.findByRole("button", { name: "Picture size" }));
+    await userEvent.click(await screen.findByRole("menuitemradio", { name: /Fill the screen/ }));
+    expect(readPref("player.pictureMode", "fit")).toBe("fill");
+  });
+
+  it("has no picture size menu for a file without black bars", async () => {
+    await renderWithProviders(<VideoPlayer item={item} onBack={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Picture size" })).not.toBeInTheDocument();
   });
 
   it("has no audio menu for a file with one track", async () => {
