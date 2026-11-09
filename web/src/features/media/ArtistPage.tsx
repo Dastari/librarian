@@ -16,7 +16,6 @@ import { LIBRARY_TYPES } from "@/lib/library-types";
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { FindReleasesButton } from "@/features/recommendations/FindReleasesButton";
 import { useRecommended } from "@/features/recommendations/useRecommended";
-import { useIsAdmin } from "@/lib/auth/useSession";
 
 import { DetailShell } from "./DetailShell";
 import { MediaActions } from "./MediaActions";

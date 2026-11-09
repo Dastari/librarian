@@ -17223,6 +17223,7 @@ type ArtworkOptions {
 type ArtworkChangeResult {
   success: Boolean!
   error: String
+}
 
 input CheckInDeviceInput {
 	"""
