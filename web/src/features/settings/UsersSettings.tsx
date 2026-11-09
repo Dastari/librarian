@@ -34,7 +34,7 @@ import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { runSettingsSelection } from "./runSettingsSelection";
 
 import { SettingsLoadError } from "./SettingsLoadError";
-import { SettingsSection } from "./SettingsSection";
+import { SettingsPage, SettingsSection } from "./SettingsSection";
 import { useSettingsConnection } from "./useSettingsConnection";
 
 const inviteSchema = z.object({ role: z.enum(["member", "admin"]), accessLevel: z.string(), maxUses: z.number().int().min(1).max(100), expiresInDays: z.number().int().min(1).max(365) });
@@ -156,7 +156,7 @@ export function UsersSettings() {
   ]), [deleteInvite, refreshInvites]);
 
   return (
-    <div className="flex flex-col gap-8">
+    <SettingsPage>
       <SettingsSection title="Users" actions={<Button size="sm" variant="primary" onPress={() => setInviting(true)}><IconPlus /> Invite</Button>}>
         <SettingsLoadError error={users.error} retry={users.refetch} hasRows={userRows.length > 0} />
         <LoadedDataTable<UserFieldsFragment> complete={!users.loading && !users.error} height="auto" selectable queryKey={me?.id} id={`librarian.${me?.id ?? "session"}.settings.users`} label="Users" columns={userColumns} rows={userRows} getRowId={(user) => user.id} getRowLabel={(user) => user.displayName ?? user.username} loading={users.loading && userRows.length === 0} actions={userActions} renderBulkActions={(rows) => <TableBulkActions set={userActions} rows={rows} noun={{ one: "user", other: "users" }} />} noun={{ one: "user", other: "users" }} emptyMessage="No users" />
@@ -172,11 +172,11 @@ export function UsersSettings() {
           <FieldGroup>
             <FormSelectField control={inviteForm.control} name="role" label="Role" options={[{ key: "member", label: "Member", description: "Browse and play" }, { key: "admin", label: "Admin", description: "Manage libraries, sources and users" }]} />
             <FormSelectField control={inviteForm.control} name="accessLevel" label="Library access" options={[{ key: "full", label: "All libraries" }, { key: "restricted", label: "Restricted" }]} />
-            <FormNumberField control={inviteForm.control} name="maxUses" label="Maximum uses" min={1} max={100} />
-            <FormNumberField control={inviteForm.control} name="expiresInDays" label="Expires in (days)" min={1} max={365} />
+            <FormNumberField control={inviteForm.control} name="maxUses" label="Maximum uses" min={1} max={100} suffix="uses" />
+            <FormNumberField control={inviteForm.control} name="expiresInDays" label="Expires in" min={1} max={365} suffix="days" />
           </FieldGroup>
         </form>
       </Dialog>
-    </div>
+    </SettingsPage>
   );
 }

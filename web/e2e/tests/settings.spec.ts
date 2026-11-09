@@ -19,7 +19,7 @@ test.describe("Settings", () => {
       ["Sources", "Sources"],
       ["Quality", "Quality profiles"],
       ["Downloads", "Automatic downloads"],
-      ["General", "Appearance"],
+      ["General", "This device"],
     ] as const) {
       await page.getByRole("main").getByRole("link", { name: label, exact: true }).click();
       await expect(page.getByRole("heading", { name: panel })).toBeVisible();
@@ -28,8 +28,8 @@ test.describe("Settings", () => {
 
   test("General offers the theme picker and the playback form", async ({ page }) => {
     await openSettings(page, "/settings/general");
-    await expect(page.getByRole("radiogroup", { name: "Theme" })).toBeVisible();
-    await expect(page.getByRole("textbox", { name: "Save progress every (seconds)" })).toBeVisible();
+    await expect(page.getByText("Color mode", { exact: true })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Save progress every" })).toBeVisible();
     await expect(page.getByRole("textbox", { name: /Metadata language/ })).toBeVisible();
     // Nothing is dirty on arrival, so there is nothing to save.
     await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();

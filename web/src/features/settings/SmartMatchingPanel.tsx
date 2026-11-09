@@ -1,13 +1,16 @@
 import { useMutation } from "@apollo/client/react";
-import { Form, FormActions, formBehaviour, useAppForm } from "glass-ux/form";
+import { Form, FormActions, useAppForm } from "glass-ux/form";
 import { IconPlug } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
 import { z } from "zod";
 
-import { Button, FieldGroup, Panel } from "@/components/ui";
+import { Button } from "@/components/ui";
 import { EntityMatchingAssistantCreateDocument, EntityMatchingAssistantListDocument, EntityMatchingAssistantUpdateDocument, TestJevConnectionDocument, type EntityMatchingAssistantListQuery } from "@/graphql/generated/graphql";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
+
+import { TextRow, settingsFormBehaviour } from "./SettingFields";
+import { SettingsSection } from "./SettingsSection";
 
 const DEFAULT_MODEL = "jev-latest";
 
@@ -48,7 +51,7 @@ function SmartMatchingForm({ row, refetch }: { row: Row | null; refetch: () => P
     await refetch();
   };
   const form = useAppForm({
-    ...formBehaviour,
+    ...settingsFormBehaviour,
     defaultValues: { enabled: row?.enabled ?? false, apiKey: "", model: row?.model ?? DEFAULT_MODEL },
     validators: { onDynamic: schema },
     onSubmit: async ({ value, formApi }) => {
@@ -77,27 +80,26 @@ function SmartMatchingForm({ row, refetch }: { row: Row | null; refetch: () => P
   };
 
   return (
-    <Form form={form} className="flex min-w-0 flex-col gap-6" onError={(error) => toast.danger(errorMessage(error, "Could not save smart matching"))}>
+    <Form form={form} className="settings-measure flex min-w-0 flex-col gap-4" onError={(error) => toast.danger(errorMessage(error, "Could not save smart matching"))}>
       <form.Subscribe selector={(state) => state.isSubmitting}>
-        {(submitting) => (
-          <Panel
+        {(submitting) => <>
+          <SettingsSection
             title="Smart matching with Jev"
+            width="readable"
             description="Asked only when names, tags and lengths can't decide which book or track a file is. File and title names are sent to TypeSafe while this is on. The key is stored encrypted and never shown again."
             actions={<Button size="sm" variant="ghost" onPress={() => void runTest()} isPending={testing.loading}><IconPlug size="md" /> Test</Button>}
           >
-            <FieldGroup columns={2}>
-              <form.AppField name="enabled">{(field) => <field.SwitchRow label="Enable" className="sm:col-span-2" disabled={submitting} />}</form.AppField>
-              <form.AppField name="apiKey">
-                {(field) => <field.TextField label="API key" type="password" autoComplete="off" placeholder={hasKey ? "Saved. Enter a new key to replace it." : "From console.typesafe.ai"} disabled={submitting} />}
-              </form.AppField>
-              <form.AppField name="model">{(field) => <field.TextField label="Model" className="font-mono" placeholder={DEFAULT_MODEL} disabled={submitting} />}</form.AppField>
-            </FieldGroup>
-            <FormActions>
-              {hasKey ? <Button size="sm" variant="ghost" onPress={() => void removeKey()}>Remove key</Button> : null}
-              <form.SubmitButton disabled={submitting}>Save</form.SubmitButton>
-            </FormActions>
-          </Panel>
-        )}
+            <form.AppField name="enabled">{(field) => <field.SwitchRow label="Enable" disabled={submitting} />}</form.AppField>
+            <form.AppField name="apiKey">
+              {() => <TextRow label="API key" type="password" autoComplete="off" mono placeholder={hasKey ? "Saved. Enter a new key to replace it." : "From console.typesafe.ai"} disabled={submitting} />}
+            </form.AppField>
+            <form.AppField name="model">{() => <TextRow label="Model" mono placeholder={DEFAULT_MODEL} disabled={submitting} />}</form.AppField>
+          </SettingsSection>
+          <FormActions>
+            {hasKey ? <Button size="sm" variant="ghost" onPress={() => void removeKey()}>Remove key</Button> : null}
+            <form.SubmitButton disabled={submitting}>Save</form.SubmitButton>
+          </FormActions>
+        </>}
       </form.Subscribe>
     </Form>
   );

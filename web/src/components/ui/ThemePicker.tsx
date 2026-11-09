@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 export function ThemePicker({ className }: { className?: string }) {
   const { preference, setPreference, blur, setBlur } = useTheme();
   return (
-    <div className={cn("flex flex-col gap-3", className)}>
+    <div className={cn("flex flex-col gap-2", className)}>
       <SettingRow
         label="Color mode"
         control={<Segmented options={THEMES.map((theme) => ({ value: theme.id, label: theme.label }))} value={preference} onValueChange={(mode) => setPreference(mode as ThemePreference)} />}

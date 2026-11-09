@@ -18,7 +18,7 @@ import { libraryType } from "@/lib/library-types";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 
 import { SettingsLoadError } from "./SettingsLoadError";
-import { SettingsSection } from "./SettingsSection";
+import { SettingsPage, SettingsSection } from "./SettingsSection";
 import { useSettingsConnection } from "./useSettingsConnection";
 
 const column = createDataTableColumns<LibraryOverview>();
@@ -44,7 +44,7 @@ export function LibrariesSettings() {
   const actions = useLibraryActions<LibraryOverview>({ settings: openSettings, onChanged: refetch });
 
   return (
-    <div className="flex flex-col gap-6">
+    <SettingsPage>
       <SettingsSection title="Libraries" actions={<Button variant="primary" size="sm" onPress={() => setCreating(true)}><IconPlus /> Add library</Button>}>
         <SettingsLoadError error={list.error} retry={list.refetch} hasRows={libraries.length > 0} />
         <LoadedDataTable<LibraryOverview> complete={!list.loading && !list.error} height="auto" selectable queryKey={user?.id}
@@ -66,6 +66,6 @@ export function LibrariesSettings() {
       {settings ? <LibrarySettingsDialog library={libraries.find((row) => row.id === settings.library.id) ?? settings.library} open onOpenChange={(open) => { if (!open) setSettings(null); }} tab={settings.tab} onTabChange={(tab) => setSettings({ ...settings, tab })} items={libraryItemCount(settings.library).count} /> : null}
 
       <AddLibraryDialog open={creating} onOpenChange={setCreating} onCreated={() => void refetch()} />
-    </div>
+    </SettingsPage>
   );
 }

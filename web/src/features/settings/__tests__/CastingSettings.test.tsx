@@ -71,7 +71,7 @@ describe("CastingSettings bound forms", () => {
   it("keeps saved values across unrelated rerenders and restores them after discard", async () => {
     await mount();
     expect(input("Preferred quality")).toHaveValue("720p");
-    expect(input("Discovery interval (seconds)")).toHaveValue("600");
+    expect(input("Discovery interval")).toHaveValue("10m");
     expect(screen.getByRole("switch", { name: "Discover devices automatically" })).not.toBeChecked();
     act(() => refresh());
     expect(input("Preferred quality")).toHaveValue("720p");
@@ -90,18 +90,18 @@ describe("CastingSettings bound forms", () => {
       refresh();
     });
     expect(input("Preferred quality")).toHaveValue("1080p");
-    expect(input("Discovery interval (seconds)")).toHaveValue("900");
+    expect(input("Discovery interval")).toHaveValue("15m");
     act(() => refresh());
     expect(input("Preferred quality")).toHaveValue("1080p");
     await userEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(input("Preferred quality")).toHaveValue("2160p");
-    expect(input("Discovery interval (seconds)")).toHaveValue("900");
+    expect(input("Discovery interval")).toHaveValue("15m");
     expect(save()).toBeDisabled();
   });
 
   it("updates the existing record, preserves zero volume and sends empty quality as null", async () => {
     await mount();
-    await edit("Default volume (0–1)", "0");
+    await edit("Default volume", "0");
     await edit("Preferred quality", "  ");
     await userEvent.click(save());
     await screen.findByText("Settings saved");
@@ -124,7 +124,7 @@ describe("CastingSettings bound forms", () => {
 
   it("rejects an empty numeric value and focuses the field without mutation", async () => {
     await mount();
-    const interval = await edit("Discovery interval (seconds)", "");
+    const interval = await edit("Discovery interval", "");
     await userEvent.click(save());
     expect(await screen.findByText("Enter a number")).toBeInTheDocument();
     await waitFor(() => expect(interval).toHaveFocus());
@@ -203,6 +203,6 @@ describe("CastingSettings bound forms", () => {
     const reopened = await openDevice();
     expect(reopened.getByRole("textbox", { name: "IP address or hostname" })).toHaveValue("");
     expect(reopened.getByRole("textbox", { name: "Name" })).toHaveValue("");
-    expect(input("Port")).toHaveValue("8,009");
+    expect(input("Port")).toHaveValue("8009");
   });
 });
