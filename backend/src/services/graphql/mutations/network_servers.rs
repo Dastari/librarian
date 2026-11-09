@@ -230,9 +230,7 @@ impl ServerConnectionMutations {
             servers::record_check(schema, &server.id, None).await;
             let mut known: Vec<String> = shares.iter().map(|share| share.name.clone()).collect();
             known.extend(input.share.clone());
-            for share in known {
-                servers::remember_share(schema, server, &share).await;
-            }
+            servers::remember_shares(schema, server, &known).await;
         }
         let known = server.map(|server| server.known_shares).unwrap_or_default();
         Ok(TestNetworkServerResult {

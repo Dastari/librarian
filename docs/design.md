@@ -1724,8 +1724,8 @@ used or listed is remembered there, so a picker can offer them while the server 
 *Lifecycle hooks, no hand resolvers:* creating or updating normalises the host, port and share names, encrypts a new
 password (an already encrypted envelope is kept as it is) and refuses a second server for the same host and port. Removing
 a server, or changing its host or port, is refused while a library, the download folder or a stored torrent is on it, with
-the reason ("TrueNAS cannot be removed: the libraries Movies, TV Shows and the download folder are still on it. Move them
-to another location first"). After any change the registry forgets that server's connections, so the next use signs in with
+the reason ("TrueNAS cannot be removed while it is used by the libraries Movies, TV Shows and the download folder. Move
+them to another location first"), shown to the person as it is (the refusals carry `BAD_USER_INPUT`). After any change the registry forgets that server's connections, so the next use signs in with
 the new details. `testNetworkServer` (an action: sign in, list shares, optionally open one share) and `networkServerShares`
 are the only hand-written operations; a test of a saved server records `status`, `lastError` and `lastCheckedAt` on it.
 

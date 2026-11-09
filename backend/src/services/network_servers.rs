@@ -170,7 +170,7 @@ pub async fn server_usage(db: &Database, host: &str, port: Option<u16>) -> Resul
         .count();
     if torrents > 0 {
         uses.push(format!(
-            "{torrents} {} stored on it",
+            "{torrents} {}",
             if torrents == 1 { "torrent" } else { "torrents" }
         ));
     }
@@ -227,8 +227,13 @@ pub async fn credentials_of(
 
 /// Make sure a share name is among the server's known shares.
 pub async fn remember_share(schema: &LibrarianSchema, server: &NetworkServer, share: &str) {
+    remember_shares(schema, server, &[share.to_string()]).await;
+}
+
+/// Make sure these share names are among the server's known shares, in one write.
+pub async fn remember_shares(schema: &LibrarianSchema, server: &NetworkServer, names: &[String]) {
     let mut shares = server.known_shares.clone();
-    shares.push(share.to_string());
+    shares.extend(names.iter().cloned());
     let shares = normalize_shares(&shares);
     if shares == normalize_shares(&server.known_shares) {
         return;

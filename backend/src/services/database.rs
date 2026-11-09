@@ -1040,8 +1040,8 @@ impl AppWriteInputTransform {
         input: &mut CreateNetworkServerInput,
     ) -> async_graphql::Result<()> {
         use crate::services::network_servers as servers;
-        input.host = servers::normalize_host(&input.host).map_err(async_graphql::Error::new)?;
-        input.port = servers::normalize_port(input.port).map_err(async_graphql::Error::new)?;
+        input.host = servers::normalize_host(&input.host).map_err(Self::refused)?;
+        input.port = servers::normalize_port(input.port).map_err(Self::refused)?;
         if input.name.trim().is_empty() {
             input.name = input.host.clone();
         }
@@ -1062,7 +1062,7 @@ impl AppWriteInputTransform {
             .map_err(Self::hook_error)?
             .is_some()
         {
-            return Err(async_graphql::Error::new(format!(
+            return Err(Self::refused(format!(
                 "The server {} is already saved",
                 Self::server_label(&input.host, input.port)
             )));
@@ -1079,10 +1079,10 @@ impl AppWriteInputTransform {
     ) -> async_graphql::Result<()> {
         use crate::services::network_servers as servers;
         if let Some(host) = input.host.as_mut() {
-            *host = servers::normalize_host(host).map_err(async_graphql::Error::new)?;
+            *host = servers::normalize_host(host).map_err(Self::refused)?;
         }
         if let Some(port) = input.port.as_mut() {
-            *port = servers::normalize_port(*port).map_err(async_graphql::Error::new)?;
+            *port = servers::normalize_port(*port).map_err(Self::refused)?;
         }
         if let Some(name) = input.name.as_mut() {
             *name = name.trim().to_string();
@@ -1111,8 +1111,8 @@ impl AppWriteInputTransform {
                     .await
                     .map_err(Self::hook_error)?;
                 if !uses.is_empty() {
-                    return Err(async_graphql::Error::new(format!(
-                        "{} is still used by {}. Its address cannot change while anything is stored on it: move them to the new address first",
+                    return Err(Self::refused(format!(
+                        "{} is used by {}. Its address cannot change while anything is stored on it: move them to the new address first",
                         existing.name,
                         servers::join_words(&uses)
                     )));
@@ -1123,7 +1123,7 @@ impl AppWriteInputTransform {
                     .map_err(Self::hook_error)?
                     .is_some_and(|other| other.id != existing.id)
                 {
-                    return Err(async_graphql::Error::new(format!(
+                    return Err(Self::refused(format!(
                         "The server {} is already saved",
                         Self::server_label(&host, port)
                     )));
@@ -1131,6 +1131,13 @@ impl AppWriteInputTransform {
             }
         }
         Ok(())
+    }
+
+    /// A refusal the person can act on: shown to them as it is (resolver errors without a public
+    /// code are replaced by a generic message).
+    fn refused(message: impl Into<String>) -> async_graphql::Error {
+        async_graphql::Error::new(message.into())
+            .extend_with(|_, extensions| extensions.set("code", "BAD_USER_INPUT"))
     }
 
     fn server_label(host: &str, port: Option<i32>) -> String {
@@ -1723,19 +1730,19 @@ impl AppMutationHook {
             return Ok(());
         }
         Err(async_graphql::Error::new(format!(
-            "{} cannot be removed: {} still {} on it. Move {} to another location first",
+            "{} cannot be removed while it is used by {}. Move {} to another location first",
             server.name,
             crate::services::network_servers::join_words(&uses),
             if uses.len() == 1
                 && !uses[0].starts_with("the libraries")
-                && !uses[0].contains("torrents")
+                && !uses[0].ends_with("torrents")
             {
-                "is"
+                "it"
             } else {
-                "are"
-            },
-            if uses.len() == 1 { "it" } else { "them" }
-        )))
+                "them"
+            }
+        ))
+        .extend_with(|_, extensions| extensions.set("code", "BAD_USER_INPUT")))
     }
 
     async fn cleanup_library_children(

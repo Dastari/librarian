@@ -974,7 +974,9 @@ impl TorrentService {
                 let paused = handle.is_paused();
                 super::share_watch::readd_from_metadata(&r.session, &handle, &folder, paused)
                     .await
-                    .with_context(|| format!("Could not move {info_hash} to {}", folder.display()))?;
+                    .with_context(|| {
+                        format!("Could not move {info_hash} to {}", folder.display())
+                    })?;
                 info!(
                     info_hash = %info_hash,
                     folder = %folder.display(),
