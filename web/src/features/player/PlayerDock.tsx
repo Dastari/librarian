@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Artwork } from "@/components/ui";
 import { useIsDesktop } from "@/hooks/useMediaQuery";
+import { holdScreenOn } from "@/lib/tv-app";
 import { cn } from "@/lib/utils";
 
 import { PlayPauseButton, SeekBar, SkipButton, VolumeControl } from "./controls";
@@ -177,6 +178,39 @@ export function PlayerDock() {
   useEffect(() => {
     if ("mediaSession" in navigator) navigator.mediaSession.playbackState = transport.playing ? "playing" : "paused";
   }, [transport.playing]);
+
+  // Media keys from a keyboard or the TV app's remote, while music or a book plays. A full-screen
+  // video player takes them first (it prevents the default).
+  useEffect(() => {
+    if (!item) return;
+    const seekBy = (seconds: number) => audioCommands.seek?.(Math.max(0, (audioRef.current?.currentTime ?? 0) + seconds));
+    const keys: Record<string, () => void> = {
+      MediaPlayPause: () => playerStore.updateTransport({ playing: !playerStore.getSnapshot().transport.playing }),
+      MediaPlay: () => playerStore.updateTransport({ playing: true }),
+      MediaPause: () => playerStore.updateTransport({ playing: false }),
+      MediaStop: () => playerStore.updateTransport({ playing: false }),
+      MediaTrackNext: () => skipAudio(1),
+      MediaTrackPrevious: () => skipAudio(-1),
+      MediaRewind: () => seekBy(-15),
+      MediaFastForward: () => seekBy(30),
+    };
+    const onKey = (event: KeyboardEvent) => {
+      const action = keys[event.key];
+      if (!action || event.defaultPrevented) return;
+      event.preventDefault();
+      action();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [item]);
+
+  // The TV app keeps the screen on while something plays.
+  const screenToken = useRef(Symbol("audio"));
+  useEffect(() => {
+    const token = screenToken.current;
+    holdScreenOn(token, Boolean(item) && transport.playing);
+    return () => holdScreenOn(token, false);
+  }, [item, transport.playing]);
 
   const desktop = useIsDesktop();
   const bodyHeight = useShellBodyHeight(desktop && state.sheetOpen);

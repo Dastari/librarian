@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 import { useSettingsConnection } from "@/features/settings/useSettingsConnection";
 import { EntityAudioStreamListDocument, EntityMediaChapterListDocument, EntitySubtitleListDocument } from "@/graphql/generated/graphql";
 import { mediaSubtitleUrl } from "@/lib/api/urls";
+import { holdScreenOn } from "@/lib/tv-app";
 import { useInputMode } from "@/lib/input-mode";
 import { cn } from "@/lib/utils";
 
@@ -212,11 +213,25 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
       const target = event.target instanceof Element ? event.target : null;
       if (event.defaultPrevented || target?.closest('[role="menu"], [role="dialog"], [role="listbox"], input, textarea')) return;
       const player = controller.current;
-      if (event.key === "MediaPlayPause") player?.toggle();
-      else if (event.key === "MediaRewind") player?.seekBy(-10);
-      else if (event.key === "MediaFastForward") player?.seekBy(10);
-      else if ((event.key === "Escape" || event.key === "Backspace" || event.key === "GoBack" || BACK_KEY_CODES.has(event.keyCode)) && !document.fullscreenElement) onBack();
-      else if (document.activeElement === document.body && player) {
+      // Remote and keyboard media keys (the TV app forwards its remote's keys as these).
+      const mediaKeys: Record<string, (() => void) | undefined> = {
+        MediaPlayPause: () => player?.toggle(),
+        MediaPlay: () => player?.play(),
+        MediaPause: () => player?.pause(),
+        MediaStop: () => player?.pause(),
+        MediaRewind: () => player?.seekBy(-10),
+        MediaFastForward: () => player?.seekBy(10),
+        MediaTrackNext: onNext,
+      };
+      const mediaKey = mediaKeys[event.key];
+      if (mediaKey) {
+        event.preventDefault();
+        mediaKey();
+      } else if ((event.key === "Escape" || event.key === "Backspace" || event.key === "GoBack" || BACK_KEY_CODES.has(event.keyCode)) && !document.fullscreenElement) {
+        // Taken here, so the TV app does not also step back through the WebView's history.
+        event.preventDefault();
+        onBack();
+      } else if (document.activeElement === document.body && player) {
         if (event.key === " " || event.key === "k") { event.preventDefault(); player.toggle(); }
         else if (event.key === "ArrowLeft") { event.preventDefault(); player.seekBy(-5); }
         else if (event.key === "ArrowRight") { event.preventDefault(); player.seekBy(5); }
@@ -226,7 +241,15 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onBack, wake]);
+  }, [onBack, onNext, wake]);
+
+  // The TV app keeps the screen on while the picture plays.
+  const screenToken = useRef(Symbol("video"));
+  useEffect(() => {
+    const token = screenToken.current;
+    holdScreenOn(token, Boolean(video) && !paused);
+    return () => holdScreenOn(token, false);
+  }, [video, paused]);
 
   // The receiver starts from where this player is when the picker opens.
   useEffect(() => { if (cast.pickerOpen) setCastPosition(controller.current?.getTime().currentTime); }, [cast.pickerOpen]);

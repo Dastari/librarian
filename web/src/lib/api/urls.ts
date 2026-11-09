@@ -1,3 +1,5 @@
+import { isConstrainedDevice } from "@/lib/tv-app";
+
 /**
  * REST endpoints that sit beside GraphQL: artwork, media streaming and health.
  * The browser always talks to the same origin; the dev server proxies to the backend.
@@ -10,13 +12,22 @@ export function artworkUrl(entity: ArtworkEntity, id: string | number, kind: Art
   return `/api/artwork/${entity}/${encodeURIComponent(String(id))}/${kind}`;
 }
 
+/** Widest artwork a constrained device asks for (a full-screen backdrop on a 1080p TV). */
+export const CONSTRAINED_MAX_ARTWORK_WIDTH = 1280;
+
 /**
  * Ask the artwork cache for a stored copy close to the displayed size. The server snaps the
  * width to a small set of steps and never upscales, so the result is cacheable everywhere.
  * Only local cache URLs are resized; anything else is returned unchanged.
+ *
+ * In the TV app and on 2 GB devices every decoded picture costs memory the player needs, so
+ * artwork is fetched at one pixel per CSS pixel, at most 1280 wide, and unsized artwork (a
+ * backdrop) gets that cap too (Q139).
  */
-export function sizedArtwork(url: string | undefined, displayWidth: number | undefined): string | undefined {
-  if (!url || !displayWidth || !url.startsWith("/api/artwork/") || url.includes("?")) return url;
+export function sizedArtwork(url: string | undefined, displayWidth: number | undefined, constrained: boolean = isConstrainedDevice()): string | undefined {
+  if (!url || !url.startsWith("/api/artwork/") || url.includes("?")) return url;
+  if (constrained) return `${url}?w=${Math.min(CONSTRAINED_MAX_ARTWORK_WIDTH, Math.round(displayWidth ?? CONSTRAINED_MAX_ARTWORK_WIDTH))}`;
+  if (!displayWidth) return url;
   const density = typeof window === "undefined" ? 1 : Math.min(window.devicePixelRatio || 1, 2);
   return `${url}?w=${Math.round(displayWidth * density)}`;
 }

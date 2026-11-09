@@ -10,6 +10,8 @@
  */
 import { useSyncExternalStore } from "react";
 
+import { isTvApp } from "@/lib/tv-app";
+
 export interface PwaState {
   /** A newer build than this tab's is deployed. */
   updateAvailable: boolean;
@@ -53,7 +55,11 @@ export function startPwa(): void {
     void retireWorkers();
     return;
   }
-  void registerWorker();
+  // The Android TV app loads the page from the server every time and cannot work offline anyway; a
+  // worker there would only hold a second copy of the app in a WebView short of storage and
+  // memory, and serve a stale shell after an update. It still polls version.json below (Q137).
+  if (isTvApp()) void retireWorkers();
+  else void registerWorker();
   window.setInterval(() => void checkForUpdate(), VERSION_POLL_MS);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") void checkForUpdate();

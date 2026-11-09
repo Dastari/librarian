@@ -22,6 +22,8 @@
 import { prefersReducedMotion } from "glass-ux/appearance";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
+import { isTvApp } from "@/lib/tv-app";
+
 export type InputMode = "pointer" | "touch" | "tv";
 
 interface InputModeContextValue {
@@ -37,6 +39,7 @@ const InputModeContext = createContext<InputModeContextValue | null>(null);
 function detectInitialMode(): InputMode {
   if (typeof window === "undefined") return "pointer";
   const ua = navigator.userAgent;
+  if (isTvApp(ua)) return "tv";
   if (/\b(SMART-TV|SmartTV|Tizen|Web0S|WebOS|BRAVIA|AppleTV|GoogleTV|Android TV|AFT[A-Z]?\b)/i.test(ua)) return "tv";
   if (window.matchMedia("(hover: none) and (pointer: coarse)").matches) return "touch";
   return "pointer";
@@ -54,7 +57,8 @@ export function InputModeProvider({ children }: { children: ReactNode }) {
   const [detected] = useState<InputMode>(detectInitialMode);
   const [forced, setForcedState] = useState<InputMode | null>(readForced);
 
-  const mode = forced ?? detected;
+  // The Android TV app is always driven by a remote, whatever this browser stored before.
+  const mode = isTvApp() ? "tv" : (forced ?? detected);
 
   useEffect(() => {
     document.documentElement.dataset.inputMode = mode;

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 import { resolvePlaybackSource, type PlaybackSource } from "@/lib/api/urls";
+import { isConstrainedDevice } from "@/lib/tv-app";
 
 type HlsModule = typeof import("hls.js");
 type HlsInstance = import("hls.js").default;
@@ -27,6 +28,17 @@ export interface MediaSourceState {
 type SourceSnapshot = Omit<MediaSourceState, "retry" | "isTransitioning">;
 const emptySource: SourceSnapshot = { source: null, loading: false, error: null, duration: undefined, hls: null };
 const MAX_HLS_RECOVERIES = 2;
+
+/**
+ * hls.js buffer sizes. Elsewhere: 60 s ahead and 90 s behind (hls.js caps the forward buffer at
+ * 60 MB by default). In the TV app and on 2 GB devices the buffer lives in the same few hundred MB
+ * as the page, so it is kept to 30 s ahead (60 s at most), 10 s behind and 30 MB (Q139).
+ */
+export function hlsBufferConfig(constrained: boolean) {
+  return constrained
+    ? { maxBufferLength: 30, maxMaxBufferLength: 60, backBufferLength: 10, maxBufferSize: 30 * 1000 * 1000 }
+    : { maxBufferLength: 60, backBufferLength: 90 };
+}
 
 /** Attaches one source generation; late promises and media listeners belong only to it. */
 export function useMediaSource(
@@ -143,7 +155,8 @@ export function useMediaSource(
           return;
         }
         const instance = new Hls({
-          lowLatencyMode: false, backBufferLength: 90, maxBufferLength: 60,
+          lowLatencyMode: false,
+          ...hlsBufferConfig(isConstrainedDevice()),
           enableWorker: true,
           // A stream copy's playlist stays open until it's finished, which hls.js treats as live:
           // without this it starts near the newest segment rather than at the beginning.

@@ -9,6 +9,8 @@ import {
   type GlassRendering,
 } from "glass-ux/appearance";
 
+import { isConstrainedDevice, isLowMemoryDevice, isTvApp } from "@/lib/tv-app";
+
 export const APPEARANCE_KEY = "librarian.appearance.v1";
 export const LEGACY_THEME_KEY = "librarian.theme";
 /**
@@ -54,12 +56,21 @@ function storage(): Storage | null {
   }
 }
 
-/** Blur is on unless this device has turned it off. */
-export function readBlur(store: Pick<Storage, "getItem"> | null = storage()): boolean {
+/**
+ * Blur's default: on, except in the Android TV app and on devices with 2 GB or less, whose GPUs
+ * spend most of their memory and time on it (docs/design.md Q139).
+ */
+export function blurDefault(): boolean {
+  return !isConstrainedDevice();
+}
+
+/** Blur follows this device's choice ("on"/"off"), else the device default. */
+export function readBlur(store: Pick<Storage, "getItem"> | null = storage(), fallback: boolean = blurDefault()): boolean {
   try {
-    return store?.getItem(BLUR_KEY) !== "off";
+    const stored = store?.getItem(BLUR_KEY);
+    return stored === "off" ? false : stored === "on" ? true : fallback;
   } catch {
-    return true;
+    return fallback;
   }
 }
 
@@ -77,8 +88,9 @@ let blurSnapshot = readBlur();
 /** Turn blur on or off for this device, at once and in every open tab. */
 export function setBlur(on: boolean): void {
   try {
-    if (on) storage()?.removeItem(BLUR_KEY);
-    else storage()?.setItem(BLUR_KEY, "off");
+    // The default is stored as nothing, so a device that never chose follows a changed default.
+    if (on === blurDefault()) storage()?.removeItem(BLUR_KEY);
+    else storage()?.setItem(BLUR_KEY, on ? "on" : "off");
   } catch {
     // Storage is blocked: the choice still applies until the page reloads.
   }
@@ -110,6 +122,62 @@ export const blurStore = {
     };
   },
   getSnapshot: (): boolean => blurSnapshot,
+};
+
+/**
+ * Animated backgrounds: the WebGL scene behind Home (`SceneBackdrop`) and the moving film
+ * constellation behind sign-in (`ConstellationBackdrop`). A device setting like blur. They never run
+ * in the TV app or on a device with 2 GB or less (the switch is shown off and locked there), nor
+ * for reduced motion or a small screen; the static Cinema gradient stays (Q139).
+ */
+export const ANIMATED_BACKGROUNDS_KEY = "librarian.animatedBackgrounds.v1";
+
+/** Why animated backgrounds cannot run on this device at all, or null when they can. */
+export function animatedBackgroundsUnavailable(): string | null {
+  if (isTvApp()) return "Off in the TV app, to keep memory for playback.";
+  if (isLowMemoryDevice()) return "Off on this device, which has little memory.";
+  return null;
+}
+
+export function readAnimatedBackgrounds(store: Pick<Storage, "getItem"> | null = storage()): boolean {
+  if (animatedBackgroundsUnavailable()) return false;
+  try {
+    return store?.getItem(ANIMATED_BACKGROUNDS_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+const animatedListeners = new Set<() => void>();
+
+export function setAnimatedBackgrounds(on: boolean): void {
+  try {
+    if (on) storage()?.removeItem(ANIMATED_BACKGROUNDS_KEY);
+    else storage()?.setItem(ANIMATED_BACKGROUNDS_KEY, "off");
+  } catch {
+    // Storage is blocked: the choice still applies until the page reloads.
+  }
+  notifyAnimated();
+}
+
+function notifyAnimated(): void {
+  for (const listener of animatedListeners) listener();
+}
+
+export const animatedBackgroundsStore = {
+  subscribe(listener: () => void): () => void {
+    animatedListeners.add(listener);
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === ANIMATED_BACKGROUNDS_KEY || event.key === null) notifyAnimated();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      animatedListeners.delete(listener);
+      window.removeEventListener("storage", onStorage);
+    };
+  },
+  // A boolean read from storage each time: cheap, and never stale.
+  getSnapshot: (): boolean => readAnimatedBackgrounds(),
 };
 
 /**
