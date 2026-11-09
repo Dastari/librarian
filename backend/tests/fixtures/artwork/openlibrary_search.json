@@ -1,0 +1,40 @@
+{
+ "numFound": 24,
+ "start": 0,
+ "numFoundExact": true,
+ "num_found": 24,
+ "documentation_url": "https://openlibrary.org/dev/docs/api/search",
+ "q": "",
+ "offset": null,
+ "docs": [
+  {
+   "cover_i": 14627509,
+   "first_publish_year": 1937,
+   "title": "The Hobbit"
+  },
+  {
+   "cover_i": 8406766,
+   "first_publish_year": 1990,
+   "title": "The Hobbit"
+  },
+  {
+   "cover_i": 255844,
+   "first_publish_year": 1979,
+   "title": "The Hobbit & The Lord of the Rings [collection/set]"
+  },
+  {
+   "cover_i": 1885351,
+   "first_publish_year": 1954,
+   "title": "Novels (Fellowship of the Ring / Hobbit)"
+  },
+  {
+   "cover_i": 392814,
+   "first_publish_year": 1999,
+   "title": "Poems from The hobbit"
+  },
+  {
+   "first_publish_year": 2004,
+   "title": "The Hobbit / Lord of the Rings / Silmarillion"
+  }
+ ]
+}

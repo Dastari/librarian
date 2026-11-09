@@ -180,6 +180,112 @@ pub async fn deezer_image(user_agent: &str, artist_name: &str) -> Result<Option<
     Ok(image)
 }
 
+/// Every Commons file an entity's `P18` claims name, preferred first, deprecated left out (the
+/// artwork picker lists them all).
+pub fn commons_files_from_claims(body: &Value) -> Vec<String> {
+    let Some(claims) = body.pointer("/claims/P18").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let rank_of = |claim: &Value| match claim.get("rank").and_then(Value::as_str) {
+        Some("preferred") => 0,
+        Some("deprecated") => 2,
+        _ => 1,
+    };
+    let mut files = claims
+        .iter()
+        .filter(|claim| rank_of(claim) < 2)
+        .filter_map(|claim| {
+            let file = claim
+                .pointer("/mainsnak/datavalue/value")?
+                .as_str()?
+                .trim()
+                .to_string();
+            (!file.is_empty()).then(|| (rank_of(claim), file))
+        })
+        .collect::<Vec<_>>();
+    files.sort_by_key(|(rank, _)| *rank);
+    let mut seen = std::collections::HashSet::new();
+    files
+        .into_iter()
+        .map(|(_, file)| file)
+        .filter(|file| seen.insert(file.clone()))
+        .collect()
+}
+
+/// The pictures of every Deezer search result named exactly `artist_name`, placeholders left out.
+pub fn deezer_artist_images(body: &Value, artist_name: &str) -> Vec<String> {
+    let wanted = normalize_words(artist_name);
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let Some(results) = body.get("data").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut pictures = Vec::new();
+    for artist in results {
+        let named = artist
+            .get("name")
+            .and_then(Value::as_str)
+            .is_some_and(|name| normalize_words(name) == wanted);
+        if let Some(picture) = artist.get("picture_xl").and_then(Value::as_str)
+            && named
+            && !is_deezer_placeholder(picture)
+            && !pictures.iter().any(|seen: &String| seen == picture)
+        {
+            pictures.push(picture.to_string());
+        }
+    }
+    pictures
+}
+
+/// Every Commons photo Wikidata holds for an item, as sized image URLs.
+pub async fn wikidata_images(user_agent: &str, wikidata_id: &str) -> Result<Vec<String>> {
+    let client = outbound_client(OutboundHttpProfile::Metadata)?;
+    let request = client
+        .get(WIKIDATA_API)
+        .header("User-Agent", user_agent)
+        .query(&[
+            ("action", "wbgetclaims"),
+            ("entity", wikidata_id),
+            ("property", "P18"),
+            ("format", "json"),
+        ]);
+    let response = send_with_policy(request, "wikidata", "wbgetclaims").await?;
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "Wikidata returned HTTP {} listing the images of {wikidata_id}",
+            response.status()
+        );
+    }
+    let body: Value = response_json_limited(response, METADATA_RESPONSE_LIMIT)
+        .await
+        .with_context(|| format!("Failed to read the Wikidata image claims of {wikidata_id}"))?;
+    Ok(commons_files_from_claims(&body)
+        .iter()
+        .filter_map(|file| commons_image_url(file))
+        .collect())
+}
+
+/// Deezer's pictures for every artist with exactly this name.
+pub async fn deezer_images(user_agent: &str, artist_name: &str) -> Result<Vec<String>> {
+    let client = outbound_client(OutboundHttpProfile::Metadata)?;
+    let request = client
+        .get(DEEZER_ARTIST_SEARCH)
+        .header("User-Agent", user_agent)
+        .query(&[("q", artist_name), ("limit", "25")]);
+    let response = send_with_policy(request, "deezer", "search_artist").await?;
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "Deezer returned HTTP {} listing pictures for artist '{artist_name}'",
+            response.status()
+        );
+    }
+    let body: Value = response_json_limited(response, METADATA_RESPONSE_LIMIT)
+        .await
+        .with_context(|| format!("Failed to read Deezer's search for artist '{artist_name}'"))?;
+    Ok(deezer_artist_images(&body, artist_name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

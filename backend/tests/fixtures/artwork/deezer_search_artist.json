@@ -1,0 +1,80 @@
+{
+ "data": [
+  {
+   "id": 663,
+   "name": "Guns N' Roses",
+   "link": "https://www.deezer.com/artist/663",
+   "picture": "https://api.deezer.com/artist/663/image",
+   "picture_small": "https://cdn-images.dzcdn.net/images/artist/c62989722e38d7a2ab18afde3c19bc5c/56x56-000000-80-0-0.jpg",
+   "picture_medium": "https://cdn-images.dzcdn.net/images/artist/c62989722e38d7a2ab18afde3c19bc5c/250x250-000000-80-0-0.jpg",
+   "picture_big": "https://cdn-images.dzcdn.net/images/artist/c62989722e38d7a2ab18afde3c19bc5c/500x500-000000-80-0-0.jpg",
+   "picture_xl": "https://cdn-images.dzcdn.net/images/artist/c62989722e38d7a2ab18afde3c19bc5c/1000x1000-000000-80-0-0.jpg",
+   "nb_album": 24,
+   "nb_fan": 8628607,
+   "radio": true,
+   "tracklist": "https://api.deezer.com/artist/663/top?limit=50",
+   "type": "artist"
+  },
+  {
+   "id": 497943,
+   "name": "GUNS N` ROSES",
+   "link": "https://www.deezer.com/artist/497943",
+   "picture": "https://api.deezer.com/artist/497943/image",
+   "picture_small": "https://cdn-images.dzcdn.net/images/artist/d3665f215c8b1d38c55fe1be56a0a2f1/56x56-000000-80-0-0.jpg",
+   "picture_medium": "https://cdn-images.dzcdn.net/images/artist/d3665f215c8b1d38c55fe1be56a0a2f1/250x250-000000-80-0-0.jpg",
+   "picture_big": "https://cdn-images.dzcdn.net/images/artist/d3665f215c8b1d38c55fe1be56a0a2f1/500x500-000000-80-0-0.jpg",
+   "picture_xl": "https://cdn-images.dzcdn.net/images/artist/d3665f215c8b1d38c55fe1be56a0a2f1/1000x1000-000000-80-0-0.jpg",
+   "nb_album": 0,
+   "nb_fan": 118,
+   "radio": true,
+   "tracklist": "https://api.deezer.com/artist/497943/top?limit=50",
+   "type": "artist"
+  },
+  {
+   "id": 8961918,
+   "name": "Guns N'Roses",
+   "link": "https://www.deezer.com/artist/8961918",
+   "picture": "https://api.deezer.com/artist/8961918/image",
+   "picture_small": "https://cdn-images.dzcdn.net/images/artist/b6bfb09036a9aba0638a64733134623e/56x56-000000-80-0-0.jpg",
+   "picture_medium": "https://cdn-images.dzcdn.net/images/artist/b6bfb09036a9aba0638a64733134623e/250x250-000000-80-0-0.jpg",
+   "picture_big": "https://cdn-images.dzcdn.net/images/artist/b6bfb09036a9aba0638a64733134623e/500x500-000000-80-0-0.jpg",
+   "picture_xl": "https://cdn-images.dzcdn.net/images/artist/b6bfb09036a9aba0638a64733134623e/1000x1000-000000-80-0-0.jpg",
+   "nb_album": 0,
+   "nb_fan": 95,
+   "radio": true,
+   "tracklist": "https://api.deezer.com/artist/8961918/top?limit=50",
+   "type": "artist"
+  },
+  {
+   "id": 178053397,
+   "name": "Blue Guns N Roses",
+   "link": "https://www.deezer.com/artist/178053397",
+   "picture": "https://api.deezer.com/artist/178053397/image",
+   "picture_small": "https://cdn-images.dzcdn.net/images/artist/140bb7c924e06e6b0a1c9f02f46719cc/56x56-000000-80-0-0.jpg",
+   "picture_medium": "https://cdn-images.dzcdn.net/images/artist/140bb7c924e06e6b0a1c9f02f46719cc/250x250-000000-80-0-0.jpg",
+   "picture_big": "https://cdn-images.dzcdn.net/images/artist/140bb7c924e06e6b0a1c9f02f46719cc/500x500-000000-80-0-0.jpg",
+   "picture_xl": "https://cdn-images.dzcdn.net/images/artist/140bb7c924e06e6b0a1c9f02f46719cc/1000x1000-000000-80-0-0.jpg",
+   "nb_album": 1,
+   "nb_fan": 531,
+   "radio": true,
+   "tracklist": "https://api.deezer.com/artist/178053397/top?limit=50",
+   "type": "artist"
+  },
+  {
+   "id": 98322502,
+   "name": "guns `n` roses",
+   "link": "https://www.deezer.com/artist/98322502",
+   "picture": "https://api.deezer.com/artist/98322502/image",
+   "picture_small": "https://cdn-images.dzcdn.net/images/artist//56x56-000000-80-0-0.jpg",
+   "picture_medium": "https://cdn-images.dzcdn.net/images/artist//250x250-000000-80-0-0.jpg",
+   "picture_big": "https://cdn-images.dzcdn.net/images/artist//500x500-000000-80-0-0.jpg",
+   "picture_xl": "https://cdn-images.dzcdn.net/images/artist//1000x1000-000000-80-0-0.jpg",
+   "nb_album": 0,
+   "nb_fan": 100,
+   "radio": true,
+   "tracklist": "https://api.deezer.com/artist/98322502/top?limit=50",
+   "type": "artist"
+  }
+ ],
+ "total": 6
+}

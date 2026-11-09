@@ -17,6 +17,10 @@ use tracing::{debug, info, warn};
 
 use crate::services::rate_limiter::{RateLimitConfig, RateLimitedClient, RetryConfig, retry_async};
 
+/// Every poster, backdrop, logo and still TMDB holds for a title (the artwork picker).
+#[path = "tmdb_images.rs"]
+pub mod images;
+
 /// Public release lists supported by TMDB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, async_graphql::Enum)]
 pub enum MovieReleaseKind {

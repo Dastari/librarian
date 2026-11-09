@@ -1475,7 +1475,7 @@ impl MetadataService {
     ///
     /// This ensures that if the user updates the API key via settings,
     /// the next request will use the new key without requiring a server restart.
-    async fn get_tmdb_client(&self) -> Result<TmdbClient> {
+    pub(crate) async fn get_tmdb_client(&self) -> Result<TmdbClient> {
         let settings = MetadataSettings::load(&self.db).await?;
         let Some(key) = settings.tmdb_api_key else {
             anyhow::bail!("TMDB API key not configured. Add tmdb_api_key to settings.")
