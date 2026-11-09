@@ -1,7 +1,6 @@
 import { useMutation } from "@apollo/client/react";
 import { Field } from "glass-ux/field";
 import { Input } from "glass-ux/input";
-import { PasswordInput } from "glass-ux/password-field";
 import { Segmented } from "glass-ux/segmented";
 import { Select } from "glass-ux/select";
 import { SettingRow } from "glass-ux/setting-row";
@@ -240,19 +239,19 @@ function IndexerDialog({ source, isOpen, onOpenChange, onSaved, kindRow }: Index
             {method === "password" ? (
               <>
                 <Field label="Username" error={errors.username} required={!source}>
-                  <Input value={login.username} onValueChange={(username) => setLogin({ ...login, username })} autoComplete="off" required={!source} placeholder={source ? "Leave empty to keep the stored login" : undefined} />
+                  <Input value={login.username} onValueChange={(username) => setLogin({ ...login, username })} autoComplete="off" spellCheck={false} required={!source} placeholder={source ? "Leave empty to keep the stored login" : undefined} />
                 </Field>
                 <Field label="Password" error={errors.password} required={!source}>
-                  <PasswordInput value={login.password} onValueChange={(password) => setLogin({ ...login, password })} purpose="current" required={!source} placeholder={source ? "Leave empty to keep the stored login" : undefined} />
+                  <Input value={login.password} onValueChange={(password) => setLogin({ ...login, password })} type="password" autoComplete="off" spellCheck={false} required={!source} placeholder={source ? "Leave empty to keep the stored login" : undefined} />
                 </Field>
               </>
             ) : (
               <>
                 <Field label="Cookie" error={errors.cookie} hint="Stored encrypted and never shown again." required={!source}>
-                  <PasswordInput value={login.cookie} onValueChange={(cookie) => setLogin({ ...login, cookie })} purpose="current" required={!source} placeholder={source ? "Leave empty to keep the stored cookie" : undefined} className="font-mono" />
+                  <Input value={login.cookie} onValueChange={(cookie) => setLogin({ ...login, cookie })} type="password" autoComplete="off" spellCheck={false} required={!source} placeholder={source ? "Leave empty to keep the stored cookie" : undefined} className="font-mono" />
                 </Field>
                 <Field label="User agent" hint="The browser's user agent, so the site sees the same browser.">
-                  <Input value={login.userAgent} onValueChange={(userAgent) => setLogin({ ...login, userAgent })} className="font-mono" />
+                  <Input value={login.userAgent} onValueChange={(userAgent) => setLogin({ ...login, userAgent })} autoComplete="off" spellCheck={false} className="font-mono" />
                 </Field>
               </>
             )}
@@ -260,7 +259,7 @@ function IndexerDialog({ source, isOpen, onOpenChange, onSaved, kindRow }: Index
         ) : null}
         {requiredCredentials.map((key) => (
           <Field key={key} label={key.replace(/_/g, " ")} error={errors[key]} required={!source}>
-            <PasswordInput value={credentials[key] ?? ""} onValueChange={(value) => setCredentials({ ...credentials, [key]: value })} purpose="current" required={!source} placeholder={source ? "Leave empty to keep the stored value" : undefined} className="font-mono" />
+            <Input value={credentials[key] ?? ""} onValueChange={(value) => setCredentials({ ...credentials, [key]: value })} type="password" autoComplete="off" spellCheck={false} required={!source} placeholder={source ? "Leave empty to keep the stored value" : undefined} className="font-mono" />
           </Field>
         ))}
         {(settingDefs.data?.sourceSettingDefinitions ?? []).map((setting) =>

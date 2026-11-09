@@ -1,46 +1,55 @@
 import { useMutation } from "@apollo/client/react";
 import { toast } from "glass-ux/toast";
-import { Form, FormActions, formBehaviour, useAppForm } from "glass-ux/form";
+import { byteSizeSchema } from "glass-ux/byte-size-field";
+import { durationSchema } from "glass-ux/duration-field";
+import { Form, FormActions, numberRule, useAppForm } from "glass-ux/form";
 import { IconPlay } from "glass-ux/icons";
+import { SettingRow } from "glass-ux/setting-row";
 import { useEffect, useRef } from "react";
 import { z } from "zod";
 
-import { Button, FieldGroup, Panel } from "@/components/ui";
+import { Button } from "@/components/ui";
 import { MODE_HELP } from "@/features/acquisition/mode";
 import { TriggerAutoDownloadDocument } from "@/graphql/generated/graphql";
 import { errorMessage } from "@/lib/graphql/errors";
 
 import { AutoDownloadStatus } from "./AutoDownloadStatus";
 import { BlockedReleases } from "./BlockedReleases";
+import { ByteSizeRow, DurationRow, NumberRow, TextRow, settingsFormBehaviour } from "./SettingFields";
+import { SettingsPage, SettingsSection } from "./SettingsSection";
 import { asBool, asNumber, useAppSettings } from "./useAppSettings";
 
-const requiredNumber = (rule: z.ZodNumber) => z.number().nullable().transform((value, context) => {
-  if (value === null) {
-    context.addIssue({ code: "custom", message: "Enter a number" });
-    return z.NEVER;
-  }
-  return value;
-}).pipe(rule);
+/** Intervals are kept as minutes on the server and edited as seconds, the way `DurationRow` holds them. */
+export const minutesToSeconds = (minutes: number) => Math.round(minutes * 60);
+export const secondsToMinutes = (seconds: number) => Math.round(seconds / 60);
+
+const count = (min: number, max: number | undefined, noun: string) => numberRule({
+  required: true, integer: true, min, max,
+  requiredMessage: "Enter a number",
+  rangeMessage: max === undefined ? `Enter a whole number of at least ${min}` : `Enter a whole number from ${min} to ${max}${noun}`,
+});
+const minutes = (min: number, max: number) => durationSchema({ required: true, min: minutesToSeconds(min), max: minutesToSeconds(max) });
 
 const schema = z.object({
   downloadDir: z.string().trim().min(1, "Choose a download folder"),
   sessionDir: z.string().trim().min(1, "Choose a session folder"),
-  listenPort: requiredNumber(z.number().int().min(1024).max(65535)),
+  listenPort: count(1024, 65535, ""),
   enableDht: z.boolean(),
-  maxConcurrent: requiredNumber(z.number().int().min(1).max(50)),
-  downloadLimit: requiredNumber(z.number().int().min(0)),
-  uploadLimit: requiredNumber(z.number().int().min(0)),
+  maxConcurrent: count(1, 50, ""),
+  // Bytes per second, as the client reads them; 0 is unlimited.
+  downloadLimit: byteSizeSchema({ required: true, min: 0 }),
+  uploadLimit: byteSizeSchema({ required: true, min: 0 }),
   autoEnabled: z.boolean(),
-  autoInterval: requiredNumber(z.number().int().min(5).max(1440)),
-  autoBackoff: requiredNumber(z.number().int().min(5).max(10080)),
-  airGrace: requiredNumber(z.number().int().min(0).max(1440)),
-  airWindow: requiredNumber(z.number().int().min(0).max(60)),
-  airRetry: requiredNumber(z.number().int().min(5).max(1440)),
-  maxGrabs: requiredNumber(z.number().int().min(1).max(100)),
-  hourlySearchBudget: requiredNumber(z.number().int().min(0).max(600)),
+  autoInterval: minutes(5, 1440),
+  autoBackoff: minutes(5, 10080),
+  airGrace: minutes(0, 1440),
+  airWindow: count(0, 60, " days"),
+  airRetry: minutes(5, 1440),
+  maxGrabs: count(1, 100, ""),
+  hourlySearchBudget: count(0, 600, ""),
   onlyMissingFiles: z.boolean(),
-  seedRatioLimit: requiredNumber(z.number().min(0).max(100)),
-  seedTimeMinutes: requiredNumber(z.number().int().min(0).max(100000)),
+  seedRatioLimit: numberRule({ required: true, min: 0, max: 100, requiredMessage: "Enter a number", rangeMessage: "Enter a ratio from 0 to 100" }),
+  seedTime: minutes(0, 100000),
   removeAfterImport: z.boolean(),
 });
 type Values = z.input<typeof schema>;
@@ -49,15 +58,16 @@ export function DownloadsSettings() {
   const torrent = useAppSettings("torrent");
   const auto = useAppSettings("auto_download");
   const [trigger, { loading: triggering }] = useMutation(TriggerAutoDownloadDocument);
-  const defaults = useRef<Values>({ downloadDir: "", sessionDir: "", listenPort: 6881, enableDht: true, maxConcurrent: 5, downloadLimit: 0, uploadLimit: 0, autoEnabled: false, autoInterval: 60, autoBackoff: 360, airGrace: 60, airWindow: 7, airRetry: 60, maxGrabs: 5, hourlySearchBudget: 30, onlyMissingFiles: true, seedRatioLimit: 1, seedTimeMinutes: 0, removeAfterImport: false });
-  const form = useAppForm({ ...formBehaviour, validators: { onDynamic: schema }, defaultValues: defaults.current, onSubmit: async ({ value }) => {
-    const values = schema.parse(value);
-    // Only what was edited is written, so saving one panel does not create rows for every
+  // Intervals are minutes in the settings and seconds in the form (see `minutesToSeconds`).
+  const defaults = useRef<Values>({ downloadDir: "", sessionDir: "", listenPort: 6881, enableDht: true, maxConcurrent: 5, downloadLimit: 0, uploadLimit: 0, autoEnabled: false, autoInterval: minutesToSeconds(60), autoBackoff: minutesToSeconds(360), airGrace: minutesToSeconds(60), airWindow: 7, airRetry: minutesToSeconds(60), maxGrabs: 5, hourlySearchBudget: 30, onlyMissingFiles: true, seedRatioLimit: 1, seedTime: 0, removeAfterImport: false });
+  const form = useAppForm({ ...settingsFormBehaviour, validators: { onDynamic: schema }, defaultValues: defaults.current, onSubmit: async ({ value }) => {
+    const values = schema.parse(value) as Values;
+    // Only what was edited is written, so saving one group does not create rows for every
     // default on the page.
     const baseline = defaults.current;
-    const edited = (fields: Array<[keyof Values, string]>) => Object.fromEntries(fields.filter(([field]) => !Object.is(values[field], baseline[field])).map(([field, key]) => [key, values[field]]));
-    await torrent.save(edited([["downloadDir", "torrent.download_dir"], ["sessionDir", "torrent.session_dir"], ["listenPort", "torrent.listen_port"], ["enableDht", "torrent.enable_dht"], ["maxConcurrent", "torrent.max_concurrent"], ["downloadLimit", "torrent.download_limit"], ["uploadLimit", "torrent.upload_limit"], ["seedRatioLimit", "torrent.seed_ratio_limit"], ["seedTimeMinutes", "torrent.seed_time_minutes"], ["removeAfterImport", "torrent.remove_after_import"]]));
-    await auto.save(edited([["autoEnabled", "auto_download.enabled"], ["autoInterval", "auto_download.interval_minutes"], ["autoBackoff", "auto_download.search_backoff_minutes"], ["airGrace", "auto_download.air_grace_minutes"], ["airWindow", "auto_download.air_window_days"], ["airRetry", "auto_download.air_retry_minutes"], ["maxGrabs", "auto_download.max_concurrent_grabs"], ["hourlySearchBudget", "auto_download.hourly_search_budget"], ["onlyMissingFiles", "auto_download.only_missing_files"]]));
+    const edited = (fields: Array<[keyof Values, string, ((value: number) => number)?]>) => Object.fromEntries(fields.filter(([field]) => !Object.is(values[field], baseline[field])).map(([field, key, toStored]) => [key, toStored ? toStored(values[field] as number) : values[field]]));
+    await torrent.save(edited([["downloadDir", "torrent.download_dir"], ["sessionDir", "torrent.session_dir"], ["listenPort", "torrent.listen_port"], ["enableDht", "torrent.enable_dht"], ["maxConcurrent", "torrent.max_concurrent"], ["downloadLimit", "torrent.download_limit"], ["uploadLimit", "torrent.upload_limit"], ["seedRatioLimit", "torrent.seed_ratio_limit"], ["seedTime", "torrent.seed_time_minutes", secondsToMinutes], ["removeAfterImport", "torrent.remove_after_import"]]));
+    await auto.save(edited([["autoEnabled", "auto_download.enabled"], ["autoInterval", "auto_download.interval_minutes", secondsToMinutes], ["autoBackoff", "auto_download.search_backoff_minutes", secondsToMinutes], ["airGrace", "auto_download.air_grace_minutes", secondsToMinutes], ["airWindow", "auto_download.air_window_days"], ["airRetry", "auto_download.air_retry_minutes", secondsToMinutes], ["maxGrabs", "auto_download.max_concurrent_grabs"], ["hourlySearchBudget", "auto_download.hourly_search_budget"], ["onlyMissingFiles", "auto_download.only_missing_files"]]));
     defaults.current = values;
     toast.success("Settings saved");
   } });
@@ -76,15 +86,15 @@ export function DownloadsSettings() {
       downloadLimit: asNumber(t.get("torrent.download_limit"), 0),
       uploadLimit: asNumber(t.get("torrent.upload_limit"), 0),
       seedRatioLimit: asNumber(t.get("torrent.seed_ratio_limit"), 1),
-      seedTimeMinutes: asNumber(t.get("torrent.seed_time_minutes"), 0),
+      seedTime: minutesToSeconds(asNumber(t.get("torrent.seed_time_minutes"), 0)),
       removeAfterImport: asBool(t.get("torrent.remove_after_import"), false),
       // Off until someone turns it on, as the server has it (download_monitor.rs).
       autoEnabled: asBool(a.get("auto_download.enabled"), false),
-      autoInterval: asNumber(a.get("auto_download.interval_minutes"), 60),
-      autoBackoff: asNumber(a.get("auto_download.search_backoff_minutes"), 360),
-      airGrace: asNumber(a.get("auto_download.air_grace_minutes"), 60),
+      autoInterval: minutesToSeconds(asNumber(a.get("auto_download.interval_minutes"), 60)),
+      autoBackoff: minutesToSeconds(asNumber(a.get("auto_download.search_backoff_minutes"), 360)),
+      airGrace: minutesToSeconds(asNumber(a.get("auto_download.air_grace_minutes"), 60)),
       airWindow: asNumber(a.get("auto_download.air_window_days"), 7),
-      airRetry: asNumber(a.get("auto_download.air_retry_minutes"), 60),
+      airRetry: minutesToSeconds(asNumber(a.get("auto_download.air_retry_minutes"), 60)),
       maxGrabs: asNumber(a.get("auto_download.max_concurrent_grabs"), 5),
       hourlySearchBudget: asNumber(a.get("auto_download.hourly_search_budget"), 30),
       onlyMissingFiles: asBool(a.get("auto_download.only_missing_files"), true),
@@ -109,54 +119,53 @@ export function DownloadsSettings() {
   };
 
   return (
-    <div className="flex flex-col gap-6">
-      <Form form={form} className="flex min-w-0 flex-col gap-6" onError={(error) => toast.danger(errorMessage(error, "Could not save settings"))}>
-        <Panel
+    <SettingsPage>
+      <Form form={form} className="settings-measure flex min-w-0 flex-col gap-8" onError={(error) => toast.danger(errorMessage(error, "Could not save settings"))}>
+        <SettingsSection
           title="Automatic downloads"
+          width="readable"
           description="Librarian watches for what you want and sends the best match to the download client, on a schedule and from your RSS feeds. Feeds and sources are set up under Sources."
-          actions={<Button size="sm" variant="ghost" onPress={() => void runNow()} isPending={triggering}><IconPlay size="md" /> Run now</Button>}
         >
-          <div className="flex flex-col gap-4">
-            <form.AppField name="autoEnabled">{(field) => <field.SwitchRow label="Search and download automatically" description="Off by default. While off, nothing searches or downloads on its own (feeds are still read into their catalogue, and recommendations are still looked up); Search now and Run now still work." />}</form.AppField>
-            <AutoDownloadStatus settings={auto.values} />
-            <FieldGroup columns={2}>
-              <form.AppField name="autoInterval">{(field) => <field.NumberField label="Check everything every (minutes)" min={5} max={1440} step={5} hint="A full sweep of every wanted title." />}</form.AppField>
-              <form.AppField name="autoBackoff">{(field) => <field.NumberField label="Search a missing item again after (minutes)" min={5} max={10080} step={30} hint="Keeps one missing item from being searched on every sweep." />}</form.AppField>
-              <form.AppField name="airGrace">{(field) => <field.NumberField label="Wait after an episode airs (minutes)" min={0} max={1440} step={15} hint="Releases take a while to appear. Nothing is searched for before this has passed." />}</form.AppField>
-              <form.AppField name="airWindow">{(field) => <field.NumberField label="Watch new episodes for (days)" min={0} max={60} hint="How long a new episode is searched for on the quicker schedule. 0 skips it." />}</form.AppField>
-              <form.AppField name="airRetry">{(field) => <field.NumberField label="Search a new episode again after (minutes)" min={5} max={1440} step={15} hint="Used until the days above run out; the setting before it applies after." />}</form.AppField>
-              <form.AppField name="maxGrabs">{(field) => <field.NumberField label="Most automatic downloads at once" min={1} max={100} hint="Anything more waits for a free slot. Searching by hand is not limited." />}</form.AppField>
-              <form.AppField name="hourlySearchBudget">{(field) => <field.NumberField label="Indexer searches for recommendations per hour" min={0} max={600} step={5} hint="Looking up the best release for what is missing never exceeds this, so indexers are not hammered. Feeds are used first and cost nothing. 0 turns recommendations off." />}</form.AppField>
-              <form.AppField name="onlyMissingFiles">{(field) => <field.SwitchRow label="Download only the missing files from packs" description="A season pack or album downloads just the episodes or tracks you are missing, not the whole thing. On a private tracker this can cost ratio: a partial download never completes the torrent, so it cannot be seeded to 100%, and some trackers count an unfinished torrent against your account. Turn it off to always take the whole pack." className="sm:col-span-2" />}</form.AppField>
-            </FieldGroup>
-            <AutoDownloadGuide />
-          </div>
-        </Panel>
-        <Panel title="Torrent client" description="The client reads these settings when it starts, so every change on this page, including seeding, takes effect after the server restarts.">
-          <FieldGroup columns={2}>
-            <form.AppField name="downloadDir">{(field) => <field.TextField label="Download folder" className="font-mono" required />}</form.AppField>
-            <form.AppField name="sessionDir">{(field) => <field.TextField label="Session folder" className="font-mono" required hint="Resume data and DHT state." />}</form.AppField>
-            <form.AppField name="listenPort">{(field) => <field.NumberField label="Listen port" min={1024} max={65535} />}</form.AppField>
-            <form.AppField name="maxConcurrent">{(field) => <field.NumberField label="Concurrent downloads" min={1} max={50} />}</form.AppField>
-            <form.AppField name="downloadLimit">{(field) => <field.NumberField label="Download limit (KB/s, 0 = unlimited)" min={0} />}</form.AppField>
-            <form.AppField name="uploadLimit">{(field) => <field.NumberField label="Upload limit (KB/s, 0 = unlimited)" min={0} />}</form.AppField>
-            <form.AppField name="enableDht">{(field) => <field.SwitchRow label="Enable DHT" description="Find peers without a tracker. Turn off for private-tracker-only setups." className="sm:col-span-2" />}</form.AppField>
-          </FieldGroup>
-        </Panel>
-        <Panel title="Seeding" description="When a finished download stops sharing.">
-          <FieldGroup columns={2}>
-            <form.AppField name="seedRatioLimit">{(field) => <field.NumberField label="Seed until ratio" min={0} max={100} step={0.1} hint="0 = no ratio rule." />}</form.AppField>
-            <form.AppField name="seedTimeMinutes">{(field) => <field.NumberField label="Seed for (minutes)" min={0} step={30} hint="0 = no time rule." />}</form.AppField>
-            <form.AppField name="removeAfterImport">{(field) => <field.SwitchRow label="Remove the torrent and its files after import" description="Off keeps the files and only stops seeding." className="sm:col-span-2" />}</form.AppField>
-          </FieldGroup>
-        </Panel>
+          <form.AppField name="autoEnabled">{(field) => <field.SwitchRow label="Search and download automatically" description="Off by default. While off, nothing searches or downloads on its own (feeds are still read into their catalogue, and recommendations are still looked up); Search now and Run now still work." />}</form.AppField>
+          <SettingRow
+            label="Recent activity"
+            description={<AutoDownloadStatus settings={auto.values} />}
+            control={<Button size="sm" variant="secondary" onPress={() => void runNow()} isPending={triggering}><IconPlay size="md" /> Run now</Button>}
+          />
+          <form.AppField name="autoInterval">{() => <DurationRow label="Check everything every" description="A full sweep of every wanted title." units={["d", "h", "m"]} defaultUnit="m" />}</form.AppField>
+          <form.AppField name="autoBackoff">{() => <DurationRow label="Search a missing item again after" description="Keeps one missing item from being searched on every sweep." units={["d", "h", "m"]} defaultUnit="m" />}</form.AppField>
+          <form.AppField name="airGrace">{() => <DurationRow label="Wait after an episode airs" description="Releases take a while to appear. Nothing is searched for before this has passed." units={["h", "m"]} defaultUnit="m" />}</form.AppField>
+          <form.AppField name="airWindow">{() => <NumberRow label="Watch new episodes for" description="How long a new episode is searched for on the quicker schedule. 0 skips it." min={0} max={60} unit="days" />}</form.AppField>
+          <form.AppField name="airRetry">{() => <DurationRow label="Search a new episode again after" description="Used until the days above run out; the setting before it applies after." units={["h", "m"]} defaultUnit="m" />}</form.AppField>
+          <form.AppField name="maxGrabs">{() => <NumberRow label="Most automatic downloads at once" description="Anything more waits for a free slot. Searching by hand is not limited." min={1} max={100} />}</form.AppField>
+          <form.AppField name="hourlySearchBudget">{() => <NumberRow label="Indexer searches for recommendations" description="Looking up the best release for what is missing never exceeds this, so indexers are not hammered. Feeds are used first and cost nothing. 0 turns recommendations off." min={0} max={600} step={5} unit="per hour" />}</form.AppField>
+          <form.AppField name="onlyMissingFiles">{(field) => <field.SwitchRow label="Download only the missing files from packs" description="A season pack or album downloads just the episodes or tracks you are missing, not the whole thing. On a private tracker this can cost ratio: a partial download never completes the torrent, so it cannot be seeded to 100%, and some trackers count an unfinished torrent against your account. Turn it off to always take the whole pack." />}</form.AppField>
+          <AutoDownloadGuide />
+        </SettingsSection>
+
+        <SettingsSection title="Torrent client" width="readable" description="The client reads these settings when it starts, so every change on this page, including seeding, takes effect after the server restarts.">
+          <form.AppField name="downloadDir">{() => <TextRow mono label="Download folder" />}</form.AppField>
+          <form.AppField name="sessionDir">{() => <TextRow mono label="Session folder" description="Resume data and DHT state." />}</form.AppField>
+          <form.AppField name="listenPort">{() => <NumberRow label="Listen port" min={1024} max={65535} format={{ useGrouping: false }} />}</form.AppField>
+          <form.AppField name="maxConcurrent">{() => <NumberRow label="Concurrent downloads" min={1} max={50} />}</form.AppField>
+          <form.AppField name="downloadLimit">{() => <ByteSizeRow label="Download speed limit" description="Per second. 0 is unlimited." defaultUnit="MB" />}</form.AppField>
+          <form.AppField name="uploadLimit">{() => <ByteSizeRow label="Upload speed limit" description="Per second. 0 is unlimited." defaultUnit="MB" />}</form.AppField>
+          <form.AppField name="enableDht">{(field) => <field.SwitchRow label="Enable DHT" description="Find peers without a tracker. Turn off for private-tracker-only setups." />}</form.AppField>
+        </SettingsSection>
+
+        <SettingsSection title="Seeding" width="readable" description="When a finished download stops sharing.">
+          <form.AppField name="seedRatioLimit">{() => <NumberRow label="Seed until ratio" description="0 = no ratio rule." min={0} max={100} step={0.1} />}</form.AppField>
+          <form.AppField name="seedTime">{() => <DurationRow label="Seed for" description="0 = no time rule." units={["d", "h", "m"]} defaultUnit="m" />}</form.AppField>
+          <form.AppField name="removeAfterImport">{(field) => <field.SwitchRow label="Remove the torrent and its files after import" description="Off keeps the files and only stops seeding." />}</form.AppField>
+        </SettingsSection>
+
         <FormActions>
           <form.Subscribe selector={(state) => state.isSubmitting}>{(pending) => <form.CancelButton disabled={pending}>Discard</form.CancelButton>}</form.Subscribe>
           <form.SubmitButton>Save</form.SubmitButton>
         </FormActions>
       </Form>
       <BlockedReleases />
-    </div>
+    </SettingsPage>
   );
 }
 
@@ -169,7 +178,7 @@ function AutoDownloadGuide() {
     ["Always", "Only the best release your quality profile accepts is taken; blocklisted releases are never taken again. Each search, grab and reason for skipping appears under Activity."],
   ];
   return (
-    <dl className="flex flex-col gap-2 text-label-sm text-muted" aria-label="What automatic downloads do">
+    <dl className="mt-2 flex flex-col gap-2 px-1 text-label-sm text-muted" aria-label="What automatic downloads do">
       {rows.map(([term, text]) => (
         <div key={term}>
           <dt className="font-medium text-foreground">{term}</dt>

@@ -3,14 +3,14 @@ import { useMutation } from "@apollo/client/react";
 import { toast } from "glass-ux/toast";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
-import { createDataTableColumns, IdentityCell, NumericCell, RelativeTime, TextCell } from "glass-ux/data-table";
+import { createDataTableColumns, NumericCell, RelativeTime, TextCell } from "glass-ux/data-table";
 import { IconArrowDown, IconArrowUp, IconEdit, IconPlus, IconTrash } from "glass-ux/icons";
 import { IconList, IconPlugConnected, IconPower, IconRss } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui";
 import { useSession } from "@/lib/auth/useSession";
-import { ENTITY_KINDS, glyph } from "@/lib/entities/kinds";
+import { glyph } from "@/lib/entities/kinds";
 import {
   CreateRssFeedFromSourceDocument,
   EntityRssFeedDeleteDocument,
@@ -30,13 +30,14 @@ import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 
 import { FeedItemsDialog } from "./FeedItemsDialog";
 import { SourceDialog, type SourceTarget } from "./SourceDialog";
+import { SourceIdentity } from "./SourceIdentity";
 import { healthState, type HealthState } from "./sourceHealth";
 
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { runSettingsSelection } from "./runSettingsSelection";
 
 import { SettingsLoadError } from "./SettingsLoadError";
-import { SettingsSection } from "./SettingsSection";
+import { SettingsPage, SettingsSection } from "./SettingsSection";
 import { useSettingsConnection } from "./useSettingsConnection";
 
 type Source = EntitySourceListQuery["sources"]["edges"][number]["node"];
@@ -47,7 +48,6 @@ export type SourceRow =
   | { rowKey: string; kind: "source"; name: string; enabled: boolean; health: HealthState; source: Source }
   | { rowKey: string; kind: "feed"; name: string; enabled: boolean; health: HealthState; feed: Feed };
 
-const SourceGlyph = ENTITY_KINDS.source.icon;
 const FeedGlyph = glyph(IconRss, "rss");
 const TestIcon = glyph(IconPlugConnected, "plug-connected");
 const PowerIcon = glyph(IconPower, "power");
@@ -73,13 +73,13 @@ const column = createDataTableColumns<SourceRow>();
 const columns = column.columns([
   column.accessor((row) => (row.kind === "source" ? row.source.priority : 1000), { id: "priority", header: "#", width: 4, priority: 2, align: "end", grow: false, cell: ({ row }) => (row.original.kind === "source" ? <NumericCell value={row.original.source.priority} /> : <TextCell muted>—</TextCell>) }),
   column.accessor("name", {
-    header: "Source", width: 30, priority: 1, cardRole: "title",
+    header: "Source", width: 32, priority: 1, cardRole: "title",
     cell: ({ row }) => {
       const item = row.original;
       const subtitle = item.kind === "source"
         ? [item.source.definitionId, item.source.siteUrl].filter(Boolean).join(" · ")
         : [item.feed.urlDisplay, `every ${item.feed.pollIntervalMinutes} min`].filter(Boolean).join(" · ");
-      return <IdentityCell icon={item.kind === "source" ? <SourceGlyph /> : <FeedGlyph />} title={item.name} subtitle={item.health.status === "error" ? item.health.detail : subtitle} status={item.health.status} statusLabel={item.health.label} />;
+      return <SourceIdentity kind={item.kind} name={item.name} health={item.health} enabled={item.enabled} facts={subtitle} />;
     },
   }),
   column.display({ id: "kind", header: "Kind", width: 11, priority: 3, cell: ({ row }) => <TextCell muted>{row.original.kind === "feed" ? "RSS feed" : searches(row.original.source)}</TextCell> }),
@@ -202,7 +202,7 @@ export function SourcesSettings() {
 
   const editingTarget = editing === "new" ? null : editing;
   return (
-    <div className="flex flex-col gap-6">
+    <SettingsPage>
       <SettingsSection
         title="Sources"
         description="Indexers are searched in priority order when looking for releases; RSS feeds are read on a schedule and kept as a catalogue of what is available. Each is checked at least once an hour."
@@ -233,6 +233,6 @@ export function SourcesSettings() {
       </SettingsSection>
       <SourceDialog target={editingTarget} isOpen={editing !== null} onOpenChange={(open) => !open && setEditing(null)} onSaved={() => void refetch()} />
       <FeedItemsDialog feedId={browsing?.id ?? null} feedName={browsing?.name ?? ""} onOpenChange={(open) => !open && setBrowsing(null)} />
-    </div>
+    </SettingsPage>
   );
 }
