@@ -38,6 +38,7 @@ const entityDocuments = {
   MovieCastCredit: G.EntityMovieCastCreditChangedDocument,
   Movie: G.EntityMovieChangedDocument,
   NamingPattern: G.EntityNamingPatternChangedDocument,
+  NetworkServer: G.EntityNetworkServerChangedDocument,
   Notification: G.EntityNotificationChangedDocument,
   PendingFileMatch: G.EntityPendingFileMatchChangedDocument,
   Person: G.EntityPersonChangedDocument,
@@ -196,7 +197,7 @@ export function queryDependencies(document: DocumentNode, variables: Record<stri
 /** How a generated `Changed` stream says it ended without delivering everything. */
 const CONTINUITY_ERRORS = new Set(["SUBSCRIPTION_CONTINUITY_LOST", "SUBSCRIPTION_SOURCE_CLOSED"]);
 
-const adminTopics = new Set<LiveTopic>(["AppLog", "AppSetting", "User", "InviteToken", "RefreshToken", "Source", "UsenetServer", "MetadataCache", "ScheduleSyncState", "Backup", "Filesystem"]);
+const adminTopics = new Set<LiveTopic>(["AppLog", "AppSetting", "User", "InviteToken", "RefreshToken", "Source", "UsenetServer", "NetworkServer", "MetadataCache", "ScheduleSyncState", "Backup", "Filesystem"]);
 
 export function apolloLiveSource(client: ApolloClient, isAdmin: boolean): LiveSource {
   const states = new Map<string, string>();

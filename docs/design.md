@@ -1707,3 +1707,35 @@ everywhere.
 `take_login.php`, the cookie names, the RSS page printing the link) is inferred from Jackett's and Prowlarr's definitions and
 reports; the parsers read the form from the page instead of assuming it, and are tested against hand-written fixtures in
 `backend/tests/fixtures/iptorrents/`.
+
+### Q98: How are file servers and their shares saved?
+**Answer:** As a **server**, the `NetworkServer` entity (Settings › Network shares): name, host (lower case, a name or an IP
+address), port (empty for 445), user name, and a password that the generated mutations accept and the write transform
+encrypts (the `Source.credentials` envelope); it is never readable through GraphQL, and `hasPassword` says whether one is
+stored. A server is saved once, and every share on it uses its sign-in: SMB signs in per server, not per share, and the
+user's own setup (one TrueNAS, one user, several libraries on one share) means one entry. **Shares are listed, not typed:**
+`smb2` speaks srvsvc `NetShareEnumAll` (`SmbClient::list_shares`, the list Windows shows for a server), so choosing a
+location lists what the server offers (`networkServerShares`, administrative `$` shares left out). A server that signs the
+user in but refuses the listing still works: the share is typed once and kept in `knownShares`, and every share that was
+used or listed is remembered there, so a picker can offer them while the server is down. A location stays one
+`smb://host[:port]/share/folder` string (Q85); the sign-in for it is the saved server with that host and port
+(`network_servers::find_server`, used by `NetworkShareProvider`).
+
+*Lifecycle hooks, no hand resolvers:* creating or updating normalises the host, port and share names, encrypts a new
+password (an already encrypted envelope is kept as it is) and refuses a second server for the same host and port. Removing
+a server, or changing its host or port, is refused while a library, the download folder or a stored torrent is on it, with
+the reason ("TrueNAS cannot be removed: the libraries Movies, TV Shows and the download folder are still on it. Move them
+to another location first"). After any change the registry forgets that server's connections, so the next use signs in with
+the new details. `testNetworkServer` (an action: sign in, list shares, optionally open one share) and `networkServerShares`
+are the only hand-written operations; a test of a saved server records `status`, `lastError` and `lastCheckedAt` on it.
+
+*Where it is chosen:* every location picker (Add library, Library settings, a library's Move tab, the download folder) is
+"This server | Network share"; a share is a saved server, then one of its shares, then a folder (typed or browsed). "Add
+network share…" in the server list saves a new server without leaving the picker and chooses it. The server has its own
+identity (glyph, a dot for whether it answered, address and user), actions (Server settings, Test connection, Remove) and
+settings dialog (Connection, Shares, Remove).
+
+*Carried over:* sign-ins saved before servers existed (`network_mount.<digest>` app settings, platform `smb-native`) become
+servers at startup (`carry_over_saved_sign_ins`), once each, with the stored envelope copied as it is: the password is
+never decrypted for this, and the old record is left in place as a fallback until a server exists for that host.
+`connectShare` now saves into the server too.

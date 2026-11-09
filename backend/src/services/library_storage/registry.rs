@@ -93,6 +93,11 @@ impl LibraryStorage {
         }
     }
 
+    /// Whether a share provider is installed yet.
+    pub fn has_share_provider(&self) -> bool {
+        self.provider.read().is_ok_and(|slot| slot.is_some())
+    }
+
     pub fn install_tool_url_issuer(&self, issuer: Arc<dyn ToolUrlIssuer>) {
         if let Ok(mut slot) = self.tool_urls.write() {
             *slot = Some(issuer);
@@ -179,6 +184,92 @@ impl LibraryStorage {
                         Err(error)
                     }
                 }
+            }
+        }
+    }
+
+    /// The share `path` is on, as an SMB storage.
+    pub async fn smb_storage_for(
+        &self,
+        path: impl IntoStoragePath,
+    ) -> StorageResult<super::SmbStorage> {
+        let path = path.into_storage_path();
+        let storage = self.for_path(&path).await?;
+        storage.as_smb().cloned().ok_or_else(|| {
+            StorageError::new(
+                StorageErrorKind::Unsupported,
+                format!("'{path}' is not on an SMB share"),
+            )
+        })
+    }
+
+    /// Forget every connected share on one server (its sign-in changed or it was removed).
+    pub fn forget_server(&self, host: &str, port: Option<u16>) {
+        let host = host.trim().to_ascii_lowercase();
+        let matches = |key: &str| {
+            super::SmbLocation::parse(key)
+                .is_ok_and(|location| location.host == host && location.port == port)
+        };
+        if let Ok(mut remotes) = self.remotes.write() {
+            remotes.retain(|key, _| !matches(key));
+        }
+        if let Ok(mut failures) = self.failures.lock() {
+            failures.retain(|key, _| !matches(key));
+        }
+    }
+
+    /// Copy a file from wherever it is to wherever `dst` is, leaving the source untouched: from
+    /// this machine with `put_from_local`, within one share with a server-side copy, and between
+    /// two storages by streaming the bytes through Librarian.
+    pub async fn copy(
+        &self,
+        src: impl IntoStoragePath,
+        dst: impl IntoStoragePath,
+        mode: PlaceMode,
+    ) -> StorageResult<PlaceOutcome> {
+        let (src, dst) = (src.into_storage_path(), dst.into_storage_path());
+        let target = self.for_path(&dst).await?;
+        if src.kind() == StorageKind::Local {
+            return target
+                .put_from_local(Path::new(src.as_str()), &dst, mode)
+                .await;
+        }
+        let same_share = match (src.as_smb(), dst.as_smb()) {
+            (Some(a), Some(b)) => a.share_root() == b.share_root(),
+            _ => false,
+        };
+        if same_share {
+            return target.copy_within(&src, &dst, mode).await;
+        }
+        let opened = self.for_path(&src).await?.open_read(&src).await?;
+        target
+            .put_from_reader(Box::new(opened.reader), &dst, mode)
+            .await
+    }
+
+    /// Copy a file from any storage to a path on this machine (which must not exist yet).
+    pub async fn download_to_local(
+        &self,
+        src: impl IntoStoragePath,
+        dst: &Path,
+    ) -> StorageResult<u64> {
+        let src = src.into_storage_path();
+        let mut opened = self.for_path(&src).await?.open_read(&src).await?;
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(dst)
+            .await?;
+        let copied = tokio::io::copy(&mut opened.reader, &mut file).await;
+        match copied {
+            Ok(bytes) => {
+                file.sync_all().await?;
+                Ok(bytes)
+            }
+            Err(error) => {
+                drop(file);
+                let _ = tokio::fs::remove_file(dst).await;
+                Err(error.into())
             }
         }
     }
@@ -525,6 +616,14 @@ mod tests {
             async fn put_from_local(
                 &self,
                 _: &Path,
+                _: &StoragePath,
+                _: PlaceMode,
+            ) -> StorageResult<PlaceOutcome> {
+                Err(StorageError::unsupported("put"))
+            }
+            async fn put_from_reader(
+                &self,
+                _: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
                 _: &StoragePath,
                 _: PlaceMode,
             ) -> StorageResult<PlaceOutcome> {

@@ -60,6 +60,7 @@ pub mod source_priority_rule;
 
 // Other entities
 pub mod artwork_cache;
+pub mod network_server;
 pub mod notification;
 pub mod quality_profile;
 pub mod release_blocklist;
@@ -104,6 +105,7 @@ pub use metadata_cache::*;
 pub use movie::*;
 pub use movie_cast_credit::*;
 pub use naming_pattern::*;
+pub use network_server::*;
 pub use notification::*;
 pub use pending_file_match::*;
 pub use person::*;

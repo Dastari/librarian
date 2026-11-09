@@ -12,9 +12,10 @@ use graphql_orm::schema_roots;
 use crate::db::Database;
 use crate::services::graphql::entities::*;
 use crate::services::graphql::mutations::{
-    ArtworkMutations, AuthMutations, AutoDownloadMutations, BackupMutations, FeedMutations,
-    FilesystemMutations, LibraryScanMutations, MaintenanceMutations, NotificationFeedMutations,
-    QualityMutations, RecommendationMutations,
+    ArtworkMutations, AuthMutations, AutoDownloadMutations, BackupMutations,
+    FeedMutations, FilesystemMutations,
+    LibraryScanMutations, MaintenanceMutations, NotificationFeedMutations, QualityMutations,
+    RecommendationMutations, ServerConnectionMutations, ServerConnectionQueries,
 };
 use crate::services::graphql::queries::{
     BackupQueries, ContentStatusQueries, FilesystemQueries, GenreQueries, ResumeQueries,
@@ -91,6 +92,7 @@ macro_rules! librarian_schema_roots {
         QualityProfile,
         ReleaseBlocklist,
         ReleaseRecommendation,
+        NetworkServer,
     ],
     // Entities that no client or internal GraphQL operation writes through the generated
     // roots: they are written by services in Rust (analysis, scan runs, auth sessions) or
@@ -114,8 +116,8 @@ macro_rules! librarian_schema_roots {
         UsenetServer,
         ReleaseRecommendation,
     ],
-    extra_query_types: [FilesystemQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries],
-    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations],
+    extra_query_types: [FilesystemQueries, ServerConnectionQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries],
+    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations, ServerConnectionMutations],
     extra_subscription_types: [BackupSubscriptions, FilesystemSubscriptions, TorrentRuntimeSubscriptions, SessionSubscriptions, SourceCapabilitySubscriptions],
         }
     };
@@ -434,6 +436,7 @@ mod tests {
             QualityProfile,
             ReleaseBlocklist,
             ReleaseRecommendation,
+            NetworkServer,
         );
         expected.sort();
         actual.sort();

@@ -67,6 +67,18 @@ impl StorageError {
         self.kind
     }
 
+    /// The same message, filed under another kind.
+    pub fn with_kind(mut self, kind: StorageErrorKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    /// Whether the storage could not be reached (a share that is down), as opposed to an answer
+    /// about the file.
+    pub fn is_unavailable(&self) -> bool {
+        self.kind == StorageErrorKind::Unavailable
+    }
+
     pub fn is_not_found(&self) -> bool {
         self.kind == StorageErrorKind::NotFound
     }

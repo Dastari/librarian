@@ -3,12 +3,14 @@ import { IconCast, IconCloudDownload, IconDatabase, IconFileText, IconFolder, Ic
 
 import { PageScroller } from "@/components/shell/PageScroller";
 import { PageHeader, SideTabs, type TabItem } from "@/components/ui";
+import { ENTITY_KINDS } from "@/lib/entities/kinds";
 import { cn } from "@/lib/utils";
 import { useIsAdmin } from "@/lib/auth/useSession";
 
 const SECTIONS: Array<TabItem & { adminOnly?: boolean }> = [
   { key: "general", label: "General", href: "/settings/general", icon: IconSliders },
   { key: "libraries", label: "Libraries", href: "/settings/libraries", icon: IconLayers, adminOnly: true },
+  { key: "network-shares", label: "Network shares", href: "/settings/network-shares", icon: ENTITY_KINDS.networkServer.icon, adminOnly: true },
   { key: "metadata", label: "Metadata", href: "/settings/metadata", icon: IconGlobe, adminOnly: true },
   { key: "sources", label: "Sources", href: "/settings/sources", icon: IconPlug, adminOnly: true },
   { key: "quality", label: "Quality", href: "/settings/quality", icon: IconTag, adminOnly: true },

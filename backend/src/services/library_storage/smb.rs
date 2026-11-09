@@ -86,6 +86,7 @@ fn classify(error: smb2::Error, what: &str) -> Failure {
         SmbErrorKind::ConnectionLost | SmbErrorKind::SessionExpired | SmbErrorKind::TimedOut => {
             return Failure::ConnectionLost(error);
         }
+        SmbErrorKind::Unsupported => StorageErrorKind::Unsupported,
         _ => match error.status() {
             Some(status) if status == smb2::types::status::NtStatus::DIRECTORY_NOT_EMPTY => {
                 StorageErrorKind::NotEmpty
@@ -118,6 +119,104 @@ fn file_kind(is_directory: bool, is_link: bool) -> EntryKind {
     }
 }
 
+/// Resolve `host` (saying so plainly when a name does not resolve from here) and sign in.
+async fn connect_client(
+    host: &str,
+    port: Option<u16>,
+    credentials: &SmbCredentials,
+) -> StorageResult<SmbClient> {
+    let port = port.unwrap_or(445);
+    let address = tokio::net::lookup_host((host, port))
+        .await
+        .ok()
+        .and_then(|mut addresses| addresses.next())
+        .ok_or_else(|| {
+            StorageError::new(
+                StorageErrorKind::Unavailable,
+                format!(
+                    "The server name '{host}' does not resolve from the machine Librarian runs on. Try its IP address instead"
+                ),
+            )
+        })?;
+    let config = ClientConfig {
+        addr: address.to_string(),
+        timeout: CONNECT_TIMEOUT,
+        username: credentials.username.clone(),
+        password: credentials.password.clone(),
+        // Dead connections are replaced by this module, so that a write is never replayed.
+        auto_reconnect: false,
+        ..Default::default()
+    };
+    SmbClient::connect(config).await.map_err(|error| {
+        let shown = match error.kind() {
+            SmbErrorKind::AuthRequired | SmbErrorKind::AccessDenied => {
+                format!(
+                    "The server refused the sign-in for '{}' ({error})",
+                    credentials.username
+                )
+            }
+            SmbErrorKind::ConnectionLost | SmbErrorKind::TimedOut => {
+                format!("Could not reach {host}:{port} ({error})")
+            }
+            _ => format!("Could not sign in to {host}:{port} ({error})"),
+        };
+        let kind = match error.kind() {
+            SmbErrorKind::AuthRequired | SmbErrorKind::AccessDenied => {
+                StorageErrorKind::PermissionDenied
+            }
+            _ => StorageErrorKind::Unavailable,
+        };
+        StorageError::new(kind, shown)
+    })
+}
+
+/// One share a server offers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShareListing {
+    pub name: String,
+    pub comment: String,
+}
+
+/// Sign in to a server and ask it which disk shares it offers (srvsvc `NetShareEnumAll`, the
+/// list Windows shows for a server). Administrative shares ending in `$` are left out. The outer
+/// error is a failed sign-in; the inner one a server that signed the user in but would not list
+/// its shares (some refuse it to users who may still open a share by name).
+pub async fn list_server_shares(
+    host: &str,
+    port: Option<u16>,
+    credentials: &SmbCredentials,
+) -> StorageResult<StorageResult<Vec<ShareListing>>> {
+    let mut client = connect_client(host, port, credentials).await?;
+    let shares = match client.list_shares().await {
+        Ok(shares) => shares,
+        Err(error) => {
+            let kind = match error.kind() {
+                SmbErrorKind::AccessDenied | SmbErrorKind::AuthRequired => {
+                    StorageErrorKind::PermissionDenied
+                }
+                SmbErrorKind::ConnectionLost | SmbErrorKind::TimedOut => {
+                    StorageErrorKind::Unavailable
+                }
+                _ => StorageErrorKind::Other,
+            };
+            return Ok(Err(StorageError::new(
+                kind,
+                format!("{host} signed you in but would not list its shares ({error})"),
+            )));
+        }
+    };
+    let mut listed: Vec<ShareListing> = shares
+        .into_iter()
+        .filter(|share| !share.name.ends_with('$'))
+        .map(|share| ShareListing {
+            name: share.name,
+            comment: share.comment,
+        })
+        .collect();
+    listed.sort_by_key(|share| share.name.to_lowercase());
+    Ok(Ok(listed))
+}
+
 impl SmbStorage {
     pub fn new(root: SmbLocation, credentials: SmbCredentials) -> Self {
         let root = root.share_root();
@@ -142,52 +241,25 @@ impl SmbStorage {
 }
 
 impl Share {
+    /// Forget pooled connections that have dropped, so the next call connects afresh.
+    async fn drop_dead(&self) {
+        for slot in &self.pool {
+            let mut guard = slot.lock().await;
+            if guard
+                .as_ref()
+                .is_some_and(|conn| conn.client.is_disconnected())
+            {
+                *guard = None;
+            }
+        }
+    }
+}
+
+impl Share {
     /// Resolve the host (a clear error when a name does not resolve here) and sign in.
     async fn connect(&self) -> StorageResult<Conn> {
         let host = &self.root.host;
-        let port = self.root.port.unwrap_or(445);
-        let address = tokio::net::lookup_host((host.as_str(), port))
-            .await
-            .ok()
-            .and_then(|mut addresses| addresses.next())
-            .ok_or_else(|| {
-                StorageError::new(
-                    StorageErrorKind::Unavailable,
-                    format!(
-                        "The server name '{host}' does not resolve from the machine Librarian runs on. Try its IP address instead"
-                    ),
-                )
-            })?;
-        let config = ClientConfig {
-            addr: address.to_string(),
-            timeout: CONNECT_TIMEOUT,
-            username: self.credentials.username.clone(),
-            password: self.credentials.password.clone(),
-            // Dead connections are replaced by this module, so that a write is never replayed.
-            auto_reconnect: false,
-            ..Default::default()
-        };
-        let mut client = SmbClient::connect(config).await.map_err(|error| {
-            let shown = match error.kind() {
-                SmbErrorKind::AuthRequired | SmbErrorKind::AccessDenied => {
-                    format!(
-                        "The server refused the sign-in for '{}' ({error})",
-                        self.credentials.username
-                    )
-                }
-                SmbErrorKind::ConnectionLost | SmbErrorKind::TimedOut => {
-                    format!("Could not reach {host}:{port} ({error})")
-                }
-                _ => format!("Could not sign in to {host}:{port} ({error})"),
-            };
-            let kind = match error.kind() {
-                SmbErrorKind::AuthRequired | SmbErrorKind::AccessDenied => {
-                    StorageErrorKind::PermissionDenied
-                }
-                _ => StorageErrorKind::Unavailable,
-            };
-            StorageError::new(kind, shown)
-        })?;
+        let mut client = connect_client(host, self.root.port, &self.credentials).await?;
         let tree = client
             .connect_share(&self.root.share)
             .await
@@ -348,6 +420,40 @@ impl Share {
     }
 }
 
+/// A name beside `rel` that no scan takes for media, for bytes on their way to `rel`.
+fn temp_name(rel: &str) -> String {
+    let (dir, name) = rel.rsplit_once('/').unwrap_or(("", rel));
+    join_rel(dir, &format!("{name}.librarian-tmp-{}", Uuid::new_v4()))
+}
+
+impl Share {
+    /// Rename a finished temporary copy to its real name (without replacing, for `NoClobber`),
+    /// and remove it if that fails.
+    async fn place_temp(
+        &self,
+        temp: &str,
+        rel: &str,
+        mode: PlaceMode,
+        what: &str,
+    ) -> StorageResult<PlaceOutcome> {
+        let options = RenameOptions::new().replace_if_exists(mode == PlaceMode::Replace);
+        let renamed = once!(self, what, |client, tree| client
+            .rename_with(tree, temp, rel, options));
+        match renamed {
+            Ok(()) => Ok(PlaceOutcome::Placed),
+            Err(error) => {
+                let _ = once!(self, "removing a partial copy", |client, tree| client
+                    .delete_file(tree, temp));
+                if error.kind() == StorageErrorKind::AlreadyExists {
+                    Ok(PlaceOutcome::TargetExists)
+                } else {
+                    Err(error)
+                }
+            }
+        }
+    }
+}
+
 fn join_rel(dir: &str, name: &str) -> String {
     if dir.is_empty() {
         name.to_string()
@@ -360,6 +466,10 @@ fn join_rel(dir: &str, name: &str) -> String {
 impl Storage for SmbStorage {
     fn kind(&self) -> StorageKind {
         StorageKind::Smb
+    }
+
+    fn as_smb(&self) -> Option<&SmbStorage> {
+        Some(self)
     }
 
     fn capabilities(&self) -> StorageCapabilities {
@@ -499,19 +609,28 @@ impl Storage for SmbStorage {
         dst: &StoragePath,
         mode: PlaceMode,
     ) -> StorageResult<PlaceOutcome> {
+        if mode == PlaceMode::NoClobber && self.0.stat(dst).await.is_ok() {
+            return Ok(PlaceOutcome::TargetExists);
+        }
+        let source = tokio::fs::File::open(src).await?;
+        self.put_from_reader(Box::new(source), dst, mode).await
+    }
+
+    async fn put_from_reader(
+        &self,
+        mut source: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        dst: &StoragePath,
+        mode: PlaceMode,
+    ) -> StorageResult<PlaceOutcome> {
         let rel = self.0.relative(dst)?;
         if mode == PlaceMode::NoClobber && self.0.stat(dst).await.is_ok() {
             return Ok(PlaceOutcome::TargetExists);
         }
-        let mut source = tokio::fs::File::open(src).await?;
         // The bytes go to a name no scan will take for media, then the finished file is renamed
         // into place: a half-copied file never has its real name, and the rename without replace
         // is what makes "never overwrite" a decision of the server.
-        let temp = {
-            let (dir, name) = rel.rsplit_once('/').unwrap_or(("", rel.as_str()));
-            join_rel(dir, &format!("{name}.librarian-tmp-{}", Uuid::new_v4()))
-        };
-        let what = format!("copying '{}' to '{dst}'", src.display());
+        let temp = temp_name(&rel);
+        let what = format!("copying to '{dst}'");
         let copied: StorageResult<()> = async {
             let mut guard = self.0.acquire().await?;
             let conn = guard.as_mut().expect("acquire connects");
@@ -550,16 +669,42 @@ impl Storage for SmbStorage {
                 .delete_file(tree, &temp));
             return Err(error);
         }
-        let options = RenameOptions::new().replace_if_exists(mode == PlaceMode::Replace);
-        let renamed = once!(self.0, &what, |client, tree| client
-            .rename_with(tree, &temp, &rel, options));
-        match renamed {
-            Ok(()) => Ok(PlaceOutcome::Placed),
+        self.0.place_temp(&temp, &rel, mode, &what).await
+    }
+
+    async fn copy_within(
+        &self,
+        from: &StoragePath,
+        to: &StoragePath,
+        mode: PlaceMode,
+    ) -> StorageResult<PlaceOutcome> {
+        let (from_rel, to_rel) = (self.0.relative(from)?, self.0.relative(to)?);
+        if mode == PlaceMode::NoClobber && self.0.stat(to).await.is_ok() {
+            return Ok(PlaceOutcome::TargetExists);
+        }
+        // FSCTL_SRV_COPYCHUNK: the server copies the bytes itself, so none cross the network.
+        let temp = temp_name(&to_rel);
+        let what = format!("copying '{from}' to '{to}' on the server");
+        let copied = once!(self.0, &what, |client, tree| client
+            .server_side_copy_file(tree, &from_rel, &temp));
+        match copied {
+            Ok(_) => self.0.place_temp(&temp, &to_rel, mode, &what).await,
             Err(error) => {
                 let _ = once!(self.0, "removing a partial copy", |client, tree| client
                     .delete_file(tree, &temp));
-                if error.kind() == StorageErrorKind::AlreadyExists {
-                    Ok(PlaceOutcome::TargetExists)
+                if error.kind() == StorageErrorKind::Unsupported
+                    || error.kind() == StorageErrorKind::Other
+                {
+                    // A server without server-side copy: stream it through Librarian instead.
+                    tracing::debug!(
+                        from = %from,
+                        to = %to,
+                        error = %error,
+                        "Server-side copy refused; copying through Librarian"
+                    );
+                    let opened = self.open_read(from).await?;
+                    self.put_from_reader(Box::new(opened.reader), to, mode)
+                        .await
                 } else {
                     Err(error)
                 }
@@ -624,5 +769,50 @@ impl Storage for SmbStorage {
             StorageErrorKind::Unsupported,
             "A file on a share is given to tools through the tool URL service",
         ))
+    }
+}
+
+impl SmbStorage {
+    /// Open a file for positioned reads and writes (creating it when `create`), with its size.
+    /// The handle lives on its own clone of a pooled connection; see [`SmbFile`].
+    pub async fn open_file(
+        &self,
+        path: &StoragePath,
+        create: bool,
+    ) -> StorageResult<(super::SmbFile, u64)> {
+        let rel = self.0.relative(path)?;
+        let mut attempt = 0;
+        loop {
+            let (conn, tree) = {
+                let mut guard = self.0.acquire().await?;
+                let held = guard.as_mut().expect("acquire connects");
+                match held.client.connection_for(&held.tree) {
+                    Ok(conn) => (conn, held.tree.clone()),
+                    Err(error) => {
+                        *guard = None;
+                        return Err(StorageError::new(
+                            StorageErrorKind::Unavailable,
+                            format!("The connection to the share is not usable ({error})"),
+                        ));
+                    }
+                }
+            };
+            match super::SmbFile::open(conn, tree, &rel, create).await {
+                // Opening is safe to repeat once: it either finds or makes the same file.
+                Err(error) if error.is_unavailable() && attempt == 0 => {
+                    attempt += 1;
+                    self.0.drop_dead().await;
+                }
+                other => return other,
+            }
+        }
+    }
+
+    /// The share's free and total bytes, where the server says.
+    pub async fn space(&self) -> StorageResult<(u64, u64)> {
+        let info = repeatable!(self.0, "reading the share's free space", |client, tree| {
+            client.fs_info(tree)
+        })?;
+        Ok((info.free_bytes, info.total_bytes))
     }
 }

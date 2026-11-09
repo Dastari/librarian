@@ -197,6 +197,7 @@ pub(crate) fn entity_metadata() -> Vec<&'static graphql_orm::graphql::orm::Entit
         <QualityProfile as Entity>::metadata(),
         <ReleaseBlocklist as Entity>::metadata(),
         <ReleaseRecommendation as Entity>::metadata(),
+        <NetworkServer as Entity>::metadata(),
     ]
 }
 
@@ -1016,6 +1017,133 @@ impl AppWriteInputTransform {
     /// Encrypt a secret that rides in a feed address or link, like source credentials. Where no
     /// services manager exists at all (a bare repository in a tool or test) the value is kept as
     /// given; a running server always has one, and one without a credential key refuses the write.
+    /// Encrypt a server password unless it already is an envelope (a sign-in carried over from
+    /// the old store). Without a key (unit tests with no services) it is kept as given.
+    async fn protect_server_password(
+        &self,
+        ctx: Option<&async_graphql::Context<'_>>,
+        password: String,
+    ) -> async_graphql::Result<String> {
+        if password.is_empty() || Self::credentials_look_encrypted(&password) {
+            return Ok(password);
+        }
+        if ctx.is_none() && self.services_from_ctx(None).is_none() {
+            return Ok(password);
+        }
+        self.encrypt_source_credentials(ctx, password).await
+    }
+
+    async fn prepare_network_server_create(
+        &self,
+        ctx: Option<&async_graphql::Context<'_>>,
+        db: &Database,
+        input: &mut CreateNetworkServerInput,
+    ) -> async_graphql::Result<()> {
+        use crate::services::network_servers as servers;
+        input.host = servers::normalize_host(&input.host).map_err(async_graphql::Error::new)?;
+        input.port = servers::normalize_port(input.port).map_err(async_graphql::Error::new)?;
+        if input.name.trim().is_empty() {
+            input.name = input.host.clone();
+        }
+        input.name = input.name.trim().to_string();
+        input.username = input
+            .username
+            .take()
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty());
+        input.known_shares = servers::normalize_shares(&input.known_shares);
+        input.has_password = !input.password.is_empty();
+        input.password = self
+            .protect_server_password(ctx, std::mem::take(&mut input.password))
+            .await?;
+        let port = input.port.and_then(|port| u16::try_from(port).ok());
+        if servers::find_server(db, &input.host, port)
+            .await
+            .map_err(Self::hook_error)?
+            .is_some()
+        {
+            return Err(async_graphql::Error::new(format!(
+                "The server {} is already saved",
+                Self::server_label(&input.host, input.port)
+            )));
+        }
+        Ok(())
+    }
+
+    async fn prepare_network_server_update(
+        &self,
+        ctx: Option<&async_graphql::Context<'_>>,
+        db: &Database,
+        existing: Option<&NetworkServer>,
+        input: &mut UpdateNetworkServerInput,
+    ) -> async_graphql::Result<()> {
+        use crate::services::network_servers as servers;
+        if let Some(host) = input.host.as_mut() {
+            *host = servers::normalize_host(host).map_err(async_graphql::Error::new)?;
+        }
+        if let Some(port) = input.port.as_mut() {
+            *port = servers::normalize_port(*port).map_err(async_graphql::Error::new)?;
+        }
+        if let Some(name) = input.name.as_mut() {
+            *name = name.trim().to_string();
+        }
+        if let Some(username) = input.username.as_mut() {
+            *username = username
+                .take()
+                .map(|name| name.trim().to_string())
+                .filter(|name| !name.is_empty());
+        }
+        if let Some(shares) = input.known_shares.as_mut() {
+            *shares = servers::normalize_shares(shares);
+        }
+        // Whether a password is stored follows the password itself, and nothing else can claim it.
+        input.has_password = None;
+        if let Some(password) = input.password.take() {
+            input.has_password = Some(!password.is_empty());
+            input.password = Some(self.protect_server_password(ctx, password).await?);
+        }
+        if let Some(existing) = existing {
+            let host = input.host.clone().unwrap_or_else(|| existing.host.clone());
+            let port = input.port.unwrap_or(existing.port);
+            if host != existing.host || port != existing.port {
+                let old_port = existing.port.and_then(|port| u16::try_from(port).ok());
+                let uses = servers::server_usage(db, &existing.host, old_port)
+                    .await
+                    .map_err(Self::hook_error)?;
+                if !uses.is_empty() {
+                    return Err(async_graphql::Error::new(format!(
+                        "{} is still used by {}. Its address cannot change while anything is stored on it: move them to the new address first",
+                        existing.name,
+                        servers::join_words(&uses)
+                    )));
+                }
+                let new_port = port.and_then(|port| u16::try_from(port).ok());
+                if servers::find_server(db, &host, new_port)
+                    .await
+                    .map_err(Self::hook_error)?
+                    .is_some_and(|other| other.id != existing.id)
+                {
+                    return Err(async_graphql::Error::new(format!(
+                        "The server {} is already saved",
+                        Self::server_label(&host, port)
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn server_label(host: &str, port: Option<i32>) -> String {
+        match port {
+            Some(port) => format!("{host}:{port}"),
+            None => host.to_string(),
+        }
+    }
+
+    fn hook_error(error: anyhow::Error) -> async_graphql::Error {
+        async_graphql::Error::new(error.to_string())
+    }
+
     async fn protect_feed_secret(
         &self,
         ctx: Option<&async_graphql::Context<'_>>,
@@ -1146,6 +1274,11 @@ impl WriteInputTransform for AppWriteInputTransform {
                     .protect_feed_secret(ctx, input.release_link.clone())
                     .await?;
             }
+            if entity_name == "NetworkServer"
+                && let Some(input) = input.downcast_mut::<CreateNetworkServerInput>()
+            {
+                self.prepare_network_server_create(ctx, db, input).await?;
+            }
             if entity_name == "MatchingAssistant"
                 && let Some(input) = input.downcast_mut::<CreateMatchingAssistantInput>()
             {
@@ -1209,6 +1342,13 @@ impl WriteInputTransform for AppWriteInputTransform {
                 && let Some(link) = input.link.take()
             {
                 input.link = Some(self.protect_feed_secret(ctx, link).await?);
+            }
+            if entity_name == "NetworkServer"
+                && let Some(input) = input.downcast_mut::<UpdateNetworkServerInput>()
+            {
+                let existing = existing_row.and_then(|row| row.downcast_ref::<NetworkServer>());
+                self.prepare_network_server_update(ctx, db, existing, input)
+                    .await?;
             }
             if entity_name == "MatchingAssistant"
                 && let Some(input) = input.downcast_mut::<UpdateMatchingAssistantInput>()
@@ -1565,6 +1705,37 @@ impl AppMutationHook {
     ) -> Option<Arc<ServicesManager>> {
         ctx.and_then(|ctx| ctx.data::<Arc<ServicesManager>>().ok().cloned())
             .or_else(|| self.services.as_ref().and_then(Weak::upgrade))
+    }
+
+    /// Removing a server that a library, the download folder or a stored torrent still uses would
+    /// leave them unable to sign in: refuse, and say what uses it.
+    async fn refuse_removing_used_server(
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        let server = Self::before::<NetworkServer>(event, "NetworkServer")?;
+        let port = server.port.and_then(|port| u16::try_from(port).ok());
+        let uses =
+            crate::services::network_servers::server_usage(hook_ctx.database(), &server.host, port)
+                .await
+                .map_err(Self::db_error)?;
+        if uses.is_empty() {
+            return Ok(());
+        }
+        Err(async_graphql::Error::new(format!(
+            "{} cannot be removed: {} still {} on it. Move {} to another location first",
+            server.name,
+            crate::services::network_servers::join_words(&uses),
+            if uses.len() == 1
+                && !uses[0].starts_with("the libraries")
+                && !uses[0].contains("torrents")
+            {
+                "is"
+            } else {
+                "are"
+            },
+            if uses.len() == 1 { "it" } else { "them" }
+        )))
     }
 
     async fn cleanup_library_children(
@@ -4009,6 +4180,24 @@ impl MutationHook for AppMutationHook {
                     | "Person",
                 ) => {
                     Self::cleanup_parent_children(hook_ctx, event).await?;
+                }
+                (MutationPhase::Before, ChangeAction::Deleted, "NetworkServer") => {
+                    Self::refuse_removing_used_server(hook_ctx, event).await?;
+                }
+                (MutationPhase::After, _, "NetworkServer") => {
+                    // A changed or removed sign-in: connections made with the old one go.
+                    for server in [
+                        event.before::<NetworkServer>().ok().flatten(),
+                        event.after::<NetworkServer>().ok().flatten(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        crate::services::library_storage::library_storage().forget_server(
+                            &server.host,
+                            server.port.and_then(|port| u16::try_from(port).ok()),
+                        );
+                    }
                 }
                 (MutationPhase::Before, ChangeAction::Deleted, "User") => {
                     Self::cleanup_user_refresh_tokens(hook_ctx, event).await?;

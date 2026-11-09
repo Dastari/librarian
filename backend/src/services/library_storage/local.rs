@@ -222,6 +222,56 @@ impl Storage for LocalStorage {
         }
     }
 
+    async fn put_from_reader(
+        &self,
+        mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        dst: &StoragePath,
+        mode: PlaceMode,
+    ) -> StorageResult<PlaceOutcome> {
+        let dst = local_path(dst)?.to_path_buf();
+        if mode == PlaceMode::NoClobber && tokio::fs::symlink_metadata(&dst).await.is_ok() {
+            return Ok(PlaceOutcome::TargetExists);
+        }
+        let temp = cross_device_temp_path(&dst);
+        let written: StorageResult<()> = async {
+            let mut file = tokio::fs::File::create(&temp).await?;
+            tokio::io::copy(&mut reader, &mut file).await?;
+            file.sync_all().await?;
+            Ok(())
+        }
+        .await;
+        if let Err(error) = written {
+            let _ = tokio::fs::remove_file(&temp).await;
+            return Err(error);
+        }
+        let placed = match mode {
+            PlaceMode::Replace => tokio::fs::rename(&temp, &dst)
+                .await
+                .map(|()| PlaceOutcome::Placed)
+                .map_err(StorageError::from),
+            PlaceMode::NoClobber => {
+                let (temp, dst) = (temp.clone(), dst.clone());
+                tokio::task::spawn_blocking(move || place_no_clobber_blocking(&temp, &dst, true))
+                    .await
+                    .map_err(|error| StorageError::new(StorageErrorKind::Other, error.to_string()))?
+                    .map_err(placement_error)
+            }
+        };
+        // Gone already when it was moved into place.
+        let _ = tokio::fs::remove_file(&temp).await;
+        placed
+    }
+
+    async fn copy_within(
+        &self,
+        from: &StoragePath,
+        to: &StoragePath,
+        mode: PlaceMode,
+    ) -> StorageResult<PlaceOutcome> {
+        let from = local_path(from)?.to_path_buf();
+        self.put_from_local(&from, to, mode).await
+    }
+
     async fn rename(
         &self,
         from: &StoragePath,

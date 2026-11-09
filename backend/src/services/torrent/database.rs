@@ -57,7 +57,7 @@ fn open_fd_diagnostics() -> Option<String> {
     }
 }
 
-async fn execute_query(
+pub(crate) async fn execute_query(
     schema: &LibrarianSchema,
     auth_user: &AuthUser,
     query: &str,
@@ -87,7 +87,7 @@ async fn execute_query(
     Ok(data)
 }
 
-async fn execute_mutation(
+pub(crate) async fn execute_mutation(
     schema: &LibrarianSchema,
     auth_user: &AuthUser,
     query: &str,
@@ -1154,6 +1154,45 @@ pub async fn list_resumable(pool: &Database) -> Result<Vec<ResumableRecord>, any
             magnet_uri: torrent.magnet_uri,
         })
         .collect())
+}
+
+/// Write an app setting's raw value (stored as given), creating the row if there is none.
+pub async fn put_setting_value(
+    db: &Database,
+    key: &str,
+    value: &str,
+    category: &str,
+    description: &str,
+) -> Result<(), anyhow::Error> {
+    use crate::graphql::entities::{CreateAppSettingInput, UpdateAppSettingInput};
+    match find_setting(db, key).await? {
+        Some(existing) => {
+            AppSetting::update_by_id(
+                db,
+                &existing.id,
+                UpdateAppSettingInput {
+                    key: None,
+                    value: Some(value.to_string()),
+                    description: None,
+                    category: None,
+                },
+            )
+            .await?;
+        }
+        None => {
+            AppSetting::insert(
+                db,
+                CreateAppSettingInput {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                    description: Some(description.to_string()),
+                    category: category.to_string(),
+                },
+            )
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 async fn find_setting(db: &Database, key: &str) -> Result<Option<AppSetting>, anyhow::Error> {

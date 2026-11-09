@@ -16,6 +16,7 @@ vi.mock("@apollo/client/react", () => ({
   },
 }));
 vi.mock("@/features/files/FolderPickerDialog", () => ({ FolderPickerDialog: () => null }));
+vi.mock("@/lib/graphql/live/hooks", () => ({ useLiveQuery: () => ({ data: undefined, loading: false, refetch: vi.fn() }) }));
 vi.mock("glass-ux/toast", async (original) => ({ ...(await original<typeof import("glass-ux/toast")>()), toast: { success: mocks.success, danger: mocks.danger } }));
 
 Element.prototype.getAnimations ??= () => [];

@@ -334,5 +334,11 @@
     "list": "releaseRecommendations",
     "get": "releaseRecommendation",
     "changed": "releaseRecommendationChanged"
+  },
+  {
+    "entity": "NetworkServer",
+    "list": "networkServers",
+    "get": "networkServer",
+    "changed": "networkServerChanged"
   }
 ]

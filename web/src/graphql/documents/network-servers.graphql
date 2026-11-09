@@ -1,0 +1,25 @@
+query NetworkServerShares($id: String!) {
+  networkServerShares(id: $id) {
+    success
+    error
+    shares {
+      name
+      comment
+      listed
+    }
+  }
+}
+
+mutation TestNetworkServer($input: TestNetworkServerInput!) {
+  testNetworkServer(input: $input) {
+    success
+    error
+    shares {
+      name
+      comment
+      listed
+    }
+    sharesError
+    folders
+  }
+}

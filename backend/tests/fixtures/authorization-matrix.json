@@ -41,6 +41,7 @@
   {"entity":"CastSession","read":"member.read","write":"admin.write","scope":"owner"},
   {"entity":"CastSetting","read":"member.read","write":"admin.write","scope":"shared"},
   {"entity":"UsenetServer","read":"admin.read","write":"admin.write","scope":"admin"},
+  {"entity":"NetworkServer","read":"admin.read","write":"admin.write","scope":"admin"},
   {"entity":"MatchingAssistant","read":"admin.read","write":"admin.write","scope":"admin"},
   {"entity":"IdentificationEvent","read":"member.read","write":"admin.write","scope":"owner"},
   {"entity":"IdentifiedItem","read":"member.read","write":"admin.write","scope":"owner"},

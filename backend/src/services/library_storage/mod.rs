@@ -19,6 +19,7 @@ mod location;
 mod path;
 mod registry;
 mod smb;
+mod smb_file;
 mod smb_reader;
 mod staged;
 mod types;
@@ -27,7 +28,8 @@ pub use local::{LocalStorage, place_no_clobber_blocking};
 pub use location::{CredentialRef, LocationError, SmbLocation, StorageLocation};
 pub use path::{IntoStoragePath, StorageKind, StoragePath, is_smb_uri};
 pub use registry::{LibraryStorage, ShareProvider, ToolUrlIssuer, library_storage};
-pub use smb::{SmbCredentials, SmbStorage};
+pub use smb::{ShareListing, SmbCredentials, SmbStorage, list_server_shares};
+pub use smb_file::SmbFile;
 pub use staged::{MAX_STAGED_BYTES, StagedCopy, run_on_input};
 pub use types::{
     DirEntry, EntryKind, EntryMeta, FileIdentity, PlaceMode, PlaceOutcome, StorageCapabilities,
@@ -58,6 +60,12 @@ pub trait Storage: Send + Sync {
     fn kind(&self) -> StorageKind;
 
     fn capabilities(&self) -> StorageCapabilities;
+
+    /// This storage as an SMB share, for callers that need what only a share does (open file
+    /// handles for the torrent client).
+    fn as_smb(&self) -> Option<&SmbStorage> {
+        None
+    }
 
     /// Size, kind and times, following a symlink to what it points at.
     async fn stat(&self, path: &StoragePath) -> StorageResult<EntryMeta>;
@@ -111,6 +119,29 @@ pub trait Storage: Send + Sync {
         dst: &StoragePath,
         mode: PlaceMode,
     ) -> StorageResult<PlaceOutcome>;
+
+    /// Write what `reader` gives to `dst`, which must be in this storage: a copy from another
+    /// storage. The bytes go to a temporary name first, so a copy that stops half way never has
+    /// the real name. With [`PlaceMode::NoClobber`] an existing `dst` is left alone.
+    async fn put_from_reader(
+        &self,
+        reader: Box<dyn AsyncRead + Send + Unpin>,
+        dst: &StoragePath,
+        mode: PlaceMode,
+    ) -> StorageResult<PlaceOutcome>;
+
+    /// Copy a file to another path in this storage, leaving the source as it is. A storage that
+    /// can copy without moving the bytes through Librarian (an SMB server-side copy) does so.
+    async fn copy_within(
+        &self,
+        from: &StoragePath,
+        to: &StoragePath,
+        mode: PlaceMode,
+    ) -> StorageResult<PlaceOutcome> {
+        let opened = self.open_read(from).await?;
+        self.put_from_reader(Box::new(opened.reader), to, mode)
+            .await
+    }
 
     /// Move a file within this storage. With [`PlaceMode::NoClobber`] an existing `to` is left
     /// alone. Where [`StorageCapabilities::atomic_rename`] is `false` this is a copy then a

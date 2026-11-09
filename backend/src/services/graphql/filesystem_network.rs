@@ -812,30 +812,49 @@ impl NetworkShareProvider {
     }
 }
 
+/// The sign-in for a share: its saved server's, else a sign-in saved for the share before servers
+/// were an entity, else a guest session.
+pub async fn share_credentials(
+    db: &Database,
+    services: &Arc<ServicesManager>,
+    share: &SmbLocation,
+) -> StorageResult<SmbCredentials> {
+    let unreadable = |error: anyhow::Error| {
+        StorageError::new(
+            StorageErrorKind::Unavailable,
+            format!(
+                "The saved sign-in for '{}' could not be read: {error}",
+                share.credential_ref()
+            ),
+        )
+    };
+    if let Some(server) = crate::services::network_servers::find_server(db, &share.host, share.port)
+        .await
+        .map_err(unreadable)?
+    {
+        return crate::services::network_servers::credentials_of(services, &server)
+            .await
+            .map_err(unreadable);
+    }
+    let saved = load_share_credentials(db, services, &share.credential_ref())
+        .await
+        .map_err(unreadable)?;
+    Ok(saved.map_or_else(
+        || SmbCredentials {
+            username: String::new(),
+            password: String::new(),
+        },
+        |saved| SmbCredentials {
+            username: saved.username,
+            password: saved.password,
+        },
+    ))
+}
+
 #[async_trait::async_trait]
 impl ShareProvider for NetworkShareProvider {
     async fn connect(&self, share: &SmbLocation) -> StorageResult<Arc<dyn Storage>> {
-        let saved = load_share_credentials(&self.db, &self.services, &share.credential_ref())
-            .await
-            .map_err(|error| {
-                StorageError::new(
-                    StorageErrorKind::Unavailable,
-                    format!(
-                        "The saved sign-in for '{}' could not be read: {error}",
-                        share.credential_ref()
-                    ),
-                )
-            })?;
-        let credentials = saved.map_or_else(
-            || SmbCredentials {
-                username: String::new(),
-                password: String::new(),
-            },
-            |saved| SmbCredentials {
-                username: saved.username,
-                password: saved.password,
-            },
-        );
+        let credentials = share_credentials(&self.db, &self.services, share).await?;
         let storage = SmbStorage::new(share.clone(), credentials);
         storage.check().await?;
         Ok(Arc::new(storage))
@@ -863,30 +882,25 @@ pub async fn connect_share(
     let share = share.share_root();
     let reference = share.credential_ref();
     let entered = !username.trim().is_empty() || !password.is_empty();
+    let saved = share_credentials(db, services, &share).await.ok();
     let credentials = if entered {
         let mut password = password.to_string();
         if password.is_empty()
-            && let Ok(Some(saved)) = load_share_credentials(db, services, &reference).await
+            && let Some(saved) = saved.as_ref()
             && saved.username.eq_ignore_ascii_case(username.trim())
         {
             // A blank password for the saved user name means keep the saved password.
-            password = saved.password;
+            password = saved.password.clone();
         }
         SmbCredentials {
             username: username.trim().to_string(),
             password,
         }
     } else {
-        match load_share_credentials(db, services, &reference).await {
-            Ok(Some(saved)) => SmbCredentials {
-                username: saved.username,
-                password: saved.password,
-            },
-            _ => SmbCredentials {
-                username: String::new(),
-                password: String::new(),
-            },
-        }
+        saved.unwrap_or(SmbCredentials {
+            username: String::new(),
+            password: String::new(),
+        })
     };
     let storage = SmbStorage::new(share.clone(), credentials.clone());
     storage.check().await?;
@@ -897,26 +911,86 @@ pub async fn connect_share(
         .filter(|entry| entry.kind == crate::services::library_storage::EntryKind::Directory)
         .count();
     if save && entered {
-        save_share_credentials(
-            db,
-            services,
-            &reference,
-            &credentials.username,
-            &credentials.password,
-        )
-        .await
-        .map_err(|error| {
-            StorageError::new(
-                StorageErrorKind::Other,
-                format!("Connected, but the sign-in could not be saved: {error}"),
-            )
-        })?;
+        save_server_sign_in(db, services, &share, &credentials)
+            .await
+            .map_err(|error| {
+                StorageError::new(
+                    StorageErrorKind::Other,
+                    format!("Connected, but the sign-in could not be saved: {error}"),
+                )
+            })?;
         library_storage().forget_share(&share);
     }
+    let _ = reference;
     Ok(ShareConnection {
         share: share.to_uri(),
         folders,
     })
+}
+
+/// Save a sign-in that worked on the share's server (`NetworkServer`), creating the server if it
+/// is not saved yet and remembering the share on it.
+async fn save_server_sign_in(
+    db: &Database,
+    services: &Arc<ServicesManager>,
+    share: &SmbLocation,
+    credentials: &SmbCredentials,
+) -> Result<()> {
+    let schema = services
+        .get_graphql()
+        .await
+        .ok_or_else(|| anyhow!("GraphQL service not available"))?
+        .schema()
+        .await
+        .ok_or_else(|| anyhow!("GraphQL schema not ready"))?;
+    let auth = crate::services::torrent::database::system_auth_user();
+    match crate::services::network_servers::find_server(db, &share.host, share.port).await? {
+        Some(server) => {
+            let mut shares = server.known_shares.clone();
+            shares.push(share.share.clone());
+            crate::services::torrent::database::execute_mutation(
+                &schema,
+                &auth,
+                r#"mutation SaveShareSignIn($id: String!, $input: UpdateNetworkServerInput!) {
+                    UpdateNetworkServer: updateNetworkServer(id: $id, input: $input) { success error }
+                }"#,
+                serde_json::json!({
+                    "id": server.id,
+                    "input": {
+                        "username": credentials.username,
+                        "password": credentials.password,
+                        "knownShares": shares,
+                    }
+                }),
+            )
+            .await?;
+        }
+        None => {
+            crate::services::torrent::database::execute_mutation(
+                &schema,
+                &auth,
+                r#"mutation SaveShareServer($input: CreateNetworkServerInput!) {
+                    CreateNetworkServer: createNetworkServer(input: $input) { success error }
+                }"#,
+                serde_json::json!({
+                    "input": {
+                        "name": share.host,
+                        "host": share.host,
+                        "port": share.port.map(i32::from),
+                        "username": credentials.username,
+                        "password": credentials.password,
+                        "hasPassword": false,
+                        "knownShares": [share.share],
+                        "status": "ok",
+                        "lastError": null,
+                        "lastCheckedAt": Utc::now().to_rfc3339(),
+                    }
+                }),
+            )
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 /// The user name saved for a share, if a sign-in is saved.
@@ -925,6 +999,11 @@ pub async fn saved_share_username(
     services: &Arc<ServicesManager>,
     share: &SmbLocation,
 ) -> Option<String> {
+    if let Ok(Some(server)) =
+        crate::services::network_servers::find_server(db, &share.host, share.port).await
+    {
+        return Some(server.username.unwrap_or_default());
+    }
     load_share_credentials(db, services, &share.credential_ref())
         .await
         .ok()

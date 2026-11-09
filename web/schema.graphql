@@ -1442,6 +1442,40 @@ input ConfigureNetworkPathInput {
 }
 
 """
+Sign in to a network share to check it, and keep the sign-in for the share.
+"""
+input ConnectShareInput {
+  """Host name or IP address of the file server."""
+  host: String!
+
+  """Port, when it is not 445."""
+  port: Int
+
+  """Share name, such as `media`."""
+  share: String!
+
+  """Blank for the saved sign-in, or a guest share when none is saved."""
+  username: String
+
+  """Blank keeps the saved password when the user name is the saved one."""
+  password: String
+
+  """Keep the sign-in, encrypted, if it works. On by default."""
+  save: Boolean
+}
+
+type ConnectSharePayload {
+  success: Boolean!
+  error: String
+
+  """The share's normalised `smb://host[:port]/share` address."""
+  share: String
+
+  """Folders at the top of the share."""
+  folders: Int!
+}
+
+"""
 Content status for playable media items (episodes, movies, tracks, chapters)
 """
 enum ContentStatus {
@@ -1929,6 +1963,19 @@ input CreateNamingPatternInput {
   description: String
   isDefault: Boolean!
   isSystem: Boolean!
+}
+
+input CreateNetworkServerInput {
+  name: String!
+  host: String!
+  port: Int
+  username: String
+  password: String!
+  hasPassword: Boolean!
+  knownShares: JSON!
+  status: String
+  lastError: String
+  lastCheckedAt: String
 }
 
 input CreateNotificationInput {
@@ -2494,6 +2541,13 @@ type DeleteMoviesResult {
 
 """Result of bulk delete by Where filter"""
 type DeleteNamingPatternsResult {
+  success: Boolean!
+  error: String
+  deletedCount: Int!
+}
+
+"""Result of bulk delete by Where filter"""
+type DeleteNetworkServersResult {
   success: Boolean!
   error: String
   deletedCount: Int!
@@ -3449,6 +3503,49 @@ type LibraryEdge {
 
   """A cursor for pagination"""
   cursor: String!
+}
+
+"""
+What moving a library to a folder its files were copied to would find. Nothing is changed.
+"""
+type LibraryMovePlan {
+  """The library's current folder."""
+  oldPath: String!
+
+  """The new folder, as it would be saved."""
+  newPath: String!
+
+  """Files the library holds."""
+  fileCount: Int!
+
+  """On the new folder with the same size."""
+  matched: Int!
+
+  """Not on the new folder at all."""
+  missing: Int!
+
+  """The first of them, as paths below the library's folder."""
+  missingFiles: [String!]!
+
+  """
+  On the new folder, but at a different size (a copy that did not finish).
+  """
+  changed: Int!
+  changedFiles: [String!]!
+
+  """
+  Media files on the new folder that the library does not hold; the next scan finds them.
+  """
+  extra: Int!
+  extraFiles: [String!]!
+
+  """Why the move cannot go ahead at all."""
+  blocked: String
+
+  """
+  Every file is on the new folder at its size, and nothing blocks the move.
+  """
+  canApply: Boolean!
 }
 
 input LibraryOrderByInput {
@@ -4472,6 +4569,36 @@ input MetadataCacheWhereInput {
   not: MetadataCacheWhereInput
 }
 
+"""Move a library to a folder its files were copied to."""
+input MoveLibraryInput {
+  libraryId: String!
+
+  """The new folder: an absolute path, or `smb://host/share/folder`."""
+  newPath: String!
+
+  """
+  Move even though some files are not on the new folder yet. They are then reported
+  missing by the next scan.
+  """
+  allowMissing: Boolean
+}
+
+type MoveLibraryResult {
+  success: Boolean!
+  error: String
+
+  """File records rewritten to the new folder."""
+  movedFiles: Int!
+
+  """Show, album and audiobook folders rewritten."""
+  movedFolders: Int!
+
+  """
+  Open scan issues closed, because they named paths that no longer apply.
+  """
+  closedIssues: Int!
+}
+
 type Movie {
   id: String!
   libraryId: String!
@@ -4783,7 +4910,6 @@ type Mutation {
   logout: LogoutPayload!
   createDirectory(input: CreateDirectoryInput!): FileOperationPayload!
   configureNetworkPath(input: ConfigureNetworkPathInput!): NetworkPathConfigPayload!
-  reconnectLibraryPath(path: String!): NetworkPathConfigPayload!
 
   """
   Sign in to a network share, check that it can be read, and keep the sign-in. The answer
@@ -4797,6 +4923,7 @@ type Mutation {
   files keep their ids, matches, progress and playlists. Run a scan afterwards to verify.
   """
   moveLibrary(input: MoveLibraryInput!): MoveLibraryResult!
+  reconnectLibraryPath(path: String!): NetworkPathConfigPayload!
   testTmdbConnection(input: TestTmdbConnectionInput!): TestTmdbConnectionResult!
   scanLibrary(id: String!): ScanLibraryResult!
   analyzeMediaFile(mediaFileId: String!, path: String!): AnalyzeMediaFileResult!
@@ -4978,6 +5105,13 @@ type Mutation {
   the files that fill what was missing. Owner or admin.
   """
   grabRecommendation(id: String!): GrabRecommendationPayload!
+
+  """
+  Sign in to a server and list its shares, with a saved server's sign-in or with what was
+  typed. The answer names what is wrong in words a person can act on. A saved server's
+  status records the outcome, and the shares it lists are remembered on it.
+  """
+  testNetworkServer(input: TestNetworkServerInput!): TestNetworkServerResult!
 
   """
   Create a new #struct_name_str
@@ -7342,6 +7476,57 @@ type Mutation {
     """Where"""
     where: ReleaseBlocklistWhereInput
   ): DeleteReleaseBlocklistsResult!
+
+  """
+  Create a new #struct_name_str
+  Create one NetworkServer records
+  """
+  createNetworkServer(
+    """Input"""
+    input: CreateNetworkServerInput!
+  ): NetworkServerResult!
+
+  """
+  Update an existing #struct_name_str
+  Update one NetworkServer records
+  """
+  updateNetworkServer(
+    """Id"""
+    id: String!
+
+    """Input"""
+    input: UpdateNetworkServerInput!
+  ): NetworkServerResult!
+
+  """
+  Delete a #struct_name_str
+  Delete one NetworkServer records
+  """
+  deleteNetworkServer(
+    """Id"""
+    id: String!
+  ): NetworkServerResult!
+
+  """
+  Update multiple #plural_name matching the given Where filter
+  Update matching NetworkServer records
+  """
+  updateNetworkServers(
+    """Where"""
+    where: NetworkServerWhereInput
+
+    """Input"""
+    input: UpdateNetworkServerInput!
+  ): UpdateNetworkServersResult!
+
+  """
+  Delete multiple #plural_name matching the given Where filter
+  Delete matching NetworkServer records
+  """
+  deleteNetworkServers(
+    """Where"""
+    where: NetworkServerWhereInput
+  ): DeleteNetworkServersResult!
 }
 
 """Naming Pattern"""
@@ -7440,117 +7625,6 @@ input NamingPatternWhereInput {
   not: NamingPatternWhereInput
 }
 
-"""Sign in to a network share to check it, and keep the sign-in for the share."""
-input ConnectShareInput {
-  """Host name or IP address of the file server."""
-  host: String!
-
-  """Port, when it is not 445."""
-  port: Int
-
-  """Share name, such as `media`."""
-  share: String!
-
-  """Blank for the saved sign-in, or a guest share when none is saved."""
-  username: String
-
-  """Blank keeps the saved password when the user name is the saved one."""
-  password: String
-
-  """Keep the sign-in, encrypted, if it works. On by default."""
-  save: Boolean
-}
-
-type ConnectSharePayload {
-  success: Boolean!
-  error: String
-
-  """The share's normalised `smb://host[:port]/share` address."""
-  share: String
-
-  """Folders at the top of the share."""
-  folders: Int!
-}
-
-"""Move a library to a folder its files were copied to."""
-input MoveLibraryInput {
-  libraryId: String!
-
-  """The new folder: an absolute path, or `smb://host/share/folder`."""
-  newPath: String!
-
-  """
-  Move even though some files are not on the new folder yet. They are then reported
-  missing by the next scan.
-  """
-  allowMissing: Boolean
-}
-
-type MoveLibraryResult {
-  success: Boolean!
-  error: String
-
-  """File records rewritten to the new folder."""
-  movedFiles: Int!
-
-  """Show, album and audiobook folders rewritten."""
-  movedFolders: Int!
-
-  """
-  Open scan issues closed, because they named paths that no longer apply.
-  """
-  closedIssues: Int!
-}
-
-"""Whether a saved sign-in exists for a share, and for whom."""
-type ShareSignIn {
-  """The share's normalised `smb://host[:port]/share` address."""
-  share: String!
-  saved: Boolean!
-  username: String
-}
-
-"""
-What moving a library to a folder its files were copied to would find. Nothing is changed.
-"""
-type LibraryMovePlan {
-  """The library's current folder."""
-  oldPath: String!
-
-  """The new folder, as it would be saved."""
-  newPath: String!
-
-  """Files the library holds."""
-  fileCount: Int!
-
-  """On the new folder with the same size."""
-  matched: Int!
-
-  """Not on the new folder at all."""
-  missing: Int!
-
-  """The first of them, as paths below the library's folder."""
-  missingFiles: [String!]!
-
-  """
-  On the new folder, but at a different size (a copy that did not finish).
-  """
-  changed: Int!
-  changedFiles: [String!]!
-
-  """
-  Media files on the new folder that the library does not hold; the next scan finds them.
-  """
-  extra: Int!
-  extraFiles: [String!]!
-
-  """Why the move cannot go ahead at all."""
-  blocked: String
-
-  """Every file is on the new folder at its size, and nothing blocks the move."""
-  canApply: Boolean!
-}
-
 type NetworkPathConfigPayload {
   success: Boolean!
   error: String
@@ -7558,6 +7632,136 @@ type NetworkPathConfigPayload {
   connected: Boolean!
   stored: Boolean!
   message: String
+}
+
+"""
+A file server Librarian signs in to by itself (SMB, no operating-system mount), saved once
+with its sign-in so libraries and download folders on its shares never ask for it again
+(`docs/design.md` Q98). A location on it stays a plain `smb://host[:port]/share/...` string;
+the server is found from the host and port.
+
+The password is written through the generated mutations and encrypted by the write
+transform (the same envelope as `Source.credentials`); it is never readable through GraphQL.
+`hasPassword` says whether one is stored. The lifecycle hooks normalise the host, refuse a
+second server for the same host and port, and refuse removing a server, or moving it to
+another host, while a library or the download folder still uses it.
+"""
+type NetworkServer {
+  id: String!
+
+  """What the server is called in Librarian ("TrueNAS")."""
+  name: String!
+
+  """A name or an IP address, lower case."""
+  host: String!
+
+  """`None` is the standard SMB port, 445."""
+  port: Int
+
+  """Empty for a guest sign-in."""
+  username: String
+
+  """
+  Whether a password is stored. Set by the write transform from `password`.
+  """
+  hasPassword: Boolean!
+
+  """
+  Share names known on this server: those it listed, and any typed in by hand where it would
+  not list them. Offered when choosing a location, so a share is never typed twice.
+  """
+  knownShares: [String!]!
+
+  """`ok` or `failing`, from the last test or use."""
+  status: String
+  lastError: String
+  lastCheckedAt: String
+  createdAt: String!
+  updatedAt: String!
+
+  """
+  The server's address as locations on it begin: `smb://host` or `smb://host:port`.
+  """
+  address: String!
+}
+
+"""Event for #struct_name changes (subscriptions)"""
+type NetworkServerChangedEvent {
+  action: ChangeAction!
+  changeKind: ChangeKind!
+  id: String!
+  sourceEntity: String
+  sourceId: String
+  path: [String!]!
+  networkServer: NetworkServer
+}
+
+"""Connection containing edges and page info"""
+type NetworkServerConnection {
+  """The edges in this connection"""
+  edges: [NetworkServerEdge!]!
+
+  """Pagination information"""
+  pageInfo: PageInfo!
+}
+
+"""Edge containing a node and cursor"""
+type NetworkServerEdge {
+  """The item at the end of the edge"""
+  node: NetworkServer!
+
+  """A cursor for pagination"""
+  cursor: String!
+}
+
+input NetworkServerOrderByInput {
+  name: OrderDirection
+  host: OrderDirection
+  lastCheckedAt: OrderDirection
+  createdAt: OrderDirection
+  updatedAt: OrderDirection
+}
+
+"""Result type for #struct_name mutations"""
+type NetworkServerResult {
+  success: Boolean!
+  error: String
+  networkServer: NetworkServer
+}
+
+type NetworkServerSharesResult {
+  success: Boolean!
+  error: String
+  shares: [NetworkShare!]!
+}
+
+input NetworkServerWhereInput {
+  id: StringFilter
+  name: StringFilter
+  host: StringFilter
+  port: IntFilter
+  hasPassword: BoolFilter
+  status: StringFilter
+  lastCheckedAt: DateFilter
+  createdAt: DateFilter
+  updatedAt: DateFilter
+
+  """Logical AND of conditions"""
+  and: [NetworkServerWhereInput!]
+
+  """Logical OR of conditions"""
+  or: [NetworkServerWhereInput!]
+
+  """Logical NOT of condition"""
+  not: NetworkServerWhereInput
+}
+
+type NetworkShare {
+  name: String!
+  comment: String
+
+  """Listed by the server just now (otherwise only remembered)."""
+  listed: Boolean!
 }
 
 type Notification {
@@ -8602,6 +8806,12 @@ type Query {
 
   """Browse a directory on the server. Requires authentication."""
   browseDirectory(input: BrowseDirectoryInput): BrowseDirectoryResult!
+
+  """
+  The shares a saved server offers: what it lists now, with the shares remembered on it.
+  When it cannot be reached the remembered shares are returned with the reason.
+  """
+  networkServerShares(id: String!): NetworkServerSharesResult!
 
   """Get available source definitions (e.g., IPTorrents, Newznab, etc.)"""
   availableSourceDefinitions: [SourceDefinitionInfo!]!
@@ -9990,6 +10200,30 @@ type Query {
     """Id"""
     id: String!
   ): ReleaseRecommendation
+
+  """
+  Get a list of #plural_name with optional filtering, sorting, and pagination
+  List NetworkServer records
+  """
+  networkServers(
+    """Where"""
+    where: NetworkServerWhereInput
+
+    """Order by"""
+    orderBy: [NetworkServerOrderByInput!]
+
+    """Page"""
+    page: PageInput
+  ): NetworkServerConnection!
+
+  """
+  Get a single #struct_name_str by ID
+  Read one NetworkServer records
+  """
+  networkServer(
+    """Id"""
+    id: String!
+  ): NetworkServer
 }
 
 """Refresh Token"""
@@ -11188,6 +11422,14 @@ input SeasonWhereInput {
 type SessionInvalidation {
   """ready, changed or resync. No account/credential payload is broadcast."""
   kind: String!
+}
+
+"""Whether a saved sign-in exists for a share, and for whom."""
+type ShareSignIn {
+  """The share's normalised `smb://host[:port]/share` address."""
+  share: String!
+  saved: Boolean!
+  username: String
 }
 
 """
@@ -12761,6 +13003,23 @@ type Subscription {
     """
     keys: [String!]
   ): ReleaseRecommendationChangedEvent!
+
+  """
+  Subscribe to #struct_name_str changes
+  Observe changes to NetworkServer records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+  """
+  networkServerChanged(
+    """Filter"""
+    filter: SubscriptionFilterInput
+
+    """Exact complete primary key to observe"""
+    key: String
+
+    """
+    Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+    """
+    keys: [String!]
+  ): NetworkServerChangedEvent!
 }
 
 input SubscriptionFilterInput {
@@ -12866,6 +13125,35 @@ input SubtitleWhereInput {
 input TestLlmParserInput {
   filename: String!
   libraryType: String!
+}
+
+"""
+What to sign in with: a saved server, or what was typed before saving it (or both: typed
+values win, and a blank password with the saved user name keeps the saved password).
+"""
+input TestNetworkServerInput {
+  """A saved server. Its result is recorded on it."""
+  id: String
+  host: String
+  port: Int
+  username: String
+  password: String
+
+  """Also open this share and count its top-level folders."""
+  share: String
+}
+
+type TestNetworkServerResult {
+  """Signed in (and, with `share`, opened it)."""
+  success: Boolean!
+  error: String
+  shares: [NetworkShare!]!
+
+  """Why the shares could not be listed, when signing in worked."""
+  sharesError: String
+
+  """Folders at the top of `share`, when one was given."""
+  folders: Int
 }
 
 input TestOllamaConnectionInput {
@@ -14094,6 +14382,26 @@ input UpdateNamingPatternInput {
 
 """Result of bulk update by Where filter"""
 type UpdateNamingPatternsResult {
+  success: Boolean!
+  error: String
+  affectedCount: Int!
+}
+
+input UpdateNetworkServerInput {
+  name: String
+  host: String
+  port: Int
+  username: String
+  password: String
+  hasPassword: Boolean
+  knownShares: JSON
+  status: String
+  lastError: String
+  lastCheckedAt: String
+}
+
+"""Result of bulk update by Where filter"""
+type UpdateNetworkServersResult {
   success: Boolean!
   error: String
   affectedCount: Int!

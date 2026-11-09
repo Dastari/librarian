@@ -277,6 +277,22 @@ async fn async_main() -> anyhow::Result<()> {
         crate::services::tool_url::tool_urls().configure(bind, config.port);
         crate::services::library_storage::library_storage()
             .install_tool_url_issuer(Arc::new(crate::services::tool_url::GlobalToolUrls));
+        // Share sign-ins saved before servers were an entity become saved servers, once.
+        if let Some(graphql) = services.get_graphql().await
+            && let Some(schema) = graphql.schema().await
+        {
+            match crate::services::network_servers::carry_over_saved_sign_ins(&db, &schema).await {
+                Ok(0) => {}
+                Ok(count) => tracing::info!(
+                    servers = count,
+                    "Saved share sign-ins carried over to saved servers"
+                ),
+                Err(error) => tracing::warn!(
+                    error = %error,
+                    "Could not carry saved share sign-ins over to saved servers; they keep working as they are"
+                ),
+            }
+        }
         // A move that a stopped server left half done is finished before anything scans.
         if let Some(scan) = services.get_library_scan().await {
             tokio::spawn(async move { scan.resume_library_moves().await });
