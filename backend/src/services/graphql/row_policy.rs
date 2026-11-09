@@ -184,9 +184,8 @@ impl OwnershipRowPolicy {
             "Person" | "CastDevice" | "CastSetting" | "ScheduleCache" | "TorznabCategory"
             | "QualityProfile" | "ReleaseBlocklist" => ScopeClass::Shared,
             "Source" | "User" | "InviteToken" | "RefreshToken" | "AppSetting" | "AppLog"
-            | "UsenetServer" | "ScheduleSyncState" | "MetadataCache" | "MatchingAssistant" => {
-                ScopeClass::Admin
-            }
+            | "UsenetServer" | "ScheduleSyncState" | "MetadataCache" | "MatchingAssistant"
+            | "TorrentContents" => ScopeClass::Admin,
             _ => return None,
         })
     }

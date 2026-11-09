@@ -91,6 +91,7 @@ macro_rules! librarian_schema_roots {
         QualityProfile,
         ReleaseBlocklist,
         ReleaseRecommendation,
+        TorrentContents,
     ],
     // Entities that no client or internal GraphQL operation writes through the generated
     // roots: they are written by services in Rust (analysis, scan runs, auth sessions) or
@@ -113,6 +114,7 @@ macro_rules! librarian_schema_roots {
         UsenetDownload,
         UsenetServer,
         ReleaseRecommendation,
+        TorrentContents,
     ],
     extra_query_types: [FilesystemQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries],
     extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations],
@@ -434,6 +436,7 @@ mod tests {
             QualityProfile,
             ReleaseBlocklist,
             ReleaseRecommendation,
+            TorrentContents,
         );
         expected.sort();
         actual.sort();

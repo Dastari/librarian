@@ -65,6 +65,7 @@ pub mod quality_profile;
 pub mod release_blocklist;
 pub mod release_recommendation;
 pub mod storage_object;
+pub mod torrent_contents;
 pub mod torznab_category;
 
 // Higher-level entities with multiple relations
@@ -125,6 +126,7 @@ pub use source_priority_rule::*;
 pub use storage_object::*;
 pub use subtitle::*;
 pub use torrent::*;
+pub use torrent_contents::*;
 pub use torrent_file::*;
 pub use torznab_category::*;
 pub use track::*;

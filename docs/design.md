@@ -1740,3 +1740,36 @@ labelling catalogue items.
 from older rules (including every row written before the column existed) does not count as an answer: lookups ignore it, it
 cannot be grabbed, and the next pass removes it, so the Babylon Berlin row is replaced within one worker tick rather than
 after its day. Raise the version whenever a change means stored answers may be wrong.
+
+### Q99: Can a torrent be looked into before it is grabbed?
+**Answer:** Yes: its file list (names, sizes, piece layout) is read without downloading anything, by
+`services::torrent::inspect`, and kept as a `TorrentContents` row keyed by info hash.
+- **A `.torrent` link** (Torznab, IPTorrents, a feed item): fetched the way a grab fetches it, through the source's login
+  when the link is on the source's own site (`fetch_torrent_from_source`), else by the client in list-only mode, and parsed
+  locally. No peer or tracker is asked, so a private tracker never sees an announce, and the passkey in its announce
+  address is never stored (only the info dictionary is read, and for a private torrent not even that is kept).
+- **A magnet** (The Pirate Bay and the like): `TorrentService::read_metadata_only` asks librqbit 9.1 for it in list-only
+  mode (`AddTorrentOptions { list_only: true, paused: true }`). librqbit resolves the info dictionary from peers (DHT,
+  the magnet's trackers) and returns `AddTorrentResponse::ListOnly` before creating storage, a handle or a session entry,
+  so nothing is downloaded, written or left in the session. A hard 40-second timeout drops the attempt (and its peer
+  connections). A torrent the session already holds answers from its handle.
+- **A feed release** (catalogue item): its link is revealed from the item, as a grab reveals it, and read as above.
+
+Each file is described once (`ContentFile`): video, audio, subtitle, sample, extra (featurettes, behind the scenes,
+`Extras/`), info (`.nfo`, `.txt`, `.cue`...), image, ebook, archive, other; with the season and episodes a video's name or
+`Season N/` folder gives, and an audio file's track and disc numbers. Padding files are left out but indexes stay the
+torrent's own, so a selection can be passed to `only_files`.
+
+**Cache and budget.** Metadata is immutable, so a row is never refreshed; the same hash is never read twice. A `.torrent`
+link with no info hash in its listing is also found again by `linkKey`, a SHA-256 of its source and guid (never the link
+itself, which can hold a passkey). `.torrent` downloads count against `auto_download.hourly_search_budget` per rolling hour;
+at most two magnets are resolved at once; a release that could not be read is not tried again for six hours. Callers
+inspect only the top few candidates of a target (Q100). Errors are redacted before they are logged or shown.
+
+`infoBytes` keeps a public torrent's info dictionary (base64) for a later grab that skips magnet resolution; grabs do not
+use it yet, because a torrent added from a file loses the magnet its `Torrent` row keeps for restoring.
+
+**Tested** with two hand-made `.torrent` fixtures (`backend/tests/fixtures/torrents/`, built by `make_fixtures.py`: a
+private season pack whose announce holds a fake passkey, and a public album) and with a magnet resolved from a librqbit
+seeder on loopback, which checks that the reading session keeps no torrent and writes no file, and that a magnet nobody
+seeds gives up within its timeout. Never run against real indexers or the public DHT.
