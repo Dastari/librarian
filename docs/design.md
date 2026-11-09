@@ -1489,7 +1489,7 @@ rest after one explicit reconnect (measured: a stat after a dropped connection t
 reconnecting). CHANGE_NOTIFY on a folder tree works with `smb2` (an event arrived 0.5 s after a file was created), which the later
 "watch for changes" work can use instead of polling. The live backend is a debug build, where the crates' signing and encryption run
 unoptimised: the same `smb2` spike built in debug managed 33 MiB/s writes and 38 MiB/s reads against 285 and 308 MiB/s in release, so
-the dev profile gets a raised `opt-level` for `smb2` and its crypto dependencies when the backend lands.
+the dev profile raises `opt-level` for `smb2` and its crypto dependencies (`[profile.dev.package.*]` in `backend/Cargo.toml`).
 
 *External tools* (ffprobe, ffmpeg for HLS, subtitles and clips, fpcalc) open a path. For a file on a remote storage the backend
 serves it to them on its own loopback address: `http://127.0.0.1:<port>/internal/tool/<token>/<file name>`. The token is random,
@@ -1501,7 +1501,7 @@ read-ahead buffer, and the tools get `-protocol_whitelist file,pipe,http,tcp` (t
 `ToolInput::Url` for remote ones. A tool that cannot take a URL (to be checked per binary, `fpcalc` first) is given a staged
 copy in the scratch folder instead. Whisper reads only the WAV clips ffmpeg cuts, which are already local.
 
-*Moving a library* (`moveLibrary`, an action mutation, not generated CRUD, built after the SMB backend): changing a library's
+*Moving a library* (`moveLibrary`, an action mutation, not generated CRUD; as built, Q88): changing a library's
 root must rewrite its records, not rescan, so nothing is re-matched and every `MediaFile` id, with its movie, episode, track,
 progress and playlist links, survives. Librarian does not copy library content in this step; the person copies the folder first
 (rsync or cp, preserving times). (1) *Plan* (read-only query): connect to the new root, walk it once, and for each `MediaFile`
@@ -1517,9 +1517,59 @@ scan must report no new, removed or changed files. Moving back is the same actio
 capability would be added to the entity layer first if chunked mutations prove too slow for tens of thousands of files; direct
 SQL is not an option.
 
-*What moved in the first step.* The interface and the local backend exist and carry the library discovery walk, empty-folder
-tidying, duplicate hashing, duplicate trash moves, same-file checks, the stream endpoint, and the existence and size checks of the
-music and identification passes, with no behaviour change. Still local-only, by design until the SMB backend lands: the
-contained-path checks (`checked_library_path` resolves symlinks with `canonicalize`, which has no meaning on a share and
-becomes a lexical check there), `place_in_library` and the quality-upgrade staging (they rely on hard links and device and inode
-proofs), `remove_empty_folders_upward`, extraction, HLS and subtitle input paths, and the tool callers.
+*What moved in the first step.* The interface and the local backend carried the library discovery walk, empty-folder tidying,
+duplicate hashing, duplicate trash moves, same-file checks, the stream endpoint, and the existence and size checks of the music
+and identification passes, with no behaviour change. The SMB backend, the share-aware pipeline, the tool URL service and the move
+are Q86 to Q88.
+
+### Q86: How does a library on a network share behave?
+**Answer:** The same as a local one, through `Storage`, with these differences. **Adding it:** in Add library and in a library's
+settings the location is either a folder on this server (the default) or a network share: server (a name or an IP address),
+share, a user name and password, and a folder browsed over the share. *Test connection* signs in, lists the share's top level
+and, if it works, saves the sign-in encrypted for the share (`connectShare`); a server name that does not resolve from the
+machine Librarian runs on is reported as such ("try its IP address"). Saving the library normalises the address (`smb://`
+host and share in lower case) and refuses a root that cannot be read or is not a folder. **Connections:** `SmbStorage` keeps up to
+three signed-in sessions per share, connected on first use from the saved sign-in, and replaces a session known to be dead before
+anything is sent on it. A read, listing or stat that fails because the connection dropped is repeated once; a write, rename or
+delete is never repeated, because it may have happened: it fails as "unavailable", says so, and the next call starts afresh.
+**Unavailable shares:** a scan of a library whose share cannot be reached records a `LIBRARY_STORAGE_UNAVAILABLE` issue and stops
+without touching the catalogue. A share that stops answering mid-scan, any unreadable folder, or a walk that finds nothing in a
+library that had files, keeps every file record: nothing is removed or marked missing on the strength of a walk that was not
+complete, and a check that cannot be answered counts as "present". The failed connection is remembered for ten seconds so a scan
+does not wait out a connection timeout per file. **Imports:** a download is *copied* to the share (to a name no scan takes for
+media, then renamed into place without replacing), and the download stays where it is so its torrent keeps seeding; extraction
+output stays next to the download. **Organizing** renames on the share (rename without replace, atomic on the server);
+emptied folders are removed only when the share says they are empty. **Contained paths:** on a share a path is contained by its
+name alone (under the root, no `..`), as there are no symlinks. **Refused on a share, clearly:** quality upgrades (they replace a
+file after proving its device, inode and change time, which a share cannot give; the better copy stays in the downloads and the
+log says why), copying between two shares, and copying within one.
+
+### Q87: How do external tools read a file on a share?
+**Answer:** Through `/internal/tool/<token>/<file name>` on the backend's own port (`api::tool`, `services::tool_url`). The token is
+random (two UUIDs), bound to one resolved path, expires after 30 minutes without a request (each request counts), and the route
+answers only a loopback peer (or the single address the server is bound to). It serves `GET` and `HEAD` with `Range` and
+`Accept-Ranges: bytes` from `open_read`, so ffprobe and ffmpeg can seek; it sits outside `/api`, takes no login, and refuses
+anything else. Tool callers ask `tool_input`/`tool_argument`: a local file gets its path, unchanged, and a file on a share a URL.
+ffprobe (`-protocol_whitelist file,pipe,http,tcp` added for a URL), the HLS remux, transcode and on-demand segment ffmpeg runs,
+the WebVTT subtitle conversion (whose whitelist stays `file,pipe` for local input), the whisper audio clips, and fingerprinting
+all go through it. `fpcalc` is tried with the URL first (it opens input with ffmpeg's libraries, which speak http); if this build
+refuses it, the file is copied to scratch space (at most 1 GiB, removed afterwards) and fingerprinted there. Residual risk, as for
+any ffmpeg input: a file disguised as a playlist could make ffmpeg open other http addresses; a library's files are the
+administrator's own.
+
+### Q88: How is a library moved?
+**Answer:** Changing a library's root rewrites its records; it never copies files, and the person copies the folder first
+(keeping file dates). *Library settings > Move*, or the library's *Move library…* action: choose the new location (a folder or a
+share), **Check the files** (`libraryMovePlan`, read only) and read the result, then **Move library** (`moveLibrary`); a
+verifying scan starts afterwards. The plan walks the new root once and compares it with every file record by the part of its path
+below the root: files found with the same size (`matched`), not found (`missing`), found at another size (`changed`, a copy that did
+not finish) and media files the library does not hold (`extra`, found by the next scan). It refuses a new root inside the old one or
+the reverse, one that cannot be read, and a library with files outside its own folder. Applying refuses while anything is missing or
+changed unless *Move anyway* is chosen, and while a scan is running. It then marks the library as moving (an app-setting record
+`library_move.<id>`; scans, organizing and imports refuse a library with the mark), rewrites in batches through the generated update
+mutations (`MediaFile` path, relative path, size and modified time, taken from the new storage so a copy that changed times is not read
+as a changed file; show, album and audiobook folders; sidecar subtitle paths), closes the library's open scan issues (they name old
+paths), changes `Library.path` last, and clears the mark. Every record is rewritten from the part of its path below the root, so a
+move that stopped is finished by running it again, and the server resumes marked moves at start. The records keep their ids, so
+matches, progress and playlists survive, and nothing is re-matched or re-analysed. The originals are never deleted. Moving back is the
+same action with the old location.
