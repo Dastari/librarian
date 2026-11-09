@@ -2949,3 +2949,18 @@ count; a control, page or player does. The checks in the shell, the player, the 
   before it falls back to the page's start. This includes closing the player, which is a route.
 - **Row controls:** when focus is handed back to one of a row's own controls (its ⋯, after its menu closes), focus moves
   to the row.
+
+### Q144: What happens when keyboard focus and mouse hover are on different items?
+
+Only one item is highlighted: whichever input was used last owns it (`web/src/lib/pointer-focus.ts`).
+
+- **Tracking the last input:** `data-last-input` on `<html>` becomes `keys` after a navigation key
+  (arrows, Tab, Enter, Back, media keys) and `pointer` after the mouse really moves.
+- **Pointer last:** a keyboard focus ring left on another tile hides.
+- **Keys last:** hover stops lifting tiles, so a resting cursor can't leave a second highlight.
+- **TV mode:** hovering a tile focuses it, so the tile under the mouse and the focused tile are the
+  same, and OK opens what the mouse is on. Tiles that slide under a resting cursor while the remote
+  scrolls a row don't take focus; that needs a real mouse move after the last key. The focused tile
+  is drawn over its neighbours, so a lifted ring never collides with the next tile's edge.
+- **Persistent selection** (a chosen tile, ticked rows) is a separate state from focus and is marked
+  inside the tile, so it can sit next to the focused tile.

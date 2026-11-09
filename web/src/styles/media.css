@@ -132,18 +132,23 @@
 }
 
 /* The link covers the whole tile; the ring belongs to the artwork, which is the card. */
-.poster-navigation:is(:focus-visible, [data-focus-visible="true"]) + .poster-art {
+/* Whichever input was used last owns the highlight (lib/pointer-focus.ts, design.md Q144): once the
+ * mouse moves, a keyboard ring left on another tile hides, and after a key press hover stops lifting. */
+:root:not([data-last-input="pointer"]) .poster-navigation:is(:focus-visible, [data-focus-visible="true"]) + .poster-art {
   outline: var(--nav-focus-width) solid var(--focus);
   outline-offset: var(--nav-focus-offset);
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .poster-card:hover .poster-art { box-shadow: var(--poster-shadow-hover); }
+  :root:not([data-last-input="keys"]) .poster-card:hover .poster-art { box-shadow: var(--poster-shadow-hover); }
 }
 
 /* Remote focus: the focused tile grows like on a TV home screen. Transform only, so
  * neighbours never move (R9.6, R18.1). */
-:root[data-input-mode="tv"] .poster-card:is(:focus-within, :hover) .poster-art,
+/* In TV mode hovering a tile focuses it (lib/pointer-focus.ts), so focus alone marks it: the mouse
+ * and the remote never highlight two tiles at once. The lifted tile draws over its neighbours. */
+:root[data-input-mode="tv"] .poster-card:focus-within { position: relative; z-index: 1; }
+:root[data-input-mode="tv"] .poster-card:focus-within .poster-art,
 :root[data-input-mode="tv"] .tv-lift:focus-within > .tv-lift-target,
 :root[data-input-mode="tv"] .tv-lift:is(:focus-visible, [data-focus-visible="true"]) {
   transform: scale(1.05);
@@ -164,9 +169,9 @@
   transition: transform calc(var(--duration-base) * var(--motion-scale)) var(--ease-spring);
 }
 
-/* TV mode has one pointer, wherever it came from: the tile it's on carries the ring, even after a
+/* TV mode has one pointer, wherever it came from: the focused tile carries the ring, even after a
  * mouse click, which :focus-visible alone would hide. */
-:root[data-input-mode="tv"] .poster-card:is(:focus-within, :hover) .poster-art {
+:root[data-input-mode="tv"] .poster-card:focus-within .poster-art {
   outline: var(--nav-focus-width) solid var(--focus);
   outline-offset: var(--nav-focus-offset);
 }

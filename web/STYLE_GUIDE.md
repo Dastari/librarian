@@ -342,6 +342,11 @@ component takes Back, it calls `preventDefault()` and `stopPropagation()`.
   `[data-tv-app]` (`styles/tv-app.css`) drops costly effects on budget TVs: a new full-screen
   blur, mask, shadow or animation needs a rule there too.
 
+- **One highlight.** Keyboard focus and mouse hover never highlight two items at once: the input used
+  last owns it (`data-last-input`, `lib/pointer-focus.ts`). Style hover under
+  `:root:not([data-last-input="keys"])` and focus rings under `:root:not([data-last-input="pointer"])`;
+  in TV mode hover moves focus, so style `:focus-within` only (design.md Q144).
+
 ## Motion
 
 Routes cross-fade with the View Transitions API (`defaultViewTransition`). Only the
