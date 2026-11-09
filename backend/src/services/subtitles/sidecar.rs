@@ -367,7 +367,7 @@ mod tests {
             (Some("eng"), None)
         );
         assert_eq!(facts("pt-BR").language, Some("por"));
-        assert_eq!(facts("English-SDH").hearing_impaired, true);
+        assert!(facts("English-SDH").hearing_impaired);
         let commentary = facts("en.Director Commentary");
         assert_eq!(commentary.title.as_deref(), Some("Director Commentary"));
         assert_eq!(facts("it").language, Some("ita"));

@@ -316,6 +316,7 @@ pub fn build_on_demand_transcode_args_with_burn(
 }
 
 /// Start an on-demand encoder at `start_segment`.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_on_demand_transcode(
     ffmpeg_path: &str,
     input: &Path,
