@@ -2,6 +2,7 @@ import { Button } from "glass-ux/button";
 import { IconArrowLeft, IconSkipForward, IconVolume } from "glass-ux/icons";
 import { VideoPlayer as GlassVideoPlayer, type MediaAttach, type MediaPlayerController, type MediaStreamContext, type MediaTextTrack, type MediaViewMode, type MediaViewModeChangeDetails } from "glass-ux/media-player";
 import { Menu } from "glass-ux/menu";
+import { toast } from "glass-ux/toast";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { useSettingsConnection } from "@/features/settings/useSettingsConnection";
@@ -14,7 +15,7 @@ import { CastButton } from "./CastButton";
 import { usePlayerState, type PlayItem } from "./store";
 import { useCastAdapter } from "./useCastAdapter";
 import { useMediaSource } from "./useMediaSource";
-import { useProgressSync } from "./useProgressSync";
+import { playbackDetails, useProgressSync } from "./useProgressSync";
 import { readMiniRect, saveMiniRect, saveVideoSession } from "./videoSession";
 
 const VIEW_MODES: readonly MediaViewMode[] = ["inline", "windowed", "fullscreen", "pip"];
@@ -70,8 +71,15 @@ export function VideoPlayer({ item, onBack, onEnded, nextLabel, onNext, mini = f
   const [chromeAwake, setChromeAwake] = useState(true);
   const [castPosition, setCastPosition] = useState<number>();
 
-  const progress = useProgressSync(item);
+  const progress = useProgressSync(item, undefined, {
+    onStopRequested: () => {
+      element.current?.pause();
+      toast.info("Playback was stopped from another device");
+    },
+  });
   const media = useMediaSource(progress.loading ? null : item.mediaFileId, element, progress.resumePosition, { audioStreamIndex: selectedAudio });
+  const { describe } = progress;
+  useEffect(() => { describe(playbackDetails(media.source)); }, [describe, media.source]);
   const cast = useCastAdapter(item.mediaFileId);
   const audioRows = useSettingsConnection(EntityAudioStreamListDocument, { where: { mediaFileId: { eq: item.mediaFileId } }, orderBy: [{ streamIndex: "ASC" }] }, (data) => data.audioStreams);
   const subtitleRows = useSettingsConnection(EntitySubtitleListDocument, { where: { mediaFileId: { eq: item.mediaFileId } }, orderBy: [{ createdAt: "ASC" }] }, (data) => data.subtitles);

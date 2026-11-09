@@ -3,6 +3,7 @@ import { Button } from "glass-ux/button";
 import { ListRow } from "glass-ux/list-row";
 import { Notice } from "glass-ux/notice";
 import { IconChevronUp, IconList, IconClose } from "glass-ux/icons";
+import { toast } from "glass-ux/toast";
 import { useEffect, useRef, useState } from "react";
 
 import { Artwork } from "@/components/ui";
@@ -16,7 +17,7 @@ import { currentChapterTitle, seekSpan } from "./chapterNav";
 import { audioCommands, canSkipAudio, skipAudio } from "./usePlayer";
 import { currentAudioItem, playerStore, usePlayerState } from "./store";
 import { useMediaSource } from "./useMediaSource";
-import { useProgressSync } from "./useProgressSync";
+import { playbackDetails, useProgressSync } from "./useProgressSync";
 
 /**
  * Persistent audio player. Holds the single <audio> element for the whole app, mirrors its
@@ -28,8 +29,15 @@ export function PlayerDock() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const navigate = useNavigate();
   const activationKey = state.audioActivation;
-  const progress = useProgressSync(item, activationKey);
+  const progress = useProgressSync(item, activationKey, {
+    onStopRequested: () => {
+      audioRef.current?.pause();
+      toast.info("Playback was stopped from another device");
+    },
+  });
   const media = useMediaSource(item && !progress.loading ? item.mediaFileId : null, audioRef, progress.resumePosition ?? item?.startPosition, { activationKey });
+  const { describe } = progress;
+  useEffect(() => { describe(playbackDetails(media.source)); }, [describe, media.source]);
   const { transport } = state;
 
   const { report, flush } = progress;

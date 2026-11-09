@@ -2,6 +2,7 @@ import { Outlet, useRouter, useRouterState, Link } from "@tanstack/react-router"
 import { AppShell as GlassAppShell, ShellBrand } from "glass-ux/shell";
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 
+import { useDeviceCheckIn } from "@/features/devices/useDeviceCheckIn";
 import { FileDialogHost } from "@/features/files/FileDetailDialog";
 import { PlayerDock } from "@/features/player/PlayerDock";
 import { currentAudioItem, playerStore } from "@/features/player/store";
@@ -28,6 +29,7 @@ const hasAudio = () => Boolean(currentAudioItem(playerStore.getSnapshot()));
 export function AppShell() {
   const { mode } = useInputMode();
   const router = useRouter();
+  useDeviceCheckIn();
   // The remote's Back never leaves the app: it walks in-app history, then returns Home.
   const back = useCallback(() => {
     if (router.history.canGoBack()) router.history.back();

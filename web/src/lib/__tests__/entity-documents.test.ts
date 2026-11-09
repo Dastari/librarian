@@ -31,6 +31,7 @@ describe("GraphQL documents", () => {
       InviteToken: ["token"],
       UsenetServer: ["password", "passwordNonce"],
       Source: ["credentials", "credentialsNonce"],
+      Device: ["sessionId"],
     };
     for (const [entity, forbidden] of Object.entries(privateFields)) {
       for (const name of [entity, `${entity}WhereInput`, `${entity}OrderByInput`]) {

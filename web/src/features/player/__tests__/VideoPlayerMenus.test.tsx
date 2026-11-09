@@ -30,7 +30,7 @@ vi.mock("../useMediaSource", () => ({
     return { source: null, loading: false, error: null, duration: 300, hls: null, retry: mocks.retry, isTransitioning: () => false };
   },
 }));
-vi.mock("../useProgressSync", () => ({ useProgressSync: () => ({ loading: false, resumePosition: 0, report: vi.fn(), flush: vi.fn() }) }));
+vi.mock("../useProgressSync", () => ({ useProgressSync: () => ({ loading: false, resumePosition: 0, report: vi.fn(), flush: vi.fn(), describe: vi.fn() }), playbackDetails: () => null }));
 vi.mock("../useCastAdapter", () => ({
   useCastAdapter: () => {
     const adapter: CastAdapter = {

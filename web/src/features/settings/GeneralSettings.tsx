@@ -11,12 +11,13 @@ import { errorMessage } from "@/lib/graphql/errors";
 import { useInputMode } from "@/lib/input-mode";
 import { LANGUAGES } from "@/lib/languages";
 
-import { DurationRow, TagsRow, TextRow, settingsFormBehaviour } from "./SettingFields";
+import { DurationRow, NumberRow, TagsRow, TextRow, settingsFormBehaviour } from "./SettingFields";
 import { SettingsPage, SettingsSection } from "./SettingsSection";
 import { asList, asNumber, useAppSettings } from "./useAppSettings";
 
 const schema = z.object({
   playbackSyncInterval: numberRule({ required: true, integer: true, min: 5, max: 300, requiredMessage: "Enter a progress interval", rangeMessage: "Enter a whole number from 5 to 300" }),
+  historyRetentionDays: numberRule({ required: true, integer: true, min: 0, max: 36500, requiredMessage: "Enter a number of days, or 0 to keep everything", rangeMessage: "Enter a whole number of days from 0 to 36500" }),
   preferredLanguage: z.string().trim().max(10),
   subtitleLanguages: z.array(z.string().trim().min(1)).refine((languages) => languages.join(",").length <= 200, "Use at most 200 characters"),
 });
@@ -31,6 +32,7 @@ export function GeneralSettings() {
   const subtitles = useAppSettings("subtitles");
   const storedValues = useMemo<Values>(() => ({
     playbackSyncInterval: asNumber(playback.values.get("playback_sync_interval"), 15),
+    historyRetentionDays: asNumber(playback.values.get("play_history.retention_days"), 0),
     preferredLanguage: metadata.values.get("metadata.preferred_language") ?? "en",
     subtitleLanguages: asList(subtitles.values.get("subtitles.preferred_languages")),
   }), [playback.values, metadata.values, subtitles.values]);
@@ -46,7 +48,7 @@ export function GeneralSettings() {
     onSubmit: async ({ value, formApi }) => {
       // TanStack validates but does not apply schema transforms to the submitted value.
       const saved = schema.parse(value);
-      await playback.save({ playback_sync_interval: String(saved.playbackSyncInterval) });
+      await playback.save({ playback_sync_interval: String(saved.playbackSyncInterval), "play_history.retention_days": String(saved.historyRetentionDays) });
       await metadata.save({ "metadata.preferred_language": saved.preferredLanguage });
       await subtitles.save({ "subtitles.preferred_languages": JSON.stringify(saved.subtitleLanguages) });
       setBaseline(saved);
@@ -81,6 +83,9 @@ export function GeneralSettings() {
               <SettingsSection title="Playback" width="readable">
                 <form.AppField name="playbackSyncInterval">
                   {() => <DurationRow label="Save progress every" description="How often the position in what you are watching is saved." units={["m", "s"]} defaultUnit="s" disabled={loading || submitting} />}
+                </form.AppField>
+                <form.AppField name="historyRetentionDays">
+                  {() => <NumberRow label="Keep play history for" description="Everyone's plays older than this are deleted, a few times a day. 0 keeps them all." unit="days" min={0} max={36500} disabled={loading || submitting} />}
                 </form.AppField>
               </SettingsSection>
               <SettingsSection title="Language" width="readable">

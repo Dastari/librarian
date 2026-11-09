@@ -20,6 +20,7 @@ const entityDocuments = {
   CastSetting: G.EntityCastSettingChangedDocument,
   Chapter: G.EntityChapterChangedDocument,
   Collection: G.EntityCollectionChangedDocument,
+  Device: G.EntityDeviceChangedDocument,
   Episode: G.EntityEpisodeChangedDocument,
   IdentificationEvent: G.EntityIdentificationEventChangedDocument,
   IdentifiedItem: G.EntityIdentifiedItemChangedDocument,
@@ -44,6 +45,7 @@ const entityDocuments = {
   Person: G.EntityPersonChangedDocument,
   PlaybackProgress: G.EntityPlaybackProgressChangedDocument,
   PlaybackSession: G.EntityPlaybackSessionChangedDocument,
+  PlayHistory: G.EntityPlayHistoryChangedDocument,
   QualityProfile: G.EntityQualityProfileChangedDocument,
   RefreshToken: G.EntityRefreshTokenChangedDocument,
   ReleaseBlocklist: G.EntityReleaseBlocklistChangedDocument,
@@ -55,6 +57,7 @@ const entityDocuments = {
   Season: G.EntitySeasonChangedDocument,
   Show: G.EntityShowChangedDocument,
   SourcePriorityRule: G.EntitySourcePriorityRuleChangedDocument,
+  StatsShare: G.EntityStatsShareChangedDocument,
   Source: G.EntitySourceChangedDocument,
   Subtitle: G.EntitySubtitleChangedDocument,
   Torrent: G.EntityTorrentChangedDocument,
@@ -113,6 +116,9 @@ const extraRoots: Record<string, readonly LiveTopic[]> = {
   availableSourceDefinitions: ["Source"], sourceSettingDefinitions: ["Source"],
   filesystemRoots: ["Filesystem", "AppSetting"], browseDirectory: ["Filesystem", "AppSetting"],
   libraryPathAvailability: ["Filesystem", "AppSetting"],
+  // Computed over plays; a share given or taken back changes whose can be read.
+  playStatistics: ["PlayHistory", "StatsShare"],
+  statisticsPeople: ["StatsShare", "User"],
 };
 // A root query does not also watch its children, or anything that reaches it by propagation:
 // each has `propagate_change = "up"` for creates and updates, and
