@@ -350,8 +350,9 @@ async fn exercise(app: &TestApp, admin: &mut GqlClient, work: &SmbLocation) {
 
     // The address is normalised when the library is saved: host and share in lower case.
     let typed = format!(
-        "smb://{}/{}/{}",
+        "smb://{}{}/{}/{}",
         movies.host.to_uppercase(),
+        movies.port.map(|port| format!(":{port}")).unwrap_or_default(),
         movies.share.to_uppercase(),
         movies.path
     );
