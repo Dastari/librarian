@@ -243,7 +243,52 @@ results that are not in the library keep their remote URLs.
 
 ## Remote focus
 
-`lib/input-mode.tsx` owns TV behaviour; mark structure, do not script focus per page:
+`lib/input-mode.tsx` owns TV behaviour; mark structure, do not script focus per page.
+
+**What is a stop** (design.md Q141; `isRemoteStop` is the one definition). A stop is something to act on: a card, a
+row, a control.
+- **One stop per card or row.** A poster, an episode still or a table row is a single stop. Its secondary buttons
+  (play, favourite, ⋯, a checkbox, an in-cell button) are the pointer's, and their actions go in the card's menu, which
+  the remote's Menu key opens: wrap a card that has actions in `ActionContextMenu`. Inside a Glass `DataTable` this is
+  automatic. Elsewhere mark the secondary buttons `tabIndex={-1}` and `data-nav-skip`.
+- **Never a stop:**
+  - table headers (sort, column menus, resize handles, select-all);
+  - disabled controls (`disabled`, `aria-disabled`, a `disabledReason`);
+  - decoration, labels, badges, and the anchor of a tooltip on something that isn't a control;
+  - anything hidden, collapsed, `inert` or off screen in a closed panel (unmount it or make it `inert`);
+  - a field's own −/+ or clear buttons.
+- **Sorting:** on a TV a table's toolbar carries a sort menu (`DataTableRemoteContext`, provided by `InputModeProvider`).
+  Don't make a header reachable to get it.
+- **Cards that can't act now:** a card worth reading that can't act right now stays a stop and says why. Don't set
+  `aria-disabled` on it.
+- **Dense control rows** (filters, toolbars): put the controls in one row, so Left/Right walk the row and Up/Down move
+  between rows. Composites own only their own axis. Selects, ⋯ menus and horizontal sliders let Up/Down pass in TV mode
+  (OK opens or adjusts them), and nothing ever traps.
+- **Reading:** when nothing lies further down, Down scrolls the page, so a summary or a chart below the last control is
+  still readable.
+- **Test it:** `src/test/remote.ts` has `layoutColumn`, `remoteStops`, `walkRemote` and `RemoteNavigation`. Assert a new
+  page's stop list and a walk down and back up.
+
+**Back, in order** (Q142):
+1. The nearest thing that handles it: scrubbing, a number field being adjusted, the player, the now playing drawer.
+2. The topmost overlay: a menu, popover, dialog or drawer.
+3. An edit state: a search field's text.
+4. One navigation step: history, then Home. On Home the key is left alone, and the TV app exits.
+
+To react to Back, use `isBackKey(event, { tv })` from `lib/remote-back.ts` and check `backHandled(event)`, never
+`event.defaultPrevented`: a focused button's tooltip prevents Escape as it closes, and must not swallow Back. When a
+component takes Back, it calls `preventDefault()` and `stopPropagation()`.
+
+**Focus restoration** (Q143):
+- After a dialog, menu, drawer or the player closes, focus returns to the control that opened it.
+- Glass and Base UI overlays do this themselves. A custom overlay returns focus in its effect's cleanup, as the now
+  playing drawer does.
+- If the opener is gone (a menu item, a deleted row), the shell returns focus to the last control outside the overlay,
+  then to the page's `data-tv-autofocus`, then to its first stop. Focus never rests on the body.
+- Going back restores the control last used on that page (by link, table row id, label, id or button text). Give a
+  control that should come back a stable link or label.
+
+**Structure:**
 
 - `data-nav-section` on each hero/row. Up/Down moves to the nearest section, then the
   nearest row inside it; a remote reveals the whole section when it fits on screen.
@@ -259,12 +304,8 @@ results that are not in the library keep their remote URLs.
   marks pointer-only controls (a row's scroll arrows) that arrow keys never stop on, in any
   input mode; give them `tabIndex={-1}` too. The
   remote's Play key plays a focused tile.
-- In TV mode single-line fields, ⋯ menu buttons and horizontal tab strips never trap
-  the remote; Backspace/Escape and the webOS/Tizen Back keys go back through in-app
-  history, then Home. Focused tiles grow with a transform only.
-- A card is one stop. Secondary buttons on it (a poster's play button, a library card's favourite
-  star) are pointer-only: `tabIndex={-1}` and `data-nav-skip`, with their action also in the
-  card's menu or on its Play key. Walking across cards never lands between them.
+- In TV mode single-line fields, ⋯ menu buttons, selects, horizontal sliders and horizontal tab
+  strips never trap the remote. Back follows the order above. Focused tiles grow with a transform only.
 - TV mode trims the app chrome: the top bar loses search, Commands, Cast and the account (the
   rail has Search; the account is its last item, opening the same menu beside the rail; casting
   is in the players' own controls) and keeps the breadcrumbs. Every scroller that clips (a rail's

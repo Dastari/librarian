@@ -2879,3 +2879,73 @@ audiobook), and the dialog's table lists the recommended releases as ordinary ro
 in the profile column (its reasons on the badge's tooltip), what each adds in the quality column ("S02 · adds 6"), and a
 release the live search also returned shown once. "Download recommended" in the table's toolbar downloads the whole plan
 after a confirmation; what the plan leaves uncovered is a quiet line under the table.
+
+### Q141: What can a TV remote stop on?
+**Answer:** One definition, `isRemoteStop` in `web/src/lib/input-mode.tsx`, used by the arrow keys, a page's first focus
+and focus restoration alike. A stop is something to act on: a card, a row, a control. Never a stop:
+- **Hidden things:** anything hidden, `inert` or `aria-hidden`, and anything with no box (a collapsed panel keeps its width
+  but has no height).
+- **Disabled controls:** `disabled` or `aria-disabled="true"`, including Glass buttons with a `disabledReason`. A card that
+  can't act right now but is worth reading (an episode still with no file) is not disabled: it says why instead.
+- **Pointer-only shortcuts:** `data-nav-skip` always, `data-tv-skip` on a TV.
+- **A data table's header:** sort buttons, column menus, resize handles and select-all (`.fa-dt-head`, `columnheader`,
+  `separator`). On a TV the tables are given `DataTableRemoteContext` (an addition to our Glass patch), so the table's
+  toolbar carries the same sort menu its card view has. Columns and density stay a pointer matter.
+- **A field's own buttons that Glass keeps out of the tab order**, such as a number field's −/+ (OK adjusts instead, Q107).
+- **Inside a table line:** a row or card of a Glass `DataTable` is one stop. Its checkbox, ⋯, expander and in-cell
+  buttons are the pointer's; its actions open with the remote's Menu key, which is the table's context menu. A detail
+  panel's own controls are stops.
+- **A region that only contains controls:** focus lands on the controls.
+
+**Tables.** The table moves between its lines with Up/Down, and across a grid of cards with Left/Right, but it clamps at
+its edges. So the remote leaves it there instead (`leavesTable`): Up from the first row, Down from the last once
+everything is loaded (not while it is busy), and Left/Right from the end of a row of cards. Left from a table row reaches
+the rail.
+
+**Composites.** A select's trigger and a horizontal slider let Up/Down move on in TV mode, as ⋯ menu buttons already did.
+OK opens the select, and Left/Right change the slider. Walking down a settings page never opens or nudges what it passes.
+A `role="grid"` marked `data-nav-group` (the guide's month of days) is walked spatially; other grids own their arrows.
+
+**Reading.** When nothing lies further down but the page scrolls on (charts, a summary under the last control), Down
+scrolls the page a step instead of doing nothing.
+
+**Tests.** `web/src/test/remote.ts` lays a jsdom page out as a column (`layoutColumn`), lists its stops (`remoteStops`)
+and walks it with the arrow keys (`walkRemote`). Pages that use it: Find a release, Statistics and General settings.
+
+### Q142: What does the remote's Back do, and in what order?
+**Answer:** Back arrives as `Escape` (a keyboard, or the Android TV app aiming it at an overlay), as `GoBack` or
+`BrowserBack`, or only as key code 461 (webOS) or 10009 (Tizen). In TV mode, Backspace outside a text field is Back too.
+`web/src/lib/remote-back.ts` has the one `isBackKey`. The first step that applies takes the press:
+1. **The nearest thing that handles it itself:**
+   - the scrub preview (Back puts the position back);
+   - a number field that is being adjusted;
+   - the video player;
+   - the now playing drawer.
+2. **The topmost overlay:** a menu, popover, select list, dialog or drawer. Dialogs and menus close on Escape themselves.
+   Another Back key, or focus outside the overlay (the drawer, with focus on the page), is re-sent to it as Escape.
+3. **An edit state:** a search field with text is cleared.
+4. **One navigation step:** in-app history, else Home. On Home there is no step, so the key is left unhandled and the
+   Android TV app exits (`handleBack` sends `GoBack` first and exits only if nothing took it).
+
+**Tooltips.** A tooltip shown on a focused icon button closes on Escape and lets it carry on. It still prevents the
+default (Glass's tooltip host on the capture phase, then Base UI's dismiss). So every "already handled?" check that read
+`defaultPrevented` ignored Back while a tooltip showed. `backHandled(event)` replaces those checks. A watcher on the
+window's capture phase records who prevents a Back key's default. Document-level listeners are dismiss layers and don't
+count; a control, page or player does. The checks in the shell, the player, the dock and the drawer use it.
+
+### Q143: Where does focus go when something closes, or after going back?
+**Answer:** Focus never rests on the page body in TV mode.
+- **Dialogs and menus** return focus to their trigger (Base UI). If that fails, for example because a menu item opened
+  the dialog, or because the action removed its opener, the shell steps in. While an overlay holds focus, and when focus
+  drops with no successor, the shell looks every 100 ms. Once the overlay is gone and focus is on the body, it moves
+  focus back, in this order:
+  - the last control focused outside any overlay (its table row, when that control was inside one);
+  - the last content control;
+  - the page's `data-tv-autofocus`;
+  - its first stop.
+- **The now playing drawer** returns focus to the control that opened it.
+- **Navigating back:** route focus remembers the last control used on each page by its link, table row id, label, id or
+  button text, and restores it when the page opens again. While the page loads it waits up to 1.5 s for that control
+  before it falls back to the page's start. This includes closing the player, which is a route.
+- **Row controls:** when focus is handed back to one of a row's own controls (its ⋯, after its menu closes), focus moves
+  to the row.
