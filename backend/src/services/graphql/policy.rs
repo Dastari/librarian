@@ -9,7 +9,7 @@ use graphql_orm::graphql::orm::{
 
 use crate::db::Database;
 use crate::graphql::entities::{
-    Album, Artist, Audiobook, Chapter, Episode, Library, LibraryScanRun, LibraryWhereInput,
+    Album, Artist, Audiobook, Chapter, Device, Episode, Library, LibraryScanRun, LibraryWhereInput,
     MediaFile, Movie, PendingFileMatch, RssFeed, Show, Torrent, TorrentWhereInput, Track,
 };
 use crate::services::graphql::auth::{AuthUser, Role};
@@ -206,6 +206,8 @@ impl AppFieldPolicy {
             "albumId" => read!(Album::get(db.pool(), &value.to_string()))
                 .is_some_and(|row| row.user_id == user_id),
             "audiobookId" => read!(Audiobook::get(db.pool(), &value.to_string()))
+                .is_some_and(|row| row.user_id == user_id),
+            "deviceId" => read!(Device::get(db.pool(), &value.to_string()))
                 .is_some_and(|row| row.user_id == user_id),
             "mediaFileId" => {
                 let media = read!(MediaFile::get(db.pool(), &value.to_string()));

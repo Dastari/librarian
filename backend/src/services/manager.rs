@@ -160,6 +160,7 @@ enum ServiceRegistrationKind {
     LibraryScan(LibraryScanServiceConfig),
     AutoDownload(AutoDownloadServiceConfig),
     ScheduleSync(ScheduleSyncConfig),
+    PlayHistory(crate::services::play_history::service::PlayHistoryConfig),
     Transcode(TranscodeServiceConfig),
     Service(Arc<dyn Service>),
 }
@@ -244,6 +245,12 @@ impl IntoServiceRegistration for LibraryScanServiceConfig {
 impl IntoServiceRegistration for ScheduleSyncConfig {
     fn into_registration(self) -> ServiceRegistration {
         ServiceRegistration(ServiceRegistrationKind::ScheduleSync(self))
+    }
+}
+
+impl IntoServiceRegistration for crate::services::play_history::service::PlayHistoryConfig {
+    fn into_registration(self) -> ServiceRegistration {
+        ServiceRegistration(ServiceRegistrationKind::PlayHistory(self))
     }
 }
 
@@ -393,6 +400,16 @@ impl ServicesManagerBuilder {
                 ServiceRegistrationKind::ScheduleSync(config) => {
                     manager
                         .register(Arc::new(ScheduleSyncService::new(manager.clone(), config)))
+                        .await;
+                }
+                ServiceRegistrationKind::PlayHistory(config) => {
+                    manager
+                        .register(Arc::new(
+                            crate::services::play_history::service::PlayHistoryService::new(
+                                manager.clone(),
+                                config,
+                            ),
+                        ))
                         .await;
                 }
                 ServiceRegistrationKind::AutoDownload(config) => {

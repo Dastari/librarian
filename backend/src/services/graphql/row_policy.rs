@@ -93,6 +93,9 @@ impl OwnershipRowPolicy {
             "IdentifiedItem" => direct!(IdentifiedItemWhereInput),
             "PlaybackProgress" => direct!(PlaybackProgressWhereInput),
             "PlaybackSession" => direct!(PlaybackSessionWhereInput),
+            "Device" => direct!(DeviceWhereInput),
+            "PlayHistory" => direct!(PlayHistoryWhereInput),
+            "StatsShare" => direct!(StatsShareWhereInput),
             "Notification" => direct!(NotificationWhereInput),
             "ReleaseRecommendation" => direct!(ReleaseRecommendationWhereInput),
             "RssFeed" => direct!(RssFeedWhereInput),
@@ -168,6 +171,9 @@ impl OwnershipRowPolicy {
             | "PendingFileMatch"
             | "PlaybackProgress"
             | "PlaybackSession"
+            | "Device"
+            | "PlayHistory"
+            | "StatsShare"
             | "Notification"
             | "ReleaseRecommendation"
             | "RssFeed"
@@ -215,6 +221,9 @@ impl OwnershipRowPolicy {
             "IdentifiedItem" => required!(IdentifiedItem),
             "PlaybackProgress" => required!(PlaybackProgress),
             "PlaybackSession" => required!(PlaybackSession),
+            "Device" => required!(Device),
+            "PlayHistory" => required!(PlayHistory),
+            "StatsShare" => required!(StatsShare),
             "Notification" => required!(Notification),
             "ReleaseRecommendation" => required!(ReleaseRecommendation),
             "RssFeed" => required!(RssFeed),

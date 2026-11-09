@@ -171,6 +171,9 @@ pub(crate) fn entity_metadata() -> Vec<&'static graphql_orm::graphql::orm::Entit
         <Subtitle as Entity>::metadata(),
         <MediaChapter as Entity>::metadata(),
         <PlaybackSession as Entity>::metadata(),
+        <Device as Entity>::metadata(),
+        <PlayHistory as Entity>::metadata(),
+        <StatsShare as Entity>::metadata(),
         <PlaybackProgress as Entity>::metadata(),
         <PersonalList as Entity>::metadata(),
         <ListEntry as Entity>::metadata(),
@@ -647,6 +650,8 @@ impl AppWriteInputTransform {
         assign!("PendingFileMatch", CreatePendingFileMatchInput);
         assign!("PlaybackProgress", CreatePlaybackProgressInput);
         assign!("PlaybackSession", CreatePlaybackSessionInput);
+        assign!("Device", CreateDeviceInput);
+        assign!("StatsShare", CreateStatsShareInput);
         assign!("Notification", CreateNotificationInput);
         assign!("RssFeed", CreateRssFeedInput);
         assign!("Torrent", CreateTorrentInput);
@@ -697,6 +702,9 @@ impl AppWriteInputTransform {
         supplied!("PendingFileMatch", UpdatePendingFileMatchInput);
         supplied!("PlaybackProgress", UpdatePlaybackProgressInput);
         supplied!("PlaybackSession", UpdatePlaybackSessionInput);
+        supplied!("Device", UpdateDeviceInput);
+        supplied!("PlayHistory", UpdatePlayHistoryInput);
+        supplied!("StatsShare", UpdateStatsShareInput);
         supplied!("Notification", UpdateNotificationInput);
         supplied!("RssFeed", UpdateRssFeedInput);
         supplied!("Torrent", UpdateTorrentInput);
@@ -1248,6 +1256,10 @@ impl WriteInputTransform for AppWriteInputTransform {
         Box::pin(async move {
             crate::services::graphql::personal_policy::prepare_create(ctx, entity_name, input)?;
             Self::assign_create_owner(ctx, entity_name, input);
+            if ctx.is_some() {
+                crate::services::play_history::prepare_public_create(db, entity_name, input)
+                    .await?;
+            }
             Self::validate_upsert_link_workaround(ctx, db, entity_name, input, true).await?;
             Self::reject_member_artwork_source_write(ctx, entity_name, input)?;
             Self::prepare_cast_create(entity_name, input)?;
@@ -1315,6 +1327,9 @@ impl WriteInputTransform for AppWriteInputTransform {
                 input,
             )?;
             Self::reject_owner_update(ctx, entity_name, input)?;
+            if ctx.is_some() {
+                crate::services::play_history::prepare_public_update(entity_name, input)?;
+            }
             Self::validate_upsert_link_workaround(ctx, db, entity_name, input, false).await?;
             Self::reject_member_artwork_source_write(ctx, entity_name, input)?;
             Self::prepare_cast_update(entity_name, existing_row, input)?;
@@ -4209,6 +4224,20 @@ impl MutationHook for AppMutationHook {
                 }
                 (MutationPhase::Before, ChangeAction::Deleted, "User") => {
                     Self::cleanup_user_refresh_tokens(hook_ctx, event).await?;
+                    crate::services::play_history::cleanup_deleted_user(hook_ctx, &event.id)
+                        .await?;
+                }
+                (MutationPhase::After, ChangeAction::Updated, "PlaybackSession") => {
+                    crate::services::play_history::record_session_change(hook_ctx, event).await?;
+                }
+                (MutationPhase::After, ChangeAction::Created, "PlaybackSession") => {
+                    crate::services::play_history::devices::end_other_device_sessions(
+                        hook_ctx, event,
+                    )
+                    .await?;
+                }
+                (MutationPhase::Before, ChangeAction::Deleted, "Device") => {
+                    crate::services::play_history::devices::forget_device(hook_ctx, event).await?;
                 }
                 (MutationPhase::After, ChangeAction::Updated, "User") => {
                     Self::revoke_user_sessions_if_needed(hook_ctx, event).await?;

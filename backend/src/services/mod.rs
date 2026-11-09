@@ -52,6 +52,7 @@ pub mod metadata;
 pub mod music_rules;
 pub mod network_servers;
 pub mod ollama;
+pub mod play_history;
 pub mod quality;
 pub mod rate_limiter;
 pub mod redact;
