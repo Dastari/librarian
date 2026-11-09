@@ -40,19 +40,27 @@ export function isEditing(element: Element | null): boolean {
 }
 
 const taken = new WeakSet<Event>();
+/** Back presses whose `preventDefault` could not be wrapped; `defaultPrevented` stands in. */
+const unwatched = new WeakSet<Event>();
 const WATCHED = new Set(["Escape", "Backspace", "GoBack", "BrowserBack"]);
 
 /** Seen first, on the window's capture phase: note who prevents this Back press's default. */
 function watch(event: KeyboardEvent) {
   if (!WATCHED.has(event.key) && !BACK_KEY_CODES.has(event.keyCode)) return;
   const prevent = event.preventDefault;
-  Object.defineProperty(event, "preventDefault", {
-    configurable: true,
-    value: function preventDefault(this: KeyboardEvent) {
-      if (event.currentTarget !== document) taken.add(event);
-      prevent.call(event);
-    },
-  });
+  try {
+    Object.defineProperty(event, "preventDefault", {
+      configurable: true,
+      value: function preventDefault(this: KeyboardEvent) {
+        if (event.currentTarget !== document) taken.add(event);
+        prevent.call(event);
+      },
+    });
+  } catch {
+    // Something already fixed `preventDefault` on this event (a synthetic event from a test
+    // tool, an extension). Fall back to the plain flag for it.
+    unwatched.add(event);
+  }
 }
 
 let watching = false;
@@ -72,6 +80,6 @@ watchBackKeys();
  */
 export function backHandled(event: Event | { nativeEvent: Event }): boolean {
   const native = "nativeEvent" in event ? event.nativeEvent : event;
-  return taken.has(native);
+  return taken.has(native) || (unwatched.has(native) && native.defaultPrevented);
 }
 
