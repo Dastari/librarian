@@ -127,6 +127,6 @@ pub async fn share_candidates(
         .filter(|(id, (_, active))| *active && id != &viewer.user_id)
         .map(|(id, (name, _))| (id, name))
         .collect();
-    people.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
+    people.sort_by_key(|a| a.1.to_lowercase());
     Ok(people)
 }
