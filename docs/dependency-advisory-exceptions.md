@@ -54,6 +54,19 @@
 - **Review trigger:** a `librqbit`/`librqbit-utp` release on `ringbuf` 0.5.
 - **Expiry:** 2027-01-31.
 
+### RUSTSEC-2026-0459 — `libsqlite3-sys` 0.30.1 (bundled SQLite before 3.54)
+
+- **Owner:** Librarian backend maintainers.
+- **Affected scope:** `sqlx-sqlite` 0.8.6 (via `sqlx` 0.8 and `graphql-orm`) builds the bundled SQLite.
+- **Librarian exposure:** very low. The bug returns stale page-cache memory only when a process opens a
+  database together with a crafted `-wal` file of a different page size. Librarian opens only its own
+  database under its data directory, which no less trusted party writes. Sandbox and backup restores
+  read Librarian's own files too.
+- **Why not upgraded:** the fix is `libsqlite3-sys` 0.39 (SQLite 3.54), which `sqlx` 0.8 cannot use.
+  It needs the `sqlx` upgrade that `graphql-orm` must adopt first.
+- **Review trigger:** a `graphql-orm` release on a `sqlx` that accepts `libsqlite3-sys` 0.39.
+- **Expiry:** 2027-01-31.
+
 ### RUSTSEC-2026-0391, RUSTSEC-2026-0403, RUSTSEC-2026-0398 — `zstd` 0.13.3 / `zstd-safe` 7.3.0
 
 - **Owner:** Librarian backend maintainers (with `graphql-orm`).

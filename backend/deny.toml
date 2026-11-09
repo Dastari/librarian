@@ -24,6 +24,9 @@ ignore = [
     "RUSTSEC-2026-0404",
     "RUSTSEC-2026-0405",
     "RUSTSEC-2026-0406",
+    # libsqlite3-sys 0.30 (SQLite < 3.54) via sqlx 0.8: needs a crafted database and -wal pair.
+    # Librarian opens only its own database; the fix is libsqlite3-sys 0.39, which needs a newer sqlx.
+    "RUSTSEC-2026-0459",
 ]
 
 [licenses]
