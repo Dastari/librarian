@@ -52,7 +52,7 @@ const columns = column.columns([
       );
     },
   }),
-  column.accessor("seenAt", { header: "Seen", width: 8, priority: 2, grow: false, cell: ({ row }) => <TextCell muted>{formatRelative(row.original.pubDate ?? row.original.seenAt)}</TextCell> }),
+  column.accessor("seenAt", { header: "Seen", width: 11, priority: 2, grow: false, cell: ({ row }) => <TextCell muted>{formatRelative(row.original.pubDate ?? row.original.seenAt)}</TextCell> }),
 ]);
 
 /** What can be done with a listed release: take its title elsewhere. */

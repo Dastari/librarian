@@ -2,6 +2,7 @@ import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
 import { useMutation } from "@apollo/client/react";
 import { toast } from "glass-ux/toast";
 import { defineActions } from "glass-ux/actions";
+import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, NumericCell, RelativeTime, TextCell } from "glass-ux/data-table";
 import { IconArrowDown, IconArrowUp, IconEdit, IconPlus, IconTrash } from "glass-ux/icons";
 import { IconList, IconPlugConnected, IconPower, IconRss } from "@tabler/icons-react";
@@ -72,7 +73,7 @@ const column = createDataTableColumns<SourceRow>();
 const columns = column.columns([
   column.accessor((row) => (row.kind === "source" ? row.source.priority : 1000), { id: "priority", header: "#", width: 4, priority: 2, align: "end", grow: false, cell: ({ row }) => (row.original.kind === "source" ? <NumericCell value={row.original.source.priority} /> : <TextCell muted>—</TextCell>) }),
   column.accessor("name", {
-    header: "Source", width: 42, priority: 1, cardRole: "title",
+    header: "Source", width: 32, priority: 1, cardRole: "title",
     cell: ({ row }) => {
       const item = row.original;
       const subtitle = item.kind === "source"
@@ -82,6 +83,7 @@ const columns = column.columns([
     },
   }),
   column.display({ id: "kind", header: "Kind", width: 11, priority: 3, cell: ({ row }) => <TextCell muted>{row.original.kind === "feed" ? "RSS feed" : searches(row.original.source)}</TextCell> }),
+  column.display({ id: "status", header: "Status", width: 12, priority: 2, cardRole: "status", cell: ({ row }) => <Badge size="sm" marker="dot" tone={row.original.health.tone}>{row.original.health.label}</Badge> }),
   column.accessor((row) => (row.kind === "source" ? row.source.lastSuccessAt : row.feed.lastSuccessfulAt) ?? "", { id: "last", header: "Last worked", width: 10, priority: 4, cell: ({ row }) => <RelativeTime value={parseTimestamp(row.original.kind === "source" ? row.original.source.lastSuccessAt : row.original.feed.lastSuccessfulAt)} fallback="Never" /> }),
 ]);
 
