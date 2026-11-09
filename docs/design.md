@@ -1437,3 +1437,89 @@ year, or a title too different. It resolves when the target is grabbed. Back-cat
 ("waiting for a free slot") and a blocklisted dead grab are likewise single notifications. Skipping a target because it is inside
 its backoff is not recorded per tick; it is visible as the "next search after" time on the waiting notification and in the debug
 log. Every search, grab and skip is also logged with the target, trigger and reason, per `logging.mdc`.
+
+### Q85: Where can a library's files live, and how does Librarian reach them?
+**Answer:** A library root is **a folder on this machine (the default) or a folder on an SMB share**, chosen per library when it is
+added; a network share is an optional alternative, and libraries on both can exist side by side. Cloud buckets (S3 and similar) come
+later and the model below is built so they fit. SMB is read by Librarian itself, with no operating-system mount, because the
+backend runs in unprivileged containers (an unprivileged LXC has no `mount -t cifs`, and Docker is the same).
+
+*The location.* Everything that names a library file keeps one string, as it does today: `Library.path`, `MediaFile.path`, the folder
+paths on shows, albums and audiobooks, sidecar subtitle paths. A local path is unchanged (`/data/media/Movies/Film (2020)/Film.mkv`).
+A share is `smb://host[:port]/share/folder/file.mkv`: host and share lower-cased, no user name or password in the string, folder names
+case-preserved, `.` and `..` refused. `services/library_storage` parses it (`StorageLocation`, `StoragePath`; nothing else splits
+these strings). `MediaFile.relative_path` is the part below the library root, so a root can be swapped without re-deriving it.
+*Credentials* are per share, not per library: the sign-in for `smb://host/share` is saved once, encrypted with the key that
+already protects network-path passwords, in the same app-setting record (`network_mount.<digest of the share address>`) with
+`platform = smb-native`. Libraries on one share find it through `CredentialRef`; entries of that platform are never mounted,
+reconnected or listed as network paths, and the password is never logged or shown.
+
+*The interface.* Every read or write of a library file goes through `Storage` (`services/library_storage`): `stat`/`lstat`,
+`list_dir`, `walk`, `open_read` (a reader that seeks, so a player can scrub), `read_all`, `put_from_local`, `rename`,
+`remove_file`, `create_dir_all`, `remove_dir` (only if empty), `is_dir_empty`, `tool_input`. `LibraryStorage` routes by path: local
+paths to `LocalStorage`, an `smb://` path to the backend registered for its share, and a share that is not connected is
+`Unavailable`, never "file missing" (a down NAS must not make a scan delete every file's record). Callers never assume what a
+filesystem gives and ask `StorageCapabilities` instead, so a bucket can say no:
+- **No hard links.** "Place without overwriting" is `PlaceMode::NoClobber` on `put_from_local` and `rename`. Locally it is the
+  existing hard-link-then-unlink (with copy-to-temp across devices); on SMB it is a create-or-fail or a rename without replace,
+  both atomic on the server; on a bucket it is a conditional put. `atomic_no_clobber` says which one can be relied on.
+- **No real directories.** On a bucket a folder is only a prefix: `create_dir_all` does nothing, an empty folder cannot exist, and
+  empty-folder tidying is skipped (`real_directories`).
+- **No atomic rename.** `rename` on a bucket is copy then delete and can stop half way; callers that move a file check
+  `atomic_rename` and verify the copy before the delete, and never rename between two storages (the registry refuses it: a
+  move across storages is `put_from_local`, check, `remove_file`).
+- **No file identity.** `EntryMeta.identity` (device and inode locally, the file id on SMB) is optional; "are these the same
+  file" falls back to path equality, size and time.
+- **No path for other programs.** `tools_need_url` says external tools cannot open the file (see below).
+Torrent downloads stay local (`torrent.download_dir`), as does extraction staging, HLS scratch output and database backups. An
+import from a download **copies onto the library's storage** (`put_from_local`, `NoClobber`) and never moves out of the download
+folder, so a seeding source is never touched, exactly as with a local library.
+
+*Choice of SMB client* (spike on 2026-11-08 against `//truenas.localdomain/media`, SMB 3.1.1 over 10 GbE, release builds, other agents
+loading the machine): **`smb2` (vdavid, 0.43)**. Both crates connect, sign in, list, stat, read at any offset, write, rename without
+replacement, delete and make folders. The deciding difference is latency. `smb2` sets `TCP_NODELAY`; `smb` (smb-rs 0.12) does not, so
+every request waits out the 40 ms Nagle/delayed-ACK stall: `smb2` against `smb` was 0.3 ms against 176 ms for a stat, 1,000 small
+files created in 2.4 s against 134 s, a 1,000-file walk in 29 ms against 2.8 s, a random 1 MiB read in 4.4 ms against 48 ms, an
+open-read-close in 1.7 ms against 132 ms, and a sequential read 308 to 329 MiB/s against 21 MiB/s with one request outstanding
+(`smb` can only keep up if the caller builds the pipelining; its parallel read hung twice, and eight parallel 4 MiB writes on one
+handle hung once, though 1 MiB writes ran at 203 to 342 MiB/s). Scrubbing a video is a few random reads and a library scan is tens of
+thousands of stats, so only `smb2` fits. It also reconnects a dead session itself for reads, listings and stat, and deliberately not
+for writes, renames and deletes (they may already have happened), so the backend retries only the idempotent calls and reports the
+rest after one explicit reconnect (measured: a stat after a dropped connection took 19 ms; a write failed at once, then worked after
+reconnecting). CHANGE_NOTIFY on a folder tree works with `smb2` (an event arrived 0.5 s after a file was created), which the later
+"watch for changes" work can use instead of polling. The live backend is a debug build, where the crates' signing and encryption run
+unoptimised: the same `smb2` spike built in debug managed 33 MiB/s writes and 38 MiB/s reads against 285 and 308 MiB/s in release, so
+the dev profile gets a raised `opt-level` for `smb2` and its crypto dependencies when the backend lands.
+
+*External tools* (ffprobe, ffmpeg for HLS, subtitles and clips, fpcalc) open a path. For a file on a remote storage the backend
+serves it to them on its own loopback address: `http://127.0.0.1:<port>/internal/tool/<token>/<file name>`. The token is random,
+bound to one resolved `StoragePath` (never a path a client supplies), short-lived (extended while a read is in flight, revoked when the
+HLS session or scan step ends) and accepted only from a loopback peer; the URL ends in the real file name so ffmpeg still
+guesses the container from the extension. The route answers `HEAD`, `Range` and `Accept-Ranges: bytes` from `open_read` with a
+read-ahead buffer, and the tools get `-protocol_whitelist file,pipe,http,tcp` (the subtitle extractor today allows only
+`file,pipe`). `Storage::tool_input` returns `ToolInput::Path` for local files, so local behaviour does not change at all, and
+`ToolInput::Url` for remote ones. A tool that cannot take a URL (to be checked per binary, `fpcalc` first) is given a staged
+copy in the scratch folder instead. Whisper reads only the WAV clips ffmpeg cuts, which are already local.
+
+*Moving a library* (`moveLibrary`, an action mutation, not generated CRUD, built after the SMB backend): changing a library's
+root must rewrite its records, not rescan, so nothing is re-matched and every `MediaFile` id, with its movie, episode, track,
+progress and playlist links, survives. Librarian does not copy library content in this step; the person copies the folder first
+(rsync or cp, preserving times). (1) *Plan* (read-only query): connect to the new root, walk it once, and for each `MediaFile`
+compute `new path = new root + relative_path`; report matched, missing (first 50 named) and extra files, and refuse to proceed
+with any missing unless told to. Reject a new root inside the old one or the reverse on the same storage. (2) *Apply*: mark the
+library as moving (an app-setting record via the entity layer; scans, organize and imports skip a library with the marker, and
+it is resumed on startup), then rewrite in chunks through generated mutations in one `MutationContext` each: `MediaFile.path`
+(and `size` and `file_modified_at` from the new storage, so a copy that changed times is not read as a changed file and
+re-analysed), `Show.path`, `Album.path`, `Audiobook.path`, sidecar `Subtitle.file_path`, and last `Library.path`. Rows are
+rewritten from `relative_path`, so a stopped move resumes by running it again. Downloads, pending matches and torrent paths are
+not library paths and are not touched; open scan issues for the library are closed (they hold old paths). (3) *Verify*: one
+scan must report no new, removed or changed files. Moving back is the same action with the old root. A bulk "set path prefix"
+capability would be added to the entity layer first if chunked mutations prove too slow for tens of thousands of files; direct
+SQL is not an option.
+
+*What moved in the first step.* The interface and the local backend exist and carry the library discovery walk, empty-folder
+tidying, duplicate hashing, duplicate trash moves, same-file checks, the stream endpoint, and the existence and size checks of the
+music and identification passes, with no behaviour change. Still local-only, by design until the SMB backend lands: the
+contained-path checks (`checked_library_path` resolves symlinks with `canonicalize`, which has no meaning on a share and
+becomes a lexical check there), `place_in_library` and the quality-upgrade staging (they rely on hard links and device and inode
+proofs), `remove_empty_folders_upward`, extraction, HLS and subtitle input paths, and the tool callers.
