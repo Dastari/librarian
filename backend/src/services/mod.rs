@@ -43,6 +43,7 @@ pub mod http_client;
 pub mod http_server;
 pub mod identify_rules;
 pub mod jev;
+pub mod lan_advertise;
 pub mod library_scan;
 pub mod library_storage;
 pub mod logging;

@@ -238,6 +238,10 @@ async fn async_main() -> anyhow::Result<()> {
         .add_service(LibraryScanServiceConfig::default())
         .add_service(AutoDownloadServiceConfig::default())
         .add_service(crate::jobs::schedule_sync::ScheduleSyncConfig::from_env()?)
+        .add_service(crate::services::lan_advertise::LanAdvertiseConfig::new(
+            config.port,
+            config.host.clone(),
+        ))
         .add_service(TranscodeServiceConfig {
             cache_path: PathBuf::from(&config.cache_path),
             ffmpeg_path: config

@@ -903,6 +903,30 @@ impl AppWriteInputTransform {
         }
     }
 
+    /// App settings with a shape of their own (the LAN announcement, Q138). A person's bad value
+    /// is refused; one from the environment or a seed is logged and stored as automatic, so a
+    /// typo in `LIBRARIAN_PUBLIC_WEB_URL` cannot stop the server starting.
+    fn checked_app_setting(
+        ctx: Option<&async_graphql::Context<'_>>,
+        key: &str,
+        value: &str,
+    ) -> async_graphql::Result<Option<String>> {
+        match crate::services::lan_advertise::prepare_setting_value(key, value) {
+            Ok(value) => Ok(value),
+            Err(error) if ctx.is_some() => Err(async_graphql::Error::new(error.to_string())
+                .extend_with(|_, extensions| extensions.set("code", "BAD_USER_INPUT"))),
+            Err(error) => {
+                warn!(key, error = %error, "Ignoring an invalid app setting value; using the default");
+                Ok(
+                    crate::services::lan_advertise::prepare_setting_value(key, "")
+                        .ok()
+                        .flatten()
+                        .or_else(|| Some("true".to_string())),
+                )
+            }
+        }
+    }
+
     /// Content rules for the entities outside Cast. See `services::write_rules`.
     fn prepare_content_create(
         entity_name: &str,
@@ -1252,6 +1276,12 @@ impl WriteInputTransform for AppWriteInputTransform {
             Self::reject_member_artwork_source_write(ctx, entity_name, input)?;
             Self::prepare_cast_create(entity_name, input)?;
             Self::prepare_content_create(entity_name, input)?;
+            if entity_name == "AppSetting"
+                && let Some(input) = input.downcast_mut::<CreateAppSettingInput>()
+                && let Some(value) = Self::checked_app_setting(ctx, &input.key, &input.value)?
+            {
+                input.value = value;
+            }
             if entity_name == "Library"
                 && let Some(input) = input.downcast_mut::<CreateLibraryInput>()
             {
@@ -1319,6 +1349,14 @@ impl WriteInputTransform for AppWriteInputTransform {
             Self::reject_member_artwork_source_write(ctx, entity_name, input)?;
             Self::prepare_cast_update(entity_name, existing_row, input)?;
             Self::prepare_content_update(ctx, entity_name, existing_row, input)?;
+            if entity_name == "AppSetting"
+                && let Some(input) = input.downcast_mut::<UpdateAppSettingInput>()
+                && let Some(row) = existing_row.and_then(|row| row.downcast_ref::<AppSetting>())
+                && let Some(value) = input.value.as_deref()
+                && let Some(value) = Self::checked_app_setting(ctx, &row.key, value)?
+            {
+                input.value = Some(value);
+            }
             if entity_name == "Library"
                 && let Some(input) = input.downcast_mut::<UpdateLibraryInput>()
                 && let Some(path) = input.path.as_mut()
@@ -3803,6 +3841,41 @@ impl AppMutationHook {
         Ok(())
     }
 
+    /// Saving the LAN announcement's switch or address re-announces with it (Q138).
+    fn defer_lan_advertise_restart(
+        &self,
+        ctx: Option<&async_graphql::Context<'_>>,
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        use crate::services::lan_advertise;
+        let before = event.before::<AppSetting>()?;
+        let after = event.after::<AppSetting>()?;
+        let changed = match (&before, &after) {
+            (Some(before), Some(after)) => before.key != after.key || before.value != after.value,
+            _ => true,
+        };
+        let ours = [&before, &after]
+            .into_iter()
+            .flatten()
+            .any(|setting| lan_advertise::is_own_setting(&setting.key));
+        if !changed || !ours {
+            return Ok(());
+        }
+        let Some(services) = self.services_from_ctx(ctx) else {
+            return Ok(());
+        };
+        hook_ctx.defer(move |_db| async move {
+            // Absent in tests and tools that build no services; the service reads the
+            // settings itself when it starts.
+            if services.get(lan_advertise::SERVICE_NAME).await.is_none() {
+                return Ok::<(), anyhow::Error>(());
+            }
+            services.restart_one(lan_advertise::SERVICE_NAME).await
+        });
+        Ok(())
+    }
+
     /// Whether an edit to a quality profile can change any file's evaluation.
     /// Naming and search-only fields (seeder floor, release age) cannot.
     fn quality_profile_changes_evaluation(before: &QualityProfile, after: &QualityProfile) -> bool {
@@ -4274,6 +4347,9 @@ impl MutationHook for AppMutationHook {
                     "CastSetting",
                 ) => {
                     self.defer_cast_runtime_settings(ctx, hook_ctx, event)?;
+                }
+                (MutationPhase::After, _, "AppSetting") => {
+                    self.defer_lan_advertise_restart(ctx, hook_ctx, event)?;
                 }
                 (MutationPhase::Before, ChangeAction::Deleted, "Torrent") => {
                     // Everything that should fail visibly to the client belongs here: a

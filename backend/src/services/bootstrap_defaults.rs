@@ -263,6 +263,18 @@ const APP_SETTINGS: &[AppSettingSeed] = &[
         description: "File operation mode: copy, move, or hardlink",
         category: "organize",
     },
+    AppSettingSeed {
+        key: "discovery.advertise",
+        value: "true",
+        description: "Announce this server on the local network (mDNS _librarian._tcp) so TV apps can find it",
+        category: "discovery",
+    },
+    AppSettingSeed {
+        key: "discovery.web_url",
+        value: "\"\"",
+        description: "Web address announced on the local network; empty to use this machine's LAN address",
+        category: "discovery",
+    },
 ];
 
 const NAMING_PATTERNS: &[NamingPatternSeed] = &[
@@ -844,16 +856,49 @@ mod tests;
 /// with the static seed (port 6881, `/data/downloads`) no matter what the
 /// deployment asked for, and the settings screen showed a value that was never
 /// the one in effect.
-const ENVIRONMENT_DEFAULTS: &[(&str, &str, bool)] = &[
-    // (setting key, environment variable, value is a JSON string)
-    ("torrent.listen_port", "TORRENT_LISTEN_PORT", false),
-    ("torrent.download_dir", "DOWNLOADS_PATH", true),
-    ("torrent.session_dir", "SESSION_PATH", true),
+const ENVIRONMENT_DEFAULTS: &[(&str, &str, EnvironmentValue)] = &[
+    // (setting key, environment variable, how the value is stored)
+    (
+        "torrent.listen_port",
+        "TORRENT_LISTEN_PORT",
+        EnvironmentValue::Port,
+    ),
+    (
+        "torrent.download_dir",
+        "DOWNLOADS_PATH",
+        EnvironmentValue::String,
+    ),
+    (
+        "torrent.session_dir",
+        "SESSION_PATH",
+        EnvironmentValue::String,
+    ),
+    // The LAN announcement (Q138): the address TV apps open, and a way to turn it off.
+    (
+        "discovery.web_url",
+        "LIBRARIAN_PUBLIC_WEB_URL",
+        EnvironmentValue::String,
+    ),
+    (
+        "discovery.advertise",
+        "LIBRARIAN_LAN_ADVERTISE",
+        EnvironmentValue::Bool,
+    ),
 ];
+
+#[derive(Clone, Copy)]
+enum EnvironmentValue {
+    /// Stored as a JSON string.
+    String,
+    /// A port number.
+    Port,
+    /// `true`/`false` (also accepts 1/0, yes/no, on/off).
+    Bool,
+}
 
 /// Resolves the value a setting should be seeded with, preferring the environment.
 pub fn environment_default(key: &str) -> Option<String> {
-    let (_, variable, is_string) = ENVIRONMENT_DEFAULTS
+    let (_, variable, kind) = ENVIRONMENT_DEFAULTS
         .iter()
         .find(|(setting, _, _)| *setting == key)?;
     let raw = std::env::var(variable).ok()?;
@@ -861,10 +906,15 @@ pub fn environment_default(key: &str) -> Option<String> {
     if raw.is_empty() {
         return None;
     }
-    if *is_string {
-        return Some(serde_json::Value::String(raw.to_string()).to_string());
+    match kind {
+        EnvironmentValue::String => Some(serde_json::Value::String(raw.to_string()).to_string()),
+        EnvironmentValue::Port => raw.parse::<u16>().ok().map(|port| port.to_string()),
+        EnvironmentValue::Bool => match raw.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some("true".to_string()),
+            "0" | "false" | "no" | "off" => Some("false".to_string()),
+            _ => None,
+        },
     }
-    raw.parse::<u16>().ok().map(|port| port.to_string())
 }
 
 async fn seed_app_settings(db: &Database) -> Result<()> {

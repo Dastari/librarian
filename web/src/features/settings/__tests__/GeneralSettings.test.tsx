@@ -12,11 +12,12 @@ const settings = vi.hoisted(() => ({
   playback: { values: new Map<string, string>(), loading: false, save: vi.fn() },
   metadata: { values: new Map<string, string>(), loading: false, save: vi.fn() },
   subtitles: { values: new Map<string, string>(), loading: false, save: vi.fn() },
+  discovery: { values: new Map<string, string>(), loading: false, save: vi.fn() },
 }));
 vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => settings.admin }));
 vi.mock("../useAppSettings", async (importOriginal) => ({
   ...await importOriginal<typeof import("../useAppSettings")>(),
-  useAppSettings: (category: "playback" | "metadata" | "subtitles") => settings[category],
+  useAppSettings: (category: "playback" | "metadata" | "subtitles" | "discovery") => settings[category],
 }));
 
 let refresh: () => void;
@@ -42,11 +43,12 @@ const save = () => screen.getByRole("button", { name: "Save" });
 beforeEach(() => {
   vi.clearAllMocks();
   settings.admin = true;
-  settings.playback.loading = settings.metadata.loading = settings.subtitles.loading = false;
+  settings.playback.loading = settings.metadata.loading = settings.subtitles.loading = settings.discovery.loading = false;
+  settings.discovery.values = new Map([["discovery.advertise", "true"], ["discovery.web_url", ""]]);
   settings.playback.values = new Map([["playback_sync_interval", "30"]]);
   settings.metadata.values = new Map([["metadata.preferred_language", "en"]]);
   settings.subtitles.values = new Map([["subtitles.preferred_languages", '["en","de"]']]);
-  for (const category of [settings.playback, settings.metadata, settings.subtitles]) category.save.mockReset().mockResolvedValue(undefined);
+  for (const category of [settings.playback, settings.metadata, settings.subtitles, settings.discovery]) category.save.mockReset().mockResolvedValue(undefined);
   localStorage.clear();
 });
 
@@ -184,5 +186,23 @@ describe("GeneralSettings bound form", () => {
     expect(localStorage.getItem("librarian.inputMode")).toBe("tv");
     expect(document.documentElement.dataset.inputMode).toBe("tv");
     expect(settings.playback.save).not.toHaveBeenCalled();
+  });
+});
+
+describe("GeneralSettings network announcement", () => {
+  it("saves the switch and the address for TV apps", async () => {
+    await mount();
+    await userEvent.click(screen.getByRole("switch", { name: /Announce on the local network/ }));
+    await edit("Address for TV apps", "http://192.168.1.20:3001");
+    await userEvent.click(save());
+    await waitFor(() => expect(settings.discovery.save).toHaveBeenCalledWith({ "discovery.advertise": false, "discovery.web_url": '"http://192.168.1.20:3001"' }));
+  });
+
+  it("refuses an address without its scheme", async () => {
+    await mount();
+    await edit("Address for TV apps", "192.168.1.20:3001");
+    await userEvent.click(save());
+    expect(await screen.findByText(/Enter a full address/)).toBeInTheDocument();
+    expect(settings.discovery.save).not.toHaveBeenCalled();
   });
 });
