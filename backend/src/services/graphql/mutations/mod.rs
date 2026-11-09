@@ -12,6 +12,7 @@ pub mod network_servers;
 pub mod notifications;
 pub mod quality;
 pub mod recommendations;
+pub mod subtitles;
 
 pub use artwork::ArtworkMutations;
 pub use auth::AuthMutations;
@@ -25,6 +26,7 @@ pub use network_servers::{ServerConnectionMutations, ServerConnectionQueries};
 pub use notifications::NotificationFeedMutations;
 pub use quality::QualityMutations;
 pub use recommendations::RecommendationMutations;
+pub use subtitles::SubtitleMutations;
 
 #[cfg(test)]
 mod auth_session_tests;

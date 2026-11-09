@@ -31,6 +31,8 @@ pub struct SessionKey {
     pub media_file_id: String,
     pub kind: TranscodeKind,
     pub audio_stream: Option<i32>,
+    /// The burned-in subtitle of this variant (`BurnIn::key`), if any.
+    pub burn: Option<String>,
 }
 
 impl SessionKey {
@@ -39,7 +41,14 @@ impl SessionKey {
             media_file_id: media_file_id.to_owned(),
             kind,
             audio_stream,
+            burn: None,
         }
+    }
+
+    /// The same variant with a subtitle burned in.
+    pub fn with_burn(mut self, burn: Option<String>) -> Self {
+        self.burn = burn;
+        self
     }
 }
 
@@ -52,6 +61,8 @@ pub struct TranscodeSession {
     pub output_dir: PathBuf,
     pub kind: TranscodeKind,
     pub audio_stream: Option<i32>,
+    /// See [`SessionKey::burn`].
+    pub burn: Option<String>,
     child: Option<Child>,
     /// Segments are encoded on request, so this session has no fixed `ffmpeg`
     /// run: its encoder restarts wherever someone seeks to.
@@ -75,6 +86,7 @@ impl TranscodeSession {
             output_dir,
             kind,
             audio_stream: None,
+            burn: None,
             child: Some(child),
             on_demand: false,
             encoder_start: 0,
@@ -96,6 +108,7 @@ impl TranscodeSession {
             output_dir,
             kind,
             audio_stream,
+            burn: None,
             child: None,
             on_demand: true,
             encoder_start: 0,
@@ -105,6 +118,7 @@ impl TranscodeSession {
 
     fn key(&self) -> SessionKey {
         SessionKey::new(&self.media_file_id, self.kind, self.audio_stream)
+            .with_burn(self.burn.clone())
     }
 }
 

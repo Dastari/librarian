@@ -169,6 +169,26 @@ pub fn vod_playlist(duration_seconds: u32) -> String {
     playlist
 }
 
+/// A picture subtitle drawn into the video (Q120): PGS, VobSub and DVB subtitles cannot be
+/// sent to a browser as text, so a variant with them burned in is encoded instead.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum BurnIn {
+    /// A subtitle stream of the file itself, by its absolute ffprobe index.
+    Stream(i32),
+    /// A VobSub sidecar on this machine, by its `.idx` (ffmpeg finds the `.sub` beside it).
+    VobSub(PathBuf),
+}
+
+impl BurnIn {
+    /// Names the variant in a session key.
+    pub fn key(&self) -> String {
+        match self {
+            Self::Stream(index) => format!("stream:{index}"),
+            Self::VobSub(path) => format!("vobsub:{}", path.display()),
+        }
+    }
+}
+
 /// Re-encode from `start_segment` to the end of the file. The output keeps the file's own
 /// timeline, so a segment is the same wherever the encoder started: a later seek can reuse it.
 pub fn build_on_demand_transcode_args(
@@ -178,10 +198,52 @@ pub fn build_on_demand_transcode_args(
     audio_stream: Option<i32>,
     audio_only: bool,
 ) -> Vec<String> {
+    build_on_demand_transcode_args_with_burn(
+        input,
+        output_dir,
+        start_segment,
+        audio_stream,
+        audio_only,
+        None,
+    )
+}
+
+/// [`build_on_demand_transcode_args`], optionally with a picture subtitle burned in. The
+/// subtitle input is seeked like the video, so its pictures stay on the file's timeline.
+pub fn build_on_demand_transcode_args_with_burn(
+    input: &Path,
+    output_dir: &Path,
+    start_segment: u32,
+    audio_stream: Option<i32>,
+    audio_only: bool,
+    burn: Option<&BurnIn>,
+) -> Vec<String> {
     let offset = (start_segment * SEGMENT_SECONDS).to_string();
     let mut args: Vec<String> = ["-y", "-ss", &offset, "-i"].map(str::to_owned).to_vec();
     args.push(input.to_string_lossy().into_owned());
-    if let Some(index) = audio_stream {
+    let burn = burn.filter(|_| !audio_only);
+    if let Some(BurnIn::VobSub(index_file)) = burn {
+        args.extend(["-ss".to_owned(), offset.clone(), "-i".to_owned()]);
+        args.push(index_file.to_string_lossy().into_owned());
+    }
+    if let Some(burn) = burn {
+        let subtitle = match burn {
+            BurnIn::Stream(index) => format!("[0:{index}]"),
+            BurnIn::VobSub(_) => "[1:s:0]".to_owned(),
+        };
+        // `eof_action=pass` keeps the picture going after the last subtitle.
+        args.extend([
+            "-filter_complex".to_owned(),
+            format!("[0:v:0]{subtitle}overlay=eof_action=pass[burned]"),
+            "-map".to_owned(),
+            "[burned]".to_owned(),
+            "-map".to_owned(),
+            match audio_stream {
+                Some(index) => format!("0:{index}"),
+                None => "0:a:0?".to_owned(),
+            },
+        ]);
+    } else if let Some(index) = audio_stream {
         args.extend([
             "-map".to_owned(),
             "0:v:0?".to_owned(),
@@ -262,9 +324,16 @@ pub fn spawn_on_demand_transcode(
     start_segment: u32,
     audio_stream: Option<i32>,
     audio_only: bool,
+    burn: Option<&BurnIn>,
 ) -> Result<Child> {
-    let args =
-        build_on_demand_transcode_args(input, output_dir, start_segment, audio_stream, audio_only);
+    let args = build_on_demand_transcode_args_with_burn(
+        input,
+        output_dir,
+        start_segment,
+        audio_stream,
+        audio_only,
+        burn,
+    );
     spawn_ffmpeg(ffmpeg_path, &args, session_id)
 }
 
@@ -443,6 +512,32 @@ pub async fn subtitle_webvtt(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn burn_in_overlays_the_subtitle_and_keeps_the_audio() {
+        let args = build_on_demand_transcode_args_with_burn(
+            Path::new("/in.mkv"),
+            Path::new("/out"),
+            2,
+            Some(1),
+            false,
+            Some(&BurnIn::Stream(4)),
+        );
+        let joined = args.join(" ");
+        assert!(joined.starts_with("-y -ss 12 -i /in.mkv -filter_complex [0:v:0][0:4]overlay=eof_action=pass[burned] -map [burned] -map 0:1"), "{joined}");
+        let vobsub = build_on_demand_transcode_args_with_burn(
+            Path::new("/in.mkv"),
+            Path::new("/out"),
+            0,
+            None,
+            false,
+            Some(&BurnIn::VobSub(PathBuf::from("/m/Film.idx"))),
+        )
+        .join(" ");
+        assert!(vobsub.starts_with("-y -ss 0 -i /in.mkv -ss 0 -i /m/Film.idx -filter_complex [0:v:0][1:s:0]overlay=eof_action=pass[burned] -map [burned] -map 0:a:0?"), "{vobsub}");
+        // Still no subtitle stream in the output.
+        assert!(vobsub.contains(" -sn "));
+    }
+
     use super::*;
 
     #[test]

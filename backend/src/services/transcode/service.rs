@@ -200,21 +200,22 @@ impl TranscodeService {
             audio_stream = ?key.audio_stream,
             "Transcode: opened on-demand HLS session"
         );
-        self.sessions
-            .insert(TranscodeSession::on_demand(
-                key.media_file_id.clone(),
-                session_id,
-                output_dir,
-                key.kind,
-                key.audio_stream,
-            ))
-            .await;
+        let mut session = TranscodeSession::on_demand(
+            key.media_file_id.clone(),
+            session_id,
+            output_dir,
+            key.kind,
+            key.audio_stream,
+        );
+        session.burn = key.burn.clone();
+        self.sessions.insert(session).await;
         Ok(())
     }
 
     /// Prepare `segment` of an on-demand transcode: serve it if it's on disk, wait if the encoder
     /// is nearly there, or move the encoder to it. Returns where it will appear, or `None` if the
     /// file ended before it. The caller has authorized the file and the audio stream.
+    #[allow(clippy::too_many_arguments)]
     pub async fn on_demand_segment(
         &self,
         media_file_id: &str,
@@ -223,12 +224,14 @@ impl TranscodeService {
         audio_stream: Option<i32>,
         segment: u32,
         audio_only: bool,
+        burn: Option<&ffmpeg::BurnIn>,
     ) -> Result<Option<PathBuf>> {
         anyhow::ensure!(
             audio_stream.is_none_or(|index| index >= 0),
             "negative audio stream index"
         );
-        let key = SessionKey::new(media_file_id, kind, audio_stream);
+        let key = SessionKey::new(media_file_id, kind, audio_stream)
+            .with_burn(burn.map(ffmpeg::BurnIn::key));
         let start_lock = self.start_lock(&key).await;
         let _start = start_lock.lock().await;
         self.ensure_on_demand_session(&key).await?;
@@ -250,6 +253,7 @@ impl TranscodeService {
                     segment,
                     audio_stream,
                     audio_only,
+                    burn,
                 )?;
                 self.sessions.set_encoder(&key, child).await;
                 dir

@@ -142,6 +142,10 @@ impl OwnershipRowPolicy {
                 &[("media_file_id", "id")],
                 file()?,
             )?,
+            "Lyric" => ReadPredicate::related::<DefaultBackend, Lyric, MediaFile>(
+                &[("media_file_id", "id")],
+                file()?,
+            )?,
             "MediaChapter" => ReadPredicate::related::<DefaultBackend, MediaChapter, MediaFile>(
                 &[("media_file_id", "id")],
                 file()?,
@@ -180,7 +184,7 @@ impl OwnershipRowPolicy {
             | "IdentifiedItem" => ScopeClass::Owner,
             "MovieCastCredit" | "Episode" | "Season" | "MediaFile" | "Track" | "Chapter"
             | "TorrentFile" | "RssFeedItem" | "VideoStream" | "AudioStream" | "Subtitle"
-            | "MediaChapter" => ScopeClass::Derived,
+            | "Lyric" | "MediaChapter" => ScopeClass::Derived,
             "Person" | "CastDevice" | "CastSetting" | "ScheduleCache" | "TorznabCategory"
             | "QualityProfile" | "ReleaseBlocklist" => ScopeClass::Shared,
             "Source" | "User" | "InviteToken" | "RefreshToken" | "AppSetting" | "AppLog"
@@ -321,6 +325,12 @@ impl OwnershipRowPolicy {
             }
             "Subtitle" => {
                 let Some(record) = row.downcast_ref::<Subtitle>() else {
+                    return Ok(Some(false));
+                };
+                Self::media_file_owned(db, &record.media_file_id, requester_user_id).await?
+            }
+            "Lyric" => {
+                let Some(record) = row.downcast_ref::<Lyric>() else {
                     return Ok(Some(false));
                 };
                 Self::media_file_owned(db, &record.media_file_id, requester_user_id).await?

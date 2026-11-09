@@ -1,0 +1,32 @@
+[
+  {
+    "id": 3396227,
+    "trackName": "I Want to Live (Reprise)",
+    "artistName": "Borislav Slavov",
+    "albumName": "Baldur's Gate 3 (Original Game Soundtrack)",
+    "duration": 120,
+    "instrumental": false,
+    "plainLyrics": "Reprise placeholder",
+    "syncedLyrics": "[00:01.00] Reprise placeholder\n[00:05.00] more"
+  },
+  {
+    "id": 3396228,
+    "trackName": "I Want to Live",
+    "artistName": "Borislav Slavov",
+    "albumName": "Single",
+    "duration": 234,
+    "instrumental": false,
+    "plainLyrics": "Plain only placeholder",
+    "syncedLyrics": null
+  },
+  {
+    "id": 3396226,
+    "trackName": "I Want to Live",
+    "artistName": "Borislav Slavov",
+    "albumName": "Baldur's Gate 3 (Original Game Soundtrack)",
+    "duration": 233,
+    "instrumental": false,
+    "plainLyrics": "First placeholder line\nSecond placeholder line",
+    "syncedLyrics": "[00:17.12] First placeholder line\n[00:22.45] Second placeholder line"
+  }
+]

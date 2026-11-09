@@ -63,6 +63,7 @@ impl_string_pk_batch_load!(
     super::SourcePriorityRule,
     super::StorageObject,
     super::Subtitle,
+    super::Lyric,
     super::Torrent,
     super::TorrentFile,
     super::Track,

@@ -4,6 +4,7 @@ pub mod common;
 
 // Base entities (no relations to other entities)
 pub mod audio_stream;
+pub mod lyric;
 pub mod media_chapter;
 pub mod media_file;
 pub mod movie_cast_credit;
@@ -99,6 +100,7 @@ pub use invite_token::*;
 pub use library::*;
 pub use library_scan_issue::*;
 pub use library_scan_run::*;
+pub use lyric::*;
 pub use matching_assistant::*;
 pub use media_chapter::*;
 pub use media_file::*;
