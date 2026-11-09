@@ -13,10 +13,12 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
+use super::watch::SIGNAL_QUEUE;
 use super::{
-    DirEntry, EntryKind, EntryMeta, FileIdentity, OpenedRead, PlaceMode, PlaceOutcome, Storage,
-    StorageCapabilities, StorageError, StorageErrorKind, StorageKind, StoragePath, StorageResult,
-    ToolInput, WalkCandidate, WalkEntry, WalkOptions, WalkStream,
+    DirEntry, EntryKind, EntryMeta, FileIdentity, FolderWatch, OpenedRead, PlaceMode, PlaceOutcome,
+    Storage, StorageCapabilities, StorageError, StorageErrorKind, StorageKind, StoragePath,
+    StorageResult, ToolInput, WalkCandidate, WalkEntry, WalkOptions, WalkStream, WatchChange,
+    WatchChangeKind, WatchSignal,
 };
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -310,6 +312,129 @@ impl Storage for LocalStorage {
 
     async fn tool_input(&self, path: &StoragePath) -> StorageResult<ToolInput> {
         Ok(ToolInput::Path(local_path(path)?.to_path_buf()))
+    }
+
+    async fn watch(&self, dir: &StoragePath) -> StorageResult<FolderWatch> {
+        let root = local_path(dir)?.to_path_buf();
+        tokio::task::spawn_blocking(move || watch_local(root))
+            .await
+            .map_err(|error| {
+                StorageError::new(
+                    StorageErrorKind::Other,
+                    format!("The folder watch could not start: {error}"),
+                )
+            })?
+    }
+}
+
+/// inotify on the tree under `root`. Arming walks the whole tree (a watch per folder), so it runs
+/// on a blocking thread. The notify thread blocks when the queue is full, the kernel's own queue
+/// then overflows, and that arrives as a rescan: nothing is dropped without saying so.
+fn watch_local(root: PathBuf) -> StorageResult<FolderWatch> {
+    use notify::event::{AccessKind, AccessMode, ModifyKind, RenameMode};
+    use notify::{EventKind, RecursiveMode, Watcher};
+
+    if !root.is_dir() {
+        return Err(StorageError::new(
+            StorageErrorKind::NotFound,
+            format!("'{}' is not a folder that can be watched", root.display()),
+        ));
+    }
+    let (tx, signals) = mpsc::channel(SIGNAL_QUEUE);
+    let event_root = root.clone();
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        let signal = match event {
+            Ok(event) if event.need_rescan() => WatchSignal::Overflow,
+            Ok(event) => {
+                let relative = |path: &Path| -> Option<String> {
+                    let rest = path.strip_prefix(&event_root).ok()?;
+                    let parts: Vec<String> = rest
+                        .components()
+                        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                        .collect();
+                    Some(parts.join("/"))
+                };
+                let kinds: Vec<WatchChangeKind> = match event.kind {
+                    EventKind::Create(_) => vec![WatchChangeKind::Added],
+                    EventKind::Remove(_) => vec![WatchChangeKind::Removed],
+                    EventKind::Modify(ModifyKind::Name(RenameMode::From)) => {
+                        vec![WatchChangeKind::RenamedFrom]
+                    }
+                    EventKind::Modify(ModifyKind::Name(RenameMode::To)) => {
+                        vec![WatchChangeKind::RenamedTo]
+                    }
+                    EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => {
+                        vec![WatchChangeKind::RenamedFrom, WatchChangeKind::RenamedTo]
+                    }
+                    EventKind::Modify(_) => vec![WatchChangeKind::Modified],
+                    // A file finished being written.
+                    EventKind::Access(AccessKind::Close(AccessMode::Write)) => {
+                        vec![WatchChangeKind::Modified]
+                    }
+                    EventKind::Any | EventKind::Other => vec![WatchChangeKind::Modified],
+                    EventKind::Access(_) => return,
+                };
+                let mut changes = Vec::new();
+                for (index, path) in event.paths.iter().enumerate() {
+                    let Some(path) = relative(path) else { continue };
+                    if path.is_empty() {
+                        // The watched folder itself was removed or moved away.
+                        if matches!(
+                            event.kind,
+                            EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_))
+                        ) {
+                            let _ = tx.blocking_send(WatchSignal::Lost(StorageError::new(
+                                StorageErrorKind::NotFound,
+                                format!("'{}' was removed or moved", event_root.display()),
+                            )));
+                            return;
+                        }
+                        continue;
+                    }
+                    let kind = kinds
+                        .get(index)
+                        .or_else(|| kinds.first())
+                        .copied()
+                        .unwrap_or(WatchChangeKind::Modified);
+                    changes.push(WatchChange { path, kind });
+                }
+                if changes.is_empty() {
+                    return;
+                }
+                WatchSignal::Changed(changes)
+            }
+            Err(error) => WatchSignal::Lost(StorageError::new(
+                StorageErrorKind::Other,
+                format!("The folder watch stopped: {error}"),
+            )),
+        };
+        let _ = tx.blocking_send(signal);
+    })
+    .map_err(|error| notify_error(&root, error))?;
+    watcher
+        .watch(&root, RecursiveMode::Recursive)
+        .map_err(|error| notify_error(&root, error))?;
+    Ok(FolderWatch::new(signals, Box::new(watcher)))
+}
+
+fn notify_error(root: &Path, error: notify::Error) -> StorageError {
+    match error.kind {
+        notify::ErrorKind::MaxFilesWatch => StorageError::new(
+            StorageErrorKind::Other,
+            format!(
+                "'{}' has more folders than this machine lets one program watch (raise fs.inotify.max_user_watches)",
+                root.display()
+            ),
+        ),
+        notify::ErrorKind::PathNotFound => StorageError::new(
+            StorageErrorKind::NotFound,
+            format!("'{}' does not exist", root.display()),
+        ),
+        notify::ErrorKind::Io(io) => io.into(),
+        _ => StorageError::new(
+            StorageErrorKind::Other,
+            format!("Could not watch '{}': {error}", root.display()),
+        ),
     }
 }
 

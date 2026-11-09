@@ -6,18 +6,28 @@ import { ENTITY_KINDS } from "@/lib/entities/kinds";
 import { formatRelative, pluralize } from "@/lib/format";
 import { libraryType } from "@/lib/library-types";
 
+import { libraryWatch, type LibraryWatchFields } from "./libraryWatch";
+
 export interface LibraryEntity {
   id: string;
   name: string;
   libraryType: string;
   scanning: boolean;
   lastScannedAt?: string | null;
+  path?: string;
+  watchForChanges?: boolean;
+  watchStatus?: string | null;
+  watchStatusSince?: string | null;
 }
 
 /** What a library is doing, or whether it needs someone. Scanning outranks everything else. */
 export function libraryState(library: LibraryEntity, issues = 0): EntityState {
   if (library.scanning) return { id: "scanning", label: "Scanning", tone: "info", activity: true };
   if (issues > 0) return { id: "issues", label: pluralize(issues, "issue"), tone: "warning" };
+  if (library.watchForChanges && library.path !== undefined) {
+    const watch = libraryWatch(library as LibraryWatchFields);
+    if (watch.id === "unavailable" || watch.id === "failed") return { id: `watch-${watch.id}`, label: watch.label, tone: "warning" };
+  }
   return { id: "ready", label: library.lastScannedAt ? "Ready" : "Not scanned yet", tone: library.lastScannedAt ? "success" : "neutral" };
 }
 

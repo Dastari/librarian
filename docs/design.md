@@ -2044,3 +2044,70 @@ people (one TMDB request each). TMDB requests go through the client's 12-a-secon
 or person that fails is not tried again until the next start, so a missing provider record does not cost a request every
 pass. Titles are never written; locked credits and details stay as they are (Q130). Without a TMDB key the job still fills
 audiobooks and albums, and copies movies' old cast (Q129).
+
+### Q115: How does Librarian notice that a library's files changed?
+**Answer:** A library with *Watch the folder* (`Library.watchForChanges`) is told by its storage, instead of waiting for the
+next scheduled scan. *What ran before:* the setting was saved but nothing read it. Every library was scanned whole by the
+scheduler (a 60 s timer that only reads the database and queues libraries whose `scanIntervalMinutes`, 60 for all four live
+libraries, had passed since `lastScannedAt`). Over SMB each of those scans lists every folder and stats every file of the
+library: on 2026-11-09 the four libraries on `smb://10.0.1.190/media` (about 320 files) took 1.3 to 1.6 s, 0.5 to 1.5 s, 0.2 s
+and 0.05 s an hour, so the cost was small but a new file could wait up to an hour to show up. *Now:* `Storage::watch` hands out
+a `FolderWatch` of changed paths below a folder.
+- *On a share:* SMB2 CHANGE_NOTIFY with `SMB2_WATCH_TREE` on the library root, through `smb2`'s own `Watcher` (0.43 already
+  has one: it keeps a request armed at all times, including across its ten-minute refresh, so no event falls between two
+  requests, and bounds the wait by connection silence, which its ECHO keepalive makes mean something). The watch has a
+  signed-in session of its own, so the long-held request never takes one of the three pooled connections from scans and
+  playback. A server that runs out of room for the list (`STATUS_NOTIFY_ENUM_DIR`) is a "rescan everything".
+- *On this machine:* inotify through the `notify` crate (8.2, recursive, a watch per folder added as folders appear). A
+  queue overflow is a "rescan everything"; running out of `fs.inotify.max_user_watches` is a failed watch that says so.
+- *The fallback the request allowed for* (re-listing only folders whose time changed) was not needed: both storages notify.
+  A future bucket storage, which cannot, says `change_notifications: false` and refuses `watch`, and its libraries keep the
+  schedule.
+
+*The share drops:* the watch ends (`WatchSignal::Lost`, within about 15 s on a silent server, at once on a reset), the
+library says "Share not reachable, retrying" (Q117), and the watch is tried again after 5 s, doubling to a minute. When it is
+armed again one whole-library scan catches up with whatever changed meanwhile, because nothing told it. That scan keeps the
+rules of Q86: a share that stops answering removes nothing. A watch armed for the first time (the backend started, or
+watching was just turned on) also starts with one whole-library scan if the library's last one is more than ten minutes old.
+
+*The safety net:* a watched library is still scanned whole at least hourly (its own schedule if shorter; hourly even with
+*Scan on a schedule* off), for whatever no notification told. Only these whole-library scans set `lastScannedAt`.
+
+### Q116: What does a change notification lead to?
+**Answer:** A scan of just what changed (`ScanScope::Changes`), never of the whole library, unless more than 50 places changed
+at once or the storage lost count.
+- *Ignored:* any path with a hidden part (the library's `.librarian-trash`, `.DS_Store`, AppleDouble `._` files, rsync's
+  `.name.XXXXXX` temporaries), Librarian's own `.librarian-tmp-` copies, names ending `.part`, `.partial`, `.crdownload`,
+  `.!qB`, `.tmp` or `~`, and **Librarian's own writes**: every change made through `LibraryStorage` (copies, imports,
+  organize renames, trash moves, folders made and removed) and the scanner's local-only placements are noted in
+  `library_storage::own_writes` while they run and for 30 s after; a notification for such a path, or for a folder above one
+  (its time changes when something in it does), is dropped. So an import is never scanned a second time and an organize
+  rename never looks like a file that went away.
+- *Gathered per path:* a path below one already waiting joins it (a film copied into a new folder is one scan of that
+  folder); a folder whose contents changed is kept apart and dropped if, when looked at, it is a folder that only had its
+  own times changed, as its files are reported on their own.
+- *Settled first:* a path is looked at once it has had no notification for 3 s: its size and time, or for a folder its
+  number of files, bytes and newest time. Two looks 4 s apart must agree, and every new notification starts the looks over,
+  so a large copy is never scanned half written (a gone path is two looks of "gone").
+- *Queued:* `queue_change_scan` drops paths that cannot matter (a changed `.nfo`, or a gone file nobody catalogued) and
+  queues the rest as one scan. A change scan is queued even while the library is being scanned, as the running scan may
+  have walked past it; scans of one library run one after another.
+- *The scan:* walks each changed folder, stats each changed file, and reconciles only the records at or under those paths
+  (a gone path's records are checked one by one, and one that cannot be checked is kept). It matches, analyses and
+  organizes what it finds as any scan does, but leaves library-wide tidying (TV season folders, empty folders, collections)
+  to whole-library scans and does not set `lastScannedAt`. Its scan run says what it looked at ("Changes checked in Film A
+  (2020): 1 found, 0 matched, 0 removed").
+
+A rename by someone else is a gone name and a new one, as it always was for scans: the old record goes and the new file is
+matched afresh.
+
+### Q117: Where is a library's watch state shown?
+**Answer:** On the library, from three fields the watch writes through the generated `updateLibrary` mutation:
+`watchStatus` (`starting`, `watching`, `unavailable`, `failed`, or empty while the library is not watched), `watchDetail`
+(why, for `failed` and `unavailable`) and `watchStatusSince` (additive, nullable columns). They are written only when the
+state changes, so the generated change events keep every open view current without polling. Library settings › Scanning
+shows a *Folder watch* row under *Watch the folder* ("Watching for changes", "Share not reachable, retrying" with since
+when, "Can't watch the folder" with the reason); Settings › Libraries has a *Watch* column; and a library's identity shows
+"Share not reachable, retrying" as a warning state (after scanning and open issues). The watch supervisor follows the
+setting at once: a change to a library's folder or its watch setting nudges it from the `Library` lifecycle hook, and it
+also looks again every minute.

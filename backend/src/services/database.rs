@@ -4305,6 +4305,19 @@ impl MutationHook for AppMutationHook {
                 _ => {}
             }
 
+            if event.phase == MutationPhase::After && event.entity_name == "Library" {
+                // A library added, removed, moved, or its watch turned on or off: the folder
+                // watches follow at once (docs/design.md Q115).
+                let before = event.before::<Library>().ok().flatten();
+                let after = event.after::<Library>().ok().flatten();
+                let watch_of = |row: &Option<&Library>| {
+                    row.as_ref()
+                        .map(|row| (row.path.clone(), row.watch_for_changes))
+                };
+                if watch_of(&before) != watch_of(&after) {
+                    crate::services::library_scan::nudge_library_watches();
+                }
+            }
             if event.phase == MutationPhase::Before
                 && event.action == ChangeAction::Deleted
                 && matches!(event.entity_name, "Movie" | "Episode" | "Track" | "Chapter")
@@ -4644,6 +4657,9 @@ mod lifecycle_tests {
                 naming_pattern: "default".to_string(),
                 scan_interval_minutes: 60,
                 watch_for_changes: false,
+                watch_status: None,
+                watch_detail: None,
+                watch_status_since: None,
                 scanning: false,
                 last_scanned_at: None,
                 quality_profile_id: None,

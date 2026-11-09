@@ -15,6 +15,14 @@ describe("a library's identity", () => {
     expect(libraryState({ ...library, lastScannedAt: null })).toMatchObject({ label: "Not scanned yet", tone: "neutral" });
   });
 
+  it("says when its watched share can't be reached, after scanning and issues", () => {
+    const watched = { ...library, path: "smb://nas/media/Books", watchForChanges: true, watchStatus: "unavailable" };
+    expect(libraryState(watched)).toMatchObject({ id: "watch-unavailable", label: "Share not reachable, retrying", tone: "warning" });
+    expect(libraryState(watched, 2)).toMatchObject({ id: "issues" });
+    expect(libraryState({ ...watched, watchStatus: "watching" })).toMatchObject({ id: "ready" });
+    expect(libraryState({ ...watched, watchForChanges: false })).toMatchObject({ id: "ready" });
+  });
+
   it("shows what it holds and its state", () => {
     render(<TooltipProvider><ActionProvider navigate={vi.fn()}><LibraryIdentity tier="header" heading="h2" library={library} items={12} issues={2} /></ActionProvider></TooltipProvider>);
     expect(screen.getByRole("heading", { name: "Audio Books" })).toBeTruthy();
