@@ -1,5 +1,6 @@
 pub mod client;
 pub mod database;
+pub mod move_downloads;
 pub mod partial;
 pub mod seeding;
 pub mod service;

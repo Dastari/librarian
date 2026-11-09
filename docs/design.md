@@ -1794,3 +1794,19 @@ librqbit then checks what is on the share, so nothing is downloaded twice, and n
 paused are kept in `torrent.share_paused`, so a restart during an outage still resumes them, and a torrent a person paused
 is left alone. Imports of a finished download wait too: a copy that cannot read the share fails without touching the
 library, and library scans of a share never mark files missing on a walk that did not finish (Q86).
+
+### Q101: How is the download folder moved?
+**Answer:** Like a library (Q88): the person copies the folder first (`rsync -rt`, keeping dates), Librarian checks the copy,
+then moves. Settings › Downloads › Download folder › *Move…* picks the new folder (here or on a saved share) and *Check
+the files* (`downloadsMovePlan`, read only): every file on disk of every torrent stored under the old folder is looked for at
+the same place under the new one, by size (`matched`, `missing`, `changed`, the first 50 named). It refuses the same folder,
+one inside the other, and a folder that cannot be read. *Move downloads* (`moveDownloads`) refuses missing or changed files
+unless *Move anyway* is chosen (the client then downloads them again), writes a marker app setting
+(`torrent.downloads_move`), and for each torrent under the old folder takes it out of the client keeping its files and adds it
+back from its own metadata with its folder under the new one, its wanted files (`only_files`) and paused state kept; the
+client checks the copied files, so nothing that is there is downloaded again. It then rewrites the records through the
+generated update mutations (`Torrent.savePath` and `downloadPath`, `TorrentFile.filePath`, `PendingFileMatch.sourcePath`, and
+the file records of downloads), sets `torrent.download_dir`, clears the marker and restarts the client so new downloads go
+to the new folder. Every step skips what is done, so a stopped move is finished by the server at its next start. *New
+downloads only* changes the folder for new torrents and leaves the existing ones seeding where they are. The old files are
+never deleted.

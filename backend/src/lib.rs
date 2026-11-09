@@ -293,6 +293,10 @@ async fn async_main() -> anyhow::Result<()> {
                 ),
             }
         }
+        // A move of the download folder that a stopped server left half done is finished.
+        if let Some(torrent) = services.get_torrent().await {
+            tokio::spawn(async move { torrent.resume_downloads_move().await });
+        }
         // A move that a stopped server left half done is finished before anything scans.
         if let Some(scan) = services.get_library_scan().await {
             tokio::spawn(async move { scan.resume_library_moves().await });

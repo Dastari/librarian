@@ -101,7 +101,7 @@ describe("interval conversion", () => {
 describe("DownloadsSettings", () => {
   it("fills the form from the stored settings", async () => {
     await mount();
-    expect(await screen.findByDisplayValue("/data/downloads")).toBeInTheDocument();
+    expect(await screen.findByText("/data/downloads")).toBeInTheDocument();
     expect(screen.getByDisplayValue("/data/session")).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Listen port" })).toHaveValue("6881");
     expect(screen.getByRole("switch", { name: /Enable DHT/ })).toBeChecked();
@@ -110,7 +110,7 @@ describe("DownloadsSettings", () => {
 
   it("shows automatic downloads off, with the real defaults, until the server has a setting", async () => {
     await mountFresh();
-    await screen.findByDisplayValue("/data/downloads");
+    await screen.findByDisplayValue("/data/session");
     // The server does nothing without `auto_download.enabled`, so the switch must not claim otherwise.
     expect(screen.getByRole("switch", { name: /Search and download automatically/ })).not.toBeChecked();
     // Stored as 60 and 360 minutes, shown as durations.
@@ -136,7 +136,7 @@ describe("DownloadsSettings", () => {
 
   it("offers the search budget and partial pack downloads, with the real defaults and the ratio warning", async () => {
     await mountFresh();
-    await screen.findByDisplayValue("/data/downloads");
+    await screen.findByDisplayValue("/data/session");
     // 30 searches an hour, and only the missing files of a pack, until someone says otherwise.
     expect(screen.getAllByDisplayValue("30").length).toBeGreaterThan(0);
     expect(screen.getByRole("switch", { name: /Download only the missing files from packs/ })).toBeChecked();
@@ -176,7 +176,7 @@ describe("DownloadsSettings", () => {
 
   it("keeps Save disabled until something changes", async () => {
     await mount();
-    await screen.findByDisplayValue("/data/downloads");
+    await screen.findByDisplayValue("/data/session");
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Discard" })).toBeDisabled();
   });
@@ -203,7 +203,7 @@ describe("DownloadsSettings", () => {
     const dht = updateMock("set-torrent.enable_dht", "false");
     const untouched = updateMock("set-torrent.listen_port", "6881");
     await mount([dht.mock, untouched.mock]);
-    await screen.findByDisplayValue("/data/downloads");
+    await screen.findByDisplayValue("/data/session");
     await userEvent.click(screen.getByRole("switch", { name: /Enable DHT/ }));
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     await vi.waitFor(() => expect(dht.called).toHaveBeenCalled());
@@ -240,7 +240,7 @@ describe("DownloadsSettings", () => {
   it("keeps a cleared numeric limit empty and lets the form schema reject it", async () => {
     const update = updateMock("set-torrent.download_limit", "0");
     await mount([update.mock]);
-    await screen.findByDisplayValue("/data/downloads");
+    await screen.findByDisplayValue("/data/session");
     const input = screen.getByRole("textbox", { name: "Download speed limit" });
     await userEvent.clear(input);
     await userEvent.tab();
@@ -251,12 +251,21 @@ describe("DownloadsSettings", () => {
     expect(update.called).not.toHaveBeenCalled();
   });
 
-  it("refuses an empty download folder", async () => {
+  it("refuses an empty session folder", async () => {
     await mount();
-    const folder = await screen.findByDisplayValue("/data/downloads");
+    const folder = await screen.findByDisplayValue("/data/session");
     await userEvent.clear(folder);
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("Choose a download folder")).toBeInTheDocument();
+    expect(await screen.findByText("Choose a session folder")).toBeInTheDocument();
+  });
+
+  it("shows the download folder and moves it only through the move dialog", async () => {
+    await mount();
+    expect(await screen.findByText("/data/downloads")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("/data/downloads")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Move…/ }));
+    expect(await screen.findByRole("dialog", { name: "Move the download folder" })).toBeInTheDocument();
+    expect(screen.getByText(/Librarian does not copy your downloads/)).toBeInTheDocument();
   });
 
   it("preserves an edited folder while another settings snapshot arrives", async () => {
@@ -277,31 +286,31 @@ describe("DownloadsSettings", () => {
       return <DownloadsSettings />;
     }
     await renderWithProviders(<SettingsWithSnapshot />, { mocks: base() as never });
-    const folder = await screen.findByDisplayValue("/data/downloads");
+    const folder = await screen.findByDisplayValue("/data/session");
     await screen.findByDisplayValue("6h");
     await userEvent.clear(folder);
     act(() => receiveSnapshot());
     await screen.findByDisplayValue("8h");
     expect(folder).toHaveValue("");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("Choose a download folder")).toBeInTheDocument();
+    expect(await screen.findByText("Choose a session folder")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Discard" }));
-    expect(folder).toHaveValue("/data/downloads");
+    expect(folder).toHaveValue("/data/session");
     expect(screen.getByDisplayValue("8h")).toBeInTheDocument();
   });
   it("retains the folder draft on a failed save and can discard it", async () => {
     await mount([{
-      request: { query: EntityAppSettingUpdateDocument, variables: { id: "set-torrent.download_dir", input: { value: "/new/downloads" } } },
+      request: { query: EntityAppSettingUpdateDocument, variables: { id: "set-torrent.session_dir", input: { value: "/new/session" } } },
       error: new Error("Download settings unavailable"),
     }]);
-    const folder = await screen.findByDisplayValue("/data/downloads");
+    const folder = await screen.findByDisplayValue("/data/session");
     await userEvent.clear(folder);
-    await userEvent.type(folder, "/new/downloads");
+    await userEvent.type(folder, "/new/session");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     await vi.waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Download settings unavailable"));
-    expect(folder).toHaveValue("/new/downloads");
+    expect(folder).toHaveValue("/new/session");
     await userEvent.click(screen.getByRole("button", { name: "Discard" }));
-    expect(folder).toHaveValue("/data/downloads");
+    expect(folder).toHaveValue("/data/session");
   });
 
   it("shows stored minutes as durations and writes edited ones back as minutes", async () => {
@@ -357,9 +366,8 @@ describe("DownloadsSettings", () => {
       return <DownloadsSettings />;
     }
     await renderWithProviders(<Harness />, { mocks: base() as never });
-    await screen.findByDisplayValue("/data/downloads");
+    await screen.findByDisplayValue("/data/session");
     act(() => refresh());
-    expect(screen.getByDisplayValue("/data/downloads")).toBeInTheDocument();
     expect(screen.getByDisplayValue("/data/session")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });

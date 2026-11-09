@@ -428,3 +428,126 @@ async fn outage(work: &StoragePath, stop: &str, start: &str) {
     seeder.stop().await;
     leecher.stop().await;
 }
+
+#[test]
+fn a_torrent_moved_onto_a_share_seeds_from_its_copy_without_downloading() {
+    let Some((url, credentials)) = env() else {
+        eprintln!("LIBRARIAN_SMB_TEST_URL not set; skipping");
+        return;
+    };
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async move {
+            let share = SmbLocation::parse(&url).unwrap();
+            let storage = SmbStorage::new(share.clone(), credentials);
+            storage.check().await.expect("the test share answers");
+            library_storage()
+                .register_remote(&share.share_root().storage_path(), Arc::new(storage));
+            let work = share.join(&format!("librarian-tor-{}", uuid::Uuid::new_v4().simple()));
+            let work_path = work.storage_path();
+            library_storage().create_dir_all(&work_path).await.unwrap();
+            let outcome = tokio::time::timeout(Duration::from_secs(300), moved(&work_path)).await;
+            remove_tree(&work_path).await;
+            outcome.expect("the test finished in time");
+        });
+}
+
+async fn moved(work: &StoragePath) {
+    let source = tempfile::tempdir().unwrap();
+    let folder = source.path().join("Moved.Release");
+    std::fs::create_dir_all(&folder).unwrap();
+    let big = payload(5 * 1024 * 1024 + 7, 41);
+    std::fs::write(folder.join("Moved.Release.mkv"), &big).unwrap();
+    std::fs::write(folder.join("Moved.Release.nfo"), b"moved").unwrap();
+    let seeder = Session::new_with_opts(source.path().to_path_buf(), options(false))
+        .await
+        .unwrap();
+    let (created, _seeding) = seeder
+        .create_and_serve_torrent(
+            &folder,
+            CreateTorrentOptions {
+                name: Some("Moved.Release"),
+                trackers: vec![],
+                piece_length: Some(256 * 1024),
+            },
+        )
+        .await
+        .unwrap();
+    let seeder_addr = seeder.listen_addr().unwrap();
+
+    // Downloaded into a folder on this machine first, as torrents are today.
+    let local = tempfile::tempdir().unwrap();
+    set_default_folder(local.path());
+    let leecher = Session::new_with_opts(local.path().to_path_buf(), options(true))
+        .await
+        .unwrap();
+    let handle = leecher
+        .add_torrent(
+            AddTorrent::TorrentFileBytes(created.as_bytes().unwrap()),
+            Some(AddTorrentOptions {
+                overwrite: true,
+                initial_peers: Some(vec![seeder_addr]),
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap()
+        .into_handle()
+        .unwrap();
+    wait_finished(&handle, Duration::from_secs(60)).await;
+    assert_eq!(handle.output_folder(), local.path().join("Moved.Release"));
+    seeder.stop().await;
+
+    // The person copies the folder to the share; the move points the torrent at the copy.
+    let copy = work.join("Moved.Release");
+    library_storage().create_dir_all(&copy).await.unwrap();
+    for name in ["Moved.Release.mkv", "Moved.Release.nfo"] {
+        library_storage()
+            .put_from_local(
+                &local.path().join("Moved.Release").join(name),
+                copy.join(name),
+                librarian::services::library_storage::PlaceMode::NoClobber,
+            )
+            .await
+            .unwrap();
+    }
+    let new_folder = librarian::services::torrent::move_downloads::moved_folder(
+        &local.path().to_string_lossy(),
+        work.as_str(),
+        handle.output_folder(),
+    )
+    .unwrap();
+    assert_eq!(new_folder.to_string_lossy(), copy.as_str());
+    librarian::services::torrent::share_watch::readd_from_metadata(
+        &leecher,
+        &handle,
+        &new_folder,
+        false,
+    )
+    .await
+    .unwrap();
+    let again = leecher
+        .with_torrents(|torrents| torrents.map(|(_, handle)| handle.clone()).next())
+        .expect("the torrent is back");
+    assert_eq!(again.output_folder().to_string_lossy(), copy.as_str());
+    // No peer at all now: it can only finish from the copy on the share.
+    wait_finished(&again, Duration::from_secs(60)).await;
+    assert_eq!(
+        again
+            .stats()
+            .live
+            .map(|live| live.snapshot.downloaded_and_checked_bytes)
+            .unwrap_or(0),
+        0,
+        "nothing was downloaded again"
+    );
+    // The local folder is left as it was.
+    assert_eq!(
+        std::fs::read(local.path().join("Moved.Release").join("Moved.Release.mkv")).unwrap(),
+        big
+    );
+    leecher.stop().await;
+}

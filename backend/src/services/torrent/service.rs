@@ -875,6 +875,163 @@ impl TorrentService {
         Ok(())
     }
 
+    /// The download folder the client was started with.
+    pub async fn download_dir(&self) -> Option<PathBuf> {
+        Some(self.runtime().await?.config.download_dir.clone())
+    }
+
+    /// Compare the torrents in the download folder with their copy at `new_path` (Q101).
+    pub async fn downloads_move_plan(
+        &self,
+        new_path: &str,
+    ) -> Result<super::move_downloads::DownloadsMovePlan> {
+        let r = self
+            .runtime()
+            .await
+            .context("torrent service not started")?;
+        let old = r.config.download_dir.to_string_lossy().into_owned();
+        super::move_downloads::plan(&r.db, &old, new_path).await
+    }
+
+    /// Move the download folder to `new_path` (Q101): with `move_torrents`, every torrent under the
+    /// old folder is pointed at its copy under the new one and the records are rewritten;
+    /// without, only new downloads go there. The client restarts afterwards so the new folder
+    /// is its default. The old files are never deleted.
+    pub async fn move_downloads(
+        &self,
+        new_path: &str,
+        move_torrents: bool,
+        allow_missing: bool,
+    ) -> Result<super::move_downloads::Rewritten> {
+        use super::move_downloads as moving;
+        let r = self
+            .runtime()
+            .await
+            .context("torrent service not started")?;
+        let old_root = moving::normalize_root(&r.config.download_dir.to_string_lossy())?;
+        let new_root = moving::normalize_root(new_path)?;
+        if move_torrents {
+            let plan = moving::plan(&r.db, &old_root, &new_root).await?;
+            if let Some(blocked) = plan.blocked {
+                anyhow::bail!("{blocked}");
+            }
+            if !plan.can_apply() && !allow_missing {
+                anyhow::bail!(
+                    "{} of {} files are not at the new folder yet (or not at the same size). Finish copying, or choose Move anyway",
+                    plan.missing + plan.changed,
+                    plan.file_count
+                );
+            }
+        } else if let Err(error) = crate::services::library_storage::library_storage()
+            .stat(new_root.as_str())
+            .await
+        {
+            anyhow::bail!("The new folder cannot be read: {error}");
+        }
+        let marker = moving::MoveMarker {
+            old_root: old_root.clone(),
+            new_root: new_root.clone(),
+            move_torrents,
+            started_at: Utc::now().to_rfc3339(),
+        };
+        moving::write_marker(&r.db, &marker).await?;
+        let rewritten = self.finish_downloads_move(&marker).await?;
+        // The session's default folder is fixed when it is made: start it again on the new one.
+        drop(r);
+        self.stop().await?;
+        self.start().await?;
+        Ok(rewritten)
+    }
+
+    /// Carry out (or finish) a marked move. Each step skips what is already done.
+    async fn finish_downloads_move(
+        &self,
+        marker: &super::move_downloads::MoveMarker,
+    ) -> Result<super::move_downloads::Rewritten> {
+        use super::move_downloads as moving;
+        let r = self
+            .runtime()
+            .await
+            .context("torrent service not started")?;
+        let mut rewritten = moving::Rewritten::default();
+        if marker.move_torrents {
+            let handles: Vec<Arc<librqbit::ManagedTorrent>> = r
+                .session
+                .with_torrents(|torrents| torrents.map(|(_, handle)| handle.clone()).collect());
+            for handle in handles {
+                let Some(folder) = moving::moved_folder(
+                    &marker.old_root,
+                    &marker.new_root,
+                    handle.output_folder(),
+                ) else {
+                    continue;
+                };
+                let info_hash = get_info_hash_hex(&handle);
+                if handle.metadata.load_full().is_none() {
+                    warn!(info_hash = %info_hash, "A torrent without its metadata yet stays where it is; it is moved once it has it");
+                    continue;
+                }
+                let paused = handle.is_paused();
+                super::share_watch::readd_from_metadata(&r.session, &handle, &folder, paused)
+                    .await
+                    .with_context(|| format!("Could not move {info_hash} to {}", folder.display()))?;
+                info!(
+                    info_hash = %info_hash,
+                    folder = %folder.display(),
+                    "Torrent now reads from the new download folder"
+                );
+            }
+            rewritten =
+                moving::rewrite_records(&r.db, &r.schema, &marker.old_root, &marker.new_root)
+                    .await?;
+        }
+        database::put_setting_value(
+            &r.db,
+            "torrent.download_dir",
+            &serde_json::to_string(&marker.new_root)?,
+            "torrent",
+            "Where torrents download to",
+        )
+        .await?;
+        moving::clear_marker(&r.db).await?;
+        info!(
+            old = %marker.old_root,
+            new = %marker.new_root,
+            torrents = rewritten.torrents,
+            files = rewritten.files,
+            "Download folder moved"
+        );
+        Ok(rewritten)
+    }
+
+    /// Finish a move of the download folder that a stopped server left half done. Called once
+    /// after startup.
+    pub async fn resume_downloads_move(&self) {
+        let Some(r) = self.runtime().await else {
+            return;
+        };
+        let Some(marker) = super::move_downloads::read_marker(&r.db).await else {
+            return;
+        };
+        drop(r);
+        info!(old = %marker.old_root, new = %marker.new_root, "Finishing a move of the download folder");
+        match self.finish_downloads_move(&marker).await {
+            Ok(_) => {
+                // Started on the old default: start again on the new one.
+                if let Err(error) = self.stop().await {
+                    warn!(error = %error, "Could not restart the torrent client after the move");
+                    return;
+                }
+                if let Err(error) = self.start().await {
+                    warn!(error = %error, "Could not restart the torrent client after the move");
+                }
+            }
+            Err(error) => {
+                warn!(error = %error, "Could not finish the move of the download folder; it is tried again at the next start")
+            }
+        }
+    }
+
     /// Pause a torrent by info hash (hex string).
     pub async fn pause_by_info_hash(&self, info_hash: &str) -> Result<()> {
         let r = self
@@ -1416,6 +1573,9 @@ impl Service for TorrentService {
         let previous = self.inner.write().await.take();
         if let Some(arc_r) = previous {
             arc_r.cancel_token.cancel();
+            // Stopped here even while something still holds the runtime, so a start that follows
+            // (after moving the download folder) can listen on the same port.
+            arc_r.session.stop().await;
             if let Ok(runtime) = Arc::try_unwrap(arc_r) {
                 runtime.shutdown().await;
             }

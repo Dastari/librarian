@@ -3,9 +3,9 @@ import { toast } from "glass-ux/toast";
 import { byteSizeSchema } from "glass-ux/byte-size-field";
 import { durationSchema } from "glass-ux/duration-field";
 import { Form, FormActions, numberRule, useAppForm } from "glass-ux/form";
-import { IconPlay } from "glass-ux/icons";
+import { IconFolder, IconPlay } from "glass-ux/icons";
 import { SettingRow } from "glass-ux/setting-row";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 
 import { Button } from "@/components/ui";
@@ -15,6 +15,7 @@ import { errorMessage } from "@/lib/graphql/errors";
 
 import { AutoDownloadStatus } from "./AutoDownloadStatus";
 import { BlockedReleases } from "./BlockedReleases";
+import { MoveDownloadsDialog } from "./MoveDownloadsDialog";
 import { ByteSizeRow, DurationRow, NumberRow, TextRow, settingsFormBehaviour } from "./SettingFields";
 import { SettingsPage, SettingsSection } from "./SettingsSection";
 import { asBool, asNumber, useAppSettings } from "./useAppSettings";
@@ -31,7 +32,6 @@ const count = (min: number, max: number | undefined, noun: string) => numberRule
 const minutes = (min: number, max: number) => durationSchema({ required: true, min: minutesToSeconds(min), max: minutesToSeconds(max) });
 
 const schema = z.object({
-  downloadDir: z.string().trim().min(1, "Choose a download folder"),
   sessionDir: z.string().trim().min(1, "Choose a session folder"),
   listenPort: count(1024, 65535, ""),
   enableDht: z.boolean(),
@@ -58,15 +58,17 @@ export function DownloadsSettings() {
   const torrent = useAppSettings("torrent");
   const auto = useAppSettings("auto_download");
   const [trigger, { loading: triggering }] = useMutation(TriggerAutoDownloadDocument);
+  const [movingDownloads, setMovingDownloads] = useState(false);
+  const downloadDir = torrent.values.get("torrent.download_dir") ?? "";
   // Intervals are minutes in the settings and seconds in the form (see `minutesToSeconds`).
-  const defaults = useRef<Values>({ downloadDir: "", sessionDir: "", listenPort: 6881, enableDht: true, maxConcurrent: 5, downloadLimit: 0, uploadLimit: 0, autoEnabled: false, autoInterval: minutesToSeconds(60), autoBackoff: minutesToSeconds(360), airGrace: minutesToSeconds(60), airWindow: 7, airRetry: minutesToSeconds(60), maxGrabs: 5, hourlySearchBudget: 30, onlyMissingFiles: true, seedRatioLimit: 1, seedTime: 0, removeAfterImport: false });
+  const defaults = useRef<Values>({ sessionDir: "", listenPort: 6881, enableDht: true, maxConcurrent: 5, downloadLimit: 0, uploadLimit: 0, autoEnabled: false, autoInterval: minutesToSeconds(60), autoBackoff: minutesToSeconds(360), airGrace: minutesToSeconds(60), airWindow: 7, airRetry: minutesToSeconds(60), maxGrabs: 5, hourlySearchBudget: 30, onlyMissingFiles: true, seedRatioLimit: 1, seedTime: 0, removeAfterImport: false });
   const form = useAppForm({ ...settingsFormBehaviour, validators: { onDynamic: schema }, defaultValues: defaults.current, onSubmit: async ({ value }) => {
     const values = schema.parse(value) as Values;
     // Only what was edited is written, so saving one group does not create rows for every
     // default on the page.
     const baseline = defaults.current;
     const edited = (fields: Array<[keyof Values, string, ((value: number) => number)?]>) => Object.fromEntries(fields.filter(([field]) => !Object.is(values[field], baseline[field])).map(([field, key, toStored]) => [key, toStored ? toStored(values[field] as number) : values[field]]));
-    await torrent.save(edited([["downloadDir", "torrent.download_dir"], ["sessionDir", "torrent.session_dir"], ["listenPort", "torrent.listen_port"], ["enableDht", "torrent.enable_dht"], ["maxConcurrent", "torrent.max_concurrent"], ["downloadLimit", "torrent.download_limit"], ["uploadLimit", "torrent.upload_limit"], ["seedRatioLimit", "torrent.seed_ratio_limit"], ["seedTime", "torrent.seed_time_minutes", secondsToMinutes], ["removeAfterImport", "torrent.remove_after_import"]]));
+    await torrent.save(edited([["sessionDir", "torrent.session_dir"], ["listenPort", "torrent.listen_port"], ["enableDht", "torrent.enable_dht"], ["maxConcurrent", "torrent.max_concurrent"], ["downloadLimit", "torrent.download_limit"], ["uploadLimit", "torrent.upload_limit"], ["seedRatioLimit", "torrent.seed_ratio_limit"], ["seedTime", "torrent.seed_time_minutes", secondsToMinutes], ["removeAfterImport", "torrent.remove_after_import"]]));
     await auto.save(edited([["autoEnabled", "auto_download.enabled"], ["autoInterval", "auto_download.interval_minutes", secondsToMinutes], ["autoBackoff", "auto_download.search_backoff_minutes", secondsToMinutes], ["airGrace", "auto_download.air_grace_minutes", secondsToMinutes], ["airWindow", "auto_download.air_window_days"], ["airRetry", "auto_download.air_retry_minutes", secondsToMinutes], ["maxGrabs", "auto_download.max_concurrent_grabs"], ["hourlySearchBudget", "auto_download.hourly_search_budget"], ["onlyMissingFiles", "auto_download.only_missing_files"]]));
     defaults.current = values;
     toast.success("Settings saved");
@@ -78,7 +80,6 @@ export function DownloadsSettings() {
     // Initial category responses and live snapshots can arrive independently.
     // Update untouched fields/defaults without discarding an in-progress edit.
     const snapshot: Values = {
-      downloadDir: t.get("torrent.download_dir") ?? "",
       sessionDir: t.get("torrent.session_dir") ?? "",
       listenPort: asNumber(t.get("torrent.listen_port"), 6881),
       enableDht: asBool(t.get("torrent.enable_dht"), true),
@@ -143,8 +144,12 @@ export function DownloadsSettings() {
           <AutoDownloadGuide />
         </SettingsSection>
 
-        <SettingsSection title="Torrent client" width="readable" description="The client reads these settings when it starts, so every change on this page, including seeding, takes effect after the server restarts.">
-          <form.AppField name="downloadDir">{() => <TextRow mono label="Download folder" />}</form.AppField>
+        <SettingsSection title="Torrent client" width="readable" description="The client reads these settings when it starts, so every change on this page, including seeding, takes effect after the server restarts. Moving the download folder restarts the client itself.">
+          <SettingRow
+            label="Download folder"
+            description={<><span className="font-mono text-foreground [overflow-wrap:anywhere]">{downloadDir || "/data/downloads"}</span><br />A folder on this server or on a saved network share. Moving it checks a copy you made first, then points every torrent at it.</>}
+            control={<Button size="sm" variant="secondary" onPress={() => setMovingDownloads(true)}><IconFolder size="md" /> Move…</Button>}
+          />
           <form.AppField name="sessionDir">{() => <TextRow mono label="Session folder" description="Resume data and DHT state." />}</form.AppField>
           <form.AppField name="listenPort">{() => <NumberRow label="Listen port" min={1024} max={65535} format={{ useGrouping: false }} />}</form.AppField>
           <form.AppField name="maxConcurrent">{() => <NumberRow label="Concurrent downloads" min={1} max={50} />}</form.AppField>
@@ -165,6 +170,7 @@ export function DownloadsSettings() {
         </FormActions>
       </Form>
       <BlockedReleases />
+      <MoveDownloadsDialog open={movingDownloads} onOpenChange={setMovingDownloads} current={downloadDir} />
     </SettingsPage>
   );
 }

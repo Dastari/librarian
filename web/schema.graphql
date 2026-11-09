@@ -2693,6 +2693,35 @@ type DeleteUsersResult {
   deletedCount: Int!
 }
 
+type DownloadsMovePlan {
+  """The download folder now."""
+  oldPath: String!
+
+  """The new folder, as it would be saved."""
+  newPath: String!
+
+  """Torrents stored under the download folder."""
+  torrentCount: Int!
+
+  """Their files that are on disk now."""
+  fileCount: Int!
+
+  """Found at the new folder with the same size."""
+  matched: Int!
+  missing: Int!
+
+  """The first of them, as paths below the download folder."""
+  missingFiles: [String!]!
+
+  """At the new folder at another size (a copy that did not finish)."""
+  changed: Int!
+  changedFiles: [String!]!
+
+  """Why the move cannot be made at all."""
+  blocked: String
+  canApply: Boolean!
+}
+
 type Episode {
   id: String!
   showId: String!
@@ -4575,6 +4604,31 @@ input MetadataCacheWhereInput {
   not: MetadataCacheWhereInput
 }
 
+input MoveDownloadsInput {
+  """
+  The new folder: an absolute path, or `smb://host/share/folder` on a saved server.
+  """
+  newPath: String!
+
+  """
+  Point the torrents in the download folder at their copy there (default). Off: only new
+  downloads go to the new folder, and the torrents stay where they are.
+  """
+  moveTorrents: Boolean
+
+  """
+  Move even though some files are not at the new folder yet. The client downloads them again.
+  """
+  allowMissing: Boolean
+}
+
+type MoveDownloadsResult {
+  success: Boolean!
+  error: String
+  movedTorrents: Int!
+  movedFiles: Int!
+}
+
 """Move a library to a folder its files were copied to."""
 input MoveLibraryInput {
   libraryId: String!
@@ -5118,6 +5172,13 @@ type Mutation {
   status records the outcome, and the shares it lists are remembered on it.
   """
   testNetworkServer(input: TestNetworkServerInput!): TestNetworkServerResult!
+
+  """
+  Move the download folder after its files were copied there: every torrent keeps seeding
+  from its copy, and nothing is downloaded again. The old files are not deleted. The client
+  restarts so the new folder is where new downloads go.
+  """
+  moveDownloads(input: MoveDownloadsInput!): MoveDownloadsResult!
 
   """
   Create a new #struct_name_str
@@ -8818,6 +8879,12 @@ type Query {
   When it cannot be reached the remembered shares are returned with the reason.
   """
   networkServerShares(id: String!): NetworkServerSharesResult!
+
+  """
+  Compare the torrents in the download folder with a folder they were copied to, before
+  moving the download folder there. Read only.
+  """
+  downloadsMovePlan(newPath: String!): DownloadsMovePlan!
 
   """Get available source definitions (e.g., IPTorrents, Newznab, etc.)"""
   availableSourceDefinitions: [SourceDefinitionInfo!]!

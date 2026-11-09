@@ -13,7 +13,7 @@ use crate::db::Database;
 use crate::services::graphql::entities::*;
 use crate::services::graphql::mutations::{
     ArtworkMutations, AuthMutations, AutoDownloadMutations, BackupMutations,
-    FeedMutations, FilesystemMutations,
+    DownloadsMoveMutations, DownloadsMoveQueries, FeedMutations, FilesystemMutations,
     LibraryScanMutations, MaintenanceMutations, NotificationFeedMutations, QualityMutations,
     RecommendationMutations, ServerConnectionMutations, ServerConnectionQueries,
 };
@@ -116,8 +116,8 @@ macro_rules! librarian_schema_roots {
         UsenetServer,
         ReleaseRecommendation,
     ],
-    extra_query_types: [FilesystemQueries, ServerConnectionQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries],
-    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations, ServerConnectionMutations],
+    extra_query_types: [FilesystemQueries, ServerConnectionQueries, DownloadsMoveQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries],
+    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations, ServerConnectionMutations, DownloadsMoveMutations],
     extra_subscription_types: [BackupSubscriptions, FilesystemSubscriptions, TorrentRuntimeSubscriptions, SessionSubscriptions, SourceCapabilitySubscriptions],
         }
     };
