@@ -185,7 +185,7 @@ impl OwnershipRowPolicy {
             | "QualityProfile" | "ReleaseBlocklist" => ScopeClass::Shared,
             "Source" | "User" | "InviteToken" | "RefreshToken" | "AppSetting" | "AppLog"
             | "UsenetServer" | "ScheduleSyncState" | "MetadataCache" | "MatchingAssistant"
-            | "NetworkServer" => ScopeClass::Admin,
+            | "NetworkServer" | "TorrentContents" => ScopeClass::Admin,
             _ => return None,
         })
     }

@@ -1296,7 +1296,7 @@ async fn process_feed(
             candidate.episode_count,
         );
         let Some(best) = picked else {
-            let (too_different, below_profile, profile_reasons) = explain_profile_rejections(
+            let rejections = explain_profile_rejections(
                 &candidate.match_title,
                 &releases,
                 &quality_profile,
@@ -1305,10 +1305,11 @@ async fn process_feed(
             let why = describe_no_grab(&NoGrabFacts {
                 sources: 1,
                 seen: releases.len(),
-                too_different,
-                below_profile,
+                too_different: rejections.too_different,
+                too_different_example: rejections.too_different_example,
+                below_profile: rejections.below,
                 profile: quality_profile.name.clone(),
-                profile_reasons,
+                profile_reasons: rejections.reasons,
                 ..Default::default()
             });
             info!(

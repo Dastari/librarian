@@ -352,7 +352,10 @@ async fn exercise(app: &TestApp, admin: &mut GqlClient, work: &SmbLocation) {
     let typed = format!(
         "smb://{}{}/{}/{}",
         movies.host.to_uppercase(),
-        movies.port.map(|port| format!(":{port}")).unwrap_or_default(),
+        movies
+            .port
+            .map(|port| format!(":{port}"))
+            .unwrap_or_default(),
         movies.share.to_uppercase(),
         movies.path
     );

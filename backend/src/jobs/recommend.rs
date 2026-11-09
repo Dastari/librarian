@@ -44,22 +44,40 @@ use crate::graphql::entities::{FEED_ITEM_GUID_PREFIX, feed_item_release};
 use crate::services::ServicesManager;
 use crate::services::quality::profile;
 use crate::services::quality::scoring::{ParsedRelease, ScoredRelease};
+use crate::services::quality::title_match::WantedTitle;
 use crate::services::sources::manager::SourcesManager;
 use crate::services::sources::{QueryType, SourceQuery, SourceRelease};
 
 use super::auto_download::{
     Blocklist, CandidateLinkage, Collected, HuntScope, NoGrabFacts, WantedCandidate,
-    collect_releases_from, describe_no_grab, discover_candidates, rank_for_candidate,
+    collect_releases_from, describe_no_grab, discover_candidates, explain_profile_rejections,
+    rank_for_candidate,
 };
 use super::auto_schedule::{Expectation, Timing};
 use super::auto_settings::AutoDownloadSettings;
+use super::recommend_plan::{
+    Claim, CoverPlan, MissingEpisode, PlanOption, claim_of, claimed_cover, describe_items,
+    plan_cover, seasons_of,
+};
+use crate::services::quality::scoring::parse_release;
+use crate::services::torrent::inspect::{self, Inspection};
+use crate::services::torrent::judge::{self, ContentsVerdict, WantedItems};
 
 /// How long a recommendation, or a "nothing found", is kept before the lookup is repeated.
 pub const TTL: Duration = Duration::hours(24);
+/// The version of the rules that choose a recommendation. Raise it whenever a change means stored
+/// answers may be wrong: rows from an older version are removed on the next pass and looked up
+/// again, instead of standing for up to a day. 2: titles are matched word for word (Q98), so
+/// `Babylon Berlin` is no longer recommended for `Babylon 5`. 3: a show's answer is a coverage
+/// plan (Q101), and releases are judged by their files (Q100).
+pub const RULES_VERSION: i32 = 3;
+
+/// Whether a stored answer was chosen by the current rules.
+pub fn is_current(row: &ReleaseRecommendation) -> bool {
+    row.rules_version.unwrap_or(0) >= RULES_VERSION
+}
 /// How long a "searching" placeholder lives if its lookup never finishes.
 const PLACEHOLDER_TTL: Duration = Duration::minutes(60);
-/// Most episode recommendations written for one season.
-const MAX_EPISODE_ROWS: usize = 40;
 /// Targets one background pass looks up.
 const BACKGROUND_TARGETS_PER_PASS: usize = 8;
 /// Between background passes.
@@ -393,6 +411,12 @@ struct Row {
     covers_ids: Vec<String>,
     covers_count: i32,
     missing_count: i32,
+    /// Seasons the covered episodes are in (shows only).
+    covers_seasons: Vec<i32>,
+    /// Where a release comes in its plan.
+    plan_position: Option<i32>,
+    /// A plan row's own reasons (a release row's come with its release).
+    plan_reasons: Vec<String>,
     note: Option<String>,
 }
 
@@ -403,11 +427,15 @@ struct Chosen {
     reasons: Vec<String>,
     feed_item_id: Option<String>,
     source_name: Option<String>,
+    /// Exactly the files to download, from an inspection.
+    file_indices: Vec<usize>,
 }
 
 /// Where a lookup is made and what it knows.
 struct Env<'a> {
     db: &'a Database,
+    /// For looking into torrents (Q99); `None` in pure tests.
+    manager: Option<&'a Arc<ServicesManager>>,
     sources: Option<&'a SourcesManager>,
     blocklist: &'a Blocklist,
     settings: &'a AutoDownloadSettings,
@@ -470,6 +498,7 @@ fn chosen_from(
             .strip_prefix(FEED_ITEM_GUID_PREFIX)
             .map(str::to_string),
         source_name: picked.release.source_name.clone(),
+        file_indices: Vec::new(),
     })
 }
 
@@ -518,10 +547,6 @@ struct SeasonGroup<'a> {
 }
 
 impl SeasonGroup<'_> {
-    fn label(&self) -> String {
-        format!("{} S{:02}", self.show_name, self.season)
-    }
-
     /// The candidate to search with: the pack's, or one built from an episode's for the whole season
     /// (a season search returns packs and single episodes alike).
     fn search_candidate(&self) -> Option<WantedCandidate> {
@@ -534,7 +559,6 @@ impl SeasonGroup<'_> {
         let worded = format!("{} Season {}", self.show_name, self.season);
         let mut candidate = (*first).clone();
         candidate.label = format!("season '{padded}'");
-        candidate.match_title = padded.clone();
         candidate.queries = [padded, worded]
             .into_iter()
             .map(|term| SourceQuery {
@@ -551,210 +575,515 @@ impl SeasonGroup<'_> {
     }
 }
 
-async fn look_up_season(env: &Env<'_>, group: &SeasonGroup<'_>) -> Vec<Row> {
-    let missing = group.episodes.len();
-    let Some(search) = group.search_candidate() else {
-        return Vec::new();
-    };
-    let quality = resolve_profile(env, &search).await;
-    let target = CatalogueTarget {
-        show_id: Some(group.show_id.clone()),
-        ..Default::default()
-    };
-    let pack_candidate = group.pack;
-    let episodes = &group.episodes;
-    let rank_all = |collected: &Collected| {
-        let pack = pack_candidate.map(|pack| rank_for_candidate(pack, collected, &quality, true));
-        let singles: Vec<_> = episodes
-            .iter()
-            .map(|episode| {
-                (
-                    *episode,
-                    rank_for_candidate(episode, collected, &quality, true),
-                )
-            })
-            .collect();
-        (pack, singles)
-    };
-    // The catalogue settles it if it has a pack, or an acceptable release for every episode.
-    let settled = |collected: &Collected| {
-        let (pack, singles) = rank_all(collected);
-        pack.as_ref().is_some_and(|pack| pack.is_ok())
-            || singles.iter().all(|(_, ranked)| ranked.is_ok())
-    };
-    let (collected, feeds, ran_out) = gather(env, &target, &search, settled).await;
-    let (pack, singles) = rank_all(&collected);
+/// Most packs looked into (Q99) for one show's plan.
+const INSPECT_PER_PLAN: usize = 4;
+/// Most releases one plan lists.
+const MAX_PLAN_RELEASES: usize = 60;
 
-    let covered_ids = ids_of(&group.episodes, |linkage| linkage.episode_id.as_ref());
-    if let Some(Ok(ranked)) = &pack
-        && let Some(chosen) = chosen_from(ranked, &quality.name, &feeds, missing, missing)
-    {
-        return vec![Row {
-            scope: "season_pack",
-            status: "ready",
-            target_label: group.label(),
-            show_id: Some(group.show_id.clone()),
-            season: Some(group.season),
-            episode_id: None,
-            movie_id: None,
-            album_id: None,
-            track_id: None,
-            audiobook_id: None,
-            chosen: Some(chosen),
-            covers_ids: covered_ids,
-            covers_count: missing as i32,
-            missing_count: missing as i32,
-            note: None,
-        }];
-    }
-    let mut rows = Vec::new();
-    for (episode, ranked) in singles.into_iter().take(MAX_EPISODE_ROWS) {
-        let Ok(ranked) = ranked else { continue };
-        let Some(chosen) = chosen_from(&ranked, &quality.name, &feeds, 1, missing) else {
-            continue;
-        };
-        rows.push(Row {
-            scope: "episode",
-            status: "ready",
-            target_label: episode
-                .label
-                .trim_start_matches("episode '")
-                .trim_end_matches('\'')
-                .to_string(),
-            show_id: Some(group.show_id.clone()),
-            season: Some(group.season),
-            episode_id: episode.linkage.episode_id.clone(),
-            movie_id: None,
-            album_id: None,
-            track_id: None,
-            audiobook_id: None,
-            chosen: Some(chosen),
-            covers_ids: episode.linkage.episode_id.clone().into_iter().collect(),
-            covers_count: 1,
-            missing_count: missing as i32,
-            note: None,
-        });
-    }
-    if rows.is_empty() {
-        let facts = match pack {
-            Some(Err(facts)) => facts,
-            _ => rank_for_candidate(&search, &collected, &quality, true)
-                .err()
-                .unwrap_or_default(),
-        };
-        rows.push(Row {
-            scope: "season_pack",
-            status: "none",
-            target_label: group.label(),
-            show_id: Some(group.show_id.clone()),
-            season: Some(group.season),
-            episode_id: None,
-            movie_id: None,
-            album_id: None,
-            track_id: None,
-            audiobook_id: None,
-            chosen: None,
-            covers_ids: Vec::new(),
-            covers_count: 0,
-            missing_count: missing as i32,
-            note: Some(none_note(&facts, ran_out)),
-        });
-    }
-    rows
+/// A release that could go into a show's plan.
+#[derive(Debug, Clone)]
+struct ShowOption {
+    scored: ScoredRelease,
+    claim: Claim,
+    /// Indexes of the missing episodes it covers: by name, or by its files once inspected.
+    covers: Vec<usize>,
+    /// What its files said, when it was looked into.
+    verdict: Option<ContentsVerdict>,
 }
 
-/// A complete-series pack covering several of a show's missing seasons.
-async fn look_up_series(
+/// Where a show's plan stands after one round of gathering.
+#[derive(Debug, Default)]
+struct ShowEvaluation {
+    options: Vec<ShowOption>,
+    plan: CoverPlan,
+    /// Named after the show but saying no season or episode.
+    unnumbered: usize,
+    unnumbered_example: Option<String>,
+    /// Turned down by their files.
+    rejected_by_files: Vec<String>,
+}
+
+fn missing_pairs(missing: &[MissingEpisode], items: &[usize]) -> Vec<(i32, i32)> {
+    items
+        .iter()
+        .filter_map(|index| missing.get(*index))
+        .map(|item| (item.season, item.episode))
+        .collect()
+}
+
+/// Say what each gathered release covers, look into the most promising packs, and plan.
+async fn evaluate_show(
     env: &Env<'_>,
-    show_name: &str,
-    groups: &[&SeasonGroup<'_>],
-) -> Option<Row> {
-    let first = groups.iter().find_map(|group| group.pack)?;
-    let missing: usize = groups.iter().map(|group| group.episodes.len()).sum();
-    let base = first.queries.first()?.clone();
-    let mut candidate = first.clone();
+    show_title: &WantedTitle,
+    quality: &crate::graphql::entities::QualityProfile,
+    collected: &Collected,
+    missing: &[MissingEpisode],
+    inspected: &mut HashMap<String, Inspection>,
+) -> ShowEvaluation {
+    let mut evaluation = ShowEvaluation::default();
+    let mut options: Vec<ShowOption> = Vec::new();
+    for release in &collected.releases {
+        if show_title.mismatch(&release.title).is_some() {
+            continue;
+        }
+        let parsed = parse_release(&release.title);
+        let Some(claim) = claim_of(&parsed, &release.title) else {
+            evaluation.unnumbered += 1;
+            evaluation.unnumbered_example.get_or_insert_with(|| {
+                format!(
+                    "'{}' does not say which season or episode it is",
+                    release.title
+                )
+            });
+            continue;
+        };
+        let covers = claimed_cover(&claim, missing);
+        if covers.is_empty() && claim != Claim::Vague {
+            continue;
+        }
+        let count = if claim == Claim::Vague {
+            missing.len()
+        } else {
+            covers.len()
+        };
+        let Some(scored) = profile::filter_and_rank(
+            show_title,
+            vec![release.clone()],
+            quality,
+            count.max(1) as i32,
+        )
+        .into_iter()
+        .next() else {
+            continue;
+        };
+        options.push(ShowOption {
+            scored,
+            claim,
+            covers,
+            verdict: None,
+        });
+    }
+    // The profile's order, so `rank` means the same as everywhere else.
+    let mut ranked: Vec<ScoredRelease> =
+        options.iter().map(|option| option.scored.clone()).collect();
+    profile::sort_by_profile(&mut ranked, quality);
+    let rank_of = |guid: &str| {
+        ranked
+            .iter()
+            .position(|scored| scored.release.guid == guid)
+            .unwrap_or(usize::MAX)
+    };
+
+    // Look into the packs that would cover most, best ranked first, within the budget.
+    let mut packs: Vec<&ShowOption> = options
+        .iter()
+        .filter(|option| option.claim.is_pack())
+        .collect();
+    packs.sort_by_key(|option| {
+        (
+            std::cmp::Reverse(if option.claim == Claim::Vague {
+                missing.len()
+            } else {
+                option.covers.len()
+            }),
+            rank_of(&option.scored.release.guid),
+        )
+    });
+    for option in packs {
+        if inspected.len() >= INSPECT_PER_PLAN {
+            break;
+        }
+        let guid = option.scored.release.guid.clone();
+        if inspected.contains_key(&guid) {
+            continue;
+        }
+        let reading = match env.manager {
+            Some(manager) => {
+                inspect::inspect_release(
+                    manager,
+                    env.db,
+                    &option.scored.release,
+                    env.settings.hourly_search_budget,
+                )
+                .await
+            }
+            None => Inspection::Unavailable("the torrent client is not available".to_string()),
+        };
+        inspected.insert(guid, reading);
+    }
+
+    // Files beat names.
+    let everything: Vec<usize> = (0..missing.len()).collect();
+    let all_pairs = missing_pairs(missing, &everything);
+    let mut kept: Vec<ShowOption> = Vec::new();
+    for mut option in options {
+        let reading = inspected
+            .get(&option.scored.release.guid)
+            .and_then(Inspection::contents);
+        match reading {
+            Some(contents) => {
+                let default_season = match option.claim {
+                    Claim::Seasons(first, last) if first == last => Some(first),
+                    Claim::Episodes(season, _) => Some(season),
+                    _ => None,
+                };
+                let verdict = judge::judge(
+                    contents,
+                    &WantedItems::Episodes {
+                        show: show_title.clone(),
+                        episodes: all_pairs.clone(),
+                        default_season,
+                    },
+                );
+                if let Some(why) = &verdict.reject {
+                    debug!(release = %option.scored.release.title, reason = %why, "Recommendations: '{}' turned down by its files: {why}", option.scored.release.title);
+                    evaluation
+                        .rejected_by_files
+                        .push(format!("'{}' {why}", option.scored.release.title));
+                    continue;
+                }
+                option.covers = verdict.covers.clone();
+                option.verdict = Some(verdict);
+            }
+            // A pack that names no season is used only once its files say what it holds.
+            None if option.claim == Claim::Vague => continue,
+            None => {}
+        }
+        if !option.covers.is_empty() {
+            kept.push(option);
+        }
+    }
+    let plan_options: Vec<PlanOption> = kept
+        .iter()
+        .map(|option| PlanOption {
+            covers: option.covers.clone(),
+            tier: profile::resolution_tier(&option.scored.parsed, quality),
+            seeders: option.scored.release.seeders,
+            size: option.scored.release.size,
+            rank: rank_of(&option.scored.release.guid),
+        })
+        .collect();
+    evaluation.plan = plan_cover(missing.len(), &plan_options);
+    evaluation.options = kept;
+    evaluation
+}
+
+/// The candidate a complete-series search is made with, from a season's.
+fn series_search(base: &WantedCandidate, show_name: &str, missing: usize) -> WantedCandidate {
+    let template = base.queries.first().cloned().unwrap_or_default();
+    let mut candidate = base.clone();
     let complete = format!("{show_name} Complete Series");
     let short = format!("{show_name} Complete");
     candidate.label = format!("complete series '{show_name}'");
-    candidate.match_title = complete.clone();
     candidate.queries = [complete, short]
         .into_iter()
         .map(|term| SourceQuery {
             search_term: Some(term),
             season: None,
             episode: None,
-            ..base.clone()
+            ..template.clone()
         })
         .collect();
     candidate.expectation = Expectation::SeriesPack;
     candidate.episode_count = missing as i32;
-    candidate.linkage = CandidateLinkage {
-        show_id: first.linkage.show_id.clone(),
-        ..Default::default()
-    };
-    let quality = resolve_profile(env, &candidate).await;
-    let target = CatalogueTarget {
-        show_id: first.linkage.show_id.clone(),
-        ..Default::default()
-    };
-    let (collected, feeds, _) = gather(env, &target, &candidate, |collected| {
-        rank_for_candidate(&candidate, collected, &quality, true).is_ok()
-    })
-    .await;
-    let ranked = rank_for_candidate(&candidate, &collected, &quality, true).ok()?;
-    let chosen = chosen_from(&ranked, &quality.name, &feeds, missing, missing)?;
-    // Only the missing seasons the release covers count.
-    let (covered_ids, covered) = match pack_season_range(&chosen.parsed) {
-        Some((from, to)) => {
-            let inside: Vec<&&SeasonGroup<'_>> = groups
-                .iter()
-                .filter(|group| (from..=to).contains(&group.season))
-                .collect();
-            (
-                inside
-                    .iter()
-                    .flat_map(|group| {
-                        ids_of(&group.episodes, |linkage| linkage.episode_id.as_ref())
-                    })
-                    .collect::<Vec<_>>(),
-                inside
-                    .iter()
-                    .map(|group| group.episodes.len())
-                    .sum::<usize>(),
-            )
+    candidate
+}
+
+/// The coverage plan for a show's missing episodes (Q101): the feed catalogue first, then a
+/// complete-series search (when two or more seasons are missing) and the season searches for
+/// seasons still uncovered, within the hourly budget, looking into the most promising packs on
+/// the way. Returns the plan's row and one row per release in it.
+async fn look_up_show(
+    env: &Env<'_>,
+    show_id: &str,
+    show_name: &str,
+    groups: &[&SeasonGroup<'_>],
+) -> Option<(Row, Vec<Row>)> {
+    let mut missing: Vec<MissingEpisode> = Vec::new();
+    for group in groups {
+        for episode in &group.episodes {
+            if let (Some(id), Expectation::Episode { season, episode }) =
+                (&episode.linkage.episode_id, &episode.expectation)
+                && !missing.iter().any(|item| &item.id == id)
+            {
+                missing.push(MissingEpisode {
+                    id: id.clone(),
+                    season: *season,
+                    episode: *episode,
+                });
+            }
         }
-        None => (
-            groups
-                .iter()
-                .flat_map(|group| ids_of(&group.episodes, |linkage| linkage.episode_id.as_ref()))
-                .collect(),
-            missing,
-        ),
-    };
-    if covered < 2 {
+    }
+    missing.sort_by_key(|item| (item.season, item.episode));
+    if missing.is_empty() {
         return None;
     }
-    Some(Row {
-        scope: "series_pack",
-        status: "ready",
-        target_label: format!("{show_name} (complete series)"),
-        show_id: first.linkage.show_id.clone(),
+    let mut seasons: Vec<&SeasonGroup<'_>> = groups.to_vec();
+    seasons.sort_by_key(|group| (std::cmp::Reverse(group.episodes.len()), group.season));
+    let base = seasons.iter().find_map(|group| group.search_candidate())?;
+    let quality = resolve_profile(env, &base).await;
+    let show_title = base.match_title.clone();
+    let target = CatalogueTarget {
+        show_id: Some(show_id.to_string()),
+        ..Default::default()
+    };
+    let (mut collected, feeds) =
+        catalogue_releases(env.db, &env.owner_id, &target, env.blocklist).await;
+
+    let mut searches: Vec<WantedCandidate> = Vec::new();
+    let season_count = seasons_of(&missing, &(0..missing.len()).collect::<Vec<_>>()).len();
+    if season_count >= 2 {
+        searches.push(series_search(&base, show_name, missing.len()));
+    }
+    searches.extend(seasons.iter().filter_map(|group| group.search_candidate()));
+
+    let mut inspected: HashMap<String, Inspection> = HashMap::new();
+    let mut ran_out = false;
+    let mut evaluation = evaluate_show(
+        env,
+        &show_title,
+        &quality,
+        &collected,
+        &missing,
+        &mut inspected,
+    )
+    .await;
+    for search in &searches {
+        if evaluation.plan.uncovered.is_empty() {
+            break;
+        }
+        if let Expectation::SeasonPack { season } = search.expectation
+            && !seasons_of(&missing, &evaluation.plan.uncovered).contains(&season)
+        {
+            continue;
+        }
+        let requests = search.queries.len() as u32;
+        match env.sources {
+            Some(sources) if budget_remaining(env.settings.hourly_search_budget) >= requests => {
+                budget_spend(requests);
+                let searched = collect_releases_from(sources, env.blocklist, search).await;
+                merge(&mut collected, searched);
+            }
+            Some(_) => {
+                ran_out = true;
+                break;
+            }
+            None => break,
+        }
+        evaluation = evaluate_show(
+            env,
+            &show_title,
+            &quality,
+            &collected,
+            &missing,
+            &mut inspected,
+        )
+        .await;
+    }
+
+    let plan = &evaluation.plan;
+    let covered_ids: Vec<String> = plan
+        .releases
+        .iter()
+        .flat_map(|planned| planned.adds.iter().map(|index| missing[*index].id.clone()))
+        .collect();
+    let mut header = Row {
+        scope: "plan",
+        status: if plan.releases.is_empty() {
+            "none"
+        } else {
+            "ready"
+        },
+        target_label: show_name.to_string(),
+        show_id: Some(show_id.to_string()),
         season: None,
         episode_id: None,
         movie_id: None,
         album_id: None,
         track_id: None,
         audiobook_id: None,
-        chosen: Some(chosen),
+        chosen: None,
         covers_ids: covered_ids,
-        covers_count: covered as i32,
-        missing_count: missing as i32,
+        covers_count: plan.covered() as i32,
+        missing_count: missing.len() as i32,
+        covers_seasons: seasons_of(&missing, &(0..missing.len()).collect::<Vec<_>>()),
+        plan_position: None,
+        plan_reasons: Vec::new(),
         note: None,
-    })
+    };
+    let budget_note = "the hourly search budget is used up, so some seasons were not searched";
+    if plan.releases.is_empty() {
+        let rejections = explain_profile_rejections(&show_title, &collected.releases, &quality, 1);
+        let facts = NoGrabFacts {
+            sources: collected.sources,
+            errors: collected.errors.clone(),
+            seen: collected.seen,
+            blocklisted: collected.blocklisted,
+            wrong_target: evaluation.unnumbered,
+            wrong_example: evaluation.unnumbered_example.clone(),
+            too_different: rejections.too_different,
+            too_different_example: rejections.too_different_example,
+            below_profile: rejections.below,
+            profile: quality.name.clone(),
+            profile_reasons: rejections.reasons,
+        };
+        let mut note = describe_no_grab(&facts);
+        if !evaluation.rejected_by_files.is_empty() {
+            note = format!(
+                "{note}; {} turned down by their files (e.g. {})",
+                evaluation.rejected_by_files.len(),
+                evaluation.rejected_by_files[0]
+            );
+        }
+        if ran_out {
+            note = format!("{note}; {budget_note}");
+        }
+        header.note = Some(note);
+        return Some((header, Vec::new()));
+    }
+
+    let mut packs = 0usize;
+    let mut episodes = 0usize;
+    let mut members: Vec<Row> = Vec::new();
+    for (position, planned) in plan.releases.iter().take(MAX_PLAN_RELEASES).enumerate() {
+        let option = &evaluation.options[planned.option];
+        let adds = &planned.adds;
+        let adds_seasons = seasons_of(&missing, adds);
+        if option.claim.is_pack() {
+            packs += 1;
+        } else {
+            episodes += 1;
+        }
+        // Exactly the files for what this release adds, when its files were read.
+        let file_indices = match inspected
+            .get(&option.scored.release.guid)
+            .and_then(Inspection::contents)
+        {
+            Some(contents) if option.claim.is_pack() => {
+                judge::judge(
+                    contents,
+                    &WantedItems::Episodes {
+                        show: show_title.clone(),
+                        episodes: missing_pairs(&missing, adds),
+                        default_season: match option.claim {
+                            Claim::Seasons(first, last) if first == last => Some(first),
+                            _ => None,
+                        },
+                    },
+                )
+                .files
+            }
+            _ => Vec::new(),
+        };
+        let mut reasons = vec![format!(
+            "{} fits the '{}' profile",
+            quality_label(&option.scored.parsed),
+            quality.name
+        )];
+        if let Some(seeders) = option.scored.release.seeders {
+            reasons.push(format!("{seeders} seeders"));
+        }
+        match &option.verdict {
+            Some(verdict) => reasons.push(match &verdict.note {
+                Some(note) => format!("Files checked: {note}"),
+                None => "Files checked".to_string(),
+            }),
+            None if option.claim.is_pack() => {
+                reasons.push("Files not checked: judged by its name".to_string())
+            }
+            None => {}
+        }
+        if let Some(feed) = feeds.get(&option.scored.release.guid) {
+            reasons.push(format!("Already listed by feed '{feed}': no search needed"));
+        }
+        reasons.push(format!("Adds {} of {} missing", adds.len(), missing.len()));
+        let label = match &option.claim {
+            Claim::Episodes(season, numbers) => numbers
+                .iter()
+                .map(|number| format!("S{season:02}E{number:02}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+            Claim::Seasons(first, last) if first == last => format!("Season {first}"),
+            Claim::Seasons(first, last) => format!("Seasons {first}–{last}"),
+            Claim::Everything | Claim::Vague => "Complete series".to_string(),
+        };
+        members.push(Row {
+            scope: option.claim.scope(),
+            status: "ready",
+            target_label: format!("{show_name} {label}"),
+            show_id: Some(show_id.to_string()),
+            season: (adds_seasons.len() == 1).then(|| adds_seasons[0]),
+            episode_id: (!option.claim.is_pack() && adds.len() == 1)
+                .then(|| missing[adds[0]].id.clone()),
+            movie_id: None,
+            album_id: None,
+            track_id: None,
+            audiobook_id: None,
+            chosen: Some(Chosen {
+                release: option.scored.release.clone(),
+                parsed: option.scored.parsed.clone(),
+                reasons,
+                feed_item_id: option
+                    .scored
+                    .release
+                    .guid
+                    .strip_prefix(FEED_ITEM_GUID_PREFIX)
+                    .map(str::to_string),
+                source_name: option.scored.release.source_name.clone(),
+                file_indices,
+            }),
+            covers_ids: adds
+                .iter()
+                .map(|index| missing[*index].id.clone())
+                .collect(),
+            covers_count: adds.len() as i32,
+            missing_count: missing.len() as i32,
+            covers_seasons: adds_seasons,
+            plan_position: Some(position as i32),
+            plan_reasons: Vec::new(),
+            note: None,
+        });
+    }
+    let mut summary = Vec::new();
+    if packs > 0 {
+        summary.push(format!("{packs} pack{}", if packs == 1 { "" } else { "s" }));
+    }
+    if episodes > 0 {
+        summary.push(format!(
+            "{episodes} single episode{}",
+            if episodes == 1 { "" } else { "s" }
+        ));
+    }
+    let mut reasons = vec![format!(
+        "{} cover {} of {} missing at the best quality found",
+        summary.join(" and "),
+        plan.covered(),
+        missing.len()
+    )];
+    if !evaluation.rejected_by_files.is_empty() {
+        reasons.push(format!(
+            "{} turned down by their files (e.g. {})",
+            evaluation.rejected_by_files.len(),
+            evaluation.rejected_by_files[0]
+        ));
+    }
+    header.plan_reasons = reasons;
+    if !plan.uncovered.is_empty() {
+        let mut note = format!(
+            "Still missing: {} (no usable release found)",
+            describe_items(&missing, &plan.uncovered)
+        );
+        if ran_out {
+            note = format!("{note}; {budget_note}");
+        }
+        header.note = Some(note);
+    }
+    Some((header, members))
 }
 
 // ---- Movie, book, album ----------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 async fn look_up_single(
     env: &Env<'_>,
     candidate: &WantedCandidate,
@@ -763,6 +1092,7 @@ async fn look_up_single(
     label: String,
     linkage: &CandidateLinkage,
     covers: Vec<String>,
+    items: Option<WantedItems>,
 ) -> Row {
     let quality = resolve_profile(env, candidate).await;
     let (collected, feeds, ran_out) = gather(env, &target, candidate, |collected| {
@@ -790,20 +1120,76 @@ async fn look_up_single(
         covers_ids: covers,
         covers_count: missing as i32,
         missing_count: missing as i32,
+        covers_seasons: Vec::new(),
+        plan_position: None,
+        plan_reasons: Vec::new(),
         note: None,
     };
     match ranked {
-        Ok(ranked) => match chosen_from(&ranked, &quality.name, &feeds, missing, missing) {
-            Some(chosen) => {
-                row.status = "ready";
-                row.chosen = Some(chosen);
+        Ok(mut ranked) => {
+            let mut turned_down: Vec<String> = Vec::new();
+            // Its files must be what is wanted (an album's tracks, a book's audio): the pick is
+            // looked into, and the next one if it is turned down.
+            let mut looked = 0;
+            let chosen = loop {
+                let Some(mut chosen) =
+                    chosen_from(&ranked, &quality.name, &feeds, missing, missing)
+                else {
+                    break None;
+                };
+                let (Some(items), Some(manager)) = (&items, env.manager) else {
+                    break Some(chosen);
+                };
+                if looked >= SINGLE_INSPECTIONS {
+                    break Some(chosen);
+                }
+                looked += 1;
+                let reading = inspect::inspect_release(
+                    manager,
+                    env.db,
+                    &chosen.release,
+                    env.settings.hourly_search_budget,
+                )
+                .await;
+                let Some(contents) = reading.contents() else {
+                    break Some(chosen);
+                };
+                let verdict = judge::judge(contents, items);
+                if let Some(why) = verdict.reject {
+                    turned_down.push(format!("'{}' {why}", chosen.release.title));
+                    let guid = chosen.release.guid.clone();
+                    ranked.retain(|scored| scored.release.guid != guid);
+                    continue;
+                }
+                chosen.reasons.push(match &verdict.note {
+                    Some(note) => format!("Files checked: {note}"),
+                    None => "Files checked".to_string(),
+                });
+                chosen.file_indices = verdict.files;
+                break Some(chosen);
+            };
+            match chosen {
+                Some(chosen) => {
+                    row.status = "ready";
+                    row.chosen = Some(chosen);
+                }
+                None if !turned_down.is_empty() => {
+                    row.note = Some(format!(
+                        "{} release(s) turned down by their files: {}",
+                        turned_down.len(),
+                        turned_down.join("; ")
+                    ))
+                }
+                None => row.note = Some("nothing usable".to_string()),
             }
-            None => row.note = Some("nothing usable".to_string()),
-        },
+        }
         Err(facts) => row.note = Some(none_note(&facts, ran_out)),
     }
     row
 }
+
+/// Releases of one movie, album or book looked into before it is recommended.
+const SINGLE_INSPECTIONS: usize = 2;
 
 /// A whole album, built from the per-track candidates the hunt would make for it.
 fn album_candidate(tracks: &[&WantedCandidate]) -> Option<(WantedCandidate, String)> {
@@ -814,7 +1200,11 @@ fn album_candidate(tracks: &[&WantedCandidate]) -> Option<(WantedCandidate, Stri
     let term = format!("{artist} {album}");
     let mut candidate = (*first).clone();
     candidate.label = format!("album '{term}'");
-    candidate.match_title = term.clone();
+    candidate.match_title = WantedTitle::Music {
+        artist: artist.clone(),
+        album: Some(album.clone()),
+        track: None,
+    };
     candidate.queries = vec![SourceQuery {
         query_type: QueryType::MusicSearch,
         search_term: Some(term.clone()),
@@ -884,6 +1274,7 @@ fn to_input(
     row: &Row,
     owner_id: &str,
     library_id: &str,
+    plan_id: Option<&str>,
     now: DateTime<Utc>,
 ) -> CreateReleaseRecommendationInput {
     let (
@@ -899,6 +1290,7 @@ fn to_input(
         seeders,
         quality,
         reasons,
+        file_indices,
     ) = match &row.chosen {
         Some(chosen) => {
             let release = &chosen.release;
@@ -924,6 +1316,9 @@ fn to_input(
                 release.seeders,
                 Some(quality_label(&chosen.parsed)),
                 chosen.reasons.clone(),
+                (!chosen.file_indices.is_empty())
+                    .then(|| serde_json::to_string(&chosen.file_indices).ok())
+                    .flatten(),
             )
         }
         None => (
@@ -938,7 +1333,8 @@ fn to_input(
             None,
             None,
             None,
-            Vec::new(),
+            row.plan_reasons.clone(),
+            None,
         ),
     };
     let expires = match row.status {
@@ -976,6 +1372,13 @@ fn to_input(
         ),
         reasons,
         note: row.note.clone(),
+        plan_id: plan_id.map(str::to_string),
+        plan_position: row.plan_position,
+        covers_seasons: (!row.covers_seasons.is_empty())
+            .then(|| serde_json::to_string(&row.covers_seasons).ok())
+            .flatten(),
+        file_indices,
+        rules_version: Some(RULES_VERSION),
         found_at: now.to_rfc3339(),
         expires_at: expires.to_rfc3339(),
     }
@@ -1000,9 +1403,9 @@ async fn clear_for(db: &Database, row: &Row) {
                 });
             }
         }
-        "series_pack" => filters.push(ReleaseRecommendationWhereInput {
+        // A show's plan replaces everything stored for the show, older per-season answers too.
+        "plan" | "series_pack" => filters.push(ReleaseRecommendationWhereInput {
             show_id: row.show_id.as_deref().map(string_eq),
-            scope: Some(string_eq("series_pack")),
             ..Default::default()
         }),
         "movie" => filters.push(ReleaseRecommendationWhereInput {
@@ -1049,11 +1452,64 @@ async fn store(db: &Database, rows: &[Row], owner_id: &str, library_id: &str) ->
             _ => {}
         }
         if let Err(error) =
-            ReleaseRecommendation::insert(db, to_input(row, owner_id, library_id, now)).await
+            ReleaseRecommendation::insert(db, to_input(row, owner_id, library_id, None, now)).await
         {
             warn!(target = %row.target_label, error = %crate::services::redact::redact_text(&error.to_string()), "Recommendations: could not store an answer");
         }
     }
+    summary
+}
+
+/// Store a show's plan: its own row first, then each release's row pointing at it. Replaces
+/// everything stored for the show.
+async fn store_plan(
+    db: &Database,
+    header: Row,
+    members: &[Row],
+    owner_id: &str,
+    library_id: &str,
+) -> LookupSummary {
+    let now = Utc::now();
+    let mut summary = LookupSummary::default();
+    clear_for(db, &header).await;
+    match header.status {
+        "ready" => summary.ready += 1,
+        "none" => summary.none += 1,
+        _ => {}
+    }
+    let plan = match ReleaseRecommendation::insert(
+        db,
+        to_input(&header, owner_id, library_id, None, now),
+    )
+    .await
+    {
+        Ok(plan) => plan,
+        Err(error) => {
+            warn!(target = %header.target_label, error = %crate::services::redact::redact_text(&error.to_string()), "Recommendations: could not store the plan for '{}'", header.target_label);
+            return summary;
+        }
+    };
+    for member in members {
+        if let Err(error) = ReleaseRecommendation::insert(
+            db,
+            to_input(member, owner_id, library_id, Some(&plan.id), now),
+        )
+        .await
+        {
+            warn!(target = %member.target_label, error = %crate::services::redact::redact_text(&error.to_string()), "Recommendations: could not store a release of the plan for '{}'", header.target_label);
+        }
+    }
+    info!(
+        show = %header.target_label,
+        releases = members.len(),
+        covers = header.covers_count,
+        missing = header.missing_count,
+        "Recommendations: plan for '{}': {} release(s) cover {} of {} missing",
+        header.target_label,
+        members.len(),
+        header.covers_count,
+        header.missing_count
+    );
     summary
 }
 
@@ -1145,7 +1601,7 @@ pub async fn look_up(
     let mut summary = LookupSummary::default();
     let mut left = max_targets;
 
-    // Seasons, then each show's series pack.
+    // Shows: one coverage plan each, over every missing season the scope names.
     let mut by_show: HashMap<String, Vec<&SeasonGroup<'_>>> = HashMap::new();
     let mut ordered: Vec<&SeasonGroup<'_>> = seasons.values().collect();
     ordered.sort_by(|a, b| (&a.show_id, a.season).cmp(&(&b.show_id, b.season)));
@@ -1154,13 +1610,16 @@ pub async fn look_up(
             .entry(group.show_id.clone())
             .or_default()
             .push(group);
-        if left == 0 || existing.contains(&format!("show:{}:{}", group.show_id, group.season)) {
+    }
+    let mut shows: Vec<(String, Vec<&SeasonGroup<'_>>)> = by_show.into_iter().collect();
+    shows.sort_by(|a, b| a.0.cmp(&b.0));
+    for (show_id, groups) in shows {
+        if left == 0 || existing.contains(&format!("plan:{show_id}")) {
             continue;
         }
-        let Some(library_id) = group
-            .episodes
-            .first()
-            .or(group.pack.as_ref())
+        let Some(library_id) = groups
+            .iter()
+            .find_map(|group| group.episodes.first().or(group.pack.as_ref()))
             .map(|candidate| candidate.library_id.clone())
         else {
             continue;
@@ -1170,6 +1629,7 @@ pub async fn look_up(
         };
         let env = Env {
             db: &db,
+            manager: Some(manager),
             sources: sources_manager.as_deref(),
             blocklist: &blocklist,
             settings: &settings,
@@ -1177,62 +1637,12 @@ pub async fn look_up(
         };
         left -= 1;
         summary.targets += 1;
-        let rows = look_up_season(&env, group).await;
-        let part = store(&db, &rows, &owner, &library_id).await;
-        summary.ready += part.ready;
-        summary.none += part.none;
-    }
-    for (show_id, groups) in by_show {
-        let qualifying: Vec<&SeasonGroup<'_>> = groups
-            .iter()
-            .copied()
-            .filter(|group| group.pack.is_some())
-            .collect();
-        if left == 0 || qualifying.len() < 2 || existing.contains(&format!("series:{show_id}")) {
-            continue;
-        }
-        let first = qualifying[0];
-        let library_id = first
-            .pack
-            .map(|pack| pack.library_id.clone())
-            .unwrap_or_default();
-        let Some(owner) = library_owner(&db, &mut owners, &library_id).await else {
+        let show_name = groups[0].show_name.clone();
+        let Some((header, members)) = look_up_show(&env, &show_id, &show_name, &groups).await
+        else {
             continue;
         };
-        let env = Env {
-            db: &db,
-            sources: sources_manager.as_deref(),
-            blocklist: &blocklist,
-            settings: &settings,
-            owner_id: owner.clone(),
-        };
-        left -= 1;
-        summary.targets += 1;
-        let row = look_up_series(&env, &first.show_name, &qualifying).await;
-        let rows = match row {
-            Some(row) => vec![row],
-            None => vec![Row {
-                scope: "series_pack",
-                status: "none",
-                target_label: format!("{} (complete series)", first.show_name),
-                show_id: Some(show_id.clone()),
-                season: None,
-                episode_id: None,
-                movie_id: None,
-                album_id: None,
-                track_id: None,
-                audiobook_id: None,
-                chosen: None,
-                covers_ids: Vec::new(),
-                covers_count: 0,
-                missing_count: qualifying
-                    .iter()
-                    .map(|group| group.episodes.len())
-                    .sum::<usize>() as i32,
-                note: Some("no complete-series pack found".to_string()),
-            }],
-        };
-        let part = store(&db, &rows, &owner, &library_id).await;
+        let part = store_plan(&db, header, &members, &owner, &library_id).await;
         summary.ready += part.ready;
         summary.none += part.none;
     }
@@ -1256,6 +1666,7 @@ pub async fn look_up(
         };
         let env = Env {
             db: &db,
+            manager: Some(manager),
             sources: sources_manager.as_deref(),
             blocklist: &blocklist,
             settings: &settings,
@@ -1273,6 +1684,11 @@ pub async fn look_up(
             .split_once('\'')
             .map(|(_, rest)| rest.trim_end_matches('\'').to_string())
             .unwrap_or_else(|| candidate.label.clone());
+        let items = if scope == "book" {
+            WantedItems::Book
+        } else {
+            WantedItems::Movie
+        };
         let row = look_up_single(
             &env,
             candidate,
@@ -1281,6 +1697,7 @@ pub async fn look_up(
             label,
             &candidate.linkage,
             Vec::new(),
+            Some(items),
         )
         .await;
         let part = store(&db, &[row], &owner, &candidate.library_id).await;
@@ -1301,6 +1718,7 @@ pub async fn look_up(
         };
         let env = Env {
             db: &db,
+            manager: Some(manager),
             sources: sources_manager.as_deref(),
             blocklist: &blocklist,
             settings: &settings,
@@ -1309,6 +1727,12 @@ pub async fn look_up(
         left -= 1;
         summary.targets += 1;
         let covers = ids_of(&tracks, |linkage| linkage.track_id.as_ref());
+        let mut wanted_tracks = Vec::new();
+        for id in &covers {
+            if let Ok(Some(track)) = crate::graphql::entities::Track::get(db.pool(), id).await {
+                wanted_tracks.push((track.track_number, track.title));
+            }
+        }
         let target = CatalogueTarget {
             album_id: Some(album_id.clone()),
             ..Default::default()
@@ -1321,6 +1745,9 @@ pub async fn look_up(
             term,
             &candidate.linkage,
             covers,
+            (!wanted_tracks.is_empty()).then_some(WantedItems::Tracks {
+                tracks: wanted_tracks,
+            }),
         )
         .await;
         let part = store(&db, &[row], &owner, &candidate.library_id).await;
@@ -1339,8 +1766,8 @@ pub async fn look_up(
     Ok(summary)
 }
 
-/// Keys of targets that already have an answer that has not expired: `show:<id>:<season>`,
-/// `series:<id>`, `movie:<id>`, `book:<id>`, `album:<id>`.
+/// Keys of targets that already have an answer that has not expired: `plan:<show id>`,
+/// `movie:<id>`, `book:<id>`, `album:<id>`.
 async fn fresh_targets(db: &Database, now: DateTime<Utc>) -> HashSet<String> {
     let rows = ReleaseRecommendation::query(db.pool())
         .filter(ReleaseRecommendationWhereInput {
@@ -1354,15 +1781,16 @@ async fn fresh_targets(db: &Database, now: DateTime<Utc>) -> HashSet<String> {
         .await
         .unwrap_or_default();
     let mut keys = HashSet::new();
-    // A "searching" placeholder is a request for an answer, not an answer.
-    for row in rows.into_iter().filter(|row| row.status != "searching") {
-        if let (Some(show), Some(season)) = (&row.show_id, row.season) {
-            keys.insert(format!("show:{show}:{season}"));
-        }
-        if row.scope == "series_pack"
+    // A "searching" placeholder is a request for an answer, not an answer, and an answer from older
+    // rules is not one either.
+    for row in rows
+        .into_iter()
+        .filter(|row| row.status != "searching" && is_current(row))
+    {
+        if row.scope == "plan"
             && let Some(show) = &row.show_id
         {
-            keys.insert(format!("series:{show}"));
+            keys.insert(format!("plan:{show}"));
         }
         if let Some(movie) = &row.movie_id {
             keys.insert(format!("movie:{movie}"));
@@ -1385,17 +1813,44 @@ async fn fresh_targets(db: &Database, now: DateTime<Utc>) -> HashSet<String> {
 pub async fn forget_for_linkage(db: &Database, linkage: &CandidateLinkage) {
     let mut filters = Vec::new();
     if let Some(show) = &linkage.show_id {
-        filters.push(ReleaseRecommendationWhereInput {
-            show_id: Some(string_eq(show)),
-            season: linkage
-                .season
-                .map(|season| graphql_orm::graphql::filters::IntFilter {
-                    eq: Some(season),
-                    ..Default::default()
-                }),
-            episode_id: linkage.episode_id.as_deref().map(string_eq),
-            ..Default::default()
-        });
+        // A show's plan is not dropped because one thing in it, or near it, was grabbed: only the
+        // releases the grab makes pointless go (the same episode, or another pack of the same
+        // season). The plan's own row goes when it has no releases left (`prune`).
+        let rows = ReleaseRecommendation::query(db.pool())
+            .filter(ReleaseRecommendationWhereInput {
+                show_id: Some(string_eq(show)),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await
+            .unwrap_or_default();
+        for row in rows {
+            let in_plan = row.plan_id.is_some() || row.scope == "plan";
+            let pointless = if in_plan {
+                row.scope != "plan"
+                    && match (&linkage.episode_id, linkage.season) {
+                        (Some(episode), _) => row.episode_id.as_ref() == Some(episode),
+                        // Another pack of the same season; the plan's single episodes of that
+                        // season fill what its pack lacked, so they stay.
+                        (None, Some(season)) => {
+                            row.season == Some(season) && row.scope == "season_pack"
+                        }
+                        (None, None) => false,
+                    }
+            } else {
+                linkage
+                    .season
+                    .is_none_or(|season| row.season == Some(season))
+                    && linkage
+                        .episode_id
+                        .as_ref()
+                        .is_none_or(|episode| row.episode_id.as_ref() == Some(episode))
+            };
+            if pointless && let Err(error) = ReleaseRecommendation::delete_by_id(db, &row.id).await
+            {
+                warn!(error = %error, "Recommendations: could not forget a grabbed target's answer");
+            }
+        }
     }
     let (movie, album, book, track) = (
         linkage.movie_id.as_deref(),
@@ -1432,12 +1887,35 @@ pub async fn prune(db: &Database) -> usize {
         }
     };
     let mut removed = 0;
+    let plan_ids: HashSet<String> = rows
+        .iter()
+        .filter(|row| row.scope == "plan")
+        .map(|row| row.id.clone())
+        .collect();
+    let mut kept_members: HashSet<String> = HashSet::new();
+    let mut plans: Vec<ReleaseRecommendation> = Vec::new();
     for row in rows {
+        if row.scope == "plan" && row.status == "ready" && is_current(&row) {
+            // Judged once its releases have been.
+            plans.push(row);
+            continue;
+        }
         let expired = DateTime::parse_from_rfc3339(&row.expires_at)
             .map(|at| at.with_timezone(&Utc) <= now)
             .unwrap_or(true);
         let mut drop = expired;
         let mut why = "expired";
+        if !drop && !is_current(&row) {
+            drop = true;
+            why = "it was chosen by older rules";
+        }
+        if !drop
+            && let Some(plan) = &row.plan_id
+            && !plan_ids.contains(plan)
+        {
+            drop = true;
+            why = "its plan is gone";
+        }
         if !drop && row.status == "ready" {
             if row
                 .info_hash
@@ -1458,7 +1936,11 @@ pub async fn prune(db: &Database) -> usize {
             {
                 drop = true;
                 why = "its release is gone from the feed";
-            } else if target_is_settled(db, &row).await {
+            } else if if row.plan_id.is_some() {
+                plan_release_is_settled(db, &row).await
+            } else {
+                target_is_settled(db, &row).await
+            } {
                 drop = true;
                 why = "what it was for is no longer missing";
             }
@@ -1471,9 +1953,80 @@ pub async fn prune(db: &Database) -> usize {
             {
                 removed += 1;
             }
+        } else if let Some(plan) = &row.plan_id {
+            kept_members.insert(plan.clone());
+        }
+    }
+    for plan in plans {
+        let expired = DateTime::parse_from_rfc3339(&plan.expires_at)
+            .map(|at| at.with_timezone(&Utc) <= now)
+            .unwrap_or(true);
+        if expired || !kept_members.contains(&plan.id) {
+            debug!(target = %plan.target_label, "Recommendations: removing the plan for '{}': {}", plan.target_label, if expired { "expired" } else { "every release in it was grabbed or is gone" });
+            if ReleaseRecommendation::delete_by_id(db, &plan.id)
+                .await
+                .is_ok()
+            {
+                removed += 1;
+            }
         }
     }
     removed
+}
+
+/// Whether a release in a show's plan is no longer needed: every episode it adds has a file, or a
+/// torrent that has not failed was grabbed for exactly what it is (that episode, that season's
+/// pack, or a pack of the whole show).
+async fn plan_release_is_settled(db: &Database, row: &ReleaseRecommendation) -> bool {
+    use crate::graphql::entities::Episode;
+    if let Some(json) = &row.covers_ids
+        && let Ok(ids) = serde_json::from_str::<Vec<String>>(json)
+        && !ids.is_empty()
+    {
+        let mut all_filled = true;
+        for id in &ids {
+            let filled = Episode::get(db.pool(), id)
+                .await
+                .ok()
+                .flatten()
+                .is_none_or(|episode| episode.media_file_id.is_some());
+            if !filled {
+                all_filled = false;
+                break;
+            }
+        }
+        if all_filled {
+            return true;
+        }
+    }
+    let Some(show) = &row.show_id else {
+        return false;
+    };
+    let torrents = Torrent::query(db.pool())
+        .filter(TorrentWhereInput {
+            show_id: Some(string_eq(show)),
+            ..Default::default()
+        })
+        .fetch_all()
+        .await
+        .unwrap_or_default();
+    torrents
+        .iter()
+        .filter(|torrent| torrent.post_process_status.as_deref() != Some("failed"))
+        .any(|torrent| match row.scope.as_str() {
+            "episode" => row.episode_id.is_some() && torrent.episode_id == row.episode_id,
+            "season_pack" => {
+                torrent.episode_id.is_none() && row.season.is_some() && torrent.season == row.season
+            }
+            _ => {
+                torrent.episode_id.is_none()
+                    && torrent.season.is_none()
+                    && row
+                        .info_hash
+                        .as_deref()
+                        .is_some_and(|hash| hash.eq_ignore_ascii_case(&torrent.info_hash))
+            }
+        })
 }
 
 /// Whether what a recommendation is for has since been filled or taken: a file exists, or a torrent
@@ -1583,10 +2136,9 @@ fn request_scope(request: &LookupRequest) -> Option<&'static str> {
         Some("book")
     } else if request.album_id.is_some() {
         Some("album")
-    } else if request.show_id.is_some() && request.season.is_some() {
-        Some("season_pack")
     } else if request.show_id.is_some() {
-        Some("series_pack")
+        // A show, a season or an episode: the answer is the show's coverage plan.
+        Some("plan")
     } else {
         None
     }
@@ -1603,20 +2155,21 @@ pub async fn request_lookup(
     request: LookupRequest,
 ) -> Result<Requested> {
     let scope = request_scope(&request).context("a lookup needs a season, movie, album or book")?;
+    // A season or an episode of a show is answered by the show's plan.
+    let request = match &request.show_id {
+        Some(show_id) => LookupRequest {
+            show_id: Some(show_id.clone()),
+            ..Default::default()
+        },
+        None => request,
+    };
     let existing = ReleaseRecommendation::query(db.pool())
         .filter(ReleaseRecommendationWhereInput {
             show_id: request.show_id.as_deref().map(string_eq),
-            season: request
-                .season
-                .map(|season| graphql_orm::graphql::filters::IntFilter {
-                    eq: Some(season),
-                    ..Default::default()
-                }),
             movie_id: request.movie_id.as_deref().map(string_eq),
             album_id: request.album_id.as_deref().map(string_eq),
             audiobook_id: request.audiobook_id.as_deref().map(string_eq),
-            // A whole-show request is about the complete-series pack, not the seasons' own rows.
-            scope: (scope == "series_pack").then(|| string_eq("series_pack")),
+            scope: (scope == "plan").then(|| string_eq("plan")),
             expires_at: Some(DateFilter {
                 gt: Some(Utc::now().to_rfc3339()),
                 ..Default::default()
@@ -1625,7 +2178,10 @@ pub async fn request_lookup(
         })
         .fetch_all()
         .await?;
-    if existing.iter().any(|row| row.status != "searching") {
+    if existing
+        .iter()
+        .any(|row| row.status != "searching" && is_current(row))
+    {
         return Ok(Requested::Cached);
     }
     if !enqueue(request.clone()) || existing.iter().any(|row| row.status == "searching") {
@@ -1646,6 +2202,9 @@ pub async fn request_lookup(
         covers_ids: Vec::new(),
         covers_count: 0,
         missing_count: 0,
+        covers_seasons: Vec::new(),
+        plan_position: None,
+        plan_reasons: Vec::new(),
         note: None,
     };
     store(db, &[row], owner_id, library_id).await;
@@ -1666,8 +2225,7 @@ async fn drop_placeholders(db: &Database, request: &LookupRequest) {
         movie_id: request.movie_id.as_deref().map(string_eq),
         album_id: request.album_id.as_deref().map(string_eq),
         audiobook_id: request.audiobook_id.as_deref().map(string_eq),
-        scope: (request.show_id.is_some() && request.season.is_none())
-            .then(|| string_eq("series_pack")),
+        scope: request.show_id.is_some().then(|| string_eq("plan")),
         status: Some(string_eq("searching")),
         ..Default::default()
     };
@@ -1697,6 +2255,15 @@ async fn wanted_files_for(
     {
         return None;
     }
+    // Looked into before it was recommended: exactly those files.
+    if let Some(indices) = rec
+        .file_indices
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<Vec<usize>>(json).ok())
+        .filter(|indices| !indices.is_empty())
+    {
+        return Some(WantedFiles::exactly(indices));
+    }
     let ids: Vec<String> = serde_json::from_str(rec.covers_ids.as_deref()?).ok()?;
     let mut wanted = WantedFiles::default();
     for id in ids {
@@ -1720,9 +2287,6 @@ pub async fn grab_recommendation(
     actor_user_id: &str,
     is_admin: bool,
 ) -> Result<GrabOutcome> {
-    use super::auto_download::{GrabEnv, grab_release_with, hunt_lock};
-    use super::auto_trail::{GrabRecord, Trail, Trigger};
-
     let deny = || anyhow::anyhow!("Recommendation not found or access denied");
     let db = manager
         .get_database()
@@ -1736,7 +2300,95 @@ pub async fn grab_recommendation(
     if !is_admin && rec.user_id != actor_user_id {
         return Err(deny());
     }
+    anyhow::ensure!(
+        rec.scope != "plan",
+        "That is a plan: download its releases, or the whole plan"
+    );
+    grab_row(manager, &db, rec).await
+}
+
+/// What downloading a whole plan did.
+#[derive(Debug, Clone, Default)]
+pub struct PlanGrabOutcome {
+    pub started: Vec<GrabOutcome>,
+    /// `'release title': why` for each release that could not be started.
+    pub failed: Vec<String>,
+}
+
+/// Download every release of a show's plan, in its order, through the same path as one release.
+/// The releases are read up front, so grabbing one (which may settle another's row) does not
+/// change what is downloaded. `actor_user_id` is checked against the plan's owner unless
+/// `is_admin`.
+pub async fn grab_plan(
+    manager: &Arc<ServicesManager>,
+    plan_id: &str,
+    actor_user_id: &str,
+    is_admin: bool,
+) -> Result<PlanGrabOutcome> {
+    let deny = || anyhow::anyhow!("Plan not found or access denied");
+    let db = manager
+        .get_database()
+        .await
+        .context("database service not available")?
+        .pool()
+        .clone();
+    let plan = ReleaseRecommendation::get(db.pool(), &plan_id.to_string())
+        .await?
+        .ok_or_else(deny)?;
+    if (!is_admin && plan.user_id != actor_user_id) || plan.scope != "plan" {
+        return Err(deny());
+    }
+    anyhow::ensure!(plan.status == "ready", "That plan has no releases");
+    anyhow::ensure!(
+        is_current(&plan),
+        "That plan was made by older rules and is being looked up again"
+    );
+    let mut members = ReleaseRecommendation::query(db.pool())
+        .filter(ReleaseRecommendationWhereInput {
+            plan_id: Some(string_eq(&plan.id)),
+            ..Default::default()
+        })
+        .fetch_all()
+        .await?;
+    members.sort_by_key(|member| member.plan_position.unwrap_or(i32::MAX));
+    anyhow::ensure!(!members.is_empty(), "That plan has no releases left");
+    let mut outcome = PlanGrabOutcome::default();
+    for member in members {
+        let title = member.title.clone().unwrap_or_default();
+        match grab_row(manager, &db, member).await {
+            Ok(started) => outcome.started.push(started),
+            Err(error) => outcome.failed.push(format!(
+                "'{title}': {}",
+                crate::services::redact::redact_text(&format!("{error:#}"))
+            )),
+        }
+    }
+    info!(
+        show = %plan.target_label,
+        started = outcome.started.len(),
+        failed = outcome.failed.len(),
+        "Recommendations: downloading the plan for '{}': {} started, {} could not start",
+        plan.target_label,
+        outcome.started.len(),
+        outcome.failed.len()
+    );
+    Ok(outcome)
+}
+
+/// Grab one stored recommendation (a movie, album or book, or one release of a plan).
+async fn grab_row(
+    manager: &Arc<ServicesManager>,
+    db: &Database,
+    rec: ReleaseRecommendation,
+) -> Result<GrabOutcome> {
+    use super::auto_download::{GrabEnv, grab_release_with, hunt_lock};
+    use super::auto_trail::{GrabRecord, Trail, Trigger};
+    let db = db.clone();
     anyhow::ensure!(rec.status == "ready", "That recommendation is not ready");
+    anyhow::ensure!(
+        is_current(&rec),
+        "That recommendation was chosen by older rules and is being looked up again"
+    );
     let title = rec
         .title
         .clone()
@@ -1795,11 +2447,14 @@ pub async fn grab_recommendation(
             None
         },
     };
+    // A release in a plan stands for what it adds, not for its whole season: the grab forgets only
+    // what it makes pointless (`forget_for_linkage`), and this row.
+    let in_plan = rec.plan_id.is_some();
     let candidate = WantedCandidate {
         label: rec.target_label.clone(),
         library_id: rec.library_id.clone(),
         queries: Vec::new(),
-        match_title: rec.target_label.clone(),
+        match_title: WantedTitle::work(rec.target_label.clone()),
         linkage: linkage.clone(),
         quality_profile_override_id: None,
         search_key: format!("recommendation:{}", rec.id),
@@ -1825,7 +2480,9 @@ pub async fn grab_recommendation(
         .await?
         .context("the download client already has that torrent")?;
     let _ = ReleaseRecommendation::delete_by_id(&db, &rec.id).await;
-    forget_for_linkage(&db, &linkage).await;
+    if !in_plan {
+        forget_for_linkage(&db, &linkage).await;
+    }
     Trail::new(&db)
         .grabbed(&GrabRecord {
             library_id: &rec.library_id,
@@ -1877,12 +2534,8 @@ pub async fn work(manager: &Arc<ServicesManager>) -> Result<()> {
             ignore_backoff: true,
             ..Default::default()
         };
-        // A whole show looks at each of its seasons and then the series pack.
-        let targets = if request.show_id.is_some() && request.season.is_none() {
-            12
-        } else {
-            4
-        };
+        // A show is one target: its plan.
+        let targets = 4;
         if let Err(error) = look_up(manager, &scope, Reach::AnyMissing, false, targets).await {
             warn!(error = %crate::services::redact::redact_text(&format!("{error:#}")), "Recommendations: a queued lookup failed");
         }

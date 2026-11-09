@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// A file server Librarian signs in to by itself (SMB, no operating-system mount), saved once
 /// with its sign-in so libraries and download folders on its shares never ask for it again
-/// (`docs/design.md` Q98). A location on it stays a plain `smb://host[:port]/share/...` string;
+/// (`docs/design.md` Q102). A location on it stays a plain `smb://host[:port]/share/...` string;
 /// the server is found from the host and port.
 ///
 /// The password is written through the generated mutations and encrypted by the write

@@ -1,4 +1,4 @@
-//! Torrents on a share that stops answering wait for it instead of failing (Q100).
+//! Torrents on a share that stops answering wait for it instead of failing (Q104).
 //!
 //! The share storage reports every call that could not reach the share. The watcher then pauses
 //! the torrents stored on that share, so nothing keeps trying (and failing) against it, says why

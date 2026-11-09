@@ -1,4 +1,4 @@
-//! Moving the download folder (Q101): like moving a library, the person copies the files first
+//! Moving the download folder (Q105): like moving a library, the person copies the files first
 //! (keeping them seeding from the old place meanwhile), Librarian checks the copy, then points
 //! every torrent at the new place and rewrites the records that name a download path.
 //!

@@ -39,8 +39,8 @@ use crate::services::graphql::entities::{
 };
 use crate::services::graphql::{AuthUser, LibrarianSchema};
 use crate::services::library_storage::{
-    EntryKind, IntoStoragePath, PlaceMode, StorageErrorKind, TOOL_PROTOCOL_WHITELIST, WalkFilter,
-    WalkOptions, is_smb_uri, is_tool_url, library_storage, place_no_clobber_blocking,
+    EntryKind, IntoStoragePath, PlaceMode, StorageErrorKind, StoragePath, TOOL_PROTOCOL_WHITELIST,
+    WalkFilter, WalkOptions, is_smb_uri, is_tool_url, library_storage, place_no_clobber_blocking,
     tool_argument,
 };
 use crate::services::manager::{Service, ServiceHealth, ServicesManager};
@@ -755,6 +755,50 @@ struct MediaFileRow {
 struct ExistingMediaFileRow {
     id: String,
     path: String,
+}
+
+/// Where a catalogued file sits relative to its library: a scan's walk finds only the first kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecordPlace {
+    /// Under the library's folder, where the walk looks.
+    Library,
+    /// In the library's own trash folder, which the walk skips.
+    Trash,
+    /// Not under the library's folder at all, as after the library moved.
+    OutsideRoot,
+}
+
+impl RecordPlace {
+    fn of(path: &str, root: &StoragePath) -> Self {
+        let Some(relative) = StoragePath::new(path).relative_to(root) else {
+            return Self::OutsideRoot;
+        };
+        let first = relative.split('/').next().unwrap_or_default();
+        // The trash is a folder, so a file sitting directly in the root with that name is not in it.
+        if first == LIBRARY_TRASH_DIR && relative.contains('/') {
+            Self::Trash
+        } else {
+            Self::Library
+        }
+    }
+}
+
+/// What one scan's reconciliation did with the records of files that were not found.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct MissingRecordSummary {
+    removed_in_library: usize,
+    removed_in_trash: usize,
+    removed_outside_root: usize,
+    /// Gone files whose record could not be removed.
+    delete_failed: usize,
+    /// Records kept because the storage could not say whether the file is there.
+    kept_unchecked: usize,
+}
+
+impl MissingRecordSummary {
+    fn removed(&self) -> usize {
+        self.removed_in_library + self.removed_in_trash + self.removed_outside_root
+    }
 }
 
 /// A file already linked to a library item, with what organizing needs to know about the link.
@@ -5079,10 +5123,42 @@ impl LibraryScanService {
                     library.name
                 );
             }
+            info!(
+                library_id = %library_id,
+                library_name = %library.name,
+                removed = 0,
+                "Removed 0 records of missing files from '{}': the library could not be read completely",
+                library.name
+            );
             0
         } else {
-            self.reconcile_missing_media_files(&auth_user, &discovered_paths, &reconciliation_rows)
-                .await?
+            let summary = self
+                .reconcile_missing_media_files(
+                    &auth_user,
+                    &library,
+                    &discovered_paths,
+                    &reconciliation_rows,
+                )
+                .await?;
+            info!(
+                library_id = %library_id,
+                library_name = %library.name,
+                removed = summary.removed(),
+                in_library = summary.removed_in_library,
+                in_trash = summary.removed_in_trash,
+                outside_root = summary.removed_outside_root,
+                delete_failed = summary.delete_failed,
+                kept_unchecked = summary.kept_unchecked,
+                "Removed {} records of missing files from '{}': {} in the library, {} in its trash, {} outside its folder ({} could not be removed, {} kept because their file could not be checked)",
+                summary.removed(),
+                library.name,
+                summary.removed_in_library,
+                summary.removed_in_trash,
+                summary.removed_outside_root,
+                summary.delete_failed,
+                summary.kept_unchecked
+            );
+            summary.removed()
         };
 
         let organized_misplaced_count = if library.auto_organize {
@@ -14422,22 +14498,43 @@ impl LibraryScanService {
         )
     }
 
+    /// Remove the records of files that are gone: any record the walk did not find whose file the
+    /// storage says is not there. That covers a record the walk can never find again, one in the
+    /// library's own trash or one outside the library's folder (left behind by a move), as well as
+    /// a file deleted from inside the library. A record whose file cannot be checked stays, so a
+    /// share or mount that is down never costs a record. Nothing on disk is touched, and each
+    /// removal is the entity delete, so links to tracks and other items cascade as they always do.
     async fn reconcile_missing_media_files(
         &self,
         auth_user: &AuthUser,
+        library: &LibraryRow,
         discovered_paths: &HashSet<String>,
         rows: &[ExistingMediaFileRow],
-    ) -> Result<usize> {
-        let mut removed = 0;
+    ) -> Result<MissingRecordSummary> {
+        let root = PathBuf::from(&library.path).into_storage_path();
+        let mut summary = MissingRecordSummary::default();
         for row in rows {
-            // A file that cannot be checked is kept: only a storage that answers "not there" counts.
-            if discovered_paths.contains(&row.path)
-                || library_storage().exists(&row.path).await.unwrap_or(true)
-            {
+            if discovered_paths.contains(&row.path) {
                 continue;
             }
-            removed += 1;
-            let _ = self
+            // A file that cannot be checked is kept: only a storage that answers "not there" counts.
+            match library_storage().exists(&row.path).await {
+                Ok(false) => {}
+                Ok(true) => continue,
+                Err(error) => {
+                    summary.kept_unchecked += 1;
+                    debug!(
+                        library_id = %library.id,
+                        path = %row.path,
+                        error = %error,
+                        "Kept the record of '{}': its file could not be checked",
+                        row.path
+                    );
+                    continue;
+                }
+            }
+            let place = RecordPlace::of(&row.path, &root);
+            let deleted = self
                 .execute_mutation(
                     auth_user,
                     r#"mutation DeleteMissingMediaFile($id: String!) {
@@ -14445,10 +14542,29 @@ impl LibraryScanService {
                     }"#,
                     serde_json::json!({ "id": row.id }),
                 )
-                .await;
+                .await
+                .ok()
+                .and_then(|data| data.get("DeleteMediaFile")?.get("Success")?.as_bool())
+                .unwrap_or(false);
+            if !deleted {
+                summary.delete_failed += 1;
+                warn!(
+                    library_id = %library.id,
+                    media_file_id = %row.id,
+                    path = %row.path,
+                    "Could not remove the record of '{}' (its file is gone)",
+                    row.path
+                );
+                continue;
+            }
+            match place {
+                RecordPlace::Library => summary.removed_in_library += 1,
+                RecordPlace::Trash => summary.removed_in_trash += 1,
+                RecordPlace::OutsideRoot => summary.removed_outside_root += 1,
+            }
         }
 
-        Ok(removed)
+        Ok(summary)
     }
 
     async fn get_tv_shows_for_library(
@@ -17074,10 +17190,11 @@ async fn no_clobber_place(
 mod tests {
 
     use super::{
-        ImportDiagnostics, ImportFile, LinkedTrackRow, MatchCandidate, SkippedImportFile,
-        SourceFileImport, TORRENT_LINK_MATCH_TYPE, TORRENT_LINK_PARSED_MATCH_TYPE,
-        TorrentImportLink, UnmatchedImportFile,
+        ImportDiagnostics, ImportFile, LinkedTrackRow, MatchCandidate, RecordPlace,
+        SkippedImportFile, SourceFileImport, TORRENT_LINK_MATCH_TYPE,
+        TORRENT_LINK_PARSED_MATCH_TYPE, TorrentImportLink, UnmatchedImportFile,
     };
+    use crate::services::library_storage::StoragePath;
 
     fn import_file(path: &str, size_mb: i64) -> ImportFile {
         ImportFile {
@@ -18166,6 +18283,256 @@ mod tests {
             .fetch_all()
             .await?;
         assert!(unresolved_tmdb_issues.is_empty());
+
+        services.stop_all().await?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_record_is_placed_in_the_library_its_trash_or_outside_it() {
+        let local = StoragePath::new("/data/media/Music");
+        let place = |path: &str, root: &StoragePath| RecordPlace::of(path, root);
+        assert_eq!(
+            place("/data/media/Music/Artist/Album/01.flac", &local),
+            RecordPlace::Library
+        );
+        assert_eq!(
+            place(
+                "/data/media/Music/.librarian-trash/a-b-02 - Dust n’ Bones.flac",
+                &local
+            ),
+            RecordPlace::Trash
+        );
+        // A file merely named like the trash, or a folder of the same name deeper down, is not it.
+        assert_eq!(
+            place("/data/media/Music/.librarian-trash", &local),
+            RecordPlace::Library
+        );
+        assert_eq!(
+            place("/data/media/Music/Artist/.librarian-trash/x.flac", &local),
+            RecordPlace::Library
+        );
+        assert_eq!(
+            place("/data/media/Music2/Artist/01.flac", &local),
+            RecordPlace::OutsideRoot
+        );
+        // After a move to a share, the old local paths are outside the library, trash or not.
+        let share = StoragePath::new("smb://10.0.1.190/media/Music");
+        assert_eq!(
+            place("/data/media/Music/.librarian-trash/x.flac", &share),
+            RecordPlace::OutsideRoot
+        );
+        assert_eq!(
+            place(
+                "smb://10.0.1.190/media/Music/.librarian-trash/x.flac",
+                &share
+            ),
+            RecordPlace::Trash
+        );
+        assert_eq!(
+            place("smb://10.0.1.190/media/Music/Artist/01.flac", &share),
+            RecordPlace::Library
+        );
+        assert_eq!(
+            place("smb://10.0.1.190/media/Movies/Film.mkv", &share),
+            RecordPlace::OutsideRoot
+        );
+    }
+
+    #[test]
+    fn scan_removes_records_for_gone_files_the_walk_cannot_see() -> anyhow::Result<()> {
+        std::thread::Builder::new()
+            .name("unseen-record-scan-test".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                runtime.block_on(scan_removes_unseen_gone_records_case())
+            })?
+            .join()
+            .map_err(|_| anyhow::anyhow!("unseen record scan test thread panicked"))?
+    }
+
+    async fn scan_removes_unseen_gone_records_case() -> anyhow::Result<()> {
+        use crate::graphql::entities::{
+            CreateLibraryInput, CreateMediaFileInput, CreateUserInput, Library, LibraryScanRun,
+            MediaFile, MediaFileWhereInput, User,
+        };
+        use anyhow::Context;
+        use graphql_orm::graphql::filters::StringFilter;
+
+        let temp_dir = tempfile::tempdir()?;
+        let library_root = temp_dir.path().join("music");
+        let trash = library_root.join(super::LIBRARY_TRASH_DIR);
+        let elsewhere = temp_dir.path().join("elsewhere");
+        std::fs::create_dir_all(&trash)?;
+        std::fs::create_dir_all(&elsewhere)?;
+        std::fs::write(library_root.join("Kept.mp3"), b"a track the walk sees")?;
+        // Trashed files the person has not emptied yet, and a file outside the root that is still
+        // there: their records stay.
+        std::fs::write(trash.join("still-in-trash.flac"), b"recoverable")?;
+        std::fs::write(elsewhere.join("outside.flac"), b"not in the library folder")?;
+
+        let services = crate::services::ServicesManager::builder()
+            .add_service(crate::services::DatabaseServiceConfig {
+                database_url: format!(
+                    "sqlite://{}",
+                    temp_dir.path().join("librarian.db").display()
+                ),
+                connect_timeout: Duration::from_secs(5),
+            })
+            .add_service(crate::services::AuthConfig::for_tests())
+            .add_service(crate::services::GraphqlServiceConfig { server_port: 0 })
+            .add_service(LibraryScanServiceConfig {
+                autoscan_poll_interval: Duration::from_secs(3600),
+                analyze_workers: 1,
+            })
+            .start()
+            .await?;
+        let database = services
+            .get_database()
+            .await
+            .context("database service missing")?;
+        let user = User::insert(
+            database.pool(),
+            CreateUserInput {
+                username: "unseen-owner".to_string(),
+                email: Some("unseen-owner@example.test".to_string()),
+                password_hash: "test-only".to_string(),
+                role: "Member".to_string(),
+                display_name: None,
+                avatar_url: None,
+                is_active: true,
+                last_login_at: None,
+            },
+        )
+        .await?;
+        let library = Library::insert(
+            database.pool(),
+            CreateLibraryInput {
+                user_id: user.id,
+                name: "Unseen test".to_string(),
+                path: library_root.to_string_lossy().to_string(),
+                library_type: "music".to_string(),
+                icon: None,
+                color: None,
+                auto_scan: false,
+                auto_organize: false,
+                auto_resolve_duplicates: None,
+                naming_pattern: String::new(),
+                scan_interval_minutes: 60,
+                watch_for_changes: false,
+                scanning: false,
+                last_scanned_at: None,
+                quality_profile_id: None,
+            },
+        )
+        .await?;
+        let record = |path: String| CreateMediaFileInput {
+            library_id: Some(library.id.clone()),
+            episode_id: None,
+            movie_id: None,
+            track_id: None,
+            chapter_id: None,
+            path,
+            relative_path: None,
+            original_name: None,
+            size: 10,
+            container: None,
+            video_codec: None,
+            audio_codec: None,
+            width: None,
+            height: None,
+            duration: None,
+            bitrate: None,
+            resolution: None,
+            is_hdr: false,
+            hdr_type: None,
+            audio_channels: None,
+            metadata: None,
+            content_type: None,
+            added_at: "2026-10-26T00:00:00Z".to_string(),
+            analyzed_at: None,
+            file_modified_at: None,
+            match_type: None,
+            matched_by_user_id: None,
+            match_confirmed_at: None,
+            quality_status: None,
+        };
+        let path_text = |path: PathBuf| path.to_string_lossy().to_string();
+        let gone_from_trash = path_text(trash.join("emptied.flac"));
+        let still_in_trash = path_text(trash.join("still-in-trash.flac"));
+        let gone_hidden_deeper = path_text(library_root.join(".sync").join("old.flac"));
+        let gone_old_root = "/definitely/not/a/library/old-root/Music/gone.flac".to_string();
+        let outside_present = path_text(elsewhere.join("outside.flac"));
+        let outside_gone = path_text(elsewhere.join("gone.flac"));
+        for path in [
+            &gone_from_trash,
+            &still_in_trash,
+            &gone_hidden_deeper,
+            &gone_old_root,
+            &outside_present,
+            &outside_gone,
+        ] {
+            MediaFile::insert(database.pool(), record(path.clone())).await?;
+        }
+
+        let scanner = services
+            .get_library_scan()
+            .await
+            .context("library scan service missing")?;
+        let run_id = scanner
+            .queue_scan(&library.id)
+            .await?
+            .scan_run_id
+            .context("scan did not return a run id")?;
+        let mut terminal = None;
+        for _ in 0..1200 {
+            terminal = LibraryScanRun::get(database.pool().pool(), &run_id).await?;
+            if terminal.as_ref().is_some_and(|run| {
+                matches!(
+                    run.status.as_str(),
+                    "COMPLETED" | "COMPLETED_WITH_ISSUES" | "FAILED" | "CANCELLED"
+                )
+            }) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let terminal = terminal.context("scan did not complete")?;
+        assert_ne!(terminal.status, "FAILED", "{terminal:?}");
+
+        let remaining = MediaFile::query(database.pool().pool())
+            .filter(MediaFileWhereInput {
+                library_id: Some(StringFilter {
+                    eq: Some(library.id.clone()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await?
+            .into_iter()
+            .map(|file| file.path)
+            .collect::<HashSet<_>>();
+        for gone in [
+            &gone_from_trash,
+            &gone_hidden_deeper,
+            &gone_old_root,
+            &outside_gone,
+        ] {
+            assert!(!remaining.contains(gone), "{gone} should be removed");
+        }
+        for kept in [&still_in_trash, &outside_present] {
+            assert!(remaining.contains(kept), "{kept} should stay");
+        }
+        assert!(
+            remaining.contains(&path_text(library_root.join("Kept.mp3"))),
+            "the walked file stays"
+        );
+        assert!(trash.join("still-in-trash.flac").exists());
+        assert!(elsewhere.join("outside.flac").exists());
 
         services.stop_all().await?;
         Ok(())

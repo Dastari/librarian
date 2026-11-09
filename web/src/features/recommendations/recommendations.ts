@@ -2,39 +2,42 @@ import type { EntityReleaseRecommendationListQuery } from "@/graphql/generated/g
 
 export type Recommendation = EntityReleaseRecommendationListQuery["releaseRecommendations"]["edges"][number]["node"];
 
-/** What a recommendation is looked up for: a season (with its episodes), a movie, an album, a book, or a whole show. */
+/**
+ * What a recommendation is looked up for: a movie, an album, a book, or a show. A show's answer is
+ * one coverage plan for everything missing; `season` narrows what is shown to that season's part of
+ * it, and `series` shows the whole plan with its "Download all".
+ */
 export interface RecommendationTarget {
   showId?: string;
   season?: number;
-  /** `series_pack` recommendations belong to the show, not a season. */
+  /** The whole show: its plan in full. */
   series?: boolean;
   movieId?: string;
   albumId?: string;
   audiobookId?: string;
 }
 
-/** The server-side filter for a target's rows. */
+/** The server-side filter for a target's rows. A show's rows are its plan and the plan's releases. */
 export function recommendationFilter(target: RecommendationTarget) {
   if (target.movieId) return { movieId: { eq: target.movieId } };
   if (target.albumId) return { albumId: { eq: target.albumId } };
   if (target.audiobookId) return { audiobookId: { eq: target.audiobookId } };
-  if (target.showId && target.series) return { showId: { eq: target.showId }, scope: { eq: "series_pack" } };
-  if (target.showId && target.season !== undefined) return { showId: { eq: target.showId }, season: { eq: target.season } };
+  if (target.showId && (target.series || target.season !== undefined)) return { showId: { eq: target.showId } };
   return null;
 }
 
-/** A stable key for a target, so one lookup is asked for once per session. */
+/** A stable key for a target, so one lookup is asked for once per session. A show is looked up once, whichever season asked. */
 export function targetKey(target: RecommendationTarget): string {
-  return [target.showId, target.series ? "series" : target.season, target.movieId, target.albumId, target.audiobookId].filter((part) => part !== undefined).join(":");
+  if (target.showId) return `${target.showId}:plan`;
+  return [target.movieId, target.albumId, target.audiobookId].filter((part) => part !== undefined).join(":");
 }
 
-/** The lookup input for a target. A whole-show target (the complete-series pack) names the show alone. */
+/** The lookup input for a target. A show (any season of it) is looked up whole. */
 export function lookupInput(target: RecommendationTarget) {
   if (target.movieId) return { movieId: target.movieId };
   if (target.albumId) return { albumId: target.albumId };
   if (target.audiobookId) return { audiobookId: target.audiobookId };
-  if (target.showId && target.series) return { showId: target.showId };
-  if (target.showId && target.season !== undefined) return { showId: target.showId, season: target.season };
+  if (target.showId && (target.series || target.season !== undefined)) return { showId: target.showId };
   return null;
 }
 
@@ -53,6 +56,7 @@ const SCOPE_LABEL: Record<string, string> = {
   album: "Album",
   track: "Track",
   book: "Audiobook",
+  plan: "Plan",
 };
 
 export const scopeLabel = (scope: string): string => SCOPE_LABEL[scope] ?? scope;
@@ -65,4 +69,63 @@ export function visibleRows(rows: readonly Recommendation[]): { ready: Recommend
     searching: ready.length === 0 && rows.some((row) => row.status === "searching"),
     none: ready.length === 0 ? rows.find((row) => row.status === "none") ?? null : null,
   };
+}
+
+/** A JSON array of numbers stored as text, or an empty list. */
+function numbers(json: string | null | undefined): number[] {
+  if (!json) return [];
+  try {
+    const value: unknown = JSON.parse(json);
+    return Array.isArray(value) ? value.filter((item): item is number => typeof item === "number") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** The seasons a release in a plan covers. */
+export const coversSeasons = (row: Pick<Recommendation, "coversSeasons" | "season">): number[] => {
+  const seasons = numbers(row.coversSeasons);
+  return seasons.length > 0 ? seasons : row.season !== null && row.season !== undefined ? [row.season] : [];
+};
+
+/** A show's plan as stored: its own row, its releases in order, and whether a lookup is pending or found nothing. */
+export interface PlanView {
+  plan: Recommendation | null;
+  releases: Recommendation[];
+  searching: boolean;
+  none: Recommendation | null;
+}
+
+/**
+ * The show's current plan from its rows. With `season`, only the releases covering that season.
+ * Rows from before plans existed (no plan row) are left out.
+ */
+export function planView(rows: readonly Recommendation[], season?: number): PlanView {
+  const plan = rows.find((row) => row.scope === "plan" && row.status === "ready") ?? null;
+  const releases = plan
+    ? rows
+        .filter((row) => row.planId === plan.id && row.status === "ready")
+        .filter((row) => season === undefined || coversSeasons(row).includes(season))
+        .sort((a, b) => (a.planPosition ?? 0) - (b.planPosition ?? 0))
+    : [];
+  return {
+    plan: plan && releases.length > 0 ? plan : null,
+    releases,
+    searching: !plan && rows.some((row) => row.scope === "plan" && row.status === "searching"),
+    none: !plan ? rows.find((row) => row.scope === "plan" && row.status === "none") ?? null : null,
+  };
+}
+
+/** "Recommended: 3 releases cover 24 of 44 missing". */
+export function planSummary(plan: Pick<Recommendation, "coversCount" | "missingCount">, releases: number): string {
+  const covers = plan.coversCount ?? 0;
+  const missing = plan.missingCount ?? 0;
+  const noun = releases === 1 ? "release covers" : "releases cover";
+  return missing > 0 ? `${releases} ${noun} ${covers} of ${missing} missing` : `${releases} ${noun} what is missing`;
+}
+
+/** "adds 22": what one release contributes to its plan. */
+export function addsLabel(row: Pick<Recommendation, "coversCount">): string | null {
+  const covers = row.coversCount ?? 0;
+  return covers > 0 ? `adds ${covers}` : null;
 }

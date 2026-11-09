@@ -1474,7 +1474,7 @@ filesystem gives and ask `StorageCapabilities` instead, so a bucket can say no:
 - **No file identity.** `EntryMeta.identity` (device and inode locally, the file id on SMB) is optional; "are these the same
   file" falls back to path equality, size and time.
 - **No path for other programs.** `tools_need_url` says external tools cannot open the file (see below).
-Torrent downloads stayed local at first (`torrent.download_dir`; since Q99 they can be on a share too), as do extraction staging, HLS scratch output and database backups. An
+Torrent downloads stayed local at first (`torrent.download_dir`; since Q103 they can be on a share too), as do extraction staging, HLS scratch output and database backups. An
 import from a download **copies onto the library's storage** (`put_from_local`, `NoClobber`) and never moves out of the download
 folder, so a seeding source is never touched, exactly as with a local library.
 
@@ -1708,7 +1708,139 @@ everywhere.
 reports; the parsers read the form from the page instead of assuming it, and are tested against hand-written fixtures in
 `backend/tests/fixtures/iptorrents/`.
 
-### Q98: How are file servers and their shares saved?
+### Q98: How does the hunt tell that a release is for the wanted title?
+**Answer:** By the release's **title part**, word for word (`quality::title_match`), not by a similarity score. Until
+November 2026 `filter_and_rank` dropped a release only when the Jaro-Winkler similarity of the *whole* normalised release
+title (quality tags included) against the wanted title fell under 0.70. A shared prefix carries Jaro-Winkler a long way:
+`Babylon.Berlin.S01.1080p.10bit.WEBRip.6CH.x265.HEVC-PSA` passed for **Babylon 5**, was recommended as "covers 22 of 22
+missing", and the same gate guards automatic grabs. `Expectation` checked only season, episode and year, so nothing caught it.
+
+Every hunt target now carries a `WantedTitle` (`WantedCandidate.match_title`), and `filter_and_rank` rejects any release
+whose `WantedTitle::mismatch` is not `None`, before quality is looked at:
+- **Shows and movies** (`Work`, the show name or movie title plus aliases, today a movie's original title): the words of the
+  release are walked from the start. Every significant word of the name must come, in order, and the first word after the
+  name must be a *marker* (SxxEyy, `2x05`, `Season`, `Complete`, a year, a resolution, a number of two or more digits as
+  anime numbering uses, a source/codec/edition tag) or the end. So `Babylon.Berlin.S01` is refused (`berlin` where `5`
+  was wanted) and `Silo.Rising.S01` is refused for Silo. Tolerated: `the`/`a`/`an`/`and`/`&`, punctuation, apostrophes,
+  accents, `S.H.I.E.L.D` as `SHIELD`, `SpiderMan` as `Spider Man`, a leading `[Group]` or `www.site.org -`, an `aka` alias in
+  the release, and a year or a country code (`US`, `UK`, `GB`, `AU`, `CA`, `NZ`) after the name unless the wanted name says
+  another (`The Office (US)` refuses `The.Office.UK`; `Doctor Who (2005)` refuses `Doctor.Who.1963`). Two years in a row
+  mean the first is part of a longer name (`Blade.Runner.2049.2017` is not *Blade Runner*).
+- **Music** (`Music`: artist, album, track): every word of the artist and every word of the album or the track, as whole
+  words (`Queen` is not `Queens of the Stone Age`). A whole album is still also checked by `Expectation::Album`.
+- **Audiobooks** (`Book`): every word of the short title present and `release_match::title_score` at least 0.75 (author and
+  narrator words are ignored, so extra words are fine). Other books of a series are still dropped by `release_relevance`.
+
+The similarity score remains only as the last ranking tiebreak. A release turned down this way counts as "named after a
+different title" in the no-release explanation, with one example ("'Babylon.Berlin.S01…' names 'babylon berlin', not 'Babylon
+5' (names 'berlin' where '5' was wanted)"). Feed matching keeps its own exact-name rule (`rss_poll::names_match`) for
+labelling catalogue items.
+
+**Stale answers.** Every `ReleaseRecommendation` row carries `rulesVersion` (`jobs::recommend::RULES_VERSION`, now 2). A row
+from older rules (including every row written before the column existed) does not count as an answer: lookups ignore it, it
+cannot be grabbed, and the next pass removes it, so the Babylon Berlin row is replaced within one worker tick rather than
+after its day. Raise the version whenever a change means stored answers may be wrong.
+
+### Q99: Can a torrent be looked into before it is grabbed?
+**Answer:** Yes: its file list (names, sizes, piece layout) is read without downloading anything, by
+`services::torrent::inspect`, and kept as a `TorrentContents` row keyed by info hash.
+- **A `.torrent` link** (Torznab, IPTorrents, a feed item): fetched the way a grab fetches it, through the source's login
+  when the link is on the source's own site (`fetch_torrent_from_source`), else by the client in list-only mode, and parsed
+  locally. No peer or tracker is asked, so a private tracker never sees an announce, and the passkey in its announce
+  address is never stored (only the info dictionary is read, and for a private torrent not even that is kept).
+- **A magnet** (The Pirate Bay and the like): `TorrentService::read_metadata_only` asks librqbit 9.1 for it in list-only
+  mode (`AddTorrentOptions { list_only: true, paused: true }`). librqbit resolves the info dictionary from peers (DHT,
+  the magnet's trackers) and returns `AddTorrentResponse::ListOnly` before creating storage, a handle or a session entry,
+  so nothing is downloaded, written or left in the session. A hard 40-second timeout drops the attempt (and its peer
+  connections). A torrent the session already holds answers from its handle.
+- **A feed release** (catalogue item): its link is revealed from the item, as a grab reveals it, and read as above.
+
+Each file is described once (`ContentFile`): video, audio, subtitle, sample, extra (featurettes, behind the scenes,
+`Extras/`), info (`.nfo`, `.txt`, `.cue`...), image, ebook, archive, other; with the season and episodes a video's name or
+`Season N/` folder gives, and an audio file's track and disc numbers. Padding files are left out but indexes stay the
+torrent's own, so a selection can be passed to `only_files`.
+
+**Cache and budget.** Metadata is immutable, so a row is never refreshed; the same hash is never read twice. A `.torrent`
+link with no info hash in its listing is also found again by `linkKey`, a SHA-256 of its source and guid (never the link
+itself, which can hold a passkey). `.torrent` downloads count against `auto_download.hourly_search_budget` per rolling hour;
+at most two magnets are resolved at once; a release that could not be read is not tried again for six hours. Callers
+inspect only the top few candidates of a target (Q100). Errors are redacted before they are logged or shown.
+
+`infoBytes` keeps a public torrent's info dictionary (base64) for a later grab that skips magnet resolution; grabs do not
+use it yet, because a torrent added from a file loses the magnet its `Torrent` row keeps for restoring.
+
+**Tested** with two hand-made `.torrent` fixtures (`backend/tests/fixtures/torrents/`, built by `make_fixtures.py`: a
+private season pack whose announce holds a fake passkey, and a public album) and with a magnet resolved from a librqbit
+seeder on loopback, which checks that the reading session keeps no torrent and writes no file, and that a magnet nobody
+seeds gives up within its timeout. Never run against real indexers or the public DHT.
+
+### Q100: How do a release's files change whether it is taken?
+**Answer:** Its files beat its name. `services::torrent::judge` maps an inspected torrent (Q99) to what is wanted:
+- **Episodes** (a season or the whole show): video files that are not samples or extras, numbered by their names
+  (`S01E05`, `2x05`) or by a `Season N/` folder and a leading number (`Season 2/05 - Title.mkv`), and, for a single-season
+  pack, the pack's season for a file that gives only an episode. A pack whose numbered files mostly name another show is
+  **rejected** ("its files are 'babylon berlin', not 'Babylon 5'"); one that holds none of the missing episodes is rejected
+  ("holds none of the missing episodes (it has S01E01–E18)"); otherwise it counts for exactly what it holds ("contains 18 of
+  22 missing episodes"), which is how a vaguely named pack ("Babylon 5 Complete DVD Rip") covers the seasons its files show.
+- **Tracks**: audio files, by title first (numbers repeat across discs) and then by a unique track number.
+- **A book or a movie**: it must have audio (or video) files; an ebook-only release is rejected.
+- Files packed in archives, or videos that say no episode, cannot be checked: the release is judged by its name as before.
+
+The files that fill what is missing are named exactly: the matching videos or tracks, their subtitles (same name or same
+episode) and release-wide `.nfo`/artwork at the top level, never samples or extras. With `auto_download.only_missing_files`
+on they are passed to the grab as `WantedFiles::exactly` (indexes into the torrent), which `select_wanted_files` takes as
+they are when they fit the torrent, before falling back to matching names (Q95).
+
+**In the hunt** only season packs are looked into, the best three ranked releases at most (`INSPECT_PER_TARGET`): among
+those not rejected, the one holding most of what is missing is grabbed, with its files selected; a release that could not
+be read is taken by its name only when none of them could be read; if all are rejected nothing is grabbed, the reason
+("2 release(s) turned down by their files: ...") goes to the trail, and the per-episode fallbacks are searched as when no
+pack is found. Single episodes, movies, tracks and books are grabbed by name, as a look costs a request or a magnet
+resolution per grab. **Recommendations** use the same judge for their plans (Q101).
+
+### Q101: What does Recommended show for a show, and how is it chosen?
+**Answer:** A **coverage plan**: the smallest set of releases that covers every missing episode of the show, mixing a
+complete-series pack, season packs and single episodes for the gaps, shown as "Recommended: 3 releases cover 24 of 44
+missing" with the releases listed, a **Download all**, a Download on each release, and what is still uncovered ("Still
+missing: S02E03–E22 (no usable release found)"). It replaces the per-season answers of Q93 for shows; movies, albums and books
+still get one release each.
+
+**Building it** (`jobs::recommend::look_up_show`, pure rules in `jobs::recommend_plan`):
+1. The missing episodes come from the hunt's discovery, as before (wanted only in the background, any missing on demand).
+   Opening any season, episode or the show asks for the same lookup: the whole show.
+2. Releases are gathered cheapest first: the feed catalogue, then a complete-series search (two or more seasons missing),
+   then each season's search, **only for seasons the plan does not yet cover**, stopping as soon as everything is covered
+   or the hourly budget (Q94) runs out.
+3. Each release must name the show (Q98) and pass the profile (`filter_and_rank`, size limits per covered episode). Its name
+   says what it claims (`recommend_plan::claim_of`): episodes, a season or a range, the complete series, or a vague
+   "Complete" pack. The four most promising packs are looked into (Q99) and their files override the name (Q100): another
+   show's pack or one holding none of the missing episodes is dropped; a short pack counts for what it holds; a vague pack
+   counts only once its files are read.
+4. `plan_cover` picks the releases, **quality first**: the best resolution tier of the profile is planned first and a lower
+   tier only fills what it leaves; within a tier, greedily the release adding the most still-uncovered episodes (so one
+   complete series beats three season packs, and packs beat episodes), ties to the better-seeded (in bands) and then the
+   smaller; a release the others of its tier or better cover is dropped. Each release is credited only with what it adds.
+
+**Stored** as `ReleaseRecommendation` rows (additive columns `planId`, `planPosition`, `coversSeasons`, `fileIndices`): one
+row of scope `plan` (counts, uncovered note, summary reasons; status `ready`, `none` with the why, or `searching`) and one per
+release (`episode`, `season_pack` or `series_pack`) pointing at it, with what it adds (`coversIds`, `coversCount`), its
+seasons, and the exact files to download when its files were read. At most 60 releases per plan.
+
+**Downloading.** `grabRecommendation` downloads one release; `grabRecommendationPlan` downloads every release of the plan in
+order through the same path (reported per release, so a failure does not stop the rest). A pack takes only the files for
+what it adds when "Download only the missing files" is on (Q95, exactly by index when inspected). A grab removes only what
+it makes pointless: the release itself, the same episode, or another pack of the same season, never the plan's other
+releases. The plan row goes when it has no releases left; a release goes when what it adds is filled or a torrent was
+grabbed for exactly it. Rules version 3 retires every earlier per-season answer.
+
+**In the UI** (`RecommendedRelease`): Find a release shows the show's whole plan whichever season is searched. A show page
+shows the whole plan above the seasons when two or more seasons are missing something, and each season lists its part of it
+(the releases covering that season); with one season missing, that season shows the whole plan.
+
+**Not built:** plans for an artist's discography or an album set (albums are still recommended one at a time, looked into
+for their tracks), and plans that weigh a smaller lower-quality pack against several better releases (quality always wins).
+
+### Q102: How are file servers and their shares saved?
 **Answer:** As a **server**, the `NetworkServer` entity (Settings › Network shares): name, host (lower case, a name or an IP
 address), port (empty for 445), user name, and a password that the generated mutations accept and the write transform
 encrypts (the `Source.credentials` envelope); it is never readable through GraphQL, and `hasPassword` says whether one is
@@ -1740,9 +1872,9 @@ servers at startup (`carry_over_saved_sign_ins`), once each, with the stored env
 never decrypted for this, and the old record is left in place as a fallback until a server exists for that host.
 `connectShare` now saves into the server too.
 
-### Q99: Can downloads be on a share, and what reads them there?
+### Q103: Can downloads be on a share, and what reads them there?
 **Answer:** Yes. `torrent.download_dir` is a folder on this machine or an `smb://` folder on a saved server, and torrents are
-written there by Librarian itself (Q100). Everything that reads a download goes through `library_storage`, as library files
+written there by Librarian itself (Q104). Everything that reads a download goes through `library_storage`, as library files
 do (Q85): identification reads text files and ffprobe facts through `Storage` and the tool URL (Q87), and the stream and
 analysis paths already did. What had assumed a local download path, and does now:
 - *Import into a library* never moves a download. A download on a share is copied: into a library on the same share with an
@@ -1758,12 +1890,12 @@ analysis paths already did. What had assumed a local download path, and does now
   as they do for a library on a share), and the log says why; the copy stays in the downloads.
 - *Creating a folder* (`createDirectory`) for an `smb://` path makes it on the share.
 - *The startup check* of the download folder probes a share by making the folder and writing and removing a probe file
-  through it. A share that is down at start is not a broken setting: the client starts, its torrents wait (Q100), and adding a
+  through it. A share that is down at start is not a broken setting: the client starts, its torrents wait (Q104), and adding a
   torrent is refused while the share stays down ("The download folder is on a share that cannot be reached now").
 - *Partial packs* (`only_files`) and deleting a torrent with its files go through the torrent storage, so they work on a share.
-Torrents already in `/data/downloads` keep their folder until they are moved (Q101).
+Torrents already in `/data/downloads` keep their folder until they are moved (Q105).
 
-### Q100: How does the torrent client read and write a share, and what happens when the share goes away?
+### Q104: How does the torrent client read and write a share, and what happens when the share goes away?
 **Answer:** librqbit 9.1 has pluggable, synchronous storage (`StorageFactory`/`TorrentStorage`: positioned reads and writes,
 file length, removal, called from blocking threads). The session's `default_storage_factory` is `LibrarianStorageFactory`
 (`services::torrent::share_storage`): a torrent whose folder is `smb://` gets a `ShareStorage`, every other one librqbit's
@@ -1795,7 +1927,7 @@ paused are kept in `torrent.share_paused`, so a restart during an outage still r
 is left alone. Imports of a finished download wait too: a copy that cannot read the share fails without touching the
 library, and library scans of a share never mark files missing on a walk that did not finish (Q86).
 
-### Q101: How is the download folder moved?
+### Q105: How is the download folder moved?
 **Answer:** Like a library (Q88): the person copies the folder first (`rsync -rt`, keeping dates), Librarian checks the copy,
 then moves. Settings › Downloads › Download folder › *Move…* picks the new folder (here or on a saved share) and *Check
 the files* (`downloadsMovePlan`, read only): every file on disk of every torrent stored under the old folder is looked for at
@@ -1811,7 +1943,7 @@ to the new folder. Every step skips what is done, so a stopped move is finished 
 downloads only* changes the folder for new torrents and leaves the existing ones seeding where they are. The old files are
 never deleted.
 
-### Q102: Can the torrent session folder be on a share?
+### Q106: Can the torrent session folder be on a share?
 **Answer:** No, and it is not worth building. In librqbit 9.1 the session store is chosen by `SessionPersistenceConfig`,
 which is `Json { folder }` or `Postgres { connection_string }` only; the `SessionPersistenceStore` trait is public but
 `SessionOptions` has no way to pass an implementation (`persistence_factory` in `session.rs` matches the enum), and the JSON

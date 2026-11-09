@@ -29,6 +29,11 @@ fragment ReleaseRecommendationFields on ReleaseRecommendation {
   coversIds
   reasons
   note
+  planId
+  planPosition
+  coversSeasons
+  fileIndices
+  rulesVersion
   foundAt
   expiresAt
   createdAt

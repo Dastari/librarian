@@ -1,4 +1,4 @@
-//! Moving the download folder (Q101): a read-only plan, then the move. See
+//! Moving the download folder (Q105): a read-only plan, then the move. See
 //! `services::torrent::move_downloads`.
 
 use std::sync::Arc;

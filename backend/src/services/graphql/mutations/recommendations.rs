@@ -45,6 +45,20 @@ pub struct GrabRecommendationPayload {
     pub torrent_name: Option<String>,
 }
 
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "GrabRecommendationPlanPayload")]
+#[graphql(rename_fields = "camelCase")]
+pub struct GrabRecommendationPlanPayload {
+    /// True when every release of the plan started.
+    pub success: bool,
+    pub error: Option<String>,
+    /// How many releases started.
+    pub started: i32,
+    /// `'release title': why` for each release that did not start.
+    pub failed: Vec<String>,
+    pub torrent_ids: Vec<String>,
+}
+
 fn denied() -> async_graphql::Error {
     async_graphql::Error::new("Target not found or access denied")
 }
@@ -129,11 +143,8 @@ async fn authorize(
     if !own(&show.user_id) {
         return Err(denied());
     }
-    // A season, or (with none) the whole show: its complete-series pack.
-    let label = match season {
-        Some(season) => format!("{} S{season:02}", show.name),
-        None => format!("{} (complete series)", show.name),
-    };
+    // A season, an episode or the whole show: all answered by the show's coverage plan.
+    let label = show.name.clone();
     Ok((
         show.user_id,
         show.library_id,
@@ -181,6 +192,45 @@ impl RecommendationMutations {
                 success: false,
                 error: Some(crate::services::redact::redact_text(&format!("{error:#}"))),
                 state: None,
+            }),
+        }
+    }
+
+    /// Download every release of a show's coverage plan (a `plan` recommendation), in order, each
+    /// through the same path as `grabRecommendation`. Releases that start are reported even when
+    /// others do not. Owner or admin.
+    #[graphql(name = "grabRecommendationPlan")]
+    async fn grab_recommendation_plan(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "id")] id: String,
+    ) -> async_graphql::Result<GrabRecommendationPlanPayload> {
+        let user = ctx.require_member()?;
+        let manager = ctx.data::<std::sync::Arc<ServicesManager>>()?;
+        match recommend::grab_plan(manager, &id, &user.user_id, user.is_admin()).await {
+            Ok(outcome) => Ok(GrabRecommendationPlanPayload {
+                success: outcome.failed.is_empty() && !outcome.started.is_empty(),
+                error: (!outcome.failed.is_empty()).then(|| {
+                    format!(
+                        "{} of {} release(s) could not start",
+                        outcome.failed.len(),
+                        outcome.failed.len() + outcome.started.len()
+                    )
+                }),
+                started: outcome.started.len() as i32,
+                torrent_ids: outcome
+                    .started
+                    .iter()
+                    .filter_map(|started| started.torrent_id.clone())
+                    .collect(),
+                failed: outcome.failed,
+            }),
+            Err(error) => Ok(GrabRecommendationPlanPayload {
+                success: false,
+                error: Some(crate::services::redact::redact_text(&format!("{error:#}"))),
+                started: 0,
+                failed: Vec::new(),
+                torrent_ids: Vec::new(),
             }),
         }
     }

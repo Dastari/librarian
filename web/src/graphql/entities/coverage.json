@@ -340,5 +340,11 @@
     "list": "networkServers",
     "get": "networkServer",
     "changed": "networkServerChanged"
+  },
+  {
+    "entity": "TorrentContents",
+    "list": "torrentContentsList",
+    "get": "torrentContents",
+    "changed": "torrentContentsChanged"
   }
 ]

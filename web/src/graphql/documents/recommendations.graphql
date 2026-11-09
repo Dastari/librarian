@@ -16,3 +16,14 @@ mutation GrabRecommendation($id: String!) {
     torrentName
   }
 }
+
+# Download every release of a show's coverage plan, in order.
+mutation GrabRecommendationPlan($id: String!) {
+  grabRecommendationPlan(id: $id) {
+    success
+    error
+    started
+    failed
+    torrentIds
+  }
+}

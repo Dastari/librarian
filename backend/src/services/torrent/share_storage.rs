@@ -1,4 +1,4 @@
-//! Torrent payloads on an SMB share (`docs/design.md` Q100).
+//! Torrent payloads on an SMB share (`docs/design.md` Q104).
 //!
 //! librqbit writes through a [`TorrentStorage`]: synchronous positioned reads and writes, called
 //! from blocking threads. A torrent whose folder is an `smb://` address gets a [`ShareStorage`],

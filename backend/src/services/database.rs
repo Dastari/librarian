@@ -198,6 +198,7 @@ pub(crate) fn entity_metadata() -> Vec<&'static graphql_orm::graphql::orm::Entit
         <ReleaseBlocklist as Entity>::metadata(),
         <ReleaseRecommendation as Entity>::metadata(),
         <NetworkServer as Entity>::metadata(),
+        <TorrentContents as Entity>::metadata(),
     ]
 }
 

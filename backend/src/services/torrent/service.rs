@@ -372,6 +372,33 @@ impl TorrentService {
             .await
     }
 
+    /// A torrent's `.torrent` bytes without adding it (Q99): a magnet's metadata is asked of peers,
+    /// an `http(s)` link is fetched, in librqbit's list-only mode, which answers before any storage,
+    /// handle or session entry exists. Nothing is downloaded or kept, and `timeout` bounds it. A
+    /// torrent the session already has answers from its handle.
+    pub async fn read_metadata_only(&self, uri: &str, timeout: Duration) -> Result<bytes::Bytes> {
+        let r = self
+            .runtime()
+            .await
+            .context("torrent service not started")?;
+        if let Some(hash) = librqbit::Magnet::parse(uri)
+            .ok()
+            .and_then(|magnet| magnet.as_id20())
+            .map(|hash| hash.as_string())
+            && let Some(handle) = database::session_handle(&r.session, &hash)
+            && let Some(metadata) = handle.metadata.load_full()
+        {
+            return Ok(metadata.torrent_bytes.clone());
+        }
+        crate::services::torrent::inspect::list_only(
+            &r.session,
+            AddTorrent::from_url(uri),
+            None,
+            timeout,
+        )
+        .await
+    }
+
     async fn add_for_actor(
         &self,
         add: TorrentAddRequest<'_>,
@@ -880,7 +907,7 @@ impl TorrentService {
         Some(self.runtime().await?.config.download_dir.clone())
     }
 
-    /// Compare the torrents in the download folder with their copy at `new_path` (Q101).
+    /// Compare the torrents in the download folder with their copy at `new_path` (Q105).
     pub async fn downloads_move_plan(
         &self,
         new_path: &str,
@@ -893,7 +920,7 @@ impl TorrentService {
         super::move_downloads::plan(&r.db, &old, new_path).await
     }
 
-    /// Move the download folder to `new_path` (Q101): with `move_torrents`, every torrent under the
+    /// Move the download folder to `new_path` (Q105): with `move_torrents`, every torrent under the
     /// old folder is pointed at its copy under the new one and the records are rewritten;
     /// without, only new downloads go there. The client restarts afterwards so the new folder
     /// is its default. The old files are never deleted.

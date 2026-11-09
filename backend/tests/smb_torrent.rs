@@ -1,4 +1,4 @@
-//! A real torrent downloaded onto an SMB share through Librarian's torrent storage (Q100): a
+//! A real torrent downloaded onto an SMB share through Librarian's torrent storage (Q104): a
 //! seeding session on loopback serves a two-file torrent from a local folder, and a second
 //! session downloads it into a folder on the share, pauses, resumes, and deletes it.
 //!

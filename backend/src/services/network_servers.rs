@@ -1,4 +1,4 @@
-//! Saved file servers (`NetworkServer`, `docs/design.md` Q98): what a location on a share signs
+//! Saved file servers (`NetworkServer`, `docs/design.md` Q102): what a location on a share signs
 //! in with, which libraries and download folders use a server, and carrying over the sign-ins
 //! saved before servers were an entity.
 //!
