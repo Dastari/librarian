@@ -55,6 +55,12 @@ pub struct Artist {
     #[graphql(name = "disambiguation")]
     pub disambiguation: Option<String>,
 
+    /// Fields a metadata refresh must leave alone, by their GraphQL names. Chosen artwork locks
+    /// its own field (`imageUrl`), so a refresh keeps the picture someone picked.
+    #[graphql(name = "lockedFields")]
+    #[json_field]
+    pub locked_fields: Option<Vec<String>>,
+
     #[graphql(name = "imageUrl")]
     pub image_url: Option<String>,
 

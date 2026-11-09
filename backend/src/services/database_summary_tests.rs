@@ -66,6 +66,7 @@ pub(super) async fn artist(db: &Database, library: &Library) -> Artist {
     Artist::insert(
         db,
         CreateArtistInput {
+            locked_fields: None,
             library_id: library.id.clone(),
             user_id: library.user_id.clone(),
             name: "fixture artist".to_string(),
@@ -87,6 +88,7 @@ pub(super) async fn album(db: &Database, library: &Library, artist: &Artist) -> 
     Album::insert(
         db,
         CreateAlbumInput {
+            locked_fields: None,
             artist_id: artist.id.clone(),
             library_id: library.id.clone(),
             user_id: library.user_id.clone(),
@@ -237,6 +239,7 @@ pub(super) async fn episode(db: &Database, show: &Show, file_id: Option<&str>) -
     Episode::insert(
         db,
         CreateEpisodeInput {
+            locked_fields: None,
             show_id: show.id.clone(),
             season: 0,
             episode: 0,

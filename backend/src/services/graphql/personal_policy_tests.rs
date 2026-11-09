@@ -624,6 +624,7 @@ async fn show_with_episode(f: &Fixture, library: &str, number: i32) -> (String, 
     let episode = Episode::insert(
         &f.db,
         CreateEpisodeInput {
+            locked_fields: None,
             show_id: show.clone(),
             season: 1,
             episode: number,
@@ -733,6 +734,7 @@ async fn playlists_hold_episodes_and_chapters_and_drop_them_when_the_target_is_d
     let foreign_episode = Episode::insert(
         &f.db,
         CreateEpisodeInput {
+            locked_fields: None,
             show_id: foreign_show,
             season: 1,
             episode: 1,

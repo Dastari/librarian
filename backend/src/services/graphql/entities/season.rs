@@ -75,6 +75,12 @@ pub struct Season {
     #[graphql(name = "episodeOrder")]
     pub episode_order: Option<i32>,
 
+    /// Fields a metadata refresh must leave alone, by their GraphQL names. Chosen artwork locks
+    /// its own field (`posterUrl`), so a refresh keeps the picture someone picked.
+    #[graphql(name = "lockedFields")]
+    #[json_field]
+    pub locked_fields: Option<Vec<String>>,
+
     /// Provider poster URL: the source the artwork cache downloads from. Clients use the
     /// cached `/api/artwork/season/{id}/poster`, never this remote address.
     #[graphql(name = "posterUrl")]

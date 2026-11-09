@@ -1734,6 +1734,7 @@ mod ownership_tests {
         Episode::insert(
             db,
             CreateEpisodeInput {
+                locked_fields: None,
                 show_id: show.id.clone(),
                 season: 0,
                 episode: 0,

@@ -26,7 +26,7 @@ use crate::db::Database;
 use crate::graphql::entities::{
     Album, AppSetting, AppSettingWhereInput, Artist, ArtworkCache, ArtworkCacheWhereInput,
     Audiobook, Collection, CollectionWhereInput, CreateArtworkCacheInput, CreateStorageObjectInput,
-    Episode, MetadataCache, MetadataCacheWhereInput, Movie, Person, ScheduleCache,
+    Episode, MetadataCache, MetadataCacheWhereInput, Movie, Person, PersonalList, ScheduleCache,
     ScheduleCacheWhereInput, Season, Show, StorageObject, UpdateArtworkCacheInput,
 };
 use crate::services::ObjectStorageService;
@@ -131,6 +131,21 @@ pub enum ArtworkFetchError {
     Network,
 }
 
+/// An original picture about to be stored for a slot.
+struct OriginalArtwork<'a> {
+    entity_type: &'a str,
+    entity_id: &'a str,
+    artwork_type: &'a str,
+    /// The provider URL it came from, or an upload's marker.
+    source: &'a str,
+    file_name: Option<String>,
+    data: Vec<u8>,
+    mime_type: String,
+    width: i32,
+    height: i32,
+    source_host: &'a str,
+}
+
 #[derive(Debug)]
 struct DownloadedArtwork {
     data: Vec<u8>,
@@ -176,6 +191,70 @@ impl ArtworkService {
         entity_id: &str,
         artwork_type: &str,
     ) -> Result<String> {
+        // Chosen artwork is locked: a refresh asking for another picture keeps the chosen one.
+        if let Some(chosen) = self
+            .locked_source(entity_type, entity_id, artwork_type)
+            .await?
+            && !chosen.as_deref().is_some_and(|chosen| {
+                crate::services::artwork_choice::options::same_image(chosen, source_url)
+            })
+        {
+            debug!(
+                entity_type = %entity_type,
+                entity_id = %entity_id,
+                artwork_type = %artwork_type,
+                "Artwork is locked to a chosen picture; leaving it alone"
+            );
+            return Ok(format!(
+                "/api/artwork/{entity_type}/{entity_id}/{artwork_type}"
+            ));
+        }
+        self.download_and_store(source_url, entity_type, entity_id, artwork_type, false)
+            .await
+    }
+
+    /// Download a chosen picture into a slot, replacing whatever is cached there and ignoring its
+    /// lock (choosing is what sets the lock). Its resized copies are made again on first use.
+    pub async fn replace_from_url(
+        &self,
+        source_url: &str,
+        entity_type: &str,
+        entity_id: &str,
+        artwork_type: &str,
+    ) -> Result<String> {
+        self.download_and_store(source_url, entity_type, entity_id, artwork_type, true)
+            .await
+    }
+
+    /// When a slot's artwork is locked, what its entity says the picture is (`Some(None)` for a
+    /// locked slot with no source). `None` when it isn't locked or has no lock.
+    pub async fn locked_source(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        artwork_type: &str,
+    ) -> Result<Option<Option<String>>> {
+        use crate::services::artwork_choice::{ArtworkSlot, slot_state};
+        let Some(slot) = ArtworkSlot::from_path(entity_type, artwork_type) else {
+            return Ok(None);
+        };
+        if !slot.refreshable() {
+            return Ok(None);
+        }
+        Ok(slot_state(&self.db, slot, entity_id)
+            .await?
+            .filter(|state| state.locked(slot))
+            .map(|state| state.source))
+    }
+
+    async fn download_and_store(
+        &self,
+        source_url: &str,
+        entity_type: &str,
+        entity_id: &str,
+        artwork_type: &str,
+        replace: bool,
+    ) -> Result<String> {
         let source_host = Url::parse(source_url)
             .ok()
             .and_then(|url| url.host_str().map(str::to_string))
@@ -196,7 +275,8 @@ impl ArtworkService {
             .get_cached_entry(entity_type, entity_id, artwork_type)
             .await?;
         if let Some(existing) = &existing
-            && (existing.source_url.as_deref() == Some(source_url) || existing.source_url.is_none())
+            && (existing.source_url.as_deref() == Some(source_url)
+                || (existing.source_url.is_none() && !replace))
         {
             debug!(
                 entity_type = %entity_type,
@@ -224,6 +304,138 @@ impl ArtworkService {
             height,
             final_host,
         } = downloaded;
+        self.save_original(
+            OriginalArtwork {
+                entity_type,
+                entity_id,
+                artwork_type,
+                source: source_url,
+                file_name: source_url_file_name(source_url),
+                data,
+                mime_type,
+                width,
+                height,
+                source_host: &final_host,
+            },
+            existing,
+        )
+        .await
+    }
+
+    /// Store a checked upload as a slot's original, replacing what was there, and make the sizes
+    /// the app shows straight away so the first page that shows it doesn't wait for them.
+    pub async fn store_upload(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        artwork_type: &str,
+        upload: crate::services::artwork_choice::PreparedUpload,
+        source_marker: &str,
+    ) -> Result<()> {
+        let _lock = lock_artwork(format!("{entity_type}/{entity_id}/{artwork_type}")).await;
+        let existing = self
+            .get_cached_entry(entity_type, entity_id, artwork_type)
+            .await?;
+        let extension = if upload.mime_type == "image/png" {
+            "png"
+        } else {
+            "jpg"
+        };
+        self.save_original(
+            OriginalArtwork {
+                entity_type,
+                entity_id,
+                artwork_type,
+                source: source_marker,
+                file_name: Some(format!("{artwork_type}-upload.{extension}")),
+                data: upload.data,
+                mime_type: upload.mime_type,
+                width: upload.width,
+                height: upload.height,
+                source_host: "upload",
+            },
+            existing,
+        )
+        .await?;
+        drop(_lock);
+        let original = self
+            .get_cached_entry(entity_type, entity_id, artwork_type)
+            .await?
+            .context("Uploaded artwork was not saved")?;
+        for width in ARTWORK_WIDTHS {
+            if original
+                .width
+                .is_some_and(|original| original <= *width as i32)
+            {
+                break;
+            }
+            if let Err(error) = self.cached_variant(&original, *width).await {
+                warn!(
+                    entity_type = %entity_type,
+                    entity_id = %entity_id,
+                    artwork_type = %artwork_type,
+                    width,
+                    error = %error,
+                    "Could not make a resized copy of uploaded artwork; it will be made on first use"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove a slot's cached original and its resized copies. The ArtworkCache delete hook
+    /// releases the storage objects.
+    pub async fn remove_artwork(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        artwork_type: &str,
+    ) -> Result<()> {
+        let _lock = lock_artwork(format!("{entity_type}/{entity_id}/{artwork_type}")).await;
+        let rows = ArtworkCache::query(self.db.pool())
+            .filter(ArtworkCacheWhereInput {
+                entity_type: Some(StringFilter {
+                    eq: Some(entity_type.to_string()),
+                    ..Default::default()
+                }),
+                entity_id: Some(StringFilter {
+                    eq: Some(entity_id.to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await?;
+        let variant_prefix = format!("{artwork_type}@");
+        for row in rows {
+            if row.artwork_type == artwork_type || row.artwork_type.starts_with(&variant_prefix) {
+                ArtworkCache::delete_by_id(&self.db, &row.id)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to remove cached {entity_type} {artwork_type} artwork")
+                    })?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn save_original(
+        &self,
+        original: OriginalArtwork<'_>,
+        existing: Option<ArtworkCache>,
+    ) -> Result<String> {
+        let OriginalArtwork {
+            entity_type,
+            entity_id,
+            artwork_type,
+            source: source_url,
+            file_name,
+            data,
+            mime_type,
+            width,
+            height,
+            source_host: final_host,
+        } = original;
         let size_bytes = data.len() as i64;
 
         let stored = self
@@ -231,7 +443,7 @@ impl ArtworkService {
             .storage()
             .put_object(StoragePutRequest {
                 namespace: StorageNamespace::Derivatives,
-                file_name: source_url_file_name(source_url),
+                file_name,
                 mime_type: Some(mime_type.clone()),
                 bytes: data,
             })
@@ -777,6 +989,7 @@ impl ArtworkService {
             "album" => Album::get(pool, &id).await?.is_some(),
             "artist" => Artist::get(pool, &id).await?.is_some(),
             "audiobook" => Audiobook::get(pool, &id).await?.is_some(),
+            "playlist" => PersonalList::get(pool, &id).await?.is_some(),
             "person" => Person::get(pool, &id).await?.is_some(),
             "collection" => {
                 let Ok(tmdb_id) = entity_id.parse::<i32>() else {

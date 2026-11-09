@@ -1008,6 +1008,7 @@ async fn artist(db: &Database, library: &Library) -> Artist {
     Artist::insert(
         db,
         CreateArtistInput {
+            locked_fields: None,
             library_id: library.id.clone(),
             user_id: library.user_id.clone(),
             name: "fixture artist".to_string(),
@@ -1029,6 +1030,7 @@ async fn album(db: &Database, library: &Library, artist: &Artist) -> Album {
     Album::insert(
         db,
         CreateAlbumInput {
+            locked_fields: None,
             artist_id: artist.id.clone(),
             library_id: library.id.clone(),
             user_id: library.user_id.clone(),

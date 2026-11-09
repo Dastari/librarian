@@ -400,6 +400,7 @@ impl Harness {
         Ok(Artist::insert(
             self.database.pool(),
             CreateArtistInput {
+                locked_fields: None,
                 library_id: self.library.id.clone(),
                 user_id: self.library.user_id.clone(),
                 name: name.to_string(),
@@ -420,6 +421,7 @@ impl Harness {
         Ok(Album::insert(
             self.database.pool(),
             CreateAlbumInput {
+                locked_fields: None,
                 artist_id: artist.id.clone(),
                 library_id: self.library.id.clone(),
                 user_id: self.library.user_id.clone(),
