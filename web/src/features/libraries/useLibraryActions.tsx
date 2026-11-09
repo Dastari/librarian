@@ -1,6 +1,6 @@
 import { useMutation } from "@apollo/client/react";
 import { defineActions, type ActionSet } from "glass-ux/actions";
-import { IconExternalLink, IconFile, IconPlus, IconRefresh, IconSettings, IconTrash, IconWarning } from "glass-ux/icons";
+import { IconExternalLink, IconFile, IconFolder, IconPlus, IconRefresh, IconSettings, IconTrash, IconWarning } from "glass-ux/icons";
 import { parseAsString, useQueryState } from "nuqs";
 import { useCallback, useMemo } from "react";
 
@@ -61,6 +61,12 @@ export function useLibraryActions<T extends LibraryEntity>({ settings, open = tr
       id: "settings", label: "Library settings", icon: IconSettings, group: "manage", priority: 2,
       visible: (rows) => rows.length === 1 && isAdmin,
       run: (rows) => settings(rows[0]!),
+    },
+    {
+      // Changes where the library reads its files, keeping every record. The files are copied first.
+      id: "move", label: "Move library…", icon: IconFolder, group: "manage", priority: 3,
+      visible: (rows) => rows.length === 1 && isAdmin,
+      run: (rows) => settings(rows[0]!, "move"),
     },
     {
       id: "remove", label: "Remove library…", icon: IconTrash, group: "danger", priority: 9,

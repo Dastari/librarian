@@ -8,11 +8,24 @@ import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 
 const ROOT: FileUri = "server:///";
 
-export const folderUri = (path: string): FileUri =>
-  `server://${path.startsWith("/") ? "" : "/"}${path.split("/").map(encodeURIComponent).join("/")}`;
+/**
+ * A folder on a network share (`smb://host/share/folder`) is one path segment `smb:` followed by
+ * its parts, so it nests under the server's own folders the way a Glass location expects.
+ */
+const SMB_SEGMENT = "smb:";
 
-export const folderPath = (uri: FileUri): string =>
-  decodeURIComponent(uri.replace(/^server:\/\//, "")) || "/";
+export const folderUri = (path: string): FileUri => {
+  if (path.startsWith("smb://")) return `server:///${[SMB_SEGMENT, ...path.slice("smb://".length).split("/")].map(encodeURIComponent).join("/")}`;
+  return `server://${path.startsWith("/") ? "" : "/"}${path.split("/").map(encodeURIComponent).join("/")}`;
+};
+
+export const folderPath = (uri: FileUri): string => {
+  const path = decodeURIComponent(uri.replace(/^server:\/\//, "")) || "/";
+  return path.startsWith(`/${SMB_SEGMENT}/`) ? `smb://${path.slice(SMB_SEGMENT.length + 2)}` : path;
+};
+
+/** `smb://host/share` of a path on a share, which a picker inside a share cannot climb out of. */
+export const shareRootOf = (path: string | undefined): string | null => /^(smb:\/\/[^/]+\/[^/]+)/i.exec(path ?? "")?.[1] ?? null;
 
 interface FolderPickerDialogProps {
   isOpen: boolean;
@@ -22,7 +35,7 @@ interface FolderPickerDialogProps {
 }
 
 /** The server's folders as a Glass file location: it lists them, and the dialog does the rest. */
-function useServerFolders(): FileProvider {
+function useServerFolders(rootPath: string): FileProvider {
   const client = useApolloClient();
   return useMemo(() => {
     const browse = async (uri: FileUri) => {
@@ -37,7 +50,7 @@ function useServerFolders(): FileProvider {
     return {
       scheme: "server",
       label: "Server",
-      root: ROOT,
+      root: rootPath === "/" ? ROOT : folderUri(rootPath),
       stat: async (uri): Promise<FileStat> => {
         const listing = await browse(uri);
         const path = listing.currentPath;
@@ -59,12 +72,14 @@ function useServerFolders(): FileProvider {
         };
       },
     };
-  }, [client]);
+  }, [client, rootPath]);
 }
 
 /** Choose a folder on the server, for a library's root or a destination. */
 export function FolderPickerDialog({ isOpen, onOpenChange, initialPath, onPick }: FolderPickerDialogProps) {
-  const provider = useServerFolders();
+  // Inside a share the picker stays inside it: there is nothing above a share to browse.
+  const shareRoot = shareRootOf(initialPath);
+  const provider = useServerFolders(shareRoot ?? "/");
   const { data } = useQuery(BrowseDirectoryDocument, {
     skip: !isOpen,
     variables: { input: { path: initialPath || null, dirsOnly: true, showHidden: false } },

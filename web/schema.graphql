@@ -4730,6 +4730,19 @@ type Mutation {
   createDirectory(input: CreateDirectoryInput!): FileOperationPayload!
   configureNetworkPath(input: ConfigureNetworkPathInput!): NetworkPathConfigPayload!
   reconnectLibraryPath(path: String!): NetworkPathConfigPayload!
+
+  """
+  Sign in to a network share, check that it can be read, and keep the sign-in. The answer
+  names what is wrong in words a person can act on (a name that does not resolve here, a
+  refused password, a share that does not exist).
+  """
+  connectShare(input: ConnectShareInput!): ConnectSharePayload!
+
+  """
+  Change a library's folder after its files were copied there, keeping every record: the
+  files keep their ids, matches, progress and playlists. Run a scan afterwards to verify.
+  """
+  moveLibrary(input: MoveLibraryInput!): MoveLibraryResult!
   testTmdbConnection(input: TestTmdbConnectionInput!): TestTmdbConnectionResult!
   scanLibrary(id: String!): ScanLibraryResult!
   analyzeMediaFile(mediaFileId: String!, path: String!): AnalyzeMediaFileResult!
@@ -7346,6 +7359,117 @@ input NamingPatternWhereInput {
   not: NamingPatternWhereInput
 }
 
+"""Sign in to a network share to check it, and keep the sign-in for the share."""
+input ConnectShareInput {
+  """Host name or IP address of the file server."""
+  host: String!
+
+  """Port, when it is not 445."""
+  port: Int
+
+  """Share name, such as `media`."""
+  share: String!
+
+  """Blank for the saved sign-in, or a guest share when none is saved."""
+  username: String
+
+  """Blank keeps the saved password when the user name is the saved one."""
+  password: String
+
+  """Keep the sign-in, encrypted, if it works. On by default."""
+  save: Boolean
+}
+
+type ConnectSharePayload {
+  success: Boolean!
+  error: String
+
+  """The share's normalised `smb://host[:port]/share` address."""
+  share: String
+
+  """Folders at the top of the share."""
+  folders: Int!
+}
+
+"""Move a library to a folder its files were copied to."""
+input MoveLibraryInput {
+  libraryId: String!
+
+  """The new folder: an absolute path, or `smb://host/share/folder`."""
+  newPath: String!
+
+  """
+  Move even though some files are not on the new folder yet. They are then reported
+  missing by the next scan.
+  """
+  allowMissing: Boolean
+}
+
+type MoveLibraryResult {
+  success: Boolean!
+  error: String
+
+  """File records rewritten to the new folder."""
+  movedFiles: Int!
+
+  """Show, album and audiobook folders rewritten."""
+  movedFolders: Int!
+
+  """
+  Open scan issues closed, because they named paths that no longer apply.
+  """
+  closedIssues: Int!
+}
+
+"""Whether a saved sign-in exists for a share, and for whom."""
+type ShareSignIn {
+  """The share's normalised `smb://host[:port]/share` address."""
+  share: String!
+  saved: Boolean!
+  username: String
+}
+
+"""
+What moving a library to a folder its files were copied to would find. Nothing is changed.
+"""
+type LibraryMovePlan {
+  """The library's current folder."""
+  oldPath: String!
+
+  """The new folder, as it would be saved."""
+  newPath: String!
+
+  """Files the library holds."""
+  fileCount: Int!
+
+  """On the new folder with the same size."""
+  matched: Int!
+
+  """Not on the new folder at all."""
+  missing: Int!
+
+  """The first of them, as paths below the library's folder."""
+  missingFiles: [String!]!
+
+  """
+  On the new folder, but at a different size (a copy that did not finish).
+  """
+  changed: Int!
+  changedFiles: [String!]!
+
+  """
+  Media files on the new folder that the library does not hold; the next scan finds them.
+  """
+  extra: Int!
+  extraFiles: [String!]!
+
+  """Why the move cannot go ahead at all."""
+  blocked: String
+
+  """Every file is on the new folder at its size, and nothing blocks the move."""
+  canApply: Boolean!
+}
+
 type NetworkPathConfigPayload {
   success: Boolean!
   error: String
@@ -8369,6 +8493,18 @@ type Query {
   showcaseArtwork(limit: Int! = 12): [ShowcaseArtwork!]!
   filesystemRuntimeInfo: FilesystemRuntimeInfo!
   libraryPathAvailability(input: LibraryPathAvailabilityInput!): [LibraryPathAvailability!]!
+
+  """
+  Whether a sign-in is saved for a share (`smb://host[:port]/share`), and its user name. The
+  password is never returned.
+  """
+  shareSignIn(share: String!): ShareSignIn!
+
+  """
+  Compare a library's files with a folder they were copied to, before moving the library
+  there. Read only.
+  """
+  libraryMovePlan(libraryId: String!, newPath: String!): LibraryMovePlan!
 
   """Browse a directory on the server. Requires authentication."""
   browseDirectory(input: BrowseDirectoryInput): BrowseDirectoryResult!
