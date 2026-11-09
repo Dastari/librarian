@@ -102,7 +102,7 @@ mutation ClearPlayHistory($where: PlayHistoryWhereInput!) {
   deletePlayHistories(where: $where) {
     success
     error
-    affectedCount
+    deletedCount
   }
 }
 

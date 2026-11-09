@@ -2063,6 +2063,14 @@ input CreatePlaybackSessionInput {
   startedAt: String!
   lastUpdatedAt: String!
   completedAt: String
+  chapterId: String
+  deviceId: String
+  state: String
+  playMethod: String
+  quality: String
+  bitrate: Int
+  endedAt: String
+  stopRequestedAt: String
 }
 
 input CreateQualityProfileInput {
@@ -7614,6 +7622,196 @@ type Mutation {
     """Where"""
     where: NetworkServerWhereInput
   ): DeleteNetworkServersResult!
+  """
+	Add or refresh this client as one of your devices. Call it when the app starts, on a
+	sign-in, and now and then while it runs (last seen).
+	"""
+	checkInDevice(input: CheckInDeviceInput!): CheckInDevicePayload!
+  """
+	Sign a device out: its login session is revoked and what it plays stops. Your own
+	devices, or anyone's for an administrator.
+	"""
+	signOutDevice(id: String!): SignOutDevicePayload!
+  """
+	Seed play history from watch progress: one completed play per watched item, with no
+	time claimed, marked imported. Yours, or everyone's (`allUsers`, administrators).
+	Each checkpoint is imported once, so running it again only adds what is new.
+	"""
+	importPlayHistory(allUsers: Boolean! = false): ImportPlayHistoryPayload!
+  """
+	Create a new #struct_name_str
+	Create one Device records
+	"""
+	createDevice(
+		"""
+		Input
+		"""
+		input: CreateDeviceInput!
+	): DeviceResult!
+  """
+	Update an existing #struct_name_str
+	Update one Device records
+	"""
+	updateDevice(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdateDeviceInput!
+	): DeviceResult!
+  """
+	Delete a #struct_name_str
+	Delete one Device records
+	"""
+	deleteDevice(
+		"""
+		Id
+		"""
+		id: String!
+	): DeviceResult!
+  """
+	Update multiple #plural_name matching the given Where filter
+	Update matching Device records
+	"""
+	updateDevices(
+		"""
+		Where
+		"""
+		where: DeviceWhereInput,
+		"""
+		Input
+		"""
+		input: UpdateDeviceInput!
+	): UpdateDevicesResult!
+  """
+	Delete multiple #plural_name matching the given Where filter
+	Delete matching Device records
+	"""
+	deleteDevices(
+		"""
+		Where
+		"""
+		where: DeviceWhereInput
+	): DeleteDevicesResult!
+  """
+	Create a new #struct_name_str
+	Create one PlayHistory records
+	"""
+	createPlayHistory(
+		"""
+		Input
+		"""
+		input: CreatePlayHistoryInput!
+	): PlayHistoryResult!
+  """
+	Update an existing #struct_name_str
+	Update one PlayHistory records
+	"""
+	updatePlayHistory(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdatePlayHistoryInput!
+	): PlayHistoryResult!
+  """
+	Delete a #struct_name_str
+	Delete one PlayHistory records
+	"""
+	deletePlayHistory(
+		"""
+		Id
+		"""
+		id: String!
+	): PlayHistoryResult!
+  """
+	Update multiple #plural_name matching the given Where filter
+	Update matching PlayHistory records
+	"""
+	updatePlayHistories(
+		"""
+		Where
+		"""
+		where: PlayHistoryWhereInput,
+		"""
+		Input
+		"""
+		input: UpdatePlayHistoryInput!
+	): UpdatePlayHistoriesResult!
+  """
+	Delete multiple #plural_name matching the given Where filter
+	Delete matching PlayHistory records
+	"""
+	deletePlayHistories(
+		"""
+		Where
+		"""
+		where: PlayHistoryWhereInput
+	): DeletePlayHistoriesResult!
+  """
+	Create a new #struct_name_str
+	Create one StatsShare records
+	"""
+	createStatsShare(
+		"""
+		Input
+		"""
+		input: CreateStatsShareInput!
+	): StatsShareResult!
+  """
+	Update an existing #struct_name_str
+	Update one StatsShare records
+	"""
+	updateStatsShare(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdateStatsShareInput!
+	): StatsShareResult!
+  """
+	Delete a #struct_name_str
+	Delete one StatsShare records
+	"""
+	deleteStatsShare(
+		"""
+		Id
+		"""
+		id: String!
+	): StatsShareResult!
+  """
+	Update multiple #plural_name matching the given Where filter
+	Update matching StatsShare records
+	"""
+	updateStatsShares(
+		"""
+		Where
+		"""
+		where: StatsShareWhereInput,
+		"""
+		Input
+		"""
+		input: UpdateStatsShareInput!
+	): UpdateStatsSharesResult!
+  """
+	Delete multiple #plural_name matching the given Where filter
+	Delete matching StatsShare records
+	"""
+	deleteStatsShares(
+		"""
+		Where
+		"""
+		where: StatsShareWhereInput
+	): DeleteStatsSharesResult!
 }
 
 """Naming Pattern"""
@@ -8458,6 +8656,39 @@ type PlaybackSession {
 
   """Album"""
   album: Album
+  """
+	The chapter being listened to, for an audiobook session.
+	"""
+	chapterId: String
+  deviceId: String
+  """
+	`playing`, `paused`, `buffering` or `stopped`.
+	"""
+	state: String
+  """
+	`direct`, `hls`, `transcode` or `cast`.
+	"""
+	playMethod: String
+  """
+	The quality being played, as shown to people ("1080p", "Original", "320 kbps").
+	"""
+	quality: String
+  """
+	Bits per second of what is being sent, when known.
+	"""
+	bitrate: Int
+  """
+	Set when the player closed; an open session without it goes stale after a few minutes.
+	"""
+	endedAt: String
+  """
+	Someone asked this player to stop (its owner from another device, or an administrator).
+	"""
+	stopRequestedAt: String
+  """
+	Device
+	"""
+	device: Device
 }
 
 """Event for #struct_name changes (subscriptions)"""
@@ -8533,6 +8764,12 @@ input PlaybackSessionWhereInput {
 
   """Logical NOT of condition"""
   not: PlaybackSessionWhereInput
+  chapterId: StringFilter
+  deviceId: StringFilter
+  state: StringFilter
+  playMethod: StringFilter
+  endedAt: DateFilter
+  stopRequestedAt: DateFilter
 }
 
 type PollRssFeedPayload {
@@ -10341,6 +10578,106 @@ type Query {
     """Id"""
     id: String!
   ): TorrentContents
+  """
+	Totals, days, weeks, top titles, genres, streaks and devices for one person (yours by
+	default, or someone's who shares them with you), or for everyone (administrators,
+	`allUsers`). `from`/`to` default to the last 30 days; `utcOffsetMinutes` places local
+	days (east of UTC is positive, so UTC+10 is 600).
+	"""
+	playStatistics(userId: String, allUsers: Boolean! = false, from: String, to: String, utcOffsetMinutes: Int! = 0, top: Int! = 10): PlayStatistics!
+  """
+	Whose statistics you can open: yourself, people sharing with you, and (administrators)
+	everyone.
+	"""
+	statisticsPeople: [StatisticsPerson!]!
+  """
+	The other people on this server, to share your statistics with.
+	"""
+	statisticsShareCandidates: [StatisticsPerson!]!
+  """
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List Device records
+	"""
+	devices(
+		"""
+		Where
+		"""
+		where: DeviceWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [DeviceOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): DeviceConnection!
+  """
+	Get a single #struct_name_str by ID
+	Read one Device records
+	"""
+	device(
+		"""
+		Id
+		"""
+		id: String!
+	): Device
+  """
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List PlayHistory records
+	"""
+	playHistories(
+		"""
+		Where
+		"""
+		where: PlayHistoryWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [PlayHistoryOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): PlayHistoryConnection!
+  """
+	Get a single #struct_name_str by ID
+	Read one PlayHistory records
+	"""
+	playHistory(
+		"""
+		Id
+		"""
+		id: String!
+	): PlayHistory
+  """
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List StatsShare records
+	"""
+	statsShares(
+		"""
+		Where
+		"""
+		where: StatsShareWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [StatsShareOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): StatsShareConnection!
+  """
+	Get a single #struct_name_str by ID
+	Read one StatsShare records
+	"""
+	statsShare(
+		"""
+		Id
+		"""
+		id: String!
+	): StatsShare
 }
 
 """Refresh Token"""
@@ -13179,6 +13516,60 @@ type Subscription {
     """
     keys: [String!]
   ): TorrentContentsChangedEvent!
+  """
+	Subscribe to #struct_name_str changes
+	Observe changes to Device records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	deviceChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): DeviceChangedEvent!
+  """
+	Subscribe to #struct_name_str changes
+	Observe changes to PlayHistory records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	playHistoryChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): PlayHistoryChangedEvent!
+  """
+	Subscribe to #struct_name_str changes
+	Observe changes to StatsShare records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	statsShareChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): StatsShareChangedEvent!
 }
 
 input SubscriptionFilterInput {
@@ -14800,6 +15191,14 @@ input UpdatePlaybackSessionInput {
   startedAt: String
   lastUpdatedAt: String
   completedAt: String
+  chapterId: String
+  deviceId: String
+  state: String
+  playMethod: String
+  quality: String
+  bitrate: Int
+  endedAt: String
+  stopRequestedAt: String
 }
 
 """Result of bulk update by Where filter"""
@@ -15600,4 +15999,837 @@ input VideoStreamWhereInput {
 
   """Logical NOT of condition"""
   not: VideoStreamWhereInput
+}
+
+input CheckInDeviceInput {
+	"""
+	The client's stable id, kept in its own storage.
+	"""
+	clientId: String!
+	"""
+	The client's suggested name ("Safari on iPad", "TV"); kept only until someone renames it.
+	"""
+	name: String
+	"""
+	`tv`, `phone`, `tablet` or `desktop`.
+	"""
+	formFactor: String
+	platform: String
+	product: String
+	appVersion: String
+}
+
+type CheckInDevicePayload {
+	success: Boolean!
+	error: String
+	device: Device
+}
+
+input CreateDeviceInput {
+	userId: String!
+	clientId: String!
+	name: String!
+	nameIsCustom: Boolean!
+	formFactor: String!
+	platform: String
+	product: String
+	appVersion: String
+	userAgent: String
+	lastIp: String
+	lastSeenAt: String!
+	signedOutAt: String
+}
+
+input CreatePlayHistoryInput {
+	userId: String!
+	deviceId: String
+	deviceName: String
+	playbackSessionId: String
+	contentType: String!
+	mediaFileId: String
+	movieId: String
+	episodeId: String
+	showId: String
+	trackId: String
+	albumId: String
+	artistId: String
+	audiobookId: String
+	chapterId: String
+	title: String!
+	parentTitle: String
+	subtitle: String
+	startedAt: String!
+	endedAt: String!
+	secondsPlayed: Float!
+	startPosition: Float!
+	endPosition: Float!
+	duration: Float
+	completed: Boolean!
+	playMethod: String
+	imported: Boolean!
+	sourceProgressId: String
+}
+
+input CreateStatsShareInput {
+	userId: String!
+	audience: String!
+	viewerUserId: String
+}
+
+"""
+Result of bulk delete by Where filter
+"""
+type DeleteDevicesResult {
+	success: Boolean!
+	error: String
+	deletedCount: Int!
+}
+
+"""
+Result of bulk delete by Where filter
+"""
+type DeletePlayHistoriesResult {
+	success: Boolean!
+	error: String
+	deletedCount: Int!
+}
+
+"""
+Result of bulk delete by Where filter
+"""
+type DeleteStatsSharesResult {
+	success: Boolean!
+	error: String
+	deletedCount: Int!
+}
+
+"""
+Device
+"""
+type Device {
+	"""
+	Id
+	"""
+	id: String!
+	"""
+	User Id
+	"""
+	userId: String!
+	"""
+	The client's own stable identifier, kept in its storage.
+	"""
+	clientId: String!
+	"""
+	Name
+	"""
+	name: String!
+	"""
+	True once someone renamed it; check-ins then keep the name.
+	"""
+	nameIsCustom: Boolean!
+	"""
+	`tv`, `phone`, `tablet`, `desktop` or `unknown`.
+	"""
+	formFactor: String!
+	"""
+	Operating system or TV platform, as the client reported it ("iPadOS", "webOS").
+	"""
+	platform: String
+	"""
+	Browser or app ("Safari", "Librarian app").
+	"""
+	product: String
+	"""
+	App Version
+	"""
+	appVersion: String
+	"""
+	User Agent
+	"""
+	userAgent: String
+	"""
+	Last Ip
+	"""
+	lastIp: String
+	"""
+	Last Seen At
+	"""
+	lastSeenAt: String!
+	"""
+	Signed Out At
+	"""
+	signedOutAt: String
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type DeviceChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	device: Device
+}
+
+"""
+Connection containing edges and page info
+"""
+type DeviceConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [DeviceEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type DeviceEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Device!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input DeviceOrderByInput {
+	name: OrderDirection
+	lastSeenAt: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+"""
+Result type for #struct_name mutations
+"""
+type DeviceResult {
+	success: Boolean!
+	error: String
+	device: Device
+}
+
+input DeviceWhereInput {
+	id: StringFilter
+	userId: StringFilter
+	clientId: StringFilter
+	name: StringFilter
+	nameIsCustom: BoolFilter
+	formFactor: StringFilter
+	platform: StringFilter
+	lastSeenAt: DateFilter
+	signedOutAt: DateFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [DeviceWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [DeviceWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: DeviceWhereInput
+}
+
+type ImportPlayHistoryPayload {
+	success: Boolean!
+	error: String
+	imported: Int!
+	skipped: Int!
+}
+
+"""
+Play History
+"""
+type PlayHistory {
+	"""
+	Id
+	"""
+	id: String!
+	"""
+	User Id
+	"""
+	userId: String!
+	"""
+	Device Id
+	"""
+	deviceId: String
+	"""
+	The device's name when the play happened.
+	"""
+	deviceName: String
+	"""
+	Playback Session Id
+	"""
+	playbackSessionId: String
+	"""
+	`movie`, `episode`, `track` or `audiobook`.
+	"""
+	contentType: String!
+	"""
+	Media File Id
+	"""
+	mediaFileId: String
+	"""
+	Movie Id
+	"""
+	movieId: String
+	"""
+	Episode Id
+	"""
+	episodeId: String
+	"""
+	Show Id
+	"""
+	showId: String
+	"""
+	Track Id
+	"""
+	trackId: String
+	"""
+	Album Id
+	"""
+	albumId: String
+	"""
+	Artist Id
+	"""
+	artistId: String
+	"""
+	Audiobook Id
+	"""
+	audiobookId: String
+	"""
+	Chapter Id
+	"""
+	chapterId: String
+	"""
+	What was played, as it was named then ("Pilot", "Paranoid Android").
+	"""
+	title: String!
+	"""
+	The show, artist or author it belongs to, as named then.
+	"""
+	parentTitle: String
+	"""
+	"S1 · E3", the album name or the chapter: one line under the title.
+	"""
+	subtitle: String
+	"""
+	Started At
+	"""
+	startedAt: String!
+	"""
+	The last moment anything was played in it.
+	"""
+	endedAt: String!
+	"""
+	Seconds of real playing: wall time while playing, never the distance of a seek.
+	"""
+	secondsPlayed: Float!
+	"""
+	Start Position
+	"""
+	startPosition: Float!
+	"""
+	End Position
+	"""
+	endPosition: Float!
+	"""
+	Duration
+	"""
+	duration: Float
+	"""
+	Completed
+	"""
+	completed: Boolean!
+	"""
+	`direct`, `hls`, `transcode` or `cast`; null when not known (imported).
+	"""
+	playMethod: String
+	"""
+	Seeded from watch progress: the play happened, its length is unknown.
+	"""
+	imported: Boolean!
+	"""
+	For an imported play, the checkpoint it came from, so an import runs once per item.
+	"""
+	sourceProgressId: String
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type PlayHistoryChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	playHistory: PlayHistory
+}
+
+"""
+Connection containing edges and page info
+"""
+type PlayHistoryConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [PlayHistoryEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type PlayHistoryEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: PlayHistory!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input PlayHistoryOrderByInput {
+	title: OrderDirection
+	startedAt: OrderDirection
+	endedAt: OrderDirection
+	secondsPlayed: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+"""
+Result type for #struct_name mutations
+"""
+type PlayHistoryResult {
+	success: Boolean!
+	error: String
+	playHistory: PlayHistory
+}
+
+input PlayHistoryWhereInput {
+	id: StringFilter
+	userId: StringFilter
+	deviceId: StringFilter
+	playbackSessionId: StringFilter
+	contentType: StringFilter
+	mediaFileId: StringFilter
+	movieId: StringFilter
+	episodeId: StringFilter
+	showId: StringFilter
+	trackId: StringFilter
+	albumId: StringFilter
+	artistId: StringFilter
+	audiobookId: StringFilter
+	chapterId: StringFilter
+	title: StringFilter
+	startedAt: DateFilter
+	endedAt: DateFilter
+	secondsPlayed: IntFilter
+	completed: BoolFilter
+	playMethod: StringFilter
+	imported: BoolFilter
+	sourceProgressId: StringFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [PlayHistoryWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [PlayHistoryWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: PlayHistoryWhereInput
+}
+
+type PlayStatistics {
+	"""
+	Whose statistics; null for an administrator's everyone view.
+	"""
+	userId: String
+	userName: String
+	from: String!
+	to: String!
+	totals: PlayStatisticsTotals!
+	streak: PlayStatisticsStreak!
+	"""
+	One per local day of the period (periods over 400 days have weeks only).
+	"""
+	days: [PlayStatisticsBucket!]!
+	weeks: [PlayStatisticsBucket!]!
+	"""
+	Seconds by local hour, 0–23.
+	"""
+	hours: [Float!]!
+	topShows: [PlayStatisticsTopItem!]!
+	topMovies: [PlayStatisticsTopItem!]!
+	topArtists: [PlayStatisticsTopItem!]!
+	topAlbums: [PlayStatisticsTopItem!]!
+	topAudiobooks: [PlayStatisticsTopItem!]!
+	topAuthors: [PlayStatisticsTopItem!]!
+	topGenres: [PlayStatisticsTopItem!]!
+	devices: [PlayStatisticsDevice!]!
+	"""
+	Per person; only in an administrator's everyone view.
+	"""
+	users: [PlayStatisticsUser!]!
+	recent: [PlayStatisticsPlay!]!
+	"""
+	False when the period held more plays than one answer reads.
+	"""
+	complete: Boolean!
+}
+
+type PlayStatisticsBucket {
+	"""
+	The day, or the Monday that starts the week (YYYY-MM-DD).
+	"""
+	date: String!
+	secondsWatched: Float!
+	secondsListened: Float!
+	plays: Int!
+}
+
+type PlayStatisticsDevice {
+	deviceId: String
+	name: String!
+	seconds: Float!
+	plays: Int!
+	lastPlayedAt: String!
+}
+
+"""
+One play as statistics show it: no device address, user agent or session.
+"""
+type PlayStatisticsPlay {
+	id: String!
+	contentType: String!
+	title: String!
+	parentTitle: String
+	subtitle: String
+	movieId: String
+	episodeId: String
+	showId: String
+	trackId: String
+	albumId: String
+	artistId: String
+	audiobookId: String
+	startedAt: String!
+	endedAt: String!
+	secondsPlayed: Float!
+	completed: Boolean!
+	imported: Boolean!
+	deviceName: String
+	playMethod: String
+}
+
+type PlayStatisticsStreak {
+	"""
+	Days in a row up to today (or yesterday, when nothing was played yet today).
+	"""
+	current: Int!
+	longest: Int!
+	"""
+	The last day of the longest run.
+	"""
+	longestEndedOn: String
+}
+
+type PlayStatisticsTopItem {
+	"""
+	Stable key: the entity id, or the name when there is none (authors, genres).
+	"""
+	key: String!
+	"""
+	`show`, `movie`, `artist`, `album`, `audiobook`, `author` or `genre`.
+	"""
+	kind: String!
+	"""
+	The entity, when the play named one; it may since have been removed.
+	"""
+	entityId: String
+	title: String!
+	subtitle: String
+	seconds: Float!
+	plays: Int!
+}
+
+type PlayStatisticsTotals {
+	secondsWatched: Float!
+	secondsListened: Float!
+	plays: Int!
+	completedPlays: Int!
+	importedPlays: Int!
+	"""
+	Different things played (an episode, a track, a film, a book).
+	"""
+	items: Int!
+	activeDays: Int!
+}
+
+type PlayStatisticsUser {
+	userId: String!
+	name: String!
+	seconds: Float!
+	plays: Int!
+}
+
+type SignOutDevicePayload {
+	success: Boolean!
+	error: String
+	"""
+	Refresh tokens revoked (0 when the device had already signed out).
+	"""
+	revokedSessions: Int!
+}
+
+type StatisticsPerson {
+	userId: String!
+	name: String!
+	isSelf: Boolean!
+	"""
+	Their statistics reach you through a share.
+	"""
+	shared: Boolean!
+}
+
+"""
+Stats Share
+"""
+type StatsShare {
+	"""
+	Id
+	"""
+	id: String!
+	"""
+	Whose statistics are shared.
+	"""
+	userId: String!
+	"""
+	`everyone` or `user`.
+	"""
+	audience: String!
+	"""
+	The user they are shared with; null when the audience is everyone.
+	"""
+	viewerUserId: String
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type StatsShareChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	statsShare: StatsShare
+}
+
+"""
+Connection containing edges and page info
+"""
+type StatsShareConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [StatsShareEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type StatsShareEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: StatsShare!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input StatsShareOrderByInput {
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+"""
+Result type for #struct_name mutations
+"""
+type StatsShareResult {
+	success: Boolean!
+	error: String
+	statsShare: StatsShare
+}
+
+input StatsShareWhereInput {
+	id: StringFilter
+	userId: StringFilter
+	audience: StringFilter
+	viewerUserId: StringFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [StatsShareWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [StatsShareWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: StatsShareWhereInput
+}
+
+input UpdateDeviceInput {
+	userId: String
+	clientId: String
+	name: String
+	nameIsCustom: Boolean
+	formFactor: String
+	platform: String
+	product: String
+	appVersion: String
+	userAgent: String
+	lastIp: String
+	lastSeenAt: String
+	signedOutAt: String
+}
+
+"""
+Result of bulk update by Where filter
+"""
+type UpdateDevicesResult {
+	success: Boolean!
+	error: String
+	affectedCount: Int!
+}
+
+"""
+Result of bulk update by Where filter
+"""
+type UpdatePlayHistoriesResult {
+	success: Boolean!
+	error: String
+	affectedCount: Int!
+}
+
+input UpdatePlayHistoryInput {
+	userId: String
+	deviceId: String
+	deviceName: String
+	playbackSessionId: String
+	contentType: String
+	mediaFileId: String
+	movieId: String
+	episodeId: String
+	showId: String
+	trackId: String
+	albumId: String
+	artistId: String
+	audiobookId: String
+	chapterId: String
+	title: String
+	parentTitle: String
+	subtitle: String
+	startedAt: String
+	endedAt: String
+	secondsPlayed: Float
+	startPosition: Float
+	endPosition: Float
+	duration: Float
+	completed: Boolean
+	playMethod: String
+	imported: Boolean
+	sourceProgressId: String
+}
+
+input UpdateStatsShareInput {
+	userId: String
+	audience: String
+	viewerUserId: String
+}
+
+"""
+Result of bulk update by Where filter
+"""
+type UpdateStatsSharesResult {
+	success: Boolean!
+	error: String
+	affectedCount: Int!
+}
+
+"""
+Directs the executor to include this field or fragment only when the `if` argument is true.
+"""
+directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+
+"""
+Directs the executor to skip this field or fragment when the `if` argument is true.
+"""
+directive @skip(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+
+schema {
+	query: Query
+	mutation: Mutation
+	subscription: Subscription
 }

@@ -79,7 +79,7 @@ describe("Statistics", () => {
     await renderWithProviders(<StatisticsPage period="30d" />, { mocks: [people([{ userId: "me", name: "Toby", isSelf: true, shared: false }]), statsMock(stats()), sharing] });
     await userEvent.click(await screen.findByRole("button", { name: /Share/ }));
     expect(await screen.findByText("Share your statistics")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("radio", { name: "Some people" }));
+    await userEvent.click(screen.getByRole("button", { name: "Some people" }));
     expect(await screen.findByRole("checkbox", { name: "Amy" })).toBeInTheDocument();
   });
 });

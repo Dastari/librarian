@@ -346,5 +346,23 @@
     "list": "torrentContentsList",
     "get": "torrentContents",
     "changed": "torrentContentsChanged"
+  },
+  {
+    "entity": "Device",
+    "list": "devices",
+    "get": "device",
+    "changed": "deviceChanged"
+  },
+  {
+    "entity": "PlayHistory",
+    "list": "playHistories",
+    "get": "playHistory",
+    "changed": "playHistoryChanged"
+  },
+  {
+    "entity": "StatsShare",
+    "list": "statsShares",
+    "get": "statsShare",
+    "changed": "statsShareChanged"
   }
 ]

@@ -144,7 +144,7 @@ export function HistoryPage() {
     if (!user) return;
     try {
       const result = assertSuccess((await clear({ variables: { where: { userId: { eq: user.id } } } })).data?.deletePlayHistories, "Your history could not be cleared");
-      toast.success(`Cleared ${result.affectedCount ?? 0} plays`);
+      toast.success(`Cleared ${result.deletedCount ?? 0} plays`);
       setConfirmClear(false);
       refresh();
     } catch (error) {

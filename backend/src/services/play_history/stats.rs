@@ -387,7 +387,14 @@ pub fn aggregate(
         {
             for genre in genres.get(id).into_iter().flatten() {
                 if seen.insert(genre.to_lowercase()) {
-                    add(&mut genre_map, "genre", None, Some(genre.as_str()), None, row);
+                    add(
+                        &mut genre_map,
+                        "genre",
+                        None,
+                        Some(genre.as_str()),
+                        None,
+                        row,
+                    );
                 }
             }
         }

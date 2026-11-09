@@ -1,7 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { BarChart, ColumnChart } from "glass-ux/charts";
 import { IconShare, IconWarning } from "glass-ux/icons";
-import { ListRow } from "glass-ux/list-row";
 import { Metric } from "glass-ux/metric";
 import { Segmented } from "glass-ux/segmented";
 import { Select } from "glass-ux/select";
@@ -82,13 +81,11 @@ function Recent({ plays }: { plays: PlayStatistics["recent"] }) {
   if (plays.length === 0) return null;
   return (
     <Group title="Recently played">
-      <ul className="flex min-w-0 flex-col" data-nav-group>
+      <ul className="flex min-w-0 flex-col divide-y divide-separator">
         {plays.map((play) => (
-          <li key={play.id}>
-            <ListRow
-              title={play.contentType === "episode" && play.parentTitle ? `${play.parentTitle}: ${play.title}` : play.title}
-              description={[recentLine(play), play.imported ? "Imported" : formatPlayed(play.secondsPlayed), play.deviceName, formatRelative(play.startedAt)].filter(Boolean).join(" · ")}
-            />
+          <li key={play.id} className="min-w-0 py-2">
+            <p className="truncate text-body text-foreground">{play.contentType === "episode" && play.parentTitle ? `${play.parentTitle}: ${play.title}` : play.title}</p>
+            <p className="truncate text-body-sm text-muted">{[recentLine(play), play.imported ? "Imported" : formatPlayed(play.secondsPlayed), play.deviceName, formatRelative(play.startedAt)].filter(Boolean).join(" · ")}</p>
           </li>
         ))}
       </ul>

@@ -41,44 +41,72 @@ fn steady_playing_is_credited_by_position_moved() {
 #[test]
 fn faster_speech_counts_real_minutes_not_book_minutes() {
     // 2x speed: 30 seconds of the book in 15 seconds of listening.
-    assert_eq!(credited_seconds(cp(100.0, true, 0), cp(130.0, true, 15)), 15.0);
+    assert_eq!(
+        credited_seconds(cp(100.0, true, 0), cp(130.0, true, 15)),
+        15.0
+    );
 }
 
 #[test]
 fn paused_time_is_not_played() {
-    assert_eq!(credited_seconds(cp(50.0, false, 0), cp(50.0, false, 600)), 0.0);
+    assert_eq!(
+        credited_seconds(cp(50.0, false, 0), cp(50.0, false, 600)),
+        0.0
+    );
     // Stalled while "playing" (buffering): the position did not move.
     assert_eq!(credited_seconds(cp(50.0, true, 0), cp(50.0, true, 15)), 0.0);
 }
 
 #[test]
 fn resuming_from_pause_credits_what_moved() {
-    assert_eq!(credited_seconds(cp(50.0, false, 0), cp(55.0, true, 15)), 5.0);
+    assert_eq!(
+        credited_seconds(cp(50.0, false, 0), cp(55.0, true, 15)),
+        5.0
+    );
 }
 
 #[test]
 fn a_seek_counts_wall_time_never_the_distance() {
     // Forward an hour in 15 seconds of wall time.
-    assert_eq!(credited_seconds(cp(60.0, true, 0), cp(3660.0, true, 15)), 15.0);
+    assert_eq!(
+        credited_seconds(cp(60.0, true, 0), cp(3660.0, true, 15)),
+        15.0
+    );
     // Back to the start.
-    assert_eq!(credited_seconds(cp(3000.0, true, 0), cp(10.0, true, 15)), 15.0);
+    assert_eq!(
+        credited_seconds(cp(3000.0, true, 0), cp(10.0, true, 15)),
+        15.0
+    );
     // A long silence and a jump: capped at a minute.
-    assert_eq!(credited_seconds(cp(60.0, true, 0), cp(5000.0, true, 900)), 60.0);
+    assert_eq!(
+        credited_seconds(cp(60.0, true, 0), cp(5000.0, true, 900)),
+        60.0
+    );
     // Seeking while paused plays nothing.
-    assert_eq!(credited_seconds(cp(60.0, false, 0), cp(900.0, true, 10)), 0.0);
+    assert_eq!(
+        credited_seconds(cp(60.0, false, 0), cp(900.0, true, 10)),
+        0.0
+    );
 }
 
 #[test]
 fn reports_out_of_order_credit_nothing() {
     assert_eq!(credited_seconds(cp(0.0, true, 10), cp(10.0, true, 5)), 0.0);
-    assert_eq!(credited_seconds(cp(0.0, true, 0), cp(f64::NAN, true, 10)), 0.0);
+    assert_eq!(
+        credited_seconds(cp(0.0, true, 0), cp(f64::NAN, true, 10)),
+        0.0
+    );
 }
 
 #[test]
 fn completion_uses_the_watched_rule() {
     assert!(!is_complete(900.0, Some(1000.0), None));
     assert!(is_complete(920.0, Some(1000.0), None));
-    assert!(is_complete(10.0, Some(1000.0), Some("2026-11-02T20:00:00.000Z")));
+    assert!(is_complete(
+        10.0,
+        Some(1000.0),
+        Some("2026-11-02T20:00:00.000Z")
+    ));
     assert!(!is_complete(10.0, None, None));
     assert!(!is_complete(10.0, Some(0.0), None));
 }
@@ -116,7 +144,11 @@ fn user_agents_identify_devices() {
     assert_eq!(ipad.platform.as_deref(), Some("iPadOS"));
     assert_eq!(ipad.form_factor, "tablet");
     assert_eq!(
-        default_name(ipad.product.as_deref(), ipad.platform.as_deref(), ipad.form_factor),
+        default_name(
+            ipad.product.as_deref(),
+            ipad.platform.as_deref(),
+            ipad.form_factor
+        ),
         "Safari on iPad"
     );
 
@@ -143,7 +175,14 @@ fn user_agents_identify_devices() {
     assert_eq!(lg.platform.as_deref(), Some("webOS"));
     assert_eq!(lg.form_factor, "tv");
     assert_eq!(default_name(None, None, "tv"), "TV");
-    assert_eq!(default_name(lg.product.as_deref(), lg.platform.as_deref(), lg.form_factor), "webOS TV");
+    assert_eq!(
+        default_name(
+            lg.product.as_deref(),
+            lg.platform.as_deref(),
+            lg.form_factor
+        ),
+        "webOS TV"
+    );
 
     let samsung = describe_user_agent(
         "Mozilla/5.0 (SMART-TV; LINUX; Tizen 6.5) AppleWebKit/537.36 (KHTML, like Gecko) 85.0 TV Safari/537.36",
@@ -157,13 +196,23 @@ fn user_agents_identify_devices() {
     assert_eq!(edge.product.as_deref(), Some("Edge"));
     assert_eq!(edge.platform.as_deref(), Some("Windows"));
     assert_eq!(edge.form_factor, "desktop");
-    assert_eq!(default_name(edge.product.as_deref(), edge.platform.as_deref(), "desktop"), "Edge on Windows");
+    assert_eq!(
+        default_name(edge.product.as_deref(), edge.platform.as_deref(), "desktop"),
+        "Edge on Windows"
+    );
 
     let firefox = describe_user_agent(
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.4; rv:125.0) Gecko/20100101 Firefox/125.0",
     );
     assert_eq!(firefox.product.as_deref(), Some("Firefox"));
-    assert_eq!(default_name(firefox.product.as_deref(), firefox.platform.as_deref(), "desktop"), "Firefox on Mac");
+    assert_eq!(
+        default_name(
+            firefox.product.as_deref(),
+            firefox.platform.as_deref(),
+            "desktop"
+        ),
+        "Firefox on Mac"
+    );
 
     let nothing = describe_user_agent("");
     assert_eq!(nothing.form_factor, "unknown");
@@ -264,11 +313,23 @@ fn statistics_sum_days_weeks_and_kinds() {
         },
     ];
     let mut genres = HashMap::new();
-    genres.insert("s1".to_string(), vec!["Drama".to_string(), "Thriller".to_string()]);
+    genres.insert(
+        "s1".to_string(),
+        vec!["Drama".to_string(), "Thriller".to_string()],
+    );
     genres.insert("s2".to_string(), vec!["Thriller".to_string()]);
-    genres.insert("m1".to_string(), vec!["Science Fiction".to_string(), "Drama".to_string()]);
+    genres.insert(
+        "m1".to_string(),
+        vec!["Science Fiction".to_string(), "Drama".to_string()],
+    );
     let names = HashMap::from([("u1".to_string(), "Toby".to_string())]);
-    let stats = aggregate(&rows, period(day(1, 0), day(14, 23), 0), &genres, &names, 10);
+    let stats = aggregate(
+        &rows,
+        period(day(1, 0), day(14, 23), 0),
+        &genres,
+        &names,
+        10,
+    );
 
     assert_eq!(stats.totals.seconds_watched, 8400.0);
     assert_eq!(stats.totals.seconds_listened, 740.0);
@@ -308,7 +369,12 @@ fn statistics_sum_days_weeks_and_kinds() {
     assert_eq!(stats.top_genres[1].plays, 3);
 
     assert_eq!(stats.devices[0].name, "Living room TV");
-    assert!(stats.devices.iter().any(|d| d.name == "Imported from watch progress"));
+    assert!(
+        stats
+            .devices
+            .iter()
+            .any(|d| d.name == "Imported from watch progress")
+    );
     assert_eq!(stats.users[0].name, "Toby");
     assert_eq!(stats.hours[20], 5400.0);
 }
@@ -318,10 +384,26 @@ fn local_days_follow_the_viewers_offset() {
     // 23:30 UTC on the 2nd is the 3rd in Brisbane (UTC+10).
     let late = Utc.with_ymd_and_hms(2026, 11, 2, 23, 30, 0).unwrap();
     let rows = vec![play("movie", late, 100.0)];
-    let utc = aggregate(&rows, period(day(1, 0), day(5, 0), 0), &HashMap::new(), &HashMap::new(), 5);
-    let bne = aggregate(&rows, period(day(1, 0), day(5, 0), 600), &HashMap::new(), &HashMap::new(), 5);
+    let utc = aggregate(
+        &rows,
+        period(day(1, 0), day(5, 0), 0),
+        &HashMap::new(),
+        &HashMap::new(),
+        5,
+    );
+    let bne = aggregate(
+        &rows,
+        period(day(1, 0), day(5, 0), 600),
+        &HashMap::new(),
+        &HashMap::new(),
+        5,
+    );
     let date_of = |stats: &stats::Aggregate| {
-        stats.days.iter().find(|d| d.plays > 0).map(|d| d.date.clone())
+        stats
+            .days
+            .iter()
+            .find(|d| d.plays > 0)
+            .map(|d| d.date.clone())
     };
     assert_eq!(date_of(&utc).as_deref(), Some("2026-11-02"));
     assert_eq!(date_of(&bne).as_deref(), Some("2026-11-03"));
@@ -330,8 +412,17 @@ fn local_days_follow_the_viewers_offset() {
 
 #[test]
 fn plays_outside_the_period_are_left_out() {
-    let rows = vec![play("movie", day(1, 10), 100.0), play("movie", day(20, 10), 50.0)];
-    let stats = aggregate(&rows, period(day(15, 0), day(25, 0), 0), &HashMap::new(), &HashMap::new(), 5);
+    let rows = vec![
+        play("movie", day(1, 10), 100.0),
+        play("movie", day(20, 10), 50.0),
+    ];
+    let stats = aggregate(
+        &rows,
+        period(day(15, 0), day(25, 0), 0),
+        &HashMap::new(),
+        &HashMap::new(),
+        5,
+    );
     assert_eq!(stats.totals.plays, 1);
     assert_eq!(stats.totals.seconds_watched, 50.0);
 }
@@ -359,7 +450,13 @@ fn ties_rank_by_plays_then_name() {
         episode("c", "Gamma", "3", day(2, 3), 50.0),
         episode("c", "Gamma", "4", day(2, 4), 50.0),
     ];
-    let stats = aggregate(&rows, period(day(1, 0), day(3, 0), 0), &HashMap::new(), &HashMap::new(), 2);
+    let stats = aggregate(
+        &rows,
+        period(day(1, 0), day(3, 0), 0),
+        &HashMap::new(),
+        &HashMap::new(),
+        2,
+    );
     let titles: Vec<_> = stats.top_shows.iter().map(|t| t.title.as_str()).collect();
     assert_eq!(titles, ["Gamma", "Alpha"]);
 }
@@ -375,11 +472,20 @@ fn shares_grant_their_viewer_or_everyone() {
         updated_at: String::new(),
     };
     assert!(access::share_grants(&share("everyone", None), "anyone"));
-    assert!(access::share_grants(&share("user", Some("friend")), "friend"));
-    assert!(!access::share_grants(&share("user", Some("friend")), "stranger"));
+    assert!(access::share_grants(
+        &share("user", Some("friend")),
+        "friend"
+    ));
+    assert!(!access::share_grants(
+        &share("user", Some("friend")),
+        "stranger"
+    ));
     assert!(!access::share_grants(&share("user", None), "stranger"));
     assert!(!access::share_grants(&share("everyone", None), "owner"));
-    assert!(!access::share_grants(&share("nonsense", Some("friend")), "friend"));
+    assert!(!access::share_grants(
+        &share("nonsense", Some("friend")),
+        "friend"
+    ));
 }
 
 // ---- Through the database and the generated schema -------------------------------------
@@ -485,7 +591,13 @@ impl Fixture {
         self.create("Movie", json!({"userId":owner.user_id,"libraryId":library,"title":title,"genres":["Drama"],"castNames":[],"productionCountries":[],"spokenLanguages":[],"monitored":false,"wanted":false,"hasFile":false}), &self.admin).await
     }
 
-    async fn session(&self, owner: &AuthUser, movie: &str, device: Option<&str>, start: i64) -> String {
+    async fn session(
+        &self,
+        owner: &AuthUser,
+        movie: &str,
+        device: Option<&str>,
+        start: i64,
+    ) -> String {
         PlaybackSession::insert(
             &self.db,
             CreatePlaybackSessionInput {
@@ -559,7 +671,10 @@ async fn a_play_with_pauses_and_seeks_is_one_row_of_real_time() {
     let f = Fixture::new().await;
     let movie = f.movie(&f.user, "Arrival").await;
     let session = f.session(&f.user, &movie, None, 0).await;
-    assert!(f.plays(&f.user).await.is_empty(), "nothing is recorded before anything plays");
+    assert!(
+        f.plays(&f.user).await.is_empty(),
+        "nothing is recorded before anything plays"
+    );
 
     f.report(&session, 15.0, true, 15).await;
     f.report(&session, 30.0, true, 30).await;
@@ -615,7 +730,10 @@ async fn reopening_soon_continues_the_play_and_later_starts_another() {
     let plays = f.plays(&f.user).await;
     assert_eq!(plays.len(), 1, "{plays:#?}");
     assert_eq!(plays[0].seconds_played, 30.0);
-    assert_eq!(plays[0].playback_session_id.as_deref(), Some(second.as_str()));
+    assert_eq!(
+        plays[0].playback_session_id.as_deref(),
+        Some(second.as_str())
+    );
 
     // On another device it is a separate play.
     let phone = f.session(&f.user, &movie, Some("phone"), 700).await;
@@ -713,7 +831,7 @@ async fn history_is_read_and_deleted_by_its_owner_and_never_written_by_clients()
     // Clearing your history removes only yours, even with a filter naming everyone's.
     let cleared = f
         .execute(
-            "mutation($where:PlayHistoryWhereInput!){deletePlayHistories(where:$where){success error affectedCount}}",
+            "mutation($where:PlayHistoryWhereInput!){deletePlayHistories(where:$where){success error deletedCount}}",
             json!({"where":{"userId":{"inList":[f.user.user_id, f.other.user_id]}}}),
             &f.user,
         )
@@ -754,34 +872,73 @@ async fn statistics_are_private_until_shared_and_read_only_after() {
         assert!(response.errors.is_empty(), "{response:?}");
         let data = response.data.into_json().unwrap();
         assert_eq!(data["playStatistics"]["totals"]["secondsWatched"], 60.0);
-        assert_eq!(data["playStatistics"]["topMovies"][0]["title"], "Paris, Texas");
+        assert_eq!(
+            data["playStatistics"]["topMovies"][0]["title"],
+            "Paris, Texas"
+        );
     }
     // Private by default: the same answer as a user who does not exist.
     assert!(denied(&stats_for(&f, &f.other, &f.user).await));
-    let missing = AuthUser { user_id: "nobody".into(), ..f.other.clone() };
+    let missing = AuthUser {
+        user_id: "nobody".into(),
+        ..f.other.clone()
+    };
     assert!(denied(&stats_for(&f, &f.other, &missing).await));
     // The people picker shows only yourself.
-    let people = f.execute("{statisticsPeople{userId isSelf shared}}", json!({}), &f.other).await;
+    let people = f
+        .execute(
+            "{statisticsPeople{userId isSelf shared}}",
+            json!({}),
+            &f.other,
+        )
+        .await;
     assert_eq!(people["statisticsPeople"].as_array().unwrap().len(), 1);
 
     // Shared with one person: they can read, someone else cannot.
     let share = f
-        .create("StatsShare", json!({"userId": f.user.user_id, "audience": "user", "viewerUserId": f.other.user_id}), &f.user)
+        .create(
+            "StatsShare",
+            json!({"userId": f.user.user_id, "audience": "user", "viewerUserId": f.other.user_id}),
+            &f.user,
+        )
         .await;
     assert!(stats_for(&f, &f.other, &f.user).await.errors.is_empty());
     assert!(denied(&stats_for(&f, &f.third, &f.user).await));
-    let people = f.execute("{statisticsPeople{userId isSelf shared}}", json!({}), &f.other).await;
-    assert!(people["statisticsPeople"].as_array().unwrap().iter().any(|p| p["userId"] == f.user.user_id && p["shared"] == true));
+    let people = f
+        .execute(
+            "{statisticsPeople{userId isSelf shared}}",
+            json!({}),
+            &f.other,
+        )
+        .await;
+    assert!(
+        people["statisticsPeople"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["userId"] == f.user.user_id && p["shared"] == true)
+    );
 
     // The viewer cannot see or touch the share itself, nor the raw history.
-    let shares = f.execute("{statsShares{pageInfo{totalCount}}}", json!({}), &f.other).await;
+    let shares = f
+        .execute("{statsShares{pageInfo{totalCount}}}", json!({}), &f.other)
+        .await;
     assert_eq!(shares["statsShares"]["pageInfo"]["totalCount"], 0);
-    let history = f.execute("{playHistories{pageInfo{totalCount}}}", json!({}), &f.other).await;
+    let history = f
+        .execute("{playHistories{pageInfo{totalCount}}}", json!({}), &f.other)
+        .await;
     assert_eq!(history["playHistories"]["pageInfo"]["totalCount"], 0);
     let removed = f
-        .execute_raw("mutation($id:String!){deleteStatsShare(id:$id){success}}", json!({"id": share}), &f.other)
+        .execute_raw(
+            "mutation($id:String!){deleteStatsShare(id:$id){success}}",
+            json!({"id": share}),
+            &f.other,
+        )
         .await;
-    assert!(!removed.errors.is_empty() || removed.data.into_json().unwrap()["deleteStatsShare"]["success"] == false);
+    assert!(
+        !removed.errors.is_empty()
+            || removed.data.into_json().unwrap()["deleteStatsShare"]["success"] == false
+    );
     // Someone else cannot share your statistics on your behalf.
     // (Refused, or made a share of the caller's own: either way not the user's.)
     f.execute_raw(
@@ -793,11 +950,21 @@ async fn statistics_are_private_until_shared_and_read_only_after() {
     assert!(denied(&stats_for(&f, &f.third, &f.user).await));
 
     // With everyone.
-    f.create("StatsShare", json!({"userId": f.user.user_id, "audience": "everyone"}), &f.user).await;
+    f.create(
+        "StatsShare",
+        json!({"userId": f.user.user_id, "audience": "everyone"}),
+        &f.user,
+    )
+    .await;
     assert!(stats_for(&f, &f.third, &f.user).await.errors.is_empty());
 
     // Taking both back makes them private again.
-    f.execute("mutation($where:StatsShareWhereInput!){deleteStatsShares(where:$where){success}}", json!({"where": {"userId": {"eq": f.user.user_id}}}), &f.user).await;
+    f.execute(
+        "mutation($where:StatsShareWhereInput!){deleteStatsShares(where:$where){success}}",
+        json!({"where": {"userId": {"eq": f.user.user_id}}}),
+        &f.user,
+    )
+    .await;
     assert!(denied(&stats_for(&f, &f.other, &f.user).await));
     assert!(denied(&stats_for(&f, &f.third, &f.user).await));
 }
@@ -820,11 +987,25 @@ async fn shares_are_validated() {
         !response.errors.is_empty()
             || response.data.into_json().unwrap()["createStatsShare"]["success"] == false
     };
-    assert!(failed(make(json!({"userId": f.user.user_id, "audience": "user", "viewerUserId": f.user.user_id})).await));
-    assert!(failed(make(json!({"userId": f.user.user_id, "audience": "user", "viewerUserId": "nobody"})).await));
-    assert!(failed(make(json!({"userId": f.user.user_id, "audience": "user"})).await));
-    assert!(failed(make(json!({"userId": f.user.user_id, "audience": "friends"})).await));
-    assert!(!failed(make(json!({"userId": f.user.user_id, "audience": "user", "viewerUserId": f.other.user_id})).await));
+    assert!(failed(
+        make(json!({"userId": f.user.user_id, "audience": "user", "viewerUserId": f.user.user_id}))
+            .await
+    ));
+    assert!(failed(
+        make(json!({"userId": f.user.user_id, "audience": "user", "viewerUserId": "nobody"})).await
+    ));
+    assert!(failed(
+        make(json!({"userId": f.user.user_id, "audience": "user"})).await
+    ));
+    assert!(failed(
+        make(json!({"userId": f.user.user_id, "audience": "friends"})).await
+    ));
+    assert!(!failed(
+        make(
+            json!({"userId": f.user.user_id, "audience": "user", "viewerUserId": f.other.user_id})
+        )
+        .await
+    ));
     assert!(failed(make(json!({"userId": f.user.user_id, "audience": "user", "viewerUserId": f.other.user_id})).await), "twice");
     let update = f
         .execute_raw(
@@ -833,14 +1014,22 @@ async fn shares_are_validated() {
             &f.user,
         )
         .await;
-    assert!(!update.errors.is_empty() || update.data.into_json().unwrap()["updateStatsShares"]["success"] == false);
+    assert!(
+        !update.errors.is_empty()
+            || update.data.into_json().unwrap()["updateStatsShares"]["success"] == false
+    );
 }
 
 #[tokio::test]
 async fn everyones_statistics_need_an_administrator() {
     let f = Fixture::new().await;
     let query = "{playStatistics(allUsers:true){userId users{name plays}}}";
-    assert!(!f.execute_raw(query, json!({}), &f.user).await.errors.is_empty());
+    assert!(
+        !f.execute_raw(query, json!({}), &f.user)
+            .await
+            .errors
+            .is_empty()
+    );
     let data = f.execute(query, json!({}), &f.admin).await;
     assert!(data["playStatistics"]["userId"].is_null());
 }
@@ -850,7 +1039,11 @@ async fn devices_check_in_rename_and_sign_out() {
     let f = Fixture::new().await;
     let check_in = "mutation($input:CheckInDeviceInput!){checkInDevice(input:$input){success device{id name nameIsCustom formFactor platform product lastIp userAgent}}}";
     let data = f
-        .execute(check_in, json!({"input": {"clientId": "client-abc", "appVersion": "0.6.0"}}), &f.user)
+        .execute(
+            check_in,
+            json!({"input": {"clientId": "client-abc", "appVersion": "0.6.0"}}),
+            &f.user,
+        )
         .await;
     let device = &data["checkInDevice"]["device"];
     let id = device["id"].as_str().unwrap().to_owned();
@@ -860,7 +1053,11 @@ async fn devices_check_in_rename_and_sign_out() {
 
     // Checking in again is the same device; a client name is a suggestion until renamed.
     let data = f
-        .execute(check_in, json!({"input": {"clientId": "client-abc", "name": "TV", "formFactor": "tv"}}), &f.user)
+        .execute(
+            check_in,
+            json!({"input": {"clientId": "client-abc", "name": "TV", "formFactor": "tv"}}),
+            &f.user,
+        )
         .await;
     assert_eq!(data["checkInDevice"]["device"]["id"], id);
     assert_eq!(data["checkInDevice"]["device"]["name"], "TV");
@@ -870,26 +1067,51 @@ async fn devices_check_in_rename_and_sign_out() {
     assert_eq!(renamed["updateDevice"]["device"]["name"], "Lounge");
     assert_eq!(renamed["updateDevice"]["device"]["nameIsCustom"], true);
     let data = f
-        .execute(check_in, json!({"input": {"clientId": "client-abc", "name": "TV"}}), &f.user)
+        .execute(
+            check_in,
+            json!({"input": {"clientId": "client-abc", "name": "TV"}}),
+            &f.user,
+        )
         .await;
     assert_eq!(data["checkInDevice"]["device"]["name"], "Lounge");
     // Only the name can be edited.
     let spoof = f
-        .execute_raw("mutation($id:String!){updateDevice(id:$id,input:{lastIp:\"10.0.0.1\"}){success}}", json!({"id": id}), &f.user)
+        .execute_raw(
+            "mutation($id:String!){updateDevice(id:$id,input:{lastIp:\"10.0.0.1\"}){success}}",
+            json!({"id": id}),
+            &f.user,
+        )
         .await;
-    assert!(!spoof.errors.is_empty() || spoof.data.into_json().unwrap()["updateDevice"]["success"] == false);
+    assert!(
+        !spoof.errors.is_empty()
+            || spoof.data.into_json().unwrap()["updateDevice"]["success"] == false
+    );
     // Clients cannot make devices up.
     let made_up = f
         .execute_raw("mutation($input:CreateDeviceInput!){createDevice(input:$input){success}}", json!({"input": {"userId": f.user.user_id, "clientId": "x", "name": "x", "nameIsCustom": false, "formFactor": "tv", "lastSeenAt": "2026-01-01T00:00:00.000Z"}}), &f.user)
         .await;
-    assert!(!made_up.errors.is_empty() || made_up.data.into_json().unwrap()["createDevice"]["success"] == false);
+    assert!(
+        !made_up.errors.is_empty()
+            || made_up.data.into_json().unwrap()["createDevice"]["success"] == false
+    );
 
     // Another member neither sees nor signs it out; an administrator sees it.
     let list = "{devices{pageInfo{totalCount}}}";
-    assert_eq!(f.execute(list, json!({}), &f.other).await["devices"]["pageInfo"]["totalCount"], 0);
-    assert_eq!(f.execute(list, json!({}), &f.admin).await["devices"]["pageInfo"]["totalCount"], 1);
+    assert_eq!(
+        f.execute(list, json!({}), &f.other).await["devices"]["pageInfo"]["totalCount"],
+        0
+    );
+    assert_eq!(
+        f.execute(list, json!({}), &f.admin).await["devices"]["pageInfo"]["totalCount"],
+        1
+    );
     let sign_out = "mutation($id:String!){signOutDevice(id:$id){success revokedSessions}}";
-    assert!(!f.execute_raw(sign_out, json!({"id": id}), &f.other).await.errors.is_empty());
+    assert!(
+        !f.execute_raw(sign_out, json!({"id": id}), &f.other)
+            .await
+            .errors
+            .is_empty()
+    );
 
     // A session cannot be bound to someone else's device: the link is dropped.
     let movie = f.movie(&f.other, "Theirs").await;
@@ -902,18 +1124,37 @@ async fn devices_check_in_rename_and_sign_out() {
         .await;
     let created = foreign.errors.is_empty()
         && foreign.data.into_json().unwrap()["createPlaybackSession"]["success"] == true;
-    let sessions = PlaybackSession::query(f.db.pool()).fetch_all().await.unwrap();
-    assert!(sessions.iter().all(|session| session.device_id.as_deref() != Some(id.as_str())));
+    let sessions = PlaybackSession::query(f.db.pool())
+        .fetch_all()
+        .await
+        .unwrap();
+    assert!(
+        sessions
+            .iter()
+            .all(|session| session.device_id.as_deref() != Some(id.as_str()))
+    );
     let _ = created;
 
     // Signing out revokes the login session the device last checked in with.
     let device = Device::get(f.db.pool(), &id).await.unwrap().unwrap();
-    let mut tx = MutationContext::begin(&f.db, TransactionMode::Default).await.unwrap();
-    tx.update_by_id::<Device>(&device.id, UpdateDeviceInput { session_id: Some(Some("session-9".into())), ..Default::default() })
+    let mut tx = MutationContext::begin(&f.db, TransactionMode::Default)
         .await
         .unwrap();
+    tx.update_by_id::<Device>(
+        &device.id,
+        UpdateDeviceInput {
+            session_id: Some(Some("session-9".into())),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     tx.commit_and_emit().await.unwrap();
-    for (token, session) in [("t1", "session-9"), ("t2", "session-9"), ("t3", "session-other")] {
+    for (token, session) in [
+        ("t1", "session-9"),
+        ("t2", "session-9"),
+        ("t3", "session-other"),
+    ] {
         RefreshToken::insert(
             &f.db,
             CreateRefreshTokenInput {
@@ -942,10 +1183,20 @@ async fn devices_check_in_rename_and_sign_out() {
     let data = f.execute(sign_out, json!({"id": id}), &f.user).await;
     assert_eq!(data["signOutDevice"]["revokedSessions"], 2);
     for (token, revoked) in [("t1", true), ("t2", true), ("t3", false)] {
-        let row = RefreshToken::get(f.db.pool(), &token.to_string()).await.unwrap().unwrap();
+        let row = RefreshToken::get(f.db.pool(), &token.to_string())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(row.revoked_at.is_some(), revoked, "{token}");
     }
-    assert!(Device::get(f.db.pool(), &id).await.unwrap().unwrap().signed_out_at.is_some());
+    assert!(
+        Device::get(f.db.pool(), &id)
+            .await
+            .unwrap()
+            .unwrap()
+            .signed_out_at
+            .is_some()
+    );
 }
 
 #[tokio::test]
@@ -956,21 +1207,38 @@ async fn a_new_session_on_a_device_ends_its_old_one() {
         &f.user,
         None,
         &RequestClientInfo::default(),
-        super::devices::CheckIn { client_id: "tv-1".into(), ..Default::default() },
+        super::devices::CheckIn {
+            client_id: "tv-1".into(),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
     let movie = f.movie(&f.user, "Stalker").await;
     let old = f.session(&f.user, &movie, Some(&device.id), 0).await;
     let new = f.session(&f.user, &movie, Some(&device.id), 30).await;
-    let old = PlaybackSession::get(f.db.pool(), &old).await.unwrap().unwrap();
-    let new = PlaybackSession::get(f.db.pool(), &new).await.unwrap().unwrap();
+    let old = PlaybackSession::get(f.db.pool(), &old)
+        .await
+        .unwrap()
+        .unwrap();
+    let new = PlaybackSession::get(f.db.pool(), &new)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(old.ended_at.is_some() && !old.is_playing);
     assert!(new.ended_at.is_none());
 
     // Forgetting the device lets go of its sessions.
-    f.execute("mutation($id:String!){deleteDevice(id:$id){success}}", json!({"id": device.id}), &f.user).await;
-    let new = PlaybackSession::get(f.db.pool(), &new.id).await.unwrap().unwrap();
+    f.execute(
+        "mutation($id:String!){deleteDevice(id:$id){success}}",
+        json!({"id": device.id}),
+        &f.user,
+    )
+    .await;
+    let new = PlaybackSession::get(f.db.pool(), &new.id)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(new.device_id.is_none() && new.ended_at.is_some());
 }
 
@@ -1039,7 +1307,11 @@ async fn watch_progress_imports_once_without_claiming_time() {
     assert_eq!(plays[0].seconds_played, 0.0);
     assert_eq!(plays[0].started_at, "2025-03-04T05:06:07.000Z");
     assert_eq!(plays[0].title, "Tokyo Story");
-    assert_eq!(import_from_progress(&f.db, None).await.unwrap().imported, 0, "once");
+    assert_eq!(
+        import_from_progress(&f.db, None).await.unwrap().imported,
+        0,
+        "once"
+    );
 
     // An imported play is never continued by a new one.
     let session = f.session(&f.user, &movie, None, 0).await;
@@ -1060,12 +1332,43 @@ async fn deleting_a_user_removes_their_history_devices_and_shares() {
     let movie = f.movie(&f.other, "Gone").await;
     let session = f.session(&f.other, &movie, None, 0).await;
     f.report(&session, 10.0, true, 10).await;
-    f.create("StatsShare", json!({"userId": f.user.user_id, "audience": "user", "viewerUserId": f.other.user_id}), &f.user).await;
-    super::devices::check_in(&f.db, &f.other, None, &RequestClientInfo::default(), super::devices::CheckIn { client_id: "c".into(), ..Default::default() })
-        .await
-        .unwrap();
-    f.execute("mutation($id:String!){deleteUser(id:$id){success}}", json!({"id": f.other.user_id}), &f.admin).await;
+    f.create(
+        "StatsShare",
+        json!({"userId": f.user.user_id, "audience": "user", "viewerUserId": f.other.user_id}),
+        &f.user,
+    )
+    .await;
+    super::devices::check_in(
+        &f.db,
+        &f.other,
+        None,
+        &RequestClientInfo::default(),
+        super::devices::CheckIn {
+            client_id: "c".into(),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    f.execute(
+        "mutation($id:String!){deleteUser(id:$id){success}}",
+        json!({"id": f.other.user_id}),
+        &f.admin,
+    )
+    .await;
     assert!(f.plays(&f.other).await.is_empty());
-    assert!(StatsShare::query(f.db.pool()).fetch_all().await.unwrap().is_empty());
-    assert!(Device::query(f.db.pool()).fetch_all().await.unwrap().is_empty());
+    assert!(
+        StatsShare::query(f.db.pool())
+            .fetch_all()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        Device::query(f.db.pool())
+            .fetch_all()
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

@@ -84,7 +84,7 @@ describe("GeneralSettings bound form", () => {
     await userEvent.keyboard("{Backspace}{Backspace}fr{Enter}de{Enter}");
     await userEvent.click(save());
     expect(await screen.findByText("Settings saved")).toBeInTheDocument();
-    expect(settings.playback.save).toHaveBeenCalledWith({ playback_sync_interval: "45" });
+    expect(settings.playback.save).toHaveBeenCalledWith({ playback_sync_interval: "45", "play_history.retention_days": "0" });
     expect(settings.metadata.save).toHaveBeenCalledWith({ "metadata.preferred_language": "fr" });
     expect(settings.subtitles.save).toHaveBeenCalledWith({ "subtitles.preferred_languages": '["fr","de"]' });
     await userEvent.click(screen.getByRole("switch", { name: /TV mode/ }));
