@@ -1,8 +1,43 @@
+diff --git a/dist/ui/data-table/data-table.d.ts b/dist/ui/data-table/data-table.d.ts
+index fe2d797..706d9c1 100644
+--- a/dist/ui/data-table/data-table.d.ts
++++ b/dist/ui/data-table/data-table.d.ts
+@@ -9,4 +9,9 @@ import type { DataTableProps } from "./types.js";
+  * (`reorder`) that leaves the order to the host, and opt-in detail panels (`renderRowDetail`)
+  * and tree rows with lazy children (`tree`).
+  */
++/**
++ * True where a remote control or D-pad drives the tables, which never stop on column headers:
++ * the toolbar then carries the sort menu in table mode too.
++ */
++export declare const DataTableRemoteContext: import("react").Context<boolean>;
+ export declare function DataTable<T extends RowData>(props: DataTableProps<T>): import("react").JSX.Element;
 diff --git a/dist/ui/data-table/data-table.js b/dist/ui/data-table/data-table.js
-index bb9b65e..9ca6a1c 100644
+index bb9b65e..555b035 100644
 --- a/dist/ui/data-table/data-table.js
 +++ b/dist/ui/data-table/data-table.js
-@@ -1349,7 +1349,7 @@ export function DataTable(props) {
+@@ -12,7 +12,7 @@ import { ActionMenuItems } from "../actions/index.js";
+ import { normaliseColumnOrder, moveColumn } from "./column-order.js";
+ import { DragDropProvider } from "../drag-drop/index.js";
+ import { functionalUpdate, useTable, } from "@tanstack/react-table";
+-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, } from "react";
++import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, } from "react";
+ import { flushSync } from "react-dom";
+ import { IconArrowUp, IconMoreHorizontal, } from "../../icons/generated/icons.js";
+ import { resolveActions, } from "../../lib/actions/actions.js";
+@@ -147,6 +147,11 @@ const NO_TOGGLES = [];
+  * (`reorder`) that leaves the order to the host, and opt-in detail panels (`renderRowDetail`)
+  * and tree rows with lazy children (`tree`).
+  */
++/**
++ * Tables under `remote` are driven by a remote control or D-pad that never stops on column
++ * headers: the toolbar then carries the sort menu in table mode too.
++ */
++export const DataTableRemoteContext = createContext(false);
+ export function DataTable(props) {
+     const { id, label, rows, columns, getRowId, rowCount, cursor, pageSizes = DEFAULT_PAGE_SIZES, loading = false, refetching = false, error, onRetry, emptyMessage, emptyAction, emptyIcon, selectable = true, actions, getRowActions, grouping, renderRowActions, renderRowContextMenu, renderBulkActions, height = "fill", live = false, updatedAt, toolbar, search, filterToggles, status, view = "auto", cardBreakpoint = 36, cardMinWidth, cardMaxWidth, cardSort = true, renderCard, renderCardSkeleton, className, reorder, } = props;
+     const locale = useLocale(props.locale);
+@@ -1349,7 +1354,7 @@ export function DataTable(props) {
      const offerExpandAll = expandable && props.expandAll !== false && expandTargets.length > 0;
      const expandAllControl = useMemo(() => offerExpandAll ? (_jsx(ExpandAllButton, { open: allOpen, label: expandAllLabel, onToggle: () => setAllOpen(!allOpen) })) : undefined, [offerExpandAll, allOpen, expandAllLabel, setAllOpen]);
      const expanderColumn = expandable
@@ -11,7 +46,30 @@ index bb9b65e..9ca6a1c 100644
              visibleColumns[0])?.id
          : undefined;
      const commitWidth = useCallback((columnId, width) => {
-@@ -2226,7 +2226,7 @@ export function DataTable(props) {
+@@ -2040,9 +2045,10 @@ export function DataTable(props) {
+     const cardExpandAll = useMemo(() => offerExpandAll && mode === "cards"
+         ? { label: expandAllLabel, onToggle: () => setAllOpen(!allOpen) }
+         : undefined, [offerExpandAll, mode, expandAllLabel, setAllOpen, allOpen]);
+-    const offerSort = mode === "cards" && cardSort && sortableColumns.length > 0;
++    const remote = useContext(DataTableRemoteContext);
++    const offerSort = (mode === "cards" || remote) && cardSort && sortableColumns.length > 0;
+     // Before measuring, a table is taken as narrow: the button then only ever appears, never overlaps.
+-    const sortFolded = offerSort && (!measured || widthRem < CARD_SORT_FOLD_REM);
++    const sortFolded = offerSort && mode === "cards" && (!measured || widthRem < CARD_SORT_FOLD_REM);
+     const settingsMenu = useMemo(() => (_jsx(SettingsMenu, { sort: sortFolded ? (_jsx(SortGroups, { columns: sortableColumns, sorting: sorting, controller: headerController })) : undefined, columns: mode === "cards" && renderCard ? NO_COLUMNS : settingsColumns, userHidden: userHidden, autoHidden: autoHiddenSet, density: effectiveDensity, controller: headerController, expandAll: cardExpandAll })), [
+         sortFolded,
+         sortableColumns,
+@@ -2217,7 +2223,8 @@ export function DataTable(props) {
+                                     props.export ||
+                                     hasFilterBar ||
+                                     searchBinding ||
+-                                    mode === "cards" ? (_jsxs("div", { className: "fa-dt-toolbar", children: [hasFilterBar || searchBinding ? (_jsx(FilterBar, { controller: filterController, toggles: toggles, search: searchBinding, compact: measured && widthRem < FILTERS_COMPACT_REM })) : null, toolbar || props.export || mode === "cards" ? (_jsxs("div", { className: "fa-dt-toolbar-end", children: [offerSort && !sortFolded ? (_jsx(CardSortMenu, { columns: sortableColumns, sorting: sorting, controller: headerController })) : null, mode === "cards" ? settingsMenu : null, props.export ? (_jsx(ExportMenu, { run: (format) => {
++                                    offerSort ||
++                                    mode === "cards" ? (_jsxs("div", { className: "fa-dt-toolbar", children: [hasFilterBar || searchBinding ? (_jsx(FilterBar, { controller: filterController, toggles: toggles, search: searchBinding, compact: measured && widthRem < FILTERS_COMPACT_REM })) : null, toolbar || props.export || offerSort || mode === "cards" ? (_jsxs("div", { className: "fa-dt-toolbar-end", children: [offerSort && !sortFolded ? (_jsx(CardSortMenu, { columns: sortableColumns, sorting: sorting, controller: headerController })) : null, mode === "cards" ? settingsMenu : null, props.export ? (_jsx(ExportMenu, { run: (format) => {
+                                                         void runExport(format);
+                                                     } })) : null, toolbar] })) : null] })) : null, _jsxs("div", { className: "fa-dt-frame", children: [_jsxs("div", { role: tree ? "treegrid" : "grid", className: "fa-dt-grid", "aria-label": label, "aria-rowcount": showSkeleton || showError || showEmpty
+                                                 ? -1
+@@ -2226,7 +2233,7 @@ export function DataTable(props) {
                                                      : totalRows + 1, "aria-colcount": colCount, "aria-multiselectable": selectable || undefined, "aria-busy": loading ||
                                                  refetching ||
                                                  Boolean(infinite?.loadingMore) ||
@@ -20,6 +78,30 @@ index bb9b65e..9ca6a1c 100644
                                          count: selected,
                                          targets: selectedTargets,
                                          groups: bulkGroups,
+diff --git a/dist/ui/data-table/index.d.ts b/dist/ui/data-table/index.d.ts
+index e81a229..fcbcdab 100644
+--- a/dist/ui/data-table/index.d.ts
++++ b/dist/ui/data-table/index.d.ts
+@@ -1,6 +1,6 @@
+ export * from "./cells/index.js";
+ export { columnIdOf, createDataTableColumns, resolveColumnMeta, type ColumnPriority, type DataColumnSpec, type DataTableColumn, } from "./columns.js";
+-export { DataTable } from "./data-table.js";
++export { DataTable, DataTableRemoteContext } from "./data-table.js";
+ export { dataTableFeatures, type CardRole, type CellSkeleton, type ColumnAlign, type DataColumnMeta, type DataTableCellEntity, type DataTableFeatures, } from "./features.js";
+ export * from "./filters/index.js";
+ export { formatAbsolute, formatCount, formatNumber, formatRelative, formatWithUnit, } from "./format.js";
+diff --git a/dist/ui/data-table/index.js b/dist/ui/data-table/index.js
+index dd5a92a..c5009a4 100644
+--- a/dist/ui/data-table/index.js
++++ b/dist/ui/data-table/index.js
+@@ -1,6 +1,6 @@
+ export * from "./cells/index.js";
+ export { columnIdOf, createDataTableColumns, resolveColumnMeta, } from "./columns.js";
+-export { DataTable } from "./data-table.js";
++export { DataTable, DataTableRemoteContext } from "./data-table.js";
+ export { dataTableFeatures, } from "./features.js";
+ export * from "./filters/index.js";
+ export { formatAbsolute, formatCount, formatNumber, formatRelative, formatWithUnit, } from "./format.js";
 diff --git a/dist/ui/data-table/infinite.js b/dist/ui/data-table/infinite.js
 index e2f0e69..f9ac317 100644
 --- a/dist/ui/data-table/infinite.js

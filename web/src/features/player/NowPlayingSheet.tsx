@@ -8,6 +8,7 @@ import { Segmented } from "glass-ux/segmented";
 import { Artwork, Button } from "@/components/ui";
 import { useDialogReturnFocus } from "@/components/ui/Dialog";
 import { formatClock } from "@/lib/format";
+import { backHandled } from "@/lib/remote-back";
 import { usePref } from "@/lib/prefs";
 
 import { PlayPauseButton, SeekBar, SkipButton, VolumeControl } from "./controls";
@@ -166,7 +167,9 @@ export function NowPlayingDrawer({ open, onClose, onOpenEntity }: NowPlayingShee
       aria-label="Now playing"
       className="flex min-h-0 flex-1 flex-col"
       onKeyDown={(event) => {
-        if (event.key !== "Escape" || event.defaultPrevented) return;
+        // The close button's tooltip closing on Escape doesn't count as handling it.
+        if (event.key !== "Escape" || backHandled(event)) return;
+        event.preventDefault();
         event.stopPropagation();
         onClose();
       }}
