@@ -401,11 +401,12 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
               toolbar={allReleases.length > 0 || recommendedRows.length > 0 ? (
                 <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
             {plan && planReleases.length > 0 ? (
-              <Tooltip content={`${planSummary(plan, planReleases.length)}${planTotal > 0 ? ` · ${formatBytes(planTotal)}` : ""}`}>
-                <Button size="sm" variant="primary" isPending={planGrab.loading} onPress={() => setConfirmingPlan(true)} aria-label={`Download recommended: ${planSummary(plan, planReleases.length)}`} className="me-auto">
+              <span className="me-auto flex min-w-0 items-center gap-2">
+                <Button size="sm" variant="primary" isPending={planGrab.loading} onPress={() => setConfirmingPlan(true)} aria-label={`Download recommended: ${planSummary(plan, planReleases.length)}`}>
                   <IconDownload size="sm" /> Download recommended
                 </Button>
-              </Tooltip>
+                <span className="truncate text-label-sm text-muted">{planSummary(plan, planReleases.length)}{planTotal > 0 ? ` · ${formatBytes(planTotal)}` : ""}</span>
+              </span>
             ) : null}
             {audioSearch ? null : (
               <>
@@ -458,9 +459,6 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
           </>
         )}
       </div>
-      </GlassDialog.Body>
-    </GlassDialog.Popup>
-    </GlassDialog.Root>
     {plan ? (
       <ConfirmDialog
         isOpen={confirmingPlan}
@@ -472,6 +470,10 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
         onConfirm={downloadPlan}
       />
     ) : null}
+      </GlassDialog.Body>
+    </GlassDialog.Popup>
+    </GlassDialog.Root>
+
     </ReleaseActionsContext>
   );
 }

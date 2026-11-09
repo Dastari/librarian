@@ -553,7 +553,7 @@ describe("ReleaseSearchDialog recommended releases", () => {
     const grabbedPlan = vi.fn(() => ({ data: { grabRecommendationPlan: { __typename: "GrabRecommendationPlanPayload", success: true, error: null, started: 2, failed: [], torrentIds: ["t1", "t2"] } } }));
     await mount([searchMock([]), { request: { query: GrabRecommendationPlanDocument, variables: { id: "plan-1" } }, result: grabbedPlan }]);
     await userEvent.click(await screen.findByRole("button", { name: /Download recommended: 2 releases cover 8 of 10 missing/ }));
-    const confirmation = await screen.findByRole("alertdialog");
+    const confirmation = await screen.findByRole("dialog", { name: /Download 2 recommended releases/ });
     expect(grabbedPlan).not.toHaveBeenCalled();
     await userEvent.click(within(confirmation).getByRole("button", { name: "Download recommended" }));
     await vi.waitFor(() => expect(grabbedPlan).toHaveBeenCalledOnce());
