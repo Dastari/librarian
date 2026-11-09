@@ -1718,6 +1718,28 @@ input CreateCollectionInput {
   lastSyncedAt: String
 }
 
+input CreateCreditInput {
+  userId: String!
+  personId: String!
+  targetKind: String!
+  movieId: String
+  showId: String
+  seasonId: String
+  episodeId: String
+  albumId: String
+  trackId: String
+  audiobookId: String
+  kind: String!
+  guest: Boolean!
+  department: String
+  job: String
+  characterName: String
+  creditOrder: Int
+  episodeCount: Int
+  source: String!
+  providerCreditId: String
+}
+
 input CreateDirectoryInput {
   path: String!
 }
@@ -2025,6 +2047,18 @@ input CreatePersonInput {
   tmdbPersonId: Int!
   name: String!
   profileUrl: String
+  imdbId: String
+  musicbrainzArtistId: String
+  wikidataId: String
+  nameKey: String
+  biography: String
+  birthday: String
+  deathday: String
+  placeOfBirth: String
+  knownForDepartment: String
+  alsoKnownAs: JSON
+  imageUrls: JSON
+  detailsFetchedAt: String
 }
 
 input CreatePersonalListInput {
@@ -2249,6 +2283,30 @@ input CreateSubtitleInput {
   metadata: String
 }
 
+input CreateTitleDetailInput {
+  userId: String!
+  targetKind: String!
+  movieId: String
+  showId: String
+  seasonId: String
+  episodeId: String
+  albumId: String
+  trackId: String
+  audiobookId: String
+  source: String!
+  providerId: String
+  studios: JSON!
+  networks: JSON!
+  keywords: JSON!
+  originCountries: JSON!
+  contentRatings: String
+  alternativeTitles: String
+  videos: String
+  externalIds: String
+  homepage: String
+  fetchedAt: String!
+}
+
 input CreateTorrentFileInput {
   torrentId: String!
   fileIndex: Int!
@@ -2325,6 +2383,175 @@ input CreateUserInput {
   avatarUrl: String
   isActive: Boolean!
   lastLoginAt: String
+}
+
+"""
+One person's part in one title, from a metadata provider (`docs/design.md` Q129).
+
+A credit names its title through exactly one of `movieId`, `showId`, `seasonId`,
+`episodeId`, `albumId`, `trackId` or `audiobookId`, with `targetKind` saying which. `kind` is
+`cast` or `crew`; a guest star is a `cast` credit with `guest` set. Crew credits carry the
+provider's department and job ("Directing", "Director"); cast credits carry the character.
+
+Credits are owned by the title's owner (`userId`, copied from the title when written), and
+are replaced per title and source on every metadata refresh
+(`services::metadata::credits::replace_credits`), so a refresh never duplicates them.
+"""
+type Credit {
+  id: String!
+
+  """The owner of the credited title."""
+  userId: String!
+  personId: String!
+
+  """`movie`, `show`, `season`, `episode`, `album`, `track` or `audiobook`."""
+  targetKind: String!
+  movieId: String
+  showId: String
+  seasonId: String
+  episodeId: String
+  albumId: String
+  trackId: String
+  audiobookId: String
+
+  """`cast` or `crew`."""
+  kind: String!
+
+  """A guest star of one episode (a `cast` credit)."""
+  guest: Boolean!
+
+  """
+  The provider's department: "Directing", "Writing", "Production", "Acting"…
+  """
+  department: String
+
+  """
+  "Director", "Screenplay", "Executive Producer", "Composer", "Narrator"…
+  """
+  job: String
+  characterName: String
+
+  """The provider's billing order, lowest first."""
+  creditOrder: Int
+
+  """
+  Episodes this person appears in or worked on, for a show or season credit.
+  """
+  episodeCount: Int
+
+  """
+  Where the credit came from: `tmdb`, `musicbrainz` or `audiobook` (the book's own record).
+  """
+  source: String!
+
+  """
+  The provider's id for this credit, where it has one (TMDB `credit_id`).
+  """
+  providerCreditId: String
+  createdAt: String!
+  updatedAt: String!
+
+  """Person"""
+  person: Person
+
+  """Movie"""
+  movie: Movie
+
+  """Show"""
+  show: Show
+
+  """Season"""
+  season: Season
+
+  """Episode"""
+  episode: Episode
+
+  """Album"""
+  album: Album
+
+  """Track"""
+  track: Track
+
+  """Audiobook"""
+  audiobook: Audiobook
+}
+
+"""Event for #struct_name changes (subscriptions)"""
+type CreditChangedEvent {
+  action: ChangeAction!
+  changeKind: ChangeKind!
+  id: String!
+  sourceEntity: String
+  sourceId: String
+  path: [String!]!
+  credit: Credit
+}
+
+"""Connection containing edges and page info"""
+type CreditConnection {
+  """The edges in this connection"""
+  edges: [CreditEdge!]!
+
+  """Pagination information"""
+  pageInfo: PageInfo!
+}
+
+"""Edge containing a node and cursor"""
+type CreditEdge {
+  """The item at the end of the edge"""
+  node: Credit!
+
+  """A cursor for pagination"""
+  cursor: String!
+}
+
+input CreditOrderByInput {
+  kind: OrderDirection
+  department: OrderDirection
+  creditOrder: OrderDirection
+  episodeCount: OrderDirection
+  createdAt: OrderDirection
+  updatedAt: OrderDirection
+}
+
+"""Result type for #struct_name mutations"""
+type CreditResult {
+  success: Boolean!
+  error: String
+  credit: Credit
+}
+
+input CreditWhereInput {
+  id: StringFilter
+  userId: StringFilter
+  personId: StringFilter
+  targetKind: StringFilter
+  movieId: StringFilter
+  showId: StringFilter
+  seasonId: StringFilter
+  episodeId: StringFilter
+  albumId: StringFilter
+  trackId: StringFilter
+  audiobookId: StringFilter
+  kind: StringFilter
+  guest: BoolFilter
+  department: StringFilter
+  job: StringFilter
+  characterName: StringFilter
+  creditOrder: IntFilter
+  episodeCount: IntFilter
+  source: StringFilter
+  createdAt: DateFilter
+  updatedAt: DateFilter
+
+  """Logical AND of conditions"""
+  and: [CreditWhereInput!]
+
+  """Logical OR of conditions"""
+  or: [CreditWhereInput!]
+
+  """Logical NOT of condition"""
+  not: CreditWhereInput
 }
 
 input DateFilter {
@@ -2431,6 +2658,13 @@ type DeleteChaptersResult {
 
 """Result of bulk delete by Where filter"""
 type DeleteCollectionsResult {
+  success: Boolean!
+  error: String
+  deletedCount: Int!
+}
+
+"""Result of bulk delete by Where filter"""
+type DeleteCreditsResult {
   success: Boolean!
   error: String
   deletedCount: Int!
@@ -2660,6 +2894,13 @@ type DeleteSourcesResult {
 
 """Result of bulk delete by Where filter"""
 type DeleteSubtitlesResult {
+  success: Boolean!
+  error: String
+  deletedCount: Int!
+}
+
+"""Result of bulk delete by Where filter"""
+type DeleteTitleDetailsResult {
   success: Boolean!
   error: String
   deletedCount: Int!
@@ -5085,6 +5326,11 @@ type Mutation {
   """Refresh a movie's metadata and artwork from TMDB."""
   refreshMovie(id: String!): MovieOperationResult!
 
+  """
+  Read a person's biography, dates, place of birth, ids and pictures from TMDB again.
+  """
+  refreshPersonDetails(id: String!): PersonDetailsResult!
+
   """Add a TV show to a library by fetching metadata from TVMaze"""
   addTvShow(libraryId: String!, input: AddTvShowInput!): TvShowOperationResult!
 
@@ -5454,6 +5700,108 @@ type Mutation {
     """Where"""
     where: MovieCastCreditWhereInput
   ): DeleteMovieCastCreditsResult!
+
+  """
+  Create a new #struct_name_str
+  Create one Credit records
+  """
+  createCredit(
+    """Input"""
+    input: CreateCreditInput!
+  ): CreditResult!
+
+  """
+  Update an existing #struct_name_str
+  Update one Credit records
+  """
+  updateCredit(
+    """Id"""
+    id: String!
+
+    """Input"""
+    input: UpdateCreditInput!
+  ): CreditResult!
+
+  """
+  Delete a #struct_name_str
+  Delete one Credit records
+  """
+  deleteCredit(
+    """Id"""
+    id: String!
+  ): CreditResult!
+
+  """
+  Update multiple #plural_name matching the given Where filter
+  Update matching Credit records
+  """
+  updateCredits(
+    """Where"""
+    where: CreditWhereInput
+
+    """Input"""
+    input: UpdateCreditInput!
+  ): UpdateCreditsResult!
+
+  """
+  Delete multiple #plural_name matching the given Where filter
+  Delete matching Credit records
+  """
+  deleteCredits(
+    """Where"""
+    where: CreditWhereInput
+  ): DeleteCreditsResult!
+
+  """
+  Create a new #struct_name_str
+  Create one TitleDetail records
+  """
+  createTitleDetail(
+    """Input"""
+    input: CreateTitleDetailInput!
+  ): TitleDetailResult!
+
+  """
+  Update an existing #struct_name_str
+  Update one TitleDetail records
+  """
+  updateTitleDetail(
+    """Id"""
+    id: String!
+
+    """Input"""
+    input: UpdateTitleDetailInput!
+  ): TitleDetailResult!
+
+  """
+  Delete a #struct_name_str
+  Delete one TitleDetail records
+  """
+  deleteTitleDetail(
+    """Id"""
+    id: String!
+  ): TitleDetailResult!
+
+  """
+  Update multiple #plural_name matching the given Where filter
+  Update matching TitleDetail records
+  """
+  updateTitleDetails(
+    """Where"""
+    where: TitleDetailWhereInput
+
+    """Input"""
+    input: UpdateTitleDetailInput!
+  ): UpdateTitleDetailsResult!
+
+  """
+  Delete multiple #plural_name matching the given Where filter
+  Delete matching TitleDetail records
+  """
+  deleteTitleDetails(
+    """Where"""
+    where: TitleDetailWhereInput
+  ): DeleteTitleDetailsResult!
 
   """
   Create a new #struct_name_str
@@ -8162,9 +8510,47 @@ input PendingFileMatchWhereInput {
 
 type Person {
   id: String!
+
+  """
+  The person's TMDB id. A person known only from another source (a MusicBrainz artist, a
+  book's author or narrator) has no TMDB id; the column predates that and cannot become
+  nullable additively, so such a person holds a negative stand-in derived from their own key
+  (`services::metadata::credits::stand_in_tmdb_id`). Zero and below mean "none".
+  """
   tmdbPersonId: Int!
   name: String!
   profileUrl: String
+  imdbId: String
+  musicbrainzArtistId: String
+  wikidataId: String
+
+  """
+  The name lower-cased with punctuation and spacing folded, for people known by name only.
+  """
+  nameKey: String
+  biography: String
+
+  """`YYYY-MM-DD`."""
+  birthday: String
+
+  """`YYYY-MM-DD`."""
+  deathday: String
+  placeOfBirth: String
+
+  """"Acting", "Directing", "Writing", "Sound"…"""
+  knownForDepartment: String
+  alsoKnownAs: [String!]
+
+  """
+  Every profile picture the provider lists, best first (remote URLs; the first is
+  `profileUrl`, which the artwork cache serves).
+  """
+  imageUrls: [String!]
+
+  """
+  When the person's own record (biography, dates, ids, pictures) was last read.
+  """
+  detailsFetchedAt: String
   createdAt: String!
   updatedAt: String!
 
@@ -8172,6 +8558,9 @@ type Person {
   Movie credits for this person. Deleting the person deletes its credits.
   """
   castCredits(where: MovieCastCreditWhereInput, orderBy: MovieCastCreditOrderByInput, page: PageInput): MovieCastCreditConnection!
+
+  """Every credit of this person, on any title (`Credit`)."""
+  credits(where: CreditWhereInput, orderBy: CreditOrderByInput, page: PageInput): CreditConnection!
 }
 
 """Event for #struct_name changes (subscriptions)"""
@@ -8194,6 +8583,12 @@ type PersonConnection {
   pageInfo: PageInfo!
 }
 
+type PersonDetailsResult {
+  success: Boolean!
+  person: Person
+  error: String
+}
+
 """Edge containing a node and cursor"""
 type PersonEdge {
   """The item at the end of the edge"""
@@ -8205,6 +8600,7 @@ type PersonEdge {
 
 input PersonOrderByInput {
   name: OrderDirection
+  detailsFetchedAt: OrderDirection
   createdAt: OrderDirection
   updatedAt: OrderDirection
 }
@@ -8220,6 +8616,12 @@ input PersonWhereInput {
   id: StringFilter
   tmdbPersonId: IntFilter
   name: StringFilter
+  imdbId: StringFilter
+  musicbrainzArtistId: StringFilter
+  wikidataId: StringFilter
+  nameKey: StringFilter
+  knownForDepartment: StringFilter
+  detailsFetchedAt: DateFilter
   createdAt: DateFilter
   updatedAt: DateFilter
 
@@ -9081,6 +9483,54 @@ type Query {
     """Id"""
     id: String!
   ): MovieCastCredit
+
+  """
+  Get a list of #plural_name with optional filtering, sorting, and pagination
+  List Credit records
+  """
+  credits(
+    """Where"""
+    where: CreditWhereInput
+
+    """Order by"""
+    orderBy: [CreditOrderByInput!]
+
+    """Page"""
+    page: PageInput
+  ): CreditConnection!
+
+  """
+  Get a single #struct_name_str by ID
+  Read one Credit records
+  """
+  credit(
+    """Id"""
+    id: String!
+  ): Credit
+
+  """
+  Get a list of #plural_name with optional filtering, sorting, and pagination
+  List TitleDetail records
+  """
+  titleDetails(
+    """Where"""
+    where: TitleDetailWhereInput
+
+    """Order by"""
+    orderBy: [TitleDetailOrderByInput!]
+
+    """Page"""
+    page: PageInput
+  ): TitleDetailConnection!
+
+  """
+  Get a single #struct_name_str by ID
+  Read one TitleDetail records
+  """
+  titleDetail(
+    """Id"""
+    id: String!
+  ): TitleDetail
 
   """
   Get a list of #plural_name with optional filtering, sorting, and pagination
@@ -12298,6 +12748,40 @@ type Subscription {
 
   """
   Subscribe to #struct_name_str changes
+  Observe changes to Credit records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+  """
+  creditChanged(
+    """Filter"""
+    filter: SubscriptionFilterInput
+
+    """Exact complete primary key to observe"""
+    key: String
+
+    """
+    Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+    """
+    keys: [String!]
+  ): CreditChangedEvent!
+
+  """
+  Subscribe to #struct_name_str changes
+  Observe changes to TitleDetail records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+  """
+  titleDetailChanged(
+    """Filter"""
+    filter: SubscriptionFilterInput
+
+    """Exact complete primary key to observe"""
+    key: String
+
+    """
+    Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+    """
+    keys: [String!]
+  ): TitleDetailChangedEvent!
+
+  """
+  Subscribe to #struct_name_str changes
   Observe changes to Collection records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
   """
   collectionChanged(
@@ -13329,6 +13813,165 @@ type TestTmdbConnectionResult {
   correlationId: String
 }
 
+"""
+Everything else a metadata provider says about one title, kept whether or not a page shows
+it yet (`docs/design.md` Q130): studios, networks, ratings by country, keywords, alternative
+titles, trailers and other videos, and the title's ids on other sites.
+
+One row per title, named like a [`Credit`]'s target. Lists of plain names are JSON string
+lists; structured lists are JSON text in a documented shape (see each field), read by the web
+app's `lib/titleDetails.ts`. `fetchedAt` is when the provider was last read for this title,
+which is also how the background fill knows a title is done.
+"""
+type TitleDetail {
+  id: String!
+
+  """The owner of the title."""
+  userId: String!
+
+  """`movie`, `show`, `season`, `episode`, `album`, `track` or `audiobook`."""
+  targetKind: String!
+  movieId: String
+  showId: String
+  seasonId: String
+  episodeId: String
+  albumId: String
+  trackId: String
+  audiobookId: String
+
+  """`tmdb`, `musicbrainz` or `audiobook`."""
+  source: String!
+
+  """
+  The provider's id for the title (`movie/603`, `tv/1399`, a release MBID).
+  """
+  providerId: String
+
+  """Production companies (TMDB) or labels (MusicBrainz)."""
+  studios: [String!]!
+
+  """Networks a show first aired on."""
+  networks: [String!]!
+  keywords: [String!]!
+
+  """Countries the title comes from (ISO 3166-1)."""
+  originCountries: [String!]!
+
+  """
+  JSON `[{ "country": "US", "rating": "PG-13", "kind": "theatrical" }]`: movie release
+  certifications or show content ratings, one per country.
+  """
+  contentRatings: String
+
+  """JSON `[{ "title": "…", "country": "JP", "kind": "romaji" }]`."""
+  alternativeTitles: String
+
+  """
+  JSON `[{ "site": "YouTube", "key": "…", "url": "https://…", "name": "…", "kind": "Trailer",
+  "official": true, "language": "en", "publishedAt": "…" }]`: links only, nothing is fetched.
+  """
+  videos: String
+
+  """
+  JSON `{ "tmdb": "603", "imdb": "tt0133093", "tvdb": "…", "wikidata": "Q83495", … }`.
+  """
+  externalIds: String
+  homepage: String
+  fetchedAt: String!
+  createdAt: String!
+  updatedAt: String!
+
+  """Movie"""
+  movie: Movie
+
+  """Show"""
+  show: Show
+
+  """Season"""
+  season: Season
+
+  """Episode"""
+  episode: Episode
+
+  """Album"""
+  album: Album
+
+  """Track"""
+  track: Track
+
+  """Audiobook"""
+  audiobook: Audiobook
+}
+
+"""Event for #struct_name changes (subscriptions)"""
+type TitleDetailChangedEvent {
+  action: ChangeAction!
+  changeKind: ChangeKind!
+  id: String!
+  sourceEntity: String
+  sourceId: String
+  path: [String!]!
+  titleDetail: TitleDetail
+}
+
+"""Connection containing edges and page info"""
+type TitleDetailConnection {
+  """The edges in this connection"""
+  edges: [TitleDetailEdge!]!
+
+  """Pagination information"""
+  pageInfo: PageInfo!
+}
+
+"""Edge containing a node and cursor"""
+type TitleDetailEdge {
+  """The item at the end of the edge"""
+  node: TitleDetail!
+
+  """A cursor for pagination"""
+  cursor: String!
+}
+
+input TitleDetailOrderByInput {
+  fetchedAt: OrderDirection
+  createdAt: OrderDirection
+  updatedAt: OrderDirection
+}
+
+"""Result type for #struct_name mutations"""
+type TitleDetailResult {
+  success: Boolean!
+  error: String
+  titleDetail: TitleDetail
+}
+
+input TitleDetailWhereInput {
+  id: StringFilter
+  userId: StringFilter
+  targetKind: StringFilter
+  movieId: StringFilter
+  showId: StringFilter
+  seasonId: StringFilter
+  episodeId: StringFilter
+  albumId: StringFilter
+  trackId: StringFilter
+  audiobookId: StringFilter
+  source: StringFilter
+  providerId: StringFilter
+  fetchedAt: DateFilter
+  createdAt: DateFilter
+  updatedAt: DateFilter
+
+  """Logical AND of conditions"""
+  and: [TitleDetailWhereInput!]
+
+  """Logical OR of conditions"""
+  or: [TitleDetailWhereInput!]
+
+  """Logical NOT of condition"""
+  not: TitleDetailWhereInput
+}
+
 type Torrent {
   id: String!
   userId: String!
@@ -14318,6 +14961,35 @@ type UpdateCollectionsResult {
   affectedCount: Int!
 }
 
+input UpdateCreditInput {
+  userId: String
+  personId: String
+  targetKind: String
+  movieId: String
+  showId: String
+  seasonId: String
+  episodeId: String
+  albumId: String
+  trackId: String
+  audiobookId: String
+  kind: String
+  guest: Boolean
+  department: String
+  job: String
+  characterName: String
+  creditOrder: Int
+  episodeCount: Int
+  source: String
+  providerCreditId: String
+}
+
+"""Result of bulk update by Where filter"""
+type UpdateCreditsResult {
+  success: Boolean!
+  error: String
+  affectedCount: Int!
+}
+
 input UpdateEpisodeInput {
   showId: String
   season: Int
@@ -14748,6 +15420,18 @@ input UpdatePersonInput {
   tmdbPersonId: Int
   name: String
   profileUrl: String
+  imdbId: String
+  musicbrainzArtistId: String
+  wikidataId: String
+  nameKey: String
+  biography: String
+  birthday: String
+  deathday: String
+  placeOfBirth: String
+  knownForDepartment: String
+  alsoKnownAs: JSON
+  imageUrls: JSON
+  detailsFetchedAt: String
 }
 
 input UpdatePersonalListInput {
@@ -15055,6 +15739,37 @@ input UpdateSubtitleInput {
 
 """Result of bulk update by Where filter"""
 type UpdateSubtitlesResult {
+  success: Boolean!
+  error: String
+  affectedCount: Int!
+}
+
+input UpdateTitleDetailInput {
+  userId: String
+  targetKind: String
+  movieId: String
+  showId: String
+  seasonId: String
+  episodeId: String
+  albumId: String
+  trackId: String
+  audiobookId: String
+  source: String
+  providerId: String
+  studios: JSON
+  networks: JSON
+  keywords: JSON
+  originCountries: JSON
+  contentRatings: String
+  alternativeTitles: String
+  videos: String
+  externalIds: String
+  homepage: String
+  fetchedAt: String
+}
+
+"""Result of bulk update by Where filter"""
+type UpdateTitleDetailsResult {
   success: Boolean!
   error: String
   affectedCount: Int!

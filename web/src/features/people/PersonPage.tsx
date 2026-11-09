@@ -20,13 +20,18 @@ interface CreditedTitle {
   title: string;
   year?: number | null;
   image: string;
-  to: string;
+  to: "/movies/$movieId" | "/shows/$showId" | "/albums/$albumId" | "/audiobooks/$audiobookId";
   params: Record<string, string>;
   roles: string[];
 }
 
 function roleOf(credit: PersonCredit): string | null {
-  if (credit.kind === "cast") return credit.characterName ?? (credit.department && credit.department !== "Acting" ? credit.job ?? null : null) ?? (credit.guest ? "Guest star" : null);
+  if (credit.kind === "cast") {
+    if (credit.characterName) return credit.characterName;
+    // A narrator or a musician: the part is the job.
+    if (credit.job && credit.department !== "Acting") return credit.job;
+    return credit.guest ? "Guest star" : null;
+  }
   return credit.job ?? credit.department ?? null;
 }
 

@@ -36,6 +36,18 @@
     "changed": "movieCastCreditChanged"
   },
   {
+    "entity": "Credit",
+    "list": "credits",
+    "get": "credit",
+    "changed": "creditChanged"
+  },
+  {
+    "entity": "TitleDetail",
+    "list": "titleDetails",
+    "get": "titleDetail",
+    "changed": "titleDetailChanged"
+  },
+  {
     "entity": "Collection",
     "list": "collections",
     "get": "collection",

@@ -717,6 +717,10 @@ impl CreditStore {
         let op = match self.title_detail(target).await? {
             Some(existing) => Op::Update("TitleDetail", existing.id, input),
             None => {
+                // A new row needs its lists even where a lock keeps them out of updates.
+                for list in ["studios", "networks", "keywords", "originCountries"] {
+                    object.entry(list).or_insert_with(|| json!([]));
+                }
                 object.insert("targetKind".into(), json!(target.kind.as_str()));
                 object.insert(target.kind.id_field().into(), json!(target.id));
                 Op::Create("TitleDetail", input)
