@@ -120,8 +120,7 @@ pub fn select_wanted_files(names: &[String], wanted: &WantedFiles) -> Option<Vec
             ext.as_str(),
             "jpg" | "jpeg" | "png" | "nfo" | "cue" | "log" | "m3u" | "txt" | "sfv"
         ) && !name.contains('/');
-        let sidecar = matches!(ext.as_str(), "srt" | "ass" | "sub" | "idx" | "vtt");
-        if shares_name || (sidecar && shares_name) || release_wide {
+        if shares_name || release_wide {
             chosen.insert(index);
         }
     }

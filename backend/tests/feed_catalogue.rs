@@ -53,6 +53,8 @@ fn a_feed_is_encrypted_polled_into_a_catalogue_and_answers_a_release_search() {
                 32 * 1024,
             )
             .await;
+        // The mock lists releases as TV by default; this one is a movie, as its category says.
+        indexer.amend_last(|release| release.category = 2000);
         let app = TestApp::start().await;
         let mut admin = app.admin_client().await;
         let passkey = indexer.api_key.clone();

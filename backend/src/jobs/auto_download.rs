@@ -1638,7 +1638,7 @@ pub fn pick_for_candidate(
     collected: &Collected,
     quality_profile: &QualityProfile,
     strict: bool,
-) -> Result<scoring::ScoredRelease, NoGrabFacts> {
+) -> Result<scoring::ScoredRelease, Box<NoGrabFacts>> {
     rank_for_candidate(candidate, collected, quality_profile, strict).map(|ranked| {
         ranked
             .into_iter()
@@ -1654,7 +1654,7 @@ pub fn rank_for_candidate(
     collected: &Collected,
     quality_profile: &QualityProfile,
     strict: bool,
-) -> Result<Vec<scoring::ScoredRelease>, NoGrabFacts> {
+) -> Result<Vec<scoring::ScoredRelease>, Box<NoGrabFacts>> {
     let (verified, wrong_target, wrong_example) =
         verify_releases(candidate, collected.releases.clone(), strict);
     let ranked = profile::filter_and_rank(
@@ -1672,7 +1672,7 @@ pub fn rank_for_candidate(
         quality_profile,
         candidate.episode_count,
     );
-    Err(NoGrabFacts {
+    Err(Box::new(NoGrabFacts {
         sources: collected.sources,
         errors: collected.errors.clone(),
         seen: collected.seen,
@@ -1683,7 +1683,7 @@ pub fn rank_for_candidate(
         below_profile,
         profile: quality_profile.name.clone(),
         profile_reasons,
-    })
+    }))
 }
 
 /// Search for and grab the best release for one candidate.

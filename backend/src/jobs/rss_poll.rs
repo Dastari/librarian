@@ -774,6 +774,7 @@ fn describe_release(
     (facts, matched)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn remember_item(
     db: &Database,
     feed: &RssFeed,

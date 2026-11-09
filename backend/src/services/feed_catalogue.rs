@@ -279,15 +279,14 @@ pub fn read_item(
         ItemKind::Tv => {
             if !parsed.episodes.is_empty() {
                 Scope::Episode
-            } else if parsed.season.is_none()
+            } else if (parsed.season.is_none()
                 && parsed.season_end.is_none()
-                && parsed.is_season_pack
+                && parsed.is_season_pack)
+                || parsed
+                    .season_end
+                    .is_some_and(|end| Some(end) != parsed.season)
             {
-                Scope::SeriesPack
-            } else if parsed
-                .season_end
-                .is_some_and(|end| Some(end) != parsed.season)
-            {
+                // A complete series, or a range of seasons.
                 Scope::SeriesPack
             } else if parsed.is_season_pack {
                 Scope::SeasonPack
