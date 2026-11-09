@@ -16,6 +16,7 @@
 
 mod local;
 mod location;
+pub mod own_writes;
 mod path;
 mod registry;
 mod smb;
@@ -23,6 +24,7 @@ mod smb_file;
 mod smb_reader;
 mod staged;
 mod types;
+mod watch;
 
 pub use local::{LocalStorage, place_no_clobber_blocking};
 pub use location::{CredentialRef, LocationError, SmbLocation, StorageLocation};
@@ -36,6 +38,7 @@ pub use types::{
     StorageError, StorageErrorKind, StorageResult, ToolInput, WalkCandidate, WalkEntry, WalkFilter,
     WalkOptions, WalkStream,
 };
+pub use watch::{FolderWatch, WatchChange, WatchChangeKind, WatchSignal};
 
 use std::path::Path;
 
@@ -166,6 +169,14 @@ pub trait Storage: Send + Sync {
 
     /// How an external program should read this file. See `docs/design.md` Q85.
     async fn tool_input(&self, path: &StoragePath) -> StorageResult<ToolInput>;
+
+    /// Be told about changes anywhere under the folder `dir` (Q115). A storage that cannot say
+    /// ([`StorageCapabilities::change_notifications`] is `false`) refuses.
+    async fn watch(&self, dir: &StoragePath) -> StorageResult<FolderWatch> {
+        Err(StorageError::unsupported(&format!(
+            "watching '{dir}' for changes"
+        )))
+    }
 }
 
 /// Path prefix of the loopback URLs that serve a file on a share to a tool.

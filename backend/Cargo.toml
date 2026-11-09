@@ -61,6 +61,9 @@ reqwest = { version = "0.13.5", features = ["json", "rustls", "cookies", "gzip",
 walkdir = "2.5.0"
 # SMB client for libraries on a network share (docs/design.md Q85). Pure Rust, no mounts.
 smb2 = "0.43.0"
+# Change notification for libraries on this machine (inotify on Linux); shares use SMB2
+# CHANGE_NOTIFY through smb2 (docs/design.md Q115).
+notify = { version = "8.2.2", default-features = false }
 
 # GraphQL ORM
 # Optional direct edge unifies this host proc-macro feature with the git patch below.

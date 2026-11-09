@@ -18,17 +18,21 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use smb2::{ClientConfig, ErrorKind as SmbErrorKind, RenameOptions, SmbClient, Tree};
+use smb2::{
+    ClientConfig, ErrorKind as SmbErrorKind, FileNotifyAction, RenameOptions, SmbClient, Tree,
+};
 use tokio::io::AsyncReadExt;
 use tokio::sync::{Mutex, MutexGuard, mpsc};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::smb_reader::SmbReader;
+use super::watch::{AbortOnDrop, SIGNAL_QUEUE};
 use super::{
-    DirEntry, EntryKind, EntryMeta, OpenedRead, PlaceMode, PlaceOutcome, SmbLocation, Storage,
-    StorageCapabilities, StorageError, StorageErrorKind, StorageKind, StoragePath, StorageResult,
-    ToolInput, WalkCandidate, WalkEntry, WalkOptions, WalkStream,
+    DirEntry, EntryKind, EntryMeta, FolderWatch, OpenedRead, PlaceMode, PlaceOutcome, SmbLocation,
+    Storage, StorageCapabilities, StorageError, StorageErrorKind, StorageKind, StoragePath,
+    StorageResult, ToolInput, WalkCandidate, WalkEntry, WalkOptions, WalkStream, WatchChange,
+    WatchChangeKind, WatchSignal,
 };
 
 /// Connections kept per share.
@@ -769,6 +773,75 @@ impl Storage for SmbStorage {
             StorageErrorKind::Unsupported,
             "A file on a share is given to tools through the tool URL service",
         ))
+    }
+
+    /// SMB2 CHANGE_NOTIFY with WATCH_TREE on `dir`, on a connection of its own so the long-held
+    /// request never takes a pooled connection from scans and playback. smb2 keeps a request
+    /// armed at all times and probes a silent server, so a share that goes away ends the watch
+    /// with [`WatchSignal::Lost`] within seconds.
+    async fn watch(&self, dir: &StoragePath) -> StorageResult<FolderWatch> {
+        let rel = self.0.relative(dir)?;
+        let what = format!("watching '{dir}' for changes");
+        let mut conn = self.0.connect().await?;
+        let watcher = conn
+            .client
+            .watch(&conn.tree, &rel, true)
+            .await
+            .map_err(|error| match classify(error, &what) {
+                Failure::Other(error) => error,
+                Failure::ConnectionLost(error) => {
+                    StorageError::new(StorageErrorKind::Unavailable, format!("{what}: {error}"))
+                }
+            })?;
+        let (tx, signals) = mpsc::channel(SIGNAL_QUEUE);
+        let task = tokio::spawn(async move {
+            // The session must outlive the watch that runs on it.
+            let _conn = conn;
+            let mut watcher = watcher;
+            loop {
+                let signal = match watcher.next_events().await {
+                    Ok(events) if events.is_empty() => continue,
+                    Ok(events) => WatchSignal::Changed(
+                        events
+                            .into_iter()
+                            .map(|event| WatchChange {
+                                kind: match event.action {
+                                    FileNotifyAction::Added => WatchChangeKind::Added,
+                                    FileNotifyAction::Removed => WatchChangeKind::Removed,
+                                    FileNotifyAction::RenamedOldName => {
+                                        WatchChangeKind::RenamedFrom
+                                    }
+                                    FileNotifyAction::RenamedNewName => WatchChangeKind::RenamedTo,
+                                    _ => WatchChangeKind::Modified,
+                                },
+                                path: event.filename,
+                            })
+                            .collect(),
+                    ),
+                    Err(error)
+                        if error.status()
+                            == Some(smb2::types::status::NtStatus::NOTIFY_ENUM_DIR) =>
+                    {
+                        WatchSignal::Overflow
+                    }
+                    Err(error) => {
+                        let error = match classify(error, &what) {
+                            Failure::Other(error) => error,
+                            Failure::ConnectionLost(error) => StorageError::new(
+                                StorageErrorKind::Unavailable,
+                                format!("{what}: the connection dropped ({error})"),
+                            ),
+                        };
+                        let _ = tx.send(WatchSignal::Lost(error)).await;
+                        return;
+                    }
+                };
+                if tx.send(signal).await.is_err() {
+                    return;
+                }
+            }
+        });
+        Ok(FolderWatch::new(signals, Box::new(AbortOnDrop(task))))
     }
 }
 

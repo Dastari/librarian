@@ -13,6 +13,7 @@ use async_trait::async_trait;
 
 use tokio_util::sync::CancellationToken;
 
+use super::own_writes::own_write;
 use super::{
     DirEntry, EntryMeta, IntoStoragePath, LocalStorage, OpenedRead, PlaceMode, PlaceOutcome,
     SmbLocation, Storage, StorageError, StorageErrorKind, StorageKind, StoragePath, StorageResult,
@@ -228,6 +229,7 @@ impl LibraryStorage {
         mode: PlaceMode,
     ) -> StorageResult<PlaceOutcome> {
         let (src, dst) = (src.into_storage_path(), dst.into_storage_path());
+        let _own = own_write([&dst]);
         let target = self.for_path(&dst).await?;
         if src.kind() == StorageKind::Local {
             return target
@@ -326,6 +328,7 @@ impl LibraryStorage {
         mode: PlaceMode,
     ) -> StorageResult<PlaceOutcome> {
         let dst = dst.into_storage_path();
+        let _own = own_write([&dst]);
         self.for_path(&dst)
             .await?
             .put_from_local(src, &dst, mode)
@@ -346,22 +349,32 @@ impl LibraryStorage {
                 "renaming between two different storages",
             ));
         }
+        let _own = own_write([&from, &to]);
         self.for_path(&from).await?.rename(&from, &to, mode).await
     }
 
     pub async fn remove_file(&self, path: impl IntoStoragePath) -> StorageResult<()> {
         let path = path.into_storage_path();
+        let _own = own_write([&path]);
         self.for_path(&path).await?.remove_file(&path).await
     }
 
     pub async fn create_dir_all(&self, dir: impl IntoStoragePath) -> StorageResult<()> {
         let dir = dir.into_storage_path();
+        let _own = own_write([&dir]);
         self.for_path(&dir).await?.create_dir_all(&dir).await
     }
 
     pub async fn remove_dir(&self, dir: impl IntoStoragePath) -> StorageResult<()> {
         let dir = dir.into_storage_path();
+        let _own = own_write([&dir]);
         self.for_path(&dir).await?.remove_dir(&dir).await
+    }
+
+    /// Be told about changes anywhere under the folder `dir` (Q115).
+    pub async fn watch(&self, dir: impl IntoStoragePath) -> StorageResult<super::FolderWatch> {
+        let dir = dir.into_storage_path();
+        self.for_path(&dir).await?.watch(&dir).await
     }
 
     /// How an external program reads this file: by path where it can, else through a loopback
