@@ -262,6 +262,9 @@ results that are not in the library keep their remote URLs.
 - In TV mode single-line fields, ⋯ menu buttons and horizontal tab strips never trap
   the remote; Backspace/Escape and the webOS/Tizen Back keys go back through in-app
   history, then Home. Focused tiles grow with a transform only.
+- A number field (Glass `NumberField`) never traps Up/Down in TV mode either; OK on it starts an
+  adjusting state (`data-tv-adjusting`) in which Up/Down step the value, and OK or Back ends it
+  (design.md Q107).
 
 ## Motion
 

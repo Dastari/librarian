@@ -1953,3 +1953,16 @@ and the client must start while the share is down, which a store on the share ca
 would only be a backup of a few small files that Librarian can already rebuild (every torrent is in the database with its
 magnet link and save path, and `restore_from_database` re-adds what the session lost). So the session folder stays on this
 machine (`torrent.session_dir`), and only payloads go to a share.
+
+### Q107: What do the arrow keys do in a number field on a TV?
+**Answer:** Up and Down move focus to the next row, like every other single-line field; they never change the value. Glass
+UX is an external package (`glass-ux` from a release tarball), and its `NumberField` is Base UI's: the input steps on
+ArrowUp/ArrowDown and stops the event, so on a page (not in a dialog, where the app's capture handler already won) the
+remote's Down changed the value instead of moving on. The app now takes Up/Down on a number input in TV mode in the capture
+phase of `useSpatialNavigation` (`handleTvNumberKey` in `lib/input-mode.tsx`). The −/+ steppers are `tabIndex=-1`, so a remote
+cannot reach them; to change a value without typing it, OK (Enter) puts the focused field into an explicit *adjusting*
+state (`data-tv-adjusting`, drawn as a focus ring on the field group), where Up/Down step it as Base UI does; OK, Back or
+leaving the field ends it, and Back there does not leave the page. Left/Right keep the text-field rule (they leave once the
+caret is at that end). OK on a number field in TV mode therefore no longer submits its form; use the Save button.
+Upstream suggestion for Glass UX: a `NumberField` prop (or a TV-mode default) that lets ArrowUp/ArrowDown propagate unless the field
+is in an explicit edit state, and focusable steppers in `data-input-mode="tv"`.

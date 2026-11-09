@@ -303,6 +303,49 @@ function leavesClosedTagField(active: HTMLElement, direction: string): boolean {
   return (direction === "ArrowUp" || direction === "ArrowDown") && active instanceof HTMLInputElement && active.getAttribute("aria-expanded") !== "true" && Boolean(active.closest(".fa-tag-input"));
 }
 
+/** Glass NumberField's input (Base UI steps its value with Up/Down and stops the event). */
+const NUMBER_INPUT = '.fa-number-input, [aria-roledescription="Number field"]';
+const ADJUSTING = "data-tv-adjusting";
+
+function isNumberInput(active: HTMLElement | null): active is HTMLInputElement {
+  return active instanceof HTMLInputElement && active.matches(NUMBER_INPUT);
+}
+
+/**
+ * On a TV a number field does not own Up/Down, or a remote walking down a form would change
+ * values instead of moving to the next row (its −/+ steppers are pointer-only). OK (Enter)
+ * puts the focused field into an explicit adjusting state, marked `data-tv-adjusting`, where
+ * Up/Down step the value as usual; OK or Back, or leaving the field, ends it. Returns true
+ * when the key was taken.
+ */
+function handleTvNumberKey(event: KeyboardEvent, active: HTMLInputElement): boolean {
+  const adjusting = active.hasAttribute(ADJUSTING);
+  const take = () => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  if (event.key === "Enter") {
+    take();
+    if (adjusting) active.removeAttribute(ADJUSTING);
+    else active.setAttribute(ADJUSTING, "");
+    return true;
+  }
+  if (adjusting && (event.key === "Escape" || BACK_KEY_CODES.has(event.keyCode) || event.key === "GoBack" || event.key === "BrowserBack")) {
+    take();
+    active.removeAttribute(ADJUSTING);
+    return true;
+  }
+  if (adjusting || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return false;
+  take();
+  const scope = active.closest<HTMLElement>('[role="dialog"], [role="alertdialog"]') ?? document;
+  const next = findNext(active, event.key, scope);
+  if (next) {
+    next.focus({ preventScroll: true });
+    revealFocused(next);
+  }
+  return true;
+}
+
 function overlayOpen(): boolean {
   return Boolean(document.querySelector(OPEN_OVERLAY));
 }
@@ -349,6 +392,7 @@ export function useSpatialNavigation(enabled = true, tv = false, onBack: () => v
     // arrows before Base UI's trigger turns them into "open the menu".
     const onModalKeyDown = (event: KeyboardEvent) => {
       const active = document.activeElement as HTMLElement | null;
+      if (tv && isNumberInput(active) && !event.defaultPrevented && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && handleTvNumberKey(event, active)) return;
       // Base UI's combobox takes Up/Down to open its list before a bubbling handler could run.
       if (tv && active && !event.defaultPrevented && !event.altKey && !event.ctrlKey && !event.metaKey && leavesClosedTagField(active, event.key)) {
         const scope = active.closest<HTMLElement>('[role="dialog"], [role="alertdialog"]') ?? document;
@@ -377,7 +421,12 @@ export function useSpatialNavigation(enabled = true, tv = false, onBack: () => v
     window.addEventListener("keydown", onModalKeyDown, true);
     window.addEventListener("keydown", onKeyDown);
     document.addEventListener("focusin", rememberFocus);
+    const endAdjusting = (event: FocusEvent) => {
+      if (event.target instanceof HTMLElement) event.target.removeAttribute(ADJUSTING);
+    };
+    document.addEventListener("focusout", endAdjusting);
     return () => {
+      document.removeEventListener("focusout", endAdjusting);
       window.removeEventListener("keydown", onModalKeyDown, true);
       window.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("focusin", rememberFocus);

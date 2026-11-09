@@ -151,6 +151,14 @@
   z-index: 1;
 }
 
+/* A number field in TV mode only steps with Up/Down after OK puts it in the adjusting state
+ * (lib/input-mode.tsx); the group wears the focus ring and an accent edge while it does. */
+:root[data-input-mode="tv"] .fa-number-group:has(.fa-number-input[data-tv-adjusting]) {
+  outline: var(--nav-focus-width) solid var(--focus);
+  outline-offset: 2px;
+  box-shadow: inset 0 0 0 1px var(--focus);
+}
+
 :root[data-input-mode="tv"] .tv-lift,
 :root[data-input-mode="tv"] .tv-lift > .tv-lift-target {
   transition: transform calc(var(--duration-base) * var(--motion-scale)) var(--ease-spring);
