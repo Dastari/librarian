@@ -139,6 +139,11 @@ query AlbumDetail($id: String!) {
       name
       libraryType
     }
+    wantedMissing: tracks(where: { wanted: { eq: true }, mediaFileId: { isNull: true } }, page: { limit: 1, offset: 0 }) {
+      pageInfo {
+        totalCount
+      }
+    }
     tracks(orderBy: { trackNumber: ASC, discNumber: ASC }, page: { limit: 100, offset: 0 }) {
       edges {
         node {
@@ -211,6 +216,11 @@ query AudiobookDetail($id: String!) {
       id
       name
       libraryType
+    }
+    wantedMissing: chapters(where: { wanted: { eq: true }, mediaFileId: { isNull: true } }, page: { limit: 1, offset: 0 }) {
+      pageInfo {
+        totalCount
+      }
     }
     chapters(orderBy: { chapterNumber: ASC }, page: { limit: 100, offset: 0 }) {
       edges {

@@ -24,6 +24,8 @@ export interface AudiobookEntity {
   audibleId?: string | null;
   chapterCheckState?: string | null;
   autoDownloadMode: AutoDownloadMode;
+  /** Missing parts someone wants, counted with the row (for Stop wanting). */
+  wantedMissing?: { pageInfo: { totalCount?: number | null } } | null;
 }
 
 /** What a book is doing: being listened to first, then whether its files are here. */

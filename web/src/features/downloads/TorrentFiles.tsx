@@ -103,12 +103,17 @@ export function fileOutcome(file: TorrentFileRow): { label: string; tone: "succe
   return file.progress < 1 ? { label: "Downloading", tone: "neutral" } : { label: "Waiting", tone: "neutral" };
 }
 
+/** How the plan labels a file. `album` and `new` are music: a track of an album the library holds, or of one it does not. */
 const PLAN_BADGE = {
   match: { label: "Best match", tone: "info" },
   review: { label: "Needs review", tone: "warning" },
   other: { label: "Other book", tone: "neutral" },
+  album: { label: "On album", tone: "info" },
+  new: { label: "New album", tone: "neutral" },
   none: { label: "No match", tone: "warning" },
 } as const;
+
+export const planBadgeFor = (status: string) => PLAN_BADGE[status as keyof typeof PLAN_BADGE] ?? PLAN_BADGE.none;
 
 function MatchCell({ file }: { file: TorrentFileRow }) {
   if (file.group) {
@@ -123,7 +128,7 @@ function MatchCell({ file }: { file: TorrentFileRow }) {
   // Until a file has an outcome of its own, show what matching expects of it. Once imported, keep
   // the plan's reason, which says why it went where it did.
   const landed = outcome?.label === "Imported" || outcome?.label === "Matched" || outcome?.label === "Copy failed";
-  const planBadge = plan && !landed ? PLAN_BADGE[plan.status as keyof typeof PLAN_BADGE] ?? PLAN_BADGE.none : null;
+  const planBadge = plan && !landed ? planBadgeFor(plan.status) : null;
   const detail = outcome?.detail && !plan ? outcome.detail : plan?.detail;
   return (
     <div className="flex min-w-0 flex-col items-start gap-1 py-1">

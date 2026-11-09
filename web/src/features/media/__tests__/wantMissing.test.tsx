@@ -44,4 +44,15 @@ describe("wanting a title's missing chapters or tracks", () => {
     expect(wantMissing).toHaveBeenLastCalledWith("tracks", ["a"], false);
     expect(onChanged).toHaveBeenCalledTimes(2);
   });
+
+  it("offers Stop wanting only where something is wanted", () => {
+    const [want, unwant] = wantMissingActions<{ id: string; wantedMissing?: { pageInfo: { totalCount?: number | null } } | null }>("chapters", vi.fn(async () => 0));
+    const wanted = (n: number) => ({ id: `r${n}`, wantedMissing: { pageInfo: { totalCount: n } } });
+    expect(unwant!.visible?.([wanted(0)])).toBe(false);
+    expect(unwant!.visible?.([wanted(0), wanted(2)])).toBe(true);
+    expect(unwant!.visible?.([wanted(4)])).toBe(true);
+    // A row that never read the count keeps the action, so a surface without it is not stripped.
+    expect(unwant!.visible?.([{ id: "unknown" }])).toBe(true);
+    expect(want!.visible).toBeUndefined();
+  });
 });
