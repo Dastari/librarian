@@ -47,7 +47,7 @@ function SessionCard({ session, owner, canStop }: { session: NowPlayingSession; 
   };
   return (
     <Surface as="article" material="card" radius="tile" padding="tile" className="flex min-w-0 gap-3" aria-label={`${view.title}, ${state.label.toLowerCase()} on ${session.device?.name ?? "an unknown device"}`} data-state={state.id}>
-      <Link to={view.href ?? "."} disabled={!view.href} className="w-20 shrink-0 sm:w-24" tabIndex={-1} data-tv-skip>
+      <Link to={view.href ?? "."} disabled={!view.href} className="w-20 shrink-0 sm:w-24" tabIndex={-1} data-nav-skip>
         <Artwork src={view.artwork} alt="" aspect={view.square ? "square" : "poster"} displayWidth={96} className="rounded-[var(--radius-control)]" />
       </Link>
       <div className="flex min-w-0 flex-1 flex-col gap-1">

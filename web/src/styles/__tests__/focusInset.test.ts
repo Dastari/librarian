@@ -22,4 +22,10 @@ describe("focus rings are never clipped by a scroller", () => {
   it("keeps the poster row's block padding at the focus reach", () => {
     expect(rule(css("utilities.css").replace("@utility snap-row", ".snap-row"), ".snap-row")).toMatch(/padding-block:\s*max\(0\.5rem,\s*var\(--focus-reach\)\)/);
   });
+
+  it("pads the search page's term strip by the focus reach", () => {
+    const strip = rule(css("media.css"), ".search-terms");
+    expect(strip).toMatch(/padding:\s*var\(--focus-reach\)/);
+    expect(strip).toMatch(/scroll-padding-inline:\s*var\(--focus-reach\)/);
+  });
 });

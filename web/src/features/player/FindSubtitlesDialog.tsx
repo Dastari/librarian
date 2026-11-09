@@ -109,7 +109,7 @@ export function FindSubtitlesDialog({ open, onOpenChange, mediaFileId, title, on
           ) : candidates.length === 0 ? (
             <p className="py-6 text-body-sm text-muted">OpenSubtitles has nothing for this in that language.</p>
           ) : (
-            <ul className="flex min-h-0 flex-col divide-y divide-border overflow-y-auto" aria-label="Subtitles found">
+            <ul className="flex min-h-0 flex-col divide-y divide-border overflow-y-auto px-(--focus-reach)" aria-label="Subtitles found">
               {candidates.map((candidate) => (
                 <li key={candidate.fileId} className="flex items-center gap-3 py-3">
                   <div className="min-w-0 flex-1">
