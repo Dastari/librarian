@@ -107,9 +107,10 @@ const TABLE_LINE = "[data-item][data-index]";
 export const REMOTE_CANDIDATES = `${FOCUSABLE_SELECTOR}, ${TABLE_GRID} ${TABLE_LINE}`;
 /**
  * Never stops, whatever they contain: a table's header (sort buttons, column menus, resize
- * handles, select-all; sorting is in the toolbar's sort menu on a TV) and resize separators.
+ * handles, select-all; sorting is in the toolbar's sort menu on a TV), resize separators, and a
+ * field's own buttons that Glass keeps out of the tab order (a number's −/+; OK adjusts instead).
  */
-const NEVER_STOPS = '.fa-dt-head, [role="columnheader"], [role="separator"], [role="tooltip"]';
+const NEVER_STOPS = '.fa-dt-head, [role="columnheader"], [role="separator"], [role="tooltip"], .fa-number-steppers, .fa-input-btn[tabindex="-1"]';
 
 const isTvDocument = () => typeof document !== "undefined" && document.documentElement.dataset.inputMode === "tv";
 

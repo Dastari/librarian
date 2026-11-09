@@ -99,6 +99,11 @@ export function stopLabel(element: Element): string {
   if (row !== null && element.closest(".fa-dt-grid")) return `row:${row}`;
   const label = element.getAttribute("aria-label");
   if (label) return label;
+  const labelledBy = element.getAttribute("aria-labelledby");
+  const named = labelledBy?.split(/\s+/).map((id) => document.getElementById(id)?.textContent?.trim()).filter(Boolean).join(" ");
+  if (named) return named;
+  const labels = (element as HTMLInputElement).labels;
+  if (labels?.length) return Array.from(labels).map((node) => node.textContent?.trim()).join(" ");
   const text = element.textContent?.replace(/\s+/g, " ").trim();
   return text || element.getAttribute("data-testid") || element.tagName.toLowerCase();
 }
