@@ -1,5 +1,11 @@
 [
   {
+    "entity": "Lyric",
+    "list": "lyrics",
+    "get": "lyric",
+    "changed": "lyricChanged"
+  },
+  {
     "entity": "Library",
     "list": "libraries",
     "get": "library",

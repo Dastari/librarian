@@ -1892,6 +1892,7 @@ input CreateMediaFileInput {
   resolution: String
   isHdr: Boolean!
   hdrType: String
+  closedCaptions: Boolean
   audioChannels: String
   metadata: String
   contentType: String
@@ -4373,6 +4374,12 @@ type MediaFile {
   resolution: String
   isHdr: Boolean!
   hdrType: String
+
+  """
+  The video carries closed captions (EIA-608/708) inside its picture stream, as ffprobe
+  reports them. Unknown until the file is analysed. See `docs/design.md` Q119.
+  """
+  closedCaptions: Boolean
   audioChannels: String
   metadata: String
   contentType: String
@@ -4972,6 +4979,72 @@ input MovieWhereInput {
 }
 
 type Mutation {
+  """
+  Create a new #struct_name_str
+  Create one Lyric records
+  """
+  createLyric(
+    """Input"""
+    input: CreateLyricInput!
+  ): LyricResult!
+
+  """
+  Update an existing #struct_name_str
+  Update one Lyric records
+  """
+  updateLyric(
+    """Id"""
+    id: String!
+
+    """Input"""
+    input: UpdateLyricInput!
+  ): LyricResult!
+
+  """
+  Delete a #struct_name_str
+  Delete one Lyric records
+  """
+  deleteLyric(
+    """Id"""
+    id: String!
+  ): LyricResult!
+
+  """
+  Update #plural_name matching a Where filter (requires non-empty where)
+  Update matching Lyric records
+  """
+  updateLyrics(
+    """Where"""
+    where: LyricWhereInput
+
+    """Input"""
+    input: UpdateLyricInput!
+  ): UpdateLyricsResult!
+
+  """
+  Delete #plural_name matching a Where filter (requires non-empty where)
+  Delete matching Lyric records
+  """
+  deleteLyrics(
+    """Where"""
+    where: LyricWhereInput
+  ): DeleteLyricsResult!
+
+  """Search OpenSubtitles for a file's subtitles, in `languages` or the preferred ones."""
+  searchSubtitles(mediaFileId: String!, languages: [String!]): SearchSubtitlesPayload!
+
+  """Download a subtitle beside the file's video and list it with the file's subtitles."""
+  downloadSubtitle(input: DownloadSubtitleInput!): DownloadSubtitlePayload!
+
+  """Check an OpenSubtitles key and account. Signs in when an account is given."""
+  testOpenSubtitles(input: TestOpenSubtitlesInput!): TestOpenSubtitlesPayload!
+
+  """
+  A track's lyrics: what is cached, or a fresh look (`refresh`) at its `.lrc`, its tags and
+  LRCLIB, cached for next time.
+  """
+  fetchLyrics(mediaFileId: String!, refresh: Boolean): FetchLyricsPayload!
+
   """Recache artwork for a specific movie"""
   recacheMovieArtwork(movieId: String!): Boolean!
 
@@ -8804,6 +8877,30 @@ input QualityProfileWhereInput {
 }
 
 type Query {
+  """
+  Get a list of #plural_name with optional filtering, sorting, and pagination
+  List Lyric records
+  """
+  lyrics(
+    """Where"""
+    where: LyricWhereInput
+
+    """Order by"""
+    orderBy: [LyricOrderByInput!]
+
+    """Page"""
+    page: PageInput
+  ): LyricConnection!
+
+  """
+  Get a single #struct_name_str by ID
+  Read one Lyric records
+  """
+  lyric(
+    """Id"""
+    id: String!
+  ): Lyric
+
   """True if no admin user exists yet (first-time setup required)."""
   needsSetup: Boolean!
 
@@ -12172,6 +12269,23 @@ input StringFilter {
 }
 
 type Subscription {
+  """
+  Subscribe to #struct_name_str changes
+  Observe changes to Lyric records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+  """
+  lyricChanged(
+    """Filter"""
+    filter: SubscriptionFilterInput
+
+    """Exact complete primary key to observe"""
+    key: String
+
+    """
+    Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+    """
+    keys: [String!]
+  ): LyricChangedEvent!
+
   backupChanged: String!
 
   """
@@ -14552,6 +14666,7 @@ input UpdateMediaFileInput {
   resolution: String
   isHdr: Boolean
   hdrType: String
+  closedCaptions: Boolean
   audioChannels: String
   metadata: String
   contentType: String
@@ -15601,3 +15716,225 @@ input VideoStreamWhereInput {
   """Logical NOT of condition"""
   not: VideoStreamWhereInput
 }
+
+input CreateLyricInput {
+  mediaFileId: String!
+  trackId: String
+  source: String!
+  synced: Boolean!
+  syncedLyrics: String
+  plainLyrics: String
+  language: String
+  instrumental: Boolean!
+  providerId: String
+  fetchedAt: String!
+}
+
+input UpdateLyricInput {
+  mediaFileId: String
+  trackId: String
+  source: String
+  synced: Boolean
+  syncedLyrics: String
+  plainLyrics: String
+  language: String
+  instrumental: Boolean
+  providerId: String
+  fetchedAt: String
+}
+
+input LyricWhereInput {
+  id: StringFilter
+  mediaFileId: StringFilter
+  trackId: StringFilter
+  source: StringFilter
+  synced: BoolFilter
+  fetchedAt: DateFilter
+  createdAt: DateFilter
+  updatedAt: DateFilter
+
+  """Logical AND of conditions"""
+  and: [LyricWhereInput!]
+
+  """Logical OR of conditions"""
+  or: [LyricWhereInput!]
+
+  """Logical NOT of condition"""
+  not: LyricWhereInput
+}
+
+type Lyric {
+  id: String!
+  mediaFileId: String!
+
+  """The track the file plays, when it is linked to one."""
+  trackId: String
+
+  """`sidecar`, `embedded`, `lrclib` or `none`."""
+  source: String!
+
+  """Whether `syncedLyrics` holds timed lines."""
+  synced: Boolean!
+
+  """Timed lines, normalised to `[mm:ss.cc]text`, one per line, sorted."""
+  syncedLyrics: String
+
+  """The words without times."""
+  plainLyrics: String
+
+  """The language, when the source says."""
+  language: String
+
+  """The source says the track has no words."""
+  instrumental: Boolean!
+
+  """The provider's id for what was found (LRCLIB's record id)."""
+  providerId: String
+  fetchedAt: String!
+  createdAt: String!
+  updatedAt: String!
+
+  """Media File"""
+  mediaFile: MediaFile
+}
+
+"""Event for #struct_name changes (subscriptions)"""
+type LyricChangedEvent {
+  action: ChangeAction!
+  changeKind: ChangeKind!
+  id: String!
+  sourceEntity: String
+  sourceId: String
+  path: [String!]!
+  lyric: Lyric
+}
+
+"""Connection containing edges and page info"""
+type LyricConnection {
+  """The edges in this connection"""
+  edges: [LyricEdge!]!
+
+  """Pagination information"""
+  pageInfo: PageInfo!
+}
+
+"""Edge containing a node and cursor"""
+type LyricEdge {
+  """The item at the end of the edge"""
+  node: Lyric!
+
+  """A cursor for pagination"""
+  cursor: String!
+}
+
+input LyricOrderByInput {
+  createdAt: OrderDirection
+  updatedAt: OrderDirection
+}
+
+"""Result type for #struct_name mutations"""
+type LyricResult {
+  success: Boolean!
+  error: String
+  lyric: Lyric
+}
+
+"""Result of bulk update by Where filter"""
+type UpdateLyricsResult {
+  success: Boolean!
+  error: String
+  affectedCount: Int!
+}
+
+"""Result of bulk delete by Where filter"""
+type DeleteLyricsResult {
+  success: Boolean!
+  error: String
+  deletedCount: Int!
+}
+
+"""One subtitle OpenSubtitles offers for a file."""
+type SubtitleCandidate {
+  """The provider's file id, passed back to `downloadSubtitle`."""
+  fileId: String!
+
+  """ISO 639-2/B, as subtitle rows store it."""
+  language: String
+  languageName: String
+  release: String
+  fileName: String
+  hearingImpaired: Boolean!
+
+  """Only the foreign-language parts."""
+  forced: Boolean!
+
+  """Made for this very file (its OpenSubtitles hash matched)."""
+  hashMatch: Boolean!
+  downloads: Int!
+  rating: Float!
+  votes: Int!
+  trusted: Boolean!
+  machineTranslated: Boolean!
+  uploader: String
+  uploadDate: String
+}
+
+type SearchSubtitlesPayload {
+  success: Boolean!
+  error: String
+
+  """Best first."""
+  candidates: [SubtitleCandidate!]!
+
+  """The languages searched, as stored codes."""
+  languages: [String!]!
+
+  """
+  Why the automatic fetch leaves this file alone ("Has English subtitles built in"), when
+  it does. Searching by hand still works.
+  """
+  autoSkipReason: String
+}
+
+input DownloadSubtitleInput {
+  mediaFileId: String!
+  fileId: String!
+  language: String
+  hearingImpaired: Boolean
+  forced: Boolean
+  release: String
+  uploader: String
+}
+
+type DownloadSubtitlePayload {
+  success: Boolean!
+  error: String
+  subtitle: Subtitle
+
+  """Downloads left today on the account, as OpenSubtitles counts them."""
+  remainingDownloads: Int
+
+  """When the allowance renews."""
+  resetsAt: String
+}
+
+input TestOpenSubtitlesInput {
+  """What was typed; the saved value when left out."""
+  apiKey: String
+  username: String
+
+  """What was typed; the saved password when left out or empty."""
+  password: String
+}
+
+type TestOpenSubtitlesPayload {
+  success: Boolean!
+  message: String!
+}
+
+type FetchLyricsPayload {
+  success: Boolean!
+  error: String
+  lyric: Lyric
+}
+
