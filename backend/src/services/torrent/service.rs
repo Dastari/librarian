@@ -1315,6 +1315,10 @@ impl Service for TorrentService {
             persistence: Some(librqbit::SessionPersistenceConfig::Json {
                 folder: Some(effective_session_dir.clone()),
             }),
+            // Keep each torrent's checked pieces (`<session dir>/<hash>.bitv`) so a restart spot
+            // checks a sample of pieces instead of reading every file again, which matters once
+            // downloads live on a share. librqbit falls back to a full check if a sample fails.
+            fastresume: true,
             ratelimits: LimitsConfig {
                 upload_bps: NonZeroU32::new(config.upload_limit),
                 download_bps: NonZeroU32::new(config.download_limit),
