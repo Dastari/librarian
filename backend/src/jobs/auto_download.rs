@@ -63,6 +63,7 @@ use crate::graphql::entities::{
 use crate::services::ServicesManager;
 use crate::services::quality::profile;
 use crate::services::quality::scoring;
+use crate::services::quality::title_match::WantedTitle;
 use crate::services::sources::{QueryType, SourceQuery, SourceRelease};
 use crate::services::torrent::TorrentAddMetadata;
 
@@ -122,8 +123,8 @@ pub struct WantedCandidate {
     /// de-duplicated before ranking (a season pack is searched both as
     /// "Show S02" and "Show Season 2" because indexers title them either way).
     pub queries: Vec<SourceQuery>,
-    /// Fuzzy-match anchor: what an acceptable release's title must resemble.
-    pub match_title: String,
+    /// What an acceptable release must be named after, word for word (`title_match`).
+    pub match_title: WantedTitle,
     pub linkage: CandidateLinkage,
     /// Per-entity quality profile override (Show/Movie/Album/Audiobook), if
     /// set. Falls back to `Library.qualityProfileId` (then the seeded
@@ -503,7 +504,7 @@ fn episode_candidate(
     WantedCandidate {
         label: format!("episode '{term}'"),
         library_id: show.library_id.clone(),
-        match_title: term.clone(),
+        match_title: WantedTitle::work(show.name.clone()),
         queries: vec![SourceQuery {
             query_type: QueryType::TvSearch,
             search_term: Some(term),
@@ -559,7 +560,7 @@ fn season_pack_candidate(
     WantedCandidate {
         label: format!("season pack '{padded}'"),
         library_id: show.library_id.clone(),
-        match_title: padded.clone(),
+        match_title: WantedTitle::work(show.name.clone()),
         queries: vec![
             SourceQuery {
                 search_term: Some(padded),
@@ -889,7 +890,11 @@ async fn discover_track_candidates(
             out.push(WantedCandidate {
                 label: format!("track '{term}'"),
                 library_id: track.library_id.clone(),
-                match_title: term.clone(),
+                match_title: WantedTitle::Music {
+                    artist: artist.clone(),
+                    album: Some(album.name.clone()),
+                    track: Some(track.title.clone()),
+                },
                 queries: vec![SourceQuery {
                     query_type: QueryType::MusicSearch,
                     search_term: Some(term),
@@ -1045,7 +1050,10 @@ async fn discover_audiobook_candidates(
         out.push(WantedCandidate {
             label: format!("audiobook '{term}'"),
             library_id: audiobook.library_id.clone(),
-            match_title: short,
+            match_title: WantedTitle::Book {
+                title: audiobook.title.clone(),
+                author: audiobook.author_name.clone(),
+            },
             queries,
             linkage: CandidateLinkage {
                 audiobook_id: Some(audiobook.id.clone()),
@@ -1119,7 +1127,10 @@ async fn discover_movie_candidates(
         out.push(WantedCandidate {
             label: format!("movie '{term}'"),
             library_id: movie.library_id.clone(),
-            match_title: movie.title.clone(),
+            match_title: WantedTitle::work_with_aliases(
+                movie.title.clone(),
+                &[movie.original_title.clone()],
+            ),
             queries: vec![SourceQuery {
                 query_type: QueryType::MovieSearch,
                 search_term: Some(term),
@@ -1488,6 +1499,8 @@ pub struct NoGrabFacts {
     pub wrong_target: usize,
     pub wrong_example: Option<String>,
     pub too_different: usize,
+    /// One release turned down for naming another title, and why.
+    pub too_different_example: Option<String>,
     pub below_profile: usize,
     pub profile: String,
     pub profile_reasons: Vec<String>,
@@ -1531,8 +1544,13 @@ pub fn describe_no_grab(facts: &NoGrabFacts) -> String {
     }
     if facts.too_different > 0 {
         parts.push(format!(
-            "{} with a title too different",
-            facts.too_different
+            "{} named after a different title{}",
+            facts.too_different,
+            facts
+                .too_different_example
+                .as_deref()
+                .map(|example| format!(" (e.g. {example})"))
+                .unwrap_or_default()
         ));
     }
     if facts.below_profile > 0 {
@@ -1554,20 +1572,35 @@ pub fn describe_no_grab(facts: &NoGrabFacts) -> String {
     )
 }
 
-/// Why each release the profile turned down was turned down: how many were too different in title,
-/// how many were below the profile, and the most common reasons for the latter.
+/// Why the releases the profile turned down were turned down.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProfileRejections {
+    /// Named after a different title.
+    pub too_different: usize,
+    /// One of those, as `'title' names 'x', not 'y' (...)`.
+    pub too_different_example: Option<String>,
+    /// Below the quality profile.
+    pub below: usize,
+    /// The most common reasons for the latter.
+    pub reasons: Vec<String>,
+}
+
+/// Why each release the profile turned down was turned down: how many named a different title
+/// (with one example), how many were below the profile, and the most common reasons for the latter.
 pub fn explain_profile_rejections(
-    match_title: &str,
+    match_title: &WantedTitle,
     releases: &[SourceRelease],
     quality_profile: &QualityProfile,
     episode_count: i32,
-) -> (usize, usize, Vec<String>) {
+) -> ProfileRejections {
     let mut too_different = 0;
+    let mut too_different_example = None;
     let mut below = 0;
     let mut tally: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for release in releases {
-        if scoring::title_similarity(match_title, &release.title) < scoring::MIN_TITLE_SIMILARITY {
+        if let Some(reason) = match_title.mismatch(&release.title) {
             too_different += 1;
+            too_different_example.get_or_insert_with(|| format!("'{}' {reason}", release.title));
             continue;
         }
         let parsed = scoring::parse_release(&release.title);
@@ -1587,7 +1620,12 @@ pub fn explain_profile_rejections(
         .take(2)
         .map(|(reason, _)| reason)
         .collect();
-    (too_different, below, reasons)
+    ProfileRejections {
+        too_different,
+        too_different_example,
+        below,
+        reasons,
+    }
 }
 
 async fn resolve_candidate_profile(
@@ -1666,7 +1704,7 @@ pub fn rank_for_candidate(
     if !ranked.is_empty() {
         return Ok(ranked);
     }
-    let (too_different, below_profile, profile_reasons) = explain_profile_rejections(
+    let rejections = explain_profile_rejections(
         &candidate.match_title,
         &verified,
         quality_profile,
@@ -1679,10 +1717,11 @@ pub fn rank_for_candidate(
         blocklisted: collected.blocklisted,
         wrong_target,
         wrong_example,
-        too_different,
-        below_profile,
+        too_different: rejections.too_different,
+        too_different_example: rejections.too_different_example,
+        below_profile: rejections.below,
         profile: quality_profile.name.clone(),
-        profile_reasons,
+        profile_reasons: rejections.reasons,
     }))
 }
 

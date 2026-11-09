@@ -164,6 +164,11 @@ pub struct ReleaseRecommendation {
     #[graphql(name = "note")]
     pub note: Option<String>,
 
+    /// The version of the rules that chose this answer (`jobs::recommend::RULES_VERSION`). An answer
+    /// from older rules is not trusted: it is removed and looked up again (Q98).
+    #[graphql(name = "rulesVersion")]
+    pub rules_version: Option<i32>,
+
     #[graphql(name = "foundAt")]
     #[filterable(type = "date")]
     #[sortable]

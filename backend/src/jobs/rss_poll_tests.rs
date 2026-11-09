@@ -31,7 +31,7 @@ fn episode_target(show: &str, season: i32, episode: i32) -> WantedCandidate {
             tvdb_id: Some(111),
             ..Default::default()
         }],
-        match_title: format!("{show} S{season:02}E{episode:02}"),
+        match_title: crate::services::quality::title_match::WantedTitle::work(show),
         linkage: CandidateLinkage {
             show_id: Some(format!("show:{show}")),
             episode_id: Some(format!("ep:{show}:{season}:{episode}")),
@@ -64,7 +64,7 @@ fn movie_target(title: &str, year: Option<i32>) -> WantedCandidate {
             query_type: QueryType::MovieSearch,
             ..Default::default()
         }],
-        match_title: title.to_string(),
+        match_title: crate::services::quality::title_match::WantedTitle::work(title),
         linkage: CandidateLinkage {
             movie_id: Some("movie".into()),
             ..Default::default()

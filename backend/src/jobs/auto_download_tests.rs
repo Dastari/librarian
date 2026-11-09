@@ -481,7 +481,7 @@ fn episode_candidate_for(season: i32, episode: i32) -> WantedCandidate {
         label: format!("episode 'Show S{season:02}E{episode:02}'"),
         library_id: "lib".into(),
         queries: Vec::new(),
-        match_title: format!("Show S{season:02}E{episode:02}"),
+        match_title: WantedTitle::work("Show"),
         linkage: CandidateLinkage::default(),
         quality_profile_override_id: None,
         search_key: "k".into(),
@@ -529,13 +529,45 @@ fn profile_rejections_are_counted_and_the_commonest_reasons_named() {
         release("Completely Different Thing 1080p"),
         release("Show S01E02 1080p WEB-DL x264-D"),
     ];
-    let (too_different, below, reasons) =
-        explain_profile_rejections("Show S01E02", &releases, &quality, 1);
-    assert_eq!(too_different, 1);
-    assert_eq!(below, 3);
+    let rejections = explain_profile_rejections(&WantedTitle::work("Show"), &releases, &quality, 1);
+    assert_eq!(rejections.too_different, 1);
     assert!(
-        reasons[0].contains("720p"),
-        "the commonest reason leads: {reasons:?}"
+        rejections
+            .too_different_example
+            .as_deref()
+            .is_some_and(|example| example.contains("Completely Different Thing")),
+        "{rejections:?}"
+    );
+    assert_eq!(rejections.below, 3);
+    assert!(
+        rejections.reasons[0].contains("720p"),
+        "the commonest reason leads: {:?}",
+        rejections.reasons
+    );
+}
+
+#[test]
+fn a_show_with_a_similar_name_is_explained_as_a_different_title() {
+    // Babylon 5 wanted; the only release is Babylon Berlin.
+    let mut candidate = episode_candidate_for(1, 1);
+    candidate.match_title = WantedTitle::work("Babylon 5");
+    candidate.expectation = Expectation::SeasonPack { season: 1 };
+    candidate.episode_count = 22;
+    let collected = Collected {
+        releases: vec![release(
+            "Babylon.Berlin.S01.1080p.10bit.WEBRip.6CH.x265.HEVC-PSA",
+        )],
+        seen: 1,
+        sources: 1,
+        ..Default::default()
+    };
+    let quality = profile::builtin_any_profile();
+    let facts = rank_for_candidate(&candidate, &collected, &quality, true).unwrap_err();
+    assert_eq!(facts.too_different, 1);
+    let why = describe_no_grab(&facts);
+    assert!(
+        why.contains("1 named after a different title") && why.contains("babylon berlin"),
+        "{why}"
     );
 }
 
@@ -575,7 +607,7 @@ fn every_way_a_search_can_come_up_empty_is_worded() {
     assert!(everything.starts_with("9 release(s) found, none usable: "));
     assert!(everything.contains("2 blocklisted"));
     assert!(everything.contains("3 for something else (e.g. 'Show.S01E03'"));
-    assert!(everything.contains("1 with a title too different"));
+    assert!(everything.contains("1 named after a different title"));
     assert!(everything.contains("3 below the 'HD only' profile (resolution 720p"));
 }
 

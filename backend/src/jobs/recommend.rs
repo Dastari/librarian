@@ -44,6 +44,7 @@ use crate::graphql::entities::{FEED_ITEM_GUID_PREFIX, feed_item_release};
 use crate::services::ServicesManager;
 use crate::services::quality::profile;
 use crate::services::quality::scoring::{ParsedRelease, ScoredRelease};
+use crate::services::quality::title_match::WantedTitle;
 use crate::services::sources::manager::SourcesManager;
 use crate::services::sources::{QueryType, SourceQuery, SourceRelease};
 
@@ -56,6 +57,16 @@ use super::auto_settings::AutoDownloadSettings;
 
 /// How long a recommendation, or a "nothing found", is kept before the lookup is repeated.
 pub const TTL: Duration = Duration::hours(24);
+/// The version of the rules that choose a recommendation. Raise it whenever a change means stored
+/// answers may be wrong: rows from an older version are removed on the next pass and looked up
+/// again, instead of standing for up to a day. 2: titles are matched word for word (Q98), so
+/// `Babylon Berlin` is no longer recommended for `Babylon 5`.
+pub const RULES_VERSION: i32 = 2;
+
+/// Whether a stored answer was chosen by the current rules.
+pub fn is_current(row: &ReleaseRecommendation) -> bool {
+    row.rules_version.unwrap_or(0) >= RULES_VERSION
+}
 /// How long a "searching" placeholder lives if its lookup never finishes.
 const PLACEHOLDER_TTL: Duration = Duration::minutes(60);
 /// Most episode recommendations written for one season.
@@ -534,7 +545,6 @@ impl SeasonGroup<'_> {
         let worded = format!("{} Season {}", self.show_name, self.season);
         let mut candidate = (*first).clone();
         candidate.label = format!("season '{padded}'");
-        candidate.match_title = padded.clone();
         candidate.queries = [padded, worded]
             .into_iter()
             .map(|term| SourceQuery {
@@ -676,7 +686,6 @@ async fn look_up_series(
     let complete = format!("{show_name} Complete Series");
     let short = format!("{show_name} Complete");
     candidate.label = format!("complete series '{show_name}'");
-    candidate.match_title = complete.clone();
     candidate.queries = [complete, short]
         .into_iter()
         .map(|term| SourceQuery {
@@ -814,7 +823,11 @@ fn album_candidate(tracks: &[&WantedCandidate]) -> Option<(WantedCandidate, Stri
     let term = format!("{artist} {album}");
     let mut candidate = (*first).clone();
     candidate.label = format!("album '{term}'");
-    candidate.match_title = term.clone();
+    candidate.match_title = WantedTitle::Music {
+        artist: artist.clone(),
+        album: Some(album.clone()),
+        track: None,
+    };
     candidate.queries = vec![SourceQuery {
         query_type: QueryType::MusicSearch,
         search_term: Some(term.clone()),
@@ -976,6 +989,7 @@ fn to_input(
         ),
         reasons,
         note: row.note.clone(),
+        rules_version: Some(RULES_VERSION),
         found_at: now.to_rfc3339(),
         expires_at: expires.to_rfc3339(),
     }
@@ -1354,8 +1368,12 @@ async fn fresh_targets(db: &Database, now: DateTime<Utc>) -> HashSet<String> {
         .await
         .unwrap_or_default();
     let mut keys = HashSet::new();
-    // A "searching" placeholder is a request for an answer, not an answer.
-    for row in rows.into_iter().filter(|row| row.status != "searching") {
+    // A "searching" placeholder is a request for an answer, not an answer, and an answer from older
+    // rules is not one either.
+    for row in rows
+        .into_iter()
+        .filter(|row| row.status != "searching" && is_current(row))
+    {
         if let (Some(show), Some(season)) = (&row.show_id, row.season) {
             keys.insert(format!("show:{show}:{season}"));
         }
@@ -1438,6 +1456,10 @@ pub async fn prune(db: &Database) -> usize {
             .unwrap_or(true);
         let mut drop = expired;
         let mut why = "expired";
+        if !drop && !is_current(&row) {
+            drop = true;
+            why = "it was chosen by older rules";
+        }
         if !drop && row.status == "ready" {
             if row
                 .info_hash
@@ -1625,7 +1647,10 @@ pub async fn request_lookup(
         })
         .fetch_all()
         .await?;
-    if existing.iter().any(|row| row.status != "searching") {
+    if existing
+        .iter()
+        .any(|row| row.status != "searching" && is_current(row))
+    {
         return Ok(Requested::Cached);
     }
     if !enqueue(request.clone()) || existing.iter().any(|row| row.status == "searching") {
@@ -1737,6 +1762,10 @@ pub async fn grab_recommendation(
         return Err(deny());
     }
     anyhow::ensure!(rec.status == "ready", "That recommendation is not ready");
+    anyhow::ensure!(
+        is_current(&rec),
+        "That recommendation was chosen by older rules and is being looked up again"
+    );
     let title = rec
         .title
         .clone()
@@ -1799,7 +1828,7 @@ pub async fn grab_recommendation(
         label: rec.target_label.clone(),
         library_id: rec.library_id.clone(),
         queries: Vec::new(),
-        match_title: rec.target_label.clone(),
+        match_title: WantedTitle::work(rec.target_label.clone()),
         linkage: linkage.clone(),
         quality_profile_override_id: None,
         search_key: format!("recommendation:{}", rec.id),

@@ -1707,3 +1707,36 @@ everywhere.
 `take_login.php`, the cookie names, the RSS page printing the link) is inferred from Jackett's and Prowlarr's definitions and
 reports; the parsers read the form from the page instead of assuming it, and are tested against hand-written fixtures in
 `backend/tests/fixtures/iptorrents/`.
+
+### Q98: How does the hunt tell that a release is for the wanted title?
+**Answer:** By the release's **title part**, word for word (`quality::title_match`), not by a similarity score. Until
+November 2026 `filter_and_rank` dropped a release only when the Jaro-Winkler similarity of the *whole* normalised release
+title (quality tags included) against the wanted title fell under 0.70. A shared prefix carries Jaro-Winkler a long way:
+`Babylon.Berlin.S01.1080p.10bit.WEBRip.6CH.x265.HEVC-PSA` passed for **Babylon 5**, was recommended as "covers 22 of 22
+missing", and the same gate guards automatic grabs. `Expectation` checked only season, episode and year, so nothing caught it.
+
+Every hunt target now carries a `WantedTitle` (`WantedCandidate.match_title`), and `filter_and_rank` rejects any release
+whose `WantedTitle::mismatch` is not `None`, before quality is looked at:
+- **Shows and movies** (`Work`, the show name or movie title plus aliases, today a movie's original title): the words of the
+  release are walked from the start. Every significant word of the name must come, in order, and the first word after the
+  name must be a *marker* (SxxEyy, `2x05`, `Season`, `Complete`, a year, a resolution, a number of two or more digits as
+  anime numbering uses, a source/codec/edition tag) or the end. So `Babylon.Berlin.S01` is refused (`berlin` where `5`
+  was wanted) and `Silo.Rising.S01` is refused for Silo. Tolerated: `the`/`a`/`an`/`and`/`&`, punctuation, apostrophes,
+  accents, `S.H.I.E.L.D` as `SHIELD`, `SpiderMan` as `Spider Man`, a leading `[Group]` or `www.site.org -`, an `aka` alias in
+  the release, and a year or a country code (`US`, `UK`, `GB`, `AU`, `CA`, `NZ`) after the name unless the wanted name says
+  another (`The Office (US)` refuses `The.Office.UK`; `Doctor Who (2005)` refuses `Doctor.Who.1963`). Two years in a row
+  mean the first is part of a longer name (`Blade.Runner.2049.2017` is not *Blade Runner*).
+- **Music** (`Music`: artist, album, track): every word of the artist and every word of the album or the track, as whole
+  words (`Queen` is not `Queens of the Stone Age`). A whole album is still also checked by `Expectation::Album`.
+- **Audiobooks** (`Book`): every word of the short title present and `release_match::title_score` at least 0.75 (author and
+  narrator words are ignored, so extra words are fine). Other books of a series are still dropped by `release_relevance`.
+
+The similarity score remains only as the last ranking tiebreak. A release turned down this way counts as "named after a
+different title" in the no-release explanation, with one example ("'Babylon.Berlin.S01…' names 'babylon berlin', not 'Babylon
+5' (names 'berlin' where '5' was wanted)"). Feed matching keeps its own exact-name rule (`rss_poll::names_match`) for
+labelling catalogue items.
+
+**Stale answers.** Every `ReleaseRecommendation` row carries `rulesVersion` (`jobs::recommend::RULES_VERSION`, now 2). A row
+from older rules (including every row written before the column existed) does not count as an answer: lookups ignore it, it
+cannot be grabbed, and the next pass removes it, so the Babylon Berlin row is replaced within one worker tick rather than
+after its day. Raise the version whenever a change means stored answers may be wrong.
