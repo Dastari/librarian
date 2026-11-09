@@ -3,9 +3,9 @@
 
 use super::*;
 use crate::graphql::entities::{
-    Album, Artist, CreateAlbumInput, CreateArtistInput, CreateLibraryInput, CreateMediaFileInput,
-    CreateMovieInput, CreateTrackInput, CreateUserInput, Library, LibraryScanRun, MediaFile,
-    MediaFileWhereInput, Movie, Track, User,
+    Album, Artist, CreateAlbumInput, CreateArtistInput, CreateEpisodeInput, CreateLibraryInput,
+    CreateMediaFileInput, CreateMovieInput, CreateShowInput, CreateTrackInput, CreateUserInput,
+    Episode, Library, LibraryScanRun, MediaFile, MediaFileWhereInput, Movie, Show, Track, User,
 };
 use graphql_orm::graphql::filters::StringFilter;
 
@@ -83,6 +83,171 @@ fn only_the_albums_artist_record_names_the_folder() {
         unreachable!()
     };
     assert_eq!(artist_name.as_deref(), Some("Guns N' Roses"));
+}
+
+// ---- Show folders (Q145) -------------------------------------------------------------------
+
+fn episode_path(pattern: &str, show: &str, year: Option<i32>) -> String {
+    TargetFacts::Episode {
+        show_name: show.to_string(),
+        show_year: year,
+        season: 1,
+        episode: 1,
+        title: Some("The End".to_string()),
+    }
+    .relative_path(pattern, "release.mkv", "mkv")
+    .unwrap()
+    .to_string_lossy()
+    .into_owned()
+}
+
+#[test]
+fn a_show_folder_carries_the_year_and_a_show_without_one_is_just_its_name() {
+    assert_eq!(
+        episode_path(TV_DEFAULT_NAMING_PATTERN, "Fallout", Some(2024)),
+        "Fallout (2024)/Season 01/Fallout - S01E01 - The End.mkv"
+    );
+    assert_eq!(
+        episode_path(TV_DEFAULT_NAMING_PATTERN, "Fallout", None),
+        "Fallout/Season 01/Fallout - S01E01 - The End.mkv",
+        "no empty brackets and no stray space"
+    );
+    // A year that is not a year counts as none.
+    assert_eq!(
+        episode_path(TV_DEFAULT_NAMING_PATTERN, "Fallout", Some(0)),
+        "Fallout/Season 01/Fallout - S01E01 - The End.mkv"
+    );
+    // `{show}` stays the plain name, so the previous default still names the folder without it.
+    assert_eq!(
+        episode_path(TV_PREVIOUS_DEFAULT_NAMING_PATTERN, "Fallout", Some(2024)),
+        "Fallout/Season 01/Fallout - S01E01 - The End.mkv"
+    );
+    // A name that already ends in the year is not given it twice.
+    assert_eq!(
+        episode_path(TV_DEFAULT_NAMING_PATTERN, "Doctor Who (2005)", Some(2005)),
+        "Doctor Who (2005)/Season 01/Doctor Who (2005) - S01E01 - The End.mkv"
+    );
+    // Names are sanitised exactly as before.
+    assert_eq!(
+        episode_path(
+            TV_DEFAULT_NAMING_PATTERN,
+            "Marvel's Agents: S.H.I.E.L.D.",
+            Some(2013)
+        ),
+        "Marvel's Agents_ S.H.I.E.L.D (2013)/Season 01/Marvel's Agents_ S.H.I.E.L.D - S01E01 - The End.mkv"
+    );
+}
+
+#[test]
+fn a_missing_year_takes_its_brackets_and_one_separator_with_it() {
+    for (pattern, with_year, without_year) in [
+        ("{show} ({year})", "Show (1999)", "Show"),
+        ("{show} [{year}]", "Show [1999]", "Show"),
+        ("({year}) {show}", "(1999) Show", "Show"),
+        ("{show} {year}", "Show 1999", "Show"),
+        ("{year} - {show}", "1999 - Show", "Show"),
+        (
+            "{show}.{year}.S{season:02}E{episode:02}.{ext}",
+            "Show.1999.S01E01.mkv",
+            "Show.S01E01.mkv",
+        ),
+        (
+            "{show} - {year} - S{season:02}E{episode:02}.{ext}",
+            "Show - 1999 - S01E01.mkv",
+            "Show - S01E01.mkv",
+        ),
+        (
+            "{show} ({year}) - S{season:02}E{episode:02}.{ext}",
+            "Show (1999) - S01E01.mkv",
+            "Show - S01E01.mkv",
+        ),
+        // A folder named by the year alone is left out, not made with an empty name.
+        ("{year}/{show}.{ext}", "1999/Show.mkv", "Show.mkv"),
+    ] {
+        let render = |year| {
+            apply_tv_naming_pattern(pattern, "Show", year, 1, 1, None, "mkv")
+                .to_string_lossy()
+                .into_owned()
+        };
+        assert_eq!(render(Some(1999)), with_year, "{pattern}");
+        assert_eq!(render(None), without_year, "{pattern}");
+    }
+}
+
+#[test]
+fn movie_and_music_patterns_with_a_year_are_unchanged() {
+    assert_eq!(
+        apply_movie_naming_pattern(MOVIE_PATTERN, "Arrival", Some(2016), "a.mkv", "mkv"),
+        PathBuf::from("Arrival (2016)/Arrival (2016).mkv")
+    );
+    assert_eq!(
+        track_facts(Some("Guns N' Roses"))
+            .relative_path(MUSIC_PATTERN, "01.flac", "flac")
+            .unwrap(),
+        PathBuf::from(
+            "Guns N' Roses/Appetite for Destruction (1987)/01 - Welcome to the Jungle.flac"
+        )
+    );
+}
+
+#[tokio::test]
+async fn cleanup_removes_empty_show_and_season_trees_but_keeps_any_folder_with_a_file()
+-> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path();
+    // Made ahead of any file by the old folder step.
+    std::fs::create_dir_all(root.join("Babylon 5 (1993)/Season 01"))?;
+    std::fs::create_dir_all(root.join("Babylon 5 (1993)/Season 02"))?;
+    // Emptied by the move into the folder with the year.
+    std::fs::create_dir_all(root.join("Fallout/Season 01"))?;
+    std::fs::create_dir_all(root.join("Fallout (2024)/Season 01"))?;
+    std::fs::write(
+        root.join("Fallout (2024)/Season 01/Fallout - S01E01 - The End.mkv"),
+        b"video",
+    )?;
+    // Artwork and an .nfo keep their folders; an empty season beside them still goes.
+    std::fs::create_dir_all(root.join("Andor (2022)/Season 02"))?;
+    std::fs::write(root.join("Andor (2022)/folder.jpg"), b"art")?;
+    std::fs::create_dir_all(root.join("Severance/Season 01"))?;
+    std::fs::write(root.join("Severance/Season 01/tvshow.nfo"), b"nfo")?;
+    std::fs::create_dir_all(root.join(LIBRARY_TRASH_DIR).join("Old Show/Season 01"))?;
+
+    LibraryScanService::cleanup_empty_unprotected_folders(root, &HashSet::from([root.into()]))
+        .await?;
+
+    assert!(!root.join("Babylon 5 (1993)").exists());
+    assert!(!root.join("Fallout").exists());
+    assert!(
+        root.join("Fallout (2024)/Season 01/Fallout - S01E01 - The End.mkv")
+            .exists()
+    );
+    assert!(root.join("Andor (2022)/folder.jpg").exists());
+    assert!(!root.join("Andor (2022)/Season 02").exists());
+    assert!(root.join("Severance/Season 01/tvshow.nfo").exists());
+    assert!(
+        root.join(LIBRARY_TRASH_DIR)
+            .join("Old Show/Season 01")
+            .exists(),
+        "the trash is never tidied"
+    );
+    assert!(root.exists());
+    Ok(())
+}
+
+#[tokio::test]
+async fn cleanup_removes_nothing_when_the_storage_cannot_be_reached() -> anyhow::Result<()> {
+    // No provider knows this share, so it is unavailable, not empty: nothing to remove, no error.
+    LibraryScanService::cleanup_empty_unprotected_folders(
+        Path::new("smb://unconnected.invalid/media/TV Shows"),
+        &HashSet::new(),
+    )
+    .await?;
+    // A library folder that is not there is left alone too.
+    let temp = tempfile::tempdir()?;
+    let gone = temp.path().join("not-mounted");
+    LibraryScanService::cleanup_empty_unprotected_folders(&gone, &HashSet::new()).await?;
+    assert!(!gone.exists());
+    Ok(())
 }
 
 // ---- Empty folders -------------------------------------------------------------------------
@@ -485,12 +650,91 @@ impl Harness {
         .await?)
     }
 
+    async fn show(&self, name: &str, year: Option<i32>) -> anyhow::Result<Show> {
+        Ok(Show::insert(
+            self.database.pool(),
+            CreateShowInput {
+                locked_fields: None,
+                library_id: self.library.id.clone(),
+                user_id: self.library.user_id.clone(),
+                name: name.to_string(),
+                sort_name: None,
+                year,
+                tvmaze_id: None,
+                tmdb_id: None,
+                tvdb_id: None,
+                imdb_id: None,
+                overview: None,
+                network: None,
+                runtime: None,
+                genres: Vec::new(),
+                poster_url: None,
+                backdrop_url: None,
+                content_rating: None,
+                status: None,
+                auto_download: false,
+                auto_download_mode: AutoDownloadMode::None,
+                quality_profile_id: None,
+                path: None,
+            },
+        )
+        .await?)
+    }
+
+    async fn episode(
+        &self,
+        show: &Show,
+        season: i32,
+        number: i32,
+        title: &str,
+    ) -> anyhow::Result<Episode> {
+        Ok(Episode::insert(
+            self.database.pool(),
+            CreateEpisodeInput {
+                locked_fields: None,
+                show_id: show.id.clone(),
+                season,
+                episode: number,
+                absolute_number: None,
+                title: Some(title.to_string()),
+                overview: None,
+                air_date: None,
+                air_stamp: None,
+                runtime: None,
+                still_url: None,
+                tvmaze_id: None,
+                tmdb_id: None,
+                tvdb_id: None,
+                wanted: false,
+                ignored: None,
+                media_file_id: None,
+            },
+        )
+        .await?)
+    }
+
+    /// `known_file` for an episode.
+    async fn known_episode_file(&self, path: &Path, episode_id: &str) -> anyhow::Result<MediaFile> {
+        self.known_linked_file(path, None, Some(episode_id), None)
+            .await
+    }
+
     /// A file already known to the library and unchanged since the last scan: its size and
     /// modification time are what the scan will see, so the scan skips it.
     async fn known_file(
         &self,
         path: &Path,
         movie_id: Option<&str>,
+        track_id: Option<&str>,
+    ) -> anyhow::Result<MediaFile> {
+        self.known_linked_file(path, movie_id, None, track_id).await
+    }
+
+    async fn known_linked_file(
+        &self,
+        path: &Path,
+        movie_id: Option<&str>,
+        episode_id: Option<&str>,
         track_id: Option<&str>,
     ) -> anyhow::Result<MediaFile> {
         let metadata = std::fs::metadata(path)?;
@@ -500,7 +744,7 @@ impl Harness {
             self.database.pool(),
             CreateMediaFileInput {
                 library_id: Some(self.library.id.clone()),
-                episode_id: None,
+                episode_id: episode_id.map(str::to_string),
                 movie_id: movie_id.map(str::to_string),
                 track_id: track_id.map(str::to_string),
                 chapter_id: None,
@@ -840,5 +1084,92 @@ async fn prune_after_organize_case() -> anyhow::Result<()> {
         "a folder with a file in it stays"
     );
     assert!(h.root.exists());
+    h.stop().await
+}
+
+#[test]
+fn a_scan_moves_episodes_into_the_show_folder_with_the_year_and_removes_empty_folders()
+-> anyhow::Result<()> {
+    on_big_stack("organize-show-year", show_year_case)
+}
+
+async fn show_year_case() -> anyhow::Result<()> {
+    let h = Harness::new("tv", TV_DEFAULT_NAMING_PATTERN, true).await?;
+    let fallout = h.show("Fallout", Some(2024)).await?;
+    let the_end = h.episode(&fallout, 1, 1, "The End").await?;
+    let the_target = h.episode(&fallout, 1, 2, "The Target").await?;
+    // A show with every episode wanted and no files, and one without a year.
+    let babylon = h.show("Babylon 5", Some(1993)).await?;
+    h.episode(&babylon, 1, 1, "Midnight on the Firing Line")
+        .await?;
+    let severance = h.show("Severance", None).await?;
+    let good_news = h.episode(&severance, 1, 1, "Good News About Hell").await?;
+
+    // Where the previous default put them, and what the old folder step made.
+    let old_end = h.write("Fallout/Season 01/Fallout - S01E01 - The End.mkv", b"one");
+    let old_target = h.write(
+        "Fallout/Season 01/Fallout - S01E02 - The Target.mkv",
+        b"two",
+    );
+    let in_place = h.write(
+        "Severance/Season 01/Severance - S01E01 - Good News About Hell.mkv",
+        b"three",
+    );
+    std::fs::create_dir_all(h.root.join("Fallout (2024)/Season 01"))?;
+    std::fs::create_dir_all(h.root.join("Babylon 5 (1993)/Season 01"))?;
+    std::fs::create_dir_all(h.root.join(LIBRARY_TRASH_DIR))?;
+    let end_file = h.known_episode_file(&old_end, &the_end.id).await?;
+    let target_file = h.known_episode_file(&old_target, &the_target.id).await?;
+    let severance_file = h.known_episode_file(&in_place, &good_news.id).await?;
+
+    h.scan().await?;
+
+    let season = h.root.join("Fallout (2024)/Season 01");
+    for (file, name, episode) in [
+        (&end_file, "Fallout - S01E01 - The End.mkv", &the_end),
+        (
+            &target_file,
+            "Fallout - S01E02 - The Target.mkv",
+            &the_target,
+        ),
+    ] {
+        let moved = season.join(name);
+        assert!(moved.exists(), "{} was moved", moved.display());
+        let row = MediaFile::get(h.database.pool().pool(), &file.id)
+            .await?
+            .context("media file vanished")?;
+        assert_eq!(Path::new(&row.path), moved);
+        assert_eq!(
+            row.relative_path.as_deref(),
+            Some(format!("Fallout (2024)/Season 01/{name}").as_str())
+        );
+        assert_eq!(row.episode_id.as_deref(), Some(episode.id.as_str()));
+    }
+    assert!(!old_end.exists() && !old_target.exists());
+    assert!(
+        !h.root.join("Fallout").exists(),
+        "the folder the move emptied is gone"
+    );
+    assert!(
+        !h.root.join("Babylon 5 (1993)").exists(),
+        "a show with no files has no folder"
+    );
+    assert!(in_place.exists(), "a show without a year keeps its folder");
+    assert_eq!(
+        MediaFile::get(h.database.pool().pool(), &severance_file.id)
+            .await?
+            .context("media file vanished")?
+            .path,
+        in_place.to_string_lossy()
+    );
+    assert!(!h.root.join("Severance ()").exists());
+    assert!(h.root.join(LIBRARY_TRASH_DIR).exists());
+    assert_eq!(h.media_files().await?.len(), 3, "nothing new was recorded");
+
+    // Later scans make no folders for shows without files.
+    h.scan().await?;
+    assert!(!h.root.join("Babylon 5 (1993)").exists());
+    assert!(!h.root.join("Babylon 5").exists());
+    assert!(season.join("Fallout - S01E01 - The End.mkv").exists());
     h.stop().await
 }

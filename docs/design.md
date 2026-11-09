@@ -2964,3 +2964,38 @@ Only one item is highlighted: whichever input was used last owns it (`web/src/li
   is drawn over its neighbours, so a lifted ring never collides with the next tile's edge.
 - **Persistent selection** (a chosen tile, ticked rows) is a separate state from focus and is marked
   inside the tile, so it can sit next to the focused tile.
+
+### Q145: How is a TV show's folder named, and which show folders exist?
+
+**Answer:** One function names it, a folder exists only while it holds something, and empty folders are tidied.
+
+- **One name:** `apply_tv_naming_pattern` (`backend/src/services/library_scan.rs`) is the only place an episode's path
+  is made. Organizing, imports and the scan's misplaced-file check all reach it through `TargetFacts::Episode`, so they
+  can't disagree about a show's folder. There used to be a second spelling: the scan's folder step built
+  `"{name} ({year})"` itself, while organize used the pattern's plain `{show}`. That left an empty `Fallout (2024)/`
+  next to the real `Fallout/`.
+- **`{year}` in TV patterns:** `{show}` is the plain sanitised name and `{year}` is the show's year. A show without a
+  year (or with year 0) loses the token, any brackets around it, and the separator before it. So `{show} ({year})`
+  becomes `{show}`, never `{show} ()`. Between two other parts one separator stays: `{show} - {year} - S01E01` becomes
+  `{show} - S01E01`. A folder named only by `{year}` is left out. A name that already ends in ` (Year)` isn't given
+  the year twice.
+- **The default:** `{show} ({year})/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}`, which is
+  the user's choice. At startup, every TV library whose stored pattern is exactly the previous default
+  (`{show}/Season {season:02}/…`), and the built-in "Standard" row if it still has it, moves to the new default once.
+  This goes through the generated update mutations and is logged. Any other pattern, including a person's own pattern
+  with the same text, is never changed. The episodes then move on the library's next full scan, through the existing
+  check for misplaced files. On a share that is a no-clobber rename, with the media file's path, relative path and
+  subtitles updated.
+- **No folders ahead of files:** the scan no longer creates `Show (Year)/Season NN` for every show and season it knows
+  about. A show's folders are made when its first episode is imported or organized into them.
+- **Tidying:** for TV, only the library root is protected; a show or season folder is kept only by what is in it.
+  After a full scan with organize on, `cleanup_empty_folders` removes every empty folder tree through the library's
+  storage, so local folders and `smb://` shares are both covered. (It used to check `Path::exists`, which is always
+  false for a share, so shares were never tidied.) It never removes:
+  - the root;
+  - a hidden folder (`.librarian-trash`, sync markers);
+  - a folder holding any file, including artwork, `.nfo` files and hidden files, because `remove_dir` refuses a
+    non-empty folder.
+
+  It removes nothing at all when the storage can't be reached, or when any folder in the walk couldn't be listed.
+- **Movies and music** are unchanged: their patterns already carry `{year}`, and their protected folders work as before.

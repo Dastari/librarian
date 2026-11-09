@@ -2,8 +2,13 @@ use std::collections::HashSet;
 
 use anyhow::Result;
 
+use tracing::info;
+
 use crate::db::Database;
 use crate::services::graphql::entities::*;
+use crate::services::library_scan::{
+    TV_DEFAULT_NAMING_PATTERN, TV_PREVIOUS_DEFAULT_NAMING_PATTERN,
+};
 
 struct AppSettingSeed {
     key: &'static str,
@@ -288,8 +293,8 @@ const NAMING_PATTERNS: &[NamingPatternSeed] = &[
         user_id: "system",
         library_type: "tv",
         name: "Standard",
-        pattern: "{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}",
-        description: "Show/Season 01/Show - S01E01 - Title.ext",
+        pattern: TV_DEFAULT_NAMING_PATTERN,
+        description: "Show (Year)/Season 01/Show - S01E01 - Title.ext",
         is_default: true,
     },
     NamingPatternSeed {
@@ -845,6 +850,7 @@ pub async fn seed_defaults(db: &Database) -> Result<()> {
     seed_app_settings(db).await?;
     seed_cast_settings(db).await?;
     seed_naming_patterns(db).await?;
+    migrate_previous_tv_default(db).await?;
     seed_torznab_categories(db).await?;
     seed_quality_profiles(db).await?;
     Ok(())
@@ -1061,6 +1067,75 @@ async fn seed_naming_patterns(db: &Database) -> Result<()> {
         .await?;
     }
 
+    Ok(())
+}
+
+/// Move what still uses the previous TV default to the one with the show's year in its folder
+/// (design.md Q145), once: afterwards nothing stores the previous default, so this finds nothing.
+/// Only a stored pattern exactly equal to the previous default changes; any other pattern was
+/// someone's choice and stays. Files move on the library's next full scan, through organize.
+async fn migrate_previous_tv_default(db: &Database) -> Result<()> {
+    let is_tv = |library_type: &str| {
+        matches!(
+            library_type.trim().to_ascii_lowercase().as_str(),
+            "tv" | "show" | "shows"
+        )
+    };
+    for library in Library::query(db.pool()).fetch_all().await? {
+        if !is_tv(&library.library_type)
+            || library.naming_pattern != TV_PREVIOUS_DEFAULT_NAMING_PATTERN
+        {
+            continue;
+        }
+        Library::update_by_id(
+            db,
+            &library.id,
+            UpdateLibraryInput {
+                naming_pattern: Some(TV_DEFAULT_NAMING_PATTERN.to_string()),
+                ..Default::default()
+            },
+        )
+        .await?;
+        info!(
+            library_id = %library.id,
+            library_name = %library.name,
+            old_pattern = TV_PREVIOUS_DEFAULT_NAMING_PATTERN,
+            new_pattern = TV_DEFAULT_NAMING_PATTERN,
+            "Moved TV library '{}' to the naming pattern with the show's year: '{}' is now '{}'; its next full scan organizes episodes into it",
+            library.name,
+            TV_PREVIOUS_DEFAULT_NAMING_PATTERN,
+            TV_DEFAULT_NAMING_PATTERN
+        );
+    }
+    // The built-in pattern a library with no pattern of its own uses.
+    for pattern in NamingPattern::query(db.pool()).fetch_all().await? {
+        if !pattern.is_system
+            || !is_tv(&pattern.library_type)
+            || pattern.pattern != TV_PREVIOUS_DEFAULT_NAMING_PATTERN
+        {
+            continue;
+        }
+        NamingPattern::update_by_id(
+            db,
+            &pattern.id,
+            UpdateNamingPatternInput {
+                pattern: Some(TV_DEFAULT_NAMING_PATTERN.to_string()),
+                description: Some(Some(
+                    "Show (Year)/Season 01/Show - S01E01 - Title.ext".to_string(),
+                )),
+                ..Default::default()
+            },
+        )
+        .await?;
+        info!(
+            naming_pattern_id = %pattern.id,
+            naming_pattern_name = %pattern.name,
+            new_pattern = TV_DEFAULT_NAMING_PATTERN,
+            "Moved the built-in TV naming pattern '{}' to '{}'",
+            pattern.name,
+            TV_DEFAULT_NAMING_PATTERN
+        );
+    }
     Ok(())
 }
 

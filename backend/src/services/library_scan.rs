@@ -746,8 +746,6 @@ struct ChapterCandidateRow {
     has_file: bool,
 }
 
-type TvShowFolderRow = (String, Option<String>, Option<i32>, Vec<i32>);
-
 #[derive(Debug)]
 struct Runtime {
     cancel: CancellationToken,
@@ -1033,13 +1031,9 @@ impl LibraryScanService {
         }
     }
 
-    fn is_tv_library_type(library_type: &str) -> bool {
-        Self::normalize_library_type(library_type) == "tv"
-    }
-
     fn fallback_naming_pattern(library_type: &str) -> &'static str {
         match Self::normalize_library_type(library_type).as_str() {
-            "tv" => "{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}",
+            "tv" => TV_DEFAULT_NAMING_PATTERN,
             "movies" => "{title} ({year})/{title} ({year}).{ext}",
             "music" => "{artist}/{album} ({year})/{track:02} - {title}.{ext}",
             "audiobooks" => "{author}/{title}/{chapter:02} - {chapter_title}.{ext}",
@@ -5508,10 +5502,8 @@ impl LibraryScanService {
         if scope.is_full() {
             self.reconcile_movie_collections_for_library(&library).await;
 
-            if Self::is_tv_library_type(&normalized_library_type) {
-                self.ensure_tv_folder_structure(&library).await?;
-            }
-
+            // Folders are made when a file goes into them, never ahead of one, and the empty ones
+            // a move or an earlier layout left behind go here (Q145).
             if library.auto_organize {
                 self.cleanup_empty_folders(&library).await?;
             }
@@ -10240,7 +10232,7 @@ impl LibraryScanService {
                     .execute_graphql(
                         auth_user,
                         r#"query OrganizeEpisodeShowInfo($id: String!) {
-                            Show: show(id: $id) { Name: name }
+                            Show: show(id: $id) { Name: name Year: year }
                         }"#,
                         serde_json::json!({ "id": show_id }),
                     )
@@ -10252,11 +10244,17 @@ impl LibraryScanService {
                 else {
                     anyhow::bail!("Show relation not found for organizing");
                 };
+                let show_year = show_data
+                    .get("Show")
+                    .and_then(|s| s.get("Year"))
+                    .and_then(|v| v.as_i64())
+                    .and_then(|v| i32::try_from(v).ok());
                 let episode_title = episode_node
                     .and_then(|e| e.get("Title"))
                     .and_then(|v| v.as_str());
                 TargetFacts::Episode {
                     show_name: show_name.to_string(),
+                    show_year,
                     season: season as i32,
                     episode: episode as i32,
                     title: episode_title.map(str::to_string),
@@ -15089,116 +15087,6 @@ impl LibraryScanService {
         Ok(summary)
     }
 
-    async fn get_tv_shows_for_library(
-        &self,
-        auth_user: &AuthUser,
-        library_id: &str,
-    ) -> Result<Vec<TvShowFolderRow>> {
-        let data = self
-            .execute_graphql_paged(
-                auth_user,
-                r#"query TvShowsForLibrary($libraryId: String!, $page: PageInput) {
-                    Shows: shows(
-                        where: { libraryId: { eq: $libraryId } }
-                        page: $page
-                    ) {
-                        Edges: edges {
-                            Node: node {
-                                Id: id
-                                Name: name
-                                Path: path
-                                Year: year
-                            }
-                        }
-                    }
-                }"#,
-                serde_json::json!({ "libraryId": library_id }),
-                "Shows",
-            )
-            .await?;
-
-        let shows = data
-            .get("Shows")
-            .and_then(|v| v.get("Edges"))
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|edge| {
-                let node = edge.get("Node")?;
-                let show_id = node.get("Id")?.as_str()?.to_string();
-                let show_name = node.get("Name")?.as_str()?.to_string();
-                let show_path = node
-                    .get("Path")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-                let show_year = node.get("Year").and_then(|v| v.as_i64()).map(|v| v as i32);
-                Some((show_id, show_name, show_path, show_year))
-            })
-            .collect::<Vec<_>>();
-        let show_ids = shows
-            .iter()
-            .map(|(show_id, _, _, _)| show_id.clone())
-            .collect::<Vec<_>>();
-        let mut seasons_by_show: HashMap<String, Vec<i32>> = HashMap::new();
-        for episode in self.load_episodes_for_show_ids(&show_ids).await? {
-            seasons_by_show
-                .entry(episode.show_id)
-                .or_default()
-                .push(episode.season);
-        }
-
-        Ok(shows
-            .into_iter()
-            .map(|(show_id, name, path, year)| {
-                let mut seasons = seasons_by_show.remove(&show_id).unwrap_or_default();
-                seasons.sort_unstable();
-                seasons.dedup();
-                (name, path, year, seasons)
-            })
-            .collect())
-    }
-
-    async fn ensure_tv_folder_structure(&self, library: &LibraryRow) -> Result<()> {
-        let naming_pattern = self.resolve_library_naming_pattern(library).await?;
-        let auth_user = self.system_auth_user(Some(&library.user_id)).await?;
-        let shows = self
-            .get_tv_shows_for_library(&auth_user, &library.id)
-            .await?;
-
-        for (show_name, show_path, show_year, seasons) in shows {
-            if let Some(path) = show_path {
-                create_library_directory_in(Path::new(&library.path), Path::new(&path)).await?;
-            }
-
-            if seasons.is_empty() {
-                let (show_dir, _) = derive_tv_dirs_from_pattern(
-                    &library.path,
-                    &naming_pattern,
-                    &show_name,
-                    1,
-                    show_year,
-                )?;
-                create_library_directory_in(Path::new(&library.path), &show_dir).await?;
-                continue;
-            }
-
-            for season in seasons {
-                let (show_dir, season_dir) = derive_tv_dirs_from_pattern(
-                    &library.path,
-                    &naming_pattern,
-                    &show_name,
-                    season,
-                    show_year,
-                )?;
-                create_library_directory_in(Path::new(&library.path), &show_dir).await?;
-                create_library_directory_in(Path::new(&library.path), &season_dir).await?;
-            }
-        }
-
-        Ok(())
-    }
-
     /// What every library item's path is made from, for the whole library in a few paged reads, so
     /// a scan can tell which files are out of place without asking about each one.
     async fn load_target_facts(
@@ -15250,26 +15138,33 @@ impl LibraryScanService {
                         auth_user,
                         r#"query OrganizeLibraryShows($libraryId: String!, $page: PageInput) {
                             Shows: shows(where: { libraryId: { eq: $libraryId } }, page: $page) {
-                                Edges: edges { Node: node { Id: id Name: name } }
+                                Edges: edges { Node: node { Id: id Name: name Year: year } }
                             }
                         }"#,
                         variables,
                         "Shows",
                     )
                     .await?;
-                let shows: HashMap<String, String> = nodes(&data, "Shows")
+                let shows: HashMap<String, (String, Option<i32>)> = nodes(&data, "Shows")
                     .iter()
-                    .filter_map(|node| Some((text(node, "Id")?, text(node, "Name")?)))
+                    .filter_map(|node| {
+                        let year = node
+                            .get("Year")
+                            .and_then(|v| v.as_i64())
+                            .and_then(|v| i32::try_from(v).ok());
+                        Some((text(node, "Id")?, (text(node, "Name")?, year)))
+                    })
                     .collect();
                 let show_ids: Vec<String> = shows.keys().cloned().collect();
                 for episode in self.load_episodes_for_show_ids(&show_ids).await? {
-                    let Some(show_name) = shows.get(&episode.show_id) else {
+                    let Some((show_name, show_year)) = shows.get(&episode.show_id) else {
                         continue;
                     };
                     facts.insert(
                         episode.id,
                         TargetFacts::Episode {
                             show_name: show_name.clone(),
+                            show_year: *show_year,
                             season: episode.season,
                             episode: episode.episode,
                             title: episode.title,
@@ -15543,11 +15438,8 @@ impl LibraryScanService {
     }
 
     async fn cleanup_empty_folders(&self, library: &LibraryRow) -> Result<()> {
+        // Through the library's storage, so a library on a share is tidied too.
         let library_root = PathBuf::from(&library.path);
-        if !library_root.exists() {
-            return Ok(());
-        }
-
         let protected = self.build_protected_paths(library).await?;
         Self::cleanup_empty_unprotected_folders(&library_root, &protected).await
     }
@@ -15555,17 +15447,25 @@ impl LibraryScanService {
     /// Remove every empty folder under the library root that no library item expects, a whole
     /// empty tree at a time. Never the root, never a folder with anything in it (hidden files
     /// included), and never a hidden folder such as the library's `.librarian-trash` or a sync
-    /// tool's marker, which are not this scan's to judge.
+    /// tool's marker, which are not this scan's to judge. Storage that cannot be reached, or a
+    /// walk that could not read every folder, removes nothing.
     async fn cleanup_empty_unprotected_folders(
         library_root: &Path,
         protected: &HashSet<PathBuf>,
     ) -> Result<()> {
-        if !library_storage()
-            .exists(library_root)
-            .await
-            .unwrap_or(false)
-        {
-            return Ok(());
+        match library_storage().exists(library_root).await {
+            Ok(true) => {}
+            Ok(false) => return Ok(()),
+            Err(error) => {
+                debug!(
+                    library_root = %library_root.to_string_lossy(),
+                    error = %error,
+                    "Left empty folders in '{}' alone: its storage could not be reached: {}",
+                    library_root.to_string_lossy(),
+                    error
+                );
+                return Ok(());
+            }
         }
 
         // Hidden folders (the library's trash, a sync tool's markers) are never entered.
@@ -15584,15 +15484,30 @@ impl LibraryScanService {
             )
             .await?;
         let mut dirs = Vec::new();
+        let mut unread = None;
         while let Some(entry) = walk.entries.recv().await {
-            // An entry that cannot be read is left out, as it always was.
-            if let Ok(entry) = entry {
-                dirs.push(PathBuf::from(entry.path.into_string()));
+            match entry {
+                Ok(entry) => dirs.push(PathBuf::from(entry.path.into_string())),
+                Err(error) => {
+                    unread.get_or_insert(error);
+                }
             }
         }
         walk.task
             .await
             .context("Empty-folder traversal worker failed")?;
+        // Part of the tree went unseen (a folder that could not be listed, a share that went
+        // away): what was seen is not the whole picture, so nothing is removed this time.
+        if let Some(error) = unread {
+            warn!(
+                library_root = %library_root.to_string_lossy(),
+                error = %error,
+                "Left empty folders in '{}' alone: not every folder could be read: {}",
+                library_root.to_string_lossy(),
+                error
+            );
+            return Ok(());
+        }
 
         // Deepest first, so a folder whose last child was just removed is empty by its turn.
         dirs.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
@@ -15625,58 +15540,6 @@ impl LibraryScanService {
         }
 
         Ok(())
-    }
-
-    fn build_tv_protected_paths_from_rows(
-        library_path: &str,
-        naming_pattern: &str,
-        shows: &[TvShowFolderRow],
-    ) -> Result<HashSet<PathBuf>> {
-        let mut protected = HashSet::new();
-        let root = PathBuf::from(library_path);
-        protected.insert(root.clone());
-
-        for (show_name, show_path, show_year, seasons) in shows {
-            if let Some(path) = show_path {
-                checked_library_path(&root, Path::new(path))?;
-                protected.insert(PathBuf::from(path));
-            }
-
-            if seasons.is_empty() {
-                let (show_dir, _) = derive_tv_dirs_from_pattern(
-                    library_path,
-                    naming_pattern,
-                    show_name,
-                    1,
-                    *show_year,
-                )?;
-                protected.insert(show_dir);
-            } else {
-                for season in seasons {
-                    let (show_dir, season_dir) = derive_tv_dirs_from_pattern(
-                        library_path,
-                        naming_pattern,
-                        show_name,
-                        *season,
-                        *show_year,
-                    )?;
-                    protected.insert(show_dir);
-                    protected.insert(season_dir);
-                }
-            }
-        }
-
-        Ok(protected)
-    }
-
-    async fn build_tv_protected_paths(&self, library: &LibraryRow) -> Result<HashSet<PathBuf>> {
-        let auth_user = self.system_auth_user(Some(&library.user_id)).await?;
-        let naming_pattern = self.resolve_library_naming_pattern(library).await?;
-
-        let shows = self
-            .get_tv_shows_for_library(&auth_user, &library.id)
-            .await?;
-        Self::build_tv_protected_paths_from_rows(&library.path, &naming_pattern, &shows)
     }
 
     fn protect_path_and_ancestors(
@@ -15958,7 +15821,9 @@ impl LibraryScanService {
 
     async fn build_protected_paths(&self, library: &LibraryRow) -> Result<HashSet<PathBuf>> {
         match Self::normalize_library_type(&library.library_type).as_str() {
-            "tv" => self.build_tv_protected_paths(library).await,
+            // A show or season folder is kept by the files in it, never by the show's record
+            // alone: one with no files is empty, and empty folders go (Q145).
+            "tv" => Ok(HashSet::from([PathBuf::from(&library.path)])),
             "movies" => self.build_movie_protected_paths(library).await,
             "music" => self.build_music_protected_paths(library).await,
             "audiobooks" => self.build_audiobook_protected_paths(library).await,
@@ -16941,16 +16806,79 @@ fn replace_number_token(mut pattern: String, token: &str, value: i32) -> String 
     pattern
 }
 
+/// The TV default before it named show folders with the show's year (design.md Q145). A library
+/// that stored exactly this is moved to [`TV_DEFAULT_NAMING_PATTERN`] once at startup.
+pub(crate) const TV_PREVIOUS_DEFAULT_NAMING_PATTERN: &str =
+    "{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}";
+
+/// The TV default: `Show (Year)/Season 01/Show - S01E01 - Title.ext`. A show without a year gets
+/// `Show/Season 01/...`.
+pub(crate) const TV_DEFAULT_NAMING_PATTERN: &str =
+    "{show} ({year})/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}";
+
+/// Put a year into a pattern's `{year}` tokens. Without a year the token goes, and so do the
+/// brackets around it and the separator before it, so `{show} ({year})` is just `{show}`, never
+/// `{show} ()`; between two other parts one separator stays (`{show} - {year} - x` is
+/// `{show} - x`). A folder left with nothing in its name is dropped.
+fn fill_year_token(pattern: &str, year: Option<i32>) -> String {
+    if !pattern.contains("{year}") {
+        return pattern.to_string();
+    }
+    if let Some(year) = year {
+        return pattern.replace("{year}", &year.to_string());
+    }
+    static YEAR: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(r"([\s._-]*)(?:[(\[]\s*\{year\}\s*[)\]]|\{year\})([\s._-]*)")
+            .expect("the year token expression is valid")
+    });
+    pattern
+        .split('/')
+        .filter_map(|component| {
+            if !component.contains("{year}") {
+                return Some(component.to_string());
+            }
+            let collapsed = YEAR.replace_all(component, |caps: &regex::Captures| {
+                let whole = caps.get(0).expect("a match has a whole");
+                if whole.start() == 0 || whole.end() == component.len() {
+                    return String::new();
+                }
+                let (before, after) = (&caps[1], &caps[2]);
+                if after.len() > before.len() {
+                    after.to_string()
+                } else {
+                    before.to_string()
+                }
+            });
+            let collapsed = collapsed.trim();
+            (!collapsed.is_empty()).then(|| collapsed.to_string())
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Where a library's naming pattern puts an episode, relative to the library root. This is the
+/// one place a show's folder is named: organizing, imports and the scan's misplaced-file check
+/// all come here, so they cannot disagree about it.
 fn apply_tv_naming_pattern(
     pattern: &str,
     show_name: &str,
+    show_year: Option<i32>,
     season: i32,
     episode: i32,
     episode_title: Option<&str>,
     ext: &str,
 ) -> PathBuf {
-    let mut out = pattern.to_string();
-    out = out.replace("{show}", &sanitize_for_filename(show_name));
+    let show_year = show_year.filter(|year| *year > 0);
+    let mut out = fill_year_token(pattern, show_year);
+    let show = sanitize_for_filename(show_name);
+    // A provider name that already ends in the year ("Doctor Who (2005)") is not given it twice.
+    if let Some(year) = show_year {
+        let suffix = format!(" ({year})");
+        if let Some(plain) = show.strip_suffix(&suffix) {
+            out = out.replace(&format!("{{show}}{suffix}"), &format!("{plain}{suffix}"));
+        }
+    }
+    out = out.replace("{show}", &show);
     out = out.replace(
         "{title}",
         &sanitize_for_filename(
@@ -17075,6 +17003,8 @@ enum TargetFacts {
     },
     Episode {
         show_name: String,
+        /// The show's first-aired year, for `{year}` in a TV pattern.
+        show_year: Option<i32>,
         season: i32,
         episode: i32,
         title: Option<String>,
@@ -17112,12 +17042,14 @@ impl TargetFacts {
             }
             Self::Episode {
                 show_name,
+                show_year,
                 season,
                 episode,
                 title,
             } => apply_tv_naming_pattern(
                 naming_pattern,
                 show_name,
+                *show_year,
                 *season,
                 *episode,
                 title.as_deref(),
@@ -17198,49 +17130,6 @@ fn apply_audiobook_naming_pattern(
     out = out.replace("{ext}", ext.trim_start_matches('.'));
     out = replace_number_token(out, "chapter", chapter_number);
     PathBuf::from(out)
-}
-
-fn derive_tv_dirs_from_pattern(
-    library_path: &str,
-    naming_pattern: &str,
-    show_name: &str,
-    season: i32,
-    show_year: Option<i32>,
-) -> Result<(PathBuf, PathBuf)> {
-    validate_relative_library_path(Path::new(naming_pattern))?;
-    let safe_show = show_year
-        .map(|year| format!("{} ({})", sanitize_for_filename(show_name), year))
-        .unwrap_or_else(|| sanitize_for_filename(show_name));
-
-    let relative = apply_tv_naming_pattern(
-        naming_pattern,
-        &safe_show,
-        season,
-        1,
-        Some("Episode"),
-        "mkv",
-    );
-    validate_relative_library_path(&relative)?;
-    let root = Path::new(library_path);
-    let absolute = root.join(relative);
-    checked_library_path(root, &absolute)?;
-
-    let season_dir = absolute
-        .parent()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(library_path));
-    let show_dir = season_dir
-        .parent()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(library_path));
-
-    // A flat/custom layout can have fewer than two directory levels.
-    let show_dir = if show_dir.starts_with(root) {
-        show_dir
-    } else {
-        root.to_path_buf()
-    };
-    Ok((show_dir, season_dir))
 }
 
 /// Patterns and their expansions are always relative names, on every host platform.
@@ -18462,28 +18351,6 @@ mod tests {
         assert!(!LibraryScanService::media_file_version_changed(
             10, None, 10, None,
         ));
-    }
-
-    #[test]
-    fn tv_protected_paths_do_not_include_stale_season_like_folders() -> anyhow::Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let root = temp_dir.path();
-        let stale_season = root.join("Example Show").join("Season 99");
-        fs::create_dir_all(&stale_season)?;
-
-        let shows = vec![("Example Show".to_string(), None, None, vec![1])];
-        let protected = LibraryScanService::build_tv_protected_paths_from_rows(
-            &root.to_string_lossy(),
-            "{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}",
-            &shows,
-        )?;
-
-        assert!(protected.contains(&root.to_path_buf()));
-        assert!(protected.contains(&root.join("Example Show")));
-        assert!(protected.contains(&root.join("Example Show").join("Season 01")));
-        assert!(!protected.contains(&stale_season));
-
-        Ok(())
     }
 
     #[tokio::test]
@@ -20593,6 +20460,7 @@ mod library_path_safety_tests {
             apply_tv_naming_pattern(
                 "../{show}/{title}.{ext}",
                 "Show",
+                None,
                 1,
                 1,
                 Some("Title"),
@@ -20621,16 +20489,10 @@ mod library_path_safety_tests {
         ] {
             assert!(validate_relative_library_path(&relative).is_err());
         }
-        let (show, season) = derive_tv_dirs_from_pattern(
-            &temp.path().to_string_lossy(),
-            "{show}.{ext}",
-            "Show",
-            1,
-            None,
-        )
-        .unwrap();
-        assert_eq!(show, temp.path());
-        assert_eq!(season, temp.path());
+        // A flat layout puts episodes straight into the library root.
+        let flat = apply_tv_naming_pattern("{show}.{ext}", "Show", None, 1, 1, None, "mkv");
+        validate_relative_library_path(&flat).unwrap();
+        assert_eq!(flat.parent(), Some(Path::new("")));
     }
 
     #[tokio::test]
