@@ -121,6 +121,32 @@ describe("audio reliability", () => {
     expect(engine.flush).toHaveBeenCalledWith(true);
   });
 
+  it("stops a lone chapter at its end and moves to the next entry instead of running into the next chapter", async () => {
+    attach();
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    const chapter = { mediaFileId: "book", title: "Book", subtitle: "Chapter 2", entity: { kind: "chapter" as const, id: "c2" }, audiobookId: "b", startPosition: 600, endPosition: 1200 };
+    playerStore.playQueue([chapter, queue[1]!]);
+    const view = await renderWithProviders(<PlayerDock />);
+    const audio = view.container.querySelector("audio")!;
+    Object.defineProperty(audio, "currentTime", { configurable: true, writable: true, value: 1100 });
+    fireEvent.timeUpdate(audio);
+    expect(playerStore.getSnapshot().index).toBe(0);
+    audio.currentTime = 1200.2;
+    fireEvent.timeUpdate(audio);
+    expect(playerStore.getSnapshot().index).toBe(1);
+    expect(playerStore.getSnapshot().queue[1]!.entity.id).toBe("b");
+  });
+
+  it("lets an entry without an end play to the end of its file", async () => {
+    attach();
+    playerStore.playQueue(queue);
+    const view = await renderWithProviders(<PlayerDock />);
+    const audio = view.container.querySelector("audio")!;
+    Object.defineProperty(audio, "currentTime", { configurable: true, writable: true, value: 170 });
+    fireEvent.timeUpdate(audio);
+    expect(playerStore.getSnapshot().index).toBe(0);
+  });
+
   it("shows a source error and retries with playing intent restored", async () => {
     engine.error = "The server could not prepare this file.";
     playerStore.playQueue(queue);
