@@ -12,6 +12,7 @@ use anyhow::{Context, Result};
 use tokio::process::Command;
 
 use super::identify_rules::{HeardWord, Pause, parse_pauses, parse_whisper_words};
+use super::library_storage::{TOOL_PROTOCOL_WHITELIST, is_tool_url, tool_argument};
 
 const LOCAL_CLI: &str = "./data/models/whisper-cli";
 const LOCAL_MODEL: &str = "./data/models/ggml-tiny.en.bin";
@@ -130,9 +131,17 @@ pub async fn cut_clip(
                 .arg("-ss")
                 .arg(format!("{:.3}", from - position))
                 .arg("-t")
-                .arg(format!("{:.3}", to - from))
-                .arg("-i")
-                .arg(path);
+                .arg(format!("{:.3}", to - from));
+            // A file on a share is read through a loopback URL, which ffmpeg must be allowed to open.
+            let input = tool_argument(path.as_str())
+                .await
+                .with_context(|| format!("Cannot give ffmpeg access to '{path}'"))?;
+            if is_tool_url(&input) {
+                command
+                    .arg("-protocol_whitelist")
+                    .arg(TOOL_PROTOCOL_WHITELIST);
+            }
+            command.arg("-i").arg(input);
             parts += 1;
         }
         position += duration;

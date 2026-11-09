@@ -9,6 +9,9 @@ use tokio::fs;
 
 use crate::services::graphql::auth::AuthExt;
 use crate::services::graphql::filesystem_network;
+use crate::services::library_storage::{
+    EntryKind, SmbLocation, StoragePath, is_smb_uri, library_storage,
+};
 use crate::{db::Database, services::manager::ServicesManager};
 
 /// Input for the legacy BrowseDirectory query.
@@ -123,6 +126,47 @@ pub struct LibraryPathAvailability {
     pub reconnect_succeeded: bool,
     #[graphql(name = "message")]
     pub message: Option<String>,
+}
+
+/// Whether a saved sign-in exists for a share, and for whom.
+#[derive(SimpleObject)]
+#[graphql(name = "ShareSignIn")]
+pub struct ShareSignIn {
+    /// The share's normalised `smb://host[:port]/share` address.
+    #[graphql(name = "share")]
+    pub share: String,
+    #[graphql(name = "saved")]
+    pub saved: bool,
+    #[graphql(name = "username")]
+    pub username: Option<String>,
+}
+
+/// What moving a library to a folder its files were copied to would find. Nothing is changed.
+#[derive(SimpleObject)]
+#[graphql(name = "LibraryMovePlan", rename_fields = "camelCase")]
+pub struct LibraryMovePlanGql {
+    /// The library's current folder.
+    pub old_path: String,
+    /// The new folder, as it would be saved.
+    pub new_path: String,
+    /// Files the library holds.
+    pub file_count: i32,
+    /// On the new folder with the same size.
+    pub matched: i32,
+    /// Not on the new folder at all.
+    pub missing: i32,
+    /// The first of them, as paths below the library's folder.
+    pub missing_files: Vec<String>,
+    /// On the new folder, but at a different size (a copy that did not finish).
+    pub changed: i32,
+    pub changed_files: Vec<String>,
+    /// Media files on the new folder that the library does not hold; the next scan finds them.
+    pub extra: i32,
+    pub extra_files: Vec<String>,
+    /// Why the move cannot go ahead at all.
+    pub blocked: Option<String>,
+    /// Every file is on the new folder at its size, and nothing blocks the move.
+    pub can_apply: bool,
 }
 
 fn format_size(bytes: u64) -> String {
@@ -285,6 +329,63 @@ impl FilesystemQueries {
         Ok(out)
     }
 
+    /// Whether a sign-in is saved for a share (`smb://host[:port]/share`), and its user name. The
+    /// password is never returned.
+    #[graphql(name = "shareSignIn")]
+    async fn share_sign_in(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "share")] share: String,
+    ) -> Result<ShareSignIn> {
+        ctx.require_admin()?;
+        let db = ctx.data::<Database>()?;
+        let services = ctx.data::<Arc<ServicesManager>>()?;
+        let location = SmbLocation::parse(&share)
+            .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+        let username = filesystem_network::saved_share_username(db, services, &location).await;
+        Ok(ShareSignIn {
+            share: location.share_root().to_uri(),
+            saved: username.is_some(),
+            username,
+        })
+    }
+
+    /// Compare a library's files with a folder they were copied to, before moving the library
+    /// there. Read only.
+    #[graphql(name = "libraryMovePlan")]
+    async fn library_move_plan(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "libraryId")] library_id: String,
+        #[graphql(name = "newPath")] new_path: String,
+    ) -> Result<LibraryMovePlanGql> {
+        ctx.require_admin()?;
+        let services = ctx.data::<Arc<ServicesManager>>()?;
+        let scan = services
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+        let plan = scan
+            .plan_library_move(&library_id, &new_path)
+            .await
+            .map_err(|error| async_graphql::Error::new(format!("{error:#}")))?;
+        let count = |value: usize| i32::try_from(value).unwrap_or(i32::MAX);
+        Ok(LibraryMovePlanGql {
+            can_apply: plan.is_complete(),
+            old_path: plan.old_path,
+            new_path: plan.new_path,
+            file_count: count(plan.file_count),
+            matched: count(plan.matched),
+            missing: count(plan.missing),
+            missing_files: plan.missing_files,
+            changed: count(plan.changed),
+            changed_files: plan.changed_files,
+            extra: count(plan.extra),
+            extra_files: plan.extra_files,
+            blocked: plan.blocked,
+        })
+    }
+
     /// Browse a directory on the server. Requires authentication.
     #[graphql(name = "browseDirectory")]
     async fn browse_directory(
@@ -297,6 +398,10 @@ impl FilesystemQueries {
         let path = input.as_ref().and_then(|i| i.path.as_deref());
         let dirs_only = input.as_ref().map(|i| i.dirs_only).unwrap_or(true);
         let show_hidden = input.as_ref().map(|i| i.show_hidden).unwrap_or(false);
+
+        if let Some(remote) = path.filter(|path| is_smb_uri(path)) {
+            return browse_share(remote, dirs_only, show_hidden).await;
+        }
 
         let requested_path = match path {
             Some(p) if !p.is_empty() => PathBuf::from(p),
@@ -401,6 +506,78 @@ impl FilesystemQueries {
             library_id: None,
         })
     }
+}
+
+/// Browse a folder on a share through the storage layer. The listing cannot climb above the
+/// share's root.
+async fn browse_share(
+    path: &str,
+    dirs_only: bool,
+    show_hidden: bool,
+) -> Result<BrowseDirectoryResult> {
+    let location =
+        SmbLocation::parse(path).map_err(|error| async_graphql::Error::new(error.to_string()))?;
+    let storage = library_storage();
+    // A folder that is not there (a library typed ahead of its folder) shows the nearest one that is.
+    let mut here = location.storage_path();
+    let listing = loop {
+        match storage.list_dir(&here).await {
+            Ok(listing) => break listing,
+            Err(error) if error.is_not_found() && here.parent().is_some() => {
+                here = here.parent().expect("checked above");
+            }
+            Err(error) => {
+                return Err(async_graphql::Error::new(format!(
+                    "Cannot read directory: {error}"
+                )));
+            }
+        }
+    };
+    let mut entries = Vec::new();
+    for entry in listing {
+        let is_dir = entry.kind == EntryKind::Directory;
+        if (dirs_only && !is_dir) || (!show_hidden && entry.name.starts_with('.')) {
+            continue;
+        }
+        let size = if is_dir {
+            0
+        } else {
+            entry.meta.as_ref().map_or(0, |meta| meta.size)
+        };
+        let modified_at = entry
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.modified)
+            .map(|time| chrono::DateTime::<chrono::Utc>::from(time).to_rfc3339());
+        entries.push(BrowseDirectoryEntry {
+            path: here.join(&entry.name).into_string(),
+            name: entry.name,
+            is_dir,
+            size,
+            size_formatted: format_size(size),
+            readable: true,
+            writable: is_dir,
+            mime_type: None,
+            modified_at,
+        });
+    }
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+    let share_root = StoragePath::new(location.share_root().to_uri());
+    Ok(BrowseDirectoryResult {
+        current_path: here.as_str().to_string(),
+        parent_path: here.parent().map(StoragePath::into_string),
+        entries,
+        quick_paths: vec![BrowseQuickPath {
+            name: format!("{} (share)", location.share),
+            path: share_root.into_string(),
+        }],
+        is_library_path: false,
+        library_id: None,
+    })
 }
 
 #[cfg(windows)]

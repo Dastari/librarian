@@ -10,3 +10,4 @@ pub mod artwork;
 pub mod auth_guard;
 pub mod health;
 pub mod media;
+pub mod tool;

@@ -40,6 +40,8 @@ pub async fn build_app(state: AppState) -> Router<()> {
     let app = Router::new()
         .nest("/api", api)
         .merge(GraphqlService::router())
+        // Read by tools on this machine only (loopback peer, one-file token); no login.
+        .merge(crate::api::tool::router())
         .layer(cors_layer(&state.config))
         .layer(
             TraceLayer::new_for_http().make_span_with(|request: &Request<axum::body::Body>| {

@@ -54,9 +54,10 @@ impl LibraryScanService {
         let mut summary = ProviderFallbackSummary::default();
         let mut sizes = Vec::with_capacity(pending.len());
         for item in pending {
-            let size = tokio::fs::metadata(&item.media_path)
+            let size = library_storage()
+                .stat(&item.media_path)
                 .await
-                .map_or(0, |metadata| metadata.len() as i64);
+                .map_or(0, |meta| meta.size as i64);
             sizes.push((item.media_path.clone(), item.media_path.clone(), size, true));
         }
         // Read from the files rather than stored analysis, which may not have run yet.
@@ -176,9 +177,10 @@ impl LibraryScanService {
         media_path: &str,
         match_source: &str,
     ) -> Result<Option<MatchResult>> {
-        let size = tokio::fs::metadata(media_path)
+        let size = library_storage()
+            .stat(media_path)
             .await
-            .map_or(0, |metadata| metadata.len() as i64);
+            .map_or(0, |meta| meta.size as i64);
         let mut members = self
             .release_file_facts(vec![(
                 media_path.to_string(),

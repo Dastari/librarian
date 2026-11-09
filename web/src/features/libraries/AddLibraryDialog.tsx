@@ -10,12 +10,12 @@ import { useSession } from "@/lib/auth/useSession";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { LIBRARY_TYPE_OPTIONS } from "@/lib/library-types";
 
-import { FolderField } from "./FolderField";
+import { LibraryLocationField } from "./LibraryLocationField";
 
 const schema = z.object({
   name: z.string().trim().min(1, "Give the library a name").max(80),
   libraryType: z.string().min(1, "Choose a type"),
-  path: z.string().trim().min(1, "Choose the folder"),
+  path: z.string().trim().min(1, "Choose the folder, or the server and share"),
   autoScan: z.boolean(),
   autoOrganize: z.boolean(),
 });
@@ -65,7 +65,7 @@ export function AddLibraryDialog({ open, onOpenChange, onCreated }: { open: bool
         <form noValidate className="flex flex-col gap-3" onSubmit={(event) => { event.preventDefault(); void form.handleSubmit(); }}>
           <form.AppField name="name">{(field) => <field.TextField label="Name" placeholder="Movies" required />}</form.AppField>
           <form.AppField name="libraryType">{(field) => <field.SelectField label="Type" options={TYPE_OPTIONS} required />}</form.AppField>
-          <form.AppField name="path">{() => <FolderField placeholder="/data/media/Movies" required />}</form.AppField>
+          <form.AppField name="path">{() => <LibraryLocationField localPlaceholder="/data/media/Movies" required />}</form.AppField>
           <form.AppField name="autoScan">{(field) => <field.SwitchRow label="Scan on a schedule" description="Look for new, changed and missing files automatically." />}</form.AppField>
           <form.AppField name="autoOrganize">{(field) => <field.SwitchRow label="Organize files" description="Rename and move matched files into the naming pattern." />}</form.AppField>
         </form>

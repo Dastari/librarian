@@ -260,6 +260,27 @@ async fn async_main() -> anyhow::Result<()> {
 
     if let Some(db_service) = services.get_database().await {
         let db = db_service.pool().clone();
+        // A library on a network share connects itself, with its saved sign-in, on first use.
+        crate::services::library_storage::library_storage().install_share_provider(Arc::new(
+            crate::services::graphql::filesystem_network::NetworkShareProvider::new(
+                db.clone(),
+                services.clone(),
+            ),
+        ));
+        // Tools read files on a share through a URL on this server (see `services::tool_url`).
+        let bind = config
+            .host
+            .as_deref()
+            .map(str::trim)
+            .and_then(|host| host.parse::<std::net::IpAddr>().ok())
+            .unwrap_or(std::net::IpAddr::from([0, 0, 0, 0]));
+        crate::services::tool_url::tool_urls().configure(bind, config.port);
+        crate::services::library_storage::library_storage()
+            .install_tool_url_issuer(Arc::new(crate::services::tool_url::GlobalToolUrls));
+        // A move that a stopped server left half done is finished before anything scans.
+        if let Some(scan) = services.get_library_scan().await {
+            tokio::spawn(async move { scan.resume_library_moves().await });
+        }
         let services_for_reconnect = services.clone();
         tokio::spawn(async move {
             tracing::info!("Starting background reconnect for saved network paths");

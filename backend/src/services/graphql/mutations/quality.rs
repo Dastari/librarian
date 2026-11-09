@@ -503,6 +503,11 @@ async fn verify_upgrade_plan(
         anyhow::bail!("Upgrade pending source does not identify the current library target");
     }
     verify_target_owner(db, &file, &library).await?;
+    if crate::services::library_scan::is_remote_path(Path::new(&library.path)) {
+        anyhow::bail!(
+            "Quality upgrades are not supported for libraries on a network share: the replacement is checked against local file identity"
+        );
+    }
     UpgradeFileProof::capture(Path::new(&file.path))?;
     let target = checked_library_path(Path::new(&library.path), Path::new(&file.path))?;
     let (source, source_torrent, source_file) =

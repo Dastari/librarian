@@ -14,6 +14,10 @@ use uuid::Uuid;
 
 use crate::db::Database;
 use crate::graphql::entities::{AppSetting, CreateAppSettingInput, UpdateAppSettingInput};
+use crate::services::library_storage::{
+    CredentialRef, ShareProvider, SmbCredentials, SmbLocation, SmbStorage, Storage, StorageError,
+    StorageErrorKind, StorageResult, library_storage,
+};
 use crate::services::manager::ServicesManager;
 
 const CONFIG_KEY_PREFIX: &str = "network_mount.";
@@ -278,11 +282,87 @@ pub async fn load_saved_network_configs(db: &Database) -> Result<Vec<StoredNetwo
         }
 
         if let Ok(cfg) = serde_json::from_str::<StoredNetworkPathConfig>(&setting.value) {
+            // A share Librarian reads itself has no mount to reconnect or report on.
+            if cfg.platform == NATIVE_SHARE_PLATFORM {
+                continue;
+            }
             out.push(cfg);
         }
     }
 
     Ok(out)
+}
+
+/// `platform` of a credential saved for a share Librarian reads itself (an `smb://` library
+/// root), as opposed to a mount the operating system makes. Such entries share the encrypted
+/// credential store but are never mounted, reconnected or listed as network paths.
+pub const NATIVE_SHARE_PLATFORM: &str = "smb-native";
+
+/// A saved sign-in for a share. The password is never shown by `Debug`.
+#[derive(Clone)]
+pub struct ShareCredentials {
+    pub username: String,
+    pub password: String,
+}
+
+impl std::fmt::Debug for ShareCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ShareCredentials")
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .finish()
+    }
+}
+
+/// The settings key a share's sign-in is stored under.
+pub fn share_credential_key(share: &CredentialRef) -> String {
+    normalize_path_key(share.as_str())
+}
+
+/// Save (or replace) the sign-in for a share, encrypted with the same key as network-path
+/// passwords. One sign-in per share: every library on the share finds it.
+pub async fn save_share_credentials(
+    db: &Database,
+    services: &Arc<ServicesManager>,
+    share: &CredentialRef,
+    username: &str,
+    password: &str,
+) -> Result<()> {
+    let password_encrypted = get_password_cipher(services, Some(password)).await?;
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    let created_at = match find_config_for_target(db, share.as_str()).await? {
+        Some(existing) => existing.created_at,
+        None => now.clone(),
+    };
+    upsert_network_config(
+        db,
+        &StoredNetworkPathConfig {
+            target_path: share.as_str().to_string(),
+            remote_path: share.as_str().to_string(),
+            username: Some(username.trim().to_string()).filter(|name| !name.is_empty()),
+            password_encrypted,
+            platform: NATIVE_SHARE_PLATFORM.to_string(),
+            created_at,
+            updated_at: now,
+        },
+    )
+    .await
+}
+
+/// The saved sign-in for a share, or `None` when none was saved (a guest share).
+pub async fn load_share_credentials(
+    db: &Database,
+    services: &Arc<ServicesManager>,
+    share: &CredentialRef,
+) -> Result<Option<ShareCredentials>> {
+    let Some(cfg) = find_config_for_target(db, share.as_str()).await? else {
+        return Ok(None);
+    };
+    let password = decrypt_password_cipher(services, cfg.password_encrypted.as_deref()).await?;
+    Ok(Some(ShareCredentials {
+        username: cfg.username.unwrap_or_default(),
+        password: password.unwrap_or_default(),
+    }))
 }
 
 async fn find_config_for_target(
@@ -588,6 +668,33 @@ pub async fn check_path_availability(
         };
     }
 
+    // A folder on a share is asked of the share itself; there is no mount to reconnect.
+    if crate::services::library_storage::is_smb_uri(&path) {
+        let answer = library_storage().stat(&path).await;
+        return match answer {
+            Ok(meta) => PathAvailability {
+                path,
+                reachable: true,
+                exists: true,
+                is_directory: meta.is_dir(),
+                needs_reconnect: false,
+                reconnect_attempted: false,
+                reconnect_succeeded: false,
+                message: None,
+            },
+            Err(error) => PathAvailability {
+                path,
+                reachable: error.kind() != StorageErrorKind::Unavailable,
+                exists: false,
+                is_directory: false,
+                needs_reconnect: false,
+                reconnect_attempted: false,
+                reconnect_succeeded: false,
+                message: Some(error.to_string()),
+            },
+        };
+    }
+
     let metadata = fs::metadata(&path).await;
     if let Ok(md) = metadata {
         return PathAvailability {
@@ -689,5 +796,179 @@ pub async fn reconnect_saved_network_paths(db: &Database, services: &Arc<Service
         } else {
             tracing::info!(path = %cfg.target_path, "Reconnected saved network path");
         }
+    }
+}
+
+/// Connects a share the first time a path on it is used, with the sign-in saved for it (none
+/// saved is a guest session).
+pub struct NetworkShareProvider {
+    db: Database,
+    services: Arc<ServicesManager>,
+}
+
+impl NetworkShareProvider {
+    pub fn new(db: Database, services: Arc<ServicesManager>) -> Self {
+        Self { db, services }
+    }
+}
+
+#[async_trait::async_trait]
+impl ShareProvider for NetworkShareProvider {
+    async fn connect(&self, share: &SmbLocation) -> StorageResult<Arc<dyn Storage>> {
+        let saved = load_share_credentials(&self.db, &self.services, &share.credential_ref())
+            .await
+            .map_err(|error| {
+                StorageError::new(
+                    StorageErrorKind::Unavailable,
+                    format!(
+                        "The saved sign-in for '{}' could not be read: {error}",
+                        share.credential_ref()
+                    ),
+                )
+            })?;
+        let credentials = saved.map_or_else(
+            || SmbCredentials {
+                username: String::new(),
+                password: String::new(),
+            },
+            |saved| SmbCredentials {
+                username: saved.username,
+                password: saved.password,
+            },
+        );
+        let storage = SmbStorage::new(share.clone(), credentials);
+        storage.check().await?;
+        Ok(Arc::new(storage))
+    }
+}
+
+/// What connecting to a share found.
+pub struct ShareConnection {
+    /// The share's normalised `smb://host[:port]/share` address.
+    pub share: String,
+    /// Folders at the top of the share.
+    pub folders: usize,
+}
+
+/// Sign in to a share with what was entered (or, for a blank entry, what is saved) and list its
+/// top level. With `save`, a sign-in that worked is kept, encrypted, for every library on the share.
+pub async fn connect_share(
+    db: &Database,
+    services: &Arc<ServicesManager>,
+    share: &SmbLocation,
+    username: &str,
+    password: &str,
+    save: bool,
+) -> StorageResult<ShareConnection> {
+    let share = share.share_root();
+    let reference = share.credential_ref();
+    let entered = !username.trim().is_empty() || !password.is_empty();
+    let credentials = if entered {
+        let mut password = password.to_string();
+        if password.is_empty()
+            && let Ok(Some(saved)) = load_share_credentials(db, services, &reference).await
+            && saved.username.eq_ignore_ascii_case(username.trim())
+        {
+            // A blank password for the saved user name means keep the saved password.
+            password = saved.password;
+        }
+        SmbCredentials {
+            username: username.trim().to_string(),
+            password,
+        }
+    } else {
+        match load_share_credentials(db, services, &reference).await {
+            Ok(Some(saved)) => SmbCredentials {
+                username: saved.username,
+                password: saved.password,
+            },
+            _ => SmbCredentials {
+                username: String::new(),
+                password: String::new(),
+            },
+        }
+    };
+    let storage = SmbStorage::new(share.clone(), credentials.clone());
+    storage.check().await?;
+    let folders = storage
+        .list_dir(&share.storage_path())
+        .await?
+        .into_iter()
+        .filter(|entry| entry.kind == crate::services::library_storage::EntryKind::Directory)
+        .count();
+    if save && entered {
+        save_share_credentials(
+            db,
+            services,
+            &reference,
+            &credentials.username,
+            &credentials.password,
+        )
+        .await
+        .map_err(|error| {
+            StorageError::new(
+                StorageErrorKind::Other,
+                format!("Connected, but the sign-in could not be saved: {error}"),
+            )
+        })?;
+        library_storage().forget_share(&share);
+    }
+    Ok(ShareConnection {
+        share: share.to_uri(),
+        folders,
+    })
+}
+
+/// The user name saved for a share, if a sign-in is saved.
+pub async fn saved_share_username(
+    db: &Database,
+    services: &Arc<ServicesManager>,
+    share: &SmbLocation,
+) -> Option<String> {
+    load_share_credentials(db, services, &share.credential_ref())
+        .await
+        .ok()
+        .flatten()
+        .map(|saved| saved.username)
+}
+
+#[cfg(test)]
+mod share_credential_tests {
+    use super::*;
+    use crate::services::library_storage::StorageLocation;
+
+    #[test]
+    fn a_share_is_stored_under_the_key_the_network_path_store_derives_from_its_address() {
+        let share = StorageLocation::parse("smb://TrueNAS.localdomain/Media/Movies")
+            .unwrap()
+            .credential_ref()
+            .unwrap();
+        assert_eq!(
+            share_credential_key(&share),
+            normalize_path_key("smb://truenas.localdomain/media")
+        );
+        assert!(share_credential_key(&share).starts_with(CONFIG_KEY_PREFIX));
+    }
+
+    #[test]
+    fn libraries_on_one_share_use_one_key_and_other_shares_another() {
+        let movies = StorageLocation::parse("smb://nas/media/Movies").unwrap();
+        let music = StorageLocation::parse("smb://nas/media/Music").unwrap();
+        let backups = StorageLocation::parse("smb://nas/backups").unwrap();
+        let key =
+            |location: &StorageLocation| share_credential_key(&location.credential_ref().unwrap());
+        assert_eq!(key(&movies), key(&music));
+        assert_ne!(key(&movies), key(&backups));
+    }
+
+    #[test]
+    fn debug_output_never_contains_the_password() {
+        let credentials = ShareCredentials {
+            username: "toby".to_string(),
+            password: "correct horse battery staple".to_string(),
+        };
+        let shown = format!("{credentials:?}");
+        assert!(shown.contains("toby"));
+        assert!(!shown.contains("correct horse"));
     }
 }

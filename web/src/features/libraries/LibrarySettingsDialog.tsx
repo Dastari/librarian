@@ -22,13 +22,14 @@ import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { withoutAction } from "@/lib/actions/withoutAction";
 
 import { FilesBrowser } from "./browser/FilesBrowser";
-import { FolderField } from "./FolderField";
+import { LibraryLocationField } from "./LibraryLocationField";
 import { libraryIdentityProps } from "./LibraryIdentity";
+import { MoveLibraryPanel } from "./MoveLibraryPanel";
 import { previewNamingPattern } from "./namingPreview";
 import { ScansPanel } from "./ScansPanel";
 import { useLibraryActions } from "./useLibraryActions";
 
-export const LIBRARY_SETTINGS_TABS = ["general", "scanning", "organization", "files", "issues", "history", "remove"] as const;
+export const LIBRARY_SETTINGS_TABS = ["general", "scanning", "organization", "files", "issues", "history", "move", "remove"] as const;
 export type LibrarySettingsTab = (typeof LIBRARY_SETTINGS_TABS)[number];
 export const isLibrarySettingsTab = (value: string | null): value is LibrarySettingsTab => LIBRARY_SETTINGS_TABS.includes(value as LibrarySettingsTab);
 /** What someone who can't change a library can still look at. */
@@ -36,7 +37,7 @@ const READ_ONLY_TABS: readonly LibrarySettingsTab[] = ["files", "issues", "histo
 
 const schema = z.object({
   name: z.string().trim().min(1, "Give the library a name").max(80),
-  path: z.string().trim().min(1, "Choose the folder that holds the media"),
+  path: z.string().trim().min(1, "Choose the folder that holds the media, or the server and share"),
   autoScan: z.boolean(),
   scanIntervalMinutes: z.number().int().min(5, "At least 5 minutes").max(10080, "At most a week"),
   watchForChanges: z.boolean(),
@@ -93,7 +94,7 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosen
   useEffect(() => { if (open) form.reset(valuesOf(library)); }, [open, library.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const actions = useLibraryActions<LibraryFieldsFragment>({ settings: (_, next) => onTabChange(next ?? "general"), open: false });
-  const headerActions = useMemo(() => withoutAction(actions, "settings", "remove"), [actions]);
+  const headerActions = useMemo(() => withoutAction(actions, "settings", "move", "remove"), [actions]);
   const onDelete = async () => {
     try {
       const { data } = await remove({ variables: { id: library.id } });
@@ -117,7 +118,7 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosen
       content: (
         <div className="flex flex-col gap-3">
           <form.AppField name="name">{(field) => <field.TextField label="Name" required />}</form.AppField>
-          <form.AppField name="path">{() => <FolderField required />}</form.AppField>
+          <form.AppField name="path">{() => <LibraryLocationField required />}</form.AppField>
           <form.AppField name="qualityProfileId">{(field) => <field.SelectField label="Quality profile" options={profileOptions} />}</form.AppField>
         </div>
       ),
@@ -159,6 +160,10 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosen
     {
       value: "history", label: "Scan history", icon: <IconHistory />,
       content: tab === "history" ? <ScansPanel libraryId={library.id} section="history" scanRunId={null} onScanRunChange={setScanRunId} onShowIssues={(id) => { setScanRunId(id); onTabChange("issues"); }} /> : null,
+    },
+    {
+      value: "move", label: "Move", icon: <IconFolder />,
+      content: tab === "move" ? <MoveLibraryPanel library={library} /> : null,
     },
     {
       value: "remove", label: "Remove", icon: <IconTrash />,
