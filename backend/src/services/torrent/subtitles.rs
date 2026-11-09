@@ -24,9 +24,15 @@ const LANGUAGES: &[(&[&str], &str)] = &[
     (&["en", "eng", "english"], "English"),
     (&["fr", "fre", "fra", "french", "francais"], "French"),
     (&["de", "ger", "deu", "german", "deutsch"], "German"),
-    (&["es", "spa", "spanish", "espanol", "castellano"], "Spanish"),
+    (
+        &["es", "spa", "spanish", "espanol", "castellano"],
+        "Spanish",
+    ),
     (&["it", "ita", "italian", "italiano"], "Italian"),
-    (&["pt", "por", "portuguese", "portugues", "brazilian", "ptbr"], "Portuguese"),
+    (
+        &["pt", "por", "portuguese", "portugues", "brazilian", "ptbr"],
+        "Portuguese",
+    ),
     (&["nl", "dut", "nld", "dutch", "nederlands"], "Dutch"),
     (&["sv", "swe", "swedish", "svenska"], "Swedish"),
     (&["no", "nor", "nob", "norwegian", "norsk"], "Norwegian"),
@@ -36,7 +42,10 @@ const LANGUAGES: &[(&[&str], &str)] = &[
     (&["ru", "rus", "russian"], "Russian"),
     (&["ja", "jpn", "japanese"], "Japanese"),
     (&["ko", "kor", "korean"], "Korean"),
-    (&["zh", "chi", "zho", "chinese", "chs", "cht", "mandarin"], "Chinese"),
+    (
+        &["zh", "chi", "zho", "chinese", "chs", "cht", "mandarin"],
+        "Chinese",
+    ),
     (&["ar", "ara", "arabic"], "Arabic"),
     (&["he", "heb", "hebrew"], "Hebrew"),
     (&["tr", "tur", "turkish"], "Turkish"),
@@ -182,7 +191,10 @@ pub fn owner_video(subtitle: &ContentFile, videos: &[&ContentFile]) -> Option<us
         }
     }
     // `Movie/Subs/2_English.srt`: a subtitles folder whose parent holds exactly one video.
-    if let Some(position) = sub_folders.iter().rposition(|folder| is_subs_folder(folder)) {
+    if let Some(position) = sub_folders
+        .iter()
+        .rposition(|folder| is_subs_folder(folder))
+    {
         let base = &sub_folders[..position];
         let beside: Vec<usize> = videos
             .iter()
@@ -214,8 +226,7 @@ pub fn link_subtitles(files: &mut [ContentFile]) {
         if file.language.is_none() {
             file.language = subtitle_language(&file.path);
         }
-        file.belongs_to =
-            owner_video(file, &video_refs).map(|position| video_refs[position].index);
+        file.belongs_to = owner_video(file, &video_refs).map(|position| video_refs[position].index);
     }
     // A VobSub pair goes together: an `.idx` without an owner takes its `.sub`'s, and back.
     let mut by_stem: HashMap<String, Option<usize>> = HashMap::new();

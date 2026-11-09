@@ -219,7 +219,10 @@ fn trackers_with_a_passkey_are_never_kept() {
         "udp://open.tracker.example:6969/announce".to_string(),
         "javascript:alert(1)".to_string(),
     ]);
-    assert_eq!(kept, vec!["udp://open.tracker.example:6969/announce".to_string()]);
+    assert_eq!(
+        kept,
+        vec!["udp://open.tracker.example:6969/announce".to_string()]
+    );
     // A private torrent's announce (with its passkey) is not read at all.
     let private = parse_torrent_file(&fixture("babylon5_s01_private.torrent")).unwrap();
     assert!(private.trackers.is_empty());
@@ -232,9 +235,14 @@ fn a_magnet_is_built_from_the_hash_name_and_trackers() {
         "Queen - A Night at the Opera",
         &["udp://tracker.example:1337/announce".to_string()],
     );
-    assert!(magnet.starts_with("magnet:?xt=urn:btih:963a21807274bb8202c9546a88322f032b84520e&dn=Queen"));
+    assert!(
+        magnet.starts_with("magnet:?xt=urn:btih:963a21807274bb8202c9546a88322f032b84520e&dn=Queen")
+    );
     let parsed = librqbit::Magnet::parse(&magnet).unwrap();
-    assert_eq!(parsed.trackers, vec!["udp://tracker.example:1337/announce".to_string()]);
+    assert_eq!(
+        parsed.trackers,
+        vec!["udp://tracker.example:1337/announce".to_string()]
+    );
     assert_eq!(
         parsed.as_id20().unwrap().as_string(),
         "963a21807274bb8202c9546a88322f032b84520e"
@@ -290,7 +298,10 @@ async fn a_grab_finds_the_kept_torrent_and_keeps_a_magnet_for_restoring() {
     .await
     .expect("a kept torrent needs no peer");
     assert!(started.elapsed() < Duration::from_secs(5));
-    assert_eq!(parse_torrent_file(&listed).unwrap().info_hash, public.info_hash);
+    assert_eq!(
+        parse_torrent_file(&listed).unwrap().info_hash,
+        public.info_hash
+    );
     session.stop().await;
 
     // A magnet release keeps its own magnet on the row, and its trackers go into the file.

@@ -1374,11 +1374,14 @@ async fn evaluate_artist(
         } else {
             covers.len()
         };
-        let Some(scored) =
-            profile::filter_and_rank(artist_title, vec![release.clone()], quality, count.max(1) as i32)
-                .into_iter()
-                .next()
-        else {
+        let Some(scored) = profile::filter_and_rank(
+            artist_title,
+            vec![release.clone()],
+            quality,
+            count.max(1) as i32,
+        )
+        .into_iter()
+        .next() else {
             continue;
         };
         options.push(MusicOption {
@@ -1587,7 +1590,7 @@ async fn look_up_artist(
         }
     }
     for (index, candidate) in track_searches.iter().take(MAX_TRACK_SEARCHES * 4) {
-        searches.push(Search::Track(*index, *candidate));
+        searches.push(Search::Track(*index, candidate));
     }
 
     let mut inspected: HashMap<String, Inspection> = HashMap::new();
@@ -1612,11 +1615,11 @@ async fn look_up_artist(
             Search::Discography(candidate) => candidate,
             Search::Album(index, candidate) => {
                 let album = &albums[*index];
-                let open = evaluation
-                    .plan
-                    .uncovered
-                    .iter()
-                    .any(|item| missing.get(*item).is_some_and(|track| &track.album == album));
+                let open = evaluation.plan.uncovered.iter().any(|item| {
+                    missing
+                        .get(*item)
+                        .is_some_and(|track| &track.album == album)
+                });
                 if !open {
                     continue;
                 }
@@ -1714,9 +1717,7 @@ async fn look_up_artist(
             MusicClaim::Album(_) => whole_albums += 1,
             _ => singles += 1,
         }
-        let contents = inspected
-            .get(&release.guid)
-            .and_then(Inspection::contents);
+        let contents = inspected.get(&release.guid).and_then(Inspection::contents);
         // Exactly the files for what this release adds, when its files were read.
         let (file_indices, selected_size) = match contents {
             Some(contents) => {
@@ -1733,7 +1734,9 @@ async fn look_up_artist(
             None => (Vec::new(), None),
         };
         let kind = release_kind(&option.claim, &release.title);
-        let total = release.size.or(contents.map(|contents| contents.total_size));
+        let total = release
+            .size
+            .or(contents.map(|contents| contents.total_size));
         // Whether the grab takes only part of the release.
         let partial = match (contents, &option.claim) {
             (Some(_), _) => selected_size.is_some(),
@@ -1774,7 +1777,11 @@ async fn look_up_artist(
         if let Some(feed) = feeds.get(&release.guid) {
             reasons.push(format!("Already listed by feed '{feed}': no search needed"));
         }
-        reasons.push(format!("Adds {} of {} missing tracks", adds.len(), missing.len()));
+        reasons.push(format!(
+            "Adds {} of {} missing tracks",
+            adds.len(),
+            missing.len()
+        ));
         let adds_albums = albums_of(&missing, adds);
         let label = match &option.claim {
             MusicClaim::Discography => format!("{artist} discography"),
@@ -1800,7 +1807,10 @@ async fn look_up_artist(
                 source_name: release.source_name.clone(),
                 file_indices,
             }),
-            covers_ids: adds.iter().map(|index| missing[*index].id.clone()).collect(),
+            covers_ids: adds
+                .iter()
+                .map(|index| missing[*index].id.clone())
+                .collect(),
             covers_count: adds.len() as i32,
             missing_count: missing.len() as i32,
             covers_albums: adds_albums,
@@ -2351,7 +2361,8 @@ pub async fn look_up(
     let mut album_ids: Vec<&String> = albums.keys().collect();
     album_ids.sort();
     for album_id in album_ids {
-        let Ok(Some(album)) = crate::graphql::entities::Album::get(db.pool(), album_id).await else {
+        let Ok(Some(album)) = crate::graphql::entities::Album::get(db.pool(), album_id).await
+        else {
             continue;
         };
         artists
@@ -2378,8 +2389,7 @@ pub async fn look_up(
         let Some(owner) = library_owner(&db, &mut owners, &library_id).await else {
             continue;
         };
-        let artist_name = match crate::graphql::entities::Artist::get(db.pool(), &artist_id).await
-        {
+        let artist_name = match crate::graphql::entities::Artist::get(db.pool(), &artist_id).await {
             Ok(Some(artist)) => artist.name,
             _ => match &first.match_title {
                 WantedTitle::Music { artist, .. } => artist.clone(),

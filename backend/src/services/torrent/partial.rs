@@ -180,8 +180,7 @@ pub fn select_wanted_files(names: &[String], wanted: &WantedFiles) -> Option<Vec
         .map(|index| super::subtitles::pair_key(&names[*index]))
         .collect();
     for (index, name) in names.iter().enumerate() {
-        if super::subtitles::is_subtitle(name)
-            && pairs.contains(&super::subtitles::pair_key(name))
+        if super::subtitles::is_subtitle(name) && pairs.contains(&super::subtitles::pair_key(name))
         {
             chosen.insert(index);
         }

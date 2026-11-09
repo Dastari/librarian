@@ -1150,12 +1150,7 @@ async fn discover_movie_candidates(
             movie.digital_release_date.as_deref(),
             movie.physical_release_date.as_deref(),
         );
-        let timing = movie_timing(
-            movie.release_date.as_deref(),
-            home_release,
-            now,
-            settings,
-        );
+        let timing = movie_timing(movie.release_date.as_deref(), home_release, now, settings);
         if not_yet(timing) {
             continue;
         }

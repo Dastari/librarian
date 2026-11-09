@@ -24,7 +24,12 @@ fn queen() -> (Vec<String>, Vec<MissingTrack>) {
     ];
     let missing = vec![
         track("opera", "A Night at the Opera", 1, "Death on Two Legs"),
-        track("opera", "A Night at the Opera", 2, "Lazing on a Sunday Afternoon"),
+        track(
+            "opera",
+            "A Night at the Opera",
+            2,
+            "Lazing on a Sunday Afternoon",
+        ),
         track("opera", "A Night at the Opera", 11, "Bohemian Rhapsody"),
         track("news", "News of the World", 1, "We Will Rock You"),
     ];
@@ -67,7 +72,10 @@ fn claims_are_read_from_music_release_names() {
         Some(MusicClaim::Other)
     );
     // Another artist's release is not a claim at all.
-    assert_eq!(claim("Queens of the Stone Age - Songs for the Deaf (2002) [FLAC]"), None);
+    assert_eq!(
+        claim("Queens of the Stone Age - Songs for the Deaf (2002) [FLAC]"),
+        None
+    );
 }
 
 #[test]
@@ -98,12 +106,12 @@ fn a_single_track_comes_from_the_smallest_release_holding_it() {
     let (_, missing) = queen();
     // Three releases hold "We Will Rock You" and nothing else missing: the album it is on, a
     // compilation and the single. Equal health: the smallest wins.
-    let options = vec![
+    let options = [
         option(vec![3], 40, 600, 0),
         option(vec![3], 40, 900, 1),
         option(vec![3], 40, 8, 2),
     ];
-    let plan = plan_cover(missing.len(), &options[..]);
+    let plan = plan_cover(missing.len(), &options);
     assert_eq!(plan.releases.len(), 1);
     // `missing` has four entries but only index 3 is offered: the rest stay uncovered.
     assert_eq!(plan.releases[0].option, 2);
@@ -127,9 +135,18 @@ fn contents(paths: &[(&str, u64)]) -> Contents {
 #[test]
 fn a_single_track_grab_takes_only_that_tracks_files_from_an_album() {
     let album = contents(&[
-        ("Queen - News of the World (1977) [FLAC]/01 - We Will Rock You.flac", 8_000_000),
-        ("Queen - News of the World (1977) [FLAC]/02 - We Are the Champions.flac", 9_000_000),
-        ("Queen - News of the World (1977) [FLAC]/03 - Sheer Heart Attack.flac", 10_000_000),
+        (
+            "Queen - News of the World (1977) [FLAC]/01 - We Will Rock You.flac",
+            8_000_000,
+        ),
+        (
+            "Queen - News of the World (1977) [FLAC]/02 - We Are the Champions.flac",
+            9_000_000,
+        ),
+        (
+            "Queen - News of the World (1977) [FLAC]/03 - Sheer Heart Attack.flac",
+            10_000_000,
+        ),
         ("Queen - News of the World (1977) [FLAC]/cover.jpg", 50_000),
         ("folder.jpg", 10_000),
     ]);
@@ -152,7 +169,13 @@ fn a_single_track_grab_takes_only_that_tracks_files_from_an_album() {
         .map(|index| album.files[*index].size)
         .sum();
     assert_eq!(
-        download_note(1, Some(selected as i64), Some(album.total_size), "album", true),
+        download_note(
+            1,
+            Some(selected as i64),
+            Some(album.total_size),
+            "album",
+            true
+        ),
         "Downloads 1 track (8 MB) from a 27 MB album"
     );
 }
@@ -160,10 +183,22 @@ fn a_single_track_grab_takes_only_that_tracks_files_from_an_album() {
 #[test]
 fn a_discography_is_judged_album_by_album_where_track_numbers_repeat() {
     let pack = contents(&[
-        ("Queen Discography/1975 - A Night at the Opera/01 - Death on Two Legs.flac", 1),
-        ("Queen Discography/1975 - A Night at the Opera/11 - Bohemian Rhapsody.flac", 1),
-        ("Queen Discography/1977 - News of the World/01 - We Will Rock You.flac", 1),
-        ("Queen Discography/1977 - News of the World/02 - We Are the Champions.flac", 1),
+        (
+            "Queen Discography/1975 - A Night at the Opera/01 - Death on Two Legs.flac",
+            1,
+        ),
+        (
+            "Queen Discography/1975 - A Night at the Opera/11 - Bohemian Rhapsody.flac",
+            1,
+        ),
+        (
+            "Queen Discography/1977 - News of the World/01 - We Will Rock You.flac",
+            1,
+        ),
+        (
+            "Queen Discography/1977 - News of the World/02 - We Are the Champions.flac",
+            1,
+        ),
     ]);
     let (_, missing) = queen();
     let wanted: Vec<(String, i32, String)> = missing
@@ -174,12 +209,18 @@ fn a_discography_is_judged_album_by_album_where_track_numbers_repeat() {
     // "Lazing on a Sunday Afternoon" is not in the pack; track 1 of each album goes to its own.
     assert_eq!(verdict.covers, vec![0, 2, 3]);
     assert_eq!(verdict.files, vec![0, 1, 2]);
-    assert_eq!(verdict.note.as_deref(), Some("contains 3 of 4 missing tracks"));
+    assert_eq!(
+        verdict.note.as_deref(),
+        Some("contains 3 of 4 missing tracks")
+    );
 }
 
 #[test]
 fn a_compilation_holding_none_of_the_missing_tracks_is_turned_down() {
-    let pack = contents(&[("Queen - Greatest Hits/01 - Another One Bites the Dust.mp3", 1)]);
+    let pack = contents(&[(
+        "Queen - Greatest Hits/01 - Another One Bites the Dust.mp3",
+        1,
+    )]);
     let verdict = judge(
         &pack,
         &WantedItems::ArtistTracks {
@@ -203,8 +244,14 @@ fn download_lines_say_what_is_fetched() {
         download_note(1, None, Some(600_000_000), "album", false),
         "Downloads the whole 600 MB album for 1 missing track"
     );
-    assert_eq!(release_kind(&MusicClaim::Other, "Queen - Live Killers EP"), "EP");
-    assert_eq!(release_kind(&MusicClaim::Other, "Queen - Greatest Hits"), "compilation");
+    assert_eq!(
+        release_kind(&MusicClaim::Other, "Queen - Live Killers EP"),
+        "EP"
+    );
+    assert_eq!(
+        release_kind(&MusicClaim::Other, "Queen - Greatest Hits"),
+        "compilation"
+    );
 }
 
 #[test]

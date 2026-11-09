@@ -150,7 +150,8 @@ fn selection(contents: &Contents, chosen: &HashSet<usize>) -> Vec<usize> {
         .map(|file| super::subtitles::pair_key(&file.path))
         .collect();
     for file in &contents.files {
-        if file.kind == FileKind::Subtitle && pairs.contains(&super::subtitles::pair_key(&file.path))
+        if file.kind == FileKind::Subtitle
+            && pairs.contains(&super::subtitles::pair_key(&file.path))
         {
             out.insert(file.index);
         }
@@ -422,7 +423,8 @@ fn judge_artist_tracks(contents: &Contents, wanted: &[(String, i32, String)]) ->
         .collect();
     if main.is_empty() {
         // Archives: nothing can be said of which tracks it holds, so it covers nothing for sure.
-        verdict.reject = Some("its music is packed in archives, so its tracks can't be checked".to_string());
+        verdict.reject =
+            Some("its music is packed in archives, so its tracks can't be checked".to_string());
         return verdict;
     }
     let mut chosen: HashSet<usize> = HashSet::new();

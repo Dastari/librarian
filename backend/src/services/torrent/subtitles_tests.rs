@@ -92,11 +92,7 @@ fn a_season_pack_with_a_folder_per_episode_maps_each_subtitle_to_its_episode() {
     assert_eq!(owner(&pack, 3), Some(0));
     assert_eq!(owner(&pack, 4), Some(1));
     // Nothing can be said of a subtitle in a shared `Subs/` folder of a pack with no episode in it.
-    let shared = files(&[
-        "Pack/A.mkv",
-        "Pack/B.mkv",
-        "Pack/Subs/English.srt",
-    ]);
+    let shared = files(&["Pack/A.mkv", "Pack/B.mkv", "Pack/Subs/English.srt"]);
     assert_eq!(owner(&shared, 2), None);
 }
 
@@ -137,7 +133,11 @@ fn the_judge_selects_an_episode_with_its_subtitles_in_every_layout() {
     assert_eq!(verdict.files, vec![1, 3, 4, 5, 7, 8]);
     assert_eq!(
         verdict.subtitle_languages,
-        vec!["English".to_string(), "French".to_string(), "unknown".to_string()]
+        vec![
+            "English".to_string(),
+            "French".to_string(),
+            "unknown".to_string()
+        ]
     );
 }
 
@@ -184,10 +184,14 @@ fn a_selection_by_name_keeps_subtitles_in_every_layout() {
 
 #[test]
 fn a_track_pick_is_not_disturbed_by_subtitles() {
-    let names: Vec<String> = ["Album/01 - One.flac", "Album/02 - Two.flac", "Album/02 - Two.lrc"]
-        .iter()
-        .map(|name| name.to_string())
-        .collect();
+    let names: Vec<String> = [
+        "Album/01 - One.flac",
+        "Album/02 - Two.flac",
+        "Album/02 - Two.lrc",
+    ]
+    .iter()
+    .map(|name| name.to_string())
+    .collect();
     let wanted = WantedFiles {
         tracks: vec![(2, "Two".to_string())],
         ..Default::default()
@@ -203,8 +207,13 @@ fn languages_are_described_for_a_reason() {
         Some("Includes English subtitles")
     );
     assert_eq!(
-        describe_languages(&["English".into(), "French".into(), "German".into(), "Dutch".into()])
-            .as_deref(),
+        describe_languages(&[
+            "English".into(),
+            "French".into(),
+            "German".into(),
+            "Dutch".into()
+        ])
+        .as_deref(),
         Some("Includes English, French and 2 more subtitles")
     );
     assert_eq!(

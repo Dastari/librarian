@@ -483,17 +483,66 @@ mod tests {
             .with_timezone(&Utc);
         let aired = |hours: i64| Some(now - chrono::Duration::hours(hours));
         // An episode that aired three hours ago and has no release yet: quiet.
-        assert!(!opens_waiting(&Trigger::AirTime, false, Timing::Fresh, true, aired(3), now));
-        assert!(!opens_waiting(&Trigger::Sweep, false, Timing::Fresh, true, aired(23), now));
+        assert!(!opens_waiting(
+            &Trigger::AirTime,
+            false,
+            Timing::Fresh,
+            true,
+            aired(3),
+            now
+        ));
+        assert!(!opens_waiting(
+            &Trigger::Sweep,
+            false,
+            Timing::Fresh,
+            true,
+            aired(23),
+            now
+        ));
         // A day on with nothing: one notification.
-        assert!(opens_waiting(&Trigger::AirTime, false, Timing::Fresh, true, aired(25), now));
+        assert!(opens_waiting(
+            &Trigger::AirTime,
+            false,
+            Timing::Fresh,
+            true,
+            aired(25),
+            now
+        ));
         // A person searching is always told.
-        assert!(opens_waiting(&Trigger::Manual, false, Timing::Fresh, true, aired(1), now));
+        assert!(opens_waiting(
+            &Trigger::Manual,
+            false,
+            Timing::Fresh,
+            true,
+            aired(1),
+            now
+        ));
         // Back-catalogue episodes and single tracks never open one automatically.
-        assert!(!opens_waiting(&Trigger::Sweep, false, Timing::Back, true, None, now));
-        assert!(!opens_waiting(&Trigger::Sweep, true, Timing::Back, false, None, now));
+        assert!(!opens_waiting(
+            &Trigger::Sweep,
+            false,
+            Timing::Back,
+            true,
+            None,
+            now
+        ));
+        assert!(!opens_waiting(
+            &Trigger::Sweep,
+            true,
+            Timing::Back,
+            false,
+            None,
+            now
+        ));
         // A movie with no home release date keeps the old rule.
-        assert!(opens_waiting(&Trigger::Sweep, false, Timing::Back, false, None, now));
+        assert!(opens_waiting(
+            &Trigger::Sweep,
+            false,
+            Timing::Back,
+            false,
+            None,
+            now
+        ));
     }
 
     #[test]

@@ -60,9 +60,15 @@ fn says_discography(title: &str) -> bool {
             word.as_str(),
             "discography" | "discografia" | "discographie" | "diskografie" | "anthology"
         )
-    }) || words
-        .windows(2)
-        .any(|pair| matches!((pair[0].as_str(), pair[1].as_str()), ("complete", "albums") | ("studio", "albums") | ("all", "albums") | ("albums", "collection")))
+    }) || words.windows(2).any(|pair| {
+        matches!(
+            (pair[0].as_str(), pair[1].as_str()),
+            ("complete", "albums")
+                | ("studio", "albums")
+                | ("all", "albums")
+                | ("albums", "collection")
+        )
+    })
 }
 
 /// What a release's name claims, for an artist with these albums and missing tracks. `None` when it
@@ -86,7 +92,10 @@ pub fn music_claim(
     let Some(named) = facts.album.as_deref().filter(|named| !named.is_empty()) else {
         return Some(MusicClaim::Other);
     };
-    if let Some(index) = albums.iter().position(|album| same_album_title(album, named)) {
+    if let Some(index) = albums
+        .iter()
+        .position(|album| same_album_title(album, named))
+    {
         return Some(MusicClaim::Album(index));
     }
     // `Artist - Song Title (Single)`, `Artist - Song Title [WEB]`.
@@ -119,7 +128,11 @@ fn strip_single_words(named: &str) -> String {
 }
 
 /// The indexes of `missing` a claim covers by name alone.
-pub fn claimed_tracks(claim: &MusicClaim, albums: &[String], missing: &[MissingTrack]) -> Vec<usize> {
+pub fn claimed_tracks(
+    claim: &MusicClaim,
+    albums: &[String],
+    missing: &[MissingTrack],
+) -> Vec<usize> {
     match claim {
         MusicClaim::Album(index) => {
             let Some(album) = albums.get(*index) else {
@@ -147,9 +160,7 @@ pub fn release_kind(claim: &MusicClaim, title: &str) -> &'static str {
         _ if has("ep") => "EP",
         _ if has("single") => "single",
         MusicClaim::Tracks(_) => "single",
-        _ if has("compilation") || has("hits") || has("best") || has("collection") => {
-            "compilation"
-        }
+        _ if has("compilation") || has("hits") || has("best") || has("collection") => "compilation",
         _ => "release",
     }
 }

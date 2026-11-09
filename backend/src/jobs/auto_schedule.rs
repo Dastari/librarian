@@ -416,7 +416,12 @@ mod tests {
         assert_eq!(backoff(24 * 6), Duration::hours(6));
         // Back-catalogue and undated fresh targets keep their old backoffs.
         assert_eq!(
-            backoff_at(Timing::Back, Some(aired), aired + Duration::days(30), &settings),
+            backoff_at(
+                Timing::Back,
+                Some(aired),
+                aired + Duration::days(30),
+                &settings
+            ),
             Duration::minutes(360)
         );
         assert_eq!(
@@ -447,26 +452,51 @@ mod tests {
         assert_eq!(digital, Some(at("2026-11-10T00:00:00Z")));
         // In cinemas since October, but not out at home: not searched yet.
         assert!(matches!(
-            movie_timing(Some("2026-10-01"), digital, at("2026-11-09T12:00:00Z"), &settings),
+            movie_timing(
+                Some("2026-10-01"),
+                digital,
+                at("2026-11-09T12:00:00Z"),
+                &settings
+            ),
             Timing::NotYet { .. }
         ));
         // Out at home an hour and a minute: fresh, retried quickly.
         assert_eq!(
-            movie_timing(Some("2026-10-01"), digital, at("2026-11-10T01:01:00Z"), &settings),
+            movie_timing(
+                Some("2026-10-01"),
+                digital,
+                at("2026-11-10T01:01:00Z"),
+                &settings
+            ),
             Timing::Fresh
         );
         // Weeks later: the ordinary schedule.
         assert_eq!(
-            movie_timing(Some("2026-10-01"), digital, at("2026-12-10T00:00:00Z"), &settings),
+            movie_timing(
+                Some("2026-10-01"),
+                digital,
+                at("2026-12-10T00:00:00Z"),
+                &settings
+            ),
             Timing::Back
         );
         // No home release known: from its release date, on the ordinary schedule, as before.
         assert_eq!(
-            movie_timing(Some("2026-10-01"), None, at("2026-10-02T00:00:00Z"), &settings),
+            movie_timing(
+                Some("2026-10-01"),
+                None,
+                at("2026-10-02T00:00:00Z"),
+                &settings
+            ),
             Timing::Back
         );
         assert!(matches!(
-            movie_timing(Some("2026-12-01"), None, at("2026-11-09T00:00:00Z"), &settings),
+            movie_timing(
+                Some("2026-12-01"),
+                None,
+                at("2026-11-09T00:00:00Z"),
+                &settings
+            ),
             Timing::NotYet { .. }
         ));
     }

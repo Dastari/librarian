@@ -563,7 +563,10 @@ pub struct StoredTorrent {
 /// [`StoredTorrent`] from a kept row: public torrents only (a private one keeps no info bytes).
 /// `magnet` is the release's own magnet when it has one (its trackers are what the listing gave);
 /// otherwise one is built from the info hash, the name and the kept trackers.
-pub fn stored_torrent_from_row(row: &TorrentContents, magnet: Option<&str>) -> Option<StoredTorrent> {
+pub fn stored_torrent_from_row(
+    row: &TorrentContents,
+    magnet: Option<&str>,
+) -> Option<StoredTorrent> {
     if row.is_private {
         return None;
     }

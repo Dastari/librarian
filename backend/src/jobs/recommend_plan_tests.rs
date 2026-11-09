@@ -158,7 +158,10 @@ fn bundled_subtitles_settle_a_tie_but_never_beat_health() {
     let mut subbed = option("Show.S01.1080p.WEB-B", &missing, 0, 50, 12, 1);
     subbed.subtitles = true;
     let plan = plan_cover(missing.len(), &[plain.clone(), subbed.clone()]);
-    assert_eq!(plan.releases[0].option, 1, "the subtitled pack wins the tie");
+    assert_eq!(
+        plan.releases[0].option, 1,
+        "the subtitled pack wins the tie"
+    );
     // Fewer seeders (a worse health band) is not made up for by subtitles.
     subbed.seeders = Some(3);
     plain.seeders = Some(50);
