@@ -17,6 +17,7 @@ pub mod auto_settings;
 pub mod auto_trail;
 pub mod download_monitor;
 pub mod recommend;
+pub mod recommend_plan;
 pub mod rss_poll;
 pub mod source_health;
 

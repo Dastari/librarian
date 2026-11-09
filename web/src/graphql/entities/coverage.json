@@ -334,5 +334,11 @@
     "list": "releaseRecommendations",
     "get": "releaseRecommendation",
     "changed": "releaseRecommendationChanged"
+  },
+  {
+    "entity": "TorrentContents",
+    "list": "torrentContentsList",
+    "get": "torrentContents",
+    "changed": "torrentContentsChanged"
   }
 ]

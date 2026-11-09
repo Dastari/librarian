@@ -5,7 +5,8 @@
 //! (and grab one through `grabRecommendation`).
 //!
 //! A row is one answer for one target at one scope: a movie, an episode, a season pack, a
-//! complete-series pack, an album, a single track or a whole book. `status` is `ready` (a release
+//! complete-series pack, an album, a single track or a whole book. A show's answer is a coverage
+//! plan (scope `plan`): one row for the plan, and one per release in it, linked by `planId`. `status` is `ready` (a release
 //! was chosen), `searching` (a lookup is queued or running) or `none` (looked, nothing usable, so
 //! the lookup is not repeated before `expiresAt`). Rows expire after about a day, vanish when the
 //! release is blocklisted or gone from its feed, and when the target is no longer missing.
@@ -163,6 +164,27 @@ pub struct ReleaseRecommendation {
     /// For `none`: why nothing was usable.
     #[graphql(name = "note")]
     pub note: Option<String>,
+
+    /// For a release that is part of a coverage plan (Q101): the id of the plan's own row, whose
+    /// scope is `plan`. A plan's row says how many of the missing items its releases cover and what
+    /// stays uncovered (`note`); each release's row says what it adds.
+    #[graphql(name = "planId")]
+    #[filterable(type = "string")]
+    pub plan_id: Option<String>,
+
+    /// Where a release comes in its plan, from 0.
+    #[graphql(name = "planPosition")]
+    #[sortable]
+    pub plan_position: Option<i32>,
+
+    /// The seasons of the missing episodes this release covers, as a JSON array (shows only).
+    #[graphql(name = "coversSeasons")]
+    pub covers_seasons: Option<String>,
+
+    /// The torrent's file indexes to download for exactly what it covers, as a JSON array, when its
+    /// files were looked into before it was recommended (Q100). Used with "only the missing files".
+    #[graphql(name = "fileIndices")]
+    pub file_indices: Option<String>,
 
     /// The version of the rules that chose this answer (`jobs::recommend::RULES_VERSION`). An answer
     /// from older rules is not trusted: it is removed and looked up again (Q98).

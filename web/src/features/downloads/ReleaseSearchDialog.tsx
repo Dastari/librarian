@@ -116,12 +116,15 @@ export interface ReleaseTarget {
   chapterId?: string;
 }
 
-/** What a pinned recommendation is for: the season when one is searched, else the movie, album or book. */
-export function recommendationTarget(target: ReleaseTarget | undefined, season: number | null | undefined) {
+/**
+ * What a pinned recommendation is for: a show's whole coverage plan (whichever season or episode
+ * is searched, the plan says what covers everything missing), else the movie, album or book.
+ */
+export function recommendationTarget(target: ReleaseTarget | undefined) {
   if (target?.movieId) return { movieId: target.movieId };
   if (target?.albumId) return { albumId: target.albumId };
   if (target?.audiobookId) return { audiobookId: target.audiobookId };
-  if (target?.showId && season !== null && season !== undefined) return { showId: target.showId, season };
+  if (target?.showId) return { showId: target.showId, series: true };
   return {};
 }
 
@@ -279,7 +282,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
       <GlassDialog.Header title="Find a release" />
       <GlassDialog.Body className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex min-h-0 flex-1 flex-col gap-4">
-        <div className="shrink-0 empty:hidden"><RecommendedRelease target={recommendationTarget(target, season)} missing={1} quiet /></div>
+        <div className="shrink-0 empty:hidden"><RecommendedRelease target={recommendationTarget(target)} missing={1} quiet /></div>
         <form
           className="flex min-w-0 shrink-0 gap-2"
           onSubmit={(event) => {

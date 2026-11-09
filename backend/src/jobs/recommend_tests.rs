@@ -200,3 +200,112 @@ fn a_series_expectation_refuses_a_single_season_and_an_album_one_by_another_arti
     assert!(album.title_mismatch("flac pack", true).is_some());
     assert!(album.title_mismatch("flac pack", false).is_none());
 }
+
+// ---------------------------------------------------------------------------
+// A show's coverage plan
+// ---------------------------------------------------------------------------
+
+fn release(title: &str, seeders: i32, gb: f64) -> SourceRelease {
+    let mut release = SourceRelease::new(
+        title.to_string(),
+        format!("guid:{title}"),
+        at("2026-11-08T12:00:00Z"),
+    );
+    release.seeders = Some(seeders);
+    release.size = Some((gb * 1024.0 * 1024.0 * 1024.0) as i64);
+    release.magnet_uri = Some(format!("magnet:?xt=urn:btih:{}", "a".repeat(40)));
+    release
+}
+
+#[tokio::test]
+async fn a_show_plan_mixes_a_pack_and_episodes_and_never_takes_another_show() {
+    let db = Database::new(
+        graphql_orm::DbPool::connect("sqlite::memory:")
+            .await
+            .unwrap(),
+    );
+    let settings = AutoDownloadSettings::default();
+    let blocklist = Blocklist::default();
+    let env = Env {
+        db: &db,
+        manager: None,
+        sources: None,
+        blocklist: &blocklist,
+        settings: &settings,
+        owner_id: "owner".into(),
+    };
+    let mut missing = Vec::new();
+    for season in 1..=2 {
+        for episode in 1..=22 {
+            missing.push(MissingEpisode {
+                id: format!("s{season}e{episode}"),
+                season,
+                episode,
+            });
+        }
+    }
+    let collected = Collected {
+        releases: vec![
+            // The live regression: well seeded, and another show.
+            release(
+                "Babylon.Berlin.S01.1080p.10bit.WEBRip.6CH.x265.HEVC-PSA",
+                300,
+                20.0,
+            ),
+            release("Babylon.5.S01.1080p.BluRay.x264-GRP", 20, 40.0),
+            release("Babylon.5.S02E01.1080p.WEB.h264-GRP", 15, 1.5),
+            release("Babylon.5.S02E02.1080p.WEB.h264-GRP", 15, 1.5),
+            // Says only that it is complete: used only once its files are read.
+            release("Babylon 5 Complete DVD Rip", 50, 60.0),
+            // Names no season or episode at all.
+            release("Babylon.5.1080p.BluRay", 9, 8.0),
+        ],
+        seen: 6,
+        sources: 1,
+        ..Default::default()
+    };
+    let quality = profile::builtin_any_profile();
+    let mut inspected = HashMap::new();
+    let evaluation = evaluate_show(
+        &env,
+        &WantedTitle::work("Babylon 5"),
+        &quality,
+        &collected,
+        &missing,
+        &mut inspected,
+    )
+    .await;
+    assert!(
+        evaluation
+            .options
+            .iter()
+            .all(|option| !option.scored.release.title.contains("Berlin")),
+        "Babylon Berlin must never be planned for Babylon 5"
+    );
+    let titles: Vec<&str> = evaluation
+        .plan
+        .releases
+        .iter()
+        .map(|planned| {
+            evaluation.options[planned.option]
+                .scored
+                .release
+                .title
+                .as_str()
+        })
+        .collect();
+    assert_eq!(
+        titles,
+        vec![
+            "Babylon.5.S01.1080p.BluRay.x264-GRP",
+            "Babylon.5.S02E01.1080p.WEB.h264-GRP",
+            "Babylon.5.S02E02.1080p.WEB.h264-GRP",
+        ]
+    );
+    assert_eq!(evaluation.plan.covered(), 24);
+    assert_eq!(
+        describe_items(&missing, &evaluation.plan.uncovered),
+        "S02E03–E22"
+    );
+    assert_eq!(evaluation.unnumbered, 1);
+}

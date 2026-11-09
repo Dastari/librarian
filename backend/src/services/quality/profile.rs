@@ -415,11 +415,7 @@ fn rank_key(scored: &scoring::ScoredRelease, profile: &QualityProfile) -> RankKe
     // 1. Resolution. With an explicit `resolution_preference` the list position
     //    decides (unlisted resolutions sort last); otherwise the highest
     //    parsed resolution wins.
-    let resolution = if profile.resolution_preference.is_empty() {
-        u32::from(u8::MAX - parsed.resolution_rank.0)
-    } else {
-        preference_index(&profile.resolution_preference, parsed.resolution.as_ref())
-    };
+    let resolution = resolution_tier(parsed, profile);
 
     // 2. PROPER/REPACK, when the profile prefers them.
     let proper = if profile.prefer_proper_repack && parsed.is_proper_or_repack() {
@@ -452,6 +448,22 @@ fn rank_key(scored: &scoring::ScoredRelease, profile: &QualityProfile) -> RankKe
         // 7. Title, purely so the ordering is total and reproducible.
         title: scored.release.title.clone(),
     }
+}
+
+/// The resolution tier a release sits in for this profile, lower is better: its position in
+/// `resolution_preference` when that is set (unlisted last), else by the parsed resolution. The
+/// first thing [`filter_and_rank`] orders by, and what a coverage plan keeps equal.
+pub fn resolution_tier(parsed: &ParsedRelease, profile: &QualityProfile) -> u32 {
+    if profile.resolution_preference.is_empty() {
+        u32::from(u8::MAX - parsed.resolution_rank.0)
+    } else {
+        preference_index(&profile.resolution_preference, parsed.resolution.as_ref())
+    }
+}
+
+/// Order already-accepted releases the way [`filter_and_rank`] does.
+pub fn sort_by_profile(scored: &mut [scoring::ScoredRelease], profile: &QualityProfile) {
+    scored.sort_by_cached_key(|candidate| rank_key(candidate, profile));
 }
 
 /// Filter `releases` down to the ones this profile accepts and rank them.

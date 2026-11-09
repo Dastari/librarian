@@ -1442,6 +1442,40 @@ input ConfigureNetworkPathInput {
 }
 
 """
+Sign in to a network share to check it, and keep the sign-in for the share.
+"""
+input ConnectShareInput {
+  """Host name or IP address of the file server."""
+  host: String!
+
+  """Port, when it is not 445."""
+  port: Int
+
+  """Share name, such as `media`."""
+  share: String!
+
+  """Blank for the saved sign-in, or a guest share when none is saved."""
+  username: String
+
+  """Blank keeps the saved password when the user name is the saved one."""
+  password: String
+
+  """Keep the sign-in, encrypted, if it works. On by default."""
+  save: Boolean
+}
+
+type ConnectSharePayload {
+  success: Boolean!
+  error: String
+
+  """The share's normalised `smb://host[:port]/share` address."""
+  share: String
+
+  """Folders at the top of the share."""
+  folders: Int!
+}
+
+"""
 Content status for playable media items (episodes, movies, tracks, chapters)
 """
 enum ContentStatus {
@@ -2801,6 +2835,19 @@ type GrabRecommendationPayload {
   torrentName: String
 }
 
+type GrabRecommendationPlanPayload {
+  """True when every release of the plan started."""
+  success: Boolean!
+  error: String
+
+  """How many releases started."""
+  started: Int!
+
+  """`'release title': why` for each release that did not start."""
+  failed: [String!]!
+  torrentIds: [String!]!
+}
+
 type HomeShelf {
   userId: String!
   shelfKey: String!
@@ -3449,6 +3496,49 @@ type LibraryEdge {
 
   """A cursor for pagination"""
   cursor: String!
+}
+
+"""
+What moving a library to a folder its files were copied to would find. Nothing is changed.
+"""
+type LibraryMovePlan {
+  """The library's current folder."""
+  oldPath: String!
+
+  """The new folder, as it would be saved."""
+  newPath: String!
+
+  """Files the library holds."""
+  fileCount: Int!
+
+  """On the new folder with the same size."""
+  matched: Int!
+
+  """Not on the new folder at all."""
+  missing: Int!
+
+  """The first of them, as paths below the library's folder."""
+  missingFiles: [String!]!
+
+  """
+  On the new folder, but at a different size (a copy that did not finish).
+  """
+  changed: Int!
+  changedFiles: [String!]!
+
+  """
+  Media files on the new folder that the library does not hold; the next scan finds them.
+  """
+  extra: Int!
+  extraFiles: [String!]!
+
+  """Why the move cannot go ahead at all."""
+  blocked: String
+
+  """
+  Every file is on the new folder at its size, and nothing blocks the move.
+  """
+  canApply: Boolean!
 }
 
 input LibraryOrderByInput {
@@ -4472,6 +4562,36 @@ input MetadataCacheWhereInput {
   not: MetadataCacheWhereInput
 }
 
+"""Move a library to a folder its files were copied to."""
+input MoveLibraryInput {
+  libraryId: String!
+
+  """The new folder: an absolute path, or `smb://host/share/folder`."""
+  newPath: String!
+
+  """
+  Move even though some files are not on the new folder yet. They are then reported
+  missing by the next scan.
+  """
+  allowMissing: Boolean
+}
+
+type MoveLibraryResult {
+  success: Boolean!
+  error: String
+
+  """File records rewritten to the new folder."""
+  movedFiles: Int!
+
+  """Show, album and audiobook folders rewritten."""
+  movedFolders: Int!
+
+  """
+  Open scan issues closed, because they named paths that no longer apply.
+  """
+  closedIssues: Int!
+}
+
 type Movie {
   id: String!
   libraryId: String!
@@ -4783,7 +4903,6 @@ type Mutation {
   logout: LogoutPayload!
   createDirectory(input: CreateDirectoryInput!): FileOperationPayload!
   configureNetworkPath(input: ConfigureNetworkPathInput!): NetworkPathConfigPayload!
-  reconnectLibraryPath(path: String!): NetworkPathConfigPayload!
 
   """
   Sign in to a network share, check that it can be read, and keep the sign-in. The answer
@@ -4797,6 +4916,7 @@ type Mutation {
   files keep their ids, matches, progress and playlists. Run a scan afterwards to verify.
   """
   moveLibrary(input: MoveLibraryInput!): MoveLibraryResult!
+  reconnectLibraryPath(path: String!): NetworkPathConfigPayload!
   testTmdbConnection(input: TestTmdbConnectionInput!): TestTmdbConnectionResult!
   scanLibrary(id: String!): ScanLibraryResult!
   analyzeMediaFile(mediaFileId: String!, path: String!): AnalyzeMediaFileResult!
@@ -4971,6 +5091,13 @@ type Mutation {
   within the hourly search budget and the page shows "looking" until it has. Owner or admin.
   """
   lookupRecommendations(input: LookupRecommendationsInput!): LookupRecommendationsPayload!
+
+  """
+  Download every release of a show's coverage plan (a `plan` recommendation), in order, each
+  through the same path as `grabRecommendation`. Releases that start are reported even when
+  others do not. Owner or admin.
+  """
+  grabRecommendationPlan(id: String!): GrabRecommendationPlanPayload!
 
   """
   Download a recommended release through the same path automatic downloading uses, linked to
@@ -7440,117 +7567,6 @@ input NamingPatternWhereInput {
   not: NamingPatternWhereInput
 }
 
-"""Sign in to a network share to check it, and keep the sign-in for the share."""
-input ConnectShareInput {
-  """Host name or IP address of the file server."""
-  host: String!
-
-  """Port, when it is not 445."""
-  port: Int
-
-  """Share name, such as `media`."""
-  share: String!
-
-  """Blank for the saved sign-in, or a guest share when none is saved."""
-  username: String
-
-  """Blank keeps the saved password when the user name is the saved one."""
-  password: String
-
-  """Keep the sign-in, encrypted, if it works. On by default."""
-  save: Boolean
-}
-
-type ConnectSharePayload {
-  success: Boolean!
-  error: String
-
-  """The share's normalised `smb://host[:port]/share` address."""
-  share: String
-
-  """Folders at the top of the share."""
-  folders: Int!
-}
-
-"""Move a library to a folder its files were copied to."""
-input MoveLibraryInput {
-  libraryId: String!
-
-  """The new folder: an absolute path, or `smb://host/share/folder`."""
-  newPath: String!
-
-  """
-  Move even though some files are not on the new folder yet. They are then reported
-  missing by the next scan.
-  """
-  allowMissing: Boolean
-}
-
-type MoveLibraryResult {
-  success: Boolean!
-  error: String
-
-  """File records rewritten to the new folder."""
-  movedFiles: Int!
-
-  """Show, album and audiobook folders rewritten."""
-  movedFolders: Int!
-
-  """
-  Open scan issues closed, because they named paths that no longer apply.
-  """
-  closedIssues: Int!
-}
-
-"""Whether a saved sign-in exists for a share, and for whom."""
-type ShareSignIn {
-  """The share's normalised `smb://host[:port]/share` address."""
-  share: String!
-  saved: Boolean!
-  username: String
-}
-
-"""
-What moving a library to a folder its files were copied to would find. Nothing is changed.
-"""
-type LibraryMovePlan {
-  """The library's current folder."""
-  oldPath: String!
-
-  """The new folder, as it would be saved."""
-  newPath: String!
-
-  """Files the library holds."""
-  fileCount: Int!
-
-  """On the new folder with the same size."""
-  matched: Int!
-
-  """Not on the new folder at all."""
-  missing: Int!
-
-  """The first of them, as paths below the library's folder."""
-  missingFiles: [String!]!
-
-  """
-  On the new folder, but at a different size (a copy that did not finish).
-  """
-  changed: Int!
-  changedFiles: [String!]!
-
-  """
-  Media files on the new folder that the library does not hold; the next scan finds them.
-  """
-  extra: Int!
-  extraFiles: [String!]!
-
-  """Why the move cannot go ahead at all."""
-  blocked: String
-
-  """Every file is on the new folder at its size, and nothing blocks the move."""
-  canApply: Boolean!
-}
-
 type NetworkPathConfigPayload {
   success: Boolean!
   error: String
@@ -9990,6 +10006,30 @@ type Query {
     """Id"""
     id: String!
   ): ReleaseRecommendation
+
+  """
+  Get a list of #plural_name with optional filtering, sorting, and pagination
+  List TorrentContents records
+  """
+  torrentContentsList(
+    """Where"""
+    where: TorrentContentsWhereInput
+
+    """Order by"""
+    orderBy: [TorrentContentsOrderByInput!]
+
+    """Page"""
+    page: PageInput
+  ): TorrentContentsConnection!
+
+  """
+  Get a single #struct_name_str by ID
+  Read one TorrentContents records
+  """
+  torrentContents(
+    """Id"""
+    id: String!
+  ): TorrentContents
 }
 
 """Refresh Token"""
@@ -10313,6 +10353,29 @@ type ReleaseRecommendation {
   """For `none`: why nothing was usable."""
   note: String
 
+  """
+  For a release that is part of a coverage plan (Q101): the id of the plan's own row, whose scope is `plan`. A plan's row says how many of the missing items its releases cover and what stays uncovered (`note`); each release's row says what it adds.
+  """
+  planId: String
+
+  """Where a release comes in its plan, from 0."""
+  planPosition: Int
+
+  """
+  The seasons of the missing episodes this release covers, as a JSON array (shows only).
+  """
+  coversSeasons: String
+
+  """
+  The torrent's file indexes to download for exactly what it covers, as a JSON array, when its files were looked into before it was recommended (Q100). Used with "only the missing files".
+  """
+  fileIndices: String
+
+  """
+  The version of the rules that chose this answer (`jobs::recommend::RULES_VERSION`). An answer from older rules is not trusted: it is removed and looked up again (Q98).
+  """
+  rulesVersion: Int
+
   """Found At"""
   foundAt: String!
 
@@ -10357,6 +10420,7 @@ type ReleaseRecommendationEdge {
 
 input ReleaseRecommendationOrderByInput {
   title: OrderDirection
+  planPosition: OrderDirection
   foundAt: OrderDirection
   expiresAt: OrderDirection
   createdAt: OrderDirection
@@ -10387,6 +10451,7 @@ input ReleaseRecommendationWhereInput {
   seeders: IntFilter
   coversCount: IntFilter
   missingCount: IntFilter
+  planId: StringFilter
   foundAt: DateFilter
   expiresAt: DateFilter
   createdAt: DateFilter
@@ -11188,6 +11253,14 @@ input SeasonWhereInput {
 type SessionInvalidation {
   """ready, changed or resync. No account/credential payload is broadcast."""
   kind: String!
+}
+
+"""Whether a saved sign-in exists for a share, and for whom."""
+type ShareSignIn {
+  """The share's normalised `smb://host[:port]/share` address."""
+  share: String!
+  saved: Boolean!
+  username: String
 }
 
 """
@@ -12761,6 +12834,23 @@ type Subscription {
     """
     keys: [String!]
   ): ReleaseRecommendationChangedEvent!
+
+  """
+  Subscribe to #struct_name_str changes
+  Observe changes to TorrentContents records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+  """
+  torrentContentsChanged(
+    """Filter"""
+    filter: SubscriptionFilterInput
+
+    """Exact complete primary key to observe"""
+    key: String
+
+    """
+    Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+    """
+    keys: [String!]
+  ): TorrentContentsChangedEvent!
 }
 
 input SubscriptionFilterInput {
@@ -13059,6 +13149,120 @@ type TorrentConnection {
 
   """Pagination information"""
   pageInfo: PageInfo!
+}
+
+"""Torrent Contents"""
+type TorrentContents {
+  """Id"""
+  id: String!
+
+  """Lowercase hex v1 info hash."""
+  infoHash: String!
+
+  """
+  A hash of the release's guid or link at the source it was read from, so a `.torrent` link with no info hash in its listing is not fetched twice. A hash, because a feed's link holds the account's passkey.
+  """
+  linkKey: String
+
+  """The torrent's own name (its top folder, or its only file)."""
+  name: String!
+
+  """Total Size"""
+  totalSize: Int!
+
+  """File Count"""
+  fileCount: Int!
+
+  """Piece Length"""
+  pieceLength: Int!
+
+  """Piece Count"""
+  pieceCount: Int!
+
+  """The torrent is marked private: its peers come only from its tracker."""
+  isPrivate: Boolean!
+
+  """
+  How it was read: `torrent_file` (a `.torrent` parsed locally, no peers asked) or `magnet` (metadata asked of peers in list-only mode, nothing downloaded).
+  """
+  via: String!
+
+  """
+  The files, in torrent order, as a JSON array of `{index, path, size, kind, season, episodes, track, disc}` (`services::torrent::inspect::ContentFile`). Padding files are left out; `index` is the file's index in the torrent, which file selection uses.
+  """
+  files: String!
+
+  """Base64 of the bencoded info dictionary, public torrents only."""
+  infoBytes: String
+
+  """Fetched At"""
+  fetchedAt: String!
+
+  """Created At"""
+  createdAt: String!
+
+  """Updated At"""
+  updatedAt: String!
+}
+
+"""Event for #struct_name changes (subscriptions)"""
+type TorrentContentsChangedEvent {
+  action: ChangeAction!
+  changeKind: ChangeKind!
+  id: String!
+  sourceEntity: String
+  sourceId: String
+  path: [String!]!
+  torrentContents: TorrentContents
+}
+
+"""Connection containing edges and page info"""
+type TorrentContentsConnection {
+  """The edges in this connection"""
+  edges: [TorrentContentsEdge!]!
+
+  """Pagination information"""
+  pageInfo: PageInfo!
+}
+
+"""Edge containing a node and cursor"""
+type TorrentContentsEdge {
+  """The item at the end of the edge"""
+  node: TorrentContents!
+
+  """A cursor for pagination"""
+  cursor: String!
+}
+
+input TorrentContentsOrderByInput {
+  name: OrderDirection
+  totalSize: OrderDirection
+  fetchedAt: OrderDirection
+  createdAt: OrderDirection
+  updatedAt: OrderDirection
+}
+
+input TorrentContentsWhereInput {
+  id: StringFilter
+  infoHash: StringFilter
+  linkKey: StringFilter
+  name: StringFilter
+  totalSize: IntFilter
+  fileCount: IntFilter
+  isPrivate: BoolFilter
+  via: StringFilter
+  fetchedAt: DateFilter
+  createdAt: DateFilter
+  updatedAt: DateFilter
+
+  """Logical AND of conditions"""
+  and: [TorrentContentsWhereInput!]
+
+  """Logical OR of conditions"""
+  or: [TorrentContentsWhereInput!]
+
+  """Logical NOT of condition"""
+  not: TorrentContentsWhereInput
 }
 
 """Edge containing a node and cursor"""

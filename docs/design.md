@@ -1797,3 +1797,45 @@ be read is taken by its name only when none of them could be read; if all are re
 ("2 release(s) turned down by their files: ...") goes to the trail, and the per-episode fallbacks are searched as when no
 pack is found. Single episodes, movies, tracks and books are grabbed by name, as a look costs a request or a magnet
 resolution per grab. **Recommendations** use the same judge for their plans (Q101).
+
+### Q101: What does Recommended show for a show, and how is it chosen?
+**Answer:** A **coverage plan**: the smallest set of releases that covers every missing episode of the show, mixing a
+complete-series pack, season packs and single episodes for the gaps, shown as "Recommended: 3 releases cover 24 of 44
+missing" with the releases listed, a **Download all**, a Download on each release, and what is still uncovered ("Still
+missing: S02E03–E22 (no usable release found)"). It replaces the per-season answers of Q93 for shows; movies, albums and books
+still get one release each.
+
+**Building it** (`jobs::recommend::look_up_show`, pure rules in `jobs::recommend_plan`):
+1. The missing episodes come from the hunt's discovery, as before (wanted only in the background, any missing on demand).
+   Opening any season, episode or the show asks for the same lookup: the whole show.
+2. Releases are gathered cheapest first: the feed catalogue, then a complete-series search (two or more seasons missing),
+   then each season's search, **only for seasons the plan does not yet cover**, stopping as soon as everything is covered
+   or the hourly budget (Q94) runs out.
+3. Each release must name the show (Q98) and pass the profile (`filter_and_rank`, size limits per covered episode). Its name
+   says what it claims (`recommend_plan::claim_of`): episodes, a season or a range, the complete series, or a vague
+   "Complete" pack. The four most promising packs are looked into (Q99) and their files override the name (Q100): another
+   show's pack or one holding none of the missing episodes is dropped; a short pack counts for what it holds; a vague pack
+   counts only once its files are read.
+4. `plan_cover` picks the releases, **quality first**: the best resolution tier of the profile is planned first and a lower
+   tier only fills what it leaves; within a tier, greedily the release adding the most still-uncovered episodes (so one
+   complete series beats three season packs, and packs beat episodes), ties to the better-seeded (in bands) and then the
+   smaller; a release the others of its tier or better cover is dropped. Each release is credited only with what it adds.
+
+**Stored** as `ReleaseRecommendation` rows (additive columns `planId`, `planPosition`, `coversSeasons`, `fileIndices`): one
+row of scope `plan` (counts, uncovered note, summary reasons; status `ready`, `none` with the why, or `searching`) and one per
+release (`episode`, `season_pack` or `series_pack`) pointing at it, with what it adds (`coversIds`, `coversCount`), its
+seasons, and the exact files to download when its files were read. At most 60 releases per plan.
+
+**Downloading.** `grabRecommendation` downloads one release; `grabRecommendationPlan` downloads every release of the plan in
+order through the same path (reported per release, so a failure does not stop the rest). A pack takes only the files for
+what it adds when "Download only the missing files" is on (Q95, exactly by index when inspected). A grab removes only what
+it makes pointless: the release itself, the same episode, or another pack of the same season, never the plan's other
+releases. The plan row goes when it has no releases left; a release goes when what it adds is filled or a torrent was
+grabbed for exactly it. Rules version 3 retires every earlier per-season answer.
+
+**In the UI** (`RecommendedRelease`): Find a release shows the show's whole plan whichever season is searched. A show page
+shows the whole plan above the seasons when two or more seasons are missing something, and each season lists its part of it
+(the releases covering that season); with one season missing, that season shows the whole plan.
+
+**Not built:** plans for an artist's discography or an album set (albums are still recommended one at a time, looked into
+for their tracks), and plans that weigh a smaller lower-quality pack against several better releases (quality always wins).

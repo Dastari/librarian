@@ -492,8 +492,10 @@ pub async fn store(
 /// `.torrent` downloads in the last hour, shared by every inspection.
 static FETCHES: LazyLock<StdMutex<VecDeque<DateTime<Utc>>>> =
     LazyLock::new(|| StdMutex::new(VecDeque::new()));
-/// Releases that could not be read, by cache key, with when.
-static FAILURES: LazyLock<StdMutex<HashMap<String, (DateTime<Utc>, String)>>> =
+/// When a release could not be read, and why.
+type Failure = (DateTime<Utc>, String);
+/// Releases that could not be read, by cache key.
+static FAILURES: LazyLock<StdMutex<HashMap<String, Failure>>> =
     LazyLock::new(|| StdMutex::new(HashMap::new()));
 static MAGNETS: LazyLock<tokio::sync::Semaphore> =
     LazyLock::new(|| tokio::sync::Semaphore::new(MAGNET_SLOTS));

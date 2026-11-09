@@ -1132,7 +1132,7 @@ async fn discover_movie_candidates(
             library_id: movie.library_id.clone(),
             match_title: WantedTitle::work_with_aliases(
                 movie.title.clone(),
-                &[movie.original_title.clone()],
+                std::slice::from_ref(&movie.original_title),
             ),
             queries: vec![SourceQuery {
                 query_type: QueryType::MovieSearch,
