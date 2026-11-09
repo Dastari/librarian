@@ -23,7 +23,7 @@
  */
 import { prefersReducedMotion } from "glass-ux/appearance";
 import { DataTableRemoteContext } from "glass-ux/data-table";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { backHandled, isEditing, isRemoteBackKey } from "@/lib/remote-back";
 import { isTvApp } from "@/lib/tv-app";
@@ -104,7 +104,7 @@ const IN_MAIN = FOCUSABLE_SELECTOR.split(",").map((selector) => `main ${selector
 const TABLE_GRID = ".fa-dt-grid";
 const TABLE_LINE = "[data-item][data-index]";
 /** Every element the arrows consider: the focusable ones, plus a table's lines (only its active one is tabbable). */
-const CANDIDATES = `${FOCUSABLE_SELECTOR}, ${TABLE_GRID} ${TABLE_LINE}`;
+export const REMOTE_CANDIDATES = `${FOCUSABLE_SELECTOR}, ${TABLE_GRID} ${TABLE_LINE}`;
 /**
  * Never stops, whatever they contain: a table's header (sort buttons, column menus, resize
  * handles, select-all; sorting is in the toolbar's sort menu on a TV) and resize separators.
@@ -204,7 +204,7 @@ export function findNext(current: HTMLElement, direction: Direction, scope: Pare
   type Scored = { element: HTMLElement; gap: number; distance: number; centre: number; overlaps: boolean; group: Element; zone: Element | null };
   const scored: Scored[] = [];
 
-  for (const candidate of scope.querySelectorAll<HTMLElement>(CANDIDATES)) {
+  for (const candidate of scope.querySelectorAll<HTMLElement>(REMOTE_CANDIDATES)) {
     // Pointer-only controls (a row's scroll arrows, a tile's play button) are never arrow-key
     // stops: the arrows move to the next card, and the row scrolls to show it.
     if (candidate === current || !isRemoteStop(candidate, tv) || !isVisible(candidate)) continue;
@@ -474,7 +474,7 @@ export function restoreFocus(): HTMLElement | null {
   const main = document.getElementById("main") ?? document.querySelector("main");
   const opener = lastOutside && !lastOutside.matches(TABLE_LINE) ? lastOutside.closest<HTMLElement>(`${TABLE_GRID} ${TABLE_LINE}`) ?? lastOutside : lastOutside;
   const start = main?.querySelector<HTMLElement>("[data-tv-autofocus]") ?? null;
-  const target = [opener, contentMemory, start].find(usable) ?? (main ? firstStop(main, "[data-spatial-start], " + CANDIDATES) : null);
+  const target = [opener, contentMemory, start].find(usable) ?? (main ? firstStop(main, "[data-spatial-start], " + REMOTE_CANDIDATES) : null);
   if (!target) return null;
   target.focus({ preventScroll: true });
   revealFocused(target);
@@ -496,6 +496,9 @@ function overlayOpen(): boolean {
  * text field) are Back too; the remote keys always are.
  */
 export function useSpatialNavigation(enabled = true, tv = false, onBack: () => boolean | void = () => window.history.back()): void {
+  // The latest callback, without re-registering every listener (and dropping a focus watch) per render.
+  const backStep = useRef(onBack);
+  backStep.current = onBack;
   useEffect(() => {
     if (!enabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -529,7 +532,7 @@ export function useSpatialNavigation(enabled = true, tv = false, onBack: () => b
           return;
         }
         // 3. One navigation step, unless there is none (Home).
-        if (onBack() === false) return;
+        if (backStep.current() === false) return;
         event.preventDefault();
         return;
       }
@@ -586,11 +589,37 @@ export function useSpatialNavigation(enabled = true, tv = false, onBack: () => b
       }
       if (active?.closest(ARROW_SCOPE)) onKeyDown(event);
     };
+    // Focus is never left on the page body on a TV (Q143). It falls there when an overlay closes
+    // and its opener is gone (a menu item, a deleted row), and a removed element fires no
+    // focusout, so while an overlay holds focus or focus has just dropped, look every so often.
+    let watch: ReturnType<typeof setInterval> | undefined;
+    const stopWatch = () => {
+      clearInterval(watch);
+      watch = undefined;
+    };
+    const fallen = () => {
+      const now = document.activeElement;
+      return !now || now === document.body || now === document.documentElement;
+    };
+    const startWatch = () => {
+      if (!tv || watch !== undefined) return;
+      watch = setInterval(() => {
+        if (!fallen()) {
+          if (!document.activeElement?.closest(OPEN_OVERLAY)) stopWatch();
+          return;
+        }
+        // A closing overlay is still on screen while it animates out.
+        if (overlayOpen()) return;
+        stopWatch();
+        restoreFocus();
+      }, 100);
+    };
     const onFocusIn = (event: FocusEvent) => {
       rememberFocus(event);
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
-      if (!target.closest(OPEN_OVERLAY)) lastOutside = target;
+      if (target.closest(OPEN_OVERLAY)) startWatch();
+      else lastOutside = target;
       // On a TV a row's own controls (its ⋯, its checkbox) are the pointer's: focus handed back to
       // one (a menu closing) goes to its row, the stop.
       if (tv && target.closest(TABLE_GRID) && !isRemoteStop(target, true)) {
@@ -600,32 +629,22 @@ export function useSpatialNavigation(enabled = true, tv = false, onBack: () => b
         });
       }
     };
-    // Focus is never left on the page body on a TV (Q143): when it falls there, an overlay
-    // closed and nothing took it back, so it returns to the opener.
-    let fallTimer: ReturnType<typeof setTimeout> | undefined;
     const onFocusOut = (event: FocusEvent) => {
       if (event.target instanceof HTMLElement) event.target.removeAttribute(ADJUSTING);
-      if (!tv || event.relatedTarget) return;
-      clearTimeout(fallTimer);
-      fallTimer = setTimeout(() => {
-        const now = document.activeElement;
-        if (now && now !== document.body && now !== document.documentElement) return;
-        if (overlayOpen()) return;
-        restoreFocus();
-      }, 120);
+      if (!event.relatedTarget) startWatch();
     };
     window.addEventListener("keydown", onModalKeyDown, true);
     window.addEventListener("keydown", onKeyDown);
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
     return () => {
-      clearTimeout(fallTimer);
+      stopWatch();
       document.removeEventListener("focusout", onFocusOut);
       window.removeEventListener("keydown", onModalKeyDown, true);
       window.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("focusin", onFocusIn);
     };
-  }, [enabled, tv, onBack]);
+  }, [enabled, tv]);
 }
 
 /**
@@ -683,7 +702,7 @@ export function useRouteFocus(pathname: string, active: boolean) {
       const waitForRestore = Boolean(remembered) && !restore && elapsed < 1500;
       const target = restore
         ?? (waitForRestore ? null : (start && start.getAttribute("aria-disabled") !== "true" ? start : null)
-          ?? (elapsed > (start ? 3000 : 300) ? firstStop(main, "[data-spatial-start], " + CANDIDATES) : null));
+          ?? (elapsed > (start ? 3000 : 300) ? firstStop(main, "[data-spatial-start], " + REMOTE_CANDIDATES) : null));
       if (target) {
         // A restored control keeps the scroll position the router brought back.
         target.focus({ preventScroll: Boolean(restore) });
