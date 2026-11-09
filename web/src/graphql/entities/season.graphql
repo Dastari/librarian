@@ -13,6 +13,7 @@ fragment SeasonFields on Season {
   posterUrl
   createdAt
   updatedAt
+  lockedFields
 }
 
 query EntitySeasonList($where: SeasonWhereInput, $orderBy: [SeasonOrderByInput!], $page: PageInput) {

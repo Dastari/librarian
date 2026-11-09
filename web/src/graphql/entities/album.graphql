@@ -26,6 +26,7 @@ fragment AlbumFields on Album {
   path
   createdAt
   updatedAt
+  lockedFields
 }
 
 query EntityAlbumList($where: AlbumWhereInput, $orderBy: [AlbumOrderByInput!], $page: PageInput) {

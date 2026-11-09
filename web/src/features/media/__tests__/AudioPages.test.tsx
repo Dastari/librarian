@@ -49,7 +49,7 @@ const connection = <T,>(rows: T[], totalCount = rows.length, hasNextPage = false
 const album = (rows: Track[], total = rows.length, hasMore = false): NonNullable<AlbumDetailQuery["album"]> & { __typename: "Album" } => ({
   __typename: "Album", id: "album", artistId: "artist", libraryId: "music", userId: "audio-user", name: "Recording", sortName: null,
   year: 2026, musicbrainzId: null, albumType: null, genres: [], label: null, country: null, releaseDate: null,
-  coverUrl: null, trackCount: total, discCount: 2, totalDurationSecs: null, autoDownload: false, autoDownloadMode: "NONE",
+  coverUrl: null, lockedFields: null, trackCount: total, discCount: 2, totalDurationSecs: null, autoDownload: false, autoDownloadMode: "NONE",
   qualityProfileId: null, hasFiles: true, sizeBytes: null, path: null, createdAt: stamp, updatedAt: stamp,
   library: null, tracks: connection(rows, total, hasMore),
 });

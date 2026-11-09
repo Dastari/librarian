@@ -20,6 +20,7 @@ fragment EpisodeFields on Episode {
   mediaFileId
   createdAt
   updatedAt
+  lockedFields
 }
 
 query EntityEpisodeList($where: EpisodeWhereInput, $orderBy: [EpisodeOrderByInput!], $page: PageInput) {

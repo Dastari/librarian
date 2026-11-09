@@ -17,6 +17,8 @@ export interface PosterCardProps {
   meta?: ReactNode;
   image: string | null | undefined;
   aspect?: ArtworkAspect;
+  /** Fit the picture inside the tile instead of filling it (logos, which have transparency). */
+  contain?: boolean;
   tint?: string;
   to?: LinkProps["to"];
   params?: LinkProps["params"];
@@ -51,7 +53,7 @@ export interface PosterCardProps {
  */
 export const PosterInTable = createContext(false);
 
-export function PosterCard({ title, meta, image, aspect = "poster", tint, to, params, onPress, progress, status, badge, actions, onPlay, className, style, fallbackIcon, selected, width = "fill", priority, onFocus, wrapTitle }: PosterCardProps) {
+export function PosterCard({ title, meta, image, aspect = "poster", contain, tint, to, params, onPress, progress, status, badge, actions, onPlay, className, style, fallbackIcon, selected, width = "fill", priority, onFocus, wrapTitle }: PosterCardProps) {
   const labelId = useId();
   const navigationClass = "poster-navigation absolute inset-0 z-10 rounded-tile outline-none";
   const inTable = useContext(PosterInTable);
@@ -79,7 +81,7 @@ export function PosterCard({ title, meta, image, aspect = "poster", tint, to, pa
       {navigation}
       <Surface material="card" radius="tile" padding="none"
         className="poster-art pointer-events-none relative overflow-clip">
-        <Artwork src={image} alt="" aspect={aspect} tint={tint} priority={priority} fallback={fallbackIcon} displayWidth={width === "compact" ? 180 : 300} />
+        <Artwork src={image} alt="" aspect={aspect} tint={tint} priority={priority} fallback={fallbackIcon} displayWidth={width === "compact" ? 180 : 300} imageClassName={contain ? "object-contain p-3" : undefined} />
         {badge ? <Surface as="span" material="control" radius="control" padding="none" className="over-imagery absolute start-2 top-2 px-2 py-1 text-caption">{badge}</Surface> : null}
         {status ? <ToneDot overlay label={status.label} tone={status.tone === "default" ? "neutral" : status.tone} className="absolute end-2 top-2" /> : null}
         {onPlay || actions ? (

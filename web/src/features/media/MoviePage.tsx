@@ -22,6 +22,7 @@ import { LIBRARY_TYPES } from "@/lib/library-types";
 
 import { MediaActions } from "./MediaActions";
 import { DetailShell } from "./DetailShell";
+import { MovieTitle } from "@/features/artwork/TitleLogo";
 import { FileDetails } from "./FileDetails";
 import { filesWithProgress, type ProgressReset } from "./progressReset";
 import { useMovieEntity } from "./useMovieEntity";
@@ -71,7 +72,7 @@ export function MoviePage({ movieId }: { movieId: string }) {
             {movie.library.name}
           </Link>
         ) : null,
-        title: movie.title,
+        title: <MovieTitle movieId={movie.id} title={movie.title} />,
         meta: (
           <>
             <MetaLine items={[movie.year, movie.runtime ? formatRuntime(movie.runtime, "minutes") : null, movie.certification, movie.tmdbRating ? `★ ${Number(movie.tmdbRating).toFixed(1)}` : null]} />

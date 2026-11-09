@@ -3,11 +3,19 @@
  * The browser always talks to the same origin; the dev server proxies to the backend.
  */
 
-export type ArtworkEntity = "movie" | "show" | "season" | "episode" | "album" | "artist" | "audiobook" | "collection" | "person" | "guide" | "provider-movie" | "provider-show" | "provider-audiobook" | "provider-episode";
-export type ArtworkKind = "poster" | "backdrop" | "banner" | "cover" | "profile" | "thumbnail";
+import { artworkRevision } from "@/lib/artworkRevisions";
 
+export type ArtworkEntity = "movie" | "show" | "season" | "episode" | "album" | "artist" | "audiobook" | "playlist" | "collection" | "person" | "guide" | "provider-movie" | "provider-show" | "provider-audiobook" | "provider-episode";
+export type ArtworkKind = "poster" | "backdrop" | "banner" | "cover" | "profile" | "thumbnail" | "logo";
+
+/**
+ * A cached picture's address. A picture changed on this device (chosen or uploaded) carries its
+ * revision (`?v=`), so the browser fetches the new one at once instead of its cached copy.
+ */
 export function artworkUrl(entity: ArtworkEntity, id: string | number, kind: ArtworkKind): string {
-  return `/api/artwork/${entity}/${encodeURIComponent(String(id))}/${kind}`;
+  const url = `/api/artwork/${entity}/${encodeURIComponent(String(id))}/${kind}`;
+  const revision = artworkRevision(entity, String(id));
+  return revision ? `${url}?v=${revision}` : url;
 }
 
 /**
@@ -16,9 +24,9 @@ export function artworkUrl(entity: ArtworkEntity, id: string | number, kind: Art
  * Only local cache URLs are resized; anything else is returned unchanged.
  */
 export function sizedArtwork(url: string | undefined, displayWidth: number | undefined): string | undefined {
-  if (!url || !displayWidth || !url.startsWith("/api/artwork/") || url.includes("?")) return url;
+  if (!url || !displayWidth || !url.startsWith("/api/artwork/") || /[?&]w=/.test(url)) return url;
   const density = typeof window === "undefined" ? 1 : Math.min(window.devicePixelRatio || 1, 2);
-  return `${url}?w=${Math.round(displayWidth * density)}`;
+  return `${url}${url.includes("?") ? "&" : "?"}w=${Math.round(displayWidth * density)}`;
 }
 
 /**

@@ -2,12 +2,14 @@ import { useMutation } from "@apollo/client/react";
 import { useNavigate } from "@tanstack/react-router";
 import { EntitySettingsDialog, type EntitySettingsTab } from "glass-ux/entity-settings";
 import { formBehaviour, useAppForm } from "glass-ux/form";
-import { IconClock, IconDownload, IconFile, IconInfo, IconSettings, IconTag, IconTrash } from "glass-ux/icons";
+import { IconClock, IconDownload, IconFile, IconImage, IconInfo, IconSettings, IconTag, IconTrash } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
 import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { DetailGrid, DetailTile } from "@/components/entities/EntityDetailDialog";
+import { ArtworkSettings } from "@/features/artwork/ArtworkSettings";
+import { withArtworkLocks } from "@/features/artwork/slots";
 import { Button, ConfirmDialog, EmptyState } from "@/components/ui";
 import { EntityMovieDeleteDocument, EntityMovieUpdateDocument, MovieDetailDocument, type MovieDetailQuery } from "@/graphql/generated/graphql";
 import { contentStatusMeta, useContentStatuses } from "@/hooks/useContentStatuses";
@@ -98,6 +100,8 @@ function LoadedMovieSettings({ movie, open, onOpenChange, chosenTab, onTabChange
             ...input,
             ...(year !== undefined ? { year: yearValue(value.year) } : {}),
             ...(input.qualityProfileId !== undefined ? { qualityProfileId: value.qualityProfileId || null } : {}),
+            // A picture chosen while the form was open keeps its lock.
+            ...(input.lockedFields !== undefined ? { lockedFields: withArtworkLocks(value.lockedFields, movie.lockedFields) } : {}),
           },
         },
       });
@@ -150,6 +154,10 @@ function LoadedMovieSettings({ movie, open, onOpenChange, chosenTab, onTabChange
           <form.AppField name="spokenLanguages">{() => <MetadataTagsField label="Languages" placeholder="Add a language" />}</form.AppField>
         </div>
       ),
+    },
+    {
+      value: "artwork", label: "Artwork", icon: <IconImage />,
+      content: <ArtworkSettings target={{ entityType: "MOVIE", entityId: movie.id, title: movie.title }} active={open && tab === "artwork"} />,
     },
     {
       value: "downloads", label: "Downloads", icon: <IconDownload />, fields: ["monitored", "wanted", "qualityProfileId"],

@@ -2,12 +2,14 @@ import { useMutation } from "@apollo/client/react";
 import { useNavigate } from "@tanstack/react-router";
 import { EntitySettingsDialog, type EntitySettingsTab } from "glass-ux/entity-settings";
 import { formBehaviour, useAppForm } from "glass-ux/form";
-import { IconClock, IconDownload, IconFile, IconInfo, IconSettings, IconTrash } from "glass-ux/icons";
+import { IconClock, IconDownload, IconFile, IconImage, IconInfo, IconSettings, IconTrash } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
 import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { DetailGrid, DetailTile } from "@/components/entities/EntityDetailDialog";
+import { ArtworkSettings } from "@/features/artwork/ArtworkSettings";
+import { withArtworkLocks } from "@/features/artwork/slots";
 import { Button, ConfirmDialog } from "@/components/ui";
 import { FilesBrowser } from "@/features/libraries/browser/FilesBrowser";
 import { AudiobookDetailDocument, EntityAudiobookDeleteDocument, EntityAudiobookUpdateDocument, type AudiobookDetailQuery } from "@/graphql/generated/graphql";
@@ -94,6 +96,8 @@ function LoadedAudiobookSettings({ book, open, onOpenChange, chosenTab, onTabCha
             ...input,
             ...(narrators ? { narrators, narratorName: narrators[0] ?? null } : {}),
             ...(autoDownloadMode ? { autoDownloadMode, autoDownload: autoDownloadMode !== "NONE" } : {}),
+            // A picture chosen while the form was open keeps its lock.
+            ...(input.lockedFields !== undefined ? { lockedFields: withArtworkLocks(value.lockedFields, book.lockedFields) } : {}),
           },
         },
       });
@@ -138,6 +142,10 @@ function LoadedAudiobookSettings({ book, open, onOpenChange, chosenTab, onTabCha
           <form.AppField name="description">{() => <MetadataTextareaField label="Summary" minRows={5} />}</form.AppField>
         </div>
       ),
+    },
+    {
+      value: "artwork", label: "Artwork", icon: <IconImage />,
+      content: <ArtworkSettings target={{ entityType: "AUDIOBOOK", entityId: book.id, title: book.title }} active={open && tab === "artwork"} />,
     },
     {
       value: "downloads", label: "Downloads", icon: <IconDownload />, fields: ["autoDownloadMode", "qualityProfileId"],

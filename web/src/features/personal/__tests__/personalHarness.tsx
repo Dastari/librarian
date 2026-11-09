@@ -20,7 +20,7 @@ export const STAMP = "2026-10-26T00:00:00Z";
 
 export const personalList = (overrides: Partial<PersonalListFieldsFragment> = {}): PersonalListFieldsFragment & { __typename: "PersonalList" } => ({
   __typename: "PersonalList",
-  id: "list-a", userId: OWNER, name: "Evening films", kind: "MANUAL", description: null, savedViewId: null,
+  id: "list-a", userId: OWNER, name: "Evening films", kind: "MANUAL", description: null, coverUrl: null, savedViewId: null,
   createdAt: STAMP, updatedAt: STAMP, ...overrides,
 });
 export const movieFields = (id: string, title: string, overrides: Record<string, unknown> = {}) => ({

@@ -14,6 +14,7 @@ import { Artwork } from "@/components/ui/Artwork";
 import { MediaRow } from "@/components/ui/MediaRow";
 import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { useArtworkAction } from "@/features/artwork/useArtworkAction";
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { RecommendedRelease } from "@/features/recommendations/RecommendedRelease";
 import type { RecommendationTarget } from "@/features/recommendations/recommendations";
@@ -197,6 +198,7 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
     priority: 3,
   });
   const [searching, setSearching] = useState<EpisodeRow | null>(null);
+  const episodeArtwork = useArtworkAction<EpisodeRow>({ targetOf: (episode) => ({ entityType: "EPISODE", entityId: episode.id, title: `${showName} ${episodeLabel(episode)}` }), allowed: () => isAdmin, priority: 4 });
   const groups = useMemo(() => groupBySeason(episodes), [episodes]);
   // The show's coverage plan is shown whole above the seasons when several seasons are missing
   // something; each season then shows its part. With one season missing, that season shows it whole.
@@ -302,9 +304,10 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
     },
     ...resetProgressAction("video", episodeReset, resetProgress),
     episodePlaylist.action,
+    episodeArtwork.action,
     { id: "copy-titles", label: "Copy episode titles", icon: IconCopy, group: "organise", bulk: true,
       run: async (rows) => { await copyText(rows.map(episodeLabel).join("\n")); }, successMessage: () => "Episode titles copied" },
-  ]), [episodePlaylist.action, queueActions, isAdmin, onPlay, update, updateSelected, playbackUnavailable, episodeReset, resetProgress]);
+  ]), [episodePlaylist.action, episodeArtwork.action, queueActions, isAdmin, onPlay, update, updateSelected, playbackUnavailable, episodeReset, resetProgress]);
 
   const columns = episodeColumns;
   const presentation = useMemo(() => ({
@@ -324,6 +327,7 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
           {status ? <div className="text-label-sm text-muted">{status}</div> : null}
           <ReleaseSearchDialog isOpen={Boolean(searching)} onOpenChange={(open) => !open && setSearching(null)} query={showName} season={searching?.season} episode={searching?.episode} libraryId={libraryId} target={{ showId, episodeId: searching?.id }} />
           {episodePlaylist.dialog}
+          {episodeArtwork.dialog}
         </div>
       </EpisodePresentationContext.Provider>
     );
@@ -361,6 +365,7 @@ export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile
       ))}
       <ReleaseSearchDialog isOpen={Boolean(searching)} onOpenChange={(open) => !open && setSearching(null)} query={showName} season={searching?.season} episode={searching?.episode} libraryId={libraryId} target={{ showId, episodeId: searching?.id }} />
       {episodePlaylist.dialog}
+          {episodeArtwork.dialog}
     </div>
     </EpisodePresentationContext.Provider>
   );

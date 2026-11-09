@@ -2,12 +2,13 @@ import { useMutation } from "@apollo/client/react";
 import { useNavigate } from "@tanstack/react-router";
 import { EntitySettingsDialog, type EntitySettingsTab } from "glass-ux/entity-settings";
 import { formBehaviour, useAppForm } from "glass-ux/form";
-import { IconClock, IconEdit, IconInfo, IconSettings, IconTrash } from "glass-ux/icons";
+import { IconClock, IconEdit, IconImage, IconInfo, IconSettings, IconTrash } from "glass-ux/icons";
 import { toast } from "glass-ux/toast";
 import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { DetailGrid, DetailTile } from "@/components/entities/EntityDetailDialog";
+import { ArtworkSettings } from "@/features/artwork/ArtworkSettings";
 import { Button, ConfirmDialog } from "@/components/ui";
 import {
   EntityPersonalListDeleteDocument, EntityPersonalListUpdateDocument, EntitySavedViewGetDocument, PlaylistGetDocument,
@@ -25,7 +26,7 @@ import { useHomeShelves } from "./usePersonalLibrary";
 
 type Playlist = NonNullable<PlaylistGetQuery["personalList"]>;
 
-export const PLAYLIST_SETTINGS_TABS = ["general", "rules", "info", "remove"] as const;
+export const PLAYLIST_SETTINGS_TABS = ["general", "rules", "artwork", "info", "remove"] as const;
 export type PlaylistSettingsTab = (typeof PLAYLIST_SETTINGS_TABS)[number];
 
 const schema = z.object({
@@ -115,6 +116,10 @@ function LoadedPlaylistSettings({ list, open, onOpenChange, chosenTab, onTabChan
         </div>
       ),
     }] : []),
+    {
+      value: "artwork", label: "Cover", icon: <IconImage />,
+      content: <ArtworkSettings target={{ entityType: "PLAYLIST", entityId: list.id, title: list.name }} active={open && tab === "artwork"} />,
+    },
     {
       value: "info", label: "Info", icon: <IconInfo />,
       content: (

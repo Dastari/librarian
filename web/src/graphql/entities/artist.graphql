@@ -15,6 +15,7 @@ fragment ArtistFields on Artist {
   totalDurationSecs
   createdAt
   updatedAt
+  lockedFields
 }
 
 query EntityArtistList($where: ArtistWhereInput, $orderBy: [ArtistOrderByInput!], $page: PageInput) {
