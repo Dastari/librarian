@@ -137,12 +137,14 @@ class SessionStore {
     }
   }
 
-  /** Marks the session as authenticated after a successful login or registration. */
-  establish(user: SessionUser, expiresInSeconds: number): void {
+  /** Marks the session as authenticated after a successful login or registration. The sign-in
+   * answer carries no photo, so the account is read again for it. */
+  establish(user: Omit<SessionUser, "avatarUrl"> & { avatarUrl?: string | null }, expiresInSeconds: number): void {
     this.authorityEpoch++;
-    this.set({ status: "authenticated", user, expiresAt: Date.now() + expiresInSeconds * 1000 });
+    this.set({ status: "authenticated", user: { ...user, avatarUrl: user.avatarUrl ?? this.state.user?.avatarUrl ?? null }, expiresAt: Date.now() + expiresInSeconds * 1000 });
     this.schedule();
     this.notify(true);
+    void this.reconcile();
   }
 
   async logout(): Promise<void> {

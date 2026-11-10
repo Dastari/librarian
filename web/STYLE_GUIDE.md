@@ -104,6 +104,12 @@ one opens its dialog. A row's control wraps under its text in a narrow row and t
 there (`SettingFields` sizes controls by the row's own container, not the viewport), so phones need
 no separate layout. Check a new page at 390px, a laptop, 2560px, TV mode and Light.
 
+Anything personal is not a settings page: it belongs to the User entity's settings dialog, your
+profile (`UserSettingsDialog`, opened from the account menu, the command palette, a `UserIdentity`
+or any address with `?profile=<tab>`; design.md Q147). Settings › Statistics is the server-wide
+counterpart for administrators, with segment tabs over bounded tables (design.md Q150). There is no
+dashboard page.
+
 ## Tables and media compositions
 
 Use public Glass DataTable for migrated data views. Logs, season episodes, album tracks and audiobook chapters now use it.

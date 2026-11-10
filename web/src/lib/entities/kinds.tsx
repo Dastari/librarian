@@ -38,7 +38,7 @@ export const ENTITY_KINDS = defineEntityKinds({
   source: kind(IconPlug, "Source", "Sources", "settings/sources"),
   user: kind(IconUser, "User", "Users", "settings/users"),
   networkServer: kind(glyph(IconServer2, "server"), "Network server", "Network servers", "settings/network-shares"),
-  device: kind(glyph(IconDevices, "device"), "Device", "Devices", "dashboard/devices"),
+  device: kind(glyph(IconDevices, "device"), "Device", "Devices", "settings/statistics/devices"),
 });
 
 export type EntityKindName = keyof typeof ENTITY_KINDS;
@@ -51,7 +51,8 @@ export function entityPath(kind: EntityKindName, id: string, parentId?: string |
     case "notification": return "/activity";
     case "scanIssue": return undefined;
     case "mediaFile": return undefined;
-    case "device": return "/dashboard/devices";
+    // Your devices are in your profile; everyone's in Settings › Statistics.
+    case "device": return "/?profile=devices";
     default: return `/${ENTITY_KINDS[kind].segment}/${id}`;
   }
 }

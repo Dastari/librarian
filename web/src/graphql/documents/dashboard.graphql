@@ -1,4 +1,4 @@
-# Devices, now playing, play history and statistics (design.md Q133–Q136).
+# Devices, now playing, play history and statistics (design.md Q133–Q136, Q150).
 
 mutation CheckInDevice($input: CheckInDeviceInput!) {
   checkInDevice(input: $input) {
@@ -123,8 +123,8 @@ fragment PlayStatisticsBucketFields on PlayStatisticsBucket {
   plays
 }
 
-query PlayStatistics($userId: String, $allUsers: Boolean! = false, $from: String, $to: String, $utcOffsetMinutes: Int! = 0, $top: Int! = 10) {
-  playStatistics(userId: $userId, allUsers: $allUsers, from: $from, to: $to, utcOffsetMinutes: $utcOffsetMinutes, top: $top) {
+query PlayStatistics($userId: String, $allUsers: Boolean! = false, $from: String, $to: String, $utcOffsetMinutes: Int! = 0, $top: Int! = 10, $origin: String) {
+  playStatistics(userId: $userId, allUsers: $allUsers, from: $from, to: $to, utcOffsetMinutes: $utcOffsetMinutes, top: $top, origin: $origin) {
     userId
     userName
     from
@@ -143,7 +143,8 @@ query PlayStatistics($userId: String, $allUsers: Boolean! = false, $from: String
     topAuthors { ...PlayStatisticsTopItemFields }
     topGenres { ...PlayStatisticsTopItemFields }
     devices { deviceId name seconds plays lastPlayedAt }
-    users { userId name seconds plays }
+    users { userId name seconds plays secondsWatched secondsListened completedPlays lastPlayedAt }
+    origins { origin name seconds plays }
     recent {
       id contentType title parentTitle subtitle movieId episodeId showId trackId albumId artistId audiobookId
       startedAt endedAt secondsPlayed completed imported deviceName playMethod
@@ -173,6 +174,20 @@ query PlayHistorySettings {
         id
         key
         value
+      }
+    }
+  }
+}
+
+# Plays from other servers' shared libraries (none until sharing exists): the history shows a
+# server column only when some exist (design.md Q150).
+query PlayHistoryRemoteOrigins {
+  playHistories(where: { origin: { isNull: false } }, orderBy: [{ startedAt: DESC }], page: { limit: 100, offset: 0 }) {
+    edges {
+      node {
+        id
+        origin
+        originName
       }
     }
   }

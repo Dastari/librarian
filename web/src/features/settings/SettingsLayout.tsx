@@ -1,11 +1,13 @@
 import { Outlet, useRouterState } from "@tanstack/react-router";
-import { IconCast, IconCloudDownload, IconDatabase, IconFileText, IconFolder, IconGlobe, IconInfo, IconLayers, IconPlug, IconSliders, IconTag, IconUsers } from "glass-ux/icons";
+import { IconCast, IconChartLine, IconCloudDownload, IconDatabase, IconFileText, IconFolder, IconGlobe, IconInfo, IconLayers, IconPlug, IconSliders, IconTag, IconUsers } from "glass-ux/icons";
 
 import { PageScroller } from "@/components/shell/PageScroller";
 import { PageHeader, SideTabs, type TabItem } from "@/components/ui";
 import { ENTITY_KINDS } from "@/lib/entities/kinds";
 import { cn } from "@/lib/utils";
 import { useIsAdmin } from "@/lib/auth/useSession";
+
+import { SERVER_STATISTICS_TABLE_PATHS } from "./ServerStatisticsLayout";
 
 const SECTIONS: Array<TabItem & { adminOnly?: boolean }> = [
   { key: "general", label: "General", href: "/settings/general", icon: IconSliders },
@@ -18,6 +20,7 @@ const SECTIONS: Array<TabItem & { adminOnly?: boolean }> = [
   { key: "downloads", label: "Downloads", href: "/settings/downloads", icon: IconCloudDownload, adminOnly: true },
   { key: "casting", label: "Casting", href: "/settings/casting", icon: IconCast },
   { key: "users", label: "Users", href: "/settings/users", icon: IconUsers, adminOnly: true },
+  { key: "statistics", label: "Statistics", href: "/settings/statistics", icon: IconChartLine, adminOnly: true },
   { key: "backup", label: "Backup", href: "/settings/backup", icon: IconDatabase, adminOnly: true },
   { key: "logs", label: "Logs", href: "/settings/logs", icon: IconFileText, adminOnly: true },
   { key: "about", label: "About", href: "/settings/about", icon: IconInfo },
@@ -25,7 +28,7 @@ const SECTIONS: Array<TabItem & { adminOnly?: boolean }> = [
 
 export function SettingsLayout() {
   const isAdmin = useIsAdmin();
-  const tablePane = useRouterState({ select: (state) => state.location.pathname === "/settings/logs" });
+  const tablePane = useRouterState({ select: (state) => state.location.pathname === "/settings/logs" || SERVER_STATISTICS_TABLE_PATHS.includes(state.location.pathname) });
   const items = SECTIONS.filter((section) => !section.adminOnly || isAdmin);
   return (
     <div data-print-flow className="flex min-h-0 flex-1 flex-col page-gutter pt-2">

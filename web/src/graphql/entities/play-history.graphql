@@ -29,6 +29,8 @@ fragment PlayHistoryFields on PlayHistory {
   playMethod
   imported
   sourceProgressId
+  origin
+  originName
   createdAt
   updatedAt
 }

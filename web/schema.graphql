@@ -687,6 +687,10 @@ enum ArtworkEntityKind {
 	ARTIST
 	AUDIOBOOK
 	PLAYLIST
+	"""
+	A person's photo (design.md Q147).
+	"""
+	USER
 }
 
 """
@@ -699,6 +703,7 @@ enum ArtworkKind {
 	LOGO
 	THUMBNAIL
 	COVER
+	AVATAR
 }
 
 """
@@ -1086,6 +1091,15 @@ type AuthPayload {
 	error: String
 	user: AuthenticatedUser
 	tokens: AuthSessionInfo
+	"""
+	Set instead of a session when the account needs another step.
+	"""
+	challenge: SignInChallenge
+}
+
+type AccountActionResult {
+	success: Boolean!
+	error: String
 }
 
 """
@@ -2615,6 +2629,8 @@ input CreatePlayHistoryInput {
 	playMethod: String
 	imported: Boolean!
 	sourceProgressId: String
+	origin: String
+	originName: String
 }
 
 input CreatePlaybackProgressInput {
@@ -2946,7 +2962,8 @@ input CreateUserInput {
 	displayName: String
 	avatarUrl: String
 	isActive: Boolean!
-	lastLoginAt: String
+	phone: String
+	genreInterests: [String!]
 }
 
 """
@@ -4046,6 +4063,12 @@ type FilesystemRuntimeInfo {
 """
 One genre row: the most recently added titles of that genre and how many there are.
 """
+type GenreChoice {
+	genre: String!
+	movies: Int!
+	shows: Int!
+}
+
 type GenreShelf {
 	genre: String!
 	"""
@@ -5884,6 +5907,10 @@ type MeUser {
 	username: String!
 	role: String!
 	displayName: String
+	"""
+	The photo's marker when there is one (`/api/artwork/user/{id}/avatar` serves it).
+	"""
+	avatarUrl: String
 }
 
 type MediaChapter {
@@ -6755,6 +6782,17 @@ type Mutation {
 	recacheAllMovieArtwork: Int!
 	register(input: RegisterUserInput!): AuthPayload!
 	login(input: LoginInput!): AuthPayload!
+	completeTwoFactorSignIn(input: CompleteTwoFactorSignInInput!): AuthPayload!
+	completePasswordChange(input: CompletePasswordChangeInput!): AuthPayload!
+	resetPasswordWithLink(input: ResetPasswordWithLinkInput!): AccountActionResult!
+	changePassword(input: ChangePasswordInput!): AuthPayload!
+	beginTwoFactorSetup(input: PasswordConfirmationInput!): TwoFactorSetupResult!
+	confirmTwoFactorSetup(input: TwoFactorCodeInput!): RecoveryCodesResult!
+	regenerateRecoveryCodes(input: PasswordConfirmationInput!): RecoveryCodesResult!
+	disableTwoFactor(input: PasswordConfirmationInput!): AccountActionResult!
+	resetUserTwoFactor(userId: String!): AccountActionResult!
+	setTemporaryPassword(input: SetTemporaryPasswordInput!): AccountActionResult!
+	createPasswordResetLink(userId: String!): PasswordResetLinkResult!
 	refreshToken: AuthPayload!
 	logout: LogoutPayload!
 	createDirectory(input: CreateDirectoryInput!): FileOperationPayload!
@@ -11153,6 +11191,14 @@ type PlayHistory {
 	"""
 	sourceProgressId: String
 	"""
+	Origin
+	"""
+	origin: String
+	"""
+	Origin Name
+	"""
+	originName: String
+	"""
 	Created At
 	"""
 	createdAt: String!
@@ -11244,6 +11290,7 @@ input PlayHistoryWhereInput {
 	playMethod: StringFilter
 	imported: BoolFilter
 	sourceProgressId: StringFilter
+	origin: StringFilter
 	createdAt: DateFilter
 	updatedAt: DateFilter
 	"""
@@ -11291,6 +11338,10 @@ type PlayStatistics {
 	Per person; only in an administrator's everyone view.
 	"""
 	users: [PlayStatisticsUser!]!
+	"""
+	Per origin: this server, and later the servers shared libraries are on.
+	"""
+	origins: [PlayStatisticsOrigin!]!
 	recent: [PlayStatisticsPlay!]!
 	"""
 	False when the period held more plays than one answer reads.
@@ -11385,11 +11436,22 @@ type PlayStatisticsTotals {
 	activeDays: Int!
 }
 
+type PlayStatisticsOrigin {
+	origin: String
+	name: String!
+	seconds: Float!
+	plays: Int!
+}
+
 type PlayStatisticsUser {
 	userId: String!
 	name: String!
 	seconds: Float!
 	plays: Int!
+	secondsWatched: Float!
+	secondsListened: Float!
+	completedPlays: Int!
+	lastPlayedAt: String!
 }
 
 type PlaybackProgress {
@@ -12113,12 +12175,20 @@ type Query {
 	"""
 	libraryGenreShelves(libraryId: String!, maxGenres: Int! = 6, perGenre: Int! = 20): [GenreShelf!]!
 	"""
+	Every genre among the titles you can see, most titles first, for picking interests.
+	"""
+	genreChoices: [GenreChoice!]!
+	"""
+	One shelf per genre you picked as an interest (design.md Q149).
+	"""
+	genreInterestShelves(perGenre: Int! = 20): [GenreShelf!]!
+	"""
 	Totals, days, weeks, top titles, genres, streaks and devices for one person (yours by
 	default, or someone's who shares them with you), or for everyone (administrators,
 	`allUsers`). `from`/`to` default to the last 30 days; `utcOffsetMinutes` places local
 	days (east of UTC is positive, so UTC+10 is 600).
 	"""
-	playStatistics(userId: String, allUsers: Boolean! = false, from: String, to: String, utcOffsetMinutes: Int! = 0, top: Int! = 10): PlayStatistics!
+	playStatistics(userId: String, allUsers: Boolean! = false, from: String, to: String, utcOffsetMinutes: Int! = 0, top: Int! = 10, origin: String): PlayStatistics!
 	"""
 	Whose statistics you can open: yourself, people sharing with you, and (administrators)
 	everyone.
@@ -12856,6 +12926,8 @@ type Query {
 		"""
 		id: String!
 	): InviteToken
+	passwordResetTokens(where: PasswordResetTokenWhereInput, orderBy: [PasswordResetTokenOrderByInput!], page: PageInput): PasswordResetTokenConnection!
+	passwordResetToken(id: String!): PasswordResetToken
 	"""
 	Get a list of #plural_name with optional filtering, sorting, and pagination
 	List RefreshToken records
@@ -16748,6 +16820,7 @@ type Subscription {
 		"""
 		keys: [String!]
 	): InviteTokenChangedEvent!
+	passwordResetTokenChanged(filter: SubscriptionFilterInput, key: String, keys: [String!]): PasswordResetTokenChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
 	Observe changes to RefreshToken records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
@@ -19604,6 +19677,8 @@ input UpdatePlayHistoryInput {
 	playMethod: String
 	imported: Boolean
 	sourceProgressId: String
+	origin: String
+	originName: String
 }
 
 input UpdatePlaybackProgressInput {
@@ -20088,7 +20163,8 @@ input UpdateUserInput {
 	displayName: String
 	avatarUrl: String
 	isActive: Boolean
-	lastLoginAt: String
+	phone: String
+	genreInterests: [String!]
 }
 
 """
@@ -20437,6 +20513,30 @@ type User {
 	"""
 	lastLoginAt: String
 	"""
+	Phone
+	"""
+	phone: String
+	"""
+	Genre Interests
+	"""
+	genreInterests: [String!]
+	"""
+	Must Change Password
+	"""
+	mustChangePassword: Boolean!
+	"""
+	Two Factor Enabled At
+	"""
+	twoFactorEnabledAt: String
+	"""
+	Recovery Codes Remaining
+	"""
+	recoveryCodesRemaining: Int!
+	"""
+	Password Changed At
+	"""
+	passwordChangedAt: String
+	"""
 	Created At
 	"""
 	createdAt: String!
@@ -20512,6 +20612,8 @@ input UserWhereInput {
 	displayName: StringFilter
 	isActive: BoolFilter
 	lastLoginAt: DateFilter
+	mustChangePassword: BoolFilter
+	twoFactorEnabledAt: DateFilter
 	createdAt: DateFilter
 	updatedAt: DateFilter
 	"""
@@ -20674,4 +20776,134 @@ schema {
 	query: Query
 	mutation: Mutation
 	subscription: Subscription
+}
+
+type SignInChallenge {
+	token: String!
+	stage: String!
+	expiresIn: Int!
+}
+
+type TwoFactorSetupResult {
+	success: Boolean!
+	error: String
+	secret: String
+	uri: String
+	qrSvg: String
+}
+
+type RecoveryCodesResult {
+	success: Boolean!
+	error: String
+	recoveryCodes: [String!]!
+}
+
+type PasswordResetLinkResult {
+	success: Boolean!
+	error: String
+	path: String
+	expiresAt: String
+}
+
+input CompleteTwoFactorSignInInput {
+	token: String!
+	code: String!
+}
+
+input CompletePasswordChangeInput {
+	token: String!
+	newPassword: String!
+}
+
+input ResetPasswordWithLinkInput {
+	token: String!
+	newPassword: String!
+}
+
+input ChangePasswordInput {
+	currentPassword: String!
+	newPassword: String!
+}
+
+input PasswordConfirmationInput {
+	password: String!
+}
+
+input TwoFactorCodeInput {
+	code: String!
+}
+
+input SetTemporaryPasswordInput {
+	userId: String!
+	password: String!
+}
+
+type PasswordResetToken {
+	"""
+	Id
+	"""
+	id: String!
+	"""
+	User Id
+	"""
+	userId: String!
+	"""
+	Created By User Id
+	"""
+	createdByUserId: String
+	"""
+	Expires At
+	"""
+	expiresAt: String!
+	"""
+	Consumed At
+	"""
+	consumedAt: String
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+type PasswordResetTokenChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	passwordResetToken: PasswordResetToken
+}
+
+type PasswordResetTokenConnection {
+	edges: [PasswordResetTokenEdge!]!
+	pageInfo: PageInfo!
+}
+
+type PasswordResetTokenEdge {
+	node: PasswordResetToken!
+	cursor: String!
+}
+
+input PasswordResetTokenOrderByInput {
+	expiresAt: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+input PasswordResetTokenWhereInput {
+	id: StringFilter
+	userId: StringFilter
+	createdByUserId: StringFilter
+	expiresAt: DateFilter
+	consumedAt: DateFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	and: [PasswordResetTokenWhereInput!]
+	or: [PasswordResetTokenWhereInput!]
+	not: PasswordResetTokenWhereInput
 }

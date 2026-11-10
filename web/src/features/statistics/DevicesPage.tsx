@@ -10,21 +10,25 @@ import { DeviceSettingsDialog } from "@/features/devices/DeviceSettingsDialog";
 import { useDeviceActions, type DeviceSettingsTab } from "@/features/devices/useDeviceActions";
 import { SettingsLoadError } from "@/features/settings/SettingsLoadError";
 import { useSettingsConnection } from "@/features/settings/useSettingsConnection";
-import { DashboardDevicesDocument, EntityUserListDocument, type DeviceFieldsFragment } from "@/graphql/generated/graphql";
+import { UserIdentity, userName } from "@/features/users/UserIdentity";
+import { DashboardDevicesDocument, EntityUserListDocument, type DeviceFieldsFragment, type UserFieldsFragment } from "@/graphql/generated/graphql";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { parseTimestamp } from "@/lib/format";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 
 type Row = DeviceFieldsFragment;
 
-function columnsFor(current: string | null, people: ReadonlyMap<string, string> | null) {
+function columnsFor(current: string | null, people: ReadonlyMap<string, UserFieldsFragment> | null) {
   const column = createDataTableColumns<Row>();
   return column.columns([
     column.accessor("name", {
       header: "Device", width: 30, priority: 1, cardRole: "title",
-      cell: ({ row }) => <DeviceIdentity device={row.original} current={row.original.id === current} owner={people ? people.get(row.original.userId) ?? "Removed user" : undefined} />,
+      cell: ({ row }) => <DeviceIdentity device={row.original} current={row.original.id === current} owner={people ? ownerName(people, row.original.userId) : undefined} />,
     }),
-    ...(people ? [column.accessor((row) => people.get(row.userId) ?? "", { id: "person", header: "Person", width: 12, priority: 2, cell: ({ row }) => <TextCell>{people.get(row.original.userId) ?? "Removed user"}</TextCell> })] : []),
+    ...(people ? [column.accessor((row) => ownerName(people, row.userId), {
+      id: "person", header: "Person", width: 12, priority: 2,
+      cell: ({ row }) => { const person = people.get(row.original.userId); return person ? <UserIdentity user={person} tier="chip" /> : <TextCell muted>Removed user</TextCell>; },
+    })] : []),
     column.accessor((row) => deviceSoftware(row), { id: "software", header: "Browser and platform", width: 16, priority: 3, cell: ({ row }) => <TextCell muted>{deviceSoftware(row.original) || "—"}</TextCell> }),
     column.display({
       id: "status", header: "Status", width: 10, priority: 2, cardRole: "status",
@@ -38,17 +42,27 @@ function columnsFor(current: string | null, people: ReadonlyMap<string, string> 
 
 const noun = { one: "device", other: "devices" };
 
+const ownerName = (people: ReadonlyMap<string, UserFieldsFragment>, id: string) => {
+  const person = people.get(id);
+  return person ? userName(person) : "Removed user";
+};
+
 /**
- * The browsers, apps and TVs signed in to Librarian: yours, or everyone's for an administrator.
- * A device can be renamed, signed out (its login ends and its playback stops) or forgotten.
+ * The browsers, apps and TVs signed in to Librarian. `personal` (the profile dialog): one
+ * person's, yours by default. `server` (Settings › Statistics, administrators): everyone's, with
+ * whose they are. A device can be renamed, signed out (its login ends and its playback stops) or
+ * forgotten.
  */
-export function DevicesPage() {
+export function DevicesPage({ scope = "personal", userId }: { scope?: "personal" | "server"; userId?: string }) {
   const isAdmin = useIsAdmin();
   const { user } = useSession();
+  const server = scope === "server" && isAdmin;
+  const owner = server ? undefined : userId ?? user?.id;
   const current = useSyncExternalStore(currentDevice.subscribe, currentDevice.get, currentDevice.get);
-  const users = useQuery(EntityUserListDocument, { variables: { page: { limit: 100, offset: 0 } }, skip: !isAdmin });
-  const people = useMemo(() => (isAdmin ? new Map((users.data?.users.edges ?? []).map(({ node }) => [node.id, node.displayName || node.username])) : null), [isAdmin, users.data]);
-  const list = useSettingsConnection(DashboardDevicesDocument, {}, (data) => data.devices);
+  const users = useQuery(EntityUserListDocument, { variables: { page: { limit: 100, offset: 0 } }, skip: !server });
+  const people = useMemo(() => (server ? new Map((users.data?.users.edges ?? []).map(({ node }) => [node.id, node])) : null), [server, users.data]);
+  const where = useMemo(() => (owner ? { userId: { eq: owner } } : {}), [owner]);
+  const list = useSettingsConnection(DashboardDevicesDocument, { where }, (data) => data.devices);
   const { rows, refetch } = list;
   const refresh = useCallback(() => void refetch(), [refetch]);
   const [editing, setEditing] = useState<{ id: string; tab: DeviceSettingsTab } | null>(null);
@@ -64,8 +78,8 @@ export function DevicesPage() {
         complete={!list.loading && !list.error}
         height="fill"
         selectable
-        queryKey={user?.id}
-        id={`librarian.${user?.id ?? "session"}.devices`}
+        queryKey={JSON.stringify([user?.id, owner])}
+        id={`librarian.${user?.id ?? "session"}.${server ? "server-devices" : "devices"}`}
         label="Devices"
         columns={columns}
         defaultHiddenColumns={["address", "version"]}
@@ -83,7 +97,7 @@ export function DevicesPage() {
       {editingRow ? (
         <DeviceSettingsDialog
           device={editingRow}
-          owner={people?.get(editingRow.userId)}
+          owner={people ? ownerName(people, editingRow.userId) : undefined}
           open={editing !== null}
           onOpenChange={(next) => !next && setEditing(null)}
           tab={editing?.tab ?? "general"}
