@@ -6822,53 +6822,6 @@ type Mutation {
 	login(input: LoginInput!): AuthPayload!
 	refreshToken: AuthPayload!
 	logout: LogoutPayload!
-	"""
-	The second sign-in step: a code from the authenticator app or a recovery code, for the
-	challenge `login` returned. Signs in, or returns the next challenge (a new password).
-	"""
-	completeTwoFactorSignIn(input: CompleteTwoFactorSignInInput!): AuthPayload!
-	"""
-	After a temporary password: choose a new one and sign in.
-	"""
-	completePasswordChange(input: CompletePasswordChangeInput!): AuthPayload!
-	"""
-	Set a new password with a reset link an administrator passed on. Signs nobody in.
-	"""
-	resetPasswordWithLink(input: ResetPasswordWithLinkInput!): AccountActionResult!
-	"""
-	Change your password. Every session of yours ends; this device gets a new one.
-	"""
-	changePassword(input: ChangePasswordInput!): AuthPayload!
-	"""
-	Start turning on two-factor sign-in, with your password.
-	"""
-	beginTwoFactorSetup(input: PasswordConfirmationInput!): TwoFactorSetupResult!
-	"""
-	Finish turning it on with a code from the app. Returns the recovery codes.
-	"""
-	confirmTwoFactorSetup(input: TwoFactorCodeInput!): RecoveryCodesResult!
-	"""
-	New recovery codes; the old ones stop working.
-	"""
-	regenerateRecoveryCodes(input: PasswordConfirmationInput!): RecoveryCodesResult!
-	"""
-	Turn your two-factor sign-in off, with your password.
-	"""
-	disableTwoFactor(input: PasswordConfirmationInput!): AccountActionResult!
-	"""
-	Account recovery (administrators): turn someone's two-factor sign-in off. Logged.
-	"""
-	resetUserTwoFactor(userId: String!): AccountActionResult!
-	"""
-	Administrators: give someone a temporary password, which they must change when they next
-	sign in. Their sessions end.
-	"""
-	setTemporaryPassword(input: SetTemporaryPasswordInput!): AccountActionResult!
-	"""
-	Administrators: a one-time reset link for someone, valid for a day, to pass on yourself.
-	It replaces any earlier link.
-	"""
-	createPasswordResetLink(userId: String!): PasswordResetLinkResult!
 	createDirectory(input: CreateDirectoryInput!): FileOperationPayload!
 	configureNetworkPath(input: ConfigureNetworkPathInput!): NetworkPathConfigPayload!
 	"""
@@ -7120,6 +7073,63 @@ type Mutation {
 	Each checkpoint is imported once, so running it again only adds what is new.
 	"""
 	importPlayHistory(allUsers: Boolean! = false): ImportPlayHistoryPayload!
+	"""
+	Ask GitHub now. Pressed again within 20 seconds, it returns the last answer.
+	"""
+	checkForServerUpdate: CheckForServerUpdateResult!
+	"""
+	Upgrade to `version`, which must be the newest release on the channel (the confirmation
+	names it). Returns once the download has started; `serverUpdateStatus.progress` follows it,
+	and the server restarts when the new binary is in place.
+	"""
+	upgradeServer(version: String!): UpgradeServerResult!
+	"""
+	The second sign-in step: a code from the authenticator app or a recovery code, for the
+	challenge `login` returned. Signs in, or returns the next challenge (a new password).
+	"""
+	completeTwoFactorSignIn(input: CompleteTwoFactorSignInInput!): AuthPayload!
+	"""
+	After a temporary password: choose a new one and sign in.
+	"""
+	completePasswordChange(input: CompletePasswordChangeInput!): AuthPayload!
+	"""
+	Set a new password with a reset link an administrator passed on. Signs nobody in.
+	"""
+	resetPasswordWithLink(input: ResetPasswordWithLinkInput!): AccountActionResult!
+	"""
+	Change your password. Every session of yours ends; this device gets a new one.
+	"""
+	changePassword(input: ChangePasswordInput!): AuthPayload!
+	"""
+	Start turning on two-factor sign-in, with your password.
+	"""
+	beginTwoFactorSetup(input: PasswordConfirmationInput!): TwoFactorSetupResult!
+	"""
+	Finish turning it on with a code from the app. Returns the recovery codes.
+	"""
+	confirmTwoFactorSetup(input: TwoFactorCodeInput!): RecoveryCodesResult!
+	"""
+	New recovery codes; the old ones stop working.
+	"""
+	regenerateRecoveryCodes(input: PasswordConfirmationInput!): RecoveryCodesResult!
+	"""
+	Turn your two-factor sign-in off, with your password.
+	"""
+	disableTwoFactor(input: PasswordConfirmationInput!): AccountActionResult!
+	"""
+	Account recovery (administrators): turn someone's two-factor sign-in off. Logged.
+	"""
+	resetUserTwoFactor(userId: String!): AccountActionResult!
+	"""
+	Administrators: give someone a temporary password, which they must change when they next
+	sign in. Their sessions end.
+	"""
+	setTemporaryPassword(input: SetTemporaryPasswordInput!): AccountActionResult!
+	"""
+	Administrators: a one-time reset link for someone, valid for a day, to pass on yourself.
+	It replaces any earlier link.
+	"""
+	createPasswordResetLink(userId: String!): PasswordResetLinkResult!
 	"""
 	Create a new #struct_name_str
 	Create one Library records
@@ -10221,16 +10231,6 @@ type Mutation {
 		"""
 		where: NetworkServerWhereInput
 	): DeleteNetworkServersResult!
-	"""
-	Ask GitHub now. Pressed again within 20 seconds, it returns the last answer.
-	"""
-	checkForServerUpdate: CheckForServerUpdateResult!
-	"""
-	Upgrade to `version`, which must be the newest release on the channel (the confirmation
-	names it). Returns once the download has started; `serverUpdateStatus.progress` follows it,
-	and the server restarts when the new binary is in place.
-	"""
-	upgradeServer(version: String!): UpgradeServerResult!
 }
 
 """
@@ -12409,6 +12409,11 @@ type Query {
 	The other people on this server, to share your statistics with.
 	"""
 	statisticsShareCandidates: [StatisticsPerson!]!
+	serverUpdateStatus: ServerUpdateStatus!
+	"""
+	The newest Android TV app release the last check found, for the TV shell to offer.
+	"""
+	tvAppRelease: TvAppRelease
 	"""
 	Get a list of #plural_name with optional filtering, sorting, and pagination
 	List Library records
@@ -14246,12 +14251,6 @@ type Query {
 		"""
 		id: String!
 	): TorrentContents
-	serverUpdateStatus: ServerUpdateStatus!
-	"""
-	The newest Android TV app release the last check found, for the TV shell to offer.
-	"""
-	tvAppRelease: TvAppRelease
-
 	"""
 	Get a list of #plural_name with optional filtering, sorting, and pagination
 	List StorageVolume records
@@ -19318,9 +19317,6 @@ type TriggerAutoDownloadResult {
 	error: String
 }
 
-"""
-Result of TV show operations
-"""
 type TvAppRelease {
 	version: String!
 	tag: String!
@@ -19332,6 +19328,9 @@ type TvAppRelease {
 	apkUrl: String
 }
 
+"""
+Result of TV show operations
+"""
 type TvShowOperationResult {
 	success: Boolean!
 	show: Show
