@@ -113,3 +113,9 @@ video:focus, audio:focus { outline: none; }
   gap: 1px;
 }
 .entity-art[data-mosaic="3"] > img:nth-child(3) { grid-column: span 2; }
+
+/* One highlight (design.md Q144): after a key press, a table row under a resting mouse keeps its
+   own fill. Since Glass 0.19.5 the hover fill snaps on, so rows the remote scrolls past the cursor
+   would each flash a second highlight beside the focused row. */
+:root[data-last-input="keys"] .fa-dt-rows > .fa-dt-row:not([data-selected], :focus-visible):hover { --_bg: transparent; }
+:root[data-last-input="keys"] .fa-dt-rows > .fa-dt-row[data-selected]:not(:focus-visible):hover { --_bg: var(--accent-soft); }
