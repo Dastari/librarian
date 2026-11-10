@@ -7,8 +7,8 @@ import { isConstrainedDevice } from "@/lib/tv-app";
 
 import { artworkRevision } from "@/lib/artworkRevisions";
 
-export type ArtworkEntity = "movie" | "show" | "season" | "episode" | "album" | "artist" | "audiobook" | "playlist" | "collection" | "person" | "guide" | "provider-movie" | "provider-show" | "provider-audiobook" | "provider-episode";
-export type ArtworkKind = "poster" | "backdrop" | "banner" | "cover" | "profile" | "thumbnail" | "logo";
+export type ArtworkEntity = "movie" | "show" | "season" | "episode" | "album" | "artist" | "audiobook" | "playlist" | "collection" | "person" | "guide" | "provider-movie" | "provider-show" | "provider-audiobook" | "provider-episode" | "user";
+export type ArtworkKind = "poster" | "backdrop" | "banner" | "cover" | "profile" | "thumbnail" | "logo" | "avatar";
 
 /**
  * A cached picture's address. A picture changed on this device (chosen or uploaded) carries its

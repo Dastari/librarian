@@ -289,6 +289,8 @@ async fn can_access_artwork(
         "playlist" => PersonalList::get(state.db.pool(), &entity_id)
             .await?
             .map(|entity| entity.user_id),
+        // A person's photo: theirs and administrators'.
+        "user" => Some(entity_id.clone()),
         _ => None,
     };
     Ok(owner.as_deref() == Some(user.user_id.as_str()))

@@ -9,24 +9,13 @@ query CurrentUser {
     username
     role
     displayName
+    avatarUrl
   }
 }
 
 mutation Login($input: LoginInput!) {
   login(input: $input) {
-    success
-    error
-    user {
-      id
-      email
-      username
-      role
-      displayName
-    }
-    tokens {
-      expiresIn
-      tokenType
-    }
+    ...SignedInFields
   }
 }
 

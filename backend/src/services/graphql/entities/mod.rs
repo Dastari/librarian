@@ -18,6 +18,7 @@ pub mod video_stream;
 
 // User and auth entities
 pub mod invite_token;
+pub mod password_reset_token;
 pub mod refresh_token;
 pub mod user;
 
@@ -118,6 +119,7 @@ pub use movie_cast_credit::*;
 pub use naming_pattern::*;
 pub use network_server::*;
 pub use notification::*;
+pub use password_reset_token::*;
 pub use pending_file_match::*;
 pub use person::*;
 pub use personal::*;

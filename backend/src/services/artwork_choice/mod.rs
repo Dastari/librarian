@@ -30,7 +30,8 @@ use crate::graphql::AuthUser;
 use crate::graphql::entities::{
     Album, Artist, ArtworkCache, ArtworkCacheWhereInput, Audiobook, Episode, Movie, PersonalList,
     Season, Show, UpdateAlbumInput, UpdateArtistInput, UpdateAudiobookInput, UpdateEpisodeInput,
-    UpdateMovieInput, UpdatePersonalListInput, UpdateSeasonInput, UpdateShowInput,
+    UpdateMovieInput, UpdatePersonalListInput, UpdateSeasonInput, UpdateShowInput, UpdateUserInput,
+    User,
 };
 use crate::services::ArtworkService;
 
@@ -48,6 +49,8 @@ pub enum ArtworkEntityKind {
     Artist,
     Audiobook,
     Playlist,
+    /// A person's photo (design.md Q147).
+    User,
 }
 
 /// Which picture of it. An artist's picture is stored as its poster, an episode's still as its
@@ -59,6 +62,7 @@ pub enum ArtworkKind {
     Logo,
     Thumbnail,
     Cover,
+    Avatar,
 }
 
 /// One picture of one kind of entity.
@@ -81,6 +85,7 @@ pub const SLOTS: &[ArtworkSlot] = &[
     ArtworkSlot::of(ArtworkEntityKind::Artist, ArtworkKind::Poster),
     ArtworkSlot::of(ArtworkEntityKind::Audiobook, ArtworkKind::Cover),
     ArtworkSlot::of(ArtworkEntityKind::Playlist, ArtworkKind::Cover),
+    ArtworkSlot::of(ArtworkEntityKind::User, ArtworkKind::Avatar),
 ];
 
 /// What an uploaded picture's source is recorded as: a marker, never a URL, so nothing tries to
@@ -119,6 +124,7 @@ impl ArtworkSlot {
             ArtworkEntityKind::Artist => "artist",
             ArtworkEntityKind::Audiobook => "audiobook",
             ArtworkEntityKind::Playlist => "playlist",
+            ArtworkEntityKind::User => "user",
         }
     }
 
@@ -130,6 +136,7 @@ impl ArtworkSlot {
             ArtworkKind::Logo => "logo",
             ArtworkKind::Thumbnail => "thumbnail",
             ArtworkKind::Cover => "cover",
+            ArtworkKind::Avatar => "avatar",
         }
     }
 
@@ -151,13 +158,18 @@ impl ArtworkSlot {
                 ArtworkKind::Cover,
             ) => Some("coverUrl"),
             (ArtworkEntityKind::Artist, ArtworkKind::Poster) => Some("imageUrl"),
+            (ArtworkEntityKind::User, ArtworkKind::Avatar) => Some("avatarUrl"),
             _ => None,
         }
     }
 
-    /// Whether a provider lists pictures for this slot. A playlist's cover is only ever uploaded.
+    /// Whether a provider lists pictures for this slot. A playlist's cover and a person's photo
+    /// are only ever uploaded.
     pub fn has_provider(self) -> bool {
-        self.entity != ArtworkEntityKind::Playlist
+        !matches!(
+            self.entity,
+            ArtworkEntityKind::Playlist | ArtworkEntityKind::User
+        )
     }
 
     /// Whether a metadata refresh can write this slot, so a choice needs a lock to stick.
@@ -300,14 +312,20 @@ pub async fn slot_state(db: &Database, slot: ArtworkSlot, id: &str) -> Result<Op
         (ArtworkEntityKind::Playlist, _) => PersonalList::get(pool, &id)
             .await?
             .map(|list| state(list.user_id, list.cover_url, None)),
+        (ArtworkEntityKind::User, _) => User::get(pool, &id)
+            .await?
+            .map(|user| state(user.id, user.avatar_url, None)),
     })
 }
 
 /// Who may change a slot: an admin, as for every other metadata edit; a playlist's owner for its
-/// cover, since a playlist is personal.
+/// cover, since a playlist is personal; a person for their own photo.
 pub fn may_change(user: &AuthUser, slot: ArtworkSlot, state: &SlotState) -> bool {
     user.is_admin()
-        || (slot.entity == ArtworkEntityKind::Playlist && state.owner_id == user.user_id)
+        || (matches!(
+            slot.entity,
+            ArtworkEntityKind::Playlist | ArtworkEntityKind::User
+        ) && state.owner_id == user.user_id)
 }
 
 /// The locks after a slot is locked or unlocked.
@@ -427,6 +445,17 @@ pub async fn write_slot(
             &id,
             UpdatePersonalListInput {
                 cover_url: value,
+                ..Default::default()
+            },
+        )
+        .await?
+        .is_some(),
+        // Nor a person's photo.
+        (ArtworkEntityKind::User, _) => User::update_by_id(
+            db,
+            &id,
+            UpdateUserInput {
+                avatar_url: value,
                 ..Default::default()
             },
         )

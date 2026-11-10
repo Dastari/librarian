@@ -13,9 +13,9 @@ import { SceneBackdrop } from "@/components/three/SceneBackdrop";
 import { Button, EmptyState, ErrorState, MediaRow, PosterCard, Section, SkeletonBlock } from "@/components/ui";
 import { LibraryCard } from "@/features/libraries/LibraryCard";
 import { usePlayer } from "@/features/player/usePlayer";
-import { LibrariesOverviewDocument, RecentAlbumsDocument, RecentAudiobooksDocument, RecentMoviesDocument, RecentShowsDocument } from "@/graphql/generated/graphql";
+import { GenreInterestShelvesDocument, type GenreInterestShelvesQuery, LibrariesOverviewDocument, RecentAlbumsDocument, RecentAudiobooksDocument, RecentMoviesDocument, RecentShowsDocument } from "@/graphql/generated/graphql";
 import { albumCover, audiobookCover, movieBackdrop, moviePoster, showPoster } from "@/lib/artwork";
-import { formatRuntime, formatYear } from "@/lib/format";
+import { formatRuntime, formatYear, parseTimestamp } from "@/lib/format";
 import { LIBRARY_TYPES } from "@/lib/library-types";
 
 import { GuideSpotlight } from "@/features/guide/GuideSpotlight";
@@ -24,6 +24,18 @@ import { ResumeCard } from "./ResumeCard";
 import { useContinueWatching } from "./useContinueWatching";
 
 const ROW_LIMIT = 20;
+
+type InterestShelf = GenreInterestShelvesQuery["genreInterestShelves"][number];
+type InterestTitle = { kind: "movie"; movie: InterestShelf["movies"][number]; added: number } | { kind: "show"; show: InterestShelf["shows"][number]; added: number };
+const addedAt = (value: string) => parseTimestamp(value)?.getTime() ?? 0;
+
+/** A genre row's movies and shows together, newest first. */
+export function interestTitles(shelf: InterestShelf, limit = ROW_LIMIT): InterestTitle[] {
+  return [
+    ...shelf.movies.map((movie): InterestTitle => ({ kind: "movie", movie, added: addedAt(movie.createdAt) })),
+    ...shelf.shows.map((show): InterestTitle => ({ kind: "show", show, added: addedAt(show.createdAt) })),
+  ].sort((a, b) => b.added - a.added).slice(0, limit);
+}
 
 export function HomePage() {
   const navigate = useNavigate();
@@ -37,6 +49,8 @@ export function HomePage() {
   const albums = useQuery(RecentAlbumsDocument, { variables: { limit: ROW_LIMIT } });
   const audiobooks = useQuery(RecentAudiobooksDocument, { variables: { limit: ROW_LIMIT } });
   const resume = useContinueWatching();
+  const interests = useQuery(GenreInterestShelvesDocument, { variables: { perGenre: ROW_LIMIT } });
+  const interestShelves = (interests.data ?? interests.previousData)?.genreInterestShelves ?? [];
 
   const favouriteIds = new Set(preferences.rows.filter((row) => row.favourite).map((row) => row.libraryId));
   const libraryList = [...libraries.rows].sort((a, b) => Number(favouriteIds.has(b.id)) - Number(favouriteIds.has(a.id)));
@@ -75,6 +89,22 @@ export function HomePage() {
             ))}
           </MediaRow>
         </Section>
+      ) : null),
+    // One row per genre you picked in your profile, movies and shows together, newest first.
+    interests: (interestShelves.length > 0 ? (
+        <div className="flex min-w-0 flex-col gap-10">
+          {interestShelves.map((shelf) => (
+            <Section key={shelf.genre} title={`Because you like ${shelf.genre}`} bleed>
+              <MediaRow ariaLabel={`Because you like ${shelf.genre}`}>
+                {interestTitles(shelf).map((title) => (title.kind === "movie" ? (
+                  <PosterCard key={`movie-${title.movie.id}`} width="row" title={title.movie.title} meta={[title.movie.year, title.movie.runtime ? formatRuntime(title.movie.runtime, "minutes") : null].filter(Boolean).join(" · ")} image={moviePoster(title.movie.id)} tint={LIBRARY_TYPES.movies.tintVar} to="/movies/$movieId" params={{ movieId: title.movie.id }} />
+                ) : (
+                  <PosterCard key={`show-${title.show.id}`} width="row" title={title.show.name} meta={[title.show.year, title.show.network].filter(Boolean).join(" · ")} image={showPoster(title.show)} tint={LIBRARY_TYPES.tv.tintVar} to="/shows/$showId" params={{ showId: title.show.id }} />
+                )))}
+              </MediaRow>
+            </Section>
+          ))}
+        </div>
       ) : null),
     libraries: (<Section title="Libraries" bleed trailing={<Link to="/libraries" className="nav-focus rounded hover:text-foreground" data-tv-skip>See all</Link>}>
         <MediaRow ariaLabel="Libraries">

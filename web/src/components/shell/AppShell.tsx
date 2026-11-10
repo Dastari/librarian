@@ -17,6 +17,8 @@ import { ConnectionBanner } from "./ConnectionBanner";
 import { NavRail } from "./NavRail";
 import { PageScroller } from "./PageScroller";
 import { SHELL_ART_ID } from "./shellArt";
+import { ProfileDialogHost } from "@/features/users/profileDialog";
+
 import { ShellCommands } from "./ShellCommands";
 import { TopBar } from "./TopBar";
 
@@ -74,6 +76,7 @@ export function AppShell() {
     <div className="app-shell canvas-ambient relative isolate h-dvh w-full overflow-clip text-foreground">
       <div id={SHELL_ART_ID} className="shell-art" aria-hidden data-print="hide" />
       <ShellCommands />
+      <ProfileDialogHost />
       <GlassAppShell
         className="app-frame"
         contentAs="div"

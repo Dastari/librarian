@@ -156,6 +156,12 @@
     "changed": "inviteTokenChanged"
   },
   {
+    "entity": "PasswordResetToken",
+    "list": "passwordResetTokens",
+    "get": "passwordResetToken",
+    "changed": "passwordResetTokenChanged"
+  },
+  {
     "entity": "RefreshToken",
     "list": "refreshTokens",
     "get": "refreshToken",

@@ -439,6 +439,8 @@ pub(crate) async fn record_session_change(
                 play_method: after.play_method.clone(),
                 imported: false,
                 source_progress_id: None,
+                origin: None,
+                origin_name: None,
             })
             .await
             .map_err(db_error)?;
@@ -791,6 +793,8 @@ pub async fn import_from_progress(
                 play_method: None,
                 imported: true,
                 source_progress_id: Some(progress.id.clone()),
+                origin: None,
+                origin_name: None,
             })
             .await?;
             outcome.imported += 1;

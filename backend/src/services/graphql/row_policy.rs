@@ -80,6 +80,11 @@ impl OwnershipRowPolicy {
         };
         let predicate = match entity_name {
             "Library" => direct!(LibraryWhereInput),
+            // A person's own account: the row's id is its owner.
+            "User" => ReadPredicate::from_filter::<DefaultBackend, _>(&UserWhereInput {
+                id: Some(owner_filter()),
+                ..Default::default()
+            })?,
             "LibraryScanRun" => direct!(LibraryScanRunWhereInput),
             "LibraryScanIssue" => direct!(LibraryScanIssueWhereInput),
             "Movie" => direct!(MovieWhereInput),
@@ -191,15 +196,18 @@ impl OwnershipRowPolicy {
             | "IdentificationEvent"
             | "IdentifiedItem"
             | "Credit"
-            | "TitleDetail" => ScopeClass::Owner,
+            | "TitleDetail"
+            | "User" => ScopeClass::Owner,
             "MovieCastCredit" | "Episode" | "Season" | "MediaFile" | "Track" | "Chapter"
             | "TorrentFile" | "RssFeedItem" | "VideoStream" | "AudioStream" | "Subtitle"
             | "Lyric" | "MediaChapter" => ScopeClass::Derived,
             "Person" | "CastDevice" | "CastSetting" | "ScheduleCache" | "TorznabCategory"
             | "QualityProfile" | "ReleaseBlocklist" => ScopeClass::Shared,
-            "Source" | "User" | "InviteToken" | "RefreshToken" | "AppSetting" | "AppLog"
-            | "UsenetServer" | "ScheduleSyncState" | "MetadataCache" | "MatchingAssistant"
-            | "NetworkServer" | "TorrentContents" | "StorageVolume" => ScopeClass::Admin,
+            "Source" | "InviteToken" | "PasswordResetToken" | "RefreshToken" | "AppSetting"
+            | "AppLog" | "UsenetServer" | "ScheduleSyncState" | "MetadataCache"
+            | "MatchingAssistant" | "NetworkServer" | "TorrentContents" | "StorageVolume" => {
+                ScopeClass::Admin
+            }
             _ => return None,
         })
     }
@@ -215,6 +223,9 @@ impl OwnershipRowPolicy {
             };
         }
         match entity_name {
+            "User" => row
+                .downcast_ref::<User>()
+                .map(|record| Some(record.id.as_str())),
             "Library" => required!(Library),
             "LibraryScanRun" => required!(LibraryScanRun),
             "LibraryScanIssue" => required!(LibraryScanIssue),

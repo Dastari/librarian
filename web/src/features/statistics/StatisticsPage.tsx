@@ -1,4 +1,3 @@
-import { useNavigate } from "@tanstack/react-router";
 import { BarChart, ColumnChart } from "glass-ux/charts";
 import { IconShare, IconWarning } from "glass-ux/icons";
 import { Metric } from "glass-ux/metric";
@@ -159,46 +158,76 @@ function StatisticsView({ stats, everyone }: { stats: PlayStatistics; everyone: 
   );
 }
 
+export interface StatisticsSearch {
+  period?: PeriodKey;
+  user?: string;
+  origin?: string;
+}
+
 /**
- * Watch and listening statistics: yours, someone's who shares theirs with you, or (administrators)
- * anyone's and everyone's together. The period and person are in the URL.
+ * Watch and listening statistics.
+ *
+ * - `personal` (the profile dialog): yours, or the statistics of someone who shares theirs with
+ *   you. `fixedPerson` pins it to one account (an administrator looking at someone's profile).
+ * - `server` (Settings › Statistics, administrators): everyone together or anyone, with an
+ *   origin choice once plays come from more than one server (design.md Q150).
+ *
+ * The period, person and origin are the host's: the URL on a page, state in a dialog.
  */
-export function StatisticsPage({ period, person }: { period: PeriodKey; person?: string }) {
-  const navigate = useNavigate();
+export function StatisticsPage({ period, person, origin, onSearchChange, scope = "personal", fixedPerson }: {
+  period: PeriodKey;
+  person?: string;
+  origin?: string;
+  onSearchChange: (next: StatisticsSearch) => void;
+  scope?: "personal" | "server";
+  fixedPerson?: string;
+}) {
   const isAdmin = useIsAdmin();
   const { user } = useSession();
   const [sharing, setSharing] = useState(false);
-  const people = useQuery(StatisticsPeopleDocument);
-  const everyone = isAdmin && person === EVERYONE;
-  const target = everyone ? undefined : person && person !== user?.id ? person : undefined;
+  const server = scope === "server" && isAdmin;
+  const people = useQuery(StatisticsPeopleDocument, { skip: Boolean(fixedPerson) });
+  const chosen = fixedPerson ?? person ?? (server ? EVERYONE : undefined);
+  const everyone = server && chosen === EVERYONE;
+  const target = everyone ? undefined : chosen && chosen !== user?.id ? chosen : undefined;
   // One range per period choice, so the query and its live refreshes ask for the same window.
   const range = useMemo(() => periodRange(period), [period]);
   const stats = useQuery(PlayStatisticsDocument, {
-    variables: { ...range, userId: target ?? null, allUsers: everyone, top: 10 },
+    variables: { ...range, userId: target ?? null, allUsers: everyone, top: 10, origin: server ? origin ?? null : null },
   });
   const data = (stats.data ?? stats.previousData)?.playStatistics;
   const options = useMemo(() => {
-    const list = (people.data?.statisticsPeople ?? []).map((entry) => ({ value: entry.userId, label: entry.isSelf ? `${entry.name} (you)` : entry.name }));
-    return isAdmin ? [...list, { value: EVERYONE, label: "Everyone" }] : list;
-  }, [people.data, isAdmin]);
+    const list = (people.data?.statisticsPeople ?? [])
+      // Your profile lists you and the people who share with you; everyone else is the server page's.
+      .filter((entry) => server || entry.isSelf || entry.shared)
+      .map((entry) => ({ value: entry.userId, label: entry.isSelf ? `${entry.name} (you)` : entry.name }));
+    return server ? [{ value: EVERYONE, label: "Everyone" }, ...list] : list;
+  }, [people.data, server]);
+  const origins = data?.origins ?? [];
   const selected = everyone ? EVERYONE : target ?? user?.id ?? null;
   const own = !everyone && !target;
-
-  const setSearch = (next: { period?: PeriodKey; user?: string | undefined }) =>
-    void navigate({ to: "/dashboard/statistics", search: (previous: Record<string, unknown>) => ({ ...previous, ...next }) as never, replace: true });
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <div className="flex min-w-0 flex-wrap items-center gap-3" data-nav-section>
-        {options.length > 1 ? (
-          <Select aria-label="Whose statistics" value={selected} onValueChange={(value) => setSearch({ user: !value || value === user?.id ? undefined : value })} options={options} className="w-60 max-w-full" />
+        {!fixedPerson && options.length > 1 ? (
+          <Select aria-label="Whose statistics" value={selected} onValueChange={(value) => onSearchChange({ user: !value || (!server && value === user?.id) ? undefined : value })} options={options} className="w-60 max-w-full" />
         ) : null}
-        <Segmented aria-label="Period" size="sm" value={period} onValueChange={(value) => setSearch({ period: value as PeriodKey })} options={PERIODS.map((entry) => ({ value: entry.value, label: entry.label }))} />
-        {own ? (
+        {server && origins.length > 1 ? (
+          <Select
+            aria-label="Where played"
+            value={origin ?? "all"}
+            onValueChange={(value) => onSearchChange({ origin: !value || value === "all" ? undefined : value })}
+            options={[{ value: "all", label: "Every server" }, ...origins.map((entry) => ({ value: entry.origin ?? "local", label: entry.name }))]}
+            className="w-52 max-w-full"
+          />
+        ) : null}
+        <Segmented aria-label="Period" size="sm" value={period} onValueChange={(value) => onSearchChange({ period: value as PeriodKey })} options={PERIODS.map((entry) => ({ value: entry.value, label: entry.label }))} />
+        {own && !server && !fixedPerson ? (
           <Button variant="secondary" size="sm" className="ms-auto" onPress={() => setSharing(true)} data-tv-autofocus>
             <IconShare /> Share
           </Button>
-        ) : data?.userName && !everyone ? (
+        ) : data?.userName && !everyone && !server && !fixedPerson ? (
           <p className="ms-auto text-body-sm text-muted">{data.userName} shares these with you. They are read-only.</p>
         ) : null}
       </div>
@@ -207,7 +236,7 @@ export function StatisticsPage({ period, person }: { period: PeriodKey; person?:
       ) : !data ? (
         <div className="h-96 min-w-0 animate-pulse rounded-[var(--radius-surface)] bg-surface-secondary" aria-busy="true" aria-label="Loading statistics" />
       ) : !hasPlays(data) ? (
-        <EmptyState icon={IconShare} title="Nothing played in this period" description={own ? "What you watch and listen to is counted from here on, on every device." : "Nothing was played in this period."} />
+        <EmptyState icon={IconShare} title="Nothing played in this period" description={own && !server ? "What you watch and listen to is counted from here on, on every device." : "Nothing was played in this period."} />
       ) : (
         <StatisticsView stats={data} everyone={everyone} />
       )}

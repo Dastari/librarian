@@ -1,5 +1,5 @@
 import type { IconComponent } from "glass-ux/icon";
-import { IconActivity, IconBell, IconBookmark, IconCalendar, IconDownload, IconHome, IconLayers, IconListCheck, IconSearch, IconSettings } from "glass-ux/icons";
+import { IconBell, IconBookmark, IconCalendar, IconDownload, IconHome, IconLayers, IconListCheck, IconSearch, IconSettings } from "glass-ux/icons";
 
 export interface NavItem {
   key: string;
@@ -22,7 +22,6 @@ export const PRIMARY_NAV: NavItem[] = [
   { key: "guide", label: "TV guide", href: "/guide", icon: IconCalendar },
   { key: "wanted", label: "Wanted", href: "/wanted", icon: IconListCheck, mobile: true },
   { key: "downloads", label: "Downloads", href: "/downloads", icon: IconDownload, mobile: true, badge: "downloads" },
-  { key: "dashboard", label: "Dashboard", href: "/dashboard", icon: IconActivity },
   { key: "activity", label: "Activity", href: "/activity", icon: IconBell, badge: "notifications" },
   { key: "settings", label: "Settings", href: "/settings", icon: IconSettings, mobile: true },
 ];

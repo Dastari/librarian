@@ -4,12 +4,21 @@
 #[path = "auth_alignment_tests.rs"]
 mod alignment_tests;
 
+#[path = "auth_account.rs"]
+mod account;
+#[cfg(test)]
+#[path = "auth_account_tests.rs"]
+mod account_tests;
+
+pub use account::{SignIn, SignInChallenge, TwoFactorEnrollment};
+
 use std::sync::Arc;
 
 use agql_auth::{
     AuthConfig as AgqlAuthConfig, AuthPayload as AgqlAuthPayload, AuthService as AgqlAuthService,
-    AuthUser, ClientMetadata, RefreshTokenRevocationReason, RefreshTokenStore, SessionContext,
-    StoredRefreshToken, StoredUser, UserStore,
+    AuthUser, ClientMetadata, CurrentRefreshGrant, RefreshGrantAuthority,
+    RefreshTokenRevocationReason, RefreshTokenStore, SessionContext, StoredRefreshToken,
+    StoredUser, UserStore,
 };
 use anyhow::{Result, anyhow};
 use async_graphql::SimpleObject;
@@ -333,6 +342,23 @@ impl UserStore for LibrarianAuthStore {
     }
 }
 
+/// Sessions issued after a second step (two-factor code, new password) are host grants. Their
+/// refresh keeps the account's current role; `validate_session_authority` still rechecks every
+/// request.
+#[async_trait]
+impl RefreshGrantAuthority for LibrarianAuthStore {
+    async fn current_grant(
+        &self,
+        _previous: &StoredRefreshToken,
+        user: &StoredUser,
+    ) -> agql_auth::AuthResult<CurrentRefreshGrant> {
+        Ok(CurrentRefreshGrant {
+            roles: user.roles.clone(),
+            scopes: user.scopes.clone(),
+        })
+    }
+}
+
 // Private credential-store boundary: generated transaction writes preserve hooks
 // and commit-scoped events without exposing token material through public CRUD.
 fn refresh_token_input(
@@ -556,6 +582,10 @@ pub struct AuthService {
     db: RwLock<Option<Database>>,
     inner: RwLock<Option<Arc<InnerAuth>>>,
     login_limiter: crate::services::login_rate_limit::LoginRateLimiter,
+    pending: crate::services::account_security::PendingSignIns,
+    totp_replay: crate::services::account_security::MemoryTotpReplay,
+    /// One recovery code is spent at a time, so two requests can't both use the same one.
+    recovery_lock: tokio::sync::Mutex<()>,
 }
 
 impl AuthService {
@@ -566,6 +596,9 @@ impl AuthService {
             db: RwLock::new(None),
             inner: RwLock::new(None),
             login_limiter: crate::services::login_rate_limit::LoginRateLimiter::default(),
+            pending: Default::default(),
+            totp_replay: Default::default(),
+            recovery_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -851,6 +884,15 @@ impl AuthService {
                 avatar_url: None,
                 is_active: true,
                 last_login_at: None,
+                phone: None,
+                genre_interests: None,
+                must_change_password: false,
+                two_factor_enabled_at: None,
+                recovery_codes_remaining: 0,
+                password_changed_at: None,
+                totp_secret: None,
+                totp_pending_secret: None,
+                recovery_codes: None,
             })
             .await?;
         transaction.commit_and_emit().await?;
@@ -864,7 +906,17 @@ impl AuthService {
         Ok(to_login_result(user, payload))
     }
 
+    /// Password sign-in for an account without a second step. One with two-factor sign-in or a
+    /// temporary password is refused here; [`Self::sign_in`] handles both.
     pub async fn login(&self, principal: &str, password: &str) -> Result<LoginResult> {
+        match self.sign_in(principal, password).await? {
+            SignIn::Session(result) => Ok(result),
+            SignIn::Challenge(_) => Err(anyhow!("This account needs another sign-in step")),
+        }
+    }
+
+    /// The one-step password sign-in through `agql-auth`.
+    async fn password_login(&self, principal: &str, password: &str) -> Result<LoginResult> {
         if self.login_limiter.is_blocked(principal) {
             return Err(anyhow!(
                 crate::services::login_rate_limit::RATE_LIMITED_MESSAGE
@@ -981,8 +1033,9 @@ impl Service for AuthService {
             .ok_or_else(|| anyhow!("database service not available"))?;
         let store = Arc::new(LibrarianAuthStore::new(db.clone()));
         let inner = Arc::new(
-            InnerAuth::new(self.config.to_agql(), store.clone(), store)
-                .map_err(|err| anyhow!(err.to_string()))?,
+            InnerAuth::new(self.config.to_agql(), store.clone(), store.clone())
+                .map_err(|err| anyhow!(err.to_string()))?
+                .with_refresh_grant_authority(store),
         );
         *self.db.write().await = Some(db);
         *self.inner.write().await = Some(inner);

@@ -112,6 +112,7 @@ hex = "0.4.3"
 # Server self-upgrade (services::updates): release version ordering and the .tar.gz archive.
 semver = "1.0.28"
 flate2 = "1.1.11"
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 rust_decimal = { version = "1.43.0", features = ["serde"] }
 rust-embed = { version = "8.13.0", optional = true }
 rustls = { version = "0.23.46", default-features = false, features = ["ring"] }
@@ -160,6 +161,10 @@ pretty_assertions = "1.4.1"
 # graphql-ws client for the generated-subscription contract test
 # (`tests/api_entities.rs`); already in the lock graph via axum's `ws` feature.
 tokio-tungstenite = "0.29.0"
+# TOTP codes for the two-factor sign-in tests (RFC 6238 uses HMAC-SHA1); both are already in
+# the lock graph through agql-auth.
+sha1 = "0.10.6"
+hmac-sha1-compat = { package = "hmac", version = "0.12.1" }
 # regex is already a main dependency, but we use it in tests too
 
 [patch.crates-io]

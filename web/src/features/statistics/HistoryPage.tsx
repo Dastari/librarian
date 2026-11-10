@@ -10,7 +10,8 @@ import { Button, ConfirmDialog } from "@/components/ui";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { TableToolbar } from "@/components/ui/TableToolbar";
 import { useSettingsConnection } from "@/features/settings/useSettingsConnection";
-import { ClearPlayHistoryDocument, EntityUserListDocument, ImportPlayHistoryDocument, PlayHistoryPageDocument, type PlayHistoryOrderByInput, type PlayHistoryPageQuery, type PlayHistoryWhereInput } from "@/graphql/generated/graphql";
+import { UserIdentity, userName } from "@/features/users/UserIdentity";
+import { ClearPlayHistoryDocument, EntityUserListDocument, ImportPlayHistoryDocument, PlayHistoryPageDocument, PlayHistoryRemoteOriginsDocument, type PlayHistoryOrderByInput, type PlayHistoryPageQuery, type PlayHistoryWhereInput, type UserFieldsFragment } from "@/graphql/generated/graphql";
 import { useTableSelection } from "@/hooks/useTableSelection";
 import { tableUrlFilters, useTableUrlState } from "@/hooks/useTableUrlState";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
@@ -46,6 +47,12 @@ export function historyVariables(state: DataTableState): { where: PlayHistoryWhe
     if (!values.length) continue;
     if (id === "kind") conditions.push({ contentType: { inList: values } });
     else if (id === "person") conditions.push({ userId: { inList: values } });
+    else if (id === "origin") {
+      // This server's plays have no origin (design.md Q150).
+      const local = values.includes(LOCAL_ORIGIN);
+      const remote = values.filter((value) => value !== LOCAL_ORIGIN);
+      conditions.push(local && remote.length ? { or: [{ origin: { isNull: true } }, { origin: { inList: remote } }] } : local ? { origin: { isNull: true } } : { origin: { inList: remote } });
+    }
   }
   const query = state.search?.trim();
   if (query) conditions.push({ title: { contains: query } });
@@ -61,7 +68,10 @@ export function historyVariables(state: DataTableState): { where: PlayHistoryWhe
   return { where: conditions.length ? { and: conditions } : {}, orderBy: orderBy.length ? orderBy : [{ startedAt: "DESC" }] };
 }
 
-function columnsFor(people: ReadonlyMap<string, string> | null) {
+/** The origin filter's value for plays on this server. */
+export const LOCAL_ORIGIN = "local";
+
+function columnsFor(people: ReadonlyMap<string, UserFieldsFragment> | null, origins: readonly { value: string; label: string }[] | null) {
   const column = createDataTableColumns<HistoryRow>();
   return column.columns([
     column.accessor((row) => row.title, {
@@ -77,9 +87,17 @@ function columnsFor(people: ReadonlyMap<string, string> | null) {
       cell: ({ row }) => <TextCell muted>{KIND_LABEL[row.original.contentType] ?? row.original.contentType}</TextCell>,
     }),
     ...(people ? [column.accessor((row) => row.userId, {
-      id: "person", header: "Person", width: 10, priority: 2,
-      filter: filters.options({ field: "userId", nullable: false, operators: ["in"], options: [...people].map(([value, label]) => ({ value, label })) }),
-      cell: ({ row }) => <TextCell>{people.get(row.original.userId) ?? "Removed user"}</TextCell>,
+      id: "person", header: "Person", width: 12, priority: 2,
+      filter: filters.options({ field: "userId", nullable: false, operators: ["in"], options: [...people].map(([value, person]) => ({ value, label: userName(person) })) }),
+      cell: ({ row }) => {
+        const person = people.get(row.original.userId);
+        return person ? <UserIdentity user={person} tier="chip" /> : <TextCell muted>Removed user</TextCell>;
+      },
+    })] : []),
+    ...(origins ? [column.accessor((row) => row.origin ?? LOCAL_ORIGIN, {
+      id: "origin", header: "Server", width: 10, priority: 3,
+      filter: filters.options({ field: "origin", nullable: false, operators: ["in"], options: [...origins] }),
+      cell: ({ row }) => <TextCell muted={!row.original.origin}>{row.original.origin ? row.original.originName ?? row.original.origin : "This server"}</TextCell>,
     })] : []),
     column.accessor((row) => row.secondsPlayed, {
       id: "played", header: "Time", width: 8, priority: 2, sortable: true, sortDescFirst: true,
@@ -105,20 +123,37 @@ const getRowLabel = (row: HistoryRow) => row.title;
 
 /**
  * Every play, newest first: what, how long was really played, on which device and whether it was
- * finished. Yours, or everyone's for an administrator. Plays can be removed one by one, and you can
- * clear your whole history.
+ * finished.
+ *
+ * - `personal` (the profile dialog): one person's plays, yours by default. You can remove plays
+ *   and clear your whole history.
+ * - `server` (Settings › Statistics, administrators): everyone's, with who played and, once plays
+ *   come from more than one server, where (design.md Q150).
  */
-export function HistoryPage() {
+export function HistoryPage({ scope = "personal", userId }: { scope?: "personal" | "server"; userId?: string }) {
   const isAdmin = useIsAdmin();
   const { user } = useSession();
-  const users = useQuery(EntityUserListDocument, { variables: { page: { limit: 100, offset: 0 } }, skip: !isAdmin });
-  const people = useMemo(() => (isAdmin ? new Map((users.data?.users.edges ?? []).map(({ node }) => [node.id, node.displayName || node.username])) : null), [isAdmin, users.data]);
-  const columns = useMemo(() => columnsFor(people), [people]);
-  const url = useTableUrlState({ namespace: "history", columns, ...urlSchema, defaultSorting });
+  const server = scope === "server" && isAdmin;
+  const owner = server ? undefined : userId ?? user?.id;
+  const own = !server && owner === user?.id;
+  const users = useQuery(EntityUserListDocument, { variables: { page: { limit: 100, offset: 0 } }, skip: !server });
+  const people = useMemo(() => (server ? new Map((users.data?.users.edges ?? []).map(({ node }) => [node.id, node])) : null), [server, users.data]);
+  // The origin column appears once a play from another server exists.
+  const remote = useQuery(PlayHistoryRemoteOriginsDocument, { skip: !server });
+  const origins = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const { node } of remote.data?.playHistories.edges ?? []) if (node.origin) names.set(node.origin, node.originName ?? node.origin);
+    return server && names.size > 0 ? [{ value: LOCAL_ORIGIN, label: "This server" }, ...[...names].map(([value, label]) => ({ value, label }))] : null;
+  }, [remote.data, server]);
+  const columns = useMemo(() => columnsFor(people, origins), [people, origins]);
+  const url = useTableUrlState({ namespace: server ? "server-history" : "history", columns, ...urlSchema, defaultSorting });
   const baseState = useMemo<DataTableState>(() => ({ pagination: { pageIndex: 0, pageSize: 50 }, selection: {}, ...url.state }), [url.state]);
-  const variables = useMemo(() => historyVariables(baseState), [baseState]);
+  const variables = useMemo(() => {
+    const query = historyVariables(baseState);
+    return owner ? { ...query, where: { and: [{ userId: { eq: owner } }, query.where] } } : query;
+  }, [baseState, owner]);
   const list = useSettingsConnection(PlayHistoryPageDocument, variables, (data) => data.playHistories, { infinite: true, batchSize: 50, live: true });
-  const selectedRows = useTableSelection({ scope: [user?.id, url.state], rows: list.rows, ready: !list.loading && !list.fetching });
+  const selectedRows = useTableSelection({ scope: [user?.id, owner, url.state], rows: list.rows, ready: !list.loading && !list.fetching });
   const state = { ...baseState, selection: selectedRows.selection };
   const onStateChange = (next: DataTableState, change: DataTableStateChange) => (change === "selection" ? selectedRows.onSelectionChange(next.selection) : url.onStateChange(next, change));
   const refetch = list.refetch;
@@ -154,7 +189,7 @@ export function HistoryPage() {
   };
   const onImport = async () => {
     try {
-      const result = assertSuccess((await runImport({ variables: { allUsers: false } })).data?.importPlayHistory, "Watch progress could not be imported");
+      const result = assertSuccess((await runImport({ variables: { allUsers: server } })).data?.importPlayHistory, "Watch progress could not be imported");
       toast.success(result.imported > 0 ? `Imported ${result.imported} watched ${result.imported === 1 ? "item" : "items"}` : "Nothing new to import");
       refresh();
     } catch (error) {
@@ -165,8 +200,8 @@ export function HistoryPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <DataTable<HistoryRow>
-        id={`librarian.${user?.id ?? "session"}.history`}
-        label="Play history"
+        id={`librarian.${user?.id ?? "session"}.${server ? "server-history" : "history"}`}
+        label={server ? "Everyone's play history" : "Play history"}
         queryKey={JSON.stringify([user?.id, variables])}
         height="fill"
         columns={columns}
@@ -189,12 +224,12 @@ export function HistoryPage() {
         error={list.error && list.rows.length === 0 ? "Couldn't load the history. Retry to reconnect." : undefined}
         onRetry={refresh}
         emptyMessage="Nothing played yet. Plays are recorded from here on, on every device."
-        toolbar={
+        toolbar={server || own ? (
           <TableToolbar>
             <Button size="sm" variant="secondary" isPending={importing} onPress={() => void onImport()}><IconHistory /> Import watched</Button>
-            <Button size="sm" variant="danger-soft" isDisabled={list.rows.length === 0} onPress={() => setConfirmClear(true)}><IconTrash /> Clear my history</Button>
+            {own ? <Button size="sm" variant="danger-soft" isDisabled={list.rows.length === 0} onPress={() => setConfirmClear(true)}><IconTrash /> Clear my history</Button> : null}
           </TableToolbar>
-        }
+        ) : undefined}
       />
       <ConfirmDialog
         isOpen={confirmClear}

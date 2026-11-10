@@ -5,11 +5,10 @@ import { toast } from "glass-ux/toast";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
-import { createDataTableColumns, IdentityCell, RelativeTime, TextCell } from "glass-ux/data-table";
+import { createDataTableColumns, RelativeTime, TextCell } from "glass-ux/data-table";
 import { IconCopy, IconPlus, IconTrash } from "glass-ux/icons";
 import { MeterCell } from "glass-ux/meter-cell";
-import { IconShieldCheck, IconUserOff } from "@tabler/icons-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -18,19 +17,19 @@ import {
   EntityInviteTokenCreateDocument,
   EntityInviteTokenDeleteDocument,
   EntityInviteTokenListDocument,
-  EntityUserDeleteDocument,
   EntityUserListDocument,
-  EntityUserUpdateDocument,
   EntityLibraryListDocument,
   type InviteTokenFieldsFragment,
   type UserFieldsFragment,
 } from "@/graphql/generated/graphql";
 import { useSession } from "@/lib/auth/useSession";
-import { ENTITY_KINDS, glyph } from "@/lib/entities/kinds";
 import { parseTimestamp } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { UserIdentity } from "@/features/users/UserIdentity";
+import { UserSettingsDialog } from "@/features/users/UserSettingsDialog";
+import { useUserActions, type UserSettingsTab } from "@/features/users/useUserActions";
 import { runSettingsSelection } from "./runSettingsSelection";
 
 import { SettingsLoadError } from "./SettingsLoadError";
@@ -40,9 +39,6 @@ import { useSettingsConnection } from "./useSettingsConnection";
 const inviteSchema = z.object({ role: z.enum(["member", "admin"]), accessLevel: z.string(), maxUses: z.number().int().min(1).max(100), expiresInDays: z.number().int().min(1).max(365) });
 type InviteValues = z.infer<typeof inviteSchema>;
 
-const UserGlyph = ENTITY_KINDS.user.icon;
-const RoleIcon = glyph(IconShieldCheck, "shield-check");
-const SignInIcon = glyph(IconUserOff, "user-off");
 const userColumn = createDataTableColumns<UserFieldsFragment>();
 const inviteColumn = createDataTableColumns<InviteTokenFieldsFragment>();
 const inviteColumns = inviteColumn.columns([
@@ -63,8 +59,6 @@ export function UsersSettings() {
   const userRows = users.rows;
   const inviteRows = invites.rows;
 
-  const [updateUser] = useMutation(EntityUserUpdateDocument);
-  const [deleteUser] = useMutation(EntityUserDeleteDocument);
   const [createInvite, { loading: creatingInvite }] = useMutation(EntityInviteTokenCreateDocument);
   const [deleteInvite] = useMutation(EntityInviteTokenDeleteDocument);
   const [inviting, setInviting] = useState(false);
@@ -92,57 +86,21 @@ export function UsersSettings() {
 
   const userColumns = useMemo(() => userColumn.columns([
     userColumn.accessor((user) => user.displayName ?? user.username, {
-      id: "name", header: "User", width: 24, priority: 1, cardRole: "title", sortable: true,
-      cell: ({ row }) => <IdentityCell icon={<UserGlyph />} title={`${row.original.displayName ?? row.original.username}${row.original.id === me?.id ? " (you)" : ""}`} subtitle={[row.original.username, row.original.email].filter(Boolean).join(" · ")} status={row.original.isActive ? "online" : "offline"} statusLabel={row.original.isActive ? "Active" : "Disabled"} />,
+      id: "name", header: "User", width: 26, priority: 1, cardRole: "title", sortable: true,
+      cell: ({ row }) => <UserIdentity user={row.original} self={row.original.id === me?.id} />,
     }),
     userColumn.accessor("role", { header: "Role", width: 8, priority: 2, sortable: true, cell: ({ row }) => <Badge size="sm" tone={row.original.role === "admin" ? "accent" : "neutral"}>{row.original.role === "admin" ? "Admin" : "Member"}</Badge> }),
-    userColumn.accessor((user) => (user.isActive ? "active" : "disabled"), { id: "active", header: "Status", width: 8, priority: 2, cardRole: "status", cell: ({ row }) => <Badge size="sm" marker="dot" tone={row.original.isActive ? "success" : "danger"}>{row.original.isActive ? "Active" : "Disabled"}</Badge> }),
+    userColumn.accessor((user) => (user.isActive ? "active" : "disabled"), { id: "active", header: "Status", width: 8, priority: 2, cardRole: "status", cell: ({ row }) => <Badge size="sm" marker="dot" tone={row.original.isActive ? (row.original.mustChangePassword ? "warning" : "success") : "danger"}>{row.original.isActive ? (row.original.mustChangePassword ? "Temporary password" : "Active") : "Disabled"}</Badge> }),
+    userColumn.accessor((user) => (user.twoFactorEnabledAt ? "on" : "off"), { id: "twoFactor", header: "Two-factor", width: 8, priority: 3, cell: ({ row }) => (row.original.twoFactorEnabledAt ? <Badge size="sm" marker="dot" tone="success">On</Badge> : <TextCell muted>Off</TextCell>) }),
     userColumn.accessor((user) => user.lastLoginAt ?? "", { id: "last", header: "Last sign-in", width: 9, priority: 3, sortable: true, sortDescFirst: true, cell: ({ row }) => <RelativeTime value={parseTimestamp(row.original.lastLoginAt)} fallback="Never" /> }),
     userColumn.accessor("createdAt", { header: "Joined", width: 9, priority: 4, sortable: true, sortDescFirst: true, cell: ({ row }) => <RelativeTime value={parseTimestamp(row.original.createdAt)} /> }),
   ]), [me?.id]);
 
   const refreshUsers = users.refetch;
-  const userActions = useMemo(() => defineActions<UserFieldsFragment>("user", [
-    { id: "copy-usernames", label: (rows) => rows.length === 1 ? "Copy username" : "Copy usernames", icon: IconCopy, group: "open", bulk: true,
-      run: (rows) => copyText(rows.map((row) => row.username).join("\n")), successMessage: () => "Usernames copied",
-    },
-    {
-      id: "role", bulk: true, label: (rows) => (rows[0]!.role === "admin" ? "Make member" : "Make admin"), icon: RoleIcon, group: "manage", priority: 1,
-      visible: (rows) => rows.length === 1 && rows[0]!.id !== me?.id,
-      run: async (rows) => { const user = rows[0]!; assertSuccess((await updateUser({ variables: { id: user.id, input: { role: user.role === "admin" ? "member" : "admin" } } })).data?.updateUser, "Could not update"); void refreshUsers(); },
-      successMessage: (rows) => (rows[0]!.role === "admin" ? "Now a member" : "Now an admin"),
-    },
-    ...(["member", "admin"] as const).map((role) => ({
-      id: `make-${role}-selected`, label: role === "admin" ? "Make admins" : "Make members", icon: RoleIcon, group: "manage" as const, bulk: true,
-      visible: (rows: readonly UserFieldsFragment[]) => rows.length > 1 && rows.some((row) => row.role !== role),
-      disabledReason: (rows: readonly UserFieldsFragment[]) => rows.some((row) => row.id === me?.id) ? "Deselect your own account before changing roles." : false,
-      confirm: (rows: readonly UserFieldsFragment[]) => ({ title: `Make ${rows.filter((row) => row.role !== role).length} users ${role === "admin" ? "admins" : "members"}?`, body: role === "admin" ? "Admins can manage libraries, sources, settings and other users." : "Their administrator access is removed and existing sessions are signed out.", confirmLabel: role === "admin" ? "Make admins" : "Make members", tone: "warning" as const }),
-      run: (rows: readonly UserFieldsFragment[]) => runSettingsSelection(rows.filter((row) => row.role !== role), "Change role", (row) => row.displayName ?? row.username, async (row) => assertSuccess((await updateUser({ variables: { id: row.id, input: { role } } })).data?.updateUser, "Could not update role"), refreshUsers),
-      successMessage: () => "User roles updated",
-    })),
-    {
-      id: "active", bulk: true, label: (rows) => (rows[0]!.isActive ? "Disable sign-in" : "Enable sign-in"), icon: SignInIcon, group: "manage", priority: 2,
-      visible: (rows) => rows.length === 1 && rows[0]!.id !== me?.id,
-      confirm: (rows) => (rows[0]!.isActive ? { title: `Disable ${rows[0]!.displayName ?? rows[0]!.username}?`, body: "They are signed out and cannot sign in until enabled again. Their history is kept.", confirmLabel: "Disable", tone: "warning" } : null),
-      run: async (rows) => { const user = rows[0]!; assertSuccess((await updateUser({ variables: { id: user.id, input: { isActive: !user.isActive } } })).data?.updateUser, "Could not update"); void refreshUsers(); },
-    },
-    ...([true, false] as const).map((active) => ({
-      id: active ? "enable-selected" : "disable-selected", label: active ? "Enable sign-in" : "Disable sign-in", icon: SignInIcon, group: "manage" as const, bulk: true,
-      visible: (rows: readonly UserFieldsFragment[]) => rows.length > 1 && rows.some((row) => row.isActive !== active),
-      disabledReason: (rows: readonly UserFieldsFragment[]) => rows.some((row) => row.id === me?.id) ? "Deselect your own account before changing sign-in access." : false,
-      confirm: (rows: readonly UserFieldsFragment[]) => active ? null : ({ title: `Disable sign-in for ${rows.filter((row) => row.isActive).length} users?`, body: "They are signed out and cannot sign in until enabled again. Their history is kept.", confirmLabel: "Disable", tone: "warning" as const }),
-      run: (rows: readonly UserFieldsFragment[]) => runSettingsSelection(rows.filter((row) => row.isActive !== active), active ? "Enable sign-in" : "Disable sign-in", (row) => row.displayName ?? row.username, async (row) => assertSuccess((await updateUser({ variables: { id: row.id, input: { isActive: active } } })).data?.updateUser, "Could not update"), refreshUsers),
-      successMessage: () => active ? "Sign-in enabled" : "Sign-in disabled",
-    })),
-    {
-      id: "delete", label: (rows) => rows.length === 1 ? "Delete user" : `Delete ${rows.length} users`, icon: IconTrash, group: "danger", bulk: true,
-      visible: (rows) => rows.length > 1 || rows[0]!.id !== me?.id,
-      disabledReason: (rows) => rows.some((row) => row.id === me?.id) ? "Deselect your own account before deleting users." : false,
-      confirm: (rows) => ({ title: rows.length === 1 ? `Delete ${rows[0]!.displayName ?? rows[0]!.username}?` : `Delete ${rows.length} users?`, body: "Their playback history is removed. Libraries and media are kept.", confirmLabel: rows.length === 1 ? "Delete user" : "Delete users", tone: "danger" }),
-      run: (rows) => runSettingsSelection(rows, "Delete", (row) => row.displayName ?? row.username, async (row) => assertSuccess((await deleteUser({ variables: { id: row.id } })).data?.deleteUser, "Could not delete"), refreshUsers),
-      successMessage: (rows) => rows.length === 1 ? "User deleted" : `${rows.length} users deleted`,
-    },
-  ]), [deleteUser, me?.id, refreshUsers, updateUser]);
+  const [editing, setEditing] = useState<{ id: string; tab: UserSettingsTab } | null>(null);
+  const openUser = useCallback((user: UserFieldsFragment, tab?: UserSettingsTab) => setEditing({ id: user.id, tab: tab ?? "profile" }), []);
+  const refreshAfterChange = useCallback(() => void refreshUsers(), [refreshUsers]);
+  const { actions: userActions, dialogs: userDialogs } = useUserActions<UserFieldsFragment>({ settings: openUser, onChanged: refreshAfterChange });
 
   const refreshInvites = invites.refetch;
   const inviteActions = useMemo(() => defineActions<InviteTokenFieldsFragment>("invite", [
@@ -159,13 +117,24 @@ export function UsersSettings() {
     <SettingsPage>
       <SettingsSection title="Users" actions={<Button size="sm" variant="primary" onPress={() => setInviting(true)}><IconPlus /> Invite</Button>}>
         <SettingsLoadError error={users.error} retry={users.refetch} hasRows={userRows.length > 0} />
-        <LoadedDataTable<UserFieldsFragment> complete={!users.loading && !users.error} height="auto" selectable queryKey={me?.id} id={`librarian.${me?.id ?? "session"}.settings.users`} label="Users" columns={userColumns} rows={userRows} getRowId={(user) => user.id} getRowLabel={(user) => user.displayName ?? user.username} loading={users.loading && userRows.length === 0} actions={userActions} renderBulkActions={(rows) => <TableBulkActions set={userActions} rows={rows} noun={{ one: "user", other: "users" }} />} noun={{ one: "user", other: "users" }} emptyMessage="No users" />
+        <LoadedDataTable<UserFieldsFragment> complete={!users.loading && !users.error} height="auto" selectable queryKey={me?.id} id={`librarian.${me?.id ?? "session"}.settings.users`} label="Users" columns={userColumns} defaultHiddenColumns={["twoFactor"]} rows={userRows} getRowId={(user) => user.id} getRowLabel={(user) => user.displayName ?? user.username} loading={users.loading && userRows.length === 0} actions={userActions} renderBulkActions={(rows) => <TableBulkActions set={userActions} rows={rows} noun={{ one: "user", other: "users" }} />} onRowOpen={(user) => openUser(user)} rowOpen="click" noun={{ one: "user", other: "users" }} emptyMessage="No users" />
       </SettingsSection>
       <SettingsSection title="Open invites" description="Share a link; it stops working after the last use or when it expires.">
         <SettingsLoadError error={invites.error} retry={invites.refetch} hasRows={inviteRows.length > 0} />
         <LoadedDataTable<InviteTokenFieldsFragment> complete={!invites.loading && !invites.error} height="auto" selectable queryKey={me?.id} id={`librarian.${me?.id ?? "session"}.settings.invites`} label="Open invites" columns={inviteColumns} rows={inviteRows} getRowId={(token) => token.id} getRowLabel={(token) => `Invite ${token.id}`} loading={invites.loading && inviteRows.length === 0} actions={inviteActions} renderBulkActions={(rows) => <TableBulkActions set={inviteActions} rows={rows} noun={{ one: "invite", other: "invites" }} />} noun={{ one: "invite", other: "invites" }} emptyMessage="No open invites" />
       </SettingsSection>
 
+      {userDialogs}
+      {editing ? (
+        <UserSettingsDialog
+          userId={editing.id}
+          open
+          onOpenChange={(next) => !next && setEditing(null)}
+          tab={editing.tab}
+          onTabChange={(tab) => setEditing((state) => (state ? { ...state, tab } : state))}
+          onChanged={refreshAfterChange}
+        />
+      ) : null}
       <Dialog isOpen={inviting} onOpenChange={setInviting} title="Invite someone" size="sm" footer={<><Button variant="ghost" onPress={() => setInviting(false)}>Cancel</Button><Button variant="primary" onPress={() => void submitInvite()} isPending={creatingInvite} isDisabled={libraries.loading || Boolean(libraries.error)}>Create and copy link</Button></>}>
         <SettingsLoadError error={libraries.error} retry={libraries.refetch} />
         <form onSubmit={submitInvite} noValidate>

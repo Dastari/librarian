@@ -2753,8 +2753,8 @@ tokens stop working at their next request because session authority is rechecked
 `deleteDevice`, whose Before hook does the same and detaches its sessions; plays keep the device's name. A playback
 session names its device (`deviceId`, an owned link, so another person's device is dropped), and starting one ends the
 device's other open sessions. UI: `DeviceIdentity` (TV, phone, tablet or computer glyph; "This device", "Active now",
-"Signed out", last seen), `useDeviceActions` and `DeviceSettingsDialog` (General, Details, Forget), listed under
-Dashboard › Devices.
+"Signed out", last seen), `useDeviceActions` and `DeviceSettingsDialog` (General, Details, Forget), listed in your
+profile's Devices tab and, for administrators, under Settings › Statistics › Devices (the dashboard is gone, Q147).
 
 ### Q134: How is play history recorded?
 **Answer:** From the existing progress pipeline, server-side. The player already updates its `PlaybackSession` every few
@@ -2783,9 +2783,9 @@ follow the viewer's `utcOffsetMinutes`; a play counts on the day it started; wee
 imported, different titles, active days), the current and longest streak of consecutive days within the period, top shows,
 movies, artists, albums, audiobooks, authors and genres (genres from the movie, show or album, ranked by time, then plays),
 devices used, the 20 most recent plays without device addresses, and, in an administrator's everyone view, time per person.
-Imported plays count as plays with no time. Dashboard › Statistics shows them with Glass charts: metrics with sparklines,
+Imported plays count as plays with no time. Your profile's Statistics tab (and Settings › Statistics for everyone, Q150) shows them with Glass charts: metrics with sparklines,
 stacked columns per day (per week past three months), ranked bars and time of day, with a period choice (7, 30, 90 days, a
-year) and a person choice in the URL. Dashboard › Now playing lists open sessions that reported in the last three minutes
+year) and a person choice. Settings › Statistics › Now playing lists open sessions that reported in the last three minutes
 (members their own, administrators everyone's) with poster, title, person, device, progress, play method, quality and
 state, live over the session subscription; the owner or an administrator can *Stop* one (`stopRequestedAt`), and the
 player pauses as soon as its session changes.
@@ -3144,3 +3144,88 @@ a light job and turned into one alert per volume and level.
   waiting rather than as a failed grab. A release of unknown size is let through, and a partial
   pack is judged by its whole size (conservative). Only the stored reading is consulted, so a grab
   never waits on a share.
+
+### Q147: Where is a person's profile, and how does two-factor sign-in work?
+
+**The profile is the User entity's settings dialog** (`UserSettingsDialog`), not a page. It opens from the account
+menu (Profile, Statistics; in TV mode the menu sits at the foot of the rail), from the command palette, from a
+person's identity wherever it appears (`UserIdentity`, `useUserActions`), and from any address with `?profile=<tab>`,
+so Back closes it and old links can open a tab. Tabs: Profile (photo, display name, email, phone, account facts),
+Security (password, two-factor sign-in), Devices, Preferences (genres, Q149), Statistics and History. An administrator
+opening someone else's dialog from Settings › Users sees their profile, account recovery (Q148), devices, statistics
+and history. The `/dashboard` route is gone: its personal views are profile tabs and its everyone views are Settings ›
+Statistics (Q150); `/dashboard…` addresses redirect there (`dashboardRedirect`).
+
+**Who edits what.** `User` is now owner-scoped like other personal rows: a member's `users` and `user` reads see only
+their own row (row policy on `id`), and the generated `updateUser` edits it. Username, role, sign-in access and the
+photo marker need an administrator (`admin.write` fields); the security facts (`mustChangePassword`,
+`twoFactorEnabledAt`, `recoveryCodesRemaining`, `passwordChangedAt`, `lastLoginAt`) have no GraphQL input at all and are
+written only by the auth actions. Only administrators create or delete accounts through the generated roots (the
+mutation hook refuses everyone else). Display name, email and phone are trimmed and checked in the write rules, and an
+email can belong to one account only, since sign-in accepts it. The photo is an artwork slot (`USER`/`AVATAR`): it is
+uploaded through the artwork route (Q127: decoded, re-encoded, size-checked), served from `/api/artwork/user/{id}/avatar`
+to its owner and administrators, and removed with `revertArtwork`. There is no notification email preference: nothing
+sends mail yet.
+
+**Two-factor sign-in (TOTP).** `agql-auth` already provides secret generation, `otpauth://` provisioning and
+replay-safe verification with its own per-principal abuse limits, so Librarian uses those (no `totp-rs`). Enrolling:
+`beginTwoFactorSetup` (needs the password) makes a 20-byte secret, stores it encrypted with the credential key
+(`CredentialEncryption` envelope, like source credentials) as pending, and returns the key and a server-drawn QR code
+(SVG, shown as an image). `confirmTwoFactorSetup` with a code from the app moves it to the confirmed secret and returns
+ten recovery codes once: 10 characters from a 31-letter alphabet without look-alikes (about 50 bits), stored only as
+SHA-256 of the account id and the code, each spent once under a lock. `regenerateRecoveryCodes` and
+`disableTwoFactor` need the password. TOTP secrets are encrypted with the same key as source credentials; rotating
+that key (`rotate_source_credentials`) does not yet re-encrypt them, so rotation turns two-factor sign-in off in effect
+until people enrol again.
+
+**Signing in in steps.** `login` checks the password; an account with a confirmed secret or a temporary password gets
+`challenge { token, stage, expiresIn }` instead of a session. The token is 32 random bytes, held in memory only as its
+SHA-256, for five minutes and five wrong codes; it is not a JWT, sets no cookie and is accepted only by
+`completeTwoFactorSignIn` (a TOTP code or a recovery code) and `completePasswordChange`. A password change or a
+disabled account meanwhile voids it. Only the last step issues a session (a host grant, refreshed with the account's
+current role). Every wrong password or code counts in the existing login rate limiter under what was typed to sign in
+(10 per 15 minutes), on top of `agql-auth`'s TOTP limiter; wrong current passwords in the profile count under the
+account. Accounts without a second step sign in exactly as before.
+
+### Q148: How are passwords reset without email?
+
+- **Change your own:** `changePassword` with the current one. The password-hash change revokes every session of the
+  account (the existing User update hook), so this device gets a new session in the answer.
+- **Temporary password:** an administrator's `setTemporaryPassword` sets it and `mustChangePassword`; the person's
+  sessions end, and their next sign-in (after two-factor sign-in, when on) asks for a new password before any session
+  exists.
+- **Reset link:** `createPasswordResetLink` (administrators) issues `agql-auth`'s signed reset token for a day and records
+  its id as a `PasswordResetToken` row (new admin-read entity, generated mutations closed); an earlier link for the
+  account is deleted. The link (`/reset-password?token=…`) is shown to the administrator to pass on and is never
+  stored or logged. `resetPasswordWithLink` consumes the id with a conditional update (unused and unexpired), so it
+  works once; it sets the password, clears `mustChangePassword` and ends every session. Two-factor sign-in still
+  applies afterwards.
+- **Recovery of two-factor sign-in:** an administrator's `resetUserTwoFactor` clears the secret and codes and logs who
+  did it to whom (warning level). Temporary passwords and reset links are logged the same way, without the secret.
+- **Mail later:** the reset flow already has the shape a mailer needs. An SMTP setting (host, port, sender, password
+  stored like other secrets) and a `send_reset_link(user, link)` step after `createPasswordResetLink` would let people
+  ask for their own link from the sign-in page (`LoginFlow` has the views); `agql-auth`'s
+  `should_process_password_reset_request` gives the silent, rate-limited answer that needs. Not built.
+
+### Q149: How do genre interests change Home?
+
+`User.genreInterests` (a JSON list, at most twelve, trimmed and without repeats) is picked in the profile's Preferences
+tab from `genreChoices`: every genre of the movies and shows the person can see, with counts. `genreInterestShelves`
+returns one shelf per interest, in the person's order, with the newest movies and shows of that genre they can see;
+Home shows them as "Because you like Sci-Fi" rows under its new `interests` shelf (right after Continue watching by
+default, movable and hideable in Customize home like the others). Genres with nothing to show are left out. Nothing
+else is re-ranked. There were no per-person preferences in Settings › General to move: theme and TV mode are per
+device and the subtitle languages are the server's.
+
+### Q150: Where are everyone's statistics, and how will plays from shared libraries fit?
+
+Settings › Statistics (administrators; others are sent to their profile) has Now playing for everyone with Stop,
+Statistics for everyone or anyone, People (each person's watched and listened time, plays, finished and last play for the
+period; a row opens their statistics), History (everyone's plays: who, what, when, on which device, how and for how long)
+and Devices (everyone's). The tables are bounded and frameless; History pages on the server.
+
+`PlayHistory` gains `origin` (null for this server) and `originName`. When libraries can be shared between servers, a
+play of a remote library records the server it came from; until then every play is local. `playStatistics` returns
+`origins` (this server first, then others, with time and plays) and takes `origin` (`local` or an origin's id) to
+narrow everything. The statistics origin choice and the history's Server column and filter appear only when more than
+one origin exists, so nothing changes on a server without sharing.

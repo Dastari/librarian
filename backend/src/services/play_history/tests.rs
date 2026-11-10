@@ -251,6 +251,8 @@ fn play(kind: &str, started: DateTime<Utc>, seconds: f64) -> PlayHistory {
         play_method: Some("direct".into()),
         imported: false,
         source_progress_id: None,
+        origin: None,
+        origin_name: None,
         created_at: timestamp(started),
         updated_at: timestamp(started),
     }

@@ -9,6 +9,12 @@ fragment UserFields on User {
   avatarUrl
   isActive
   lastLoginAt
+  phone
+  genreInterests
+  mustChangePassword
+  twoFactorEnabledAt
+  recoveryCodesRemaining
+  passwordChangedAt
   createdAt
   updatedAt
 }

@@ -1,0 +1,124 @@
+# A person's profile, password, two-factor sign-in and account recovery (design.md Q147–Q149).
+
+fragment SignedInFields on AuthPayload {
+  success
+  error
+  user {
+    id
+    email
+    username
+    role
+    displayName
+  }
+  tokens {
+    expiresIn
+    tokenType
+  }
+  challenge {
+    token
+    stage
+    expiresIn
+  }
+}
+
+mutation CompleteTwoFactorSignIn($input: CompleteTwoFactorSignInInput!) {
+  completeTwoFactorSignIn(input: $input) {
+    ...SignedInFields
+  }
+}
+
+mutation CompletePasswordChange($input: CompletePasswordChangeInput!) {
+  completePasswordChange(input: $input) {
+    ...SignedInFields
+  }
+}
+
+mutation ResetPasswordWithLink($input: ResetPasswordWithLinkInput!) {
+  resetPasswordWithLink(input: $input) {
+    success
+    error
+  }
+}
+
+mutation ChangePassword($input: ChangePasswordInput!) {
+  changePassword(input: $input) {
+    ...SignedInFields
+  }
+}
+
+mutation BeginTwoFactorSetup($input: PasswordConfirmationInput!) {
+  beginTwoFactorSetup(input: $input) {
+    success
+    error
+    secret
+    uri
+    qrSvg
+  }
+}
+
+mutation ConfirmTwoFactorSetup($input: TwoFactorCodeInput!) {
+  confirmTwoFactorSetup(input: $input) {
+    success
+    error
+    recoveryCodes
+  }
+}
+
+mutation RegenerateRecoveryCodes($input: PasswordConfirmationInput!) {
+  regenerateRecoveryCodes(input: $input) {
+    success
+    error
+    recoveryCodes
+  }
+}
+
+mutation DisableTwoFactor($input: PasswordConfirmationInput!) {
+  disableTwoFactor(input: $input) {
+    success
+    error
+  }
+}
+
+mutation ResetUserTwoFactor($userId: String!) {
+  resetUserTwoFactor(userId: $userId) {
+    success
+    error
+  }
+}
+
+mutation SetTemporaryPassword($input: SetTemporaryPasswordInput!) {
+  setTemporaryPassword(input: $input) {
+    success
+    error
+  }
+}
+
+mutation CreatePasswordResetLink($userId: String!) {
+  createPasswordResetLink(userId: $userId) {
+    success
+    error
+    path
+    expiresAt
+  }
+}
+
+query GenreChoices {
+  genreChoices {
+    genre
+    movies
+    shows
+  }
+}
+
+query GenreInterestShelves($perGenre: Int! = 20) {
+  genreInterestShelves(perGenre: $perGenre) {
+    genre
+    total
+    movies {
+      ...MovieFields
+    }
+    shows {
+      ...ShowFields
+    }
+  }
+}

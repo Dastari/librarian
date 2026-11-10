@@ -42,6 +42,7 @@ export const SLOTS: Record<ArtworkEntityKind, SlotInfo[]> = {
   ARTIST: [{ kind: "POSTER", label: "Picture", noun: "picture", aspect: "square", path: ["artist", "poster"] }],
   AUDIOBOOK: [{ kind: "COVER", label: "Cover", noun: "cover", aspect: "square", path: ["audiobook", "cover"] }],
   PLAYLIST: [{ kind: "COVER", label: "Cover", noun: "cover", aspect: "square", path: ["playlist", "cover"] }],
+  USER: [{ kind: "AVATAR", label: "Photo", noun: "photo", aspect: "square", path: ["user", "avatar"] }],
 };
 
 export const slotInfo = (entityType: ArtworkEntityKind, kind: ArtworkKind): SlotInfo =>

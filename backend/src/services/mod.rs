@@ -30,6 +30,7 @@
 
 #![allow(unused_imports)]
 
+pub mod account_security;
 pub mod artwork;
 pub mod artwork_choice;
 pub mod auth;
