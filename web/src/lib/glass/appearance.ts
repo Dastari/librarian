@@ -77,7 +77,14 @@ export function readBlur(store: Pick<Storage, "getItem"> | null = storage(), fal
 function configure(blur: boolean): void {
   const glassRendering: GlassRendering = blur ? "live" : "none";
   // Dark is the default whatever the system prefers; Light is the one alternative offered.
-  configureAppearance({ storageKey: APPEARANCE_KEY, defaults: { mode: "dark" }, locked: LOCKED_APPEARANCE, glassRendering });
+  // Since Glass 0.19.4 blur is also a stored preference, and `update()` (the colour mode) writes
+  // it into the stored appearance, where it would outrank a default. This device's choice is
+  // therefore a lock: Glass applies it and nothing stored can override it.
+  configureAppearance({
+    storageKey: APPEARANCE_KEY,
+    defaults: { mode: "dark" },
+    locked: { ...LOCKED_APPEARANCE, glassRendering },
+  });
 }
 
 configure(readBlur());

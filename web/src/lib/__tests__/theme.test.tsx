@@ -209,6 +209,20 @@ describe("blur", () => {
     expect(root).toHaveAttribute("data-glass-rendering", "none");
   });
 
+  it("follows the device switch after a colour change stored blur in the appearance (Glass 0.19.4+)", async () => {
+    mount();
+    // Glass's update() stores the whole appearance, its blur included.
+    await userEvent.click(screen.getByRole("button", { name: "light" }));
+    expect(window.localStorage.getItem(APPEARANCE_KEY)).toMatch(/"glassRendering":"live"/);
+    act(() => setBlur(false));
+    await userEvent.click(screen.getByRole("button", { name: "dark" }));
+    expect(root).toHaveAttribute("data-glass-rendering", "none");
+    expect(screen.getByTestId("appearance")).toHaveTextContent('"glassRendering":"none"');
+    act(() => setBlur(true));
+    await userEvent.click(screen.getByRole("button", { name: "light" }));
+    expect(root).not.toHaveAttribute("data-glass-rendering");
+  });
+
   it("offers only colour mode, blur and animated backgrounds (display size is the TV app's)", () => {
     render(<ThemeProvider><ThemePicker /></ThemeProvider>);
     expect(screen.getByRole("switch", { name: "Animated backgrounds" })).toBeChecked();
