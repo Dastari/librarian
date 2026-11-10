@@ -1,0 +1,266 @@
+[
+  {
+    "url": "https://api.github.com/repos/Dastari/librarian/releases/439356123",
+    "html_url": "https://github.com/Dastari/librarian/releases/tag/v0.6.0-dev.1",
+    "id": 439356123,
+    "tag_name": "v0.6.0-dev.1",
+    "name": "v0.6.0-dev.1",
+    "draft": false,
+    "prerelease": true,
+    "created_at": "2026-11-09T15:35:46Z",
+    "published_at": "2026-11-09T16:13:52Z",
+    "body": "Development pre-release for testing. No Docker image is published for this build.\n\n## Portable builds\n\n`librarian-<version>-linux-x86_64.tar.gz` and `librarian-<version>-windows-server-x86_64.zip` contain a single binary with the web app embedded; run it in server mode and open http://localhost:3000.\n\n\n## What's Changed\n* Move to Glass UX 0.16, with on-demand transcoding, a mini player and Audible audiobooks by @Dastari in https://github.com/Dastari/librarian/pull/42\n\n\n**Full Changelog**: https://github.com/Dastari/librarian/compare/v0.5.0-dev.1...v0.6.0-dev.1",
+    "assets": [
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/728111529",
+        "id": 728111529,
+        "name": "librarian",
+        "content_type": "application/octet-stream",
+        "state": "uploaded",
+        "size": 80037320,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.6.0-dev.1/librarian"
+      },
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/728111528",
+        "id": 728111528,
+        "name": "librarian-0.6.0-linux-x86_64.tar.gz",
+        "content_type": "application/gzip",
+        "state": "uploaded",
+        "size": 32371327,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.6.0-dev.1/librarian-0.6.0-linux-x86_64.tar.gz"
+      },
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/728111525",
+        "id": 728111525,
+        "name": "librarian-0.6.0-windows-server-x86_64.zip",
+        "content_type": "application/zip",
+        "state": "uploaded",
+        "size": 36144530,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.6.0-dev.1/librarian-0.6.0-windows-server-x86_64.zip"
+      },
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/728111531",
+        "id": 728111531,
+        "name": "librarian.exe",
+        "content_type": "application/octet-stream",
+        "state": "uploaded",
+        "size": 103742976,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.6.0-dev.1/librarian.exe"
+      },
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/728111527",
+        "id": 728111527,
+        "name": "README.txt",
+        "content_type": "text/plain",
+        "state": "uploaded",
+        "size": 156,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.6.0-dev.1/README.txt"
+      }
+    ]
+  },
+  {
+    "url": "https://api.github.com/repos/Dastari/librarian/releases/439312473",
+    "html_url": "https://github.com/Dastari/librarian/releases/tag/tv-v1.0.0",
+    "id": 439312473,
+    "tag_name": "tv-v1.0.0",
+    "name": "Librarian for Android TV 1.0.0",
+    "draft": false,
+    "prerelease": true,
+    "created_at": "2026-11-09T15:36:02Z",
+    "published_at": "2026-11-09T15:36:07Z",
+    "body": "Librarian for Android TV, version 1.0.0 (versionCode 10000). Test build.\n\nA small Android TV app that opens your Librarian server's web app full screen, made for the remote.\n\n## Install\n```\nadb connect <tv-ip>:5555\nadb install -r librarian-tv-1.0.0.apk\nadb shell monkey -p net.dastari.librarian.tv -c android.intent.category.LEANBACK_LAUNCHER 1\n```\nLater versions install over this one with the same `install -r` and keep the server and sign-in.\n\n- **APK SHA-256:** `9db055351629707ac2b7193ae5a55ed28435941d5fb3b307a89177db1280c53f`\n- **Signing certificate SHA-256:** `8F:8C:52:96:C3:7C:C2:49:7B:30:42:00:83:5C:92:D2:60:78:50:E2:66:C8:CB:66:0E:32:69:49:9F:26:00:AA`\n- **Compatibility:** minSdk 24. No native code, so it runs on 32-bit TVs.\n\n## First launch\n- **Finding the server:** the app finds servers on the LAN (mDNS `_librarian._tcp`), or you can type an address.\n- **Use the https address:** sign-in cookies are Secure, so enter the address you open in a browser.\n- **Changing the server later:** hold Back or Menu, or go to Settings \u203a About \u203a TV app.\n\n## In this version\n- **Layout:** a full 1920-wide layout, with Display size from 80 to 120% in Settings \u203a General.\n- **Remote:**\n  - Back goes back, closing dialogs first.\n  - Media, Info, Guide, Menu and channel buttons reach the page.\n  - Remote volume changes show in the player, and the player's volume slider drives the TV volume.\n- **Reconnecting:** while the server restarts, \"Reconnecting to \u2026\" retries on its own.\n- **Lighter in TV mode:** animated backgrounds and Blur are off.\n\nThe web side (server 0.6.0-dev.1 or later) does the rest: TV mode, remote navigation and the player.\n",
+    "assets": [
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/727993455",
+        "id": 727993455,
+        "name": "librarian-tv-1.0.0.apk",
+        "content_type": "application/vnd.android.package-archive",
+        "state": "uploaded",
+        "size": 233897,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/tv-v1.0.0/librarian-tv-1.0.0.apk"
+      }
+    ]
+  },
+  {
+    "url": "https://api.github.com/repos/Dastari/librarian/releases/433813188",
+    "html_url": "https://github.com/Dastari/librarian/releases/tag/v0.5.0-dev.1",
+    "id": 433813188,
+    "tag_name": "v0.5.0-dev.1",
+    "name": "v0.5.0-dev.1",
+    "draft": false,
+    "prerelease": true,
+    "created_at": "2026-11-04T10:44:16Z",
+    "published_at": "2026-11-04T11:08:48Z",
+    "body": "Development pre-release for testing. No Docker image is published for this build.\n\n## Portable builds\n\n`librarian-<version>-linux-x86_64.tar.gz` and `librarian-<version>-windows-server-x86_64.zip` contain a single binary with the web app embedded; run it in server mode and open http://localhost:3000.\n\n\n## What's Changed\n* Selection and bulk actions on every table; rework Downloads detail by @Dastari in https://github.com/Dastari/librarian/pull/30\n* Upgrade Glass UX to 0.13.1 and build the rail on Sidebar by @Dastari in https://github.com/Dastari/librarian/pull/31\n* Upgrade graphql-orm to 0.89 and agql-auth to 0.24 by @Dastari in https://github.com/Dastari/librarian/pull/32\n* Live layer: resubscribe before refetch, keyed streams, fewer refetches, mark all read by @Dastari in https://github.com/Dastari/librarian/pull/34\n* Cast: generated CRUD only; rules in the write transform, effects in hooks by @Dastari in https://github.com/Dastari/librarian/pull/35\n* Check ownership on media file match, organize and unmatch by @Dastari in https://github.com/Dastari/librarian/pull/36\n* Remove torrents through the generated deleteTorrent and its lifecycle hooks by @Dastari in https://github.com/Dastari/librarian/pull/37\n* Remove the remaining hand-written twins of generated operations by @Dastari in https://github.com/Dastari/librarian/pull/38\n* Propagate child changes upward; make delete policies and dangling ids truthful by @Dastari in https://github.com/Dastari/librarian/pull/39\n* Release 0.5.0-dev.1 by @Dastari in https://github.com/Dastari/librarian/pull/41\n\n\n**Full Changelog**: https://github.com/Dastari/librarian/compare/v0.4.0-dev.1...v0.5.0-dev.1",
+    "assets": [
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/709201221",
+        "id": 709201221,
+        "name": "librarian",
+        "content_type": "application/octet-stream",
+        "state": "uploaded",
+        "size": 61895464,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.5.0-dev.1/librarian"
+      },
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/709201198",
+        "id": 709201198,
+        "name": "librarian-0.5.0-linux-x86_64.tar.gz",
+        "content_type": "application/gzip",
+        "state": "uploaded",
+        "size": 23960252,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.5.0-dev.1/librarian-0.5.0-linux-x86_64.tar.gz"
+      },
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/709201278",
+        "id": 709201278,
+        "name": "librarian-0.5.0-windows-server-x86_64.zip",
+        "content_type": "application/zip",
+        "state": "uploaded",
+        "size": 26717186,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.5.0-dev.1/librarian-0.5.0-windows-server-x86_64.zip"
+      },
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/709201175",
+        "id": 709201175,
+        "name": "librarian.exe",
+        "content_type": "application/octet-stream",
+        "state": "uploaded",
+        "size": 79357440,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.5.0-dev.1/librarian.exe"
+      },
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/709201162",
+        "id": 709201162,
+        "name": "README.txt",
+        "content_type": "text/plain",
+        "state": "uploaded",
+        "size": 156,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.5.0-dev.1/README.txt"
+      }
+    ]
+  },
+  {
+    "url": "https://api.github.com/repos/Dastari/librarian/releases/429932788",
+    "html_url": "https://github.com/Dastari/librarian/releases/tag/v0.4.0-dev.1",
+    "id": 429932788,
+    "tag_name": "v0.4.0-dev.1",
+    "name": "v0.4.0-dev.1",
+    "draft": false,
+    "prerelease": true,
+    "created_at": "2026-10-31T12:22:03Z",
+    "published_at": "2026-10-31T12:46:13Z",
+    "body": "Development pre-release for testing. No Docker image is published for this build.\n\n## Portable builds\n\n`librarian-<version>-linux-x86_64.tar.gz` and `librarian-<version>-windows-server-x86_64.zip` contain a single binary with the web app embedded; run it in server mode and open http://localhost:3000.\n\n\n## What's Changed\n* Publish pre-release tags as binary-only GitHub pre-releases by @Dastari in https://github.com/Dastari/librarian/pull/23\n* Preview the focused shelf card in a library's spotlight by @Dastari in https://github.com/Dastari/librarian/pull/24\n* TV-style search with on-screen keyboard, taller library cards, steady settings tabs by @Dastari in https://github.com/Dastari/librarian/pull/25\n* Entity tables: Downloads, Activity and library Scans by @Dastari in https://github.com/Dastari/librarian/pull/26\n* Library browsers show posters only, with a sort menu by @Dastari in https://github.com/Dastari/librarian/pull/27\n* Settings, files, tracks, wanted, lists and release search on entity tables by @Dastari in https://github.com/Dastari/librarian/pull/28\n* Release 0.4.0 by @Dastari in https://github.com/Dastari/librarian/pull/29\n\n\n**Full Changelog**: https://github.com/Dastari/librarian/compare/v0.3.2...v0.4.0-dev.1",
+    "assets": [
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/695368512",
+        "id": 695368512,
+        "name": "librarian",
+        "content_type": "application/octet-stream",
+        "state": "uploaded",
+        "size": 62171528,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.4.0-dev.1/librarian"
+      },
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/695368510",
+        "id": 695368510,
+        "name": "librarian-0.4.0-linux-x86_64.tar.gz",
+        "content_type": "application/gzip",
+        "state": "uploaded",
+        "size": 23832219,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.4.0-dev.1/librarian-0.4.0-linux-x86_64.tar.gz"
+      },
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/695368513",
+        "id": 695368513,
+        "name": "librarian-0.4.0-windows-server-x86_64.zip",
+        "content_type": "application/zip",
+        "state": "uploaded",
+        "size": 26915665,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.4.0-dev.1/librarian-0.4.0-windows-server-x86_64.zip"
+      },
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/695368516",
+        "id": 695368516,
+        "name": "librarian.exe",
+        "content_type": "application/octet-stream",
+        "state": "uploaded",
+        "size": 80400896,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.4.0-dev.1/librarian.exe"
+      },
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/695368514",
+        "id": 695368514,
+        "name": "README.txt",
+        "content_type": "text/plain",
+        "state": "uploaded",
+        "size": 156,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.4.0-dev.1/README.txt"
+      }
+    ]
+  },
+  {
+    "url": "https://api.github.com/repos/Dastari/librarian/releases/429676449",
+    "html_url": "https://github.com/Dastari/librarian/releases/tag/v0.3.2",
+    "id": 429676449,
+    "tag_name": "v0.3.2",
+    "name": "v0.3.2 (dev)",
+    "draft": false,
+    "prerelease": true,
+    "created_at": "2026-10-31T00:40:58Z",
+    "published_at": "2026-10-31T02:44:31Z",
+    "body": "Development pre-release for testing. No Docker image is published for this build.\n\n`librarian-0.3.2-linux-x86_64.tar.gz` and `librarian-0.3.2-windows-server-x86_64.zip` contain a single binary with the web app embedded; run it in server mode and open http://localhost:3000.\n## What's Changed\n* Release 0.3.0 by @Dastari in https://github.com/Dastari/librarian/pull/17\n* Rebuild the TV guide: home spotlight, calendar and streaming grid by @Dastari in https://github.com/Dastari/librarian/pull/18\n* Release 0.3.1 by @Dastari in https://github.com/Dastari/librarian/pull/21\n* Release 0.3.2 by @Dastari in https://github.com/Dastari/librarian/pull/22\n\n## New Contributors\n* @Dastari made their first contribution in https://github.com/Dastari/librarian/pull/17\n\n**Full Changelog**: https://github.com/Dastari/librarian/compare/v0.2.0...v0.3.2",
+    "assets": [
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/694152986",
+        "id": 694152986,
+        "name": "librarian-0.3.2-linux-x86_64.tar.gz",
+        "content_type": "application/x-gtar",
+        "state": "uploaded",
+        "size": 23770553,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.3.2/librarian-0.3.2-linux-x86_64.tar.gz"
+      },
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/694152989",
+        "id": 694152989,
+        "name": "librarian-0.3.2-windows-server-x86_64.zip",
+        "content_type": "application/zip",
+        "state": "uploaded",
+        "size": 26858747,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.3.2/librarian-0.3.2-windows-server-x86_64.zip"
+      }
+    ]
+  },
+  {
+    "url": "https://api.github.com/repos/Dastari/librarian/releases/384079768",
+    "html_url": "https://github.com/Dastari/librarian/releases/tag/v0.2.0",
+    "id": 384079768,
+    "tag_name": "v0.2.0",
+    "name": "Librarian 0.2.0",
+    "draft": false,
+    "prerelease": false,
+    "created_at": "2026-09-07T09:24:54Z",
+    "published_at": "2026-09-07T12:39:58Z",
+    "body": "Librarian 0.2.0 ships the new web frontend as the embedded app and makes automatic acquisition real.\n\n## Highlights\n\n- **New web app.** Full-screen, liquid-glass interface with themes, TV-remote navigation and an installable PWA. The legacy frontend is retired.\n- **Guide.** A weekly TV guide from the TVmaze schedule (library shows and everything else), plus in-cinemas and upcoming movie rows from TMDB with one-click add.\n- **Acquisition.** Per-title download rules (Off / Wanted only / Everything missing) with quality-profile overrides; profiles gain languages, size range, seeders, release age, ordered release-group and resolution preferences, season packs and PROPER/REPACK handling. The hunt honours the mode, searches season packs, backs off, blocklists failed releases, and a Wanted page lists everything missing.\n- **Import.** Downloads import to the episode, movie, album or book they were grabbed for; season packs map by filename; samples are skipped; ZIP, RAR and 7z archives are extracted with size, traversal and encryption safeguards; unmatched downloads say why.\n- **Torrent client.** Fixed settings being read as raw JSON (downloads landed in a stray folder), output paths, queueing, restart behaviour and event delivery; added a seeding policy (ratio, time, remove after import) that never touches library files.\n- **Tests.** 318 backend unit tests, 50 integration tests (including a no-network end-to-end acquisition pipeline), 265 web unit tests and a 30-test Playwright suite.\n\n## Docker image\n\n```bash\ndocker pull ghcr.io/dastari/librarian:v0.2.0\n```\n\n## Quick start\n\n1. Download the docker-compose file:\n   ```bash\n   curl -O https://raw.githubusercontent.com/Dastari/librarian/main/docker-compose.dist.yml\n   ```\n2. Create a `.env` file:\n   ```bash\n   echo \"JWT_SECRET=$(openssl rand -hex 32)\" > .env\n   echo \"LIBRARIAN_SOURCE_CREDENTIAL_KEY=$(openssl rand -base64 32)\" >> .env\n   ```\n3. Start the application:\n   ```bash\n   docker compose -f docker-compose.dist.yml up -d\n   ```\n4. Open http://localhost:3000 and create your admin account.\n\n## Portable builds\n\n`librarian-0.2.0-linux-x86_64.tar.gz` and `librarian-0.2.0-windows-server-x86_64.zip` contain a single binary with the web app embedded. Run it in server mode with `ffmpeg`/`ffprobe` installed and open http://localhost:3000.\n\n\n**Full Changelog**: https://github.com/Dastari/librarian/commits/v0.2.0",
+    "assets": [
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/548767260",
+        "id": 548767260,
+        "name": "librarian-0.2.0-linux-x86_64.tar.gz",
+        "content_type": "application/x-gtar",
+        "state": "uploaded",
+        "size": 18684714,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.2.0/librarian-0.2.0-linux-x86_64.tar.gz"
+      },
+      {
+        "url": "https://api.github.com/repos/Dastari/librarian/releases/assets/548767256",
+        "id": 548767256,
+        "name": "librarian-0.2.0-windows-server-x86_64.zip",
+        "content_type": "application/zip",
+        "state": "uploaded",
+        "size": 21013664,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.2.0/librarian-0.2.0-windows-server-x86_64.zip"
+      }
+    ]
+  }
+]

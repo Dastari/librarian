@@ -13,6 +13,7 @@ pub mod network_servers;
 pub mod notifications;
 pub mod quality;
 pub mod recommendations;
+pub mod server_update;
 pub mod subtitles;
 
 pub use artwork::ArtworkMutations;
@@ -28,6 +29,7 @@ pub use network_servers::{ServerConnectionMutations, ServerConnectionQueries};
 pub use notifications::NotificationFeedMutations;
 pub use quality::QualityMutations;
 pub use recommendations::RecommendationMutations;
+pub use server_update::{ServerUpdateMutations, ServerUpdateQueries};
 pub use subtitles::SubtitleActionMutations;
 
 #[cfg(test)]

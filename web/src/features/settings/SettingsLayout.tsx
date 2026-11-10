@@ -1,3 +1,4 @@
+import { IconArrowUpCircle } from "@tabler/icons-react";
 import { Outlet, useRouterState } from "@tanstack/react-router";
 import { IconCast, IconCloudDownload, IconDatabase, IconFileText, IconFolder, IconGlobe, IconInfo, IconLayers, IconPlug, IconSliders, IconTag, IconUsers } from "glass-ux/icons";
 
@@ -20,6 +21,7 @@ const SECTIONS: Array<TabItem & { adminOnly?: boolean }> = [
   { key: "users", label: "Users", href: "/settings/users", icon: IconUsers, adminOnly: true },
   { key: "backup", label: "Backup", href: "/settings/backup", icon: IconDatabase, adminOnly: true },
   { key: "logs", label: "Logs", href: "/settings/logs", icon: IconFileText, adminOnly: true },
+  { key: "updates", label: "Updates", href: "/settings/updates", icon: IconArrowUpCircle, adminOnly: true },
   { key: "about", label: "About", href: "/settings/about", icon: IconInfo },
 ];
 

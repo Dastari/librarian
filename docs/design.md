@@ -2999,3 +2999,92 @@ Only one item is highlighted: whichever input was used last owns it (`web/src/li
 
   It removes nothing at all when the storage can't be reached, or when any folder in the walk couldn't be listed.
 - **Movies and music** are unchanged: their patterns already carry `{year}`, and their protected folders work as before.
+
+### Q151: How does the server learn about new releases, and who is told?
+
+**Answer:** A background check of GitHub's release list, every 6 hours and on "Check now", tells every admin once
+per version (`backend/src/services/updates`).
+
+- **The request.** `GET https://api.github.com/repos/<repo>/releases?per_page=30`, through the project's outbound
+  client (User-Agent `Librarian/<version>`, nothing personal), with `If-None-Match`, so an unchanged list is a free
+  `304`. `403`/`429` with `x-ratelimit-remaining: 0` or `retry-after` set a time before which nothing is asked
+  again; "Check now" then says when. The first check runs 2 minutes after startup. `<repo>` is
+  `LIBRARIAN_UPDATE_REPOSITORY`, default `Dastari/librarian`.
+- **Channels** (`updates.channel`): **Stable** takes plain `v*` tags that GitHub does not flag as pre-releases;
+  **Dev** takes every `v*` tag. Unset, the channel follows the running version: Dev on a pre-release, else
+  Stable. Versions compare by semver (`0.6.0-dev.1 < 0.6.0-dev.2 < 0.6.0-rc.1 < 0.6.0 < 0.6.1-dev.1`). Drafts and
+  tags that are not versions are ignored; `tv-v*` tags are the Android TV app.
+- **The running version.** The release workflow builds with `LIBRARIAN_RELEASE_TAG` set, so a `v0.6.1-dev.2`
+  binary reports `0.6.1-dev.2`; any other build reports the Cargo version. Binaries built before this change
+  (v0.6.0-dev.1 and older) report the Cargo version.
+- **The record.** `updates.state` holds the last check, its error, the ETag, the rate-limit wait, the newest
+  stable, newest overall and newest TV release, and the versions already announced. `updates.auto_check`
+  (default on) turns the background check off.
+- **The notification.** Category and action type `server_update`, to every active admin, once per version:
+  the announced versions are remembered, so dismissing or deleting it does not bring it back. `actionData` is
+  `{version, tag, url, canUpgrade}`; Activity offers "Release notes" and, when this install can upgrade
+  itself, "Upgrade to …", which opens Settings › Updates. An open one is resolved as `superseded` when a newer
+  version is announced and as `installed` once the server runs that version.
+- **Settings › Updates** (admins): version, build kind (release, debug, Docker, dev, source) and platform; the
+  channel and the automatic check; the last and next check; the newest release on the channel with its notes;
+  "Check now" and "Upgrade to vX"; the upgrade history; the newest TV app. Release notes are Markdown from
+  GitHub, drawn by Glass's `RichTextReader`, which ignores raw HTML, sanitises links and here loads no images.
+- **The TV app.** `tvAppRelease` (any signed-in user) returns the newest `tv-v*` version and its APK link, for
+  the shell to offer. The shell does not use it yet.
+
+### Q152: How does the server upgrade itself, and what happens when the new version fails?
+
+**Answer:** An admin confirms "Upgrade to vX". The server downloads and verifies the release, takes a verified
+backup, swaps its binary, and restarts into it in place. A new binary that doesn't get ready is swapped back by
+itself.
+
+- **Who and where.** Admins only (`upgradeServer(version)`, which must name the newest release on the channel),
+  on release builds for linux-x86_64 and windows-x86_64. Refused, with what to do instead:
+  - in Docker (`/.dockerenv`, `/run/.containerenv`, or the image's `LIBRARIAN_IN_DOCKER`): pull the new image;
+  - on debug builds, with `LIBRARIAN_DEV`, or on a binary without the embedded web app or run from a cargo
+    `target/` folder: pull and rebuild;
+  - with the terminal dashboard;
+  - when the folder holding the binary isn't writable.
+
+  An LXC system container counts as a host.
+- **Integrity.** The release workflow publishes `SHA256SUMS` (`sha256sum` format, one line per uploaded file,
+  by base name). The server downloads `SHA256SUMS` and `librarian-<version>-linux-x86_64.tar.gz` (or the
+  Windows zip) from `https://github.com/<repo>/releases/download/…` only. Redirects are followed only to
+  `github.com`, `api.github.com`, `objects.githubusercontent.com` and `release-assets.githubusercontent.com`,
+  over HTTPS, five at most. The archive must be the size the API lists, at most 400 MB. A missing entry or a
+  wrong checksum refuses the upgrade. Releases published before this change have no `SHA256SUMS`, so the page
+  says to install them by hand. The checksums guard against corruption and tampering in transit, not against
+  a compromised release; a signature (minisign) would need a key held in the repository's secrets.
+- **Before anything changes.** Only the one binary is taken from the archive (a regular file at its top
+  level). It is run with `--version` alone, which prints `librarian <version>` and touches nothing, and must
+  report the expected version. This catches a build that cannot load on this system. Then a full backup is taken
+  with the backup service and verified. If the backup fails, the upgrade stops.
+- **The swap**, beside the real file the process runs from (symlinks resolved, so `current -> v0.6.0/` writes
+  into `v0.6.0/`):
+  - On Unix, the current binary is hard-linked as `<exe>.previous`, then `<exe>.new` is renamed over `<exe>`.
+    The path always holds a whole binary.
+  - On Windows, the running `.exe` is renamed aside first, because Windows can't replace a running file.
+
+  `<exe>.upgrade.json` (the marker: from, to, who, when, attempts, backup id) is written before the swap.
+- **The restart.** The server shuts down as for SIGTERM, then on Unix re-executes `<exe>` in place: same PID,
+  arguments and environment. So it works under any systemd `Restart=` setting, including the live unit's
+  `Restart=on-failure`, and when run by hand. If exec fails, or `LIBRARIAN_UPGRADE_RESTART=exit` is set, it
+  exits with 75 (`EX_TEMPFAIL`), which `Restart=on-failure` or `always` restarts. Windows has no exec: it always
+  exits with 75, and the portable server must run under a service manager that restarts it (NSSM, WinSW, or a
+  scheduled task set to restart on failure).
+- **Started ok, or rolled back.**
+  - The new binary's first start counts itself in the marker (attempts 1), before it reads its configuration.
+  - When its HTTP server is listening, that start is "started ok": the marker is deleted, the history records
+    `upgraded`, and the admins are told.
+  - If a start finds the marker already at attempts 1, the previous start never got ready: it crashed, or it
+    exited on an error and systemd restarted it. That start puts `.previous` back, keeps the new binary as
+    `<exe>.failed`, marks the marker `rolled_back` and re-executes the old binary.
+  - A start that hangs is rolled back the same way by a watchdog after 5 minutes.
+  - The old binary records `rolled_back` in the history and tells the admins.
+- **Migrations** run on startup as always. Only additive schema changes are allowed (the startup migration
+  refuses others), so the old binary runs against a database that the new one migrated. The verified backup
+  from before the swap is there for anything else.
+- **The record.** `updates.history` keeps the last 20 attempts: from, to, when, who (username), outcome
+  (`upgraded`, `rolled_back`, `failed`), detail and the backup snapshot id. Progress (downloading, verifying,
+  backing up, installing, restarting, failed) lives in memory; the page polls it every 2 seconds while an
+  upgrade runs.

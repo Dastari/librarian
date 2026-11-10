@@ -261,7 +261,7 @@ fn default_dev_cors_origins() -> Vec<String> {
     ]
 }
 
-fn env_bool(key: &str, default: bool) -> bool {
+pub(crate) fn env_bool(key: &str, default: bool) -> bool {
     env::var(key)
         .map(|value| {
             matches!(
