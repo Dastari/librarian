@@ -3229,3 +3229,15 @@ play of a remote library records the server it came from; until then every play 
 `origins` (this server first, then others, with time and plays) and takes `origin` (`local` or an origin's id) to
 narrow everything. The statistics origin choice and the history's Server column and filter appear only when more than
 one origin exists, so nothing changes on a server without sharing.
+
+### Q154: Why is transcoded audio stereo?
+
+On-demand transcodes and full re-encodes mix audio down to stereo (`aformat=channel_layouts=stereo|mono`,
+ffmpeg's standard downmix). Until 0.6.0-dev.1 they kept 5.1. The user's budget Android TV (TCL G07, WebView)
+then played Fallout's E-AC-3 5.1 track with music and effects but no dialogue. It kept only front left and
+right of the 5.1 AAC it was sent and lost the centre channel, which carries almost all speech. A stereo mix
+folds the centre and the surrounds into both sides, so every player gets the dialogue.
+
+Direct play is unchanged: a player that can decode a file's own surround track still gets it. Surround over
+a transcode, and passthrough to a soundbar, belong with the native Android player (Q140, stage 2). There,
+the device can say what it can output and the server can choose to keep 5.1.

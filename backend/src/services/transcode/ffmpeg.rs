@@ -68,10 +68,14 @@ pub async fn ffmpeg_available(ffmpeg_path: &str) -> bool {
     }
 }
 
-/// Keeps surround but only in layouts AAC has a standard code for. A file's 5.1(side), the usual
-/// layout of E-AC-3 and AC-3, otherwise makes ffmpeg describe the channels in a way browsers can't
-/// append: the audio is rejected and the video waits on it forever.
-const AAC_CHANNEL_LAYOUTS: &str = "aformat=channel_layouts=5.1|stereo|mono";
+/// Transcoded audio is mixed down to stereo (mono stays mono). Surround folded down by the
+/// player is not safe: some TVs' WebView plays 5.1 AAC by keeping only front left and right, which
+/// drops the centre channel and with it nearly all dialogue (music and effects only). ffmpeg's
+/// downmix folds the centre and surrounds into both sides. It also keeps the output in a layout AAC
+/// has a standard code for: a file's 5.1(side), the usual layout of E-AC-3 and AC-3, would otherwise
+/// make ffmpeg describe the channels in a way browsers can't append. Direct play still passes a
+/// file's own surround track to players that can decode it.
+const AAC_CHANNEL_LAYOUTS: &str = "aformat=channel_layouts=stereo|mono";
 
 /// Full path to the playlist file inside a session's output directory.
 pub fn playlist_path(output_dir: &Path) -> PathBuf {
