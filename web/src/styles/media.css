@@ -13,8 +13,10 @@
   z-index: 0;
   overflow: clip;
   pointer-events: none;
-  opacity: calc(1 - var(--art-scroll, 0) * 0.72);
-  transform: translateY(calc(var(--art-scroll, 0) * -4svh));
+  /* Its own GPU layer: AppShell moves and fades it while the page scrolls, and a layer of its own
+   * turns that into compositing only, with no repaint of the full-screen artwork (design.md Q155). */
+  contain: strict;
+  will-change: opacity, transform;
 }
 
 .media-backdrop {
@@ -50,12 +52,14 @@
   inline-size: 100%;
   block-size: var(--media-art-h);
   object-position: center 22%;
-  mask-image: linear-gradient(to bottom, #000 0%, #000 52%, transparent 100%);
+  /* No mask of its own: .media-backdrop already feathers the whole layer, and every mask is a
+   * full-screen offscreen pass on the GPU. The settle-in zoom is short, so it is over before the
+   * first scroll (design.md Q155). */
   opacity: 0;
-  transform: scale(1.04);
+  transform: scale(1.02);
   transition:
     opacity calc(var(--duration-slower) * var(--motion-scale)) var(--ease-glide),
-    transform calc(var(--duration-slower) * 3 * var(--motion-scale)) var(--ease-glide);
+    transform calc(var(--duration-slower) * var(--motion-scale)) var(--ease-glide);
 }
 
 .media-backdrop-image[data-loaded="true"] {

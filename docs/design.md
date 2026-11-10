@@ -3241,3 +3241,18 @@ folds the centre and the surrounds into both sides, so every player gets the dia
 Direct play is unchanged: a player that can decode a file's own surround track still gets it. Surround over
 a transcode, and passthrough to a soundbar, belong with the native Android player (Q140, stage 2). There,
 the device can say what it can output and the server can choose to keep 5.1.
+
+### Q155: Why is nothing over artwork frosted, and how does the page backdrop stay cheap?
+
+Measured on the user's GT 710 driving an ultrawide, a library page with a full-bleed backdrop scrolled sluggishly, worst in its first seconds. The cost was GPU work redone every scroll frame:
+- the backdrop layer's opacity and transform came from a CSS variable set on every frame, which its subtree inherited, so frames went through style and paint;
+- the backdrop stacked full-screen masks;
+- each poster badge, poster action, card corner and hero button ran its own backdrop blur over moving artwork;
+- the blurred rail re-blurred the content scrolling under it.
+
+Now:
+- **Backdrop layer:** `.shell-art` is its own GPU layer (`contain: strict; will-change: opacity, transform`). AppShell sets its opacity and transform directly, so a frame is compositing only.
+- **Masks:** the backdrop image drops its own mask; the layer's feather already shapes it.
+- **Opening zoom:** shortened to the fade's length, so it ends before the first scroll.
+- **Over artwork:** nothing is frosted (`.over-imagery { --_frost: none }`). Controls there take a solid canvas tint.
+- **Rail and top bar:** they keep their frosting at rest. While the page scrolls they carry `data-moving`, which Glass swaps for an opaque fill, and the blur returns 160 ms after scrolling stops.

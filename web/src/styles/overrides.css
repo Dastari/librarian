@@ -119,3 +119,14 @@ video:focus, audio:focus { outline: none; }
    would each flash a second highlight beside the focused row. */
 :root[data-last-input="keys"] .fa-dt-rows > .fa-dt-row:not([data-selected], :focus-visible):hover { --_bg: transparent; }
 :root[data-last-input="keys"] .fa-dt-rows > .fa-dt-row[data-selected]:not(:focus-visible):hover { --_bg: var(--accent-soft); }
+
+/* Nothing over artwork is frosted (design.md Q155). Poster badges and actions, card corners, hero
+   buttons and the controls in an over-imagery top bar each ran a backdrop blur, re-done every
+   frame the artwork under them scrolled or faded. On weak GPUs (a GT 710 on an ultrawide, a
+   budget TV) that was most of the cost of scrolling. They take a solid tint instead. The rail and
+   top bar keep their frosting at rest and drop it only while the page scrolls (AppShell sets
+   data-moving, which Glass swaps for an opaque fill). */
+.over-imagery { --_frost: none; }
+.over-imagery :where(.glass-control, .fa-control):not(.fa-btn[data-variant="primary"], .fa-btn[data-variant="danger"], .fa-btn[data-variant="success"], .fa-btn[data-variant="warning"]) {
+  background-color: color-mix(in oklab, var(--canvas) 72%, transparent);
+}

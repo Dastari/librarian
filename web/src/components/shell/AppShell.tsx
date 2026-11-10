@@ -57,17 +57,45 @@ export function AppShell() {
     const root = body.current;
     const art = document.getElementById(SHELL_ART_ID);
     if (!root || !art) return;
-    art.style.setProperty("--art-scroll", "0");
+    // Opacity and transform are set on the art's own GPU layer (.shell-art), not through a CSS
+    // variable its subtree inherits, so a scroll frame is compositing only (design.md Q155).
+    let shown = -1;
+    const place = (progress: number) => {
+      if (progress === shown) return;
+      shown = progress;
+      art.style.opacity = String(1 - progress * 0.72);
+      art.style.transform = progress === 0 ? "" : `translateY(${(progress * -4).toFixed(3)}svh)`;
+    };
+    place(0);
+    // While the page scrolls, the blurred chrome (rail, top bar) swaps its blur for an opaque fill:
+    // the content under it changes every frame, so a blur would be a full pass per frame. Glass
+    // restores the blur once the attribute goes, a moment after scrolling stops.
+    let moving: HTMLElement[] = [];
+    let settle = 0;
+    const startMoving = () => {
+      if (moving.length === 0) {
+        moving = Array.from(document.querySelectorAll<HTMLElement>(".app-shell .glass-chrome"));
+        for (const layer of moving) layer.setAttribute("data-moving", "");
+      }
+      window.clearTimeout(settle);
+      settle = window.setTimeout(() => {
+        for (const layer of moving) layer.removeAttribute("data-moving");
+        moving = [];
+      }, 160);
+    };
     let frame = 0;
     const onScroll = (event: Event) => {
       const target = event.target;
       if (!(target instanceof HTMLElement) || !target.hasAttribute("data-page-scroller")) return;
+      startMoving();
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => art.style.setProperty("--art-scroll", String(Math.min(1, target.scrollTop / Math.max(1, target.clientHeight)))));
+      frame = requestAnimationFrame(() => place(Math.min(1, target.scrollTop / Math.max(1, target.clientHeight))));
     };
     root.addEventListener("scroll", onScroll, { capture: true, passive: true });
     return () => {
       cancelAnimationFrame(frame);
+      window.clearTimeout(settle);
+      for (const layer of moving) layer.removeAttribute("data-moving");
       root.removeEventListener("scroll", onScroll, { capture: true });
     };
   }, [resolvedPath]);
