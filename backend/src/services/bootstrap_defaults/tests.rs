@@ -141,6 +141,7 @@ async fn library_with(db: &Database, user_id: &str, library_type: &str, pattern:
             scanning: false,
             last_scanned_at: None,
             quality_profile_id: None,
+            storage_volume_id: None,
         },
     )
     .await
@@ -168,6 +169,15 @@ async fn only_the_exact_previous_tv_default_is_moved_to_the_one_with_the_year() 
             avatar_url: None,
             is_active: true,
             last_login_at: None,
+            phone: None,
+            genre_interests: None,
+            must_change_password: false,
+            two_factor_enabled_at: None,
+            recovery_codes_remaining: 0,
+            password_changed_at: None,
+            totp_secret: None,
+            totp_pending_secret: None,
+            recovery_codes: None,
         },
     )
     .await
