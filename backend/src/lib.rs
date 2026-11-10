@@ -62,6 +62,21 @@ pub async fn get_db_pool(services: &ServicesManager) -> Option<Database> {
 /// Build the Tokio runtime and run the backend to completion.
 #[cfg(not(feature = "schema-export-only"))]
 pub fn run() -> anyhow::Result<()> {
+    // The upgrade preflight runs a new binary with only this flag; it must touch nothing.
+    if std::env::args()
+        .skip(1)
+        .any(|arg| arg == "--version" || arg == "-V")
+    {
+        println!(
+            "librarian {}",
+            crate::services::updates::version::running_version()
+        );
+        return Ok(());
+    }
+    // A start after a self-upgrade counts itself, or rolls back a binary that never got ready
+    // (design.md Q152). Before anything else, so a new binary that can't even read its
+    // configuration is still rolled back.
+    crate::services::updates::on_process_start();
     let worker_threads = runtime_thread_count(
         "LIBRARIAN_TOKIO_WORKER_THREADS",
         default_tokio_worker_threads(),
@@ -330,6 +345,12 @@ async fn async_main() -> anyhow::Result<()> {
         });
     }
 
+    // The HTTP server is listening: this start counts as "started ok" for a self-upgrade.
+    if let Some(db_service) = services.get_database().await {
+        crate::services::updates::mark_ready(db_service.pool()).await;
+    }
+    crate::services::updates::start(services.clone(), use_tui);
+
     if use_tui {
         let torrent_service = services
             .get_torrent()
@@ -366,7 +387,10 @@ async fn async_main() -> anyhow::Result<()> {
     if let Some(previews) = crate::services::video_preview::video_previews() {
         previews.stop();
     }
-    services.stop_all().await?;
+    let stopped = services.stop_all().await;
+    // A self-upgrade asked for this shutdown: start the new binary in this process's place.
+    crate::services::updates::restart_if_requested();
+    stopped?;
     Ok(())
 }
 
@@ -640,13 +664,21 @@ async fn wait_for_shutdown_signal() -> anyhow::Result<()> {
         _ = sigterm.recv() => {
             tracing::info!("Received SIGTERM, shutting down gracefully");
         }
+        _ = crate::services::updates::restart_requested() => {
+            tracing::info!("A self-upgrade is restarting the server; shutting down gracefully");
+        }
     }
     Ok(())
 }
 
 #[cfg(not(unix))]
 async fn wait_for_shutdown_signal() -> anyhow::Result<()> {
-    tokio::signal::ctrl_c().await?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result?,
+        _ = crate::services::updates::restart_requested() => {
+            tracing::info!("A self-upgrade is restarting the server; shutting down gracefully");
+        }
+    }
     Ok(())
 }
 
