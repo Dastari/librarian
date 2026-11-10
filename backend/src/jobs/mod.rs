@@ -22,6 +22,7 @@ pub mod recommend_music;
 pub mod recommend_plan;
 pub mod rss_poll;
 pub mod source_health;
+pub mod storage_capacity;
 
 pub use download_monitor::AutoDownloadServiceConfig;
 

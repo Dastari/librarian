@@ -90,6 +90,7 @@ struct AutoDownloadRuntime {
     rss_handle: tokio::task::JoinHandle<()>,
     health_handle: tokio::task::JoinHandle<()>,
     recommend_handle: tokio::task::JoinHandle<()>,
+    capacity_handle: tokio::task::JoinHandle<()>,
 }
 
 impl AutoDownloadRuntime {
@@ -100,6 +101,7 @@ impl AutoDownloadRuntime {
         let _ = self.rss_handle.await;
         let _ = self.health_handle.await;
         let _ = self.recommend_handle.await;
+        let _ = self.capacity_handle.await;
     }
 }
 
@@ -198,6 +200,18 @@ impl Service for AutoDownloadService {
             recommend_loop(manager_recommend, token_recommend, rhythm).await;
         });
 
+        // Free space on every volume (Q146): runs whether or not automatic downloading is on.
+        let manager_capacity = self.manager.clone();
+        let token_capacity = cancel_token.clone();
+        let capacity_handle = tokio::spawn(async move {
+            super::storage_capacity::run_loop(
+                manager_capacity,
+                token_capacity,
+                rhythm.startup_delay,
+            )
+            .await;
+        });
+
         let manager_retry = self.manager.clone();
         let retry_sweep_interval = self.config.retry_sweep_interval_minutes;
         let default_retry_after = self.config.default_retry_after_minutes;
@@ -221,6 +235,7 @@ impl Service for AutoDownloadService {
             rss_handle,
             health_handle,
             recommend_handle,
+            capacity_handle,
         }));
 
         info!(
@@ -252,6 +267,7 @@ impl Service for AutoDownloadService {
             || runtime.rss_handle.is_finished()
             || runtime.health_handle.is_finished()
             || runtime.recommend_handle.is_finished()
+            || runtime.capacity_handle.is_finished()
         {
             return Ok(ServiceHealth::degraded(
                 "one or more auto-download workers exited unexpectedly",

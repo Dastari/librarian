@@ -62,6 +62,7 @@ pub mod redact;
 pub mod release_match;
 pub mod sources;
 pub mod storage;
+pub mod storage_capacity;
 pub mod subtitles;
 pub mod tool_url;
 pub mod torrent;

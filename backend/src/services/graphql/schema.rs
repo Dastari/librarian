@@ -101,6 +101,7 @@ macro_rules! librarian_schema_roots {
         ReleaseRecommendation,
         NetworkServer,
         TorrentContents,
+        StorageVolume,
     ],
     // Entities that no client or internal GraphQL operation writes through the generated
     // roots: they are written by services in Rust (analysis, scan runs, auth sessions) or
@@ -124,6 +125,8 @@ macro_rules! librarian_schema_roots {
         UsenetServer,
         ReleaseRecommendation,
         TorrentContents,
+        // Written only by the capacity job (Q146): a client must not fake a reading.
+        StorageVolume,
     ],
     extra_query_types: [ArtworkQueries, FilesystemQueries, ServerConnectionQueries, DownloadsMoveQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries, StatisticsQueries],
     extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, PersonMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations, ServerConnectionMutations, DownloadsMoveMutations, SubtitleActionMutations, DeviceActionMutations],
@@ -453,6 +456,7 @@ mod tests {
             ReleaseRecommendation,
             NetworkServer,
             TorrentContents,
+            StorageVolume,
         );
         expected.sort();
         actual.sort();
@@ -754,6 +758,7 @@ mod tests {
                     scanning: false,
                     last_scanned_at: None,
                     quality_profile_id: None,
+                    storage_volume_id: None,
                 },
             )
             .await

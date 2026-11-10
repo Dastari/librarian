@@ -2964,3 +2964,59 @@ Only one item is highlighted: whichever input was used last owns it (`web/src/li
   is drawn over its neighbours, so a lifted ring never collides with the next tile's edge.
 - **Persistent selection** (a chosen tile, ticked rows) is a separate state from focus and is marked
   inside the tile, so it can sit next to the focused tile.
+
+### Q146: How does Librarian watch free disk space, and warn when a drive or share is low?
+
+One reading per volume, kept in a small `StorageVolume` entity that libraries point at, refreshed by
+a light job and turned into one alert per volume and level.
+
+- **Reading.** `Storage::capacity` in `services/library_storage`: `statvfs` for a folder on this
+  machine, SMB2 QUERY_INFO `FileFsFullSizeInformation` (smb2's `fs_info`) for a share. Both report
+  what the caller may still write (`f_bavail`, caller-available allocation units), so quotas and
+  reserved blocks count; the volume-wide free figure is kept beside it. A folder that does not exist
+  yet is measured at its nearest existing parent. A failed or slow reading (20 s) marks the volume
+  `unavailable`; it never fails a scan, an import or a move.
+- **One reading per volume.** `Storage::volume_key` names a volume: the share root
+  (`smb://10.0.1.190/media`, worked out without connecting, so a share that is down still groups) or
+  `local:<device id>`. Every library folder, the torrent download folder and Librarian's data and
+  cache folders (`DATABASE_PATH`'s folder, `CACHE_PATH`) are grouped by key and each volume is read
+  once. All four live libraries sit on one share, so they share one row.
+- **Why an entity, not Library columns.** The download folder and the data folder have no library
+  row, alerts are per volume rather than per library, and four libraries on one share would mean
+  four identical rows rewritten each time. `StorageVolume` (`storage_volumes`: key, kind, label,
+  status, level, total/available/free bytes, `holdsDownloads`, `holdsAppData`, library names,
+  `checkedAt`) holds the reading; `Library.storageVolumeId` points at it. Both are additive. The
+  entity is admin-read and has no generated mutation roots: only the job writes it.
+- **Keeping it current, quietly.** `jobs::storage_capacity` runs beside the source-health loop in
+  the auto-download service (whether or not automatic downloading is on): every 12 minutes, and 30
+  seconds after a nudge. The entity layer nudges it when a media file is made, removed or moved, a
+  library is made, removed or moved, or the download folder setting changes; the job's own
+  `storageVolumeId` writes do not. A row is written only when the available space moves by more
+  than 0.5 % of the volume, the level or status changes, what lives on it changes, or the stored
+  reading is a day old, so entity subscriptions stay quiet. The Libraries table updates through
+  the `StorageVolume` change subscription.
+- **Levels.** Settings › General › Storage: warning below 10 % or 50 GB free, whichever is larger;
+  critical below 5 % or 20 GB (`storage.warning_free_fraction`, `storage.warning_free_bytes`,
+  `storage.critical_free_fraction`, `storage.critical_free_bytes`; critical is never looser than
+  warning). A level is left only when the space is back above its threshold by a tenth of the
+  threshold, at least 1 GB (`services::storage_capacity::level_for`), so a volume on the line does
+  not flap. An unreadable volume keeps its level.
+- **Alerts.** One notification (category `storage_space`, `actionData` `<volume id>:<level>`) per
+  volume and level, for the admins and the owners of the libraries on it, naming the libraries and
+  whether the download folder or Librarian's own data is there. Nothing is raised twice; going
+  critical resolves the warning (`escalated`) and raises a critical one; recovering resolves it
+  (`recovered`), coming down from critical to warning resolves the critical one (`eased`). A volume
+  nothing lives on any more is removed and its alerts resolved. Unreachable shares are left to the
+  folder watch and the scan, which already say so.
+- **Libraries table.** A Free space column with Glass `MeterCell` (`tone="data"`): used against
+  total, "1.2 TB free of 8 TB", warning and danger following the server's level (the thresholds
+  move only inside the hysteresis band so the colour never disagrees with the alert). A share that
+  cannot be read shows "Unavailable", never 0. Settings › Downloads shows the same meter for the
+  download folder's volume.
+- **Grabs onto a full disk.** When the download folder's volume is critical, a release whose size
+  is at least the available space is refused in `grab_release_with` with a clear reason ("Not
+  enough disk space: the download folder has 10 GB free and this release is 30 GB …"), which covers
+  the hunt, feeds and "Download recommended". The hunt checks first and records the candidate as
+  waiting rather than as a failed grab. A release of unknown size is let through, and a partial
+  pack is judged by its whole size (conservative). Only the stored reading is consulted, so a grab
+  never waits on a share.
