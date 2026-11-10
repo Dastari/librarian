@@ -4248,8 +4248,16 @@ impl AppMutationHook {
     fn moves_disk_space(event: &MutationEvent) -> bool {
         macro_rules! path_changed {
             ($ty:ty, $field:ident) => {{
-                let before = event.before::<$ty>().ok().flatten().map(|row| row.$field.clone());
-                let after = event.after::<$ty>().ok().flatten().map(|row| row.$field.clone());
+                let before = event
+                    .before::<$ty>()
+                    .ok()
+                    .flatten()
+                    .map(|row| row.$field.clone());
+                let after = event
+                    .after::<$ty>()
+                    .ok()
+                    .flatten()
+                    .map(|row| row.$field.clone());
                 before != after
             }};
         }
