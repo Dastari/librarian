@@ -209,14 +209,16 @@ impl AccountMutations {
         #[graphql(name = "input")] input: CompleteTwoFactorSignInInput,
     ) -> Result<AuthPayload> {
         let auth = auth(ctx)?;
-        Ok(match auth.complete_two_factor(&input.token, &input.code).await {
-            Ok(SignIn::Session(result)) => AuthPayload::signed_in(ctx, auth, result),
-            Ok(SignIn::Challenge(challenge)) => AuthPayload::challenged(challenge),
-            Err(error) => {
-                tracing::debug!(reason = %error, "Two-factor sign-in step rejected");
-                AuthPayload::failed(public_message("auth.twoFactor", &error))
-            }
-        })
+        Ok(
+            match auth.complete_two_factor(&input.token, &input.code).await {
+                Ok(SignIn::Session(result)) => AuthPayload::signed_in(ctx, auth, result),
+                Ok(SignIn::Challenge(challenge)) => AuthPayload::challenged(challenge),
+                Err(error) => {
+                    tracing::debug!(reason = %error, "Two-factor sign-in step rejected");
+                    AuthPayload::failed(public_message("auth.twoFactor", &error))
+                }
+            },
+        )
     }
 
     /// After a temporary password: choose a new one and sign in.

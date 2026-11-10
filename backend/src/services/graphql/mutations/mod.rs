@@ -1,7 +1,7 @@
 //! GraphQL mutation modules (auth, filesystem, etc.).
 
-pub mod artwork;
 pub mod account;
+pub mod artwork;
 pub mod auth;
 pub mod auto_download;
 pub mod backup;
@@ -16,8 +16,8 @@ pub mod quality;
 pub mod recommendations;
 pub mod subtitles;
 
-pub use artwork::ArtworkMutations;
 pub use account::AccountMutations;
+pub use artwork::ArtworkMutations;
 pub use auth::AuthMutations;
 pub use auto_download::AutoDownloadMutations;
 pub use backup::BackupMutations;

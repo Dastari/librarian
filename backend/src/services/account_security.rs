@@ -207,7 +207,11 @@ pub fn recovery_hashes_json(user_id: &str, codes: &[String]) -> String {
 }
 
 /// The hashes left after using `code`, or `None` when it isn't one of them.
-pub fn consume_recovery_code(stored: Option<&str>, user_id: &str, code: &str) -> Option<Vec<String>> {
+pub fn consume_recovery_code(
+    stored: Option<&str>,
+    user_id: &str,
+    code: &str,
+) -> Option<Vec<String>> {
     let hashes: Vec<String> = serde_json::from_str(stored?).ok()?;
     if normalize_recovery_code(code).len() != 10 {
         return None;
@@ -400,7 +404,11 @@ mod tests {
     fn a_pending_sign_in_waits_for_its_stage_and_drops_after_five_wrong_codes() {
         let pending = PendingSignIns::default();
         let token = pending.create("u", "alice", ChallengeStage::TwoFactor, "hash");
-        assert!(pending.get(&token, ChallengeStage::PasswordChange).is_none());
+        assert!(
+            pending
+                .get(&token, ChallengeStage::PasswordChange)
+                .is_none()
+        );
         assert!(pending.get(&token, ChallengeStage::TwoFactor).is_some());
         for _ in 0..CHALLENGE_MAX_ATTEMPTS - 1 {
             pending.record_failure(&token);
@@ -408,7 +416,11 @@ mod tests {
         }
         pending.record_failure(&token);
         assert!(pending.get(&token, ChallengeStage::TwoFactor).is_none());
-        assert!(pending.get("not-a-token", ChallengeStage::TwoFactor).is_none());
+        assert!(
+            pending
+                .get("not-a-token", ChallengeStage::TwoFactor)
+                .is_none()
+        );
     }
 
     #[tokio::test]

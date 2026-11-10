@@ -203,9 +203,9 @@ impl OwnershipRowPolicy {
             | "Lyric" | "MediaChapter" => ScopeClass::Derived,
             "Person" | "CastDevice" | "CastSetting" | "ScheduleCache" | "TorznabCategory"
             | "QualityProfile" | "ReleaseBlocklist" => ScopeClass::Shared,
-            "Source" | "InviteToken" | "PasswordResetToken" | "RefreshToken" | "AppSetting" | "AppLog"
-            | "UsenetServer" | "ScheduleSyncState" | "MetadataCache" | "MatchingAssistant"
-            | "NetworkServer" | "TorrentContents" => ScopeClass::Admin,
+            "Source" | "InviteToken" | "PasswordResetToken" | "RefreshToken" | "AppSetting"
+            | "AppLog" | "UsenetServer" | "ScheduleSyncState" | "MetadataCache"
+            | "MatchingAssistant" | "NetworkServer" | "TorrentContents" => ScopeClass::Admin,
             _ => return None,
         })
     }

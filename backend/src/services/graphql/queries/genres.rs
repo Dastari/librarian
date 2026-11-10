@@ -40,7 +40,10 @@ pub struct GenreChoice {
 pub struct GenreQueries;
 
 /// Movies and shows the caller can see: their own, or everything for an administrator.
-async fn visible_titles(db: &Database, user: &crate::graphql::AuthUser) -> Result<(Vec<Movie>, Vec<Show>)> {
+async fn visible_titles(
+    db: &Database,
+    user: &crate::graphql::AuthUser,
+) -> Result<(Vec<Movie>, Vec<Show>)> {
     let owner = (!user.is_admin()).then(|| StringFilter {
         eq: Some(user.user_id.clone()),
         ..Default::default()
@@ -143,16 +146,26 @@ impl GenreQueries {
         let db = ctx.data::<Database>()?;
         let (movies, shows) = visible_titles(db, user).await?;
         let mut choices: HashMap<String, GenreChoice> = HashMap::new();
-        for (genre, items) in group_by_genre(movies, |movie| &movie.genres, |movie| &movie.created_at) {
+        for (genre, items) in
+            group_by_genre(movies, |movie| &movie.genres, |movie| &movie.created_at)
+        {
             choices
                 .entry(genre.to_lowercase())
-                .or_insert_with(|| GenreChoice { genre, movies: 0, shows: 0 })
+                .or_insert_with(|| GenreChoice {
+                    genre,
+                    movies: 0,
+                    shows: 0,
+                })
                 .movies = items.len() as i32;
         }
         for (genre, items) in group_by_genre(shows, |show| &show.genres, |show| &show.created_at) {
             choices
                 .entry(genre.to_lowercase())
-                .or_insert_with(|| GenreChoice { genre, movies: 0, shows: 0 })
+                .or_insert_with(|| GenreChoice {
+                    genre,
+                    movies: 0,
+                    shows: 0,
+                })
                 .shows = items.len() as i32;
         }
         let mut choices: Vec<GenreChoice> = choices.into_values().collect();
@@ -175,8 +188,10 @@ impl GenreQueries {
     ) -> Result<Vec<GenreShelf>> {
         let user = ctx.require_member()?;
         if !(1..=MAX_PER_GENRE).contains(&per_genre) {
-            return Err(async_graphql::Error::new(format!("perGenre must be 1-{MAX_PER_GENRE}"))
-                .extend_with(|_, extensions| extensions.set("code", "BAD_USER_INPUT")));
+            return Err(
+                async_graphql::Error::new(format!("perGenre must be 1-{MAX_PER_GENRE}"))
+                    .extend_with(|_, extensions| extensions.set("code", "BAD_USER_INPUT")),
+            );
         }
         let db = ctx.data::<Database>()?;
         let interests = User::get(db.pool(), &user.user_id)

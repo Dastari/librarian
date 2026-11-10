@@ -30,7 +30,8 @@ use crate::graphql::AuthUser;
 use crate::graphql::entities::{
     Album, Artist, ArtworkCache, ArtworkCacheWhereInput, Audiobook, Episode, Movie, PersonalList,
     Season, Show, UpdateAlbumInput, UpdateArtistInput, UpdateAudiobookInput, UpdateEpisodeInput,
-    UpdateMovieInput, UpdatePersonalListInput, UpdateSeasonInput, UpdateShowInput,
+    UpdateMovieInput, UpdatePersonalListInput, UpdateSeasonInput, UpdateShowInput, UpdateUserInput,
+    User,
 };
 use crate::services::ArtworkService;
 
@@ -454,7 +455,7 @@ pub async fn write_slot(
             db,
             &id,
             UpdateUserInput {
-                avatar_url: Some(value),
+                avatar_url: value,
                 ..Default::default()
             },
         )

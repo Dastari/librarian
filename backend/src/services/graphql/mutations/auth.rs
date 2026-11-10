@@ -397,7 +397,10 @@ impl AuthMutations {
         let auth = ctx
             .data::<Arc<AuthService>>()
             .map_err(|_| service_unavailable("Authentication"))?;
-        match auth.sign_in(&input.username_or_email, &input.password).await {
+        match auth
+            .sign_in(&input.username_or_email, &input.password)
+            .await
+        {
             Ok(crate::services::auth::SignIn::Session(login_result)) => {
                 Ok(AuthPayload::signed_in(ctx, auth, login_result))
             }
@@ -463,6 +466,7 @@ impl AuthMutations {
                     error: None,
                     user,
                     tokens: Some(session_info),
+                    challenge: None,
                 })
             }
             Err(err) if !is_invalid_refresh_session(&err) => {

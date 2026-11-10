@@ -1,7 +1,9 @@
 //! Two-factor sign-in, recovery codes, temporary passwords and reset links against the real
 //! ORM records (design.md Q147–Q148).
 use super::*;
-use crate::graphql::entities::{CreateUserInput, PasswordResetToken, UpdatePasswordResetTokenInput};
+use crate::graphql::entities::{
+    CreateUserInput, PasswordResetToken, UpdatePasswordResetTokenInput,
+};
 use crate::services::account_security::{CHALLENGE_MAX_ATTEMPTS, ChallengeStage};
 use crate::services::auth::account::{EXPIRED_MESSAGE, WRONG_CODE_MESSAGE};
 use crate::services::sources::encryption::CredentialEncryption;
@@ -28,7 +30,9 @@ async fn fixture() -> Fixture {
             connect_timeout: std::time::Duration::from_secs(5),
         })
         .add_service(AuthConfig::for_tests())
-        .add_service(SourcesServiceConfig::with_key(CredentialEncryption::generate_key()))
+        .add_service(SourcesServiceConfig::with_key(
+            CredentialEncryption::generate_key(),
+        ))
         .start()
         .await
         .unwrap();
@@ -69,7 +73,14 @@ async fn fixture() -> Fixture {
     )
     .await
     .unwrap();
-    Fixture { _temp: temp, _services: services, db, auth, admin, member }
+    Fixture {
+        _temp: temp,
+        _services: services,
+        db,
+        auth,
+        admin,
+        member,
+    }
 }
 
 /// RFC 6238 with the defaults agql-auth uses (SHA-1, six digits, 30 seconds).
@@ -107,15 +118,31 @@ fn data_encoding_decode(text: &str) -> Vec<u8> {
 }
 
 async fn reload(f: &Fixture, id: &str) -> User {
-    User::get(f.db.pool(), &id.to_string()).await.unwrap().unwrap()
+    User::get(f.db.pool(), &id.to_string())
+        .await
+        .unwrap()
+        .unwrap()
 }
 
 /// Enrol the member and return their secret and recovery codes.
 async fn enrol(f: &Fixture) -> (String, Vec<String>) {
-    let enrollment = f.auth.begin_two_factor(&f.member.id, PASSWORD).await.unwrap();
+    let enrollment = f
+        .auth
+        .begin_two_factor(&f.member.id, PASSWORD)
+        .await
+        .unwrap();
     // A wrong code never confirms.
-    let wrong = if totp(&enrollment.secret, 0) == "000000" { "111111" } else { "000000" };
-    assert!(f.auth.confirm_two_factor(&f.member.id, wrong).await.is_err());
+    let wrong = if totp(&enrollment.secret, 0) == "000000" {
+        "111111"
+    } else {
+        "000000"
+    };
+    assert!(
+        f.auth
+            .confirm_two_factor(&f.member.id, wrong)
+            .await
+            .is_err()
+    );
     let codes = f
         .auth
         .confirm_two_factor(&f.member.id, &totp(&enrollment.secret, 0))
@@ -134,13 +161,25 @@ async fn challenge(f: &Fixture) -> SignInChallenge {
 #[tokio::test]
 async fn enrolling_keeps_the_secret_encrypted_and_the_codes_hashed() {
     let f = fixture().await;
-    assert!(f.auth.begin_two_factor(&f.member.id, "wrong-password").await.is_err());
-    let enrollment = f.auth.begin_two_factor(&f.member.id, PASSWORD).await.unwrap();
+    assert!(
+        f.auth
+            .begin_two_factor(&f.member.id, "wrong-password")
+            .await
+            .is_err()
+    );
+    let enrollment = f
+        .auth
+        .begin_two_factor(&f.member.id, PASSWORD)
+        .await
+        .unwrap();
     assert!(enrollment.uri.starts_with("otpauth://totp/"));
     assert!(enrollment.qr_svg.contains("<svg"));
     let pending = reload(&f, &f.member.id).await;
     let stored = pending.totp_pending_secret.clone().unwrap();
-    assert!(stored.starts_with("v2:"), "the pending secret is a credential envelope");
+    assert!(
+        stored.starts_with("v2:"),
+        "the pending secret is a credential envelope"
+    );
     assert!(!stored.contains(&enrollment.secret));
     assert!(pending.totp_secret.is_none() && pending.two_factor_enabled_at.is_none());
 
@@ -166,20 +205,42 @@ async fn the_password_step_issues_no_usable_token_and_a_code_signs_in() {
     let pending = challenge(&f).await;
     assert_eq!(pending.stage, ChallengeStage::TwoFactor);
     // The challenge is no credential: not a bearer token, not a refresh token.
-    assert!(f.auth.authenticate_access_token(&pending.token).await.is_err());
+    assert!(
+        f.auth
+            .authenticate_access_token(&pending.token)
+            .await
+            .is_err()
+    );
     assert!(f.auth.refresh_token(&pending.token).await.is_err());
     // The plain login keeps refusing an account with a second step.
     assert!(f.auth.login("sam@example.test", PASSWORD).await.is_err());
 
     // The code that confirmed enrolment was spent; the next step's code signs in.
-    let signed_in = f.auth.complete_two_factor(&pending.token, &totp(&secret, 1)).await.unwrap();
-    let SignIn::Session(result) = signed_in else { panic!("a correct code signs in") };
-    let user = f.auth.authenticate_access_token(&result.tokens.access_token).await.unwrap();
+    let signed_in = f
+        .auth
+        .complete_two_factor(&pending.token, &totp(&secret, 1))
+        .await
+        .unwrap();
+    let SignIn::Session(result) = signed_in else {
+        panic!("a correct code signs in")
+    };
+    let user = f
+        .auth
+        .authenticate_access_token(&result.tokens.access_token)
+        .await
+        .unwrap();
     assert_eq!(user.user_id, f.member.id);
-    f.auth.refresh_token(&result.tokens.refresh_token).await.expect("a two-factor session refreshes");
+    f.auth
+        .refresh_token(&result.tokens.refresh_token)
+        .await
+        .expect("a two-factor session refreshes");
     // The challenge is gone once used.
     assert_eq!(
-        f.auth.complete_two_factor(&pending.token, &totp(&secret, 1)).await.unwrap_err().to_string(),
+        f.auth
+            .complete_two_factor(&pending.token, &totp(&secret, 1))
+            .await
+            .unwrap_err()
+            .to_string(),
         EXPIRED_MESSAGE
     );
 }
@@ -189,16 +250,30 @@ async fn a_recovery_code_works_once() {
     let f = fixture().await;
     let (_, codes) = enrol(&f).await;
     let first = challenge(&f).await;
-    let SignIn::Session(_) = f.auth.complete_two_factor(&first.token, &codes[3].to_uppercase()).await.unwrap() else {
+    let SignIn::Session(_) = f
+        .auth
+        .complete_two_factor(&first.token, &codes[3].to_uppercase())
+        .await
+        .unwrap()
+    else {
         panic!("a recovery code signs in");
     };
     assert_eq!(reload(&f, &f.member.id).await.recovery_codes_remaining, 9);
     let second = challenge(&f).await;
     assert_eq!(
-        f.auth.complete_two_factor(&second.token, &codes[3]).await.unwrap_err().to_string(),
+        f.auth
+            .complete_two_factor(&second.token, &codes[3])
+            .await
+            .unwrap_err()
+            .to_string(),
         WRONG_CODE_MESSAGE
     );
-    let SignIn::Session(_) = f.auth.complete_two_factor(&second.token, &codes[4]).await.unwrap() else {
+    let SignIn::Session(_) = f
+        .auth
+        .complete_two_factor(&second.token, &codes[4])
+        .await
+        .unwrap()
+    else {
         panic!("another unused code still works");
     };
 }
@@ -210,21 +285,40 @@ async fn wrong_codes_end_the_challenge_and_then_rate_limit_the_account() {
     let pending = challenge(&f).await;
     for _ in 0..CHALLENGE_MAX_ATTEMPTS {
         assert_eq!(
-            f.auth.complete_two_factor(&pending.token, "zzzzz-zzzzz").await.unwrap_err().to_string(),
+            f.auth
+                .complete_two_factor(&pending.token, "zzzzz-zzzzz")
+                .await
+                .unwrap_err()
+                .to_string(),
             WRONG_CODE_MESSAGE
         );
     }
     assert_eq!(
-        f.auth.complete_two_factor(&pending.token, "zzzzz-zzzzz").await.unwrap_err().to_string(),
+        f.auth
+            .complete_two_factor(&pending.token, "zzzzz-zzzzz")
+            .await
+            .unwrap_err()
+            .to_string(),
         EXPIRED_MESSAGE
     );
     // Ten wrong codes in the window block the sign-in name, the password step included.
     let again = challenge(&f).await;
     for _ in 0..CHALLENGE_MAX_ATTEMPTS {
-        let _ = f.auth.complete_two_factor(&again.token, "zzzzz-zzzzz").await;
+        let _ = f
+            .auth
+            .complete_two_factor(&again.token, "zzzzz-zzzzz")
+            .await;
     }
-    let blocked = f.auth.sign_in("sam@example.test", PASSWORD).await.unwrap_err().to_string();
-    assert!(crate::services::login_rate_limit::is_rate_limit_message(&blocked), "{blocked}");
+    let blocked = f
+        .auth
+        .sign_in("sam@example.test", PASSWORD)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        crate::services::login_rate_limit::is_rate_limit_message(&blocked),
+        "{blocked}"
+    );
 }
 
 #[tokio::test]
@@ -232,25 +326,57 @@ async fn a_temporary_password_must_be_replaced_before_any_session() {
     let f = fixture().await;
     let before = f.auth.login("sam@example.test", PASSWORD).await.unwrap();
     // Only an administrator can set one.
-    assert!(f.auth.admin_set_temporary_password(&f.member.id, &f.admin.id, "another-temporary-1").await.is_err());
+    assert!(
+        f.auth
+            .admin_set_temporary_password(&f.member.id, &f.admin.id, "another-temporary-1")
+            .await
+            .is_err()
+    );
     f.auth
         .admin_set_temporary_password(&f.admin.id, &f.member.id, "temporary-pass-123")
         .await
         .unwrap();
     assert!(reload(&f, &f.member.id).await.must_change_password);
     // The old session ended with the password.
-    assert!(f.auth.refresh_token(&before.tokens.refresh_token).await.is_err());
+    assert!(
+        f.auth
+            .refresh_token(&before.tokens.refresh_token)
+            .await
+            .is_err()
+    );
 
     let pending = match f.auth.sign_in("sam", "temporary-pass-123").await.unwrap() {
         SignIn::Challenge(challenge) => challenge,
         SignIn::Session(_) => panic!("a temporary password must not sign in"),
     };
     assert_eq!(pending.stage, ChallengeStage::PasswordChange);
-    assert!(f.auth.authenticate_access_token(&pending.token).await.is_err());
-    assert!(f.auth.complete_password_change(&pending.token, "temporary-pass-123").await.is_err());
-    assert!(f.auth.complete_password_change(&pending.token, "short").await.is_err());
-    let result = f.auth.complete_password_change(&pending.token, "my-own-password-9").await.unwrap();
-    f.auth.authenticate_access_token(&result.tokens.access_token).await.unwrap();
+    assert!(
+        f.auth
+            .authenticate_access_token(&pending.token)
+            .await
+            .is_err()
+    );
+    assert!(
+        f.auth
+            .complete_password_change(&pending.token, "temporary-pass-123")
+            .await
+            .is_err()
+    );
+    assert!(
+        f.auth
+            .complete_password_change(&pending.token, "short")
+            .await
+            .is_err()
+    );
+    let result = f
+        .auth
+        .complete_password_change(&pending.token, "my-own-password-9")
+        .await
+        .unwrap();
+    f.auth
+        .authenticate_access_token(&result.tokens.access_token)
+        .await
+        .unwrap();
     let user = reload(&f, &f.member.id).await;
     assert!(!user.must_change_password);
     f.auth.login("sam", "my-own-password-9").await.unwrap();
@@ -259,33 +385,83 @@ async fn a_temporary_password_must_be_replaced_before_any_session() {
 #[tokio::test]
 async fn a_reset_link_works_once_and_not_after_it_expires() {
     let f = fixture().await;
-    assert!(f.auth.admin_create_reset_link(&f.member.id, &f.admin.id).await.is_err(), "members make no links");
-    let (token, expires_at) = f.auth.admin_create_reset_link(&f.admin.id, &f.member.id).await.unwrap();
+    assert!(
+        f.auth
+            .admin_create_reset_link(&f.member.id, &f.admin.id)
+            .await
+            .is_err(),
+        "members make no links"
+    );
+    let (token, expires_at) = f
+        .auth
+        .admin_create_reset_link(&f.admin.id, &f.member.id)
+        .await
+        .unwrap();
     assert!(expires_at > OffsetDateTime::now_utc() + Duration::hours(23));
-    let rows = PasswordResetToken::query(f.db.pool()).fetch_all().await.unwrap();
+    let rows = PasswordResetToken::query(f.db.pool())
+        .fetch_all()
+        .await
+        .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(!format!("{rows:?}").contains(&token), "the link itself is never stored");
+    assert!(
+        !format!("{rows:?}").contains(&token),
+        "the link itself is never stored"
+    );
 
-    f.auth.reset_password_with_link(&token, "reset-password-42").await.unwrap();
-    assert!(f.auth.reset_password_with_link(&token, "reset-password-43").await.is_err(), "a link works once");
+    f.auth
+        .reset_password_with_link(&token, "reset-password-42")
+        .await
+        .unwrap();
+    assert!(
+        f.auth
+            .reset_password_with_link(&token, "reset-password-43")
+            .await
+            .is_err(),
+        "a link works once"
+    );
     f.auth.login("sam", "reset-password-42").await.unwrap();
 
     // A newer link replaces the older; an expired one is refused.
-    let (old, _) = f.auth.admin_create_reset_link(&f.admin.id, &f.member.id).await.unwrap();
-    let (expiring, _) = f.auth.admin_create_reset_link(&f.admin.id, &f.member.id).await.unwrap();
-    assert!(f.auth.reset_password_with_link(&old, "reset-password-44").await.is_err());
-    let row = PasswordResetToken::query(f.db.pool()).fetch_all().await.unwrap().pop().unwrap();
+    let (old, _) = f
+        .auth
+        .admin_create_reset_link(&f.admin.id, &f.member.id)
+        .await
+        .unwrap();
+    let (expiring, _) = f
+        .auth
+        .admin_create_reset_link(&f.admin.id, &f.member.id)
+        .await
+        .unwrap();
+    assert!(
+        f.auth
+            .reset_password_with_link(&old, "reset-password-44")
+            .await
+            .is_err()
+    );
+    let row = PasswordResetToken::query(f.db.pool())
+        .fetch_all()
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
     PasswordResetToken::update_by_id(
         &f.db,
         &row.id,
         UpdatePasswordResetTokenInput {
-            expires_at: Some(format_time(OffsetDateTime::now_utc() - Duration::minutes(1))),
+            expires_at: Some(format_time(
+                OffsetDateTime::now_utc() - Duration::minutes(1),
+            )),
             ..Default::default()
         },
     )
     .await
     .unwrap();
-    assert!(f.auth.reset_password_with_link(&expiring, "reset-password-45").await.is_err());
+    assert!(
+        f.auth
+            .reset_password_with_link(&expiring, "reset-password-45")
+            .await
+            .is_err()
+    );
     f.auth.login("sam", "reset-password-42").await.unwrap();
 }
 
@@ -293,21 +469,54 @@ async fn a_reset_link_works_once_and_not_after_it_expires() {
 async fn only_an_administrator_turns_off_someone_elses_two_factor_sign_in() {
     let f = fixture().await;
     enrol(&f).await;
-    assert!(f.auth.admin_reset_two_factor(&f.member.id, &f.member.id).await.is_err());
+    assert!(
+        f.auth
+            .admin_reset_two_factor(&f.member.id, &f.member.id)
+            .await
+            .is_err()
+    );
     assert!(reload(&f, &f.member.id).await.totp_secret.is_some());
-    f.auth.admin_reset_two_factor(&f.admin.id, &f.member.id).await.unwrap();
+    f.auth
+        .admin_reset_two_factor(&f.admin.id, &f.member.id)
+        .await
+        .unwrap();
     let user = reload(&f, &f.member.id).await;
-    assert!(user.totp_secret.is_none() && user.two_factor_enabled_at.is_none() && user.recovery_codes.is_none());
-    assert!(matches!(f.auth.sign_in("sam", PASSWORD).await.unwrap(), SignIn::Session(_)));
+    assert!(
+        user.totp_secret.is_none()
+            && user.two_factor_enabled_at.is_none()
+            && user.recovery_codes.is_none()
+    );
+    assert!(matches!(
+        f.auth.sign_in("sam", PASSWORD).await.unwrap(),
+        SignIn::Session(_)
+    ));
 }
 
 #[tokio::test]
 async fn changing_your_password_needs_the_current_one_and_reissues_this_session() {
     let f = fixture().await;
     let before = f.auth.login("sam", PASSWORD).await.unwrap();
-    assert!(f.auth.change_password(&f.member.id, "wrong-password", "brand-new-pass-1").await.is_err());
-    let result = f.auth.change_password(&f.member.id, PASSWORD, "brand-new-pass-1").await.unwrap();
-    assert!(f.auth.refresh_token(&before.tokens.refresh_token).await.is_err(), "other sessions end");
-    f.auth.authenticate_access_token(&result.tokens.access_token).await.unwrap();
+    assert!(
+        f.auth
+            .change_password(&f.member.id, "wrong-password", "brand-new-pass-1")
+            .await
+            .is_err()
+    );
+    let result = f
+        .auth
+        .change_password(&f.member.id, PASSWORD, "brand-new-pass-1")
+        .await
+        .unwrap();
+    assert!(
+        f.auth
+            .refresh_token(&before.tokens.refresh_token)
+            .await
+            .is_err(),
+        "other sessions end"
+    );
+    f.auth
+        .authenticate_access_token(&result.tokens.access_token)
+        .await
+        .unwrap();
     assert!(reload(&f, &f.member.id).await.password_changed_at.is_some());
 }

@@ -191,6 +191,8 @@ pub fn tmdb_options(images: &TmdbImages, kind: ArtworkKind) -> Vec<ArtworkOption
         ArtworkKind::Backdrop => (&images.backdrops, "w780"),
         ArtworkKind::Logo => (&images.logos, "w500"),
         ArtworkKind::Thumbnail => (&images.stills, "w300"),
+        // A person's photo is only ever uploaded.
+        ArtworkKind::Avatar => return Vec::new(),
     };
     let mut list = list
         .iter()

@@ -67,7 +67,7 @@ pub struct User {
     #[graphql(name = "lastLoginAt")]
     #[filterable(type = "date")]
     #[sortable]
-    #[graphql_orm(write = false)]
+    #[graphql_orm(skip_input)]
     pub last_login_at: Option<String>,
 
     /// A contact number, seen only by the person and administrators.
@@ -85,22 +85,22 @@ pub struct User {
     #[graphql(name = "mustChangePassword")]
     #[boolean_field]
     #[filterable(type = "boolean")]
-    #[graphql_orm(write = false)]
+    #[graphql_orm(skip_input)]
     pub must_change_password: bool,
 
     /// When two-factor sign-in was turned on; null while it is off.
     #[graphql(name = "twoFactorEnabledAt")]
     #[filterable(type = "date")]
-    #[graphql_orm(write = false)]
+    #[graphql_orm(skip_input)]
     pub two_factor_enabled_at: Option<String>,
 
     /// Unused recovery codes left.
     #[graphql(name = "recoveryCodesRemaining")]
-    #[graphql_orm(write = false)]
+    #[graphql_orm(skip_input)]
     pub recovery_codes_remaining: i32,
 
     #[graphql(name = "passwordChangedAt")]
-    #[graphql_orm(write = false)]
+    #[graphql_orm(skip_input)]
     pub password_changed_at: Option<String>,
 
     /// The confirmed TOTP secret, encrypted with the credential key. Never a GraphQL field.

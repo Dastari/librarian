@@ -24,6 +24,7 @@ pub struct PasswordResetToken {
     /// The signed token's id (`jti`).
     #[graphql(name = "id")]
     #[primary_key]
+    #[graphql_orm(auto_generated = false)]
     #[filterable(type = "string")]
     pub id: String,
 

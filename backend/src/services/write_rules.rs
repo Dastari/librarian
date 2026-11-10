@@ -103,7 +103,11 @@ pub fn prepare_user_update(input: &mut UpdateUserInput) -> Result<()> {
         // number typed some other way.
         if let Some(number) = cleaned.as_deref()
             && !number.chars().all(|c| {
-                c.is_ascii_digit() || matches!(c, '+' | ' ' | '-' | '(' | ')' | '.' | ';' | '=' | 'e' | 'x' | 't')
+                c.is_ascii_digit()
+                    || matches!(
+                        c,
+                        '+' | ' ' | '-' | '(' | ')' | '.' | ';' | '=' | 'e' | 'x' | 't'
+                    )
             })
         {
             return Err(invalid("That doesn't look like a phone number"));

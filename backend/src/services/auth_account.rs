@@ -8,7 +8,9 @@ use time::{Duration, OffsetDateTime};
 use tracing::{info, warn};
 
 use super::{AuthService, LoginResult, format_time, to_login_result};
-use crate::graphql::entities::{PasswordResetToken, PasswordResetTokenWhereInput, UpdateUserInput, User};
+use crate::graphql::entities::{
+    PasswordResetToken, PasswordResetTokenWhereInput, UpdateUserInput, User,
+};
 use crate::services::account_security::{
     self as security, ChallengeStage, PendingSignIn, ResetLinkStore, TOTP_FACTOR, TOTP_ISSUER,
 };
@@ -146,15 +148,12 @@ impl AuthService {
     }
 
     async fn encryption(&self) -> Result<CredentialEncryption> {
-        let sources = self
-            .manager
-            .get_sources()
-            .await
-            .ok_or_else(|| anyhow!("The credential key is not loaded, so two-factor sign-in is unavailable"))?;
-        let manager = sources
-            .get_manager()
-            .await
-            .ok_or_else(|| anyhow!("The credential key is not loaded, so two-factor sign-in is unavailable"))?;
+        let sources = self.manager.get_sources().await.ok_or_else(|| {
+            anyhow!("The credential key is not loaded, so two-factor sign-in is unavailable")
+        })?;
+        let manager = sources.get_manager().await.ok_or_else(|| {
+            anyhow!("The credential key is not loaded, so two-factor sign-in is unavailable")
+        })?;
         Ok(manager.encryption().clone())
     }
 
@@ -200,7 +199,9 @@ impl AuthService {
             .filter(|user| user.is_active && user.password_hash.starts_with("$argon2"))
             .and_then(|user| needs_second_step(&user).map(|stage| (user, stage)))
         else {
-            return Ok(SignIn::Session(self.password_login(principal, password).await?));
+            return Ok(SignIn::Session(
+                self.password_login(principal, password).await?,
+            ));
         };
         if self.login_limiter.is_blocked(principal) {
             return Err(anyhow!(RATE_LIMITED_MESSAGE));
@@ -295,16 +296,18 @@ impl AuthService {
             .await;
         match result {
             Ok(()) => Ok(true),
-            Err(
-                agql_auth::AuthError::InvalidTotpCode | agql_auth::AuthError::TotpCodeReplayed,
-            ) => Ok(false),
+            Err(agql_auth::AuthError::InvalidTotpCode | agql_auth::AuthError::TotpCodeReplayed) => {
+                Ok(false)
+            }
             Err(error) => Err(anyhow!(error.to_string())),
         }
     }
 
     /// The second step: a code from the authenticator app, or a recovery code once.
     pub async fn complete_two_factor(&self, token: &str, code: &str) -> Result<SignIn> {
-        let (pending, user) = self.pending_account(token, ChallengeStage::TwoFactor).await?;
+        let (pending, user) = self
+            .pending_account(token, ChallengeStage::TwoFactor)
+            .await?;
         let Some(secret) = user.totp_secret.clone() else {
             self.pending.remove(token);
             return Err(anyhow!(EXPIRED_MESSAGE));
@@ -343,7 +346,10 @@ impl AuthService {
         let (_, user) = self
             .pending_account(token, ChallengeStage::PasswordChange)
             .await?;
-        if self.password_matches(new_password, &user.password_hash).await? {
+        if self
+            .password_matches(new_password, &user.password_hash)
+            .await?
+        {
             return Err(anyhow!("Choose a password other than the temporary one"));
         }
         let hash = self.hash_new_password(new_password).await?;
@@ -414,7 +420,9 @@ impl AuthService {
         self.update_user(
             &user.id,
             UpdateUserInput {
-                totp_pending_secret: Some(Some(encryption.encrypt_envelope(&secret.base32_secret)?)),
+                totp_pending_secret: Some(Some(
+                    encryption.encrypt_envelope(&secret.base32_secret)?,
+                )),
                 ..Default::default()
             },
         )
@@ -494,7 +502,8 @@ impl AuthService {
     pub async fn disable_two_factor(&self, user_id: &str, password: &str) -> Result<()> {
         let user = self.current_user(user_id).await?;
         self.check_current_password(&user, password).await?;
-        self.update_user(&user.id, Self::two_factor_cleared()).await?;
+        self.update_user(&user.id, Self::two_factor_cleared())
+            .await?;
         info!(user = %user.username, "Two-factor sign-in turned off by '{}'", user.username);
         Ok(())
     }
@@ -516,7 +525,8 @@ impl AuthService {
     /// Account recovery: an administrator turns someone's two-factor sign-in off. Logged.
     pub async fn admin_reset_two_factor(&self, admin_id: &str, user_id: &str) -> Result<()> {
         let (admin, target) = self.admin_and_target(admin_id, user_id).await?;
-        self.update_user(&target.id, Self::two_factor_cleared()).await?;
+        self.update_user(&target.id, Self::two_factor_cleared())
+            .await?;
         warn!(
             admin = %admin.username,
             user = %target.username,

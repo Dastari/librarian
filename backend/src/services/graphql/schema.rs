@@ -12,10 +12,10 @@ use graphql_orm::schema_roots;
 use crate::db::Database;
 use crate::services::graphql::entities::*;
 use crate::services::graphql::mutations::{
-    AccountMutations, ArtworkMutations, AuthMutations, AutoDownloadMutations, BackupMutations, DeviceActionMutations,
-    DownloadsMoveMutations, DownloadsMoveQueries, FeedMutations, FilesystemMutations,
-    LibraryScanMutations, MaintenanceMutations, NotificationFeedMutations, QualityMutations,
-    RecommendationMutations, ServerConnectionMutations, ServerConnectionQueries,
+    AccountMutations, ArtworkMutations, AuthMutations, AutoDownloadMutations, BackupMutations,
+    DeviceActionMutations, DownloadsMoveMutations, DownloadsMoveQueries, FeedMutations,
+    FilesystemMutations, LibraryScanMutations, MaintenanceMutations, NotificationFeedMutations,
+    QualityMutations, RecommendationMutations, ServerConnectionMutations, ServerConnectionQueries,
     SubtitleActionMutations,
 };
 use crate::services::graphql::queries::{
