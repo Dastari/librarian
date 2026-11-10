@@ -11,6 +11,7 @@ const router = vi.hoisted(() => ({ pathname: "/libraries/l1/movies" }));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ to, params: _params, ...props }: { to: string; params?: unknown }) => <a href={to} {...props} />,
   useNavigate: () => vi.fn(),
+  useRouter: () => ({ navigate: vi.fn(), state: { location: { pathname: router.pathname } } }),
   useRouterState: ({ select }: { select?: (state: unknown) => unknown } = {}) => (select ? select({ location: { pathname: router.pathname } }) : router.pathname),
 }));
 vi.mock("glass-ux/command-palette", () => ({ useCommandPalette: () => ({ open: vi.fn() }) }));

@@ -30,6 +30,7 @@ export function ChangePasswordDialog({ open, onOpenChange, onChanged, userInputs
       const payload = (await change({ variables: { input: value } })).data?.changePassword;
       if (!payload?.success || !payload.user || !payload.tokens) throw new Error(payload?.error ?? "The password could not be changed");
       session.establish(payload.user, payload.tokens.expiresIn);
+      void session.reconcile();
       toast.success("Password changed. Your other devices are signed out.");
       onChanged?.();
       onOpenChange(false);

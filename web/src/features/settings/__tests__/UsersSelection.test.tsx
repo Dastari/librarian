@@ -6,7 +6,7 @@ import { renderWithProviders } from "@/test";
 import { UsersSettings } from "../UsersSettings";
 
 const state = vi.hoisted(() => ({ update: vi.fn(), remove: vi.fn(), revoke: vi.fn(), refresh: vi.fn() }));
-vi.mock("@/lib/auth/useSession", () => ({ useSession: () => ({ user: { id: "me", role: "admin" } }) }));
+vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => true, useSession: () => ({ user: { id: "me", role: "admin" } }) }));
 vi.mock("../useSettingsConnection", async () => {
   const docs = await import("@/graphql/generated/graphql");
   return { useSettingsConnection: (document: unknown) => ({
@@ -46,7 +46,7 @@ describe("user and invite selection actions", () => {
     await userEvent.click(screen.getByRole("checkbox", { name: "Select Me" }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Select Member A" }));
     await userEvent.click(screen.getByRole("button", { name: "Actions for 2 selected users" }));
-    expect(await screen.findByRole("menuitem", { name: "Delete 2 users" })).toHaveAttribute("aria-disabled", "true");
+    expect(await screen.findByRole("menuitem", { name: "Delete 2 accounts" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("menuitem", { name: "Disable sign-in" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("menuitem", { name: "Make admins" })).toHaveAttribute("aria-disabled", "true");
     expect(state.update).not.toHaveBeenCalled();

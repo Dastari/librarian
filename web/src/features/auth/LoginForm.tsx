@@ -108,6 +108,8 @@ export function LoginForm({ redirectTo, allowRegister }: LoginFormProps) {
     }
     if (!payload?.success || !payload.user || !payload.tokens) return payload?.error ?? "Sign in failed";
     session.establish(payload.user, payload.tokens.expiresIn);
+    // The sign-in answer has no photo; the account read brings it.
+    void session.reconcile();
     await navigate({ href: destination });
     return null;
   };
