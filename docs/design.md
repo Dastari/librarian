@@ -3255,4 +3255,4 @@ Now:
 - **Masks:** the backdrop image drops its own mask; the layer's feather already shapes it.
 - **Opening zoom:** shortened to the fade's length, so it ends before the first scroll.
 - **Over artwork:** nothing is frosted (`.over-imagery { --_frost: none }`). Controls there take a solid canvas tint.
-- **Rail and top bar:** they keep their frosting at rest. While the page scrolls they carry `data-moving`, which Glass swaps for an opaque fill, and the blur returns 160 ms after scrolling stops.
+- **Rail and top bar:** they keep their frosting. A pause-while-scrolling toggle (Glass `data-moving`) was tried and dropped. The strips are thin, so their blur is cheap, and switching the material at the start and end of each scroll risked a hitch and a visible pop.

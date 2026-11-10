@@ -67,35 +67,16 @@ export function AppShell() {
       art.style.transform = progress === 0 ? "" : `translateY(${(progress * -4).toFixed(3)}svh)`;
     };
     place(0);
-    // While the page scrolls, the blurred chrome (rail, top bar) swaps its blur for an opaque fill:
-    // the content under it changes every frame, so a blur would be a full pass per frame. Glass
-    // restores the blur once the attribute goes, a moment after scrolling stops.
-    let moving: HTMLElement[] = [];
-    let settle = 0;
-    const startMoving = () => {
-      if (moving.length === 0) {
-        moving = Array.from(document.querySelectorAll<HTMLElement>(".app-shell .glass-chrome"));
-        for (const layer of moving) layer.setAttribute("data-moving", "");
-      }
-      window.clearTimeout(settle);
-      settle = window.setTimeout(() => {
-        for (const layer of moving) layer.removeAttribute("data-moving");
-        moving = [];
-      }, 160);
-    };
     let frame = 0;
     const onScroll = (event: Event) => {
       const target = event.target;
       if (!(target instanceof HTMLElement) || !target.hasAttribute("data-page-scroller")) return;
-      startMoving();
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => place(Math.min(1, target.scrollTop / Math.max(1, target.clientHeight))));
     };
     root.addEventListener("scroll", onScroll, { capture: true, passive: true });
     return () => {
       cancelAnimationFrame(frame);
-      window.clearTimeout(settle);
-      for (const layer of moving) layer.removeAttribute("data-moving");
       root.removeEventListener("scroll", onScroll, { capture: true });
     };
   }, [resolvedPath]);

@@ -2,7 +2,7 @@ import { ActionContextMenu, defineActions } from "glass-ux/actions";
 import { IconInfo } from "glass-ux/icons";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button, EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, PosterCard, Section, SkeletonHero, ViewToggle, type ViewMode } from "@/components/ui";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
@@ -10,6 +10,7 @@ import { useArtworkAction } from "@/features/artwork/useArtworkAction";
 import { autoDownloadMeta } from "@/features/acquisition/mode";
 import { CastAndCrew, CastRow, useTitleCredits } from "@/features/people/CastAndCrew";
 import { episodePlayItem } from "@/features/player/playItems";
+import { useIsTvMode } from "@/lib/input-mode";
 import type { PlayItem } from "@/features/player/store";
 import { usePlayer } from "@/features/player/usePlayer";
 import { EntitySeasonListDocument, ShowDetailDocument, type ShowEpisodesQuery } from "@/graphql/generated/graphql";
@@ -43,6 +44,19 @@ export function ShowPage({ showId, initialSeason, focusEpisodeId }: {
   const navigate = useNavigate();
   const player = usePlayer();
   const isAdmin = useIsAdmin();
+  const tv = useIsTvMode();
+  // Choosing a season brings its episodes into view. Not in TV mode: there focus stays on the
+  // season card and the remote's Down moves to the episodes, which scrolls them in anyway.
+  const episodesRef = useRef<HTMLElement>(null);
+  const [revealEpisodes, setRevealEpisodes] = useState(0);
+  useEffect(() => {
+    if (!revealEpisodes) return;
+    const frame = requestAnimationFrame(() => {
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      episodesRef.current?.scrollIntoView({ block: "start", behavior: reduced ? "auto" : "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [revealEpisodes]);
   const { user } = useSession();
   const { data, previousData, loading, error, refetch } = useQuery(ShowDetailDocument, { variables: { id: showId } });
   const candidate = (data ?? previousData)?.show;
@@ -146,7 +160,7 @@ export function ShowPage({ showId, initialSeason, focusEpisodeId }: {
                   <PosterCard key={value} width="compact" title={info?.name ? `${label} · ${info.name}` : label} selected={value === activeSeason}
                     meta={[year, `${inSeason.filter((episode) => episode.mediaFileId).length} of ${info?.episodeOrder ?? inSeason.length} episodes`].filter(Boolean).join(" · ")}
                     image={seasonPoster(info, show)} tint={LIBRARY_TYPES.tv.tintVar} badge={info?.posterUrl ? undefined : value === 0 ? "SP" : `S${value}`}
-                    onPress={() => setSeason({ showId, value })} />
+                    onPress={() => { setSeason({ showId, value }); if (!tv) setRevealEpisodes((count) => count + 1); }} />
                 );
                 return info && isAdmin ? <ActionContextMenu key={value} set={seasonActions} targets={[info]} label={`Actions for ${label}`}>{card}</ActionContextMenu> : card;
               })}
@@ -154,7 +168,7 @@ export function ShowPage({ showId, initialSeason, focusEpisodeId }: {
           </Section>
         ) : null}
 
-        <section className="flex flex-col gap-4" aria-label="Episodes">
+        <section ref={episodesRef} className="flex flex-col gap-4" aria-label="Episodes" style={{ scrollMarginTop: "calc(var(--topbar-height, 4rem) + 1rem)" }}>
           <EpisodeList focusEpisodeId={focusEpisodeId} view={episodeView === "card" ? "row" : "table"} tint={LIBRARY_TYPES.tv.tintVar}
             headerExtra={<ViewToggle value={episodeView} onChange={setEpisodeView} className="shrink-0" />}
             complete={episodes.complete} episodes={seasonEpisodes} statuses={statuses} progressByFile={progressByFile} loading={episodes.loading && list.length === 0} playbackUnavailable={progress.loading ? "Loading watch progress" : progress.error ? "Retry watch progress" : undefined}
