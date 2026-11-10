@@ -1,3 +1,8 @@
+type AccountActionResult {
+	success: Boolean!
+	error: String
+}
+
 input AddAlbumInput {
 	libraryId: String!
 	musicbrainzId: String!
@@ -1097,11 +1102,6 @@ type AuthPayload {
 	challenge: SignInChallenge
 }
 
-type AccountActionResult {
-	success: Boolean!
-	error: String
-}
-
 """
 Non-secret token lifetime metadata returned to the browser. Access and refresh token
 values exist only in server-set HttpOnly cookies.
@@ -1649,6 +1649,11 @@ enum ChangeKind {
 	PROPAGATED
 }
 
+input ChangePasswordInput {
+	currentPassword: String!
+	newPassword: String!
+}
+
 type Chapter {
 	id: String!
 	audiobookId: String!
@@ -1897,6 +1902,19 @@ input CollectionWhereInput {
 	Logical NOT of condition
 	"""
 	not: CollectionWhereInput
+}
+
+input CompletePasswordChangeInput {
+	token: String!
+	newPassword: String!
+}
+
+input CompleteTwoFactorSignInInput {
+	token: String!
+	"""
+	Six digits from the app, or a recovery code.
+	"""
+	code: String!
 }
 
 input ConfigureNetworkPathInput {
@@ -2963,7 +2981,7 @@ input CreateUserInput {
 	avatarUrl: String
 	isActive: Boolean!
 	phone: String
-	genreInterests: [String!]
+	genreInterests: JSON
 }
 
 """
@@ -4061,7 +4079,7 @@ type FilesystemRuntimeInfo {
 }
 
 """
-One genre row: the most recently added titles of that genre and how many there are.
+A genre someone can pick as an interest, with how many titles of it they can see.
 """
 type GenreChoice {
 	genre: String!
@@ -4069,6 +4087,9 @@ type GenreChoice {
 	shows: Int!
 }
 
+"""
+One genre row: the most recently added titles of that genre and how many there are.
+"""
 type GenreShelf {
 	genre: String!
 	"""
@@ -6782,19 +6803,55 @@ type Mutation {
 	recacheAllMovieArtwork: Int!
 	register(input: RegisterUserInput!): AuthPayload!
 	login(input: LoginInput!): AuthPayload!
-	completeTwoFactorSignIn(input: CompleteTwoFactorSignInInput!): AuthPayload!
-	completePasswordChange(input: CompletePasswordChangeInput!): AuthPayload!
-	resetPasswordWithLink(input: ResetPasswordWithLinkInput!): AccountActionResult!
-	changePassword(input: ChangePasswordInput!): AuthPayload!
-	beginTwoFactorSetup(input: PasswordConfirmationInput!): TwoFactorSetupResult!
-	confirmTwoFactorSetup(input: TwoFactorCodeInput!): RecoveryCodesResult!
-	regenerateRecoveryCodes(input: PasswordConfirmationInput!): RecoveryCodesResult!
-	disableTwoFactor(input: PasswordConfirmationInput!): AccountActionResult!
-	resetUserTwoFactor(userId: String!): AccountActionResult!
-	setTemporaryPassword(input: SetTemporaryPasswordInput!): AccountActionResult!
-	createPasswordResetLink(userId: String!): PasswordResetLinkResult!
 	refreshToken: AuthPayload!
 	logout: LogoutPayload!
+	"""
+	The second sign-in step: a code from the authenticator app or a recovery code, for the
+	challenge `login` returned. Signs in, or returns the next challenge (a new password).
+	"""
+	completeTwoFactorSignIn(input: CompleteTwoFactorSignInInput!): AuthPayload!
+	"""
+	After a temporary password: choose a new one and sign in.
+	"""
+	completePasswordChange(input: CompletePasswordChangeInput!): AuthPayload!
+	"""
+	Set a new password with a reset link an administrator passed on. Signs nobody in.
+	"""
+	resetPasswordWithLink(input: ResetPasswordWithLinkInput!): AccountActionResult!
+	"""
+	Change your password. Every session of yours ends; this device gets a new one.
+	"""
+	changePassword(input: ChangePasswordInput!): AuthPayload!
+	"""
+	Start turning on two-factor sign-in, with your password.
+	"""
+	beginTwoFactorSetup(input: PasswordConfirmationInput!): TwoFactorSetupResult!
+	"""
+	Finish turning it on with a code from the app. Returns the recovery codes.
+	"""
+	confirmTwoFactorSetup(input: TwoFactorCodeInput!): RecoveryCodesResult!
+	"""
+	New recovery codes; the old ones stop working.
+	"""
+	regenerateRecoveryCodes(input: PasswordConfirmationInput!): RecoveryCodesResult!
+	"""
+	Turn your two-factor sign-in off, with your password.
+	"""
+	disableTwoFactor(input: PasswordConfirmationInput!): AccountActionResult!
+	"""
+	Account recovery (administrators): turn someone's two-factor sign-in off. Logged.
+	"""
+	resetUserTwoFactor(userId: String!): AccountActionResult!
+	"""
+	Administrators: give someone a temporary password, which they must change when they next
+	sign in. Their sessions end.
+	"""
+	setTemporaryPassword(input: SetTemporaryPasswordInput!): AccountActionResult!
+	"""
+	Administrators: a one-time reset link for someone, valid for a day, to pass on yourself.
+	It replaces any earlier link.
+	"""
+	createPasswordResetLink(userId: String!): PasswordResetLinkResult!
 	createDirectory(input: CreateDirectoryInput!): FileOperationPayload!
 	configureNetworkPath(input: ConfigureNetworkPathInput!): NetworkPathConfigPayload!
 	"""
@@ -10645,6 +10702,126 @@ type ParsedRelease {
 	year: Int
 }
 
+input PasswordConfirmationInput {
+	password: String!
+}
+
+"""
+A reset link for an administrator to pass on.
+"""
+type PasswordResetLinkResult {
+	success: Boolean!
+	error: String
+	"""
+	The page to open, relative to the web app: `/reset-password?token=…`.
+	"""
+	path: String
+	expiresAt: String
+}
+
+"""
+Password Reset Token
+"""
+type PasswordResetToken {
+	"""
+	The signed token's id (`jti`).
+	"""
+	id: String!
+	"""
+	User Id
+	"""
+	userId: String!
+	"""
+	The administrator who made the link.
+	"""
+	createdByUserId: String
+	"""
+	Expires At
+	"""
+	expiresAt: String!
+	"""
+	When the link was used; it never works again.
+	"""
+	consumedAt: String
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type PasswordResetTokenChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	passwordResetToken: PasswordResetToken
+}
+
+"""
+Connection containing edges and page info
+"""
+type PasswordResetTokenConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [PasswordResetTokenEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type PasswordResetTokenEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: PasswordResetToken!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input PasswordResetTokenOrderByInput {
+	expiresAt: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+input PasswordResetTokenWhereInput {
+	id: StringFilter
+	userId: StringFilter
+	createdByUserId: StringFilter
+	expiresAt: DateFilter
+	consumedAt: DateFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [PasswordResetTokenWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [PasswordResetTokenWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: PasswordResetTokenWhereInput
+}
+
 type PendingFileMatch {
 	id: String!
 	userId: String!
@@ -11191,11 +11368,11 @@ type PlayHistory {
 	"""
 	sourceProgressId: String
 	"""
-	Origin
+	Where the play happened: null for this server. A play of a library shared from another server, once sharing exists, names that server here (design.md Q150).
 	"""
 	origin: String
 	"""
-	Origin Name
+	The origin's name when the play was recorded, so history outlives the link.
 	"""
 	originName: String
 	"""
@@ -11339,7 +11516,8 @@ type PlayStatistics {
 	"""
 	users: [PlayStatisticsUser!]!
 	"""
-	Per origin: this server, and later the servers shared libraries are on.
+	Per origin: this server, and later the servers shared libraries are on. One entry
+	(this server) until sharing exists, so clients show an origin choice only past one.
 	"""
 	origins: [PlayStatisticsOrigin!]!
 	recent: [PlayStatisticsPlay!]!
@@ -11365,6 +11543,17 @@ type PlayStatisticsDevice {
 	seconds: Float!
 	plays: Int!
 	lastPlayedAt: String!
+}
+
+"""
+Where plays happened: this server (`origin` null) or, once libraries can be shared between
+servers, the server a shared library is on (design.md Q150).
+"""
+type PlayStatisticsOrigin {
+	origin: String
+	name: String!
+	seconds: Float!
+	plays: Int!
 }
 
 """
@@ -11434,13 +11623,6 @@ type PlayStatisticsTotals {
 	"""
 	items: Int!
 	activeDays: Int!
-}
-
-type PlayStatisticsOrigin {
-	origin: String
-	name: String!
-	seconds: Float!
-	plays: Int!
 }
 
 type PlayStatisticsUser {
@@ -12179,7 +12361,9 @@ type Query {
 	"""
 	genreChoices: [GenreChoice!]!
 	"""
-	One shelf per genre you picked as an interest (design.md Q149).
+	One shelf per genre you picked as an interest, in your order, each with the newest
+	movies and shows of it you can see. Genres with nothing to show are left out
+	(design.md Q149).
 	"""
 	genreInterestShelves(perGenre: Int! = 20): [GenreShelf!]!
 	"""
@@ -12926,8 +13110,34 @@ type Query {
 		"""
 		id: String!
 	): InviteToken
-	passwordResetTokens(where: PasswordResetTokenWhereInput, orderBy: [PasswordResetTokenOrderByInput!], page: PageInput): PasswordResetTokenConnection!
-	passwordResetToken(id: String!): PasswordResetToken
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List PasswordResetToken records
+	"""
+	passwordResetTokens(
+		"""
+		Where
+		"""
+		where: PasswordResetTokenWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [PasswordResetTokenOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): PasswordResetTokenConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one PasswordResetToken records
+	"""
+	passwordResetToken(
+		"""
+		Id
+		"""
+		id: String!
+	): PasswordResetToken
 	"""
 	Get a list of #plural_name with optional filtering, sorting, and pagination
 	List RefreshToken records
@@ -14012,6 +14222,15 @@ type Query {
 }
 
 """
+Recovery codes, shown this once.
+"""
+type RecoveryCodesResult {
+	success: Boolean!
+	error: String
+	recoveryCodes: [String!]!
+}
+
+"""
 Refresh Token
 """
 type RefreshToken {
@@ -14561,6 +14780,11 @@ type RematchSourceResult {
 	success: Boolean!
 	matchCount: Int!
 	error: String
+}
+
+input ResetPasswordWithLinkInput {
+	token: String!
+	newPassword: String!
 }
 
 type ResumeShelf {
@@ -15503,6 +15727,11 @@ type SessionInvalidation {
 	kind: String!
 }
 
+input SetTemporaryPasswordInput {
+	userId: String!
+	password: String!
+}
+
 """
 Whether a saved sign-in exists for a share, and for whom.
 """
@@ -15680,6 +15909,22 @@ Public catalog posters only. No personal library or user data is exposed.
 type ShowcaseArtwork {
 	title: String!
 	posterUrl: String!
+}
+
+"""
+The next sign-in step, when a correct password does not sign in yet (design.md Q147). No
+session or cookie exists until it is completed.
+"""
+type SignInChallenge {
+	"""
+	Pass to `completeTwoFactorSignIn` or `completePasswordChange`; accepted nowhere else.
+	"""
+	token: String!
+	"""
+	`two_factor` or `password_change`.
+	"""
+	stage: String!
+	expiresIn: Int!
 }
 
 type SignOutDevicePayload {
@@ -16820,7 +17065,24 @@ type Subscription {
 		"""
 		keys: [String!]
 	): InviteTokenChangedEvent!
-	passwordResetTokenChanged(filter: SubscriptionFilterInput, key: String, keys: [String!]): PasswordResetTokenChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
+	Observe changes to PasswordResetToken records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	passwordResetTokenChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): PasswordResetTokenChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
 	Observe changes to RefreshToken records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
@@ -18764,6 +19026,30 @@ type TvShowSearchResult {
 	score: Float
 }
 
+input TwoFactorCodeInput {
+	code: String!
+}
+
+"""
+A new secret to add to an authenticator app: scan `qrSvg` or type `secret`.
+"""
+type TwoFactorSetupResult {
+	success: Boolean!
+	error: String
+	"""
+	Base32, for typing in.
+	"""
+	secret: String
+	"""
+	The `otpauth://` address the QR code holds.
+	"""
+	uri: String
+	"""
+	The QR code as an SVG document.
+	"""
+	qrSvg: String
+}
+
 type UnmatchMediaFileResult {
 	success: Boolean!
 	reason: String
@@ -20164,7 +20450,7 @@ input UpdateUserInput {
 	avatarUrl: String
 	isActive: Boolean
 	phone: String
-	genreInterests: [String!]
+	genreInterests: JSON
 }
 
 """
@@ -20477,7 +20763,7 @@ input UsenetServerWhereInput {
 }
 
 """
-User
+A person who signs in. Members read and edit only their own row (the row policy scopes `users` to `id`); administrators everyone's. Sign-in names, roles and access are for administrators, and the security facts below are written only by the auth actions (design.md Q147).
 """
 type User {
 	"""
@@ -20501,7 +20787,7 @@ type User {
 	"""
 	displayName: String
 	"""
-	Avatar Url
+	An uploaded photo's marker (`upload:<hash>`), written by the upload and removal actions; the picture itself is served from `/api/artwork/user/{id}/avatar`.
 	"""
 	avatarUrl: String
 	"""
@@ -20513,23 +20799,23 @@ type User {
 	"""
 	lastLoginAt: String
 	"""
-	Phone
+	A contact number, seen only by the person and administrators.
 	"""
 	phone: String
 	"""
-	Genre Interests
+	Genres the person likes, by name as the libraries spell them. Home shows a row for each (design.md Q149).
 	"""
 	genreInterests: [String!]
 	"""
-	Must Change Password
+	Set with a temporary password: the next sign-in must choose a new one before it gets a session.
 	"""
 	mustChangePassword: Boolean!
 	"""
-	Two Factor Enabled At
+	When two-factor sign-in was turned on; null while it is off.
 	"""
 	twoFactorEnabledAt: String
 	"""
-	Recovery Codes Remaining
+	Unused recovery codes left.
 	"""
 	recoveryCodesRemaining: Int!
 	"""
@@ -20776,134 +21062,4 @@ schema {
 	query: Query
 	mutation: Mutation
 	subscription: Subscription
-}
-
-type SignInChallenge {
-	token: String!
-	stage: String!
-	expiresIn: Int!
-}
-
-type TwoFactorSetupResult {
-	success: Boolean!
-	error: String
-	secret: String
-	uri: String
-	qrSvg: String
-}
-
-type RecoveryCodesResult {
-	success: Boolean!
-	error: String
-	recoveryCodes: [String!]!
-}
-
-type PasswordResetLinkResult {
-	success: Boolean!
-	error: String
-	path: String
-	expiresAt: String
-}
-
-input CompleteTwoFactorSignInInput {
-	token: String!
-	code: String!
-}
-
-input CompletePasswordChangeInput {
-	token: String!
-	newPassword: String!
-}
-
-input ResetPasswordWithLinkInput {
-	token: String!
-	newPassword: String!
-}
-
-input ChangePasswordInput {
-	currentPassword: String!
-	newPassword: String!
-}
-
-input PasswordConfirmationInput {
-	password: String!
-}
-
-input TwoFactorCodeInput {
-	code: String!
-}
-
-input SetTemporaryPasswordInput {
-	userId: String!
-	password: String!
-}
-
-type PasswordResetToken {
-	"""
-	Id
-	"""
-	id: String!
-	"""
-	User Id
-	"""
-	userId: String!
-	"""
-	Created By User Id
-	"""
-	createdByUserId: String
-	"""
-	Expires At
-	"""
-	expiresAt: String!
-	"""
-	Consumed At
-	"""
-	consumedAt: String
-	"""
-	Created At
-	"""
-	createdAt: String!
-	"""
-	Updated At
-	"""
-	updatedAt: String!
-}
-
-type PasswordResetTokenChangedEvent {
-	action: ChangeAction!
-	changeKind: ChangeKind!
-	id: String!
-	sourceEntity: String
-	sourceId: String
-	path: [String!]!
-	passwordResetToken: PasswordResetToken
-}
-
-type PasswordResetTokenConnection {
-	edges: [PasswordResetTokenEdge!]!
-	pageInfo: PageInfo!
-}
-
-type PasswordResetTokenEdge {
-	node: PasswordResetToken!
-	cursor: String!
-}
-
-input PasswordResetTokenOrderByInput {
-	expiresAt: OrderDirection
-	createdAt: OrderDirection
-	updatedAt: OrderDirection
-}
-
-input PasswordResetTokenWhereInput {
-	id: StringFilter
-	userId: StringFilter
-	createdByUserId: StringFilter
-	expiresAt: DateFilter
-	consumedAt: DateFilter
-	createdAt: DateFilter
-	updatedAt: DateFilter
-	and: [PasswordResetTokenWhereInput!]
-	or: [PasswordResetTokenWhereInput!]
-	not: PasswordResetTokenWhereInput
 }
