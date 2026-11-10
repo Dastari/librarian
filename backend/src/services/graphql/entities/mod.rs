@@ -18,6 +18,7 @@ pub mod video_stream;
 
 // User and auth entities
 pub mod invite_token;
+pub mod password_reset_token;
 pub mod refresh_token;
 pub mod user;
 
@@ -104,6 +105,7 @@ pub use device::*;
 pub use episode::*;
 pub use identification::*;
 pub use invite_token::*;
+pub use password_reset_token::*;
 pub use library::*;
 pub use library_scan_issue::*;
 pub use library_scan_run::*;

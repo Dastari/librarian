@@ -85,7 +85,84 @@ pub fn prepare_user_update(input: &mut UpdateUserInput) -> Result<()> {
     if let Some(role) = input.role.as_deref() {
         input.role = Some(normalized_role(role)?);
     }
+    if let Some(name) = input.display_name.as_mut() {
+        *name = clean_optional(name.take(), MAX_DISPLAY_NAME_CHARS, "A display name")?;
+    }
+    if let Some(email) = input.email.as_mut() {
+        let cleaned = clean_optional(email.take(), MAX_EMAIL_CHARS, "An email address")?;
+        if let Some(address) = cleaned.as_deref()
+            && !looks_like_email(address)
+        {
+            return Err(invalid("That doesn't look like an email address"));
+        }
+        *email = cleaned;
+    }
+    if let Some(phone) = input.phone.as_mut() {
+        let cleaned = clean_optional(phone.take(), MAX_PHONE_CHARS, "A phone number")?;
+        // E.164 as the web's phone field writes it ("+61412345678", or with ";ext=204"), or a
+        // number typed some other way.
+        if let Some(number) = cleaned.as_deref()
+            && !number.chars().all(|c| {
+                c.is_ascii_digit() || matches!(c, '+' | ' ' | '-' | '(' | ')' | '.' | ';' | '=' | 'e' | 'x' | 't')
+            })
+        {
+            return Err(invalid("That doesn't look like a phone number"));
+        }
+        *phone = cleaned;
+    }
+    if let Some(genres) = input.genre_interests.as_mut() {
+        *genres = genres.take().map(|list| clean_genres(&list)).transpose()?;
+    }
     Ok(())
+}
+
+pub const MAX_DISPLAY_NAME_CHARS: usize = 80;
+pub const MAX_EMAIL_CHARS: usize = 254;
+pub const MAX_PHONE_CHARS: usize = 32;
+/// Most genres a person can pick (each becomes a Home row at most, design.md Q149).
+pub const MAX_GENRE_INTERESTS: usize = 12;
+
+/// Trimmed, blank as none, refused past `max` characters.
+fn clean_optional(value: Option<String>, max: usize, what: &str) -> Result<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim().to_string();
+    if value.chars().count() > max {
+        return Err(invalid(format!("{what} can be at most {max} characters")));
+    }
+    Ok((!value.is_empty()).then_some(value))
+}
+
+/// One `@`, something on each side, a dot in the domain and no spaces: enough to catch a slip,
+/// without pretending to validate deliverability (nothing sends mail yet).
+pub fn looks_like_email(address: &str) -> bool {
+    let Some((local, domain)) = address.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && !domain.contains('@')
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && !address.chars().any(char::is_whitespace)
+}
+
+/// Genre names trimmed, without blanks or repeats (ignoring case), in the person's order.
+pub fn clean_genres(list: &[String]) -> Result<Vec<String>> {
+    let mut seen = std::collections::HashSet::new();
+    let cleaned: Vec<String> = list
+        .iter()
+        .map(|genre| genre.trim())
+        .filter(|genre| !genre.is_empty() && seen.insert(genre.to_lowercase()))
+        .map(|genre| bounded(genre, 60))
+        .collect();
+    if cleaned.len() > MAX_GENRE_INTERESTS {
+        return Err(invalid(format!(
+            "Pick at most {MAX_GENRE_INTERESTS} genres"
+        )));
+    }
+    Ok(cleaned)
 }
 
 /// A new RSS feed: a name, a fetchable `http`/`https` address, and an interval no shorter than the

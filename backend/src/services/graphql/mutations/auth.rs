@@ -18,7 +18,7 @@ pub struct AuthCookieContext {
     pub secure: bool,
 }
 
-fn read_refresh_token(ctx: &Context<'_>) -> Option<String> {
+pub(super) fn read_refresh_token(ctx: &Context<'_>) -> Option<String> {
     ctx.data_opt::<AuthCookieContext>()
         .and_then(|c| c.refresh_token.clone())
         .filter(|token| !token.trim().is_empty())
@@ -51,7 +51,7 @@ fn build_auth_cookie(
     )
 }
 
-fn append_auth_cookies(
+pub(super) fn append_auth_cookies(
     ctx: &Context<'_>,
     tokens: &AuthTokens,
     access_max_age_seconds: i64,
@@ -131,7 +131,7 @@ mod tests {
     }
 }
 
-fn clear_auth_cookies(ctx: &Context<'_>, secure: bool) {
+pub(super) fn clear_auth_cookies(ctx: &Context<'_>, secure: bool) {
     clear_auth_cookie(ctx, ACCESS_TOKEN_COOKIE, "/", secure);
     clear_auth_cookie(ctx, REFRESH_TOKEN_COOKIE, "/graphql", secure);
 }
@@ -191,6 +191,31 @@ impl From<&AuthTokens> for AuthSessionInfo {
     }
 }
 
+/// The next sign-in step, when a correct password does not sign in yet (design.md Q147). No
+/// session or cookie exists until it is completed.
+#[derive(Debug, Clone, async_graphql::SimpleObject)]
+#[graphql(name = "SignInChallenge")]
+pub struct SignInChallengeInfo {
+    /// Pass to `completeTwoFactorSignIn` or `completePasswordChange`; accepted nowhere else.
+    #[graphql(name = "token")]
+    pub token: String,
+    /// `two_factor` or `password_change`.
+    #[graphql(name = "stage")]
+    pub stage: String,
+    #[graphql(name = "expiresIn")]
+    pub expires_in: i64,
+}
+
+impl From<crate::services::auth::SignInChallenge> for SignInChallengeInfo {
+    fn from(challenge: crate::services::auth::SignInChallenge) -> Self {
+        Self {
+            token: challenge.token,
+            stage: challenge.stage.as_str().to_string(),
+            expires_in: challenge.expires_in_seconds,
+        }
+    }
+}
+
 /// Shared auth result: success flag, optional error, and optional user/tokens.
 #[derive(Debug, Clone)]
 pub struct AuthPayload {
@@ -198,6 +223,55 @@ pub struct AuthPayload {
     pub error: Option<String>,
     pub user: Option<AuthenticatedUser>,
     pub tokens: Option<AuthSessionInfo>,
+    pub challenge: Option<SignInChallengeInfo>,
+}
+
+impl AuthPayload {
+    pub(super) fn failed(error: impl Into<String>) -> Self {
+        Self {
+            success: false,
+            error: Some(error.into()),
+            user: None,
+            tokens: None,
+            challenge: None,
+        }
+    }
+
+    pub(super) fn challenged(challenge: crate::services::auth::SignInChallenge) -> Self {
+        Self {
+            success: false,
+            error: None,
+            user: None,
+            tokens: None,
+            challenge: Some(challenge.into()),
+        }
+    }
+
+    /// Set the session cookies and answer with the user.
+    pub(super) fn signed_in(
+        ctx: &Context<'_>,
+        auth: &AuthService,
+        result: crate::services::auth::LoginResult,
+    ) -> Self {
+        let secure_cookie = ctx
+            .data_opt::<AuthCookieContext>()
+            .map(|c| c.secure)
+            .unwrap_or(false);
+        append_auth_cookies(
+            ctx,
+            &result.tokens,
+            auth.access_token_lifetime_seconds(),
+            auth.refresh_token_lifetime_seconds(),
+            secure_cookie,
+        );
+        Self {
+            success: true,
+            error: None,
+            tokens: Some(AuthSessionInfo::from(&result.tokens)),
+            user: Some(result.user),
+            challenge: None,
+        }
+    }
 }
 
 #[async_graphql::Object]
@@ -220,6 +294,12 @@ impl AuthPayload {
     #[graphql(name = "tokens")]
     async fn tokens(&self) -> Option<&AuthSessionInfo> {
         self.tokens.as_ref()
+    }
+
+    /// Set instead of a session when the account needs another step.
+    #[graphql(name = "challenge")]
+    async fn challenge(&self) -> Option<&SignInChallengeInfo> {
+        self.challenge.as_ref()
     }
 }
 
@@ -283,6 +363,7 @@ impl AuthMutations {
                     error: None,
                     user: Some(login_result.user),
                     tokens: Some(session_info),
+                    challenge: None,
                 })
             }
             Err(e) => {
@@ -301,6 +382,7 @@ impl AuthMutations {
                     error: Some(public),
                     user: None,
                     tokens: None,
+                    challenge: None,
                 })
             }
         }
@@ -315,26 +397,12 @@ impl AuthMutations {
         let auth = ctx
             .data::<Arc<AuthService>>()
             .map_err(|_| service_unavailable("Authentication"))?;
-        let secure_cookie = ctx
-            .data_opt::<AuthCookieContext>()
-            .map(|c| c.secure)
-            .unwrap_or(false);
-        match auth.login(&input.username_or_email, &input.password).await {
-            Ok(login_result) => {
-                append_auth_cookies(
-                    ctx,
-                    &login_result.tokens,
-                    auth.access_token_lifetime_seconds(),
-                    auth.refresh_token_lifetime_seconds(),
-                    secure_cookie,
-                );
-                let session_info = AuthSessionInfo::from(&login_result.tokens);
-                Ok(AuthPayload {
-                    success: true,
-                    error: None,
-                    user: Some(login_result.user),
-                    tokens: Some(session_info),
-                })
+        match auth.sign_in(&input.username_or_email, &input.password).await {
+            Ok(crate::services::auth::SignIn::Session(login_result)) => {
+                Ok(AuthPayload::signed_in(ctx, auth, login_result))
+            }
+            Ok(crate::services::auth::SignIn::Challenge(challenge)) => {
+                Ok(AuthPayload::challenged(challenge))
             }
             Err(e) => {
                 let detail = e.to_string();
@@ -351,12 +419,7 @@ impl AuthMutations {
                         "Login rejected"
                     );
                 }
-                Ok(AuthPayload {
-                    success: false,
-                    error: Some(public_login_error(&detail).to_string()),
-                    user: None,
-                    tokens: None,
-                })
+                Ok(AuthPayload::failed(public_login_error(&detail)))
             }
         }
     }
@@ -379,6 +442,7 @@ impl AuthMutations {
                     error: Some("Refresh token missing".to_string()),
                     user: None,
                     tokens: None,
+                    challenge: None,
                 });
             }
         };
@@ -413,6 +477,7 @@ impl AuthMutations {
                     error: Some("Session refresh failed; sign in again".to_string()),
                     user: None,
                     tokens: None,
+                    challenge: None,
                 })
             }
         }

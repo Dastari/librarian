@@ -16,7 +16,7 @@ use crate::db::Database;
 use crate::graphql::auth::AuthExt;
 use crate::graphql::entities::*;
 use crate::services::play_history::stats::{
-    Bucket, DeviceUsage, Period, Streak, TopItem, Totals, UserUsage, aggregate,
+    Bucket, DeviceUsage, OriginUsage, Period, Streak, TopItem, Totals, UserUsage, aggregate,
 };
 use crate::services::play_history::{access, parse_time, timestamp, user_names};
 
@@ -117,6 +117,9 @@ pub struct PlayStatistics {
     pub devices: Vec<DeviceUsage>,
     /// Per person; only in an administrator's everyone view.
     pub users: Vec<UserUsage>,
+    /// Per origin: this server, and later the servers shared libraries are on. One entry
+    /// (this server) until sharing exists, so clients show an origin choice only past one.
+    pub origins: Vec<OriginUsage>,
     pub recent: Vec<RecentPlay>,
     /// False when the period held more plays than one answer reads.
     pub complete: bool,
@@ -261,6 +264,8 @@ impl StatisticsQueries {
         to: Option<String>,
         #[graphql(name = "utcOffsetMinutes", default = 0)] utc_offset_minutes: i32,
         #[graphql(default = 10)] top: i32,
+        // Only these plays: `local` for this server, or another origin's id.
+        origin: Option<String>,
     ) -> Result<PlayStatistics> {
         let viewer = ctx.require_member()?;
         if !(1..=MAX_TOP).contains(&top) {
@@ -298,9 +303,15 @@ impl StatisticsQueries {
             Some(target)
         };
         let (from_text, to_text) = (timestamp(from), timestamp(to));
-        let (rows, complete) = read_plays(db, target.as_deref(), &from_text, &to_text)
+        let (mut rows, complete) = read_plays(db, target.as_deref(), &from_text, &to_text)
             .await
             .map_err(internal)?;
+        if let Some(origin) = origin.as_deref() {
+            rows.retain(|row| match origin {
+                "local" => row.origin.is_none(),
+                other => row.origin.as_deref() == Some(other),
+            });
+        }
         let genres = genres(db, &rows).await.map_err(internal)?;
         let names: HashMap<String, String> = user_names(db)
             .await
@@ -349,6 +360,7 @@ impl StatisticsQueries {
             } else {
                 Vec::new()
             },
+            origins: summed.origins,
             recent,
             complete,
         })

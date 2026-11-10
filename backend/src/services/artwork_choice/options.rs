@@ -717,7 +717,7 @@ async fn fetch(
                 out.set_default(source, Some(&url));
             }
         }
-        ArtworkEntityKind::Playlist => {}
+        ArtworkEntityKind::Playlist | ArtworkEntityKind::User => {}
     }
     Ok(out)
 }

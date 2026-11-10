@@ -28,8 +28,39 @@ pub struct GenreShelf {
     pub shows: Vec<Show>,
 }
 
+/// A genre someone can pick as an interest, with how many titles of it they can see.
+#[derive(SimpleObject)]
+pub struct GenreChoice {
+    pub genre: String,
+    pub movies: i32,
+    pub shows: i32,
+}
+
 #[derive(Default)]
 pub struct GenreQueries;
+
+/// Movies and shows the caller can see: their own, or everything for an administrator.
+async fn visible_titles(db: &Database, user: &crate::graphql::AuthUser) -> Result<(Vec<Movie>, Vec<Show>)> {
+    let owner = (!user.is_admin()).then(|| StringFilter {
+        eq: Some(user.user_id.clone()),
+        ..Default::default()
+    });
+    let movies = Movie::query(db.pool())
+        .filter(MovieWhereInput {
+            user_id: owner.clone(),
+            ..Default::default()
+        })
+        .fetch_all()
+        .await?;
+    let shows = Show::query(db.pool())
+        .filter(ShowWhereInput {
+            user_id: owner,
+            ..Default::default()
+        })
+        .fetch_all()
+        .await?;
+    Ok((movies, shows))
+}
 
 #[Object]
 impl GenreQueries {
@@ -103,6 +134,89 @@ impl GenreQueries {
             shelf.shows.truncate(per_genre as usize);
         }
         Ok(shelves)
+    }
+
+    /// Every genre among the titles you can see, most titles first, for picking interests.
+    #[graphql(name = "genreChoices")]
+    async fn genre_choices(&self, ctx: &Context<'_>) -> Result<Vec<GenreChoice>> {
+        let user = ctx.require_member()?;
+        let db = ctx.data::<Database>()?;
+        let (movies, shows) = visible_titles(db, user).await?;
+        let mut choices: HashMap<String, GenreChoice> = HashMap::new();
+        for (genre, items) in group_by_genre(movies, |movie| &movie.genres, |movie| &movie.created_at) {
+            choices
+                .entry(genre.to_lowercase())
+                .or_insert_with(|| GenreChoice { genre, movies: 0, shows: 0 })
+                .movies = items.len() as i32;
+        }
+        for (genre, items) in group_by_genre(shows, |show| &show.genres, |show| &show.created_at) {
+            choices
+                .entry(genre.to_lowercase())
+                .or_insert_with(|| GenreChoice { genre, movies: 0, shows: 0 })
+                .shows = items.len() as i32;
+        }
+        let mut choices: Vec<GenreChoice> = choices.into_values().collect();
+        choices.sort_by(|a, b| {
+            (b.movies + b.shows)
+                .cmp(&(a.movies + a.shows))
+                .then_with(|| a.genre.cmp(&b.genre))
+        });
+        Ok(choices)
+    }
+
+    /// One shelf per genre you picked as an interest, in your order, each with the newest
+    /// movies and shows of it you can see. Genres with nothing to show are left out
+    /// (design.md Q149).
+    #[graphql(name = "genreInterestShelves")]
+    async fn genre_interest_shelves(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "perGenre", default = 20)] per_genre: i32,
+    ) -> Result<Vec<GenreShelf>> {
+        let user = ctx.require_member()?;
+        if !(1..=MAX_PER_GENRE).contains(&per_genre) {
+            return Err(async_graphql::Error::new(format!("perGenre must be 1-{MAX_PER_GENRE}"))
+                .extend_with(|_, extensions| extensions.set("code", "BAD_USER_INPUT")));
+        }
+        let db = ctx.data::<Database>()?;
+        let interests = User::get(db.pool(), &user.user_id)
+            .await?
+            .and_then(|account| account.genre_interests)
+            .unwrap_or_default();
+        if interests.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (movies, shows) = visible_titles(db, user).await?;
+        let mut movie_groups: HashMap<String, Vec<Movie>> =
+            group_by_genre(movies, |movie| &movie.genres, |movie| &movie.created_at)
+                .into_iter()
+                .map(|(genre, items)| (genre.to_lowercase(), items))
+                .collect();
+        let mut show_groups: HashMap<String, Vec<Show>> =
+            group_by_genre(shows, |show| &show.genres, |show| &show.created_at)
+                .into_iter()
+                .map(|(genre, items)| (genre.to_lowercase(), items))
+                .collect();
+        Ok(interests
+            .iter()
+            .filter_map(|genre| {
+                let key = genre.trim().to_lowercase();
+                let mut movies = movie_groups.remove(&key).unwrap_or_default();
+                let mut shows = show_groups.remove(&key).unwrap_or_default();
+                let total = (movies.len() + shows.len()) as i32;
+                if total == 0 {
+                    return None;
+                }
+                movies.truncate(per_genre as usize);
+                shows.truncate(per_genre as usize);
+                Some(GenreShelf {
+                    genre: genre.trim().to_string(),
+                    total,
+                    movies,
+                    shows,
+                })
+            })
+            .collect())
     }
 }
 

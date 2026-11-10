@@ -17,9 +17,13 @@ use crate::services::auth::AuthService;
     table = "users",
     plural = "Users",
     default_sort = "username",
-    read_policy = "admin.read",
-    write_policy = "admin.write"
+    read_policy = "member.read",
+    write_policy = "member.write"
 )]
+/// A person who signs in. Members read and edit only their own row (the row policy scopes
+/// `users` to `id`); administrators everyone's. Sign-in names, roles and access are for
+/// administrators, and the security facts below are written only by the auth actions
+/// (design.md Q147).
 pub struct User {
     #[graphql(name = "id")]
     #[primary_key]
@@ -29,6 +33,7 @@ pub struct User {
     #[graphql(name = "username")]
     #[filterable(type = "string")]
     #[sortable]
+    #[graphql_orm(write_policy = "admin.write")]
     pub username: String,
 
     #[graphql(name = "email")]
@@ -41,23 +46,74 @@ pub struct User {
     #[graphql(name = "role")]
     #[filterable(type = "string")]
     #[sortable]
+    #[graphql_orm(write_policy = "admin.write")]
     pub role: String,
 
     #[graphql(name = "displayName")]
     #[filterable(type = "string")]
     pub display_name: Option<String>,
 
+    /// An uploaded photo's marker (`upload:<hash>`), written by the upload and removal actions;
+    /// the picture itself is served from `/api/artwork/user/{id}/avatar`.
     #[graphql(name = "avatarUrl")]
+    #[graphql_orm(write_policy = "admin.write")]
     pub avatar_url: Option<String>,
 
     #[graphql(name = "isActive")]
     #[filterable(type = "boolean")]
+    #[graphql_orm(write_policy = "admin.write")]
     pub is_active: bool,
 
     #[graphql(name = "lastLoginAt")]
     #[filterable(type = "date")]
     #[sortable]
+    #[graphql_orm(write = false)]
     pub last_login_at: Option<String>,
+
+    /// A contact number, seen only by the person and administrators.
+    #[graphql(name = "phone")]
+    pub phone: Option<String>,
+
+    /// Genres the person likes, by name as the libraries spell them. Home shows a row for each
+    /// (design.md Q149).
+    #[graphql(name = "genreInterests")]
+    #[json_field]
+    pub genre_interests: Option<Vec<String>>,
+
+    /// Set with a temporary password: the next sign-in must choose a new one before it gets a
+    /// session.
+    #[graphql(name = "mustChangePassword")]
+    #[boolean_field]
+    #[filterable(type = "boolean")]
+    #[graphql_orm(write = false)]
+    pub must_change_password: bool,
+
+    /// When two-factor sign-in was turned on; null while it is off.
+    #[graphql(name = "twoFactorEnabledAt")]
+    #[filterable(type = "date")]
+    #[graphql_orm(write = false)]
+    pub two_factor_enabled_at: Option<String>,
+
+    /// Unused recovery codes left.
+    #[graphql(name = "recoveryCodesRemaining")]
+    #[graphql_orm(write = false)]
+    pub recovery_codes_remaining: i32,
+
+    #[graphql(name = "passwordChangedAt")]
+    #[graphql_orm(write = false)]
+    pub password_changed_at: Option<String>,
+
+    /// The confirmed TOTP secret, encrypted with the credential key. Never a GraphQL field.
+    #[graphql_orm(private)]
+    pub totp_secret: Option<String>,
+
+    /// A secret being enrolled, encrypted, until a code from it is confirmed.
+    #[graphql_orm(private)]
+    pub totp_pending_secret: Option<String>,
+
+    /// SHA-256 hashes of the unused recovery codes, as a JSON list.
+    #[graphql_orm(private)]
+    pub recovery_codes: Option<String>,
 
     #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
@@ -84,6 +140,9 @@ pub struct MeUser {
     pub role: String,
     #[graphql(name = "displayName")]
     pub display_name: Option<String>,
+    /// The photo's marker when there is one (`/api/artwork/user/{id}/avatar` serves it).
+    #[graphql(name = "avatarUrl")]
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Default)]
@@ -125,6 +184,7 @@ impl UserCustomOperations {
             username: user.username,
             role: user.role,
             display_name: user.display_name,
+            avatar_url: user.avatar_url,
         }))
     }
 }

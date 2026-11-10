@@ -165,6 +165,7 @@ pub(crate) fn entity_metadata() -> Vec<&'static graphql_orm::graphql::orm::Entit
         <Source as Entity>::metadata(),
         <User as Entity>::metadata(),
         <InviteToken as Entity>::metadata(),
+        <PasswordResetToken as Entity>::metadata(),
         <RefreshToken as Entity>::metadata(),
         <AppSetting as Entity>::metadata(),
         <AppLog as Entity>::metadata(),
@@ -621,6 +622,40 @@ impl AppWriteInputTransform {
             ));
         }
         Ok(location.to_path_string())
+    }
+
+    /// Sign-in accepts a username or an email, so two accounts can never share an address.
+    async fn require_unused_email(
+        db: &Database,
+        user_id: &str,
+        email: &str,
+    ) -> async_graphql::Result<()> {
+        let mut offset = 0;
+        loop {
+            let page = User::query(db.pool())
+                .limit(100)
+                .offset(offset)
+                .fetch_all()
+                .await
+                .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+            if page.is_empty() {
+                return Ok(());
+            }
+            offset += page.len() as i64;
+            if page.iter().any(|user| {
+                user.id != user_id
+                    && (user
+                        .email
+                        .as_deref()
+                        .is_some_and(|other| other.eq_ignore_ascii_case(email))
+                        || user.username.eq_ignore_ascii_case(email))
+            }) {
+                return Err(async_graphql::Error::new(
+                    "Another account already uses that email address",
+                )
+                .extend_with(|_, extensions| extensions.set("code", "BAD_USER_INPUT")));
+            }
+        }
     }
 
     fn assign_create_owner(
@@ -1388,6 +1423,13 @@ impl WriteInputTransform for AppWriteInputTransform {
             crate::services::artwork_choice::keep_locked_artwork(entity_name, existing_row, input);
             Self::prepare_cast_update(entity_name, existing_row, input)?;
             Self::prepare_content_update(ctx, entity_name, existing_row, input)?;
+            if entity_name == "User"
+                && let Some(input) = input.downcast_ref::<UpdateUserInput>()
+                && let Some(Some(email)) = input.email.as_ref()
+                && let Some(row) = existing_row.and_then(|row| row.downcast_ref::<User>())
+            {
+                Self::require_unused_email(db, &row.id, email).await?;
+            }
             if entity_name == "AppSetting"
                 && let Some(input) = input.downcast_mut::<UpdateAppSettingInput>()
                 && let Some(row) = existing_row.and_then(|row| row.downcast_ref::<AppSetting>())
@@ -4164,6 +4206,43 @@ impl AppMutationHook {
             })
             .await
             .map_err(Self::db_error)?;
+        hook_ctx
+            .delete_where::<PasswordResetToken>(PasswordResetTokenWhereInput {
+                user_id: Some(Self::string_eq(&event.id)),
+                ..PasswordResetTokenWhereInput::default()
+            })
+            .await
+            .map_err(Self::db_error)?;
+        Ok(())
+    }
+
+    /// Accounts are made by registration and invites, and removed by administrators. A member
+    /// may edit their own row (design.md Q147) but not create, delete or reset accounts, so
+    /// public generated creates and deletes of `User` and `PasswordResetToken` need an
+    /// administrator, and reset links are made only by `createPasswordResetLink`.
+    fn require_admin_account_write(
+        ctx: Option<&async_graphql::Context<'_>>,
+        entity_name: &str,
+        action: &ChangeAction,
+    ) -> async_graphql::Result<()> {
+        let Some(ctx) = ctx else {
+            return Ok(());
+        };
+        let refused = match entity_name {
+            "User" => {
+                !matches!(action, ChangeAction::Updated)
+                    && !ctx.data_opt::<AuthUser>().is_some_and(AuthUser::is_admin)
+            }
+            "PasswordResetToken" => !matches!(action, ChangeAction::Deleted),
+            _ => false,
+        };
+        if refused {
+            return Err(async_graphql::Error::new(match entity_name {
+                "User" => "Only an administrator can add or remove accounts",
+                _ => "Reset links are made with createPasswordResetLink",
+            })
+            .extend_with(|_, extensions| extensions.set("code", "FORBIDDEN")));
+        }
         Ok(())
     }
 
@@ -4322,6 +4401,9 @@ impl MutationHook for AppMutationHook {
     ) -> BoxFuture<'a, async_graphql::Result<()>> {
         Box::pin(async move {
             crate::services::graphql::personal_policy::on_mutation(ctx, hook_ctx, event).await?;
+            if event.phase == MutationPhase::Before {
+                Self::require_admin_account_write(ctx, event.entity_name, &event.action)?;
+            }
             match (&event.phase, &event.action, event.entity_name) {
                 (MutationPhase::Before, ChangeAction::Deleted, "Library") => {
                     Self::cleanup_library_children(hook_ctx, &event.id).await?;
@@ -4788,6 +4870,15 @@ mod lifecycle_tests {
                 avatar_url: None,
                 is_active: true,
                 last_login_at: None,
+                phone: None,
+                genre_interests: None,
+                must_change_password: false,
+                two_factor_enabled_at: None,
+                recovery_codes_remaining: 0,
+                password_changed_at: None,
+                totp_secret: None,
+                totp_pending_secret: None,
+                recovery_codes: None,
             },
         )
         .await
@@ -4926,6 +5017,15 @@ mod lifecycle_tests {
                 avatar_url: None,
                 is_active: true,
                 last_login_at: None,
+                phone: None,
+                genre_interests: None,
+                must_change_password: false,
+                two_factor_enabled_at: None,
+                recovery_codes_remaining: 0,
+                password_changed_at: None,
+                totp_secret: None,
+                totp_pending_secret: None,
+                recovery_codes: None,
             },
         )
         .await

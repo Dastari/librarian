@@ -81,7 +81,25 @@ pub struct UserUsage {
     pub name: String,
     pub seconds: f64,
     pub plays: i32,
+    pub seconds_watched: f64,
+    pub seconds_listened: f64,
+    pub completed_plays: i32,
+    pub last_played_at: String,
 }
+
+/// Where plays happened: this server (`origin` null) or, once libraries can be shared between
+/// servers, the server a shared library is on (design.md Q150).
+#[derive(Clone, Debug, Default, PartialEq, SimpleObject)]
+#[graphql(name = "PlayStatisticsOrigin", rename_fields = "camelCase")]
+pub struct OriginUsage {
+    pub origin: Option<String>,
+    pub name: String,
+    pub seconds: f64,
+    pub plays: i32,
+}
+
+/// The label for plays on this server.
+pub const LOCAL_ORIGIN_NAME: &str = "This server";
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Aggregate {
@@ -100,6 +118,7 @@ pub struct Aggregate {
     pub top_genres: Vec<TopItem>,
     pub devices: Vec<DeviceUsage>,
     pub users: Vec<UserUsage>,
+    pub origins: Vec<OriginUsage>,
 }
 
 /// The local period being summed.
@@ -288,6 +307,7 @@ pub fn aggregate(
     );
     let mut devices: HashMap<String, DeviceUsage> = HashMap::new();
     let mut users: HashMap<String, UserUsage> = HashMap::new();
+    let mut origins: HashMap<Option<String>, OriginUsage> = HashMap::new();
 
     for (row, at) in &rows {
         let listening = is_listening(&row.content_type);
@@ -437,6 +457,30 @@ pub fn aggregate(
             });
         user.seconds += seconds;
         user.plays += 1;
+        if is_listening(&row.content_type) {
+            user.seconds_listened += seconds;
+        } else {
+            user.seconds_watched += seconds;
+        }
+        if row.completed {
+            user.completed_plays += 1;
+        }
+        if row.ended_at > user.last_played_at {
+            user.last_played_at = row.ended_at.clone();
+        }
+
+        let origin = origins
+            .entry(row.origin.clone())
+            .or_insert_with(|| OriginUsage {
+                origin: row.origin.clone(),
+                name: match &row.origin {
+                    None => LOCAL_ORIGIN_NAME.to_string(),
+                    Some(origin) => row.origin_name.clone().unwrap_or_else(|| origin.clone()),
+                },
+                ..Default::default()
+            });
+        origin.seconds += seconds;
+        origin.plays += 1;
     }
     totals.items = items.len() as i32;
     totals.active_days = active.len() as i32;
@@ -445,6 +489,8 @@ pub fn aggregate(
     devices.sort_by(|a, b| b.seconds.total_cmp(&a.seconds).then(b.plays.cmp(&a.plays)));
     let mut users: Vec<UserUsage> = users.into_values().collect();
     users.sort_by(|a, b| b.seconds.total_cmp(&a.seconds).then(b.plays.cmp(&a.plays)));
+    let mut origins: Vec<OriginUsage> = origins.into_values().collect();
+    origins.sort_by(|a, b| b.seconds.total_cmp(&a.seconds).then(b.plays.cmp(&a.plays)));
 
     Aggregate {
         totals,
@@ -461,5 +507,6 @@ pub fn aggregate(
         top_genres: ranked(genre_map, top),
         devices,
         users,
+        origins,
     }
 }

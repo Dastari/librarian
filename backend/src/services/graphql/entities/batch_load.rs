@@ -35,6 +35,7 @@ impl_string_pk_batch_load!(
     super::Season,
     super::HomeShelf,
     super::InviteToken,
+    super::PasswordResetToken,
     super::Library,
     super::LibraryScanIssue,
     super::LibraryScanRun,

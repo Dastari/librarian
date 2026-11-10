@@ -151,6 +151,16 @@ pub struct PlayHistory {
     #[filterable(type = "string")]
     pub source_progress_id: Option<String>,
 
+    /// Where the play happened: null for this server. A play of a library shared from another
+    /// server, once sharing exists, names that server here (design.md Q150).
+    #[graphql(name = "origin")]
+    #[filterable(type = "string")]
+    pub origin: Option<String>,
+
+    /// The origin's name when the play was recorded, so history outlives the link.
+    #[graphql(name = "originName")]
+    pub origin_name: Option<String>,
+
     #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]

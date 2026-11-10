@@ -12,7 +12,7 @@ use graphql_orm::schema_roots;
 use crate::db::Database;
 use crate::services::graphql::entities::*;
 use crate::services::graphql::mutations::{
-    ArtworkMutations, AuthMutations, AutoDownloadMutations, BackupMutations, DeviceActionMutations,
+    AccountMutations, ArtworkMutations, AuthMutations, AutoDownloadMutations, BackupMutations, DeviceActionMutations,
     DownloadsMoveMutations, DownloadsMoveQueries, FeedMutations, FilesystemMutations,
     LibraryScanMutations, MaintenanceMutations, NotificationFeedMutations, QualityMutations,
     RecommendationMutations, ServerConnectionMutations, ServerConnectionQueries,
@@ -63,6 +63,7 @@ macro_rules! librarian_schema_roots {
         Source,
         User,
         InviteToken,
+        PasswordResetToken,
         RefreshToken,
         AppSetting,
         AppLog,
@@ -116,6 +117,7 @@ macro_rules! librarian_schema_roots {
         VideoStream,
         MediaChapter,
         RefreshToken,
+        PasswordResetToken,
         RssFeedItem,
         LibraryScanRun,
         SourcePriorityRule,
@@ -126,7 +128,7 @@ macro_rules! librarian_schema_roots {
         TorrentContents,
     ],
     extra_query_types: [ArtworkQueries, FilesystemQueries, ServerConnectionQueries, DownloadsMoveQueries, SourceCustomQueries, BackupQueries, ContentStatusQueries, ResumeQueries, SourceCapabilityQueries, GenreQueries, StatisticsQueries],
-    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, PersonMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations, ServerConnectionMutations, DownloadsMoveMutations, SubtitleActionMutations, DeviceActionMutations],
+    extra_mutation_types: [ArtworkMutations, AuthMutations, AccountMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, PersonMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations, BackupMutations, AutoDownloadMutations, QualityMutations, NotificationFeedMutations, MaintenanceMutations, FeedMutations, RecommendationMutations, ServerConnectionMutations, DownloadsMoveMutations, SubtitleActionMutations, DeviceActionMutations],
     extra_subscription_types: [BackupSubscriptions, FilesystemSubscriptions, TorrentRuntimeSubscriptions, SessionSubscriptions, SourceCapabilitySubscriptions],
         }
     };
@@ -415,6 +417,7 @@ mod tests {
             Source,
             User,
             InviteToken,
+            PasswordResetToken,
             RefreshToken,
             AppSetting,
             AppLog,
@@ -717,6 +720,15 @@ mod tests {
                     avatar_url: None,
                     is_active: true,
                     last_login_at: None,
+                    phone: None,
+                    genre_interests: None,
+                    must_change_password: false,
+                    two_factor_enabled_at: None,
+                    recovery_codes_remaining: 0,
+                    password_changed_at: None,
+                    totp_secret: None,
+                    totp_pending_secret: None,
+                    recovery_codes: None,
                 },
             )
             .await
