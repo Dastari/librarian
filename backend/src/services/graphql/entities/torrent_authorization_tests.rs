@@ -282,6 +282,7 @@ async fn add_targets_require_actual_library_ownership_before_runtime_work() {
             scanning: false,
             last_scanned_at: None,
             quality_profile_id: None,
+            storage_volume_id: None,
         },
     )
     .await

@@ -2352,6 +2352,7 @@ input CreateLibraryInput {
 	scanning: Boolean!
 	lastScannedAt: String
 	qualityProfileId: String
+	storageVolumeId: String
 }
 
 input CreateLibraryPreferenceInput {
@@ -4823,6 +4824,11 @@ type Library {
 	Audiobook) > this field > seeded default profile.
 	"""
 	qualityProfileId: String
+	"""
+	The disk or share this library's folder is on, with its free space (`docs/design.md`
+	Q146). Set by the capacity job; libraries on one share point at the same volume.
+	"""
+	storageVolumeId: String
 	createdAt: String!
 	updatedAt: String!
 	"""
@@ -4869,6 +4875,10 @@ type Library {
 	Quality Profile
 	"""
 	qualityProfile: QualityProfile
+	"""
+	Storage Volume
+	"""
+	storageVolume: StorageVolume
 }
 
 """
@@ -5338,6 +5348,7 @@ input LibraryWhereInput {
 	scanning: BoolFilter
 	lastScannedAt: DateFilter
 	qualityProfileId: StringFilter
+	storageVolumeId: StringFilter
 	createdAt: DateFilter
 	updatedAt: DateFilter
 	"""
@@ -13958,6 +13969,35 @@ type Query {
 	The newest Android TV app release the last check found, for the TV shell to offer.
 	"""
 	tvAppRelease: TvAppRelease
+
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List StorageVolume records
+	"""
+	storageVolumes(
+		"""
+		Where
+		"""
+		where: StorageVolumeWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [StorageVolumeOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): StorageVolumeConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one StorageVolume records
+	"""
+	storageVolume(
+		"""
+		Id
+		"""
+		id: String!
+	): StorageVolume
 }
 
 """
@@ -16350,6 +16390,152 @@ input StatsShareWhereInput {
 	not: StatsShareWhereInput
 }
 
+"""
+One disk or share that library folders, the download folder or Librarian's own data live on, with its latest free-space reading (`docs/design.md` Q146). Several libraries usually share a volume (every library on `smb://nas/media` does), so the reading is kept once here and each `Library.storageVolumeId` points at it. Written only by the capacity job (`jobs::storage_capacity`), and only when the reading moves meaningfully, so subscriptions stay quiet.
+"""
+type StorageVolume {
+	"""
+	Id
+	"""
+	id: String!
+	"""
+	What identifies the volume: `smb://host/share` for a share, `local:<device id>` for a disk on this machine.
+	"""
+	volumeKey: String!
+	"""
+	`local` or `smb`.
+	"""
+	kind: String!
+	"""
+	What a person calls it: "media on 10.0.1.190", or the folder measured on this machine.
+	"""
+	label: String!
+	"""
+	`ok`, or `unavailable` when the share or folder could not be read; the byte counts then keep the last good reading.
+	"""
+	status: String!
+	"""
+	`normal`, `warning` or `critical`, with hysteresis: a level is left only once the space is clearly back above its threshold.
+	"""
+	level: String!
+	"""
+	Total Bytes
+	"""
+	totalBytes: Int
+	"""
+	What Librarian may still write, after quotas and reserved blocks.
+	"""
+	availableBytes: Int
+	"""
+	Free on the volume as a whole; more than `availableBytes` under a quota.
+	"""
+	freeBytes: Int
+	"""
+	Why the last reading failed, in words a person can act on.
+	"""
+	detail: String
+	"""
+	Whether the torrent download folder is on this volume.
+	"""
+	holdsDownloads: Boolean!
+	"""
+	Whether Librarian's own data and cache folder is on this volume.
+	"""
+	holdsAppData: Boolean!
+	"""
+	The names of the libraries on it, as a JSON list, for alerts and tooltips.
+	"""
+	libraryNames: String
+	"""
+	When the stored reading was taken.
+	"""
+	checkedAt: String
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type StorageVolumeChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	storageVolume: StorageVolume
+}
+
+"""
+Connection containing edges and page info
+"""
+type StorageVolumeConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [StorageVolumeEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type StorageVolumeEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: StorageVolume!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input StorageVolumeOrderByInput {
+	label: OrderDirection
+	level: OrderDirection
+	availableBytes: OrderDirection
+	checkedAt: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+input StorageVolumeWhereInput {
+	id: StringFilter
+	volumeKey: StringFilter
+	kind: StringFilter
+	label: StringFilter
+	status: StringFilter
+	level: StringFilter
+	holdsDownloads: BoolFilter
+	holdsAppData: BoolFilter
+	checkedAt: DateFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [StorageVolumeWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [StorageVolumeWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: StorageVolumeWhereInput
+}
+
 type StoredSummaryReconciliationResult {
 	dryRun: Boolean!
 	artistsExamined: Int!
@@ -17546,6 +17732,24 @@ type Subscription {
 		"""
 		keys: [String!]
 	): TorrentContentsChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
+	Observe changes to StorageVolume records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	storageVolumeChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): StorageVolumeChangedEvent!
 }
 
 input SubscriptionFilterInput {
@@ -19316,6 +19520,7 @@ input UpdateLibraryInput {
 	scanning: Boolean
 	lastScannedAt: String
 	qualityProfileId: String
+	storageVolumeId: String
 }
 
 input UpdateLibraryPreferenceInput {

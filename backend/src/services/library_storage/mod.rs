@@ -14,6 +14,7 @@
 //! Not to be confused with [`crate::services::storage`], the object store for blobs (artwork,
 //! backups) that do not belong to a library.
 
+mod capacity;
 mod local;
 mod location;
 pub mod own_writes;
@@ -26,6 +27,7 @@ mod staged;
 mod types;
 mod watch;
 
+pub use capacity::{VolumeCapacity, local_capacity, local_volume_key};
 pub use local::{LocalStorage, place_no_clobber_blocking};
 pub use location::{CredentialRef, LocationError, SmbLocation, StorageLocation};
 pub use path::{IntoStoragePath, StorageKind, StoragePath, is_smb_uri};
@@ -169,6 +171,21 @@ pub trait Storage: Send + Sync {
 
     /// How an external program should read this file. See `docs/design.md` Q85.
     async fn tool_input(&self, path: &StoragePath) -> StorageResult<ToolInput>;
+
+    /// Which volume `path` is on: `smb://host/share` for a share, `local:<device>` here. Paths
+    /// with the same key share their free space, so it is measured once (Q146).
+    async fn volume_key(&self, path: &StoragePath) -> StorageResult<String> {
+        Err(StorageError::unsupported(&format!(
+            "telling which volume '{path}' is on"
+        )))
+    }
+
+    /// How much room the volume holding `path` has, quotas applied (Q146).
+    async fn capacity(&self, path: &StoragePath) -> StorageResult<VolumeCapacity> {
+        Err(StorageError::unsupported(&format!(
+            "reading the free space for '{path}'"
+        )))
+    }
 
     /// Be told about changes anywhere under the folder `dir` (Q115). A storage that cannot say
     /// ([`StorageCapabilities::change_notifications`] is `false`) refuses.

@@ -476,6 +476,18 @@ impl Storage for SmbStorage {
         Some(self)
     }
 
+    async fn volume_key(&self, _path: &StoragePath) -> StorageResult<String> {
+        // A share is one volume as far as its clients can tell.
+        Ok(self.0.root.share_root().to_uri())
+    }
+
+    async fn capacity(&self, _path: &StoragePath) -> StorageResult<super::VolumeCapacity> {
+        let info = repeatable!(self.0, "reading the share's free space", |client, tree| {
+            client.fs_info(tree)
+        })?;
+        Ok(super::VolumeCapacity::from_smb(&info))
+    }
+
     fn capabilities(&self) -> StorageCapabilities {
         StorageCapabilities {
             atomic_rename: true,
@@ -879,13 +891,5 @@ impl SmbStorage {
                 other => return other,
             }
         }
-    }
-
-    /// The share's free and total bytes, where the server says.
-    pub async fn space(&self) -> StorageResult<(u64, u64)> {
-        let info = repeatable!(self.0, "reading the share's free space", |client, tree| {
-            client.fs_info(tree)
-        })?;
-        Ok((info.free_bytes, info.total_bytes))
     }
 }

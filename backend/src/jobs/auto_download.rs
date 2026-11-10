@@ -1283,6 +1283,9 @@ pub async fn grab_release_with(
         .clone()
         .or_else(|| release.link.clone())
         .context("the release has neither a magnet URI nor a download link")?;
+    if let Some(reason) = super::storage_capacity::download_refusal(&env.db, release.size).await {
+        anyhow::bail!(reason);
+    }
 
     let metadata = TorrentAddMetadata {
         library_id: Some(candidate.library_id.clone()),
@@ -2035,6 +2038,30 @@ async fn try_candidate(
                 &candidate.library_id,
                 &candidate.label,
                 &format!("'{}' has no magnet or download link", release.title),
+                next_search,
+                &ctx.trigger,
+                true,
+            )
+            .await;
+        return Ok(false);
+    }
+
+    // The download folder's disk is critically low and this would not fit (Q146): wait, without
+    // counting it as a failed grab.
+    if let Some(reason) = super::storage_capacity::download_refusal(&ctx.env.db, release.size).await
+    {
+        info!(
+            candidate = %candidate.label,
+            release = %release.title,
+            "Auto-download: not grabbing '{}' for {}: {reason}",
+            release.title,
+            candidate.label
+        );
+        ctx.trail
+            .waiting(
+                &candidate.library_id,
+                &candidate.label,
+                &reason,
                 next_search,
                 &ctx.trigger,
                 true,

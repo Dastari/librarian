@@ -87,3 +87,4 @@ impl_string_pk_batch_load!(super::Device);
 impl_string_pk_batch_load!(super::PlayHistory);
 impl_string_pk_batch_load!(super::StatsShare);
 impl_string_pk_batch_load!(super::TorrentContents);
+impl_string_pk_batch_load!(super::StorageVolume);

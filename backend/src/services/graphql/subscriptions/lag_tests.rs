@@ -38,6 +38,7 @@ async fn generated_subscription_reports_lag_then_reconciles_and_delivers_again()
             scanning: false,
             last_scanned_at: None,
             quality_profile_id: None,
+            storage_volume_id: None,
         },
     )
     .await

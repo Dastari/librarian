@@ -205,6 +205,7 @@ pub(crate) fn entity_metadata() -> Vec<&'static graphql_orm::graphql::orm::Entit
         <ReleaseRecommendation as Entity>::metadata(),
         <NetworkServer as Entity>::metadata(),
         <TorrentContents as Entity>::metadata(),
+        <StorageVolume as Entity>::metadata(),
     ]
 }
 
@@ -4241,6 +4242,37 @@ impl AppMutationHook {
         Ok(())
     }
 
+    /// Whether a write changes what is on disk or where a measured folder is: a media file made,
+    /// removed or moved, a library made, removed or moved, or the download folder changed. The
+    /// capacity job's own writes (a library's `storageVolumeId`) are not.
+    fn moves_disk_space(event: &MutationEvent) -> bool {
+        macro_rules! path_changed {
+            ($ty:ty, $field:ident) => {{
+                let before = event
+                    .before::<$ty>()
+                    .ok()
+                    .flatten()
+                    .map(|row| row.$field.clone());
+                let after = event
+                    .after::<$ty>()
+                    .ok()
+                    .flatten()
+                    .map(|row| row.$field.clone());
+                before != after
+            }};
+        }
+        match event.entity_name {
+            "MediaFile" => path_changed!(MediaFile, path),
+            "Library" => path_changed!(Library, path),
+            "AppSetting" => event
+                .after::<AppSetting>()
+                .ok()
+                .flatten()
+                .is_some_and(|row| row.key == "torrent.download_dir"),
+            _ => false,
+        }
+    }
+
     /// After a title leaves a library, or a library is made, downloads compared with it are
     /// looked at again: what they matched may be gone, or they may now have somewhere to go.
     fn defer_identified_recheck(
@@ -4469,6 +4501,11 @@ impl MutationHook for AppMutationHook {
                 if watch_of(&before) != watch_of(&after) {
                     crate::services::library_scan::nudge_library_watches();
                 }
+            }
+            if event.phase == MutationPhase::After && Self::moves_disk_space(event) {
+                // Files landed, left or moved, or a folder now lives elsewhere: read the free
+                // space again soon (docs/design.md Q146). Bursts collapse into one reading.
+                crate::jobs::storage_capacity::nudge();
             }
             if event.phase == MutationPhase::Before
                 && event.action == ChangeAction::Deleted
@@ -4816,6 +4853,7 @@ mod lifecycle_tests {
                 scanning: false,
                 last_scanned_at: None,
                 quality_profile_id: None,
+                storage_volume_id: None,
             },
         )
         .await

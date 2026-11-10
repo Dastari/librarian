@@ -10,7 +10,9 @@ import { z } from "zod";
 
 import { Button } from "@/components/ui";
 import { MODE_HELP } from "@/features/acquisition/mode";
-import { TriggerAutoDownloadDocument } from "@/graphql/generated/graphql";
+import { FreeSpaceCell } from "@/features/libraries/FreeSpaceCell";
+import { spaceThresholds } from "@/features/libraries/volumeSpace";
+import { EntityStorageVolumeListDocument, TriggerAutoDownloadDocument } from "@/graphql/generated/graphql";
 import { errorMessage } from "@/lib/graphql/errors";
 
 import { AutoDownloadStatus } from "./AutoDownloadStatus";
@@ -19,6 +21,7 @@ import { MoveDownloadsDialog } from "./MoveDownloadsDialog";
 import { ByteSizeRow, DurationRow, NumberRow, TextRow, settingsFormBehaviour } from "./SettingFields";
 import { SettingsPage, SettingsSection } from "./SettingsSection";
 import { asBool, asNumber, useAppSettings } from "./useAppSettings";
+import { useSettingsConnection } from "./useSettingsConnection";
 
 /** Intervals are kept as minutes on the server and edited as seconds, the way `DurationRow` holds them. */
 export const minutesToSeconds = (minutes: number) => Math.round(minutes * 60);
@@ -60,6 +63,9 @@ export function DownloadsSettings() {
   const [trigger, { loading: triggering }] = useMutation(TriggerAutoDownloadDocument);
   const [movingDownloads, setMovingDownloads] = useState(false);
   const downloadDir = torrent.values.get("torrent.download_dir") ?? "";
+  // The download folder's disk or share and its free space (design.md Q146).
+  const downloadVolume = useSettingsConnection(EntityStorageVolumeListDocument, { where: { holdsDownloads: { eq: true } } }, (data) => data.storageVolumes);
+  const storage = useAppSettings("storage");
   // Intervals are minutes in the settings and seconds in the form (see `minutesToSeconds`).
   const defaults = useRef<Values>({ sessionDir: "", listenPort: 6881, enableDht: true, maxConcurrent: 5, downloadLimit: 0, uploadLimit: 0, autoEnabled: false, autoInterval: minutesToSeconds(60), autoBackoff: minutesToSeconds(360), airGrace: minutesToSeconds(60), airWindow: 7, airRetry: minutesToSeconds(60), maxGrabs: 5, hourlySearchBudget: 30, onlyMissingFiles: true, seedRatioLimit: 1, seedTime: 0, removeAfterImport: false });
   const form = useAppForm({ ...settingsFormBehaviour, validators: { onDynamic: schema }, defaultValues: defaults.current, onSubmit: async ({ value }) => {
@@ -149,6 +155,11 @@ export function DownloadsSettings() {
             label="Download folder"
             description={<><span className="font-mono text-foreground [overflow-wrap:anywhere]">{downloadDir || "/data/downloads"}</span><br />A folder on this server or on a saved network share. Moving it checks a copy you made first, then points every torrent at it.</>}
             control={<Button size="sm" variant="secondary" onPress={() => setMovingDownloads(true)}><IconFolder size="md" /> Move…</Button>}
+          />
+          <SettingRow
+            label="Free space"
+            description={downloadVolume.rows[0]?.label ? `On ${downloadVolume.rows[0].label}. Read every few minutes; when it is critically low, releases that would not fit are not downloaded.` : "Read every few minutes; when it is critically low, releases that would not fit are not downloaded."}
+            control={<div className="w-56 max-w-full"><FreeSpaceCell volume={downloadVolume.rows[0] ?? null} thresholds={spaceThresholds(storage.values)} /></div>}
           />
           <form.AppField name="sessionDir">{() => <TextRow mono label="Session folder" description="Resume data and DHT state." />}</form.AppField>
           <form.AppField name="listenPort">{() => <NumberRow label="Listen port" min={1024} max={65535} format={{ useGrouping: false }} />}</form.AppField>

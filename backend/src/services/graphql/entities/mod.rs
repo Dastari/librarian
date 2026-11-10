@@ -72,6 +72,7 @@ pub mod quality_profile;
 pub mod release_blocklist;
 pub mod release_recommendation;
 pub mod storage_object;
+pub mod storage_volume;
 pub mod torrent_contents;
 pub mod torznab_category;
 
@@ -136,6 +137,7 @@ pub use show::*;
 pub use source::*;
 pub use source_priority_rule::*;
 pub use storage_object::*;
+pub use storage_volume::*;
 pub use subtitle::*;
 pub use title_detail::*;
 pub use torrent::*;

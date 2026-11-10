@@ -59,6 +59,7 @@ async fn library(db: &Database, user: &User, root: &Path) -> Library {
             scanning: false,
             last_scanned_at: None,
             quality_profile_id: None,
+            storage_volume_id: None,
         },
     )
     .await

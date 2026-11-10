@@ -126,6 +126,13 @@ pub struct Library {
     #[filterable(type = "string")]
     pub quality_profile_id: Option<String>,
 
+    /// The disk or share this library's folder is on, with its free space (`docs/design.md`
+    /// Q146). Set by the capacity job; libraries on one share point at the same volume.
+    #[graphql(name = "storageVolumeId")]
+    #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "admin.write")]
+    pub storage_volume_id: Option<String>,
+
     #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
@@ -246,6 +253,18 @@ pub struct Library {
         emit_fk = false
     )]
     pub quality_profile: Option<Box<QualityProfile>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "StorageVolume",
+        from = "storage_volume_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub storage_volume: Option<Box<StorageVolume>>,
 }
 
 #[derive(Default)]

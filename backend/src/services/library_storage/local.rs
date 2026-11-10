@@ -70,6 +70,20 @@ impl Storage for LocalStorage {
         StorageKind::Local
     }
 
+    async fn volume_key(&self, path: &StoragePath) -> StorageResult<String> {
+        let path = local_path(path)?.to_path_buf();
+        tokio::task::spawn_blocking(move || super::local_volume_key(&path))
+            .await
+            .map_err(|error| StorageError::new(StorageErrorKind::Other, error.to_string()))?
+    }
+
+    async fn capacity(&self, path: &StoragePath) -> StorageResult<super::VolumeCapacity> {
+        let path = local_path(path)?.to_path_buf();
+        tokio::task::spawn_blocking(move || super::local_capacity(&path))
+            .await
+            .map_err(|error| StorageError::new(StorageErrorKind::Other, error.to_string()))?
+    }
+
     fn capabilities(&self) -> StorageCapabilities {
         StorageCapabilities {
             atomic_rename: true,
