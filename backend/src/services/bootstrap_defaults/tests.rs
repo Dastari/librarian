@@ -150,11 +150,13 @@ async fn library_with(db: &Database, user_id: &str, library_type: &str, pattern:
 /// Q145: only a stored pattern exactly equal to the previous TV default moves to the new one.
 #[tokio::test]
 async fn only_the_exact_previous_tv_default_is_moved_to_the_one_with_the_year() {
-    let db = fresh_database().await;
-    DatabaseService::new(db.clone())
+    let service = DatabaseService::new(fresh_database().await);
+    service
         .start()
         .await
         .expect("database service should start and seed defaults");
+    // With the service's policies, as startup seeding runs.
+    let db = service.pool().clone();
     let user = User::insert(
         &db,
         CreateUserInput {
