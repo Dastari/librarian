@@ -85,7 +85,8 @@ pub struct User {
     #[graphql(name = "mustChangePassword")]
     #[boolean_field]
     #[filterable(type = "boolean")]
-    #[graphql_orm(skip_input)]
+    // Defaulted so adding it to an existing users table stays an additive migration.
+    #[graphql_orm(skip_input, default = "0")]
     pub must_change_password: bool,
 
     /// When two-factor sign-in was turned on; null while it is off.
@@ -96,7 +97,7 @@ pub struct User {
 
     /// Unused recovery codes left.
     #[graphql(name = "recoveryCodesRemaining")]
-    #[graphql_orm(skip_input)]
+    #[graphql_orm(skip_input, default = "0")]
     pub recovery_codes_remaining: i32,
 
     #[graphql(name = "passwordChangedAt")]
