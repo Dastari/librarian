@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ServerUpdateStatusDocument, UpgradeServerDocument, type ServerUpdateStatusFieldsFragment } from "@/graphql/generated/graphql";
 import { renderWithProviders } from "@/test";
@@ -62,6 +62,11 @@ function typed(value: ServerUpdateStatusFieldsFragment) {
   };
 }
 const mockStatus = (value: ServerUpdateStatusFieldsFragment) => ({ request: { query: ServerUpdateStatusDocument }, result: { data: { serverUpdateStatus: typed(value) } } });
+
+beforeAll(() => {
+  // The release notes scroll in Base UI's ScrollArea, which reads animations jsdom doesn't have.
+  if (!("getAnimations" in Element.prototype)) Object.defineProperty(Element.prototype, "getAnimations", { configurable: true, value: () => [] });
+});
 
 beforeEach(() => {
   settings.save.mockReset().mockResolvedValue(undefined);
