@@ -281,6 +281,25 @@ impl LibraryStorage {
         self.for_path(&path).await?.stat(&path).await
     }
 
+    /// Which volume `path` is on (Q146): the share's root, or `local:<device>`.
+    /// A path on a share is placed without connecting, so a share that is down still has one.
+    pub async fn volume_key(&self, path: impl IntoStoragePath) -> StorageResult<String> {
+        let path = path.into_storage_path();
+        if let Some(location) = path.as_smb() {
+            return Ok(location.share_root().to_uri());
+        }
+        self.for_path(&path).await?.volume_key(&path).await
+    }
+
+    /// The room on the volume holding `path`, quotas applied (Q146).
+    pub async fn capacity(
+        &self,
+        path: impl IntoStoragePath,
+    ) -> StorageResult<super::VolumeCapacity> {
+        let path = path.into_storage_path();
+        self.for_path(&path).await?.capacity(&path).await
+    }
+
     pub async fn lstat(&self, path: impl IntoStoragePath) -> StorageResult<EntryMeta> {
         let path = path.into_storage_path();
         self.for_path(&path).await?.lstat(&path).await
