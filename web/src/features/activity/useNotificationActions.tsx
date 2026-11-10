@@ -7,6 +7,7 @@ import { useMemo } from "react";
 import { ApproveQualityUpgradeDocument, EntityNotificationDeleteManyDocument, EntityNotificationUpdateDocument, EntityNotificationUpdateManyDocument } from "@/graphql/generated/graphql";
 import { ENTITY_KINDS, glyph, type EntityKindName } from "@/lib/entities/kinds";
 import { notificationSubjects } from "@/lib/entities/notification";
+import { serverUpdateDetails } from "@/features/settings/serverUpdate";
 import { assertSuccess } from "@/lib/graphql/errors";
 
 import { runSelectionAction } from "@/lib/actions/runSelectionAction";
@@ -17,6 +18,8 @@ const UpgradeIcon = glyph(IconArrowUpCircle, "arrow-up-circle");
 const plural = (rows: readonly ActivityRow[], one: string, many: string) => (rows.length === 1 ? one : many.replace("{n}", String(rows.length)));
 const now = () => new Date().toISOString();
 const pendingUpgrade = (row: ActivityRow) => row.actionType === "quality_upgrade" && !row.resolvedAt;
+/** A new server release (design.md Q151): its notes on GitHub, and the upgrade in Settings › Updates. */
+const serverRelease = (row: ActivityRow) => (row.actionType === "server_update" ? serverUpdateDetails(row.actionData) : null);
 
 /**
  * A notification's actions, defined once for its row menu, right-click, the bulk bar and the
@@ -35,6 +38,17 @@ export function useNotificationActions(onChanged: () => void, isAdmin: boolean, 
         id: "open-subject", bulk: true, label: (rows) => { const subject = notificationSubjects(rows[0]!)[0]; return `Open ${(subject ? ENTITY_KINDS[subject.kind as EntityKindName]?.noun : undefined)?.toLowerCase() ?? "item"}`; }, icon: IconExternalLink, group: "open", priority: 2,
         visible: (rows) => rows.length === 1 && Boolean(notificationSubjects(rows[0]!)[0]?.href),
         run: (rows, context) => { const href = notificationSubjects(rows[0]!)[0]?.href; if (href) context.navigate(href); },
+      },
+      {
+        id: "release-notes", label: "Release notes", icon: IconExternalLink, group: "open", priority: 1,
+        visible: (rows) => rows.length === 1 && Boolean(serverRelease(rows[0]!)?.url),
+        run: (rows) => { const url = serverRelease(rows[0]!)?.url; if (url) window.open(url, "_blank", "noopener,noreferrer"); },
+      },
+      {
+        // The confirmation and the progress live on the settings page, so this only takes the admin there.
+        id: "server-upgrade", label: (rows) => `Upgrade to ${serverRelease(rows[0]!)?.version ?? "the new version"}`, icon: UpgradeIcon, group: "manage", priority: 1,
+        visible: (rows) => isAdmin && rows.length === 1 && !rows[0]!.resolvedAt && serverRelease(rows[0]!)?.canUpgrade === true,
+        run: (_rows, context) => context.navigate("/settings/updates"),
       },
       {
         id: "read", label: (rows) => plural(rows, "Mark read", "Mark {n} read"), icon: IconCheck, group: "manage", priority: 1, bulk: true,

@@ -1,0 +1,85 @@
+fragment ServerUpdateStatusFields on ServerUpdateStatus {
+  currentVersion
+  buildKind
+  platform
+  repository
+  channel
+  channelIsDefault
+  autoCheck
+  lastCheckedAt
+  lastError
+  nextCheckAt
+  updateAvailable
+  canSelfUpgrade
+  selfUpgradeBlockedReason
+  selfUpgradeInstructions
+  latest {
+    version
+    tag
+    name
+    publishedAt
+    url
+    notes
+    prerelease
+    assetName
+    assetSize
+    hasChecksums
+  }
+  progress {
+    targetVersion
+    stage
+    message
+    startedAt
+    updatedAt
+    failed
+  }
+  history {
+    fromVersion
+    toVersion
+    at
+    by
+    outcome
+    detail
+    backupSnapshotId
+  }
+  tvApp {
+    version
+    tag
+    publishedAt
+    url
+    apkUrl
+  }
+}
+
+query ServerUpdateStatus {
+  serverUpdateStatus {
+    ...ServerUpdateStatusFields
+  }
+}
+
+mutation CheckForServerUpdate {
+  checkForServerUpdate {
+    success
+    error
+    status {
+      ...ServerUpdateStatusFields
+    }
+  }
+}
+
+mutation UpgradeServer($version: String!) {
+  upgradeServer(version: $version) {
+    success
+    error
+  }
+}
+
+query TvAppRelease {
+  tvAppRelease {
+    version
+    tag
+    publishedAt
+    url
+    apkUrl
+  }
+}

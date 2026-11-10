@@ -1750,6 +1750,12 @@ input ChapterWhereInput {
 	not: ChapterWhereInput
 }
 
+type CheckForServerUpdateResult {
+	success: Boolean!
+	error: String
+	status: ServerUpdateStatus
+}
+
 input CheckInDeviceInput {
 	"""
 	The client's stable id, kept in its own storage.
@@ -10109,6 +10115,16 @@ type Mutation {
 		"""
 		where: NetworkServerWhereInput
 	): DeleteNetworkServersResult!
+	"""
+	Ask GitHub now. Pressed again within 20 seconds, it returns the last answer.
+	"""
+	checkForServerUpdate: CheckForServerUpdateResult!
+	"""
+	Upgrade to `version`, which must be the newest release on the channel (the confirmation
+	names it). Returns once the download has started; `serverUpdateStatus.progress` follows it,
+	and the server restarts when the new binary is in place.
+	"""
+	upgradeServer(version: String!): UpgradeServerResult!
 }
 
 """
@@ -13937,6 +13953,11 @@ type Query {
 		"""
 		id: String!
 	): TorrentContents
+	serverUpdateStatus: ServerUpdateStatus!
+	"""
+	The newest Android TV app release the last check found, for the TV shell to offer.
+	"""
+	tvAppRelease: TvAppRelease
 }
 
 """
@@ -15422,6 +15443,99 @@ input SeasonWhereInput {
 	Logical NOT of condition
 	"""
 	not: SeasonWhereInput
+}
+
+type ServerRelease {
+	version: String!
+	tag: String!
+	name: String
+	publishedAt: String
+	"""
+	The release page on GitHub.
+	"""
+	url: String!
+	"""
+	Markdown as written on GitHub. Show it as text; never as HTML.
+	"""
+	notes: String
+	prerelease: Boolean!
+	"""
+	This platform's archive, when the release has one.
+	"""
+	assetName: String
+	assetSize: Int
+	hasChecksums: Boolean!
+}
+
+type ServerUpdateStatus {
+	currentVersion: String!
+	"""
+	`release`, `debug`, `docker`, `dev` or `source`.
+	"""
+	buildKind: String!
+	"""
+	`linux-x86_64`, `windows-x86_64`, …
+	"""
+	platform: String!
+	"""
+	The GitHub repository releases come from.
+	"""
+	repository: String!
+	"""
+	`stable` or `dev`.
+	"""
+	channel: String!
+	"""
+	The channel was not chosen: it follows the running version.
+	"""
+	channelIsDefault: Boolean!
+	autoCheck: Boolean!
+	lastCheckedAt: String
+	lastError: String
+	nextCheckAt: String
+	"""
+	The newest release on the channel.
+	"""
+	latest: ServerRelease
+	updateAvailable: Boolean!
+	canSelfUpgrade: Boolean!
+	"""
+	Why this install can't upgrade itself (its build, platform or folder), or why the latest
+	release can't be installed (no checksums).
+	"""
+	selfUpgradeBlockedReason: String
+	"""
+	What to do instead.
+	"""
+	selfUpgradeInstructions: String
+	progress: ServerUpgradeProgress
+	history: [ServerUpgradeRecord!]!
+	tvApp: TvAppRelease
+}
+
+type ServerUpgradeProgress {
+	targetVersion: String!
+	"""
+	`downloading`, `verifying`, `backing_up`, `installing`, `restarting` or `failed`.
+	"""
+	stage: String!
+	message: String!
+	startedAt: String!
+	updatedAt: String!
+	failed: Boolean!
+}
+
+type ServerUpgradeRecord {
+	fromVersion: String!
+	toVersion: String!
+	at: String!
+	by: String!
+	"""
+	`upgraded`, `rolled_back` or `failed`.
+	"""
+	outcome: String!
+	detail: String
+	backupSnapshotId: String
 }
 
 type SessionInvalidation {
@@ -18668,6 +18782,17 @@ type TriggerAutoDownloadResult {
 """
 Result of TV show operations
 """
+type TvAppRelease {
+	version: String!
+	tag: String!
+	publishedAt: String
+	url: String!
+	"""
+	The APK's download link, when the release has one.
+	"""
+	apkUrl: String
+}
+
 type TvShowOperationResult {
 	success: Boolean!
 	show: Show
@@ -20098,6 +20223,11 @@ type UpdateUsersResult {
 	success: Boolean!
 	error: String
 	affectedCount: Int!
+}
+
+type UpgradeServerResult {
+	success: Boolean!
+	error: String
 }
 
 type UpsertEpisodeResult {
