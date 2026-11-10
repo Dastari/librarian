@@ -624,38 +624,50 @@ impl AppWriteInputTransform {
         Ok(location.to_path_string())
     }
 
-    /// Sign-in accepts a username or an email, so two accounts can never share an address.
+    /// Sign-in accepts a username or an email, so two accounts can never share an address. Read
+    /// through the generated update's own transaction (re-entering the pool would wait on it).
+    /// SQLite's `LIKE` behind `contains` ignores ASCII case; the exact match is checked here.
     async fn require_unused_email(
-        db: &Database,
+        write_ctx: &mut graphql_orm::graphql::orm::WriteInputContext<'_, '_>,
         user_id: &str,
         email: &str,
     ) -> async_graphql::Result<()> {
-        let mut offset = 0;
-        loop {
-            let page = User::query(db.pool())
-                .limit(100)
-                .offset(offset)
-                .fetch_all()
-                .await
-                .map_err(|error| async_graphql::Error::new(error.to_string()))?;
-            if page.is_empty() {
-                return Ok(());
-            }
-            offset += page.len() as i64;
-            if page.iter().any(|user| {
-                user.id != user_id
-                    && (user
-                        .email
-                        .as_deref()
-                        .is_some_and(|other| other.eq_ignore_ascii_case(email))
-                        || user.username.eq_ignore_ascii_case(email))
-            }) {
-                return Err(async_graphql::Error::new(
-                    "Another account already uses that email address",
-                )
-                .extend_with(|_, extensions| extensions.set("code", "BAD_USER_INPUT")));
-            }
+        let contains = || StringFilter {
+            contains: Some(email.to_string()),
+            ..Default::default()
+        };
+        let candidates = write_ctx
+            .query::<User>()
+            .filter(UserWhereInput {
+                or: Some(vec![
+                    UserWhereInput {
+                        email: Some(contains()),
+                        ..Default::default()
+                    },
+                    UserWhereInput {
+                        username: Some(contains()),
+                        ..Default::default()
+                    },
+                ]),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await
+            .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+        if candidates.iter().any(|user| {
+            user.id != user_id
+                && (user
+                    .email
+                    .as_deref()
+                    .is_some_and(|other| other.eq_ignore_ascii_case(email))
+                    || user.username.eq_ignore_ascii_case(email))
+        }) {
+            return Err(async_graphql::Error::new(
+                "Another account already uses that email address",
+            )
+            .extend_with(|_, extensions| extensions.set("code", "BAD_USER_INPUT")));
         }
+        Ok(())
     }
 
     fn assign_create_owner(
@@ -1293,6 +1305,18 @@ impl WriteInputTransform for AppWriteInputTransform {
             )
             .await?;
 
+            if write_ctx.entity_name() == "User"
+                && write_ctx.graphql_ctx().is_some()
+                && let Some(email) = input
+                    .downcast_ref::<UpdateUserInput>()
+                    .and_then(|input| input.email.clone().flatten())
+                && let Some(user_id) = existing_row
+                    .and_then(|row| row.downcast_ref::<User>())
+                    .map(|row| row.id.clone())
+            {
+                Self::require_unused_email(write_ctx, &user_id, &email).await?;
+            }
+
             // Generated update holds its MutationContext before field policies
             // run. Validate this mutable link through WriteQuery, which uses
             // that transaction, rather than re-entering the connection pool.
@@ -1423,13 +1447,7 @@ impl WriteInputTransform for AppWriteInputTransform {
             crate::services::artwork_choice::keep_locked_artwork(entity_name, existing_row, input);
             Self::prepare_cast_update(entity_name, existing_row, input)?;
             Self::prepare_content_update(ctx, entity_name, existing_row, input)?;
-            if entity_name == "User"
-                && let Some(input) = input.downcast_ref::<UpdateUserInput>()
-                && let Some(Some(email)) = input.email.as_ref()
-                && let Some(row) = existing_row.and_then(|row| row.downcast_ref::<User>())
-            {
-                Self::require_unused_email(db, &row.id, email).await?;
-            }
+
             if entity_name == "AppSetting"
                 && let Some(input) = input.downcast_mut::<UpdateAppSettingInput>()
                 && let Some(row) = existing_row.and_then(|row| row.downcast_ref::<AppSetting>())
