@@ -382,5 +382,11 @@
     "list": "torrentContentsList",
     "get": "torrentContents",
     "changed": "torrentContentsChanged"
+  },
+  {
+    "entity": "StorageVolume",
+    "list": "storageVolumes",
+    "get": "storageVolume",
+    "changed": "storageVolumeChanged"
   }
 ]

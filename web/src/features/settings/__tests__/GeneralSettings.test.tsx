@@ -14,11 +14,12 @@ const settings = vi.hoisted(() => ({
   metadata: { values: new Map<string, string>(), loading: false, save: vi.fn() },
   subtitles: { values: new Map<string, string>(), loading: false, save: vi.fn() },
   discovery: { values: new Map<string, string>(), loading: false, save: vi.fn() },
+  storage: { values: new Map<string, string>(), loading: false, save: vi.fn() },
 }));
 vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => settings.admin }));
 vi.mock("../useAppSettings", async (importOriginal) => ({
   ...await importOriginal<typeof import("../useAppSettings")>(),
-  useAppSettings: (category: "playback" | "metadata" | "subtitles" | "discovery") => settings[category],
+  useAppSettings: (category: "playback" | "metadata" | "subtitles" | "discovery" | "storage") => settings[category],
 }));
 
 let refresh: () => void;
@@ -41,12 +42,13 @@ const save = () => screen.getByRole("button", { name: "Save" });
 beforeEach(() => {
   vi.clearAllMocks();
   settings.admin = true;
-  settings.playback.loading = settings.metadata.loading = settings.subtitles.loading = settings.discovery.loading = false;
+  settings.playback.loading = settings.metadata.loading = settings.subtitles.loading = settings.discovery.loading = settings.storage.loading = false;
+  settings.storage.values = new Map();
   settings.discovery.values = new Map([["discovery.advertise", "true"], ["discovery.web_url", ""]]);
   settings.playback.values = new Map([["playback_sync_interval", "30"]]);
   settings.metadata.values = new Map([["metadata.preferred_language", "en"]]);
   settings.subtitles.values = new Map([["subtitles.preferred_languages", '["en","de"]']]);
-  for (const category of [settings.playback, settings.metadata, settings.subtitles, settings.discovery]) category.save.mockReset().mockResolvedValue(undefined);
+  for (const category of [settings.playback, settings.metadata, settings.subtitles, settings.discovery, settings.storage]) category.save.mockReset().mockResolvedValue(undefined);
   localStorage.clear();
 });
 
@@ -216,10 +218,25 @@ describe("GeneralSettings on a TV remote", () => {
     localStorage.setItem("librarian.inputMode", "tv");
     await renderWithProviders(<><RemoteNavigation /><main id="main"><Harness /></main></>, { shell: true, router: false });
     layoutColumn(document.body);
-    const rows = ["Blur", "Animated backgrounds", "TV mode", "Save progress every", "Make previews for existing videos", "Keep play history for", "Metadata language", "Announce on the local network", "Address for TV apps"];
+    const rows = ["Blur", "Animated backgrounds", "TV mode", "Save progress every", "Make previews for existing videos", "Keep play history for", "Warning share", "Warning size", "Critical share", "Critical size", "Metadata language", "Announce on the local network", "Address for TV apps"];
     expect(remoteStops(document.body)).toEqual(["Dark", "Light", ...rows]);
     const down = walkRemote(remoteStopElements(document.body)[0]!);
     expect(down).toEqual(["Dark", ...rows]);
     expect(walkRemote(document.activeElement as HTMLElement, "ArrowUp")).toEqual([...down].reverse());
+  });
+});
+
+describe("GeneralSettings storage thresholds", () => {
+  it("shows the low-space defaults and saves edited thresholds as fractions and bytes", async () => {
+    await mount();
+    expect(screen.getAllByLabelText("Warning share").find((node) => node.tagName === "INPUT")).toHaveValue("10");
+    await edit("Warning share", "15");
+    await userEvent.click(save());
+    await waitFor(() => expect(settings.storage.save).toHaveBeenCalledWith({
+      "storage.warning_free_fraction": 0.15,
+      "storage.warning_free_bytes": 50e9,
+      "storage.critical_free_fraction": 0.05,
+      "storage.critical_free_bytes": 20e9,
+    }));
   });
 });

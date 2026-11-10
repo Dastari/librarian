@@ -62,5 +62,6 @@
   {"entity":"TorznabCategory","read":"member.read","write":"admin.write","scope":"shared"},
   {"entity":"QualityProfile","read":"member.read","write":"admin.write","scope":"shared"},
   {"entity":"ReleaseBlocklist","read":"member.read","write":"admin.write","scope":"shared"},
-  {"entity":"TorrentContents","read":"admin.read","write":"admin.write","scope":"admin"}
+  {"entity":"TorrentContents","read":"admin.read","write":"admin.write","scope":"admin"},
+  {"entity":"StorageVolume","read":"admin.read","write":"admin.write","scope":"admin"}
 ]

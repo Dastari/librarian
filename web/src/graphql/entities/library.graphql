@@ -20,6 +20,7 @@ fragment LibraryFields on Library {
   scanning
   lastScannedAt
   qualityProfileId
+  storageVolumeId
   createdAt
   updatedAt
 }

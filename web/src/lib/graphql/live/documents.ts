@@ -59,6 +59,7 @@ const entityDocuments = {
   Show: G.EntityShowChangedDocument,
   SourcePriorityRule: G.EntitySourcePriorityRuleChangedDocument,
   StatsShare: G.EntityStatsShareChangedDocument,
+  StorageVolume: G.EntityStorageVolumeChangedDocument,
   Source: G.EntitySourceChangedDocument,
   Subtitle: G.EntitySubtitleChangedDocument,
   TitleDetail: G.EntityTitleDetailChangedDocument,
