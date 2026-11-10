@@ -160,6 +160,9 @@ export function LibrarySettingsDialog({ library, open, onOpenChange, tab: chosen
             <Surface material="inset" padding="tile" radius="tile" className="flex min-w-0 flex-col gap-1">
               <p className="text-label-sm text-muted">A file would go here</p>
               <p className="font-mono text-label-sm text-foreground [overflow-wrap:anywhere]">{previewOf(pattern)}</p>
+              {library.libraryType.toLowerCase() === "tv" && (pattern || defaultPattern).includes("{year}") ? (
+                <p className="text-label-sm text-muted">{"{year} is the show's year. A show without one gets a folder with just its name."}</p>
+              ) : null}
             </Surface>
           )}</form.Subscribe>
         </div>

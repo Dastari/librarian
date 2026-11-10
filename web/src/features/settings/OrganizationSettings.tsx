@@ -139,7 +139,7 @@ export function OrganizationSettings() {
         </FormActions>
       </Form>
 
-      <SettingsSection title="Naming patterns" description="Tokens such as {title}, {year}, {season:00}, {episode:00}, {quality} are replaced when files are organized." actions={<Button variant="primary" size="sm" onPress={() => setEditing("new")}><IconPlus /> New pattern</Button>}>
+      <SettingsSection title="Naming patterns" description="Tokens such as {show}, {title}, {year}, {season:00}, {episode:00}, {quality} are replaced when files are organized. In TV patterns {year} is the show’s year; for a show without one, ({year}) and the space before it are left out." actions={<Button variant="primary" size="sm" onPress={() => setEditing("new")}><IconPlus /> New pattern</Button>}>
         <SettingsLoadError error={patterns.error} retry={patterns.refetch} hasRows={rows.length > 0} />
         <LoadedDataTable<Pattern> complete={!patterns.loading && !patterns.error} height="auto" selectable queryKey={user?.id} id={`librarian.${user?.id ?? "session"}.settings.naming-patterns`} label="Naming patterns" columns={columns} rows={rows} getRowId={(row) => row.id} getRowLabel={(row) => row.name} loading={patterns.loading && rows.length === 0} actions={actions} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "pattern", other: "patterns" }} />} onRowOpen={(row) => (row.isSystem ? undefined : setEditing(row))} rowOpen="click" noun={{ one: "pattern", other: "patterns" }} emptyMessage="No naming patterns" />
       </SettingsSection>
