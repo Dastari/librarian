@@ -1,6 +1,6 @@
 # Librarian web style guide
 
-Glass UX 0.19.1 owns the shared UI and appearance runtime. Follow the
+Glass UX 0.19.5 owns the shared UI and appearance runtime. Follow the
 [migration plan](../docs/glass-ux-migration-plan.md),
 [shared design rules](../docs/glass-ux/ui-rules.md) and
 [layout contract](../docs/glass-ux/layout-contract.md). The
@@ -37,7 +37,10 @@ one), full glass, comfortable density, system motion and the default radius, lin
 and interface size. Two choices remain. Dark or Light (Dark by default, never following
 the system) persists under `librarian.appearance.v1`; anything else stored there is
 dropped. Blur is a device setting under `librarian.blur.v1`, for everyone on that browser:
-off, Glass renders with `glassRendering: "none"`. Do not add palettes or appearance knobs.
+off, Glass renders with `glassRendering: "none"`. Glass 0.19.4 made blur a stored
+preference too, so the device's choice is passed as `locked.glassRendering`: the colour
+mode's `update()` stores the whole appearance, and a stored blur would otherwise outrank it.
+Do not add palettes or appearance knobs.
 
 Use `Surface` material/radius/padding props and `PanelHeader`, `PanelBody` and
 `PanelFooter` slots. Raw material classes supply neither content insets nor the
@@ -157,7 +160,7 @@ See [responsive audit](../docs/responsive-media-audit.md) for route coverage and
 the release-source continuation limitation. Never filter a partial server batch
 while presenting it as the complete dataset.
 
-The pinned Glass dependency has a small pnpm patch at `patches/glass-ux@0.19.1.patch`: grid
+The pinned Glass dependency has a small pnpm patch at `patches/glass-ux@0.19.5.patch`: grid
 focus capture synchronizes the virtualizer's active row after native focus, retaining
 alphabet-jump and cell focus while scrolling. Its additive `infinite.revision` rearms replaced
 batches without using the semantic query key or resetting the reader, and `setDuration` lets the
@@ -351,7 +354,9 @@ component takes Back, it calls `preventDefault()` and `stopPropagation()`.
 - **One highlight.** Keyboard focus and mouse hover never highlight two items at once: the input used
   last owns it (`data-last-input`, `lib/pointer-focus.ts`). Style hover under
   `:root:not([data-last-input="keys"])` and focus rings under `:root:not([data-last-input="pointer"])`;
-  in TV mode hover moves focus, so style `:focus-within` only (design.md Q144).
+  in TV mode hover moves focus, so style `:focus-within` only (design.md Q144). Glass's own
+  DataTable row hover fill is dropped after a key press (`styles/overrides.css`): since 0.19.5 it
+  snaps on, so rows the remote scrolls under a resting cursor would each flash.
 
 ## Motion
 

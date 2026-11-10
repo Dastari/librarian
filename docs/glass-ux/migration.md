@@ -3,6 +3,75 @@
 Upgrade steps between releases. Each section lists the changes that need code edits first,
 then behaviour changes to review. The [changelog](../CHANGELOG.md) lists everything else.
 
+## 0.19.4 → 0.19.5
+
+No code edits are needed.
+
+Behaviour to review:
+
+- Hover-in is now instant on DataTable rows and row actions, notification rows and tools, and list items
+  (`.fa-item`); leaving still eases. A test that waited for a hover transition to finish no longer needs to.
+- Tests run against a documentation site built with the docs kit: demo blocks far from the view skip
+  rendering once a person scrolls, but not under automation unless `localStorage["docs-kit.far-blocks"]`
+  is `"on"`.
+
+## 0.19.3 → 0.19.4
+
+No code edits are needed.
+
+Behaviour to review:
+
+- `configureAppearance({ glassRendering })` still works, as the site-wide default. Move it to
+  `defaults: { glassRendering }`, or to `locked: { glassRendering }` if people must not change it.
+- If you kept blur under your own storage key and configured it before first paint, drop that code. Use
+  `useAppearance().update({ glassRendering })`, or the style group in `AppearanceSettings`. The boot
+  script now restores the choice, and Reset includes it.
+- `exportAppearance(...).theme.glassRendering` is no longer set. Read `theme.defaults.glassRendering`.
+  Themes you already committed with a top-level `glassRendering` still configure and import.
+- `appearanceConfig().glassRendering` is the site-wide default, or the locked value. For what a person
+  sees, read `useAppearance().appearance.glassRendering`.
+
+New props:
+
+- `Appearance.glassRendering`, and the Blur row in `AppearanceSettings`'s `"style"` section.
+
+## 0.19.2 → 0.19.3
+
+No code edits are needed.
+
+Behaviour to review:
+
+- A `Slider` in a `SettingRow` control now takes 14rem. Remove overrides such as
+  `.fa-appearance-slider { width: 14rem }`. A slider given its own width keeps it.
+- `AppearanceSettings` in Flat shows Material, Background and Animation as fixed, with "Not used in
+  Flat". Pass `flat="hide"` to leave them out instead.
+
+New props:
+
+- `AppearanceSettings.flat`, and `"style"` in `AppearanceSection`. If you added your own Style row above
+  the panel, you can use the section instead.
+
+## 0.19.1 → 0.19.2
+
+No code edits are needed.
+
+Behaviour to review:
+
+- On touch screens, text in inputs, textareas, selects and editable regions is at least 16 px. Remove any
+  override added to stop iPhone Safari zooming (such as `input { font-size: max(16px, …) }`). An element
+  whose own font size is larger than its parent's can carry `data-own-font-size` and set its own floor.
+- `RadioCard` titles wrap. Cards in a horizontal grid can differ in height when one title is longer; remove
+  any override that made titles wrap.
+- `PhoneInput.ref` is the number input. Replace a focus selector that skips `[aria-hidden='true']` with
+  `autoFocus` or the ref.
+- Remove overrides that enlarged `.fa-phone-country` or a pressable `.fa-level-gauge` on touch screens: their
+  hit areas now reach 44 px without the controls growing.
+
+New props:
+
+- `RadioCard.size`, `SignaturePad.maxHeight` and `SignatureField.maxHeight`, and standard input attributes on
+  `PhoneInput`, `PhoneField` and `MobileField` (`PhoneInputAttributes`).
+
 ## 0.19.0 → 0.19.1
 
 No code edits are needed.
