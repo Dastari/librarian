@@ -27,7 +27,7 @@ start_backend() {
 
 start_web() {
   if [ -f /tmp/librarian-web-shots.pid ] && kill -0 "$(cat /tmp/librarian-web-shots.pid)" 2>/dev/null; then echo "web running"; return; fi
-  BACKEND_PROXY_TARGET=http://127.0.0.1:3011 nohup pnpm exec vite --port 3003 --host 127.0.0.1 > /tmp/web-shots.log 2>&1 &
+  BACKEND_PROXY_TARGET=http://127.0.0.1:3011 nohup pnpm exec vite --config e2e/vite.sandbox.config.ts --port 3003 --host 127.0.0.1 > /tmp/web-shots.log 2>&1 &
   echo $! > /tmp/librarian-web-shots.pid
   for _ in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:3003/ && { echo "web started on :3003"; return; }; sleep 0.5; done
   echo "web failed"; tail -20 /tmp/web-shots.log; exit 1
