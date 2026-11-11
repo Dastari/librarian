@@ -1,13 +1,23 @@
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Float } from "@react-three/drei";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
 /**
  * Ambient 3D backdrop: translucent "poster" panes drifting through soft light. Used behind the
- * sign-in card and the empty home state. Rendered lazily and only when motion is allowed; it
- * pauses when the tab is hidden because r3f stops the frame loop.
+ * sign-in card and the empty home state. Rendered lazily and only when motion is allowed.
+ *
+ * It is a soft background, so it is drawn as cheaply as it can be (design.md Q155): frames on
+ * demand at 30 a second, none while it's scrolled out of view or the tab is hidden, at 1× pixel
+ * density without antialiasing, and with plain translucent panes (a physical "transmission"
+ * material renders the whole scene a second time). A software renderer, or a GPU that can't keep
+ * up in the first seconds, gets the plain gradient instead (`onSlow`).
  */
+
+/** Frames a second the scene asks for; the drift is slow, so more buys nothing. */
+const FPS = 30;
+/** Seconds of frames measured before deciding the GPU keeps up, after a second to settle. */
+const MEASURE = { settle: 1000, window: 3000 } as const;
 
 const PANE_COLOURS = ["#7c6cff", "#4fd1ff", "#ffb35c", "#ff5ea8", "#5cf0b8"];
 
@@ -62,18 +72,7 @@ function Pane({ position, rotation, colour, scale, speed, image }: PaneProps) {
         {texture ? (
           <meshStandardMaterial map={texture} roughness={0.35} metalness={0.05} transparent opacity={0.92} side={THREE.DoubleSide} />
         ) : (
-          <meshPhysicalMaterial
-            color={colour}
-            transparent
-            opacity={0.55}
-            roughness={0.25}
-            metalness={0.1}
-            transmission={0.35}
-            thickness={0.6}
-            clearcoat={1}
-            clearcoatRoughness={0.2}
-            side={THREE.DoubleSide}
-          />
+          <meshStandardMaterial color={colour} transparent opacity={0.5} roughness={0.25} metalness={0.1} side={THREE.DoubleSide} />
         )}
       </mesh>
     </Float>
@@ -111,6 +110,50 @@ function CameraDrift() {
   return null;
 }
 
+/**
+ * Drives the scene's frames itself (the canvas renders on demand): one frame per 1/FPS while the
+ * canvas is on screen and the tab is visible. It also gives up on GPUs that can't keep up.
+ */
+function Pacer({ onSlow }: { onSlow: () => void }) {
+  const { invalidate, gl } = useThree();
+  useEffect(() => {
+    const context = gl.getContext();
+    const info = context.getExtension("WEBGL_debug_renderer_info");
+    const renderer = info ? String(context.getParameter(info.UNMASKED_RENDERER_WEBGL)) : "";
+    if (/swiftshader|llvmpipe|software|basic render/i.test(renderer)) {
+      onSlow();
+      return;
+    }
+    let onScreen = true;
+    const observer = new IntersectionObserver(([entry]) => {
+      onScreen = Boolean(entry?.isIntersecting);
+    });
+    observer.observe(gl.domElement);
+    const started = performance.now();
+    let last = 0;
+    let measured = 0;
+    let decided = false;
+    let frame = requestAnimationFrame(function tick(now) {
+      frame = requestAnimationFrame(tick);
+      if (!onScreen || document.hidden || now - last < 1000 / FPS - 2) return;
+      last = now;
+      invalidate();
+      const elapsed = now - started;
+      if (decided || elapsed < MEASURE.settle) return;
+      measured += 1;
+      if (elapsed < MEASURE.settle + MEASURE.window) return;
+      decided = true;
+      // Well under the frame rate it asked for: the GPU is struggling, and the page with it.
+      if (measured < (MEASURE.window / 1000) * FPS * 0.6) onSlow();
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [gl, invalidate, onSlow]);
+  return null;
+}
+
 /** Deterministic PRNG so the scene looks the same on every load. */
 function mulberry32(seed: number) {
   let a = seed;
@@ -123,12 +166,13 @@ function mulberry32(seed: number) {
   };
 }
 
-export default function AmbientScene({ density = 11, images = [] }: { density?: number; images?: string[] }) {
+export default function AmbientScene({ density = 11, images = [], onSlow }: { density?: number; images?: string[]; onSlow: () => void }) {
   return (
     <Canvas
-      dpr={[1, 1.5]}
+      dpr={1}
+      frameloop="demand"
       camera={{ position: [0, 0, 6], fov: 45 }}
-      gl={{ antialias: true, alpha: true, powerPreference: "low-power" }}
+      gl={{ antialias: false, alpha: true, powerPreference: "low-power" }}
       className="!absolute inset-0"
       aria-hidden
     >
@@ -138,6 +182,7 @@ export default function AmbientScene({ density = 11, images = [] }: { density?: 
       <pointLight position={[6, 2, 1]} intensity={9} color="#4fd1ff" distance={12} />
       <Panes count={density} images={images} />
       <CameraDrift />
+      <Pacer onSlow={onSlow} />
     </Canvas>
   );
 }

@@ -23,15 +23,11 @@
   box-shadow: none;
 }
 
+/* No shadow layer behind tiles at all on the TV: the ring marks the focused one. */
+:root[data-tv-app] .poster-card::before { display: none; }
+
 /* Rows appear at once instead of rising in one after another. */
 :root[data-tv-app] .media-rise { animation: none; }
-
-/* The guide's sticky headings: an opaque fill instead of frosting what scrolls under them. */
-:root[data-tv-app] :is(.guide-grid-corner, .guide-grid-day, .guide-grid-service) {
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  background-color: var(--canvas);
-}
 
 /* The TV's volume is fixed (or set by a sound system): the player keeps its mute button and shows a
  * note in place of a slider that could not change anything (VideoPlayer, Q137). */

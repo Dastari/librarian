@@ -32,11 +32,21 @@ export function MediaRow({ children, className, ariaLabel }: MediaRowProps) {
     const element = ref.current;
     if (!element) return;
     update();
-    element.addEventListener("scroll", update, { passive: true });
+    // Scroll events can come several times a frame; the arrows only need checking once per frame.
+    let frame = 0;
+    const onScroll = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        update();
+      });
+    };
+    element.addEventListener("scroll", onScroll, { passive: true });
     const observer = new ResizeObserver(update);
     observer.observe(element);
     return () => {
-      element.removeEventListener("scroll", update);
+      cancelAnimationFrame(frame);
+      element.removeEventListener("scroll", onScroll);
       observer.disconnect();
     };
   }, [update, children]);

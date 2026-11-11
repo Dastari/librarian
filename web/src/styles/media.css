@@ -67,17 +67,20 @@
   transform: none;
 }
 
-/* One static blur of the same image tints the page; it is never animated. */
+/* A thumbnail of the same image, stretched, tints the page (MediaBackdrop's BackdropWash). It is
+ * pre-blurred in a tiny canvas, so the page never pays for a full-screen blur filter. */
 .media-backdrop-wash {
-  inset-inline: -10%;
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: -10%;
   inline-size: 120%;
   block-size: 100%;
-  filter: blur(4.5rem) saturate(1.4);
-  opacity: 0.42;
-  mask-image: linear-gradient(to bottom, #000 25%, transparent 100%);
+  opacity: 0;
+  transition: opacity calc(var(--duration-slower) * var(--motion-scale)) var(--ease-glide);
 }
+.media-backdrop-wash[data-loaded="true"] { opacity: 0.42; }
 
-:root[data-mode="light"] .media-backdrop-wash { opacity: 0.3; }
+:root[data-mode="light"] .media-backdrop-wash[data-loaded="true"] { opacity: 0.3; }
 
 .media-backdrop-scrim {
   background:
@@ -130,9 +133,25 @@
 /* ---- Poster tiles ----------------------------------------------------------------------- */
 
 .poster-art {
+  transition: transform calc(var(--duration-base) * var(--motion-scale)) var(--ease-spring);
+}
+
+/* The tile's shadow: drawn once on a layer the art's shape and size (PosterCard sets
+ * --poster-ratio), then only faded and scaled. Animating the art's own box-shadow repainted the
+ * shadow on every frame of the transition, on every tile the pointer or remote passed over. */
+.poster-card::before {
+  content: "";
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  aspect-ratio: var(--poster-ratio, 2 / 3);
+  border-radius: var(--radius-tile);
+  box-shadow: var(--poster-shadow-hover);
+  opacity: 0;
+  pointer-events: none;
   transition:
-    transform calc(var(--duration-base) * var(--motion-scale)) var(--ease-spring),
-    box-shadow calc(var(--duration-base) * var(--motion-scale)) var(--ease-standard);
+    opacity calc(var(--duration-base) * var(--motion-scale)) var(--ease-standard),
+    transform calc(var(--duration-base) * var(--motion-scale)) var(--ease-spring);
 }
 
 /* The link covers the whole tile; the ring belongs to the artwork, which is the card. */
@@ -144,7 +163,7 @@
 }
 
 @media (hover: hover) and (pointer: fine) {
-  :root:not([data-last-input="keys"]) .poster-card:hover .poster-art { box-shadow: var(--poster-shadow-hover); }
+  :root:not([data-last-input="keys"]) .poster-card:hover::before { opacity: 1; }
 }
 
 /* Remote focus: the focused tile grows like on a TV home screen. Transform only, so
@@ -152,7 +171,9 @@
 /* In TV mode hovering a tile focuses it (lib/pointer-focus.ts), so focus alone marks it: the mouse
  * and the remote never highlight two tiles at once. The lifted tile draws over its neighbours. */
 :root[data-input-mode="tv"] .poster-card:focus-within { position: relative; z-index: 1; }
-:root[data-input-mode="tv"] .poster-card:focus-within .poster-art,
+:root[data-input-mode="tv"] .poster-card::before { box-shadow: var(--shadow-3); }
+:root[data-input-mode="tv"] .poster-card:focus-within::before { opacity: 1; transform: scale(1.05); }
+:root[data-input-mode="tv"] .poster-card:focus-within .poster-art { transform: scale(1.05); z-index: 1; }
 :root[data-input-mode="tv"] .tv-lift:focus-within > .tv-lift-target,
 :root[data-input-mode="tv"] .tv-lift:is(:focus-visible, [data-focus-visible="true"]) {
   transform: scale(1.05);
@@ -479,15 +500,16 @@
 
 .guide-tile:active { transform: scale(0.98); }
 
-/* Frosted fills on the canvas: the rows pass under these headings as they scroll. */
+/* Solid fills: the rows pass under these headings as they scroll. They used to frost what passed
+ * under them, but every heading cell then re-blurred its patch on every scroll frame, which a weak
+ * GPU feels; an opaque band a shade off the canvas reads the same. */
 .guide-grid-scroll { scroll-padding-block-start: 4rem; scroll-padding-inline-start: 9.5rem; }
 
 .guide-grid-corner,
 .guide-grid-day,
 .guide-grid-service {
-  background-color: color-mix(in oklab, var(--canvas) 72%, transparent);
-  -webkit-backdrop-filter: blur(1rem);
-  backdrop-filter: blur(1rem);
+  --_band: color-mix(in oklab, var(--canvas) 94%, var(--fg));
+  background-color: var(--_band);
 }
 
 .guide-grid-corner,
@@ -498,7 +520,7 @@
 }
 
 .guide-grid-corner { inset-inline-start: 0; z-index: 3; }
-.guide-grid-day.guide-grid-today { background-color: color-mix(in oklab, var(--accent) 18%, color-mix(in oklab, var(--canvas) 72%, transparent)); }
+.guide-grid-day.guide-grid-today { background-color: color-mix(in oklab, var(--accent) 18%, var(--_band)); }
 
 .guide-grid-service {
   position: sticky;
@@ -506,7 +528,7 @@
   z-index: 1;
 }
 
-.guide-grid-service.guide-grid-yours { background-color: color-mix(in oklab, var(--accent) 12%, color-mix(in oklab, var(--canvas) 72%, transparent)); }
+.guide-grid-service.guide-grid-yours { background-color: color-mix(in oklab, var(--accent) 12%, var(--_band)); }
 
 /* An episode someone followed a link to. */
 .episode-focus { background-color: var(--fill-selected, color-mix(in oklab, var(--accent) 22%, transparent)); border-radius: var(--radius-control); outline: 2px solid var(--accent); outline-offset: 2px; }

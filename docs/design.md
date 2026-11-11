@@ -3256,3 +3256,11 @@ Now:
 - **Opening zoom:** shortened to the fade's length, so it ends before the first scroll.
 - **Over artwork:** nothing is frosted (`.over-imagery { --_frost: none }`). Controls there take a solid canvas tint.
 - **Rail and top bar:** they keep their frosting. A pause-while-scrolling toggle (Glass `data-moving`) was tried and dropped. The strips are thin, so their blur is cheap, and switching the material at the start and end of each scroll risked a hitch and a visible pop.
+
+Second pass, the same kind of cost elsewhere:
+- **Colour wash:** the wash behind media pages was a 320 px image stretched full-screen under a 4.5rem `filter: blur` and its own mask. It is now drawn once into a canvas 48 px wide, lightly blurred, with its fade baked in, and the browser stretches the canvas. No filter, no mask, same look.
+- **Guide headings:** the sticky day and service cells were frosted, so each re-blurred its patch on every scroll frame. They are now an opaque band a shade off the canvas, on every device.
+- **Poster shadows:** a tile's hover or focus shadow is drawn once on `.poster-card::before`, shaped by `--poster-ratio`, and only faded and scaled. Animating the art's `box-shadow` repainted it on every frame.
+- **Home's 3D scene:** renders on demand at 30 fps, only while on screen and the tab is visible. It runs at 1× density without antialiasing, and its panes use a plain translucent material, because a physical "transmission" material renders the scene a second time. A software renderer, or a GPU that manages under 60% of the frames in its first seconds, falls back to the gradient for the rest of the tab.
+- **Sign-in constellation:** 1× density and 30 fps; hidden tabs already get no animation frames.
+- **Poster rows:** a row checks its scroll arrows once per frame, not once per scroll event.

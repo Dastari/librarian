@@ -159,13 +159,14 @@ describe("MediaRow", () => {
     expect(scrollBy).toHaveBeenLastCalledWith({ left: 425, behavior: "smooth" });
     scrollLeft = 350;
     fireEvent.scroll(list);
-    expect(previous).toBeEnabled();
+    // The arrows are checked once per animation frame, not on every scroll event.
+    await vi.waitFor(() => expect(previous).toBeEnabled());
     expectPermanentControl(previous);
     await userEvent.click(previous);
     expect(scrollBy).toHaveBeenLastCalledWith({ left: -425, behavior: "smooth" });
     scrollLeft = 700;
     fireEvent.scroll(list);
-    expect(next).toBeDisabled();
+    await vi.waitFor(() => expect(next).toBeDisabled());
     expect(previous).toBeEnabled();
   });
 

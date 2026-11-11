@@ -12,7 +12,7 @@ import type { StatusMeta } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { claimMorph } from "@/lib/view-transition";
 
-import { Artwork, type ArtworkAspect } from "./Artwork";
+import { Artwork, ASPECT, type ArtworkAspect } from "./Artwork";
 
 export interface PosterCardProps {
   title: string;
@@ -98,7 +98,9 @@ export function PosterCard({ title, meta, image, aspect = "poster", contain, tin
   const watched = typeof progress === "number" && progress > 0 ? Math.max(0, Math.min(1, progress)) : null;
 
   return (
-    <article style={style} data-selected={selected ? "true" : undefined}
+    // The tile's shadow is a layer the art's shape (`.poster-card::before`), faded and scaled
+    // instead of animating `box-shadow`, which repaints on every frame (design.md Q155).
+    <article style={{ "--poster-ratio": ASPECT[aspect], ...style } as CSSProperties} data-selected={selected ? "true" : undefined}
       className={cn("poster-card group relative flex min-w-0 flex-col", width === "row" && "w-(--poster-min) shrink-0 sm:w-[calc(var(--poster-min)*1.15)] xl:w-(--poster-max)", width === "compact" && "w-[calc(var(--poster-min)*0.72)] shrink-0 xl:w-[calc(var(--poster-max)*0.62)]", className)}>
       {navigation}
       <Surface material="card" radius="tile" padding="none"

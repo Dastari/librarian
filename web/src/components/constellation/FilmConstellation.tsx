@@ -122,7 +122,9 @@ export function FilmConstellation({ className, opacity = 0.9, density = 1, clear
 
     const size = () => {
       const rect = canvas.getBoundingClientRect();
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      // 1× is plenty for soft points and hairlines behind the sign-in card, and a quarter of the
+      // pixels of 2× on a high-density screen (design.md Q155).
+      const dpr = 1;
       canvas.width = Math.round(rect.width * dpr);
       canvas.height = Math.round(rect.height * dpr);
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -253,6 +255,12 @@ export function FilmConstellation({ className, opacity = 0.9, density = 1, clear
 
     const tick = (time: number) => {
       if (cancelled || !simulation) return;
+      // 30 frames a second is smooth for a drift this slow, and half the work of a 60 Hz screen.
+      // A hidden tab gets no animation frames at all, so it already pauses there.
+      if (time - last < 1000 / 30 - 2) {
+        frame = requestAnimationFrame(tick);
+        return;
+      }
       const dt = Math.min(0.05, (time - last) / 1000);
       last = time;
       simulation.step(dt);
