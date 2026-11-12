@@ -29,6 +29,7 @@ use crate::db::Database;
 use crate::graphql::entities::Torrent;
 use crate::services::graphql::AuthUser;
 use crate::services::graphql::LibrarianSchema;
+use crate::services::library_scan::IdentifyTrigger;
 use crate::services::library_scan::{LibraryScanService, SourceFileImport, SourceProcessSummary};
 use crate::services::manager::{Service, ServiceHealth};
 use crate::services::torrent::client::{
@@ -83,6 +84,7 @@ struct TorrentRuntime {
     reconcile_handle: tokio::task::JoinHandle<()>,
     maintenance_handle: tokio::task::JoinHandle<()>,
     upnp_handle: tokio::task::JoinHandle<()>,
+    share_watch_handle: tokio::task::JoinHandle<()>,
 }
 
 impl TorrentRuntime {
@@ -94,6 +96,7 @@ impl TorrentRuntime {
         let _ = self.reconcile_handle.await;
         let _ = self.maintenance_handle.await;
         let _ = self.upnp_handle.await;
+        let _ = self.share_watch_handle.await;
         // session dropped here
     }
 }
@@ -127,6 +130,9 @@ pub struct TorrentAddMetadata {
     pub show_id: Option<String>,
     pub album_id: Option<String>,
     pub audiobook_id: Option<String>,
+    /// For a pack: the files that fill what is missing. Set when "Download only the missing files
+    /// from packs" is on; the torrent then downloads just those (see `torrent::partial`).
+    pub wanted_files: Option<crate::services::torrent::partial::WantedFiles>,
 }
 
 /// `created` means a new owned persisted record. Reusing a registered runtime identity
@@ -156,6 +162,75 @@ fn wanted_linkage(metadata: &TorrentAddMetadata) -> database::WantedLinkage<'_> 
         album_id: metadata.album_id.as_deref(),
         audiobook_id: metadata.audiobook_id.as_deref(),
     }
+}
+
+/// Select only the wanted files of a paused torrent. A selection that cannot be made, or that would
+/// leave nothing out, leaves the whole torrent selected: never fewer files than were asked for.
+async fn apply_wanted_files(
+    session: &Arc<Session>,
+    handle: &Arc<librqbit::ManagedTorrent>,
+    wanted: &crate::services::torrent::partial::WantedFiles,
+    info_hash: &str,
+    name: &str,
+) {
+    let Some(info) = handle.metadata.load_full() else {
+        return;
+    };
+    let names: Vec<String> = info
+        .file_infos
+        .iter()
+        .map(|file| file.relative_filename.to_string_lossy().to_string())
+        .collect();
+    let Some(chosen) = crate::services::torrent::partial::select_wanted_files(&names, wanted)
+    else {
+        info!(
+            info_hash,
+            name,
+            files = names.len(),
+            "Downloading all {} files of '{name}': the missing ones could not be told apart or are all of them",
+            names.len()
+        );
+        return;
+    };
+    let selection: std::collections::HashSet<usize> = chosen.iter().copied().collect();
+    match session.update_only_files(handle, &selection).await {
+        Ok(()) => info!(
+            info_hash,
+            name,
+            selected = chosen.len(),
+            files = names.len(),
+            "Downloading only {} of {} files of '{name}': the ones that fill what is missing",
+            chosen.len(),
+            names.len()
+        ),
+        Err(error) => warn!(
+            info_hash,
+            name,
+            error = %error,
+            "Could not select only the missing files of '{name}'; downloading all {} files",
+            names.len()
+        ),
+    }
+}
+
+/// Why a just-added torrent can't be what it was grabbed for, from its file list.
+fn wrong_payload_reason(
+    handle: &librqbit::ManagedTorrent,
+    metadata: &TorrentAddMetadata,
+) -> Option<String> {
+    let wants_audio = metadata.audiobook_id.is_some()
+        || metadata.album_id.is_some()
+        || metadata.track_id.is_some()
+        || metadata.chapter_id.is_some();
+    let wants_video =
+        metadata.movie_id.is_some() || metadata.show_id.is_some() || metadata.episode_id.is_some();
+    let info = handle.metadata.load_full()?;
+    let names: Vec<String> = info
+        .file_infos
+        .iter()
+        .map(|file| file.relative_filename.to_string_lossy().to_string())
+        .collect();
+    crate::services::release_match::payload_mismatch(wants_audio, wants_video, &names)
 }
 
 fn authorize_existing_add(
@@ -204,7 +279,9 @@ fn authorize_existing_add(
 /// What `addTorrent` was given: a magnet or URL the client can fetch, or the file itself.
 enum TorrentAddRequest<'a> {
     Uri(&'a str),
-    File(Vec<u8>),
+    /// A `.torrent` file, and the magnet to keep on its `Torrent` row for restoring (a public
+    /// torrent added from kept metadata, Q111); `None` keeps no magnet, as for a private torrent.
+    File(Vec<u8>, Option<String>),
 }
 
 impl TorrentService {
@@ -293,8 +370,52 @@ impl TorrentService {
         actor: &AuthUser,
         metadata: TorrentAddMetadata,
     ) -> Result<TorrentAddOutcome> {
-        self.add_for_actor(TorrentAddRequest::File(torrent_file), actor, metadata)
+        self.add_for_actor(TorrentAddRequest::File(torrent_file, None), actor, metadata)
             .await
+    }
+
+    /// Add a public torrent from metadata read before (Q99, Q111): its rebuilt `.torrent`, so no
+    /// peer is asked for the metadata again, keeping `magnet` on the row for restoring.
+    pub async fn add_stored_torrent_for_actor_with_outcome(
+        &self,
+        torrent_file: Vec<u8>,
+        magnet: String,
+        actor: &AuthUser,
+        metadata: TorrentAddMetadata,
+    ) -> Result<TorrentAddOutcome> {
+        self.add_for_actor(
+            TorrentAddRequest::File(torrent_file, Some(magnet)),
+            actor,
+            metadata,
+        )
+        .await
+    }
+
+    /// A torrent's `.torrent` bytes without adding it (Q99): a magnet's metadata is asked of peers,
+    /// an `http(s)` link is fetched, in librqbit's list-only mode, which answers before any storage,
+    /// handle or session entry exists. Nothing is downloaded or kept, and `timeout` bounds it. A
+    /// torrent the session already has answers from its handle.
+    pub async fn read_metadata_only(&self, uri: &str, timeout: Duration) -> Result<bytes::Bytes> {
+        let r = self
+            .runtime()
+            .await
+            .context("torrent service not started")?;
+        if let Some(hash) = librqbit::Magnet::parse(uri)
+            .ok()
+            .and_then(|magnet| magnet.as_id20())
+            .map(|hash| hash.as_string())
+            && let Some(handle) = database::session_handle(&r.session, &hash)
+            && let Some(metadata) = handle.metadata.load_full()
+        {
+            return Ok(metadata.torrent_bytes.clone());
+        }
+        crate::services::torrent::inspect::list_only(
+            &r.session,
+            AddTorrent::from_url(uri),
+            None,
+            timeout,
+        )
+        .await
     }
 
     async fn add_for_actor(
@@ -303,10 +424,16 @@ impl TorrentService {
         actor: &AuthUser,
         metadata: TorrentAddMetadata,
     ) -> Result<TorrentAddOutcome> {
-        let stored_uri = match &add {
-            TorrentAddRequest::Uri(uri) => Some(*uri),
-            TorrentAddRequest::File(_) => None,
+        let kept_magnet = match &add {
+            TorrentAddRequest::File(_, magnet) => magnet.clone(),
+            TorrentAddRequest::Uri(_) => None,
         };
+        let request_uri = match &add {
+            TorrentAddRequest::Uri(uri) => Some(*uri),
+            TorrentAddRequest::File(..) => None,
+        };
+        // What the row keeps for restoring: the address added from, or the magnet a file came with.
+        let stored_uri = request_uri.or(kept_magnet.as_deref());
         let _add_guard = self.add_lock.lock().await;
         let r = self
             .runtime()
@@ -324,15 +451,25 @@ impl TorrentService {
         if let Some(problem) = &r.download_dir_error {
             anyhow::bail!("{problem}");
         }
+        let download_dir = r.config.download_dir.to_string_lossy().into_owned();
+        if crate::services::library_storage::is_smb_uri(&download_dir)
+            && let Err(error) = crate::services::library_storage::library_storage()
+                .stat(download_dir.as_str())
+                .await
+        {
+            anyhow::bail!(
+                "The download folder is on a share that cannot be reached now ({error}). Try again when the share is back."
+            );
+        }
         let deadline = tokio::time::Instant::now() + ADD_TORRENT_TIMEOUT;
         // A URL can hide an already-owned hash. Resolve its metadata in list-only mode,
         // which the pinned client returns before creating storage or a managed handle.
-        let magnet_hash = stored_uri
+        let magnet_hash = request_uri
             .and_then(|uri| librqbit::Magnet::parse(uri).ok())
             .and_then(|magnet| magnet.as_id20());
         let (request, hash) = match magnet_hash {
             Some(hash) => (
-                AddTorrent::from_url(stored_uri.unwrap_or_default()),
+                AddTorrent::from_url(request_uri.unwrap_or_default()),
                 hash.0
                     .iter()
                     .map(|byte| format!("{byte:02x}"))
@@ -343,7 +480,7 @@ impl TorrentService {
                 options.list_only = true;
                 let source = match add {
                     TorrentAddRequest::Uri(uri) => AddTorrent::from_url(uri),
-                    TorrentAddRequest::File(bytes) => AddTorrent::from_bytes(bytes),
+                    TorrentAddRequest::File(bytes, _) => AddTorrent::from_bytes(bytes),
                 };
                 let resolved =
                     tokio::time::timeout_at(deadline, r.session.add_torrent(source, Some(options)))
@@ -393,7 +530,24 @@ impl TorrentService {
             }
             AddTorrentResponse::Added(id, handle) => {
                 let info_hash = get_info_hash_hex(&handle);
+                super::share_storage::register_folder(&info_hash, handle.output_folder());
                 let name = handle.name().unwrap_or_else(|| "Unknown".to_string());
+                // Still paused, so nothing has downloaded. A release with no usable files for what
+                // it was grabbed for stops here, not after a download and a failed import.
+                if let Some(reason) = wrong_payload_reason(&handle, &metadata) {
+                    if let Err(cleanup) = r.session.delete(TorrentIdOrHash::Id(id), false).await {
+                        error!(info_hash, error = %cleanup, "Failed to remove a refused torrent");
+                    }
+                    warn!(
+                        info_hash,
+                        name, reason, "Refused a release with no usable files"
+                    );
+                    anyhow::bail!(reason);
+                }
+                // Still paused: choose which files to download before any byte is fetched.
+                if let Some(wanted) = metadata.wanted_files.as_ref() {
+                    apply_wanted_files(&r.session, &handle, wanted, &info_hash, &name).await;
+                }
                 let result: Result<bool> = async {
                     let actor = current_add_actor(&r.db, &actor).await?;
                     let current_scope = database::resolve_torrent_create_owner(
@@ -533,6 +687,67 @@ impl TorrentService {
                 })
             }
         }
+    }
+
+    /// Every file of a download with how far it has got, finished or not.
+    pub async fn release_files(&self, info_hash: &str) -> Result<Vec<SourceFileImport>> {
+        use crate::graphql::entities::{
+            Torrent, TorrentFile, TorrentFileWhereInput, TorrentWhereInput,
+        };
+        use graphql_orm::graphql::filters::StringFilter;
+        let r = self
+            .runtime()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("torrent service not started"))?;
+        if let Ok(Some(rows)) =
+            database::completed_torrent_file_rows(&r.session, &r.db, info_hash).await
+        {
+            return Ok(rows
+                .into_iter()
+                .map(|row| SourceFileImport {
+                    source_path: row.file_path,
+                    relative_path: row.relative_path,
+                    file_size: row.file_size,
+                    downloaded_bytes: row.downloaded_bytes,
+                    file_index: Some(row.file_index),
+                })
+                .collect());
+        }
+        // Not loaded in the client: what was last stored is still worth showing.
+        let torrent = Torrent::query(r.db.pool())
+            .filter(TorrentWhereInput {
+                info_hash: Some(StringFilter {
+                    eq: Some(info_hash.to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .limit(1)
+            .fetch_all()
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("Torrent not found or access denied"))?;
+        let rows = TorrentFile::query(r.db.pool())
+            .filter(TorrentFileWhereInput {
+                torrent_id: Some(StringFilter {
+                    eq: Some(torrent.id),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| SourceFileImport {
+                source_path: row.file_path,
+                relative_path: row.relative_path,
+                file_size: row.file_size,
+                downloaded_bytes: row.downloaded_bytes,
+                file_index: Some(row.file_index),
+            })
+            .collect())
     }
 
     /// One completed file of a loaded download, ready to import or match by hand.
@@ -712,6 +927,165 @@ impl TorrentService {
         Ok(())
     }
 
+    /// The download folder the client was started with.
+    pub async fn download_dir(&self) -> Option<PathBuf> {
+        Some(self.runtime().await?.config.download_dir.clone())
+    }
+
+    /// Compare the torrents in the download folder with their copy at `new_path` (Q105).
+    pub async fn downloads_move_plan(
+        &self,
+        new_path: &str,
+    ) -> Result<super::move_downloads::DownloadsMovePlan> {
+        let r = self
+            .runtime()
+            .await
+            .context("torrent service not started")?;
+        let old = r.config.download_dir.to_string_lossy().into_owned();
+        super::move_downloads::plan(&r.db, &old, new_path).await
+    }
+
+    /// Move the download folder to `new_path` (Q105): with `move_torrents`, every torrent under the
+    /// old folder is pointed at its copy under the new one and the records are rewritten;
+    /// without, only new downloads go there. The client restarts afterwards so the new folder
+    /// is its default. The old files are never deleted.
+    pub async fn move_downloads(
+        &self,
+        new_path: &str,
+        move_torrents: bool,
+        allow_missing: bool,
+    ) -> Result<super::move_downloads::Rewritten> {
+        use super::move_downloads as moving;
+        let r = self
+            .runtime()
+            .await
+            .context("torrent service not started")?;
+        let old_root = moving::normalize_root(&r.config.download_dir.to_string_lossy())?;
+        let new_root = moving::normalize_root(new_path)?;
+        if move_torrents {
+            let plan = moving::plan(&r.db, &old_root, &new_root).await?;
+            if let Some(blocked) = plan.blocked {
+                anyhow::bail!("{blocked}");
+            }
+            if !plan.can_apply() && !allow_missing {
+                anyhow::bail!(
+                    "{} of {} files are not at the new folder yet (or not at the same size). Finish copying, or choose Move anyway",
+                    plan.missing + plan.changed,
+                    plan.file_count
+                );
+            }
+        } else if let Err(error) = crate::services::library_storage::library_storage()
+            .stat(new_root.as_str())
+            .await
+        {
+            anyhow::bail!("The new folder cannot be read: {error}");
+        }
+        let marker = moving::MoveMarker {
+            old_root: old_root.clone(),
+            new_root: new_root.clone(),
+            move_torrents,
+            started_at: Utc::now().to_rfc3339(),
+        };
+        moving::write_marker(&r.db, &marker).await?;
+        let rewritten = self.finish_downloads_move(&marker).await?;
+        // The session's default folder is fixed when it is made: start it again on the new one.
+        drop(r);
+        self.stop().await?;
+        self.start().await?;
+        Ok(rewritten)
+    }
+
+    /// Carry out (or finish) a marked move. Each step skips what is already done.
+    async fn finish_downloads_move(
+        &self,
+        marker: &super::move_downloads::MoveMarker,
+    ) -> Result<super::move_downloads::Rewritten> {
+        use super::move_downloads as moving;
+        let r = self
+            .runtime()
+            .await
+            .context("torrent service not started")?;
+        let mut rewritten = moving::Rewritten::default();
+        if marker.move_torrents {
+            let handles: Vec<Arc<librqbit::ManagedTorrent>> = r
+                .session
+                .with_torrents(|torrents| torrents.map(|(_, handle)| handle.clone()).collect());
+            for handle in handles {
+                let Some(folder) = moving::moved_folder(
+                    &marker.old_root,
+                    &marker.new_root,
+                    handle.output_folder(),
+                ) else {
+                    continue;
+                };
+                let info_hash = get_info_hash_hex(&handle);
+                if handle.metadata.load_full().is_none() {
+                    warn!(info_hash = %info_hash, "A torrent without its metadata yet stays where it is; it is moved once it has it");
+                    continue;
+                }
+                let paused = handle.is_paused();
+                super::share_watch::readd_from_metadata(&r.session, &handle, &folder, paused)
+                    .await
+                    .with_context(|| {
+                        format!("Could not move {info_hash} to {}", folder.display())
+                    })?;
+                info!(
+                    info_hash = %info_hash,
+                    folder = %folder.display(),
+                    "Torrent now reads from the new download folder"
+                );
+            }
+            rewritten =
+                moving::rewrite_records(&r.db, &r.schema, &marker.old_root, &marker.new_root)
+                    .await?;
+        }
+        database::put_setting_value(
+            &r.db,
+            "torrent.download_dir",
+            &serde_json::to_string(&marker.new_root)?,
+            "torrent",
+            "Where torrents download to",
+        )
+        .await?;
+        moving::clear_marker(&r.db).await?;
+        info!(
+            old = %marker.old_root,
+            new = %marker.new_root,
+            torrents = rewritten.torrents,
+            files = rewritten.files,
+            "Download folder moved"
+        );
+        Ok(rewritten)
+    }
+
+    /// Finish a move of the download folder that a stopped server left half done. Called once
+    /// after startup.
+    pub async fn resume_downloads_move(&self) {
+        let Some(r) = self.runtime().await else {
+            return;
+        };
+        let Some(marker) = super::move_downloads::read_marker(&r.db).await else {
+            return;
+        };
+        drop(r);
+        info!(old = %marker.old_root, new = %marker.new_root, "Finishing a move of the download folder");
+        match self.finish_downloads_move(&marker).await {
+            Ok(_) => {
+                // Started on the old default: start again on the new one.
+                if let Err(error) = self.stop().await {
+                    warn!(error = %error, "Could not restart the torrent client after the move");
+                    return;
+                }
+                if let Err(error) = self.start().await {
+                    warn!(error = %error, "Could not restart the torrent client after the move");
+                }
+            }
+            Err(error) => {
+                warn!(error = %error, "Could not finish the move of the download folder; it is tried again at the next start")
+            }
+        }
+    }
+
     /// Pause a torrent by info hash (hex string).
     pub async fn pause_by_info_hash(&self, info_hash: &str) -> Result<()> {
         let r = self
@@ -864,8 +1238,21 @@ impl Service for TorrentService {
         // and the setting can be fixed from the UI) but refuses to add
         // torrents until the directory works.
         let effective_download_dir = config.download_dir.clone();
+        let download_on_share =
+            crate::services::library_storage::is_smb_uri(&config.download_dir.to_string_lossy());
         let download_dir_error = match ensure_writable_dir(&config.download_dir).await {
             Ok(()) => None,
+            // A share that is down now is not a broken setting: its torrents wait for it (the
+            // share watcher), and adds are refused only while it stays down.
+            Err(e) if download_on_share && is_unavailable_text(&e.to_string()) => {
+                warn!(
+                    service = "torrent",
+                    path = %config.download_dir.display(),
+                    error = %e,
+                    "The download share cannot be reached now; torrents on it wait for it"
+                );
+                None
+            }
             Err(e) => {
                 let message = format!(
                     "Torrent download directory '{}' is not usable: {}. Set `torrent.download_dir` to a writable path; torrents cannot be added until this is fixed.",
@@ -930,11 +1317,33 @@ impl Service for TorrentService {
             None
         };
 
+        // The session restores its torrents before the server finishes starting, so torrents on a
+        // share need their sign-in now, not when the rest of the server installs it.
+        let storage = crate::services::library_storage::library_storage();
+        if !storage.has_share_provider() {
+            storage.install_share_provider(Arc::new(
+                crate::services::graphql::filesystem_network::NetworkShareProvider::new(
+                    db.clone(),
+                    self.manager.clone(),
+                ),
+            ));
+        }
+        // Torrents on a share are read and written through it (`share_storage`); the factory
+        // needs to know where each torrent lives before the session restores them.
+        super::share_storage::set_default_folder(&effective_download_dir);
+        super::share_storage::load_persisted_folders(&effective_session_dir);
         let session_opts = SessionOptions {
+            default_storage_factory: Some(librqbit::storage::StorageFactoryExt::boxed(
+                super::share_storage::LibrarianStorageFactory,
+            )),
             dht,
             persistence: Some(librqbit::SessionPersistenceConfig::Json {
                 folder: Some(effective_session_dir.clone()),
             }),
+            // Keep each torrent's checked pieces (`<session dir>/<hash>.bitv`) so a restart spot
+            // checks a sample of pieces instead of reading every file again, which matters once
+            // downloads live on a share. librqbit falls back to a full check if a sample fails.
+            fastresume: true,
             ratelimits: LimitsConfig {
                 upload_bps: NonZeroU32::new(config.upload_limit),
                 download_bps: NonZeroU32::new(config.download_limit),
@@ -1028,32 +1437,15 @@ impl Service for TorrentService {
             }
         }
 
-        // Seed already-completed torrents so startup doesn't emit Completed
-        // events for torrents that were complete before this process started.
+        // Seed already-processed torrents so startup doesn't emit Completed events for them.
         //
-        // The session alone is not enough: a restored torrent is still
-        // `Initializing` (hash-checking) when `Session::new_with_opts` returns,
-        // so its `progress_bytes` reads 0 and it looks unfinished. A second
-        // later the progress loop saw it hit 100% and emitted a fresh
-        // `Completed` event — re-running the whole import pipeline for every
-        // finished torrent on every restart and overwriting its
-        // `post_process_status`. So the database is the authority: any row that
-        // already reached 100% *and* has a post-process status has been through
-        // the pipeline. Rows that finished but never got a status are
-        // deliberately left out, so the reconciliation sweep still retries them.
+        // The database is the authority: any row that already reached 100% *and* has a
+        // post-process status has been through the pipeline. The session can't say. A restored
+        // torrent reads as 0% while it's hash-checked, then 100%, and a small one may already
+        // read 100% here whether or not it was ever processed. So it isn't consulted, and a
+        // torrent that finished without being processed gets its Completed event now.
         let mut completed_hashes: std::collections::HashSet<String> =
-            session.with_torrents(|iter| {
-                iter.filter_map(|(_, handle)| {
-                    let stats = handle.stats();
-                    let progress = progress_ratio(stats.progress_bytes, stats.total_bytes);
-                    if progress >= 1.0 {
-                        Some(get_info_hash_hex(handle))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-            });
+            std::collections::HashSet::new();
         match database::find_completed_torrents(&db).await {
             Ok(rows) => completed_hashes.extend(
                 rows.into_iter()
@@ -1174,6 +1566,13 @@ impl Service for TorrentService {
             .await;
         });
 
+        // Torrents on a share pause while it is down and resume when it is back.
+        let share_watch_handle = tokio::spawn(super::share_watch::watch_loop(
+            session.clone(),
+            db.clone(),
+            cancel_token.clone(),
+        ));
+
         let started_download_dir = config.download_dir.clone();
         let started_session_dir = config.session_dir.clone();
         let started_listen_port = config.listen_port;
@@ -1199,6 +1598,7 @@ impl Service for TorrentService {
             reconcile_handle,
             maintenance_handle,
             upnp_handle,
+            share_watch_handle,
         });
 
         *self.inner.write().await = Some(runtime);
@@ -1231,6 +1631,9 @@ impl Service for TorrentService {
         let previous = self.inner.write().await.take();
         if let Some(arc_r) = previous {
             arc_r.cancel_token.cancel();
+            // Stopped here even while something still holds the runtime, so a start that follows
+            // (after moving the download folder) can listen on the same port.
+            arc_r.session.stop().await;
             if let Ok(runtime) = Arc::try_unwrap(arc_r) {
                 runtime.shutdown().await;
             }
@@ -1370,6 +1773,9 @@ async fn completion_handler_loop(
     cancel: CancellationToken,
 ) {
     let auth_user = database::system_auth_user();
+    // How many files of each torrent have finished, to notice when another one does.
+    let mut finished_files: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
 
     loop {
         tokio::select! {
@@ -1390,6 +1796,24 @@ async fn completion_handler_loop(
 
                 let (info_hash, name) = match event {
                     TorrentEvent::Completed { info_hash, name, .. } => (info_hash, name),
+                    TorrentEvent::Progress { info_hash, .. } => {
+                        if let Some(finished) = finished_file_count(&session, &info_hash) {
+                            match finished_files.insert(info_hash.clone(), finished) {
+                                None => scan_service
+                                    .request_identification(&info_hash, IdentifyTrigger::Observed),
+                                Some(before) if finished > before => scan_service
+                                    .request_identification(&info_hash, IdentifyTrigger::FileFinished),
+                                Some(_) => {}
+                            }
+                        }
+                        continue;
+                    }
+                    TorrentEvent::Removed { info_hash, .. } => {
+                        finished_files.remove(&info_hash);
+                        let scan = scan_service.clone();
+                        tokio::spawn(async move { scan.forget_identification(&info_hash).await });
+                        continue;
+                    }
                     _ => continue,
                 };
 
@@ -1436,6 +1860,22 @@ async fn completion_handler_loop(
     }
 }
 
+/// How many of a torrent's files have finished. `None` until its file list is known.
+fn finished_file_count(session: &Arc<Session>, info_hash: &str) -> Option<usize> {
+    let hash = database::hex_to_info_hash(info_hash).ok()?;
+    let handle = session.get(TorrentIdOrHash::Hash(hash))?;
+    let metadata = handle.metadata.load_full()?;
+    let stats = handle.stats();
+    Some(
+        metadata
+            .file_infos
+            .iter()
+            .zip(&stats.file_progress)
+            .filter(|(file, progress)| file.len > 0 && **progress >= file.len)
+            .count(),
+    )
+}
+
 /// Core processing for a single completed torrent: reads file rows from the
 /// active session and imports them via the library scan service.
 ///
@@ -1469,11 +1909,12 @@ async fn process_completed_torrent_core(
         })
         .collect::<Vec<_>>();
 
-    Ok(Some(
-        scan_service
-            .process_torrent_source_files(auth_user, info_hash, library_override, files)
-            .await,
-    ))
+    let summary = scan_service
+        .process_torrent_source_files(auth_user, info_hash, library_override, files)
+        .await;
+    // What it was grabbed for has had its turn. Now work out everything else in it.
+    scan_service.request_identification(info_hash, IdentifyTrigger::Finished);
+    Ok(Some(summary))
 }
 
 fn log_completed_torrent_outcome(
@@ -1987,7 +2428,11 @@ async fn get_torrent_info_impl(session: &Session, id: usize) -> Result<TorrentIn
         .unwrap_or((0, 0, 0));
 
     let files = get_torrent_files_list(&handle);
+    let folder = handle.output_folder().to_string_lossy().into_owned();
+    let status_detail =
+        super::share_watch::waiting_message(&info_hash, &folder).or_else(|| stats.error.clone());
     Ok(TorrentInfo {
+        status_detail,
         id,
         info_hash,
         name,
@@ -2015,6 +2460,12 @@ async fn get_torrent_info_impl(session: &Session, id: usize) -> Result<TorrentIn
 /// directory, so the probe file is what catches a mounted-but-not-writable
 /// download path.
 async fn ensure_writable_dir(dir: &Path) -> Result<()> {
+    let text = dir.to_string_lossy();
+    if crate::services::library_storage::is_smb_uri(&text) {
+        return ensure_writable_share_dir(&text)
+            .await
+            .map_err(|error| anyhow::anyhow!("{error}"));
+    }
     tokio::fs::create_dir_all(dir)
         .await
         .with_context(|| format!("could not create directory '{}'", dir.display()))?;
@@ -2023,6 +2474,47 @@ async fn ensure_writable_dir(dir: &Path) -> Result<()> {
         .await
         .with_context(|| format!("directory '{}' is not writable", dir.display()))?;
     let _ = tokio::fs::remove_file(&probe).await;
+    Ok(())
+}
+
+fn is_unavailable_text(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    [
+        "could not reach",
+        "not connected",
+        "does not resolve",
+        "unavailable",
+        "timed out",
+        "connection",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
+}
+
+/// The same check for a download folder on a share: make it, then write and remove a probe file
+/// through the share.
+pub async fn ensure_writable_share_dir(
+    dir: &str,
+) -> crate::services::library_storage::StorageResult<()> {
+    use crate::services::library_storage::{PlaceMode, Storage, StorageLocation, library_storage};
+    let location = StorageLocation::parse(dir).map_err(|error| {
+        crate::services::library_storage::StorageError::new(
+            crate::services::library_storage::StorageErrorKind::Other,
+            format!("'{dir}' is not a valid share folder: {error}"),
+        )
+    })?;
+    let root = location.root_path();
+    let storage = library_storage().for_path(&root).await?;
+    storage.create_dir_all(&root).await?;
+    let probe = root.join(&format!(".librarian-write-test-{}", Uuid::new_v4()));
+    storage
+        .put_from_reader(
+            Box::new(std::io::Cursor::new(Vec::<u8>::new())),
+            &probe,
+            PlaceMode::NoClobber,
+        )
+        .await?;
+    let _ = storage.remove_file(&probe).await;
     Ok(())
 }
 
@@ -2269,6 +2761,9 @@ mod admission_tests {
             source_feed_id: None,
             source_indexer_id: None,
             library_id: None,
+            identification_kind: None,
+            identification_status: None,
+            identification_summary: None,
             post_process_status: None,
             post_process_error: None,
             processed_at: None,
@@ -2313,6 +2808,15 @@ mod admission_tests {
                 avatar_url: None,
                 is_active: true,
                 last_login_at: None,
+                phone: None,
+                genre_interests: None,
+                must_change_password: false,
+                two_factor_enabled_at: None,
+                recovery_codes_remaining: 0,
+                password_changed_at: None,
+                totp_secret: None,
+                totp_pending_secret: None,
+                recovery_codes: None,
             },
         )
         .await

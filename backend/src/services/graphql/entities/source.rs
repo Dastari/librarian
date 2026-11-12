@@ -120,6 +120,32 @@ pub struct Source {
     #[filterable(type = "date")]
     pub last_error_at: Option<String>,
 
+    /// `ok`, `failing` or `auth_expired`: the outcome of the last health check or real use.
+    #[graphql(name = "healthStatus")]
+    #[filterable(type = "string")]
+    pub health_status: Option<String>,
+
+    /// Why it is failing: `auth`, `unreachable`, `rate_limited` or `other`.
+    #[graphql(name = "healthKind")]
+    #[filterable(type = "string")]
+    pub health_kind: Option<String>,
+
+    /// When the source was last tested or used, whichever is later.
+    #[graphql(name = "lastCheckedAt")]
+    #[filterable(type = "date")]
+    pub last_checked_at: Option<String>,
+
+    /// When the hourly check will test it next (pushed out while it keeps failing).
+    #[graphql(name = "nextCheckAt")]
+    #[filterable(type = "date")]
+    pub next_check_at: Option<String>,
+
+    /// When Librarian last tried to sign this source in with a username and password. Never more
+    /// than one attempt an hour, so a wrong password cannot lock the account.
+    #[graphql(name = "loginAttemptedAt")]
+    #[filterable(type = "date")]
+    pub login_attempted_at: Option<String>,
+
     #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
@@ -194,6 +220,20 @@ pub struct SourceReleaseInfoGql {
     /// Source-scoped hash/GUID identity for deduplicating continued pages.
     #[graphql(name = "stableId")]
     pub stable_id: String,
+    /// For book searches: `audio`, `ebook` or `unknown`.
+    #[graphql(name = "format")]
+    pub format: Option<String>,
+    #[graphql(name = "formatReason")]
+    pub format_reason: Option<String>,
+    /// For book searches: how many books the release's name says it holds, like `5 books`.
+    #[graphql(name = "packHint")]
+    pub pack_hint: Option<String>,
+    /// For a search for one book: how well the name fits it, from 0 to 1.
+    #[graphql(name = "relevance")]
+    pub relevance: Option<f64>,
+    /// For a search for one book: the other book of the series this release names.
+    #[graphql(name = "otherBookNumber")]
+    pub other_book_number: Option<i32>,
     #[graphql(name = "title")]
     pub title: String,
     #[graphql(name = "guid")]
@@ -241,6 +281,13 @@ pub struct SourceReleaseInfoGql {
     pub source_id: Option<String>,
     #[graphql(name = "sourceName")]
     pub source_name: Option<String>,
+    /// True for a release read from an RSS feed's catalogue rather than searched on an indexer.
+    #[graphql(name = "fromFeed")]
+    pub from_feed: bool,
+    /// For a feed release: the catalogue item to pass to `addTorrent.feedItemId`. A feed release
+    /// has no link a client may see, since the link carries the tracker passkey.
+    #[graphql(name = "feedItemId")]
+    pub feed_item_id: Option<String>,
     /// Quality tags parsed out of the release title.
     #[graphql(name = "parsed")]
     pub parsed: ParsedReleaseGql,
@@ -324,6 +371,9 @@ pub struct SourceSearchResultItemGql {
     pub elapsed_ms: i64,
     #[graphql(name = "fromCache")]
     pub from_cache: bool,
+    /// True when this entry is an RSS feed's catalogue, not an indexer.
+    #[graphql(name = "fromFeed")]
+    pub from_feed: bool,
     #[graphql(name = "error")]
     pub error: Option<String>,
 }
@@ -342,6 +392,12 @@ pub struct SourceSearchResultSetGql {
     /// Number of per-source result entries, including failed/unavailable sources.
     #[graphql(name = "sourcesSearched")]
     pub sources_searched: i32,
+    /// What was actually searched for, which differs from the request after cleaning or widening.
+    #[graphql(name = "searchedTerm")]
+    pub searched_term: String,
+    /// True when the requested term found nothing and a wider one was used instead.
+    #[graphql(name = "widened")]
+    pub widened: bool,
 }
 
 /// Generic success/error result for source mutations
@@ -430,6 +486,10 @@ pub struct SearchSourcesInput {
     /// A movie can return multiple torrent variants; all are preserved.
     #[graphql(name = "limit")]
     pub limit: Option<i32>,
+    /// If nothing is found, try wider terms built from the target's title and author. For a default
+    /// search: a term someone typed is searched as they typed it.
+    #[graphql(name = "autoWiden")]
+    pub auto_widen: Option<bool>,
 }
 
 /// Opaque, expiring source page handle. Contains no provider URL or secret.
@@ -455,6 +515,7 @@ fn source_search_binding(
     if let Some(fields) = request.as_object_mut() {
         fields.remove("continuations");
         fields.remove("source_ids");
+        fields.remove("auto_widen");
     }
     let mut profile = serde_json::to_value(profile)
         .map_err(|_| async_graphql::Error::new("Invalid search profile"))?;
@@ -581,7 +642,7 @@ impl SourceCustomQueries {
 
         use crate::services::sources::{QueryType, SourceQuery};
 
-        let query = SourceQuery {
+        let mut query = SourceQuery {
             query_type: if input.season.is_some()
                 || input.episode.is_some()
                 || input.tvdb_id.is_some()
@@ -617,7 +678,21 @@ impl SourceCustomQueries {
 
         let start = std::time::Instant::now();
 
-        let binding = source_search_binding(&input, quality_profile.as_ref())?;
+        use crate::services::release_match;
+        // The target is authorized above. A book's length tells an ebook from an audiobook, and its
+        // title and author give the wider terms to try if the first finds nothing.
+        let target_book = match input.audiobook_id.as_deref() {
+            Some(id) => crate::graphql::entities::Audiobook::get(db.pool(), &id.to_string())
+                .await
+                .map_err(|error| async_graphql::Error::new(error.to_string()))?,
+            None => None,
+        };
+        let book_search = target_book.is_some() || input.author.is_some();
+        let book_seconds = target_book
+            .as_ref()
+            .and_then(|book| book.total_duration_secs)
+            .map(f64::from);
+
         let principal = serde_json::to_string(&(&user.user_id, &user.role))
             .map_err(|_| async_graphql::Error::new("Invalid search principal"))?;
         let continuations: Vec<_> = input
@@ -627,16 +702,76 @@ impl SourceCustomQueries {
             .iter()
             .map(|continuation| (continuation.source_id.clone(), continuation.cursor.clone()))
             .collect();
-        let results = sources_manager
-            .search_paged(
-                &principal,
-                &binding,
-                input.source_ids.as_deref(),
-                &query,
-                &continuations,
-            )
-            .await
-            .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+        let ladder = match target_book.as_ref() {
+            Some(book) if input.auto_widen == Some(true) && continuations.is_empty() => {
+                release_match::book_search_ladder(
+                    &input.query,
+                    book.author_name.as_deref().or(input.author.as_deref()),
+                    &book.title,
+                    book.series_name.as_deref(),
+                )
+            }
+            _ => vec![release_match::clean_search_term(&input.query)],
+        };
+        let requested_term = ladder.first().cloned().unwrap_or_default();
+        let mut searched_term = requested_term.clone();
+        let mut results = Vec::new();
+        let mut binding_input = input.clone();
+        for term in &ladder {
+            searched_term = term.clone();
+            binding_input.query = term.clone();
+            query.search_term = Some(term.clone());
+            let binding = source_search_binding(&binding_input, quality_profile.as_ref())?;
+            results = sources_manager
+                .search_paged(
+                    &principal,
+                    &binding,
+                    input.source_ids.as_deref(),
+                    &query,
+                    &continuations,
+                )
+                .await
+                .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+            // Some sites index `Man's` and `Mans` separately, so a first page tries both.
+            if continuations.is_empty()
+                && let Some(plain) = release_match::without_apostrophes(term)
+            {
+                let mut variant = query.clone();
+                variant.search_term = Some(plain.clone());
+                binding_input.query = plain;
+                let binding = source_search_binding(&binding_input, quality_profile.as_ref())?;
+                let extra = sources_manager
+                    .search_paged(
+                        &principal,
+                        &binding,
+                        input.source_ids.as_deref(),
+                        &variant,
+                        &[],
+                    )
+                    .await
+                    .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+                merge_variant_results(&mut results, extra);
+            }
+            if results.iter().any(|page| !page.result.releases.is_empty()) {
+                break;
+            }
+        }
+
+        // Feeds are sources too: the catalogue answers from what they have already listed, with
+        // no request to the tracker. Only the first page; a catalogue has no further pages.
+        let mut feed_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        if continuations.is_empty() {
+            match feed_search_pages(db, user, &input).await {
+                Ok((pages, ids)) => {
+                    results.extend(pages);
+                    feed_ids.extend(ids);
+                }
+                Err(error) => tracing::warn!(
+                    error = %crate::services::redact::redact_text(&error.message),
+                    "Release search: the feed catalogue could not be searched"
+                ),
+            }
+        }
 
         let mut total_releases = 0;
         let gql_results: Vec<SourceSearchResultItemGql> = results
@@ -672,7 +807,58 @@ impl SourceCustomQueries {
                             }
                             None => (None, Vec::new()),
                         };
+                        // A quality profile says nothing about whether this is even audio.
+                        let (format, format_reason) = if book_search {
+                            release_match::classify_book_release(
+                                &rel.title,
+                                &rel.categories,
+                                rel.size,
+                                book_seconds,
+                            )
+                        } else {
+                            (release_match::ReleaseFormat::Unknown, None)
+                        };
+                        let (profile_match, reject_reasons) =
+                            if format == release_match::ReleaseFormat::Ebook {
+                                let mut reasons = reject_reasons;
+                                reasons.insert(
+                                    0,
+                                    format!(
+                                        "Looks like an ebook: {}",
+                                        format_reason.clone().unwrap_or_default()
+                                    ),
+                                );
+                                (Some("rejected".to_string()), reasons)
+                            } else {
+                                (profile_match, reject_reasons)
+                            };
+                        let pack_hint = book_search
+                            .then(|| release_match::book_pack_hint(&rel.title))
+                            .flatten();
+                        let (relevance, other_book_number) = match target_book.as_ref() {
+                            Some(book) => {
+                                let facts = release_match::BookFacts {
+                                    title: book.title.clone(),
+                                    author: book.author_name.clone(),
+                                    ..Default::default()
+                                };
+                                let (score, other) = release_match::release_relevance(
+                                    &rel.title,
+                                    &facts,
+                                    book.series_position.as_deref(),
+                                );
+                                (Some(score), other)
+                            }
+                            None => (None, None),
+                        };
+                        let from_feed = feed_ids.contains(&r.source_id);
                         SourceReleaseInfoGql {
+                            from_feed,
+                            feed_item_id: rel
+                                .guid
+                                .strip_prefix(FEED_ITEM_GUID_PREFIX)
+                                .filter(|_| from_feed)
+                                .map(str::to_string),
                             stable_id: rel.stable_id(&r.source_id),
                             title: rel.title.clone(),
                             guid: rel.guid.clone(),
@@ -699,10 +885,16 @@ impl SourceCustomQueries {
                             parsed: ParsedReleaseGql::from(&parsed),
                             profile_match,
                             reject_reasons,
+                            format: book_search.then(|| format.as_str().to_string()),
+                            format_reason,
+                            pack_hint,
+                            relevance,
+                            other_book_number,
                         }
                     })
                     .collect();
 
+                let entry_from_feed = feed_ids.contains(&r.source_id);
                 SourceSearchResultItemGql {
                     page_info: page.page_info,
                     source_id: r.source_id,
@@ -710,6 +902,7 @@ impl SourceCustomQueries {
                     releases,
                     elapsed_ms: r.elapsed_ms as i64,
                     from_cache: r.from_cache,
+                    from_feed: entry_from_feed,
                     error: r.error,
                 }
             })
@@ -722,7 +915,41 @@ impl SourceCustomQueries {
             total_releases,
             total_elapsed_ms: start.elapsed().as_millis() as i64,
             sources_searched,
+            widened: searched_term != requested_term,
+            searched_term,
         })
+    }
+}
+
+/// Add a second spelling's releases to each source's first page. The first spelling's page state is
+/// kept, since continuing a search follows that term.
+fn merge_variant_results(
+    results: &mut Vec<crate::services::sources::PagedSourceSearchResult>,
+    extra: Vec<crate::services::sources::PagedSourceSearchResult>,
+) {
+    for page in extra {
+        let Some(existing) = results
+            .iter_mut()
+            .find(|existing| existing.result.source_id == page.result.source_id)
+        else {
+            results.push(page);
+            continue;
+        };
+        let source_id = existing.result.source_id.clone();
+        let seen: std::collections::HashSet<String> = existing
+            .result
+            .releases
+            .iter()
+            .map(|release| release.stable_id(&source_id))
+            .collect();
+        for release in page.result.releases {
+            if !seen.contains(&release.stable_id(&source_id)) {
+                existing.result.releases.push(release);
+            }
+        }
+        if existing.result.error.is_some() && page.result.error.is_none() {
+            existing.result.error = None;
+        }
     }
 }
 
@@ -932,13 +1159,11 @@ impl SourceCustomMutations {
                     Some(result) => {
                         let releases_found = result.releases.len() as i32;
 
-                        let _ = update_source_status(
+                        crate::jobs::source_health::record_source_check(
                             db,
-                            &id,
-                            Some(0),
-                            Some(None),
-                            Some(Some(now_iso_string())),
-                            None,
+                            &source,
+                            &crate::jobs::source_health::CheckResult::Ok,
+                            chrono::Utc::now(),
                         )
                         .await;
 
@@ -960,13 +1185,14 @@ impl SourceCustomMutations {
             Ok(false) => {
                 let error = "Connection test failed - check your credentials".to_string();
 
-                let _ = update_source_status(
+                crate::jobs::source_health::record_source_check(
                     db,
-                    &id,
-                    Some(source.error_count + 1),
-                    Some(Some(error.clone())),
-                    None,
-                    Some(Some(now_iso_string())),
+                    &source,
+                    &crate::jobs::source_health::CheckResult::failed(
+                        crate::services::sources::health::FailureKind::Auth,
+                        &error,
+                    ),
+                    chrono::Utc::now(),
                 )
                 .await;
 
@@ -978,17 +1204,21 @@ impl SourceCustomMutations {
                 })
             }
             Err(e) => {
-                let error = e.to_string();
-
-                let _ = update_source_status(
+                let result = crate::jobs::source_health::CheckResult::from_error(&e);
+                crate::jobs::source_health::record_source_check(
                     db,
-                    &id,
-                    Some(source.error_count + 1),
-                    Some(Some(error.clone())),
-                    None,
-                    Some(Some(now_iso_string())),
+                    &source,
+                    &result,
+                    chrono::Utc::now(),
                 )
                 .await;
+                // The message is the redacted one: errors can quote an address with its key.
+                let error = match &result {
+                    crate::jobs::source_health::CheckResult::Failed { message, .. } => {
+                        message.clone()
+                    }
+                    crate::jobs::source_health::CheckResult::Ok => e.to_string(),
+                };
 
                 Ok(SourceTestConnectionResultGql {
                     success: false,
@@ -1034,6 +1264,7 @@ impl SourceCustomMutations {
                     error_count: None,
                     last_success_at: None,
                     last_error_at: None,
+                    ..Default::default()
                 },
             )
             .await?;
@@ -1069,46 +1300,6 @@ fn format_bytes(bytes: i64) -> String {
     }
 }
 
-fn now_iso_string() -> String {
-    chrono::Utc::now().to_rfc3339()
-}
-
-async fn update_source_status(
-    db: &Database,
-    id: &str,
-    error_count: Option<i32>,
-    last_error: Option<Option<String>>,
-    last_success_at: Option<Option<String>>,
-    last_error_at: Option<Option<String>>,
-) -> Result<()> {
-    Source::update_by_id(
-        db,
-        &id.to_string(),
-        UpdateSourceInput {
-            name: None,
-            source_type: None,
-            definition_id: None,
-            enabled: None,
-            priority: None,
-            media_types: None,
-            site_url: None,
-            supports_search: None,
-            supports_tv_search: None,
-            supports_movie_search: None,
-            supports_music_search: None,
-            supports_book_search: None,
-            credentials: None,
-            settings: None,
-            last_error,
-            error_count,
-            last_success_at,
-            last_error_at,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod continuation_binding_tests {
     use super::*;
@@ -1136,6 +1327,7 @@ mod continuation_binding_tests {
             album_id: None,
             audiobook_id: None,
             limit: Some(50),
+            auto_widen: None,
         }
     }
     #[test]

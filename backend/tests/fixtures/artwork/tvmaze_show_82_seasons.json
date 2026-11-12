@@ -1,0 +1,77 @@
+[
+ {
+  "id": 307,
+  "url": "https://www.tvmaze.com/seasons/307/game-of-thrones-season-1",
+  "number": 1,
+  "name": "",
+  "episodeOrder": 10,
+  "premiereDate": "2011-04-17",
+  "endDate": "2011-06-19",
+  "network": {
+   "id": 8,
+   "name": "HBO",
+   "country": {
+    "name": "United States",
+    "code": "US",
+    "timezone": "America/New_York"
+   },
+   "officialSite": "https://www.hbo.com/"
+  },
+  "webChannel": null,
+  "image": {
+   "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/24/60659.jpg",
+   "original": "https://static.tvmaze.com/uploads/images/original_untouched/24/60659.jpg"
+  },
+  "summary": "<p>Lord Eddard Stark is asked by his old friend, King Robert Baratheon, to serve as the King's Hand following the death of the previous incumbent, Eddard's mentor Jon Arryn. Eddard is reluctant, but receives intelligence suggesting that Jon was murdered. Eddard accepts Robert's offer, planning to use his position and authority to investigate the alleged murder.</p>"
+ },
+ {
+  "id": 308,
+  "url": "https://www.tvmaze.com/seasons/308/game-of-thrones-season-2",
+  "number": 2,
+  "name": "",
+  "episodeOrder": 10,
+  "premiereDate": "2012-04-01",
+  "endDate": "2012-06-03",
+  "network": {
+   "id": 8,
+   "name": "HBO",
+   "country": {
+    "name": "United States",
+    "code": "US",
+    "timezone": "America/New_York"
+   },
+   "officialSite": "https://www.hbo.com/"
+  },
+  "webChannel": null,
+  "image": {
+   "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/24/60660.jpg",
+   "original": "https://static.tvmaze.com/uploads/images/original_untouched/24/60660.jpg"
+  },
+  "summary": "<p>The Seven Kingdoms are at war, with the King in the North, Robb Stark, fighting to win independence for his people and those of the Riverlands. Robb decides that he must win the allegiance of the fiercely independent ironborn to his cause, and sends his best friend Theon Greyjoy to treat with his father, who is hatching plans of his own. Meanwhile, Joffrey Baratheon holds the Iron Throne with the backing of the powerful House Lannister, but his uncle Renly has also claimed the throne with the support of House Tyrell, whose armies are much larger. As they struggle for the throne, Tyrion Lannister arrives in King's Landing to take matters in hand, only to face opposition from his scheming sister, Cersei, now the Queen Regent.</p>"
+ },
+ {
+  "id": 309,
+  "url": "https://www.tvmaze.com/seasons/309/game-of-thrones-season-3",
+  "number": 3,
+  "name": "",
+  "episodeOrder": 10,
+  "premiereDate": "2013-03-31",
+  "endDate": "2013-06-09",
+  "network": {
+   "id": 8,
+   "name": "HBO",
+   "country": {
+    "name": "United States",
+    "code": "US",
+    "timezone": "America/New_York"
+   },
+   "officialSite": "https://www.hbo.com/"
+  },
+  "webChannel": null,
+  "image": {
+   "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/24/60661.jpg",
+   "original": "https://static.tvmaze.com/uploads/images/original_untouched/24/60661.jpg"
+  },
+  "summary": "<p>The Seven Kingdoms of Westeros remain gripped by civil war. Would-be king Renly Baratheon has been assassinated, altering the alliances in the war. The cruel boy-king Joffrey Baratheon has won a great victory by securing an alliance with House Tyrell, with his supporters defeating his uncle Stannis in an epic battle. Joffrey now commands the largest armies in the realm and his triumph appears inevitable.</p>"
+ }
+]

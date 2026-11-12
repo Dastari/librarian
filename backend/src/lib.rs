@@ -62,6 +62,21 @@ pub async fn get_db_pool(services: &ServicesManager) -> Option<Database> {
 /// Build the Tokio runtime and run the backend to completion.
 #[cfg(not(feature = "schema-export-only"))]
 pub fn run() -> anyhow::Result<()> {
+    // The upgrade preflight runs a new binary with only this flag; it must touch nothing.
+    if std::env::args()
+        .skip(1)
+        .any(|arg| arg == "--version" || arg == "-V")
+    {
+        println!(
+            "librarian {}",
+            crate::services::updates::version::running_version()
+        );
+        return Ok(());
+    }
+    // A start after a self-upgrade counts itself, or rolls back a binary that never got ready
+    // (design.md Q152). Before anything else, so a new binary that can't even read its
+    // configuration is still rolled back.
+    crate::services::updates::on_process_start();
     let worker_threads = runtime_thread_count(
         "LIBRARIAN_TOKIO_WORKER_THREADS",
         default_tokio_worker_threads(),
@@ -76,7 +91,9 @@ pub fn run() -> anyhow::Result<()> {
         .max_blocking_threads(max_blocking_threads)
         .thread_name("librarian-runtime")
         .enable_all()
-        .thread_stack_size(8 * 1024 * 1024)
+        // Linking a file nests update hooks several levels deep (file, track, the file it replaces),
+        // and an unoptimized build's frames for those are huge. Only pages in use take memory.
+        .thread_stack_size(32 * 1024 * 1024)
         .build()
         .context("failed to build Tokio runtime")?
         .block_on(async_main())
@@ -236,6 +253,12 @@ async fn async_main() -> anyhow::Result<()> {
         .add_service(LibraryScanServiceConfig::default())
         .add_service(AutoDownloadServiceConfig::default())
         .add_service(crate::jobs::schedule_sync::ScheduleSyncConfig::from_env()?)
+        .add_service(crate::jobs::credit_fill::CreditFillConfig::default())
+        .add_service(crate::services::lan_advertise::LanAdvertiseConfig::new(
+            config.port,
+            config.host.clone(),
+        ))
+        .add_service(crate::services::play_history::service::PlayHistoryConfig)
         .add_service(TranscodeServiceConfig {
             cache_path: PathBuf::from(&config.cache_path),
             ffmpeg_path: config
@@ -258,6 +281,58 @@ async fn async_main() -> anyhow::Result<()> {
 
     if let Some(db_service) = services.get_database().await {
         let db = db_service.pool().clone();
+        // A library on a network share connects itself, with its saved sign-in, on first use.
+        crate::services::library_storage::library_storage().install_share_provider(Arc::new(
+            crate::services::graphql::filesystem_network::NetworkShareProvider::new(
+                db.clone(),
+                services.clone(),
+            ),
+        ));
+        // Tools read files on a share through a URL on this server (see `services::tool_url`).
+        let bind = config
+            .host
+            .as_deref()
+            .map(str::trim)
+            .and_then(|host| host.parse::<std::net::IpAddr>().ok())
+            .unwrap_or(std::net::IpAddr::from([0, 0, 0, 0]));
+        crate::services::tool_url::tool_urls().configure(bind, config.port);
+        crate::services::library_storage::library_storage()
+            .install_tool_url_issuer(Arc::new(crate::services::tool_url::GlobalToolUrls));
+        // Share sign-ins saved before servers were an entity become saved servers, once.
+        if let Some(graphql) = services.get_graphql().await
+            && let Some(schema) = graphql.schema().await
+        {
+            match crate::services::network_servers::carry_over_saved_sign_ins(&db, &schema).await {
+                Ok(0) => {}
+                Ok(count) => tracing::info!(
+                    servers = count,
+                    "Saved share sign-ins carried over to saved servers"
+                ),
+                Err(error) => tracing::warn!(
+                    error = %error,
+                    "Could not carry saved share sign-ins over to saved servers; they keep working as they are"
+                ),
+            }
+        }
+        // Storyboards and black-bar detection, one file at a time (design.md Q124).
+        crate::services::video_preview::install(
+            services.clone(),
+            crate::services::video_preview::VideoPreviewConfig {
+                cache_path: PathBuf::from(&config.cache_path),
+                ffmpeg_path: config
+                    .ffmpeg_path
+                    .clone()
+                    .unwrap_or_else(|| "ffmpeg".to_string()),
+            },
+        );
+        // A move of the download folder that a stopped server left half done is finished.
+        if let Some(torrent) = services.get_torrent().await {
+            tokio::spawn(async move { torrent.resume_downloads_move().await });
+        }
+        // A move that a stopped server left half done is finished before anything scans.
+        if let Some(scan) = services.get_library_scan().await {
+            tokio::spawn(async move { scan.resume_library_moves().await });
+        }
         let services_for_reconnect = services.clone();
         tokio::spawn(async move {
             tracing::info!("Starting background reconnect for saved network paths");
@@ -269,6 +344,12 @@ async fn async_main() -> anyhow::Result<()> {
             tracing::info!("Finished background reconnect for saved network paths");
         });
     }
+
+    // The HTTP server is listening: this start counts as "started ok" for a self-upgrade.
+    if let Some(db_service) = services.get_database().await {
+        crate::services::updates::mark_ready(db_service.pool()).await;
+    }
+    crate::services::updates::start(services.clone(), use_tui);
 
     if use_tui {
         let torrent_service = services
@@ -303,7 +384,13 @@ async fn async_main() -> anyhow::Result<()> {
         wait_for_shutdown_signal().await?;
     }
 
-    services.stop_all().await?;
+    if let Some(previews) = crate::services::video_preview::video_previews() {
+        previews.stop();
+    }
+    let stopped = services.stop_all().await;
+    // A self-upgrade asked for this shutdown: start the new binary in this process's place.
+    crate::services::updates::restart_if_requested();
+    stopped?;
     Ok(())
 }
 
@@ -577,13 +664,21 @@ async fn wait_for_shutdown_signal() -> anyhow::Result<()> {
         _ = sigterm.recv() => {
             tracing::info!("Received SIGTERM, shutting down gracefully");
         }
+        _ = crate::services::updates::restart_requested() => {
+            tracing::info!("A self-upgrade is restarting the server; shutting down gracefully");
+        }
     }
     Ok(())
 }
 
 #[cfg(not(unix))]
 async fn wait_for_shutdown_signal() -> anyhow::Result<()> {
-    tokio::signal::ctrl_c().await?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result?,
+        _ = crate::services::updates::restart_requested() => {
+            tracing::info!("A self-upgrade is restarting the server; shutting down gracefully");
+        }
+    }
     Ok(())
 }
 

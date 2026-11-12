@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 
 export type ArtworkAspect = "poster" | "square" | "backdrop" | "banner";
 
-const ASPECT: Record<ArtworkAspect, number> = {
+export const ASPECT: Record<ArtworkAspect, number> = {
   poster: 2 / 3,
   square: 1,
   backdrop: 16 / 9,

@@ -28,7 +28,10 @@ vi.mock("@/lib/auth/session", () => ({ session: { getEpoch: () => runtime.sessio
 vi.mock("@/lib/auth/useSession", () => ({ useSession: () => ({ user: runtime.userId ? { id: runtime.userId } : null }) }));
 vi.mock("@/lib/graphql/live/hooks", () => ({
   useLiveEpoch: () => runtime.epoch,
-  useLiveInvalidation: (_document: unknown, _variables: unknown, refresh: () => Promise<void>) => { runtime.refresh = refresh; },
+  // The hook also watches its own session for stop requests; these tests drive the checkpoint read.
+  useLiveInvalidation: (document: { definitions?: Array<{ name?: { value?: string } }> }, _variables: unknown, refresh: () => Promise<void>) => {
+    if (document?.definitions?.[0]?.name?.value === "PlaybackProgressForFile") runtime.refresh = refresh;
+  },
   useLiveQuery: (_document: unknown, options?: { variables: { userId: string; mediaFileId: string } }) => {
     if (!options) return { data: { appSettings: { edges: [{ node: { value: "15" } }] } } };
     const key = `${options.variables.userId}:${options.variables.mediaFileId}`;
@@ -173,6 +176,21 @@ describe("useProgressSync serialization", () => {
     await act(async () => current.result.current.flush(true));
     expect(calls(EntityPlaybackProgressCreateDocument).map(({ variables }) => variables.input.currentPosition)).toEqual([40, 7]);
     expect(calls(EntityPlaybackSessionCreateDocument)).toHaveLength(2);
+  });
+
+  it("creates a fresh checkpoint when the playing file's row is reset by \"Mark as unplayed\"", async () => {
+    const { result } = renderHook(() => useProgressSync(item("file")));
+    act(() => result.current.report(40, 300, true));
+    await settle();
+    await act(async () => result.current.flush(true));
+    expect(calls(EntityPlaybackProgressUpdateDocument).length + calls(EntityPlaybackProgressCreateDocument).length).toBeGreaterThan(0);
+    // The reset deletes the row; the live invalidation re-reads it as gone while playback goes on.
+    runtime.rows.clear();
+    await act(async () => { await runtime.refresh?.(); });
+    act(() => result.current.report(55, 300, true));
+    await act(async () => result.current.flush(true));
+    expect(calls(EntityPlaybackProgressUpdateDocument).every(({ variables }) => variables.id === "progress-user-a-file")).toBe(true);
+    expect(calls(EntityPlaybackProgressCreateDocument).map(({ variables }) => variables.input.currentPosition)).toEqual([40, 55]);
   });
 
   it("replaces authority across mounts without waiting on or reusing old private work", async () => {

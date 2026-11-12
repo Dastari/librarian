@@ -25,8 +25,8 @@ Use URL-state adapters with the host router when the state should be shareable.
 For a long feed or log, pass `infinite={{ hasMore, onLoadMore, loadingMore }}` instead of
 paging: the table asks for each batch as the end comes near, and the host appends it to
 `rows` (Apollo `fetchMore`, TanStack Query `fetchNextPage`). Keep sorting, filters and search
-server-side; a change starts a new list. With graphql-orm, use the offset list for sortable
-tables and the keyset list only for a fixed order; `glass-ux/adapters/graphql-orm` has
+server-side; a change starts a new list. With graphql-orm, the offset and keyset lists both
+take the table's `OrderBy`; `glass-ux/adapters/graphql-orm` has
 `connectionRows`, `nextOffsetPage`, `nextKeysetPage` and the Apollo field policy
 `connectionPagination()` (docs/data-filters.md).
 
@@ -69,6 +69,13 @@ where useful, `"subtitle"` and `"status"`. Other columns with priority 1–3 flo
 label/value pairs, lowest priority number first, so give the facts a phone user scans
 (latency, devices, due date) priority 2. Priority 4–5 columns and `cardRole: "hidden"` sit
 behind the card's "+N" toggle; hide a field the title already shows.
+
+`view` holds `"table"` or `"cards"` at any width (default `"auto"`). For a person's choice, put a
+`Segmented` in `toolbar` and switch between `"auto"` and `"cards"`. `cardMinWidth` lays cards in a
+grid (`cardMaxWidth` caps it, and the same value gives fixed tiles), the toolbar gains a sort menu
+while cards show (`cardSort={false}` to place your own), and `renderCard(row, card)` draws their content: place `card.select`, `card.actions` and
+`card.expander`, draw columns with `card.cell(id)`, give your own controls `card.tabIndex`, and pass
+`renderCardSkeleton` at the same size (docs/data-filters.md).
 
 `onRowOpen` opens a row on Enter and, by default, on double-click. Where opening is the
 row's main purpose (a list of records that each lead to a page), pass `rowOpen="click"`: a

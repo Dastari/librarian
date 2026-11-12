@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
     default_sort = "path",
     // A library's files in path order, without sorting every row of a large library to find a page.
     index = "library_id,path",
+    // One record per file in a library. Re-imports and scans used to add more for the same path.
+    unique_index = "path,library_id",
     read_policy = "member.read",
     write_policy = "admin.write"
 )]
@@ -123,6 +125,11 @@ pub struct MediaFile {
     #[filterable(type = "string")]
     pub hdr_type: Option<String>,
 
+    /// The video carries closed captions (EIA-608/708) inside its picture stream, as ffprobe
+    /// reports them. Unknown until the file is analysed. See `docs/design.md` Q119.
+    #[graphql(name = "closedCaptions")]
+    pub closed_captions: Option<bool>,
+
     #[graphql(name = "audioChannels")]
     #[filterable(type = "string")]
     pub audio_channels: Option<String>,
@@ -176,6 +183,26 @@ pub struct MediaFile {
     #[graphql(name = "qualityStatus")]
     #[filterable(type = "string")]
     pub quality_status: Option<String>,
+
+    /// The picture inside black bars baked into the video (letterbox or pillarbox), found with
+    /// ffmpeg `cropdetect` after analysis (design.md Q123). `null` when the picture fills the
+    /// frame, when detection was inconclusive, or before it has run.
+    #[graphql(name = "pictureCrop")]
+    #[json_field]
+    pub picture_crop: Option<PictureCrop>,
+
+    /// Seek-bar preview sprite sheets, made after analysis (design.md Q122). Sheets are served
+    /// at `/api/media/<id>/storyboard/<key>/<sheet>.jpg`.
+    #[graphql(name = "storyboard")]
+    #[json_field]
+    pub storyboard: Option<VideoStoryboard>,
+
+    /// When the preview job (crop detection and storyboard) last finished for this version of
+    /// the file, whatever it found. Cleared when the file changes, so the job runs again.
+    #[graphql(name = "previewsCheckedAt")]
+    #[filterable(type = "date")]
+    #[sortable]
+    pub previews_checked_at: Option<String>,
 
     // Query relations do not add physical FKs or change existing delete behavior.
     #[graphql(skip)]
@@ -290,6 +317,39 @@ pub struct MediaFile {
         emit_fk = false
     )]
     pub media_chapters: Vec<MediaChapter>,
+}
+
+/// The picture's rectangle inside a frame with black bars, in the source's pixels.
+#[derive(async_graphql::SimpleObject, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[graphql(rename_fields = "camelCase")]
+#[serde(rename_all = "camelCase")]
+pub struct PictureCrop {
+    pub left: i32,
+    pub top: i32,
+    pub width: i32,
+    pub height: i32,
+    /// The frame the rectangle was measured in (the stream's coded size).
+    pub frame_width: i32,
+    pub frame_height: i32,
+}
+
+/// Sprite sheets of evenly spaced frames for the seek bar's preview.
+#[derive(async_graphql::SimpleObject, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[graphql(rename_fields = "camelCase")]
+#[serde(rename_all = "camelCase")]
+pub struct VideoStoryboard {
+    /// Names this set of sheets in their URLs; changes whenever they are made again.
+    pub key: String,
+    /// Seconds of video per tile. Tile `n` shows the picture near `(n + 0.5) * interval`.
+    pub interval: f64,
+    pub tile_width: i32,
+    pub tile_height: i32,
+    /// Tiles per row and rows per sheet.
+    pub columns: i32,
+    pub rows: i32,
+    /// Tiles in all, across every sheet.
+    pub frame_count: i32,
+    pub sheet_count: i32,
 }
 
 #[derive(Default)]

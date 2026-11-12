@@ -19,7 +19,7 @@ pub(super) async fn database(hooks: bool) -> Database {
     }
 }
 
-pub(super) async fn user(db: &Database) -> User {
+pub(crate) async fn user(db: &Database) -> User {
     User::insert(
         db,
         CreateUserInput {
@@ -31,13 +31,22 @@ pub(super) async fn user(db: &Database) -> User {
             avatar_url: None,
             is_active: true,
             last_login_at: None,
+            phone: None,
+            genre_interests: None,
+            must_change_password: false,
+            two_factor_enabled_at: None,
+            recovery_codes_remaining: 0,
+            password_changed_at: None,
+            totp_secret: None,
+            totp_pending_secret: None,
+            recovery_codes: None,
         },
     )
     .await
     .unwrap()
 }
 
-pub(super) async fn library(db: &Database, user: &User) -> Library {
+pub(crate) async fn library(db: &Database, user: &User) -> Library {
     Library::insert(
         db,
         CreateLibraryInput {
@@ -49,12 +58,17 @@ pub(super) async fn library(db: &Database, user: &User) -> Library {
             color: None,
             auto_scan: false,
             auto_organize: false,
+            auto_resolve_duplicates: None,
             naming_pattern: "fixture naming_pattern".to_string(),
             scan_interval_minutes: 0,
             watch_for_changes: false,
+            watch_status: None,
+            watch_detail: None,
+            watch_status_since: None,
             scanning: false,
             last_scanned_at: None,
             quality_profile_id: None,
+            storage_volume_id: None,
         },
     )
     .await
@@ -65,6 +79,7 @@ pub(super) async fn artist(db: &Database, library: &Library) -> Artist {
     Artist::insert(
         db,
         CreateArtistInput {
+            locked_fields: None,
             library_id: library.id.clone(),
             user_id: library.user_id.clone(),
             name: "fixture artist".to_string(),
@@ -86,6 +101,7 @@ pub(super) async fn album(db: &Database, library: &Library, artist: &Artist) -> 
     Album::insert(
         db,
         CreateAlbumInput {
+            locked_fields: None,
             artist_id: artist.id.clone(),
             library_id: library.id.clone(),
             user_id: library.user_id.clone(),
@@ -118,6 +134,14 @@ pub(super) async fn audiobook(db: &Database, library: &Library) -> Audiobook {
     Audiobook::insert(
         db,
         CreateAudiobookInput {
+            locked_fields: None,
+            series_name: None,
+            series_position: None,
+            chapter_source: None,
+            file_shape: None,
+            chapter_check_state: None,
+            chapter_check: None,
+            provider_chapters: None,
             library_id: library.id.clone(),
             user_id: library.user_id.clone(),
             title: "fixture audiobook".to_string(),
@@ -176,6 +200,7 @@ pub(super) async fn chapter(db: &Database, book: &Audiobook, file_id: Option<&st
     Chapter::insert(
         db,
         CreateChapterInput {
+            file_offset_secs: None,
             audiobook_id: book.id.clone(),
             chapter_number: 0,
             title: None,
@@ -195,6 +220,7 @@ pub(super) async fn show(db: &Database, library: &Library) -> Show {
     Show::insert(
         db,
         CreateShowInput {
+            locked_fields: None,
             library_id: library.id.clone(),
             user_id: library.user_id.clone(),
             name: "fixture show".to_string(),
@@ -226,6 +252,7 @@ pub(super) async fn episode(db: &Database, show: &Show, file_id: Option<&str>) -
     Episode::insert(
         db,
         CreateEpisodeInput {
+            locked_fields: None,
             show_id: show.id.clone(),
             season: 0,
             episode: 0,
@@ -248,10 +275,11 @@ pub(super) async fn episode(db: &Database, show: &Show, file_id: Option<&str>) -
     .unwrap()
 }
 
-pub(super) async fn movie(db: &Database, library: &Library) -> Movie {
+pub(crate) async fn movie(db: &Database, library: &Library) -> Movie {
     Movie::insert(
         db,
         CreateMovieInput {
+            locked_fields: None,
             library_id: library.id.clone(),
             user_id: library.user_id.clone(),
             title: "fixture movie".to_string(),
@@ -277,6 +305,8 @@ pub(super) async fn movie(db: &Database, library: &Library) -> Movie {
             collection_poster_url: None,
             release_date: None,
             certification: None,
+            digital_release_date: None,
+            physical_release_date: None,
             monitored: false,
             tmdb_status: None,
             wanted: true,
@@ -320,6 +350,7 @@ pub(super) async fn media_file(
             resolution: None,
             is_hdr: false,
             hdr_type: None,
+            closed_captions: None,
             audio_channels: None,
             metadata: None,
             content_type: None,
@@ -330,6 +361,9 @@ pub(super) async fn media_file(
             matched_by_user_id: None,
             match_confirmed_at: None,
             quality_status: None,
+            picture_crop: None,
+            storyboard: None,
+            previews_checked_at: None,
         },
     )
     .await
@@ -343,6 +377,18 @@ pub(super) async fn person(db: &Database) -> Person {
             tmdb_person_id: 0,
             name: "fixture person".to_string(),
             profile_url: None,
+            imdb_id: None,
+            musicbrainz_artist_id: None,
+            wikidata_id: None,
+            name_key: None,
+            biography: None,
+            birthday: None,
+            deathday: None,
+            place_of_birth: None,
+            known_for_department: None,
+            also_known_as: None,
+            image_urls: None,
+            details_fetched_at: None,
         },
     )
     .await

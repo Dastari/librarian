@@ -1,0 +1,56 @@
+# Choosing artwork (design notes Q126–Q128): what each picture of a title shows, the provider's
+# pictures for one of them, and choosing or reverting. Uploads go to PUT /api/artwork/... and
+# unlocking is the entity's own generated update of `lockedFields`.
+
+fragment ArtworkSlotStateFields on ArtworkSlotState {
+  entityType
+  entityId
+  kind
+  hasArtwork
+  locked
+  uploaded
+  hasProvider
+  lockedFields
+}
+
+query ArtworkSlots($entityType: ArtworkEntityKind!, $entityId: String!) {
+  artworkSlots(entityType: $entityType, entityId: $entityId) {
+    ...ArtworkSlotStateFields
+  }
+}
+
+query ArtworkOptions($entityType: ArtworkEntityKind!, $entityId: String!, $kind: ArtworkKind!) {
+  artworkOptions(entityType: $entityType, entityId: $entityId, kind: $kind) {
+    slot {
+      ...ArtworkSlotStateFields
+    }
+    options {
+      url
+      previewUrl
+      source
+      language
+      width
+      height
+      voteAverage
+      voteCount
+      label
+      isDefault
+      isCurrent
+    }
+    unavailable
+  }
+}
+
+mutation ChooseArtwork($entityType: ArtworkEntityKind!, $entityId: String!, $kind: ArtworkKind!, $url: String!) {
+  chooseArtwork(entityType: $entityType, entityId: $entityId, kind: $kind, url: $url) {
+    success
+    error
+  }
+}
+
+mutation RevertArtwork($entityType: ArtworkEntityKind!, $entityId: String!, $kind: ArtworkKind!) {
+  revertArtwork(entityType: $entityType, entityId: $entityId, kind: $kind) {
+    success
+    error
+  }
+}

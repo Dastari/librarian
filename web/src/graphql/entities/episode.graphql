@@ -11,6 +11,7 @@ fragment EpisodeFields on Episode {
   airDate
   airStamp
   runtime
+  lockedFields
   stillUrl
   tvmazeId
   tmdbId

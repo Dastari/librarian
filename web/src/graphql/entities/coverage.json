@@ -36,6 +36,18 @@
     "changed": "movieCastCreditChanged"
   },
   {
+    "entity": "Credit",
+    "list": "credits",
+    "get": "credit",
+    "changed": "creditChanged"
+  },
+  {
+    "entity": "TitleDetail",
+    "list": "titleDetails",
+    "get": "titleDetail",
+    "changed": "titleDetailChanged"
+  },
+  {
     "entity": "Collection",
     "list": "collections",
     "get": "collection",
@@ -144,6 +156,12 @@
     "changed": "inviteTokenChanged"
   },
   {
+    "entity": "PasswordResetToken",
+    "list": "passwordResetTokens",
+    "get": "passwordResetToken",
+    "changed": "passwordResetTokenChanged"
+  },
+  {
     "entity": "RefreshToken",
     "list": "refreshTokens",
     "get": "refreshToken",
@@ -180,6 +198,12 @@
     "changed": "subtitleChanged"
   },
   {
+    "entity": "Lyric",
+    "list": "lyrics",
+    "get": "lyric",
+    "changed": "lyricChanged"
+  },
+  {
     "entity": "MediaChapter",
     "list": "mediaChapters",
     "get": "mediaChapter",
@@ -196,6 +220,24 @@
     "list": "playbackProgresses",
     "get": "playbackProgress",
     "changed": "playbackProgressChanged"
+  },
+  {
+    "entity": "Device",
+    "list": "devices",
+    "get": "device",
+    "changed": "deviceChanged"
+  },
+  {
+    "entity": "PlayHistory",
+    "list": "playHistories",
+    "get": "playHistory",
+    "changed": "playHistoryChanged"
+  },
+  {
+    "entity": "StatsShare",
+    "list": "statsShares",
+    "get": "statsShare",
+    "changed": "statsShareChanged"
   },
   {
     "entity": "PersonalList",
@@ -250,6 +292,24 @@
     "list": "usenetServers",
     "get": "usenetServer",
     "changed": "usenetServerChanged"
+  },
+  {
+    "entity": "MatchingAssistant",
+    "list": "matchingAssistants",
+    "get": "matchingAssistant",
+    "changed": "matchingAssistantChanged"
+  },
+  {
+    "entity": "IdentificationEvent",
+    "list": "identificationEvents",
+    "get": "identificationEvent",
+    "changed": "identificationEventChanged"
+  },
+  {
+    "entity": "IdentifiedItem",
+    "list": "identifiedItems",
+    "get": "identifiedItem",
+    "changed": "identifiedItemChanged"
   },
   {
     "entity": "UsenetDownload",
@@ -310,5 +370,29 @@
     "list": "releaseBlocklists",
     "get": "releaseBlocklist",
     "changed": "releaseBlocklistChanged"
+  },
+  {
+    "entity": "ReleaseRecommendation",
+    "list": "releaseRecommendations",
+    "get": "releaseRecommendation",
+    "changed": "releaseRecommendationChanged"
+  },
+  {
+    "entity": "NetworkServer",
+    "list": "networkServers",
+    "get": "networkServer",
+    "changed": "networkServerChanged"
+  },
+  {
+    "entity": "TorrentContents",
+    "list": "torrentContentsList",
+    "get": "torrentContents",
+    "changed": "torrentContentsChanged"
+  },
+  {
+    "entity": "StorageVolume",
+    "list": "storageVolumes",
+    "get": "storageVolume",
+    "changed": "storageVolumeChanged"
   }
 ]

@@ -9,6 +9,7 @@ fragment AudiobookFields on Audiobook {
   authorName
   narratorName
   narrators
+  lockedFields
   description
   publisher
   publishedDate
@@ -19,6 +20,13 @@ fragment AudiobookFields on Audiobook {
   goodreadsId
   totalDurationSecs
   chapterCount
+  seriesName
+  seriesPosition
+  chapterSource
+  fileShape
+  chapterCheckState
+  chapterCheck
+  providerChapters
   coverUrl
   autoDownload
   autoDownloadMode

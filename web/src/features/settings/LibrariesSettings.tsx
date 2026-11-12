@@ -1,97 +1,69 @@
 import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
-import { useMutation } from "@apollo/client/react";
-import { toast } from "glass-ux/toast";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
-import { createDataTableColumns, IdentityCell, RelativeTime, TextCell } from "glass-ux/data-table";
-import { IconExternalLink, IconFolder, IconPlus, IconRefresh, IconSettings } from "glass-ux/icons";
-import { useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
-import { useForm } from "react-hook-form";
-import { z } from "zod";
+import { createDataTableColumns, RelativeTime, TextCell } from "glass-ux/data-table";
+import { IconPlus } from "glass-ux/icons";
+import { useCallback, useMemo, useState } from "react";
 
-import { Button, Dialog, FieldGroup, FormSelectField, FormSwitchField, FormTextField } from "@/components/ui";
-import { FolderPickerDialog } from "@/features/files/FolderPickerDialog";
+import { Button } from "@/components/ui";
+import { AddLibraryDialog } from "@/features/libraries/AddLibraryDialog";
+import { FreeSpaceCell } from "@/features/libraries/FreeSpaceCell";
 import { libraryItemCount, type LibraryOverview } from "@/features/libraries/LibraryCard";
-import { EntityLibraryCreateDocument, LibrariesOverviewDocument, ScanLibraryDocument } from "@/graphql/generated/graphql";
+import { LibraryIdentity } from "@/features/libraries/LibraryIdentity";
+import { libraryWatch } from "@/features/libraries/libraryWatch";
+import { LibrarySettingsDialog, type LibrarySettingsTab } from "@/features/libraries/LibrarySettingsDialog";
+import { useLibraryActions } from "@/features/libraries/useLibraryActions";
+import { EntityStorageVolumeListDocument, LibrariesOverviewDocument, type StorageVolumeFieldsFragment } from "@/graphql/generated/graphql";
 import { useSession } from "@/lib/auth/useSession";
 import { parseTimestamp, pluralize } from "@/lib/format";
-import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
-import { LIBRARY_TYPE_OPTIONS, libraryType } from "@/lib/library-types";
+import { libraryType } from "@/lib/library-types";
+import { spaceThresholds, type SpaceThresholds } from "@/features/libraries/volumeSpace";
 
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
-import { runSettingsSelection } from "./runSettingsSelection";
 
 import { SettingsLoadError } from "./SettingsLoadError";
-import { SettingsSection } from "./SettingsSection";
+import { SettingsPage, SettingsSection } from "./SettingsSection";
+import { useAppSettings } from "./useAppSettings";
 import { useSettingsConnection } from "./useSettingsConnection";
 
-const schema = z.object({
-  name: z.string().trim().min(1, "Give the library a name").max(80),
-  libraryType: z.string().min(1, "Choose a type"),
-  path: z.string().trim().min(1, "Choose the folder"),
-  autoScan: z.boolean(),
-  autoOrganize: z.boolean(),
-});
-type Values = z.infer<typeof schema>;
-
 const column = createDataTableColumns<LibraryOverview>();
-const columns = column.columns([
+type Volumes = ReadonlyMap<string, StorageVolumeFieldsFragment>;
+/** Free space of the library's disk or share (design.md Q146). Sorted by the share free. */
+const freeSpaceColumn = (volumes: Volumes, thresholds: SpaceThresholds) => column.accessor((row) => {
+  const volume = row.storageVolumeId ? volumes.get(row.storageVolumeId) : undefined;
+  return volume?.status === "ok" && volume.totalBytes ? (volume.availableBytes ?? 0) / volume.totalBytes : -1;
+}, {
+  id: "freeSpace", header: "Free space", width: 14, priority: 2, sortable: true,
+  cell: ({ row }) => <FreeSpaceCell volume={row.original.storageVolumeId ? volumes.get(row.original.storageVolumeId) : null} thresholds={thresholds} />,
+});
+const libraryColumns = (volumes: Volumes, thresholds: SpaceThresholds) => column.columns([
   column.accessor("name", {
     header: "Library", width: 26, priority: 1, cardRole: "title", sortable: true,
-    cell: ({ row }) => { const meta = libraryType(row.original.libraryType); return <IdentityCell icon={<meta.icon className={meta.tint} />} title={row.original.name} subtitle={row.original.path} status={row.original.scanning ? "installing" : "online"} statusLabel={row.original.scanning ? "Scanning" : "Idle"} />; },
+    cell: ({ row }) => <LibraryIdentity library={row.original} items={libraryItemCount(row.original).count} />,
   }),
   column.accessor((row) => libraryType(row.libraryType).label, { id: "type", header: "Type", width: 8, priority: 2, sortable: true, cell: ({ row }) => <Badge size="sm" tone="neutral">{libraryType(row.original.libraryType).label}</Badge> }),
   column.accessor((row) => libraryItemCount(row).count, { id: "items", header: "Items", width: 8, priority: 2, align: "end", sortable: true, sortDescFirst: true, cell: ({ row }) => { const { count, noun } = libraryItemCount(row.original); return <TextCell muted={count === null}>{count === null ? "Files" : pluralize(count, noun)}</TextCell>; } }),
   column.display({ id: "schedule", header: "Scanning", width: 9, priority: 3, cell: ({ row }) => <TextCell muted>{row.original.autoScan ? `Every ${row.original.scanIntervalMinutes} min` : "Manual"}</TextCell> }),
   column.accessor((row) => row.lastScannedAt ?? "", { id: "scanned", header: "Last scan", width: 9, priority: 3, sortable: true, sortDescFirst: true, cell: ({ row }) => <RelativeTime value={parseTimestamp(row.original.lastScannedAt)} fallback="Never" /> }),
+  column.display({ id: "watch", header: "Watch", width: 9, priority: 4, cell: ({ row }) => { const watch = libraryWatch(row.original); return <Badge size="sm" marker={watch.id === "off" ? undefined : "dot"} tone={watch.tone}>{watch.id === "off" ? "Off" : watch.id === "watching" ? "Watching" : watch.id === "unavailable" ? "Not reachable" : watch.id === "failed" ? "Failed" : "Starting"}</Badge>; } }),
+  freeSpaceColumn(volumes, thresholds),
   column.display({ id: "organize", header: "Organize", width: 7, priority: 4, cell: ({ row }) => <Badge size="sm" tone={row.original.autoOrganize ? "success" : "neutral"}>{row.original.autoOrganize ? "On" : "Off"}</Badge> }),
 ]);
 
 export function LibrariesSettings() {
   const { user } = useSession();
-  const navigate = useNavigate();
   const list = useSettingsConnection(LibrariesOverviewDocument, {}, (data) => data.libraries);
   const { rows: libraries, loading, refetch } = list;
+  // One reading per disk or share; libraries point at theirs. Live through StorageVolume events.
+  const volumeList = useSettingsConnection(EntityStorageVolumeListDocument, {}, (data) => data.storageVolumes);
+  const storage = useAppSettings("storage");
+  const columns = useMemo(() => libraryColumns(new Map(volumeList.rows.map((volume) => [volume.id, volume])), spaceThresholds(storage.values)), [volumeList.rows, storage.values]);
   const [creating, setCreating] = useState(false);
-  const [pickingFolder, setPickingFolder] = useState(false);
-  const [create, { loading: saving }] = useMutation(EntityLibraryCreateDocument);
-  const [scan] = useMutation(ScanLibraryDocument);
-  const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: { name: "", libraryType: "movies", path: "", autoScan: true, autoOrganize: false } });
-
-  const submit = form.handleSubmit(async (values) => {
-    if (!user) return;
-    try {
-      const { data: result } = await create({
-        variables: { input: { userId: user.id, name: values.name, path: values.path, libraryType: values.libraryType, autoScan: values.autoScan, autoOrganize: values.autoOrganize, namingPattern: "", scanIntervalMinutes: 60, watchForChanges: false, scanning: false } },
-      });
-      assertSuccess(result?.createLibrary, "Could not create the library");
-      toast.success(`${values.name} created. Run a scan to import existing files.`);
-      form.reset();
-      setCreating(false);
-      void refetch();
-    } catch (error) {
-      toast.danger(errorMessage(error));
-    }
-  });
-
-  const actions = defineActions<LibraryOverview>("library", [
-    { id: "open", bulk: true, label: "Open library", icon: IconExternalLink, group: "open", priority: 1, visible: (rows) => rows.length === 1, run: (rows, context) => context.navigate(`/libraries/${rows[0]!.id}`) },
-    { id: "settings", bulk: true, label: "Library settings", icon: IconSettings, group: "open", priority: 2, visible: (rows) => rows.length === 1, run: (rows, context) => context.navigate(`/libraries/${rows[0]!.id}/settings`) },
-    {
-      id: "scan", label: (rows) => (rows.length === 1 ? "Scan now" : `Scan ${rows.length} libraries`), icon: IconRefresh, group: "manage", priority: 1, bulk: true,
-      disabledReason: (rows) => (rows.every((row) => row.scanning) ? "Already scanning" : false),
-      run: (rows) => runSettingsSelection(rows.filter((item) => !item.scanning), "Scan", (row) => row.name, async (row) => {
-          const result = (await scan({ variables: { id: row.id } })).data?.scanLibrary;
-          if (!result?.success) throw new Error(result?.message ?? `${row.name}: the scan could not start`);
-      }, refetch),
-      successMessage: (rows) => (rows.filter((row) => !row.scanning).length === 1 ? "Scan started" : `Started ${rows.filter((row) => !row.scanning).length} scans`),
-    },
-  ]);
+  const [settings, setSettings] = useState<{ library: LibraryOverview; tab: LibrarySettingsTab } | null>(null);
+  const openSettings = useCallback((library: LibraryOverview, tab: LibrarySettingsTab = "general") => setSettings({ library, tab }), []);
+  const actions = useLibraryActions<LibraryOverview>({ settings: openSettings, onChanged: refetch });
 
   return (
-    <div className="flex flex-col gap-6">
+    <SettingsPage>
       <SettingsSection title="Libraries" actions={<Button variant="primary" size="sm" onPress={() => setCreating(true)}><IconPlus /> Add library</Button>}>
         <SettingsLoadError error={list.error} retry={list.refetch} hasRows={libraries.length > 0} />
         <LoadedDataTable<LibraryOverview> complete={!list.loading && !list.error} height="auto" selectable queryKey={user?.id}
@@ -103,46 +75,16 @@ export function LibrariesSettings() {
           getRowLabel={(row) => row.name}
           loading={loading && libraries.length === 0}
           actions={actions} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "library", other: "libraries" }} />}
-          onRowOpen={(row) => void navigate({ to: "/libraries/$libraryId/settings", params: { libraryId: row.id } })}
+          onRowOpen={(row) => openSettings(row)}
           rowOpen="click"
           noun={{ one: "library", other: "libraries" }}
           emptyMessage="No libraries yet."
           emptyAction={<Button variant="primary" onPress={() => setCreating(true)}><IconPlus /> Add library</Button>}
         />
       </SettingsSection>
+      {settings ? <LibrarySettingsDialog library={libraries.find((row) => row.id === settings.library.id) ?? settings.library} open onOpenChange={(open) => { if (!open) setSettings(null); }} tab={settings.tab} onTabChange={(tab) => setSettings({ ...settings, tab })} items={libraryItemCount(settings.library).count} /> : null}
 
-      <Dialog
-        isOpen={creating}
-        onOpenChange={setCreating}
-        title="Add library"
-        size="md"
-        footer={
-          <>
-            <Button variant="ghost" onPress={() => setCreating(false)}>
-              Cancel
-            </Button>
-            <Button variant="primary" onPress={() => void submit()} isPending={saving}>
-              Create
-            </Button>
-          </>
-        }
-      >
-        <form onSubmit={submit} noValidate>
-          <FieldGroup>
-            <FormTextField control={form.control} name="name" label="Name" placeholder="Movies" autoFocus isRequired />
-            <FormSelectField control={form.control} name="libraryType" label="Type" options={LIBRARY_TYPE_OPTIONS.map((option) => ({ key: option.type, label: option.label }))} isRequired />
-            <div className="flex items-end gap-2">
-              <FormTextField control={form.control} name="path" label="Folder" mono isRequired className="min-w-0 flex-1" placeholder="/data/media/Movies" />
-              <Button variant="secondary" isIconOnly aria-label="Browse folders" onPress={() => setPickingFolder(true)} className="mb-px">
-                <IconFolder size="lg" />
-              </Button>
-            </div>
-            <FormSwitchField control={form.control} name="autoScan" label="Scan on a schedule" />
-            <FormSwitchField control={form.control} name="autoOrganize" label="Organize files into the naming pattern" />
-          </FieldGroup>
-        </form>
-      </Dialog>
-      <FolderPickerDialog isOpen={pickingFolder} onOpenChange={setPickingFolder} initialPath={form.getValues("path")} onPick={(path) => form.setValue("path", path, { shouldDirty: true, shouldValidate: true })} />
-    </div>
+      <AddLibraryDialog open={creating} onOpenChange={setCreating} onCreated={() => void refetch()} />
+    </SettingsPage>
   );
 }

@@ -416,24 +416,80 @@ impl LibraryScanMutations {
         }
     }
 
-    #[graphql(name = "trashDuplicateScanIssue")]
-    async fn trash_duplicate_scan_issue(
+    /// Settle every open duplicate in a library: keep the copy each pair's title plays and move the
+    /// other to the library's recoverable trash. Pairs both played by titles stay open.
+    #[graphql(name = "settleDuplicateScanIssues")]
+    async fn settle_duplicate_scan_issues(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "issueId")] issue_id: String,
-    ) -> async_graphql::Result<TrashDuplicateResult> {
+        #[graphql(name = "libraryId")] library_id: String,
+    ) -> async_graphql::Result<ScanIssueActionResult> {
         ctx.require_admin()?;
         let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
         let scan_service = services
             .get_library_scan()
             .await
             .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
-        match scan_service.trash_duplicate_issue(&issue_id).await {
+        Ok(match scan_service.settle_duplicates(&library_id).await {
+            Ok(outcome) => ScanIssueActionResult {
+                success: true,
+                queued: false,
+                message: settlement_message(outcome),
+            },
+            Err(error) => {
+                tracing::warn!(library_id = %library_id, error = %error, "Failed to settle duplicates");
+                ScanIssueActionResult {
+                    success: false,
+                    queued: false,
+                    message:
+                        "The duplicates could not be settled. Review server logs and try again."
+                            .to_string(),
+                }
+            }
+        })
+    }
+
+    #[graphql(name = "trashDuplicateScanIssue")]
+    async fn trash_duplicate_scan_issue(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "issueId")] issue_id: String,
+        #[graphql(
+            name = "keep",
+            desc = "`keeper` (the default) keeps the copy the scan chose, `duplicate` keeps this issue's file, `best` keeps whichever a title plays."
+        )]
+        keep: Option<String>,
+    ) -> async_graphql::Result<TrashDuplicateResult> {
+        ctx.require_admin()?;
+        let keep = match keep.as_deref() {
+            None | Some("keeper") => crate::services::library_scan::DuplicateKeep::Keeper,
+            Some("duplicate") => crate::services::library_scan::DuplicateKeep::Duplicate,
+            Some("best") => crate::services::library_scan::DuplicateKeep::Best,
+            Some(other) => {
+                return Err(async_graphql::Error::new(format!(
+                    "keep must be keeper, duplicate or best, not '{other}'"
+                )));
+            }
+        };
+        let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
+        let scan_service = services
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+        match scan_service
+            .trash_duplicate_issue_keeping(&issue_id, keep)
+            .await
+        {
             Ok(result) => Ok(TrashDuplicateResult {
                 success: true,
-                message: "The duplicate was moved to recoverable library trash.".to_string(),
+                message: match &result.no_longer_duplicate {
+                    Some(reason) => format!(
+                        "No longer a duplicate: {reason}. The issue is closed and nothing was moved."
+                    ),
+                    None => "The other copy was moved to recoverable library trash.".to_string(),
+                },
                 old_path: Some(result.old_path),
-                trash_path: Some(result.trash_path),
+                trash_path: result.trash_path,
             }),
             Err(error) => {
                 tracing::warn!(
@@ -441,9 +497,16 @@ impl LibraryScanMutations {
                     error = %error,
                     "Failed to move duplicate scan issue to trash"
                 );
+                let message = if error.to_string()
+                    == crate::services::library_scan::BOTH_COPIES_IN_USE
+                {
+                    format!("{}.", crate::services::library_scan::BOTH_COPIES_IN_USE)
+                } else {
+                    "The duplicate was not changed. Rescan it and review server logs before retrying.".to_string()
+                };
                 Ok(TrashDuplicateResult {
                     success: false,
-                    message: "The duplicate was not changed. Rescan it and review server logs before retrying.".to_string(),
+                    message,
                     old_path: None,
                     trash_path: None,
                 })
@@ -633,6 +696,31 @@ impl LibraryScanMutations {
         }
     }
 
+    /// Check a Jev key, the one given or the saved one, without saving anything.
+    #[graphql(name = "testJevConnection")]
+    async fn test_jev_connection(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "apiKey")] api_key: Option<String>,
+    ) -> async_graphql::Result<OllamaConnectionResult> {
+        ctx.require_admin()?;
+        let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
+        Ok(
+            match crate::services::jev::Jev::test(services, api_key).await {
+                Ok(models) => OllamaConnectionResult {
+                    success: true,
+                    models,
+                    error: None,
+                },
+                Err(error) => OllamaConnectionResult {
+                    success: false,
+                    models: Vec::new(),
+                    error: Some(error.to_string()),
+                },
+            },
+        )
+    }
+
     #[graphql(name = "testOllamaConnection")]
     async fn test_ollama_connection(
         &self,
@@ -725,5 +813,33 @@ impl LibraryScanMutations {
                 error: Some(error.to_string()),
             }),
         }
+    }
+}
+
+/// What settling a library's duplicates did, in a sentence or two.
+fn settlement_message(outcome: crate::services::library_scan::DuplicateSettlement) -> String {
+    let mut parts = Vec::new();
+    if outcome.settled > 0 {
+        parts.push(format!(
+            "Kept the better copy of {} duplicate(s).",
+            outcome.settled
+        ));
+    }
+    if outcome.closed > 0 {
+        parts.push(format!(
+            "Closed {} that were no longer duplicates.",
+            outcome.closed
+        ));
+    }
+    if outcome.left > 0 {
+        parts.push(format!(
+            "{} need you to choose: both copies are played by titles.",
+            outcome.left
+        ));
+    }
+    if parts.is_empty() {
+        "No duplicates to settle.".to_string()
+    } else {
+        parts.join(" ")
     }
 }

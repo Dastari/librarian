@@ -75,6 +75,11 @@ pub struct Library {
     #[filterable(type = "boolean")]
     pub auto_organize: bool,
 
+    /// After each scan, settle byte-identical duplicates by moving the copy no title plays to the
+    /// library's recoverable trash. Pairs both played by titles are left for a person.
+    #[graphql(name = "autoResolveDuplicates")]
+    pub auto_resolve_duplicates: Option<bool>,
+
     #[graphql(name = "namingPattern")]
     #[filterable(type = "string")]
     pub naming_pattern: String,
@@ -86,6 +91,24 @@ pub struct Library {
     #[graphql(name = "watchForChanges")]
     #[filterable(type = "boolean")]
     pub watch_for_changes: bool,
+
+    /// What the folder watch is doing (`docs/design.md` Q117): `starting`, `watching`,
+    /// `unavailable` (the share cannot be reached; it is retried), `failed` (the folder cannot be
+    /// watched; `watchDetail` says why), or empty while the library is not watched. Written by the
+    /// watch itself.
+    #[graphql(name = "watchStatus")]
+    #[graphql_orm(write_policy = "admin.write")]
+    pub watch_status: Option<String>,
+
+    /// Why the watch is in that state, in words a person can act on.
+    #[graphql(name = "watchDetail")]
+    #[graphql_orm(write_policy = "admin.write")]
+    pub watch_detail: Option<String>,
+
+    /// When the watch entered its current state.
+    #[graphql(name = "watchStatusSince")]
+    #[graphql_orm(write_policy = "admin.write")]
+    pub watch_status_since: Option<String>,
 
     #[graphql(name = "scanning")]
     #[filterable(type = "boolean")]
@@ -102,6 +125,13 @@ pub struct Library {
     #[graphql(name = "qualityProfileId")]
     #[filterable(type = "string")]
     pub quality_profile_id: Option<String>,
+
+    /// The disk or share this library's folder is on, with its free space (`docs/design.md`
+    /// Q146). Set by the capacity job; libraries on one share point at the same volume.
+    #[graphql(name = "storageVolumeId")]
+    #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "admin.write")]
+    pub storage_volume_id: Option<String>,
 
     #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
@@ -223,6 +253,18 @@ pub struct Library {
         emit_fk = false
     )]
     pub quality_profile: Option<Box<QualityProfile>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "StorageVolume",
+        from = "storage_volume_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub storage_volume: Option<Box<StorageVolume>>,
 }
 
 #[derive(Default)]

@@ -1,0 +1,22 @@
+{
+  "adult": false,
+  "also_known_as": ["Keanu Charles Reeves", "キアヌ・リーブス"],
+  "biography": "Keanu Charles Reeves is a Canadian actor. Reeves is known for his roles in Bill & Ted's Excellent Adventure, Speed, Point Break, and The Matrix franchise.",
+  "birthday": "1964-09-02",
+  "deathday": null,
+  "gender": 2,
+  "homepage": null,
+  "id": 6384,
+  "imdb_id": "nm0000206",
+  "known_for_department": "Acting",
+  "name": "Keanu Reeves",
+  "place_of_birth": "Beirut, Lebanon",
+  "popularity": 46.4,
+  "profile_path": "/4D0PpNI0kmP58hgrwGC3wCjxhnm.jpg",
+  "external_ids": {"freebase_mid": "/m/0bxtg", "freebase_id": "/en/keanu_reeves", "imdb_id": "nm0000206", "tvrage_id": 27125, "wikidata_id": "Q43416", "facebook_id": null, "instagram_id": null, "tiktok_id": null, "twitter_id": null, "youtube_id": null},
+  "images": {"profiles": [
+    {"aspect_ratio": 0.667, "height": 3000, "iso_639_1": null, "file_path": "/8RZLOyYGsoRe9p44q3xin9QkMHv.jpg", "vote_average": 5.4, "vote_count": 12, "width": 2000},
+    {"aspect_ratio": 0.667, "height": 1500, "iso_639_1": null, "file_path": "/4D0PpNI0kmP58hgrwGC3wCjxhnm.jpg", "vote_average": 5.3, "vote_count": 10, "width": 1000},
+    {"aspect_ratio": 0.667, "height": 900, "iso_639_1": null, "file_path": "/bOlYWhVuOiU6azC4Bw6zlXZ5QTC.jpg", "vote_average": 5.6, "vote_count": 3, "width": 600}
+  ]}
+}

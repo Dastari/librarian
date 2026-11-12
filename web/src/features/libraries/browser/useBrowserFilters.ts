@@ -7,9 +7,9 @@ import type { AvailabilityFilter } from "./BrowserToolbar";
 const AVAILABILITY = ["all", "available", "wanted", "missing"] as const;
 
 /** URL-backed filters: shareable and back-button friendly. */
-export function useBrowserFilters() {
-  const [query, setQuery] = useQueryState("q", parseAsString.withDefault(""));
-  const [availability, setAvailability] = useQueryState("show", parseAsStringEnum<AvailabilityFilter>([...AVAILABILITY]).withDefault("all"));
+export function useBrowserFilters(prefix = "") {
+  const [query, setQuery] = useQueryState(`${prefix}q`, parseAsString.withDefault(""));
+  const [availability, setAvailability] = useQueryState(`${prefix}show`, parseAsStringEnum<AvailabilityFilter>([...AVAILABILITY]).withDefault("all"));
   const debouncedQuery = useDebouncedValue(query.trim(), 250);
 
   return {

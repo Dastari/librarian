@@ -20,6 +20,10 @@ import {
   AddTvShowDocument,
   SearchAlbumsDocument,
   SearchAudiobooksDocument,
+  OwnedAlbumsByMusicbrainzDocument,
+  OwnedAudiobooksByAudibleDocument,
+  OwnedMoviesByTmdbDocument,
+  OwnedShowsByTvmazeDocument,
   SearchMovieCollectionsDocument,
   SearchMoviesDocument,
   SearchTvShowsDocument,
@@ -107,7 +111,35 @@ export function ProviderSearchDialog({ kind, libraryId, isOpen, onOpenChange, on
     }
   }, [debounced, isOpen, kind, searchAlbums, searchBooks, searchCollections, searchMovies, searchShows]);
 
+  const [findMovies, ownedMovies] = useLazyQuery(OwnedMoviesByTmdbDocument, { fetchPolicy: "network-only" });
+  const [findShows, ownedShows] = useLazyQuery(OwnedShowsByTvmazeDocument, { fetchPolicy: "network-only" });
+  const [findAlbums, ownedAlbums] = useLazyQuery(OwnedAlbumsByMusicbrainzDocument, { fetchPolicy: "network-only" });
+  const [findBooks, ownedBooks] = useLazyQuery(OwnedAudiobooksByAudibleDocument, { fetchPolicy: "network-only" });
+
   const active = kind === "movie" ? movies : kind === "show" ? shows : kind === "album" ? albums : kind === "audiobook" ? books : collections;
+
+  // Which of the results are already in the library, by the id each kind of title keeps.
+  const resultIds = kind === "movie" ? (movies.data?.searchMovies ?? []).map((result) => String(result.providerId))
+    : kind === "show" ? (shows.data?.searchTvShows ?? []).map((result) => String(result.providerId))
+    : kind === "album" ? (albums.data?.searchAlbums ?? []).map((result) => result.providerId)
+    : kind === "audiobook" ? (books.data?.searchAudiobooks ?? []).map((result) => result.providerId)
+    : [];
+  const idsKey = resultIds.join("|");
+  useEffect(() => {
+    if (!isOpen || !idsKey) return;
+    const ids = idsKey.split("|");
+    if (kind === "movie") void findMovies({ variables: { ids: ids.map(Number) } });
+    else if (kind === "show") void findShows({ variables: { ids: ids.map(Number) } });
+    else if (kind === "album") void findAlbums({ variables: { ids } });
+    else if (kind === "audiobook") void findBooks({ variables: { ids } });
+  }, [idsKey, isOpen, kind, findMovies, findShows, findAlbums, findBooks]);
+  const ownedIds = useMemo(() => new Set<string>(
+    kind === "movie" ? (ownedMovies.data?.movies.edges ?? []).map((edge) => String(edge.node.tmdbId))
+    : kind === "show" ? (ownedShows.data?.shows.edges ?? []).map((edge) => String(edge.node.tvmazeId))
+    : kind === "album" ? (ownedAlbums.data?.albums.edges ?? []).map((edge) => String(edge.node.musicbrainzId))
+    : kind === "audiobook" ? (ownedBooks.data?.audiobooks.edges ?? []).map((edge) => String(edge.node.audibleId))
+    : [],
+  ), [kind, ownedMovies.data, ownedShows.data, ownedAlbums.data, ownedBooks.data]);
 
   const items = useMemo<ResultItem[]>(() => {
     const created = (id: string | undefined, added: Omit<AddedTitle, "id" | "libraryId">): AddedTitle => {
@@ -222,21 +254,25 @@ export function ProviderSearchDialog({ kind, libraryId, isOpen, onOpenChange, on
                   <ul className="provider-results">
                     {items.map((item) => {
                       const added = addedKeys.has(item.key);
+                      const owned = !added && ownedIds.has(item.key.slice(item.key.indexOf("-") + 1));
                       return (
                         <li key={item.key} className="flex min-w-0 flex-col gap-2">
-                          <PosterCard width="fill" wrapTitle title={item.title} meta={item.subtitle} image={item.image} aspect={aspect} tint={meta.tintVar} to={item.link?.to as never} params={item.link?.params as never} />
+                          {/* One stop per result on a TV: Add, which names the title. The poster's link is the pointer's. */}
+                          <div data-tv-skip className="contents">
+                            <PosterCard width="fill" wrapTitle title={item.title} meta={item.subtitle} image={item.image} aspect={aspect} tint={meta.tintVar} to={item.link?.to as never} params={item.link?.params as never} />
+                          </div>
                           <Button
                             size="sm"
-                            variant={added ? "ghost" : "secondary"}
+                            variant={added || owned ? "ghost" : "secondary"}
                             className="mt-auto w-full"
-                            icon={added ? <IconCheck /> : <IconPlus />}
+                            icon={added || owned ? <IconCheck /> : <IconPlus />}
                             data-focusable
-                            aria-label={added ? `${item.title} added` : `Add ${item.title}`}
-                            disabledReason={added ? "Already added" : undefined}
+                            aria-label={added ? `${item.title} added` : owned ? `${item.title} is already in your library` : `Add ${item.title}`}
+                            disabledReason={added ? "Already added" : owned ? "Already in your library" : undefined}
                             status={busyKey === item.key ? "pending" : undefined}
                             onClick={() => { if (kind === "collection") setCollection(item); else void run(item); }}
                           >
-                            {added ? "Added" : "Add"}
+                            {added ? "Added" : owned ? "Already in library" : "Add"}
                           </Button>
                         </li>
                       );

@@ -785,7 +785,7 @@ fn parse_torznab_page(xml: &str, query: &SourceQuery) -> Result<SourcePage> {
 }
 
 /// Parse a Torznab/Newznab RSS 2.0 search response into `SourceRelease`s.
-fn parse_torznab_rss(xml: &str) -> Result<Vec<SourceRelease>> {
+pub(crate) fn parse_torznab_rss(xml: &str) -> Result<Vec<SourceRelease>> {
     let mut reader = Reader::from_str(xml);
     // Not `trim_text(true)`: an entity reference splits element text into
     // several events, and trimming each one separately eats the spaces around

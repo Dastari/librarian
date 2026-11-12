@@ -10,12 +10,17 @@ fragment LibraryFields on Library {
   color
   autoScan
   autoOrganize
+  autoResolveDuplicates
   namingPattern
   scanIntervalMinutes
   watchForChanges
+  watchStatus
+  watchDetail
+  watchStatusSince
   scanning
   lastScannedAt
   qualityProfileId
+  storageVolumeId
   createdAt
   updatedAt
 }

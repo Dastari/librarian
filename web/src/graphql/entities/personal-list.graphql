@@ -5,6 +5,7 @@ fragment PersonalListFields on PersonalList {
   userId
   name
   description
+  coverUrl
   kind
   savedViewId
   createdAt

@@ -11,6 +11,7 @@
 //! 4. Register it in the `SourcesManager`
 
 pub mod iptorrents;
+pub mod iptorrents_login;
 pub mod limetorrents;
 pub mod thepiratebay;
 pub mod torznab;
@@ -79,12 +80,12 @@ pub static AVAILABLE_DEFINITIONS: Lazy<Vec<SourceDefinitionInfo>> = Lazy::new(||
         SourceDefinitionInfo {
             id: "iptorrents",
             name: "IPTorrents",
-            description: "IPTorrents is a Private site. Always a step ahead.",
+            description: "IPTorrents is a Private site. Always a step ahead. Sign in with your username and password, or with a cookie from a signed-in browser.",
             source_type: SourceType::TorrentIndexer,
             tracker_type: "Private",
             language: "en-US",
             site_link: "https://iptorrents.com/",
-            required_credentials: &["Cookie", "UserAgent"],
+            required_credentials: &["Username", "Password"],
             optional_settings: &[
                 SettingDefinition {
                     key: "Freeleech",

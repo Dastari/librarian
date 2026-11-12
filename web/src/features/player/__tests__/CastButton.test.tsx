@@ -36,7 +36,7 @@ function receiver(overrides: Partial<CastDeviceFieldsFragment> = {}): CastDevice
     model: "Chromecast with Google TV", deviceType: "CHROMECAST", enabled: true,
     playbackSupported: true, isFavorite: false, isManual: false, discoveryOrigin: "mdns",
     firstSeenAt: STAMP, lastSeenAt: STAMP, lastProbeAt: STAMP, lastProbeError: null,
-    createdAt: STAMP, updatedAt: STAMP, ...overrides,
+    createdAt: STAMP, updatedAt: STAMP, manufacturer: null, receiverId: null, nameIsCustom: null, discoveryDetails: null, ...overrides,
   };
 }
 function persisted(overrides: Partial<CastSessionFieldsFragment> = {}): CastSessionFieldsFragment {
@@ -49,9 +49,10 @@ function persisted(overrides: Partial<CastSessionFieldsFragment> = {}): CastSess
     playbackDecision: "DIRECT_PLAY", playbackReason: null, createdAt: STAMP, updatedAt: STAMP, ...overrides,
   };
 }
-function legacy(row = persisted()): LegacyCastSessionFieldsFragment {
+/** Real replies carry `__typename`; Apollo 4.3+ drops fragment fields from a reply without it. */
+function legacy(row = persisted()): LegacyCastSessionFieldsFragment & { __typename: "LegacyCastSession" } {
   return {
-    id: row.id, deviceId: row.deviceId, deviceName: "Living room Google TV", mediaFileId: row.mediaFileId,
+    __typename: "LegacyCastSession", id: row.id, deviceId: row.deviceId, deviceName: "Living room Google TV", mediaFileId: row.mediaFileId,
     episodeId: row.episodeId, playerState: row.playerState, currentTime: row.currentPosition,
     duration: row.duration, volume: row.volume, isMuted: row.isMuted, startedAt: row.startedAt,
     lastError: row.lastError, playbackDecision: row.playbackDecision, playbackReason: row.playbackReason,
@@ -249,8 +250,9 @@ describe("CastButton generated casting workflows", () => {
 
   it("keeps disabled and DLNA discovery rows visible and refuses their activation", async () => {
     const h = await open({ item: ITEM }, castHarness({ devices: [receiver(), receiver({ id: "dlna", name: "DLNA screen", deviceType: "DLNA_RENDERER", playbackSupported: true }), receiver({ id: "disabled", name: "Disabled screen", enabled: false })] }));
-    expect(screen.getByText("DLNA discovery only; playback is unavailable.")).toBeInTheDocument();
-    expect(screen.getByText("This receiver is disabled.")).toBeInTheDocument();
+    expect(screen.getByText("DLNA receivers are listed but can't play from Librarian yet.")).toBeInTheDocument();
+    expect(screen.getByText("Turned off in Settings › Casting.")).toBeInTheDocument();
+    expect(screen.getByText("Can't play from Librarian (2)")).toBeInTheDocument();
     const dlna = screen.getByRole("button", { name: "DLNA screen" });
     expect(dlna).toHaveAttribute("aria-disabled", "true");
     dlna.focus();
@@ -391,8 +393,9 @@ describe("CastButton generated casting workflows", () => {
     const trigger = screen.getByRole("button", { name: "Casting" });
     await userEvent.click(trigger);
     expect(await screen.findByText(/No receivers found/)).toBeInTheDocument();
-    expect(screen.getByText(/No active casting sessions/)).toHaveTextContent("Choose media in a player");
-    expect(screen.getByRole("button", { name: "Start casting" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText(/Start casting from a player's Cast button/)).toBeInTheDocument();
+    // Without something to cast there is nothing to start.
+    expect(screen.queryByRole("button", { name: "Start casting" })).not.toBeInTheDocument();
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(trigger).toHaveFocus());
     expect(h.mutations()).toEqual([]);

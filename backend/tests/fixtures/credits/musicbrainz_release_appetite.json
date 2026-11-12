@@ -1,0 +1,38 @@
+{
+  "id": "a2a3a7ae-b4a6-4d0b-9e46-5f7f3e9a2b0f",
+  "title": "Appetite for Destruction",
+  "status": "Official",
+  "date": "1987-07-21",
+  "country": "US",
+  "label-info": [
+    {"catalog-number": "GHS 24148", "label": {"id": "ef3f1f5e-1b24-4a8c-9e33-0bb6b6f4c5c0", "name": "Geffen Records", "label-code": 7266}},
+    {"catalog-number": "GHS 24148", "label": {"id": "ef3f1f5e-1b24-4a8c-9e33-0bb6b6f4c5c0", "name": "Geffen Records", "label-code": 7266}}
+  ],
+  "relations": [
+    {"type": "producer", "type-id": "8bf377ba-8d71-4ecc-97f2-7bb2d8a2a75f", "direction": "backward", "target-type": "artist", "attributes": [], "attribute-values": {}, "source-credit": "", "target-credit": "", "begin": null, "end": null, "ended": false,
+     "artist": {"id": "6d4e7c9a-5c4b-4f9c-8c2a-8a0d8f8f0c11", "name": "Mike Clink", "sort-name": "Clink, Mike", "disambiguation": "producer"}},
+    {"type": "mix", "type-id": "6cc958c0-533b-4540-a281-058fbb941890", "direction": "backward", "target-type": "artist", "attributes": [], "attribute-values": {}, "source-credit": "", "target-credit": "", "begin": null, "end": null, "ended": false,
+     "artist": {"id": "1a8a3c2e-3f4e-4b5d-9c7a-6f2e1d0c9b8a", "name": "Steve Thompson", "sort-name": "Thompson, Steve", "disambiguation": "producer & mix engineer"}},
+    {"type": "producer", "type-id": "8bf377ba-8d71-4ecc-97f2-7bb2d8a2a75f", "direction": "backward", "target-type": "artist", "attributes": ["executive"], "attribute-values": {}, "source-credit": "", "target-credit": "", "begin": null, "end": null, "ended": false,
+     "artist": {"id": "2b9b4d3f-4a5f-4c6e-8d8b-7a3f2e1d0caa", "name": "Tom Zutaut", "sort-name": "Zutaut, Tom", "disambiguation": ""}},
+    {"type": "discogs", "target-type": "url", "url": {"id": "u1", "resource": "https://www.discogs.com/release/1"}}
+  ],
+  "media": [
+    {"position": 1, "format": "CD", "track-count": 2, "tracks": [
+      {"id": "t1", "position": 1, "number": "1", "title": "Welcome to the Jungle", "length": 273000,
+       "recording": {"id": "rec-jungle", "title": "Welcome to the Jungle", "length": 273000,
+        "relations": [
+          {"type": "instrument", "target-type": "artist", "attributes": ["guitar"], "target-credit": "Slash", "artist": {"id": "9d4d3b0e-1c2a-4f3e-8b5d-1e2f3a4b5c6d", "name": "Saul Hudson"}},
+          {"type": "vocal", "target-type": "artist", "attributes": ["lead vocals"], "target-credit": "", "artist": {"id": "6f6b1e2a-2b3c-4d5e-9f8a-7b6c5d4e3f2a", "name": "Axl Rose"}},
+          {"type": "performance", "target-type": "work", "attributes": [], "work": {"id": "w-jungle", "title": "Welcome to the Jungle",
+            "relations": [
+              {"type": "composer", "target-type": "artist", "attributes": [], "artist": {"id": "6f6b1e2a-2b3c-4d5e-9f8a-7b6c5d4e3f2a", "name": "Axl Rose"}},
+              {"type": "lyricist", "target-type": "artist", "attributes": [], "artist": {"id": "6f6b1e2a-2b3c-4d5e-9f8a-7b6c5d4e3f2a", "name": "Axl Rose"}},
+              {"type": "composer", "target-type": "artist", "attributes": [], "artist": {"id": "9d4d3b0e-1c2a-4f3e-8b5d-1e2f3a4b5c6d", "name": "Saul Hudson"}}
+            ]}}
+        ]}},
+      {"id": "t2", "position": 2, "number": "2", "title": "It's So Easy", "length": 203000,
+       "recording": {"id": "rec-easy", "title": "It's So Easy", "length": 203000, "relations": []}}
+    ]}
+  ]
+}

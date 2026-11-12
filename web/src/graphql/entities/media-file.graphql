@@ -22,6 +22,7 @@ fragment MediaFileFields on MediaFile {
   resolution
   isHdr
   hdrType
+  closedCaptions
   audioChannels
   metadata
   contentType
@@ -32,6 +33,7 @@ fragment MediaFileFields on MediaFile {
   matchedByUserId
   matchConfirmedAt
   qualityStatus
+  previewsCheckedAt
 }
 
 query EntityMediaFileList($where: MediaFileWhereInput, $orderBy: [MediaFileOrderByInput!], $page: PageInput) {

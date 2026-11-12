@@ -24,6 +24,7 @@ use crate::services::graphql::entities::{
 };
 use crate::services::graphql::{AuthUser, LibrarianSchema};
 use crate::services::manager::ServicesManager;
+use crate::services::write_rules;
 use async_graphql::{Request, Variables};
 use graphql_orm::graphql::filters::StringFilter;
 
@@ -95,6 +96,14 @@ struct AudibleProduct {
     runtime_length_min: Option<i64>,
     #[serde(default)]
     product_images: Option<std::collections::BTreeMap<String, String>>,
+    #[serde(default)]
+    series: Option<Vec<AudibleSeries>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AudibleSeries {
+    title: Option<String>,
+    sequence: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -203,6 +212,7 @@ fn audible_search_results(mut products: Vec<AudibleProduct>) -> Vec<AudiobookSea
         .filter_map(|product| {
             let cover_url = audible_cover(&product);
             let author_name = first_contributor(&product.authors);
+            let narrator = first_contributor(&product.narrators);
             let year = release_year(product.release_date.as_deref());
             let description = product
                 .merchandising_summary
@@ -218,6 +228,8 @@ fn audible_search_results(mut products: Vec<AudibleProduct>) -> Vec<AudiobookSea
                 cover_url,
                 isbn: None,
                 description,
+                duration_secs: product.runtime_length_min.map(|minutes| minutes * 60),
+                narrator,
             })
         })
         .collect()
@@ -226,6 +238,12 @@ fn audible_search_results(mut products: Vec<AudibleProduct>) -> Vec<AudiobookSea
 fn audible_details(product: AudibleProduct) -> AudiobookDetails {
     let cover_url = audible_cover(&product);
     let author_name = first_contributor(&product.authors);
+    let authors = product
+        .authors
+        .iter()
+        .flatten()
+        .filter_map(|person| person.name.clone())
+        .collect();
     let narrators = product
         .narrators
         .iter()
@@ -237,6 +255,14 @@ fn audible_details(product: AudibleProduct) -> AudiobookDetails {
         .as_deref()
         .or(product.merchandising_summary.as_deref())
         .map(strip_html);
+    let series = product.series.iter().flatten().find(|series| {
+        series
+            .title
+            .as_deref()
+            .is_some_and(|name| !name.trim().is_empty())
+    });
+    let series_name = series.and_then(|series| series.title.clone());
+    let series_position = series.and_then(|series| series.sequence.clone());
     let title = match (product.title, product.subtitle) {
         (Some(title), Some(subtitle)) if !title.contains(&subtitle) => {
             format!("{title}: {subtitle}")
@@ -259,6 +285,9 @@ fn audible_details(product: AudibleProduct) -> AudiobookDetails {
         narrators,
         total_duration_secs: product.runtime_length_min.map(|minutes| minutes * 60),
         chapters: Vec::new(),
+        series_name,
+        series_position,
+        authors,
     }
 }
 
@@ -464,6 +493,15 @@ pub struct MovieDetails {
     pub collection_name: Option<String>,
     pub collection_poster_url: Option<String>,
     pub release_date: Option<String>,
+    /// Every credit and fact of the TMDB document (Q129–Q130). `None` in details cached before
+    /// they were kept; those titles are filled by the credits job.
+    #[serde(default)]
+    pub extras: Option<super::credits::ProviderTitle>,
+    /// Earliest digital and physical release dates (TMDB release types 4 and 5), `YYYY-MM-DD`.
+    #[serde(default)]
+    pub digital_release_date: Option<String>,
+    #[serde(default)]
+    pub physical_release_date: Option<String>,
 }
 
 /// Cast member details from provider credits.
@@ -551,6 +589,11 @@ pub struct AudiobookSearchResult {
     pub cover_url: Option<String>,
     pub isbn: Option<String>,
     pub description: Option<String>,
+    /// How long the listing runs, which tells editions and same-named books apart.
+    #[serde(default)]
+    pub duration_secs: Option<i64>,
+    #[serde(default)]
+    pub narrator: Option<String>,
 }
 
 /// Unified audiobook details (from OpenLibrary work details)
@@ -573,6 +616,13 @@ pub struct AudiobookDetails {
     pub total_duration_secs: Option<i64>,
     #[serde(default)]
     pub chapters: Vec<AudiobookChapterDetails>,
+    #[serde(default)]
+    pub series_name: Option<String>,
+    #[serde(default)]
+    pub series_position: Option<String>,
+    /// Every author the provider lists (`authorName` keeps the first).
+    #[serde(default)]
+    pub authors: Vec<String>,
 }
 
 /// One chapter of an audiobook, where the provider publishes them.
@@ -675,6 +725,25 @@ pub struct AddTvShowOptions {
     pub path: Option<String>,
 }
 
+/// A MusicBrainz release group that credits no artist, so no Artist record can be made for it.
+#[derive(Debug)]
+pub struct NoCreditedArtist {
+    pub release_group_id: String,
+    pub title: String,
+}
+
+impl std::fmt::Display for NoCreditedArtist {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "MusicBrainz release group {} ('{}') lists no artist",
+            self.release_group_id, self.title
+        )
+    }
+}
+
+impl std::error::Error for NoCreditedArtist {}
+
 /// Options for adding an album from a metadata provider
 #[derive(Debug, Clone)]
 pub struct AddAlbumOptions {
@@ -685,6 +754,9 @@ pub struct AddAlbumOptions {
     /// Auto-download policy for the new album. `None` (the default) means the
     /// album is created unmonitored, exactly as before.
     pub monitor_type: AutoDownloadMode,
+    /// The edition's tracks, when it's been chosen to fit some files. Otherwise the first official
+    /// release's are used.
+    pub listing: Option<Vec<crate::services::metadata::musicbrainz::MusicBrainzTrack>>,
 }
 
 /// Options for adding an audiobook from a metadata provider
@@ -978,10 +1050,8 @@ impl MetadataService {
                 MetadataProvider::Tmdb => settings.tmdb_cache_days,
                 MetadataProvider::Tvmaze => settings.tvmaze_cache_days,
                 MetadataProvider::Musicbrainz => settings.musicbrainz_cache_days,
-                // Same setting: both describe the same books, and it isn't worth a second dial.
-                MetadataProvider::OpenLibrary | MetadataProvider::Audible => {
-                    settings.openlibrary_cache_days
-                }
+                MetadataProvider::OpenLibrary => settings.openlibrary_cache_days,
+                MetadataProvider::Audible => settings.audible_cache_days,
             },
             Err(error) => {
                 warn!(
@@ -1424,7 +1494,7 @@ impl MetadataService {
     ///
     /// This ensures that if the user updates the API key via settings,
     /// the next request will use the new key without requiring a server restart.
-    async fn get_tmdb_client(&self) -> Result<TmdbClient> {
+    pub(crate) async fn get_tmdb_client(&self) -> Result<TmdbClient> {
         let settings = MetadataSettings::load(&self.db).await?;
         let Some(key) = settings.tmdb_api_key else {
             anyhow::bail!("TMDB API key not configured. Add tmdb_api_key to settings.")
@@ -1465,6 +1535,191 @@ impl MetadataService {
         let mut guard = self.tvmaze.write().await;
         *guard = Some(client.clone());
         Ok(client)
+    }
+
+    /// A release group's front cover from Cover Art Archive, remembered in the metadata cache
+    /// so an album removed and added again (or a second library holding it) doesn't depend on
+    /// the archive answering a second time. Only found covers are remembered.
+    pub async fn album_cover(&self, release_group_id: Uuid) -> Result<Option<String>> {
+        let cache_key = release_group_id.to_string();
+        let max_age_days = self
+            .provider_cache_days(MetadataProvider::Musicbrainz)
+            .await;
+        if let Ok(Some(cached)) = self
+            .read_metadata_cache::<String>(
+                MetadataProvider::Musicbrainz,
+                "GetCoverArt",
+                &cache_key,
+                max_age_days,
+            )
+            .await
+        {
+            return Ok(Some(cached));
+        }
+        let cover = self
+            .get_musicbrainz_client()
+            .await?
+            .get_cover_art(release_group_id)
+            .await?;
+        if let Some(cover) = &cover
+            && let Err(error) = self
+                .upsert_metadata_cache(
+                    MetadataProvider::Musicbrainz,
+                    "GetCoverArt",
+                    &cache_key,
+                    cover,
+                )
+                .await
+        {
+            debug!(release_group_id = %release_group_id, error = %error, "Could not remember an album cover");
+        }
+        Ok(cover)
+    }
+
+    /// An artist's picture: Wikimedia Commons through the artist's MusicBrainz id and Wikidata,
+    /// else Deezer's picture for an artist of exactly the same name. Found pictures are
+    /// remembered in the metadata cache (by id, and by name for Deezer) so an artist removed and
+    /// added again doesn't ask the sites a second time; nothing is remembered about a miss.
+    /// `Err` means a site couldn't be asked and nothing else found a picture, so a later try may
+    /// do better.
+    pub async fn artist_image(
+        &self,
+        musicbrainz_id: Option<Uuid>,
+        artist_name: &str,
+    ) -> Result<Option<String>> {
+        use super::artist_image::{
+            IMAGE_BY_MBID_OPERATION, IMAGE_BY_NAME_OPERATION, deezer_image, name_cache_key,
+            wikidata_image,
+        };
+        let max_age_days = self
+            .provider_cache_days(MetadataProvider::Musicbrainz)
+            .await;
+        let id_key = musicbrainz_id.map(|id| id.to_string());
+        let name_key = name_cache_key(artist_name);
+        if let Some(id_key) = &id_key
+            && let Ok(Some(cached)) = self
+                .read_metadata_cache::<String>(
+                    MetadataProvider::Musicbrainz,
+                    IMAGE_BY_MBID_OPERATION,
+                    id_key,
+                    max_age_days,
+                )
+                .await
+        {
+            return Ok(Some(cached));
+        }
+
+        let musicbrainz = self.get_musicbrainz_client().await?;
+        let user_agent = musicbrainz.user_agent().to_string();
+        let mut failure: Option<anyhow::Error> = None;
+
+        if let (Some(id), Some(id_key)) = (musicbrainz_id, &id_key) {
+            let from_wikidata = async {
+                match musicbrainz.get_artist_wikidata_id(id).await? {
+                    Some(item) => wikidata_image(&user_agent, &item).await,
+                    None => Ok(None),
+                }
+            }
+            .await;
+            match from_wikidata {
+                Ok(Some(image)) => {
+                    info!(
+                        artist = %artist_name,
+                        musicbrainz_id = %id,
+                        image_url = %image,
+                        "Found a Wikimedia Commons picture for artist '{}' (MusicBrainz {})",
+                        artist_name,
+                        id
+                    );
+                    self.remember_artist_image(
+                        IMAGE_BY_MBID_OPERATION,
+                        id_key,
+                        &image,
+                        artist_name,
+                    )
+                    .await;
+                    return Ok(Some(image));
+                }
+                Ok(None) => debug!(
+                    artist = %artist_name,
+                    musicbrainz_id = %id,
+                    "No Wikidata picture for artist '{}' (MusicBrainz {}); trying Deezer",
+                    artist_name,
+                    id
+                ),
+                Err(error) => {
+                    debug!(
+                        artist = %artist_name,
+                        musicbrainz_id = %id,
+                        error = %error,
+                        "Could not look up the Wikidata picture for artist '{}' (MusicBrainz {}); trying Deezer",
+                        artist_name,
+                        id
+                    );
+                    failure = Some(error);
+                }
+            }
+        }
+
+        if !name_key.is_empty() {
+            if let Ok(Some(cached)) = self
+                .read_metadata_cache::<String>(
+                    MetadataProvider::Musicbrainz,
+                    IMAGE_BY_NAME_OPERATION,
+                    &name_key,
+                    max_age_days,
+                )
+                .await
+            {
+                return Ok(Some(cached));
+            }
+            match deezer_image(&user_agent, artist_name).await {
+                Ok(Some(image)) => {
+                    self.remember_artist_image(
+                        IMAGE_BY_NAME_OPERATION,
+                        &name_key,
+                        &image,
+                        artist_name,
+                    )
+                    .await;
+                    // A lookup that couldn't reach Wikidata shouldn't pin this picture to the id
+                    // and keep Wikidata from being asked again.
+                    if failure.is_none()
+                        && let Some(id_key) = &id_key
+                    {
+                        self.remember_artist_image(
+                            IMAGE_BY_MBID_OPERATION,
+                            id_key,
+                            &image,
+                            artist_name,
+                        )
+                        .await;
+                    }
+                    return Ok(Some(image));
+                }
+                Ok(None) => {}
+                Err(error) => failure = Some(failure.unwrap_or(error)),
+            }
+        }
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(None),
+        }
+    }
+
+    async fn remember_artist_image(
+        &self,
+        operation: &str,
+        cache_key: &str,
+        image: &String,
+        artist_name: &str,
+    ) {
+        if let Err(error) = self
+            .upsert_metadata_cache(MetadataProvider::Musicbrainz, operation, cache_key, image)
+            .await
+        {
+            debug!(artist = %artist_name, error = %error, "Could not remember a picture for artist '{}'", artist_name);
+        }
     }
 
     /// Get MusicBrainz client, honoring the user-agent setting
@@ -1923,12 +2178,18 @@ impl MetadataService {
         query: &str,
         policy: MetadataFetchPolicy,
     ) -> Result<Vec<AudiobookSearchResult>> {
-        match self.search_audible(query, policy).await {
-            Ok(results) if !results.is_empty() => return Ok(results),
-            Ok(_) => {}
-            Err(error) => {
-                warn!(error = %error, "Audible search failed; falling back to Open Library");
+        let settings = MetadataSettings::load(&self.db).await.ok();
+        if settings.as_ref().is_none_or(|s| s.audible_enabled) {
+            match self.search_audible(query, policy).await {
+                Ok(results) if !results.is_empty() => return Ok(results),
+                Ok(_) => {}
+                Err(error) => {
+                    warn!(error = %error, "Audible search failed; falling back to Open Library");
+                }
             }
+        }
+        if settings.as_ref().is_some_and(|s| !s.openlibrary_enabled) {
+            return Ok(Vec::new());
         }
         self.search_open_library_audiobooks(query, policy).await
     }
@@ -1944,7 +2205,7 @@ impl MetadataService {
             if let Some(cached) = self
                 .read_metadata_cache::<Vec<AudiobookSearchResult>>(
                     MetadataProvider::Audible,
-                    "SearchAudiobooks",
+                    "SearchAudiobookListings",
                     &cache_key,
                     max_age_days,
                 )
@@ -1974,7 +2235,7 @@ impl MetadataService {
         if let Err(error) = self
             .upsert_metadata_cache(
                 MetadataProvider::Audible,
-                "SearchAudiobooks",
+                "SearchAudiobookListings",
                 &cache_key,
                 &results,
             )
@@ -2060,6 +2321,8 @@ impl MetadataService {
                     cover_url,
                     isbn,
                     description: None,
+                    duration_secs: None,
+                    narrator: None,
                 })
             })
             .collect::<Vec<_>>();
@@ -2113,11 +2376,23 @@ impl MetadataService {
 
         let tmdb = self.get_tmdb_client().await?;
 
-        // Fetch movie details
-        let movie = tmdb.get_movie(tmdb_id as i32).await?;
+        // One document with everything TMDB has on the film (Q130): the details, credits,
+        // certifications, keywords, alternative titles, videos and external ids.
+        let document = tmdb
+            .get_value(
+                &format!("/movie/{tmdb_id}"),
+                &[("append_to_response", MOVIE_APPEND)],
+            )
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Movie not found on TMDB"))?;
+        let movie: super::tmdb::TmdbMovie = serde_json::from_value(document.clone())
+            .map_err(|error| anyhow::anyhow!("Failed to parse TMDB movie {tmdb_id}: {error}"))?;
+        let extras = Some(super::credits::parse_tmdb_movie(&document));
 
-        // Fetch credits for director and cast
-        let credits = tmdb.get_credits(tmdb_id as i32).await.ok();
+        // Credits for director and cast
+        let credits: Option<super::tmdb::TmdbCredits> = document
+            .get("credits")
+            .and_then(|credits| serde_json::from_value(credits.clone()).ok());
         let director = credits.as_ref().and_then(|c| c.director());
         let cast_names = credits.as_ref().map(|c| c.top_cast(10)).unwrap_or_default();
         let cast_members = credits
@@ -2138,9 +2413,17 @@ impl MetadataService {
             })
             .unwrap_or_default();
 
-        // Fetch release dates for certification
-        let release_dates = tmdb.get_release_dates(tmdb_id as i32).await.ok();
+        // Release dates for certification
+        let release_dates: Option<super::tmdb::TmdbReleaseDates> = document
+            .get("release_dates")
+            .and_then(|dates| serde_json::from_value(dates.clone()).ok());
         let certification = release_dates.as_ref().and_then(|r| r.us_certification());
+        let digital_release_date = release_dates
+            .as_ref()
+            .and_then(|r| r.earliest_of_type(super::tmdb::RELEASE_TYPE_DIGITAL));
+        let physical_release_date = release_dates
+            .as_ref()
+            .and_then(|r| r.earliest_of_type(super::tmdb::RELEASE_TYPE_PHYSICAL));
 
         // Build collection info if available
         let (collection_id, collection_name, collection_poster_url) =
@@ -2180,6 +2463,9 @@ impl MetadataService {
             collection_name,
             collection_poster_url,
             release_date: movie.release_date.clone(),
+            extras,
+            digital_release_date,
+            physical_release_date,
         };
 
         if let Err(error) = self
@@ -2378,22 +2664,27 @@ impl MetadataService {
             .product;
         let mut details = audible_details(product);
         // Chapters are a bonus: the book is still worth having without them.
-        match client
-            .get(format!("{AUDNEXUS_API}/books/{asin}/chapters"))
-            .send()
+        let audnexus_enabled = MetadataSettings::load(&self.db)
             .await
-            .and_then(reqwest::Response::error_for_status)
-        {
-            Ok(response) => match response.json::<AudnexusChapters>().await {
-                Ok(listing) => {
-                    if let Some(seconds) = listing.runtime_length_sec {
-                        details.total_duration_secs = Some(seconds);
+            .map_or(true, |settings| settings.audnexus_enabled);
+        if audnexus_enabled {
+            match client
+                .get(format!("{AUDNEXUS_API}/books/{asin}/chapters"))
+                .send()
+                .await
+                .and_then(reqwest::Response::error_for_status)
+            {
+                Ok(response) => match response.json::<AudnexusChapters>().await {
+                    Ok(listing) => {
+                        if let Some(seconds) = listing.runtime_length_sec {
+                            details.total_duration_secs = Some(seconds);
+                        }
+                        details.chapters = audiobook_chapters(listing.chapters);
                     }
-                    details.chapters = audiobook_chapters(listing.chapters);
-                }
-                Err(error) => warn!(asin, error = %error, "Could not read Audnexus chapters"),
-            },
-            Err(error) => warn!(asin, error = %error, "No chapter listing from Audnexus"),
+                    Err(error) => warn!(asin, error = %error, "Could not read Audnexus chapters"),
+                },
+                Err(error) => warn!(asin, error = %error, "No chapter listing from Audnexus"),
+            }
         }
         if let Err(error) = self
             .upsert_metadata_cache(
@@ -2537,6 +2828,7 @@ impl MetadataService {
             None
         };
 
+        let authors: Vec<String> = author_name.iter().cloned().collect();
         let details = AudiobookDetails {
             provider: MetadataProvider::OpenLibrary,
             provider_id: openlibrary_id.to_string(),
@@ -2554,9 +2846,12 @@ impl MetadataService {
             isbn: None,
             published_date: work.first_publish_date,
             cover_url,
+            authors,
             narrators: Vec::new(),
             total_duration_secs: None,
             chapters: Vec::new(),
+            series_name: None,
+            series_position: None,
         };
 
         if let Err(error) = self
@@ -2603,6 +2898,8 @@ impl MetadataService {
                 "collectionId": details.collection_id, "collectionName": details.collection_name,
                 "collectionPosterUrl": details.collection_poster_url, "releaseDate": details.release_date,
                 "certification": details.certification, "monitored": options.monitored,
+                "digitalReleaseDate": details.digital_release_date,
+                "physicalReleaseDate": details.physical_release_date,
                 "tmdbStatus": details.tmdb_status, "wanted": options.monitored,
                 "hasFile": false
             }})).await?;
@@ -2725,8 +3022,7 @@ impl MetadataService {
                 "Failed to ensure collection entity after movie creation"
             );
         }
-        let _ = self
-            .sync_movie_cast_credits(&auth_user, &movie.id, &movie_details.cast_members)
+        self.store_movie_extras(&movie, movie_details.extras.as_ref())
             .await;
 
         // Cache artwork, then emit a lightweight entity update so library routes
@@ -3196,6 +3492,8 @@ impl MetadataService {
         .await?;
         self.sync_show_seasons_best_effort(&auth_user, &show.id, options.provider_id)
             .await;
+        // A show's credits take a request per season; the credits job reads them (Q132).
+        request_credit_fill();
 
         // Cache artwork, then emit a lightweight entity update so library routes
         // subscribed to change events refresh when artwork becomes available.
@@ -3565,9 +3863,77 @@ impl MetadataService {
     }
 
     /// Add an album from MusicBrainz to a library.
+    /// The edition of an album that best fits some files, with how well they fit. Each edition read
+    /// is a request to a rate-limited service, so only the likeliest few are.
+    pub async fn album_listing_for_files(
+        &self,
+        release_group_id: Uuid,
+        files: &[crate::services::release_match::ReleaseFile],
+        names: &[Option<String>],
+        held_tracks: usize,
+    ) -> Result<
+        Option<(
+            Vec<crate::services::metadata::musicbrainz::MusicBrainzTrack>,
+            crate::services::music_rules::ListingFit,
+        )>,
+    > {
+        use crate::services::music_rules;
+        const EDITIONS_READ: usize = 4;
+        let musicbrainz = self.get_musicbrainz_client().await?;
+        let editions = musicbrainz
+            .get_release_group_editions(release_group_id)
+            .await?;
+        let counts: Vec<(usize, bool)> = editions
+            .iter()
+            .map(|edition| (edition.track_count, edition.official))
+            .collect();
+        let mut listings = Vec::new();
+        let mut fits = Vec::new();
+        let read = music_rules::editions_to_read(&counts, files.len(), EDITIONS_READ);
+        for index in read.iter().copied() {
+            let tracks = musicbrainz.get_release_tracks(&editions[index].id).await?;
+            fits.push(music_rules::fit_listing(
+                files,
+                names,
+                &tracks.iter().map(listing_track_facts).collect::<Vec<_>>(),
+            ));
+            listings.push(tracks);
+        }
+        // A deluxe edition's bonus disc on its own is nearer in count to the standard album, so
+        // when the nearest editions fit badly, the next bigger one is read too.
+        if fits
+            .iter()
+            .all(|fit| fit.share < music_rules::NEAREST_FIT_BADLY)
+            && let Some(index) =
+                music_rules::next_bigger_edition(&counts, &read, files.len() + held_tracks)
+        {
+            let tracks = musicbrainz.get_release_tracks(&editions[index].id).await?;
+            fits.push(music_rules::fit_listing(
+                files,
+                names,
+                &tracks.iter().map(listing_track_facts).collect::<Vec<_>>(),
+            ));
+            listings.push(tracks);
+        }
+        Ok(music_rules::best_listing(&fits).map(|best| {
+            let tracks = listings.swap_remove(best);
+            let fit = fits.swap_remove(best);
+            let discs: Vec<i32> = tracks.iter().map(|track| track.disc_number).collect();
+            let keep = music_rules::tracks_on_held_discs(&fit, &discs);
+            let tracks = keep
+                .into_iter()
+                .map(|index| tracks[index].clone())
+                .collect();
+            (tracks, fit)
+        }))
+    }
+
     pub async fn add_album_from_provider(&self, options: AddAlbumOptions) -> Result<Album> {
         self.require_import_owner(options.library_id, options.user_id)
             .await?;
+        // One at a time: two callers checking at once would both find nothing and both create it.
+        static ADDING_ALBUM: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        let _adding = ADDING_ALBUM.lock().await;
         if options.provider != MetadataProvider::Musicbrainz {
             anyhow::bail!("Only MusicBrainz is supported for album metadata");
         }
@@ -3617,9 +3983,18 @@ impl MetadataService {
                 .ok_or_else(|| anyhow::anyhow!("Album not found after lookup"));
         }
 
+        // An album with no credited artist is not added under a made-up "Unknown Artist": its files
+        // would be filed in that folder. The caller keeps the album's own tags instead, and a later
+        // scan can look again.
         let artist_name = release_group
             .artist_names()
-            .unwrap_or_else(|| "Unknown Artist".to_string());
+            .filter(|name| !name.trim().is_empty())
+            .ok_or_else(|| {
+                anyhow::Error::new(NoCreditedArtist {
+                    release_group_id: provider_id.clone(),
+                    title: release_group.title.clone(),
+                })
+            })?;
         let artist_mbid = release_group
             .artist_credit
             .as_ref()
@@ -3634,10 +4009,17 @@ impl MetadataService {
                         Edges: edges { Node: node { Id: id } }
                     }
                 }"#,
+                // MusicBrainz credits one artist with different spellings, so its id comes first.
                 serde_json::json!({
-                    "where": {
-                        "libraryId": { "eq": options.library_id.to_string() },
-                        "name": { "eq": artist_name.clone() }
+                    "where": match artist_mbid.as_deref() {
+                        Some(id) => serde_json::json!({
+                            "libraryId": { "eq": options.library_id.to_string() },
+                            "musicbrainzId": { "eq": id }
+                        }),
+                        None => serde_json::json!({
+                            "libraryId": { "eq": options.library_id.to_string() },
+                            "name": { "eq": artist_name.clone() }
+                        }),
                     },
                     "page": { "limit": 1, "offset": 0 }
                 }),
@@ -3656,6 +4038,32 @@ impl MetadataService {
         {
             id
         } else {
+            // Best effort and bounded: a slow or failing picture lookup never holds up or fails
+            // the import. The post-scan backfill asks again for artists left without one.
+            let image_url = match artist_mbid
+                .as_deref()
+                .and_then(|id| Uuid::parse_str(id).ok())
+            {
+                Some(id) => {
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(25),
+                        self.artist_image(Some(id), &artist_name),
+                    )
+                    .await
+                    {
+                        Ok(Ok(image)) => image,
+                        Ok(Err(error)) => {
+                            debug!(artist = %artist_name, error = %error, "No picture for new artist '{}' yet: {}", artist_name, error);
+                            None
+                        }
+                        Err(_) => {
+                            debug!(artist = %artist_name, "Picture lookup for new artist '{}' timed out", artist_name);
+                            None
+                        }
+                    }
+                }
+                None => None,
+            };
             let created = self
                 .execute_mutation(
                     &auth_user,
@@ -3668,7 +4076,8 @@ impl MetadataService {
                             "userId": options.user_id.to_string(),
                             "name": artist_name.clone(),
                             "sortName": artist_name.clone(),
-                            "musicbrainzId": artist_mbid
+                            "musicbrainzId": artist_mbid,
+                            "imageUrl": image_url
                         }
                     }),
                 )
@@ -3697,11 +4106,7 @@ impl MetadataService {
                 .ok_or_else(|| anyhow::anyhow!("Artist not found after creation"))?
         };
 
-        let cover_url = musicbrainz
-            .get_cover_art(release_group_id)
-            .await
-            .ok()
-            .flatten();
+        let cover_url = self.album_cover(release_group_id).await.ok().flatten();
         // Honour the caller's monitoring choice. Previously this was hardcoded
         // to `false`/`NONE`, so album auto-download could never fire.
         let auto_download = options.monitor_type != AutoDownloadMode::None;
@@ -3761,7 +4166,16 @@ impl MetadataService {
         // for the import matcher to link files to, so create the track list
         // from the provider. Tracks start `wanted = false`; the hunt job
         // promotes them according to the album's auto-download mode.
-        match musicbrainz.get_release_group_tracks(release_group_id).await {
+        let listing = match options.listing.clone() {
+            Some(listing) => Ok(listing),
+            None => musicbrainz.get_release_group_tracks(release_group_id).await,
+        };
+        let listing_release = listing
+            .as_ref()
+            .ok()
+            .and_then(|tracks| tracks.first())
+            .and_then(|track| track.release_id.clone());
+        match listing {
             Ok(tracks) if !tracks.is_empty() => {
                 let created = self
                     .create_album_tracks(&auth_user, &options, &album, &artist_name, &tracks)
@@ -3797,6 +4211,13 @@ impl MetadataService {
                 artist_name,
                 error
             ),
+        }
+
+        // Credits of the release the listing came from, already read with it (Q130).
+        if let Some(release_id) = listing_release
+            && let Some(credits) = musicbrainz.cached_release_credits(&release_id)
+        {
+            self.store_album_credits(&album, &credits).await;
         }
 
         // Cache artwork, then emit a lightweight entity update so library/media
@@ -3961,6 +4382,8 @@ impl MetadataService {
                         "narratorName": details.narrators.first(),
                         "totalDurationSecs": details.total_duration_secs,
                         "chapterCount": details.chapters.len(),
+                        "seriesName": details.series_name,
+                        "seriesPosition": details.series_position,
                         "autoDownload": options.monitor_type != AutoDownloadMode::None,
                         "autoDownloadMode": auto_download_mode_graphql_name(options.monitor_type),
                         "hasFiles": false,
@@ -4024,6 +4447,8 @@ impl MetadataService {
                 warn!(audiobook_id = %audiobook.id, chapter = index + 1, error = %error, "Could not create audiobook chapter");
             }
         }
+        self.store_audiobook_credits(&audiobook, &details.authors)
+            .await;
         if details.chapters.is_empty() {
             warn!(
                 audiobook_id = %audiobook.id,
@@ -4089,9 +4514,9 @@ impl MetadataService {
                 }"#,
                 serde_json::json!({
                     "id": movie.id,
-                    "input": {
+                    "input": write_rules::without_locked_fields(serde_json::json!({
                         "title": details.title,
-                        "sortTitle": details.original_title.clone().unwrap_or_else(|| details.title.clone()),
+                        "sortTitle": write_rules::sort_key(&details.title),
                         "originalTitle": details.original_title,
                         "year": details.year,
                         "tmdbId": details.provider_id as i32,
@@ -4108,11 +4533,13 @@ impl MetadataService {
                         "tmdbVoteCount": details.vote_count,
                         "releaseDate": details.release_date,
                         "certification": details.certification,
+                        "digitalReleaseDate": details.digital_release_date,
+                        "physicalReleaseDate": details.physical_release_date,
                         "collectionId": details.collection_id,
                         "collectionName": details.collection_name,
                         "collectionPosterUrl": cached_collection_poster_url,
                         "tmdbStatus": details.tmdb_status,
-                    }
+                    }), movie.locked_fields.as_deref().unwrap_or_default())
                 }),
             )
             .await?;
@@ -4154,8 +4581,7 @@ impl MetadataService {
                 "Failed to ensure collection entity after movie refresh"
             );
         }
-        let _ = self
-            .sync_movie_cast_credits(&auth_user, &movie.id, &details.cast_members)
+        self.store_movie_extras(&movie, details.extras.as_ref())
             .await;
 
         // Refresh cached artwork, then emit a lightweight entity update so
@@ -4171,203 +4597,6 @@ impl MetadataService {
         }
 
         Ok(movie)
-    }
-
-    async fn sync_movie_cast_credits(
-        &self,
-        auth_user: &AuthUser,
-        movie_id: &str,
-        cast_members: &[MovieCastMemberDetails],
-    ) -> Result<()> {
-        if cast_members.is_empty() {
-            return Ok(());
-        }
-
-        let mut person_ids_for_movie: HashSet<String> = HashSet::new();
-
-        for member in cast_members {
-            let person_data = self
-                .execute_query(
-                    auth_user,
-                    r#"query PersonByTmdbId($where: PersonWhereInput, $page: PageInput) {
-                        People: people(where: $where, page: $page) {
-                            Edges: edges { Node: node { Id: id } }
-                        }
-                    }"#,
-                    serde_json::json!({
-                        "where": { "tmdbPersonId": { "eq": member.tmdb_person_id } },
-                        "page": { "limit": 1, "offset": 0 }
-                    }),
-                )
-                .await?;
-
-            let existing_person_id = person_data
-                .get("People")
-                .and_then(|v| v.get("Edges"))
-                .and_then(|v| v.as_array())
-                .and_then(|edges| edges.first())
-                .and_then(|edge| edge.get("Node"))
-                .and_then(|node| node.get("Id"))
-                .and_then(|id| id.as_str())
-                .map(|s| s.to_string());
-
-            let person_id = if let Some(existing_id) = existing_person_id {
-                let _ = self
-                    .execute_mutation(
-                        auth_user,
-                        r#"mutation UpdatePersonFromMovieCast($id: String!, $input: UpdatePersonInput!) {
-                            UpdatePerson: updatePerson(id: $id, input: $input) { Success: success Error: error }
-                        }"#,
-                        serde_json::json!({
-                            "id": existing_id,
-                            "input": {
-                                "name": member.name,
-                                "profileUrl": member.profile_url
-                            }
-                        }),
-                    )
-                    .await?;
-                existing_id
-            } else {
-                let created = self
-                    .execute_mutation(
-                        auth_user,
-                        r#"mutation CreatePersonFromMovieCast($input: CreatePersonInput!) {
-                            CreatePerson: createPerson(input: $input) { Success: success Error: error Person: person { Id: id } }
-                        }"#,
-                        serde_json::json!({
-                            "input": {
-                                "id": Uuid::new_v4().to_string(),
-                                "tmdbPersonId": member.tmdb_person_id,
-                                "name": member.name,
-                                "profileUrl": member.profile_url
-                            }
-                        }),
-                    )
-                    .await?;
-
-                created
-                    .get("CreatePerson")
-                    .and_then(|v| v.get("Person"))
-                    .and_then(|v| v.get("Id"))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("Person not found after creation"))?
-                    .to_string()
-            };
-
-            person_ids_for_movie.insert(person_id.clone());
-
-            let existing_credit_data = self
-                .execute_query(
-                    auth_user,
-                    r#"query MovieCastCreditByMovieAndPerson($where: MovieCastCreditWhereInput, $page: PageInput) {
-                        MovieCastCredits: movieCastCredits(where: $where, page: $page) {
-                            Edges: edges { Node: node { Id: id } }
-                        }
-                    }"#,
-                    serde_json::json!({
-                        "where": {
-                            "movieId": { "eq": movie_id },
-                            "personId": { "eq": person_id }
-                        },
-                        "page": { "limit": 1, "offset": 0 }
-                    }),
-                )
-                .await?;
-
-            let existing_credit_id = existing_credit_data
-                .get("MovieCastCredits")
-                .and_then(|v| v.get("Edges"))
-                .and_then(|v| v.as_array())
-                .and_then(|edges| edges.first())
-                .and_then(|edge| edge.get("Node"))
-                .and_then(|node| node.get("Id"))
-                .and_then(|id| id.as_str())
-                .map(|s| s.to_string());
-
-            if let Some(credit_id) = existing_credit_id {
-                let _ = self
-                    .execute_mutation(
-                        auth_user,
-                        r#"mutation UpdateMovieCastCreditFromMetadata($id: String!, $input: UpdateMovieCastCreditInput!) {
-                            UpdateMovieCastCredit: updateMovieCastCredit(id: $id, input: $input) { Success: success Error: error }
-                        }"#,
-                        serde_json::json!({
-                            "id": credit_id,
-                            "input": {
-                                "characterName": member.character_name,
-                                "castOrder": member.cast_order
-                            }
-                        }),
-                    )
-                    .await?;
-            } else {
-                let _ = self
-                    .execute_mutation(
-                        auth_user,
-                        r#"mutation CreateMovieCastCreditFromMetadata($input: CreateMovieCastCreditInput!) {
-                            CreateMovieCastCredit: createMovieCastCredit(input: $input) { Success: success Error: error }
-                        }"#,
-                        serde_json::json!({
-                            "input": {
-                                "id": Uuid::new_v4().to_string(),
-                                "movieId": movie_id,
-                                "personId": person_id,
-                                "characterName": member.character_name,
-                                "castOrder": member.cast_order
-                            }
-                        }),
-                    )
-                    .await?;
-            }
-        }
-
-        let existing_credits = self
-            .execute_query(
-                auth_user,
-                r#"query ExistingMovieCastCredits($where: MovieCastCreditWhereInput, $page: PageInput) {
-                    MovieCastCredits: movieCastCredits(where: $where, page: $page) {
-                        Edges: edges { Node: node { Id: id PersonId: personId } }
-                    }
-                }"#,
-                serde_json::json!({
-                    "where": { "movieId": { "eq": movie_id } },
-                    "page": { "limit": 200, "offset": 0 }
-                }),
-            )
-            .await?;
-
-        let existing_edges = existing_credits
-            .get("MovieCastCredits")
-            .and_then(|v| v.get("Edges"))
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-
-        for edge in existing_edges {
-            let node = edge.get("Node").unwrap_or(&serde_json::Value::Null);
-            let credit_id = node.get("Id").and_then(|v| v.as_str());
-            let person_id = node.get("PersonId").and_then(|v| v.as_str());
-            let (Some(credit_id), Some(person_id)) = (credit_id, person_id) else {
-                continue;
-            };
-
-            if person_ids_for_movie.contains(person_id) {
-                continue;
-            }
-
-            let _ = self
-                .execute_mutation(
-                    auth_user,
-                    r#"mutation DeleteStaleMovieCastCredit($id: String!) {
-                        DeleteMovieCastCredit: deleteMovieCastCredit(id: $id) { Success: success Error: error }
-                    }"#,
-                    serde_json::json!({ "id": credit_id }),
-                )
-                .await?;
-        }
-
-        Ok(())
     }
 
     async fn cache_collection_poster_artwork(
@@ -4643,9 +4872,9 @@ impl MetadataService {
                 }"#,
                 serde_json::json!({
                     "id": show.id,
-                    "input": {
+                    "input": write_rules::without_locked_fields(serde_json::json!({
                         "name": details.name,
-                        "sortName": details.sort_name,
+                        "sortName": write_rules::sort_key(&details.name),
                         "year": details.year,
                         "tvmazeId": details.provider_id as i32,
                         "tvdbId": details.tvdb_id,
@@ -4657,7 +4886,7 @@ impl MetadataService {
                         "posterUrl": details.poster_url,
                         "backdropUrl": details.backdrop_url,
                         "status": details.status,
-                    }
+                    }), show.locked_fields.as_deref().unwrap_or_default())
                 }),
             )
             .await?;
@@ -4691,6 +4920,18 @@ impl MetadataService {
         .await?;
         self.sync_show_seasons_best_effort(&auth_user, &show.id, tvmaze_id as u32)
             .await;
+        // Cast and crew of the show, its seasons and episodes, and its details (Q130).
+        if self.has_tmdb().await
+            && let Err(error) = self.sync_show_credits(&show).await
+        {
+            warn!(
+                show_id = %show.id,
+                show = %show.name,
+                error = %error,
+                "Could not refresh credits of show '{}': {error}",
+                show.name
+            );
+        }
 
         // Refresh cached artwork, then emit a lightweight entity update so
         // subscribers refresh once cached artwork is ready.
@@ -4708,6 +4949,18 @@ impl MetadataService {
     }
 }
 
+/// A listed track in the terms the matching rules use.
+pub fn listing_track_facts(
+    track: &crate::services::metadata::musicbrainz::MusicBrainzTrack,
+) -> crate::services::release_match::TrackFacts {
+    crate::services::release_match::TrackFacts {
+        title: track.title.clone(),
+        number: Some(track.position),
+        disc: Some(track.disc_number),
+        seconds: track.duration_secs.map(f64::from),
+    }
+}
+
 /// Options for creating a movie from metadata
 #[derive(Debug, Clone)]
 pub struct CreateMovieFromMetadataOptions {
@@ -4715,6 +4968,13 @@ pub struct CreateMovieFromMetadataOptions {
     pub user_id: Uuid,
     pub monitored: bool,
 }
+
+/// Credits, people and title details for every kind of title (Q129–Q131).
+#[path = "title_credits.rs"]
+mod title_credits;
+pub use title_credits::{
+    CreditFillBudget, CreditFillReport, MOVIE_APPEND, credit_fill_requested, request_credit_fill,
+};
 
 /// Create a sharable metadata service
 pub fn create_metadata_service(
@@ -4850,6 +5110,15 @@ mod timestamp_notification_tests {
                 avatar_url: None,
                 is_active: true,
                 last_login_at: None,
+                phone: None,
+                genre_interests: None,
+                must_change_password: false,
+                two_factor_enabled_at: None,
+                recovery_codes_remaining: 0,
+                password_changed_at: None,
+                totp_secret: None,
+                totp_pending_secret: None,
+                recovery_codes: None,
             },
         )
         .await
@@ -4868,12 +5137,17 @@ mod timestamp_notification_tests {
                 color: None,
                 auto_scan: false,
                 auto_organize: false,
+                auto_resolve_duplicates: None,
                 naming_pattern: "fixture naming_pattern".to_string(),
                 scan_interval_minutes: 0,
                 watch_for_changes: false,
+                watch_status: None,
+                watch_detail: None,
+                watch_status_since: None,
                 scanning: false,
                 last_scanned_at: None,
                 quality_profile_id: None,
+                storage_volume_id: None,
             },
         )
         .await
@@ -4884,6 +5158,7 @@ mod timestamp_notification_tests {
         Movie::insert(
             db,
             CreateMovieInput {
+                locked_fields: None,
                 library_id: library.id.clone(),
                 user_id: library.user_id.clone(),
                 title: "fixture movie".to_string(),
@@ -4909,6 +5184,8 @@ mod timestamp_notification_tests {
                 collection_poster_url: None,
                 release_date: None,
                 certification: None,
+                digital_release_date: None,
+                physical_release_date: None,
                 monitored: false,
                 tmdb_status: None,
                 wanted: true,

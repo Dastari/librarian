@@ -5,12 +5,13 @@ import { defineActions } from "glass-ux/actions";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { useSelectableTableState } from "@/hooks/useTableSelection";
 import { useSession } from "@/lib/auth/useSession";
+import { useQueueActions } from "@/features/player/queueActions";
 import { usePlayer } from "@/features/player/usePlayer";
 import type { PlayItem } from "@/features/player/store";
 import { createDataTableColumns, DataTable, IdentityCell, TextCell } from "glass-ux/data-table";
 import { EmptyState, ErrorState, MediaRow, PosterCard, PosterGallery } from "@/components/ui";
 import { ENTITY_KINDS } from "@/lib/entities/kinds";
-import { IconBookmark, IconCopy, IconExternalLink, IconPlay, IconPlus } from "glass-ux/icons";
+import { IconBookmark, IconCopy, IconExternalLink, IconPlay } from "glass-ux/icons";
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
 import { useInfiniteConnection } from "@/features/libraries/browser/useInfiniteConnection";
 import {
@@ -53,20 +54,22 @@ function Results({ rows, list, preview = false }: { preview?: boolean; rows: Row
   const player = usePlayer();
   const { user } = useSession();
   const table = useSelectableTableState({ scope: [user?.id, list.queryKey], rows, getRowId, ready: !list.loading && !list.fetching });
+  const playable = (selected: readonly Row[]) => selected.some((row) => !row.playItem) ? "Some selected tracks have no file. Deselect them to play or queue the selection." : false;
+  const items = (selected: readonly Row[]) => {
+    if (playable(selected)) throw new Error("Select playable tracks");
+    const ids = new Set(selected.map((row) => row.id));
+    return rows.filter((row) => ids.has(row.id)).flatMap((row) => row.playItem ? [row.playItem] : []);
+  };
+  // Play next / Add to queue: the selected tracks in the displayed order.
+  const queueActions = useQueueActions<Row>((selected) => [items(selected)], { disabledReason: playable });
   const actions = useMemo(() => {
-    const playable = (selected: readonly Row[]) => selected.some((row) => !row.playItem) ? "Some selected tracks have no file. Deselect them to play or queue the selection." : false;
-    const items = (selected: readonly Row[]) => {
-      if (playable(selected)) throw new Error("Select playable tracks");
-      const ids = new Set(selected.map((row) => row.id));
-      return rows.filter((row) => ids.has(row.id)).flatMap((row) => row.playItem ? [row.playItem] : []);
-    };
     return defineActions<Row>("smart-track", [
       { id: "open", label: "Open album", icon: IconExternalLink, group: "open", bulk: true, visible: (selected) => selected.length === 1, run: ([row], context) => { if (row) context.navigate(row.href); } },
       { id: "play", label: (selected) => selected.length === 1 ? "Play" : "Play selected tracks", icon: IconPlay, group: "open", bulk: true, disabledReason: playable, run: (selected) => { const queue = items(selected); if (!queue.length) throw new Error("No playable tracks selected"); player.playAudio(queue); } },
-      { id: "enqueue", label: "Add to queue", icon: IconPlus, group: "organise", bulk: true, disabledReason: playable, run: (selected) => { const queue = items(selected); if (!queue.length) throw new Error("No playable tracks selected"); player.enqueue(queue); }, successMessage: () => "Added to queue" },
+      ...queueActions,
       { id: "copy-titles", label: "Copy track titles", icon: IconCopy, group: "organise", bulk: true, run: async (selected) => { await copyText(selected.map((row) => row.title).join("\n")); }, successMessage: () => "Track titles copied" },
     ]);
-  }, [rows, player]);
+  }, [rows, player, queueActions]);
   if (preview) return <div className="flex min-w-0 flex-col gap-3">{list.error ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : null}{list.loading && rows.length === 0 ? <p role="status">Loading collection…</p> : null}<MediaRow ariaLabel="Smart collection">{rows.slice(0, 20).map((row) => <PosterCard key={row.id} title={row.title} meta={row.detail} image={row.image} aspect={row.square ? "square" : "poster"} width="row" onPress={() => void navigate({ href: row.href })} />)}</MediaRow></div>;
   const infinite = { hasMore: list.hasMore, loadMore: list.loadMore };
   // Titles are shown as posters, like the library browsers; tracks have no artwork of their own.

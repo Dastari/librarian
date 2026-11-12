@@ -124,6 +124,22 @@ pub struct Torrent {
     #[graphql_orm(write_policy = "admin.write")]
     pub post_process_status: Option<String>,
 
+    /// How identifying this download is going: `running`, `done` or `failed`.
+    #[graphql(name = "identificationStatus")]
+    #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "admin.write")]
+    pub identification_status: Option<String>,
+
+    /// What a person said this download is, when identification got it wrong.
+    #[graphql(name = "identificationKind")]
+    #[graphql_orm(write_policy = "admin.write")]
+    pub identification_kind: Option<String>,
+
+    /// One line on what it was found to be.
+    #[graphql(name = "identificationSummary")]
+    #[graphql_orm(write_policy = "admin.write")]
+    pub identification_summary: Option<String>,
+
     #[graphql(name = "postProcessError")]
     #[graphql_orm(write_policy = "admin.write")]
     pub post_process_error: Option<String>,
@@ -435,6 +451,10 @@ pub struct LiveTorrent {
     pub save_path: String,
     #[graphql(name = "files")]
     pub files: Vec<LiveTorrentFile>,
+    /// Why the torrent is stopped or waiting: the client's error, or that its download share is
+    /// unreachable (it resumes by itself when the share answers).
+    #[graphql(name = "statusDetail")]
+    pub status_detail: Option<String>,
 }
 
 fn service_state_to_string(s: ServiceTorrentState) -> &'static str {
@@ -462,6 +482,7 @@ fn service_torrent_to_live(t: ServiceTorrentInfo) -> LiveTorrent {
         upload_speed: t.upload_speed as i64,
         peers: t.peers as i32,
         save_path: t.save_path,
+        status_detail: t.status_detail,
         files: t
             .files
             .into_iter()
@@ -770,6 +791,9 @@ pub struct AddTorrentInput {
     pub source_url: Option<String>,
     pub source_indexer_id: Option<String>,
     pub source_feed_id: Option<String>,
+    /// Grab a release from an RSS feed's catalogue. The link carries the tracker's passkey and is
+    /// never sent to a client, so the server reads it; `magnet` and `url` are ignored.
+    pub feed_item_id: Option<String>,
 }
 
 /// Result of add torrent mutation
@@ -802,6 +826,124 @@ pub struct ProcessSourceResult {
     pub files_failed: i32,
     pub messages: Vec<String>,
     pub error: Option<String>,
+}
+
+/// What matching makes of a download. Shown while it downloads and after, and based on the same plan
+/// the import uses, so a wrong match can be seen before anything moves.
+#[derive(Debug, async_graphql::SimpleObject)]
+#[graphql(rename_fields = "camelCase")]
+pub struct TorrentMatchPreview {
+    /// `ready`, `review`, `unlinked` or `none`.
+    pub status: String,
+    pub summary: Option<String>,
+    /// Why it needs a person.
+    pub reason: Option<String>,
+    pub can_accept: bool,
+    pub chapter_source: Option<String>,
+    pub file_shape: Option<String>,
+    pub evidence: Vec<String>,
+    /// False while the plan rests only on names and sizes.
+    pub complete_facts: bool,
+    pub groups: Vec<TorrentMatchGroup>,
+    pub files: Vec<TorrentMatchFile>,
+}
+
+/// One book, or what looks like one, in a download.
+#[derive(Debug, async_graphql::SimpleObject)]
+#[graphql(rename_fields = "camelCase")]
+pub struct TorrentMatchGroup {
+    pub key: String,
+    pub label: String,
+    pub file_count: i32,
+    pub seconds: Option<f64>,
+    pub is_target: bool,
+    pub book_id: Option<String>,
+    pub book_title: Option<String>,
+    pub author: Option<String>,
+}
+
+#[derive(Debug, async_graphql::SimpleObject)]
+#[graphql(rename_fields = "camelCase")]
+pub struct TorrentMatchFile {
+    pub file_index: i32,
+    pub group_key: Option<String>,
+    /// `match`, `review`, `other` or `none`.
+    pub status: String,
+    pub target: Option<String>,
+    pub detail: Option<String>,
+    pub warning: Option<String>,
+}
+
+/// Something a download could be.
+#[derive(Debug, async_graphql::SimpleObject)]
+#[graphql(rename_fields = "camelCase")]
+pub struct IdentificationCandidate {
+    pub source: String,
+    pub provider: Option<String>,
+    pub provider_id: Option<String>,
+    pub library_item_type: Option<String>,
+    pub library_item_id: Option<String>,
+    pub library_id: Option<String>,
+    pub title: String,
+    pub creator: Option<String>,
+    pub narrator: Option<String>,
+    pub year: Option<i32>,
+    pub cover_url: Option<String>,
+    pub seconds: Option<f64>,
+    pub chapters: Option<i32>,
+    pub length_percent: Option<f64>,
+    pub fit: Option<String>,
+    pub score: f64,
+    pub reasons: Vec<String>,
+}
+
+impl From<crate::services::library_scan::IdentifyCandidate> for IdentificationCandidate {
+    fn from(found: crate::services::library_scan::IdentifyCandidate) -> Self {
+        Self {
+            source: found.source,
+            provider: found.provider,
+            provider_id: found.provider_id,
+            library_item_type: found.library_item_type,
+            library_item_id: found.library_item_id,
+            library_id: found.library_id,
+            title: found.title,
+            creator: found.creator,
+            narrator: found.narrator,
+            year: found.year,
+            cover_url: found.cover_url,
+            seconds: found.seconds,
+            chapters: found.chapters,
+            length_percent: found.length_percent,
+            fit: found.fit,
+            score: found.score,
+            reasons: found.reasons,
+        }
+    }
+}
+
+/// What a person decided a result is.
+#[derive(Debug, InputObject)]
+#[graphql(rename_fields = "camelCase")]
+pub struct ImportIdentifiedItemInput {
+    pub item_id: String,
+    /// A listing to add to the library first.
+    pub provider_id: Option<String>,
+    /// Something already in the library.
+    pub library_item_id: Option<String>,
+    /// Which library to add it to, when there's a choice.
+    pub library_id: Option<String>,
+    /// Import even though the plan asks for review.
+    pub accept_review: Option<bool>,
+    /// Put better copies on tracks that already have files, keeping those files on disk.
+    pub better_copies: Option<bool>,
+}
+
+/// Whether listening to recordings is possible here.
+#[derive(Debug, async_graphql::SimpleObject)]
+#[graphql(rename_fields = "camelCase")]
+pub struct ListeningStatus {
+    pub available: bool,
+    pub detail: String,
 }
 
 /// One file of a download, and what a person says it is.
@@ -876,6 +1018,135 @@ impl TorrentCustomOperations {
                 reason: candidate.reason,
             })
             .collect())
+    }
+
+    /// What a result of identifying a download could be: a person's own search, or the first one.
+    #[graphql(name = "identificationCandidates")]
+    async fn identification_candidates(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "itemId")] item_id: String,
+        query: Option<String>,
+    ) -> Result<Vec<IdentificationCandidate>> {
+        let user = ctx.require_admin()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let scan = manager
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+        Ok(scan
+            .identification_candidates(user, &item_id, query)
+            .await
+            .map_err(|error| async_graphql::Error::new(error.to_string()))?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// Other listings of a book, compared with its files.
+    #[graphql(name = "audiobookEditions")]
+    async fn audiobook_editions(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "audiobookId")] audiobook_id: String,
+        query: Option<String>,
+    ) -> Result<Vec<IdentificationCandidate>> {
+        ctx.require_admin()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let scan = manager
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+        Ok(scan
+            .book_editions(&audiobook_id, query)
+            .await
+            .map_err(|error| async_graphql::Error::new(error.to_string()))?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// Whether this server can listen to recordings.
+    #[graphql(name = "listeningStatus")]
+    async fn listening_status(&self, ctx: &Context<'_>) -> Result<ListeningStatus> {
+        ctx.require_admin()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let scan = manager
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+        let (available, detail) = scan.listening_status().await;
+        Ok(ListeningStatus { available, detail })
+    }
+
+    /// What matching makes of a download's files, from names and sizes until they have downloaded
+    /// and from their tags and lengths after. Changes nothing.
+    #[graphql(name = "torrentMatchPreview")]
+    async fn torrent_match_preview(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "infoHash")] info_hash: String,
+    ) -> Result<TorrentMatchPreview> {
+        let user = ctx.librarian_auth_user()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let torrents = manager
+            .get_torrent()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
+        let scan = manager
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+        let files = torrents
+            .release_files(&info_hash)
+            .await
+            .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+        let index_of: std::collections::HashMap<String, i32> = files
+            .iter()
+            .filter_map(|file| Some((file.source_path.clone(), file.file_index?)))
+            .collect();
+        let preview = scan
+            .torrent_match_preview(user, &info_hash, files)
+            .await
+            .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+        Ok(TorrentMatchPreview {
+            status: preview.status.to_string(),
+            summary: preview.summary,
+            reason: preview.reason,
+            can_accept: preview.can_accept,
+            chapter_source: preview.chapter_source,
+            file_shape: preview.file_shape,
+            evidence: preview.evidence,
+            complete_facts: preview.complete_facts,
+            groups: preview
+                .groups
+                .into_iter()
+                .map(|group| TorrentMatchGroup {
+                    key: group.key,
+                    label: group.label,
+                    file_count: group.file_count,
+                    seconds: group.seconds,
+                    is_target: group.is_target,
+                    book_id: group.book_id,
+                    book_title: group.book_title,
+                    author: group.author,
+                })
+                .collect(),
+            files: preview
+                .files
+                .into_iter()
+                .filter_map(|file| {
+                    Some(TorrentMatchFile {
+                        file_index: *index_of.get(&file.path)?,
+                        group_key: file.group_key,
+                        status: file.status.to_string(),
+                        target: file.target,
+                        detail: file.detail,
+                        warning: file.warning,
+                    })
+                })
+                .collect(),
+        })
     }
 
     /// Get all torrents with live state from the torrent client
@@ -1037,12 +1308,23 @@ impl TorrentClientMutations {
     async fn add_torrent(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "input")] input: AddTorrentInput,
+        #[graphql(name = "input")] mut input: AddTorrentInput,
     ) -> Result<AddTorrentResult> {
         let db = ctx.data::<Database>()?;
         let user = current_torrent_user(db, ctx.require_member()?).await?;
-        let owner_id = authorize_add_torrent_targets(db, &user, &input).await?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
+        if let Some(item_id) = input.feed_item_id.take() {
+            let (link, feed) = resolve_feed_item_for_grab(db, manager, &user, &item_id).await?;
+            input.magnet = None;
+            input.url = None;
+            if link.to_ascii_lowercase().starts_with("magnet:") {
+                input.magnet = Some(link);
+            } else {
+                input.url = Some(link);
+            }
+            input.source_feed_id = Some(feed.id);
+        }
+        let owner_id = authorize_add_torrent_targets(db, &user, &input).await?;
         let service = manager
             .get_torrent()
             .await
@@ -1078,6 +1360,16 @@ impl TorrentClientMutations {
             }
             _ => None,
         };
+        let linkage = crate::jobs::auto_download::CandidateLinkage {
+            episode_id: input.episode_id.clone(),
+            movie_id: input.movie_id.clone(),
+            track_id: input.track_id.clone(),
+            chapter_id: input.chapter_id.clone(),
+            show_id: input.show_id.clone(),
+            album_id: input.album_id.clone(),
+            audiobook_id: input.audiobook_id.clone(),
+            season: input.season,
+        };
         let metadata = TorrentAddMetadata {
             library_id: input.library_id,
             movie_id: input.movie_id,
@@ -1090,6 +1382,7 @@ impl TorrentClientMutations {
             source_url: input.source_url,
             source_indexer_id: input.source_indexer_id,
             source_feed_id: input.source_feed_id,
+            wanted_files: None,
         };
         let result = match source_file {
             Some(file) => {
@@ -1123,6 +1416,10 @@ impl TorrentClientMutations {
                     input.minimum_ratio,
                     input.minimum_seed_time,
                 );
+                if outcome.created {
+                    // Anything recommended for this target is settled by a download of it.
+                    crate::jobs::recommend::forget_for_linkage(db, &linkage).await;
+                }
                 if outcome.created && !details.is_empty() {
                     let db = ctx.data::<crate::db::Database>()?;
                     if let Err(error) =
@@ -1142,10 +1439,11 @@ impl TorrentClientMutations {
                     error: None,
                 })
             }
+            // The error may quote the link, and a feed's links carry the account's passkey.
             Err(e) => Ok(AddTorrentResult {
                 success: false,
                 torrent: None,
-                error: Some(e.to_string()),
+                error: Some(crate::services::redact::redact_text(&e.to_string())),
             }),
         }
     }
@@ -1349,6 +1647,162 @@ impl TorrentClientMutations {
         })
     }
 
+    /// Work out what a download is again.
+    #[graphql(name = "identifyTorrent")]
+    async fn identify_torrent(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "infoHash")] info_hash: String,
+        #[graphql(
+            desc = "Treat it as this kind: audiobook, music, tv or movie. `auto` goes back to working it out."
+        )]
+        kind: Option<String>,
+    ) -> Result<RematchSourceResult> {
+        ctx.require_admin()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let scan = manager
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+        if let Some(kind) = kind.as_deref()
+            && let Err(error) = scan.set_identification_kind(&info_hash, kind).await
+        {
+            return Ok(RematchSourceResult {
+                success: false,
+                match_count: 0,
+                error: Some(error.to_string()),
+            });
+        }
+        scan.request_identification(
+            &info_hash,
+            crate::services::library_scan::IdentifyTrigger::Asked,
+        );
+        Ok(RematchSourceResult {
+            success: true,
+            match_count: 0,
+            error: None,
+        })
+    }
+
+    /// Bring in something identification found, as what a person says it is.
+    #[graphql(name = "importIdentifiedItem")]
+    async fn import_identified_item(
+        &self,
+        ctx: &Context<'_>,
+        input: ImportIdentifiedItemInput,
+    ) -> Result<RematchSourceResult> {
+        let user = ctx.require_admin()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let scan = manager
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+        let summary = scan
+            .import_identified_item(
+                user,
+                crate::services::library_scan::IdentifiedChoice {
+                    item_id: input.item_id,
+                    provider_id: input.provider_id,
+                    library_item_id: input.library_item_id,
+                    library_id: input.library_id,
+                    accept_review: input.accept_review.unwrap_or(false),
+                    better_copies: input.better_copies.unwrap_or(false),
+                },
+            )
+            .await;
+        Ok(RematchSourceResult {
+            success: summary.success,
+            match_count: summary.files_processed,
+            error: summary.error,
+        })
+    }
+
+    /// Make a book a different listing, keeping its files.
+    #[graphql(name = "changeAudiobookEdition")]
+    async fn change_audiobook_edition(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "audiobookId")] audiobook_id: String,
+        #[graphql(name = "providerId")] provider_id: String,
+    ) -> Result<RematchSourceResult> {
+        ctx.require_admin()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let scan = manager
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+        Ok(
+            match scan.change_book_edition(&audiobook_id, &provider_id).await {
+                Ok(()) => RematchSourceResult {
+                    success: true,
+                    match_count: 0,
+                    error: None,
+                },
+                Err(error) => RematchSourceResult {
+                    success: false,
+                    match_count: 0,
+                    error: Some(error.to_string()),
+                },
+            },
+        )
+    }
+
+    /// Check a book's chapters by listening for them, in the background.
+    #[graphql(name = "listenToAudiobookChapters")]
+    async fn listen_to_audiobook_chapters(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "audiobookId")] audiobook_id: String,
+    ) -> Result<RematchSourceResult> {
+        ctx.require_admin()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let scan = manager
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+        let (available, detail) = scan.listening_status().await;
+        if !available {
+            return Ok(RematchSourceResult {
+                success: false,
+                match_count: 0,
+                error: Some(detail),
+            });
+        }
+        scan.start_chapter_check(&audiobook_id);
+        Ok(RematchSourceResult {
+            success: true,
+            match_count: 0,
+            error: None,
+        })
+    }
+
+    /// Put a book's provider chapters back after a release's own replaced them.
+    #[graphql(name = "restoreAudiobookChapters")]
+    async fn restore_audiobook_chapters(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "audiobookId")] audiobook_id: String,
+    ) -> Result<RematchSourceResult> {
+        ctx.require_admin()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let scan = manager
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+        Ok(match scan.restore_provider_chapters(&audiobook_id).await {
+            Ok(()) => RematchSourceResult {
+                success: true,
+                match_count: 0,
+                error: None,
+            },
+            Err(error) => RematchSourceResult {
+                success: false,
+                match_count: 0,
+                error: Some(error.to_string()),
+            },
+        })
+    }
+
     /// Re-run matching for files from a source.
     #[graphql(name = "rematchSource")]
     async fn rematch_source(
@@ -1413,7 +1867,7 @@ fn looks_like_torrent_file(bytes: &[u8]) -> bool {
 
 /// The release's torrent file, fetched with its source's login. `None` means the source has no
 /// part in this link, and the client should fetch it directly as before.
-async fn fetch_torrent_from_source(
+pub(crate) async fn fetch_torrent_from_source(
     manager: &ServicesManager,
     source_id: &str,
     link: &str,

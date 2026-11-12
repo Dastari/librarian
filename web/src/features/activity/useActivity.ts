@@ -11,7 +11,7 @@ export const ACTIVITY_PRESETS = ["unread", "action", "all"] as const;
 export type ActivityPreset = (typeof ACTIVITY_PRESETS)[number];
 
 /** Categories the server writes (library_scan.rs, quality, auto-download, metadata jobs). */
-export const ACTIVITY_CATEGORIES = ["ORGANIZATION", "QUALITY", "SCAN", "auto_download", "metadata", "organize", "filesystem", "llm"] as const;
+export const ACTIVITY_CATEGORIES = ["ORGANIZATION", "QUALITY", "SCAN", "auto_download", "source_health", "server_update", "metadata", "organize", "filesystem", "llm"] as const;
 
 const BATCH = 50;
 

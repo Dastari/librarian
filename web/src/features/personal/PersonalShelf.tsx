@@ -15,7 +15,7 @@ export function PersonalShelf({ listId }: { listId: string }) {
   const navigate = useNavigate();
   if (!list) return null;
   const savedView = (view.data ?? view.previousData)?.savedView;
-  return <Section title={list.name} bleed trailing={<Link to="/lists/$listId" params={{ listId }}>See all</Link>}>
+  return <Section title={list.name} bleed trailing={<Link to="/lists/$listId" params={{ listId }} className="nav-focus rounded hover:text-foreground" data-tv-skip>See all</Link>}>
     {list.kind === "SMART" ? <>{view.error ? <ErrorState error={view.error} onRetry={() => void view.refetch()} /> : null}{savedView?.id === list.savedViewId ? <SmartResults view={savedView} preview /> : view.loading ? <p role="status">Loading rules…</p> : !view.error ? <p role="status">Collection rules are unavailable.</p> : null}</> : <>{entries.error ? <ErrorState error={entries.error} onRetry={() => void entries.refetch()} /> : null}<MediaRow ariaLabel={list.name}>
       {entries.data?.listEntries.edges.map(({ node }) => { const item = entryPresentation(node); return item ? <PosterCard key={node.id} title={item.title} meta={item.subtitle} image={item.image} width="row" aspect={item.square ? "square" : "poster"} onPress={() => void navigate({ href: item.href })} /> : null; })}
     </MediaRow></>}

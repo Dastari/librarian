@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 import { resolvePlaybackSource, type PlaybackSource } from "@/lib/api/urls";
+import { isConstrainedDevice } from "@/lib/tv-app";
 
 type HlsModule = typeof import("hls.js");
 type HlsInstance = import("hls.js").default;
 
 export interface MediaSourceOptions {
   audioStreamIndex?: number;
+  /** A picture subtitle to burn into the picture: the server encodes a variant with it. */
+  burnSubtitleId?: string;
   retryKey?: number;
   /** A new playback activation restarts even when it uses the same file. */
   activationKey?: string | number;
@@ -28,6 +31,17 @@ type SourceSnapshot = Omit<MediaSourceState, "retry" | "isTransitioning">;
 const emptySource: SourceSnapshot = { source: null, loading: false, error: null, duration: undefined, hls: null };
 const MAX_HLS_RECOVERIES = 2;
 
+/**
+ * hls.js buffer sizes. Elsewhere: 60 s ahead and 90 s behind (hls.js caps the forward buffer at
+ * 60 MB by default). In the TV app and on 2 GB devices the buffer lives in the same few hundred MB
+ * as the page, so it is kept to 30 s ahead (60 s at most), 10 s behind and 30 MB (Q139).
+ */
+export function hlsBufferConfig(constrained: boolean) {
+  return constrained
+    ? { maxBufferLength: 30, maxMaxBufferLength: 60, backBufferLength: 10, maxBufferSize: 30 * 1000 * 1000 }
+    : { maxBufferLength: 60, backBufferLength: 90 };
+}
+
 /** Attaches one source generation; late promises and media listeners belong only to it. */
 export function useMediaSource(
   mediaFileId: string | null,
@@ -41,10 +55,10 @@ export function useMediaSource(
   startRef.current = startPosition;
   const transition = useRef(true);
   const previous = useRef<{ fileId: string; activationKey?: string | number; position: number } | null>(null);
-  const { audioStreamIndex, retryKey, activationKey } = options ?? {};
+  const { audioStreamIndex, burnSubtitleId, retryKey, activationKey } = options ?? {};
   // Used as well as effect cancellation: a render for another item must never expose
   // the previous item's source or let its event handlers write the new transport.
-  const key = JSON.stringify([mediaFileId, activationKey, audioStreamIndex, retryKey, attempt]);
+  const key = JSON.stringify([mediaFileId, activationKey, audioStreamIndex, burnSubtitleId, retryKey, attempt]);
   const currentKey = useRef(key);
   currentKey.current = key;
   const attachedKey = useRef<string | null>(null);
@@ -119,7 +133,7 @@ export function useMediaSource(
 
     void (async () => {
       try {
-        const source = await resolvePlaybackSource(mediaFileId, controller.signal, { audioStreamIndex });
+        const source = await resolvePlaybackSource(mediaFileId, controller.signal, { audioStreamIndex, burnSubtitleId });
         if (!active() || terminal) return;
         if (!source.isHls) {
           setState({ source, loading: true, error: null, duration: source.duration, hls: null });
@@ -143,7 +157,8 @@ export function useMediaSource(
           return;
         }
         const instance = new Hls({
-          lowLatencyMode: false, backBufferLength: 90, maxBufferLength: 60,
+          lowLatencyMode: false,
+          ...hlsBufferConfig(isConstrainedDevice()),
           enableWorker: true,
           // A stream copy's playlist stays open until it's finished, which hls.js treats as live:
           // without this it starts near the newest segment rather than at the beginning.
@@ -204,7 +219,7 @@ export function useMediaSource(
       media.removeAttribute("src");
       media.load();
     };
-  }, [mediaFileId, element, activationKey, audioStreamIndex, retryKey, attempt, key]);
+  }, [mediaFileId, element, activationKey, audioStreamIndex, burnSubtitleId, retryKey, attempt, key]);
 
   const snapshot = attachedKey.current === key ? state : { ...emptySource, loading: Boolean(mediaFileId) };
   return { ...snapshot, retry, isTransitioning };

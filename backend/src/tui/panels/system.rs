@@ -40,7 +40,8 @@ fn format_uptime(secs: u64) -> String {
 
 /// System panel showing CPU, memory, uptime.
 pub struct SystemPanel {
-    sys: System,
+    /// `None` where sysinfo cannot read this platform; the panel then shows zeros.
+    sys: Option<System>,
     snapshot: SystemSnapshot,
     port: u16,
 }
@@ -48,9 +49,11 @@ pub struct SystemPanel {
 impl SystemPanel {
     /// Create a new system panel.
     pub fn new(port: u16) -> Self {
-        let mut sys = System::new();
-        sys.refresh_memory();
-        sys.refresh_cpu_usage();
+        let sys = System::new().ok().map(|mut sys| {
+            sys.refresh_memory();
+            sys.refresh_cpu_usage();
+            sys
+        });
 
         let mut panel = Self {
             sys,
@@ -62,12 +65,15 @@ impl SystemPanel {
     }
 
     fn refresh(&mut self) {
-        self.sys.refresh_cpu_usage();
-        self.sys.refresh_memory();
+        let Some(sys) = self.sys.as_mut() else {
+            return;
+        };
+        sys.refresh_cpu_usage();
+        sys.refresh_memory();
 
-        let cpu_percent = self.sys.global_cpu_usage() as f64;
-        let memory_total = self.sys.total_memory();
-        let memory_used = self.sys.used_memory();
+        let cpu_percent = sys.global_cpu_usage() as f64;
+        let memory_total = sys.total_memory();
+        let memory_used = sys.used_memory();
         let mem_percent = if memory_total > 0 {
             ((memory_used as f64 / memory_total as f64) * 100.0).round() as u64
         } else {
@@ -77,7 +83,9 @@ impl SystemPanel {
         self.snapshot.cpu_percent = cpu_percent;
         self.snapshot.memory_total = memory_total;
         self.snapshot.memory_used = memory_used;
-        self.snapshot.uptime_secs = System::uptime();
+        if let Ok(uptime) = System::uptime() {
+            self.snapshot.uptime_secs = uptime;
+        }
 
         self.snapshot.cpu_history.push(cpu_percent.round() as u64);
         if self.snapshot.cpu_history.len() > HISTORY_LIMIT {

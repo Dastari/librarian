@@ -62,12 +62,17 @@ async fn library(db: &Database, owner: &AuthUser, name: &str) -> Library {
             color: None,
             auto_scan: false,
             auto_organize: false,
+            auto_resolve_duplicates: None,
             naming_pattern: String::new(),
             scan_interval_minutes: 60,
             watch_for_changes: false,
+            watch_status: None,
+            watch_detail: None,
+            watch_status_since: None,
             scanning: false,
             last_scanned_at: None,
             quality_profile_id: None,
+            storage_volume_id: None,
         },
     )
     .await

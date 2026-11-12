@@ -10,6 +10,7 @@ fragment SeasonFields on Season {
   premiereDate
   endDate
   episodeOrder
+  lockedFields
   posterUrl
   createdAt
   updatedAt

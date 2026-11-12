@@ -2,7 +2,10 @@ import { Outlet, useRouter, useRouterState, Link } from "@tanstack/react-router"
 import { AppShell as GlassAppShell, ShellBrand } from "glass-ux/shell";
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 
+import { useDeviceCheckIn } from "@/features/devices/useDeviceCheckIn";
 import { FileDialogHost } from "@/features/files/FileDetailDialog";
+import { useGlobalMediaKeys } from "@/features/player/mediaKeys";
+import { useNowPlayingShortcut } from "@/features/player/nowPlaying";
 import { PlayerDock } from "@/features/player/PlayerDock";
 import { currentAudioItem, playerStore } from "@/features/player/store";
 import "@/lib/glass/brand";
@@ -14,9 +17,10 @@ import { ConnectionBanner } from "./ConnectionBanner";
 import { NavRail } from "./NavRail";
 import { PageScroller } from "./PageScroller";
 import { SHELL_ART_ID } from "./shellArt";
+import { ProfileDialogHost } from "@/features/users/profileDialog";
+
 import { ShellCommands } from "./ShellCommands";
 import { TopBar } from "./TopBar";
-import { UpdatePrompt } from "./UpdatePrompt";
 
 const hasAudio = () => Boolean(currentAudioItem(playerStore.getSnapshot()));
 
@@ -29,12 +33,19 @@ const hasAudio = () => Boolean(currentAudioItem(playerStore.getSnapshot()));
 export function AppShell() {
   const { mode } = useInputMode();
   const router = useRouter();
-  // The remote's Back never leaves the app: it walks in-app history, then returns Home.
+  useDeviceCheckIn();
+  // The remote's Back walks in-app history, then returns Home. On Home there is nowhere further:
+  // the key is left unhandled, and the TV app exits (design.md Q142).
   const back = useCallback(() => {
+    if (router.state.location.pathname === "/") return false;
     if (router.history.canGoBack()) router.history.back();
-    else if (router.state.location.pathname !== "/") void router.navigate({ to: "/" });
+    else void router.navigate({ to: "/" });
+    return true;
   }, [router]);
   useSpatialNavigation(true, mode === "tv", back);
+  // Media keys and the now playing shortcut work from anywhere (design.md Q125).
+  useGlobalMediaKeys();
+  useNowPlayingShortcut();
   const resolvedPath = useRouterState({ select: (state) => state.resolvedLocation?.pathname ?? state.location.pathname });
   useRouteFocus(resolvedPath, mode === "tv");
   const audioActive = useSyncExternalStore(playerStore.subscribe, hasAudio, hasAudio);
@@ -46,13 +57,22 @@ export function AppShell() {
     const root = body.current;
     const art = document.getElementById(SHELL_ART_ID);
     if (!root || !art) return;
-    art.style.setProperty("--art-scroll", "0");
+    // Opacity and transform are set on the art's own GPU layer (.shell-art), not through a CSS
+    // variable its subtree inherits, so a scroll frame is compositing only (design.md Q155).
+    let shown = -1;
+    const place = (progress: number) => {
+      if (progress === shown) return;
+      shown = progress;
+      art.style.opacity = String(1 - progress * 0.72);
+      art.style.transform = progress === 0 ? "" : `translateY(${(progress * -4).toFixed(3)}svh)`;
+    };
+    place(0);
     let frame = 0;
     const onScroll = (event: Event) => {
       const target = event.target;
       if (!(target instanceof HTMLElement) || !target.hasAttribute("data-page-scroller")) return;
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => art.style.setProperty("--art-scroll", String(Math.min(1, target.scrollTop / Math.max(1, target.clientHeight)))));
+      frame = requestAnimationFrame(() => place(Math.min(1, target.scrollTop / Math.max(1, target.clientHeight))));
     };
     root.addEventListener("scroll", onScroll, { capture: true, passive: true });
     return () => {
@@ -65,6 +85,7 @@ export function AppShell() {
     <div className="app-shell canvas-ambient relative isolate h-dvh w-full overflow-clip text-foreground">
       <div id={SHELL_ART_ID} className="shell-art" aria-hidden data-print="hide" />
       <ShellCommands />
+      <ProfileDialogHost />
       <GlassAppShell
         className="app-frame"
         contentAs="div"
@@ -84,7 +105,6 @@ export function AppShell() {
         </div>
       </GlassAppShell>
       <FileDialogHost />
-      <div className="contents" data-print="hide"><UpdatePrompt /></div>
     </div>
   );
 }

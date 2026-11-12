@@ -1,47 +1,35 @@
-import { ActionBar, defineActions, usePaletteActions, type ActionDefinition } from "glass-ux/actions";
+import { ActionBar, usePaletteActions, type ActionContext, type ActionSet } from "glass-ux/actions";
 import { Button } from "glass-ux/button";
-import { IconBookmark, IconDownload, IconPlay, IconPlus, IconRefresh, IconSettings, IconTrash } from "glass-ux/icons";
+import { IconPlay } from "glass-ux/icons";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { SaveToListDialog } from "@/features/personal/SaveToListDialog";
-import type { PersonalTarget } from "@/features/personal/types";
 
-interface MediaActionsProps {
-  id: string;
-  label: string;
-  personal?: PersonalTarget;
-  play?: { label: string; run: () => void; disabledReason?: string };
-  wanted?: { value: boolean; run: () => Promise<void> };
-  enqueue?: () => void;
-  find?: () => void;
-  settings?: () => void;
-  refresh?: { pending: boolean; run: () => Promise<void> };
-  remove?: () => void;
-}
+import { FindReleasesButton } from "@/features/recommendations/FindReleasesButton";
+
+/** What an action needs from its surface when the hero runs one itself (Find releases only reads its targets). */
+const HERO_CONTEXT = {
+  surface: "bar",
+  navigate: () => {},
+  toast: () => {},
+  openWindow: () => {},
+} as unknown as ActionContext;
 
 /**
- * Media hero actions. Playback leads the row as the large primary button, the way media
- * players present it; every other action, and Play itself in menus and the palette, reads
- * the same action set. The bar after Play is told how much room is left so it folds into
- * More instead of wrapping, and stays left-aligned beside the button.
+ * A title's own actions in its page hero. Playback leads the row as the large primary button; the
+ * rest are the title's one action list, which folds into More instead of wrapping. With
+ * `recommended`, the title's "Find releases" action gets its own button carrying a badge with the
+ * number of releases Librarian recommends for it (the action stays in menus and the palette).
  */
-export function MediaActions({ id, label, personal, play, wanted, enqueue, find, settings, refresh, remove }: MediaActionsProps) {
-  const [saving, setSaving] = useState(false);
-  const targets = useMemo(() => [id], [id]);
-  const set = useMemo(() => {
-    const actions: ActionDefinition<string>[] = [];
-    if (play) actions.push({ id: "play", label: play.label, icon: IconPlay, group: "open", surfaces: ["menu", "context", "palette"], disabledReason: () => play.disabledReason, run: play.run });
-    if (wanted) actions.push({ id: "wanted", label: wanted.value ? "Wanted" : "Want", icon: IconBookmark, group: "manage", priority: 1, run: wanted.run, successMessage: () => wanted.value ? "No longer wanted" : "Marked as wanted" });
-    if (enqueue) actions.push({ id: "enqueue", label: "Add to queue", icon: IconPlus, group: "open", priority: 1, run: enqueue });
-    if (personal) actions.push({ id: "save", label: "Save to list", icon: IconBookmark, group: "open", priority: 1, run: () => setSaving(true) });
-    if (find) actions.push({ id: "find", label: "Find releases", icon: IconDownload, group: "manage", priority: 2, primary: !play, run: find });
-    if (settings) actions.push({ id: "settings", label: "Download settings", icon: IconSettings, group: "manage", run: settings });
-    if (refresh) actions.push({ id: "refresh", label: "Refresh metadata", icon: IconRefresh, group: "manage", disabledReason: () => refresh.pending ? "Metadata refresh is in progress" : false, run: refresh.run, successMessage: () => "Metadata refreshed" });
-    // Existing page confirmation owns removal and pending state.
-    if (remove) actions.push({ id: "remove", label: "Remove from library", icon: IconTrash, group: "danger", run: remove });
-    return defineActions("media", actions);
-  }, [play, wanted, personal, enqueue, find, settings, refresh, remove]);
-  usePaletteActions(set, targets, label);
-
+export function MediaActions<T>({ target, label, actions, play, recommended }: {
+  target: T;
+  label: string;
+  actions: ActionSet<T>;
+  play?: { label: string; run: () => void; disabledReason?: string };
+  recommended?: number;
+}) {
+  const targets = useMemo(() => [target], [target]);
+  usePaletteActions(actions, targets, label);
+  const find = recommended === undefined ? undefined : actions.actions.find((action) => action.id === "find" && (action.visible?.(targets) ?? true));
+  const bar = useMemo<ActionSet<T>>(() => (find ? { entity: actions.entity, actions: actions.actions.filter((action) => action.id !== "find") } : actions), [actions, find]);
   const row = useRef<HTMLDivElement>(null);
   const lead = useRef<HTMLDivElement>(null);
   const [room, setRoom] = useState<number>();
@@ -58,24 +46,18 @@ export function MediaActions({ id, label, personal, play, wanted, enqueue, find,
     observer.observe(element);
     if (lead.current) observer.observe(lead.current);
     return () => observer.disconnect();
-  }, [play]);
-
+  }, [play, find]);
   return (
-    <>
-      <div ref={row} className="media-actions flex min-w-0 items-center gap-3">
-        {play ? (
-          <div ref={lead} className="shrink-0">
-            <Button variant="primary" size="lg" icon={<IconPlay />} onClick={play.disabledReason ? undefined : play.run} disabledReason={play.disabledReason} data-tv-autofocus data-focusable className="media-play">
-              {play.label}
-            </Button>
-          </div>
-        ) : null}
-        {/* The bar right-aligns itself; a shrink-to-fit box keeps it beside Play. */}
-        <div className="flex min-w-0 flex-[0_1_auto]">
-          <ActionBar set={set} targets={targets} label={label} maxButtons={3} available={room} className="min-w-0" />
+    <div ref={row} className="media-actions flex min-w-0 items-center gap-3">
+      {play || find ? (
+        <div ref={lead} className="flex shrink-0 items-center gap-3">
+          {play ? <Button variant="primary" size="lg" icon={<IconPlay />} onClick={play.disabledReason ? undefined : play.run} disabledReason={play.disabledReason} data-tv-autofocus data-focusable className="media-play">{play.label}</Button> : null}
+          {find ? <FindReleasesButton count={recommended ?? 0} variant={play ? "secondary" : "primary"} onPress={() => void find.run?.(targets, HERO_CONTEXT)} /> : null}
         </div>
+      ) : null}
+      <div className="flex min-w-0 flex-[0_1_auto]">
+        <ActionBar set={bar} targets={targets} label={label} maxButtons={find ? 2 : 3} available={room} className="min-w-0" />
       </div>
-      {personal && saving ? <SaveToListDialog open={saving} onOpenChange={setSaving} target={personal} title={label} /> : null}
-    </>
+    </div>
   );
 }

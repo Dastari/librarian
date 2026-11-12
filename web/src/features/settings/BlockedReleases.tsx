@@ -3,9 +3,9 @@ import { copyText } from "glass-ux/copy-button";
 import { useMutation } from "@apollo/client/react";
 import { defineActions } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
-import { createDataTableColumns, filters, IdentityCell, RelativeTime } from "glass-ux/data-table";
+import { createDataTableColumns, filters, RelativeTime } from "glass-ux/data-table";
 import { IconCopy, IconExternalLink } from "glass-ux/icons";
-import { IconBan, IconRotate } from "@tabler/icons-react";
+import { IconRotate } from "@tabler/icons-react";
 import { useMemo } from "react";
 
 import {
@@ -19,6 +19,7 @@ import { parseTimestamp } from "@/lib/format";
 import { assertSuccess } from "@/lib/graphql/errors";
 
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { ReleaseIdentity } from "./ReleaseIdentity";
 import { runSettingsSelection } from "./runSettingsSelection";
 
 import { SettingsLoadError } from "./SettingsLoadError";
@@ -34,7 +35,6 @@ const REASON: Record<string, string> = {
   rejected: "Rejected",
   manual: "Blocked by hand",
 };
-const BlockGlyph = glyph(IconBan, "ban");
 const UnblockIcon = glyph(IconRotate, "rotate");
 
 /** What the release was for, as a kind and id for its page. */
@@ -50,7 +50,7 @@ const column = createDataTableColumns<Row>();
 const columns = column.columns([
   column.accessor("title", {
     header: "Release", width: 30, priority: 1, cardRole: "title", sortable: true,
-    cell: ({ row }) => <IdentityCell icon={<BlockGlyph />} title={row.original.title} subtitle={row.original.infoHash ?? row.original.guid ?? undefined} />,
+    cell: ({ row }) => <ReleaseIdentity title={row.original.title} facts={row.original.infoHash ?? row.original.guid ?? undefined} />,
   }),
   column.accessor("reason", {
     header: "Reason", width: 10, priority: 2, cardRole: "status", sortable: true,
@@ -101,7 +101,6 @@ export function BlockedReleases() {
         loading={loading && rows.length === 0}
         actions={actions} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "release", other: "releases" }} />}
 
-        density="compact"
         noun={{ one: "release", other: "releases" }}
         emptyMessage="Nothing is blocked."
       />

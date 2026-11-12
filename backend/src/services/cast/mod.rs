@@ -1,3 +1,4 @@
+pub mod describe;
 mod grant;
 pub mod service;
 pub mod write_rules;

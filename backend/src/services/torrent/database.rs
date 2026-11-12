@@ -57,7 +57,7 @@ fn open_fd_diagnostics() -> Option<String> {
     }
 }
 
-async fn execute_query(
+pub(crate) async fn execute_query(
     schema: &LibrarianSchema,
     auth_user: &AuthUser,
     query: &str,
@@ -87,7 +87,7 @@ async fn execute_query(
     Ok(data)
 }
 
-async fn execute_mutation(
+pub(crate) async fn execute_mutation(
     schema: &LibrarianSchema,
     auth_user: &AuthUser,
     query: &str,
@@ -141,7 +141,7 @@ fn check_mutation_payloads(data: &serde_json::Value) -> anyhow::Result<()> {
 }
 
 /// Parse a hex info_hash string into a 20-byte `Id20`.
-fn hex_to_info_hash(hex: &str) -> Result<librqbit::dht::Id20, anyhow::Error> {
+pub(super) fn hex_to_info_hash(hex: &str) -> Result<librqbit::dht::Id20, anyhow::Error> {
     if hex.len() != 40 {
         anyhow::bail!(
             "Invalid info_hash hex length: expected 40, got {}",
@@ -1156,6 +1156,45 @@ pub async fn list_resumable(pool: &Database) -> Result<Vec<ResumableRecord>, any
         .collect())
 }
 
+/// Write an app setting's raw value (stored as given), creating the row if there is none.
+pub async fn put_setting_value(
+    db: &Database,
+    key: &str,
+    value: &str,
+    category: &str,
+    description: &str,
+) -> Result<(), anyhow::Error> {
+    use crate::graphql::entities::{CreateAppSettingInput, UpdateAppSettingInput};
+    match find_setting(db, key).await? {
+        Some(existing) => {
+            AppSetting::update_by_id(
+                db,
+                &existing.id,
+                UpdateAppSettingInput {
+                    key: None,
+                    value: Some(value.to_string()),
+                    description: None,
+                    category: None,
+                },
+            )
+            .await?;
+        }
+        None => {
+            AppSetting::insert(
+                db,
+                CreateAppSettingInput {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                    description: Some(description.to_string()),
+                    category: category.to_string(),
+                },
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 async fn find_setting(db: &Database, key: &str) -> Result<Option<AppSetting>, anyhow::Error> {
     Ok(AppSetting::query(db.pool())
         .filter(AppSettingWhereInput {
@@ -1228,16 +1267,15 @@ pub async fn find_active_torrents(db: &Database) -> Result<Vec<Torrent>, anyhow:
 
 /// Every torrent that has finished downloading, for the seeding-policy sweep.
 pub async fn find_completed_torrents(db: &Database) -> Result<Vec<Torrent>, anyhow::Error> {
+    // Not by progress alone: a torrent reads as empty while the client verifies it, and stopping then
+    // leaves that low progress stored. Treating it as unfinished at the next start would run its
+    // imports again as though it had just finished.
     Ok(Torrent::query(db.pool())
-        .filter(TorrentWhereInput {
-            progress: Some(IntFilter {
-                gte: Some(1),
-                ..Default::default()
-            }),
-            ..Default::default()
-        })
         .fetch_all()
-        .await?)
+        .await?
+        .into_iter()
+        .filter(|torrent| torrent.completed_at.is_some() || torrent.progress >= 1.0)
+        .collect())
 }
 
 /// Sync all session torrents into the database (upsert by info_hash).
@@ -1367,7 +1405,11 @@ pub async fn restore_from_database(
                 ))
             });
             match add {
-                Ok(AddTorrentResponse::Added(_, _)) => {
+                Ok(AddTorrentResponse::Added(_, handle)) => {
+                    super::share_storage::register_folder(
+                        &record.info_hash,
+                        handle.output_folder(),
+                    );
                     if start_paused {
                         queued.push(record.info_hash.clone());
                     } else {
@@ -1627,6 +1669,15 @@ mod ownership_tests {
                 avatar_url: None,
                 is_active: true,
                 last_login_at: None,
+                phone: None,
+                genre_interests: None,
+                must_change_password: false,
+                two_factor_enabled_at: None,
+                recovery_codes_remaining: 0,
+                password_changed_at: None,
+                totp_secret: None,
+                totp_pending_secret: None,
+                recovery_codes: None,
             },
         )
         .await
@@ -1644,12 +1695,17 @@ mod ownership_tests {
                 color: None,
                 auto_scan: false,
                 auto_organize: false,
+                auto_resolve_duplicates: None,
                 naming_pattern: "fixture naming_pattern".to_string(),
                 scan_interval_minutes: 0,
                 watch_for_changes: false,
+                watch_status: None,
+                watch_detail: None,
+                watch_status_since: None,
                 scanning: false,
                 last_scanned_at: None,
                 quality_profile_id: None,
+                storage_volume_id: None,
             },
         )
         .await
@@ -1659,6 +1715,7 @@ mod ownership_tests {
         Show::insert(
             db,
             CreateShowInput {
+                locked_fields: None,
                 library_id: library.id.clone(),
                 user_id: library.user_id.clone(),
                 name: "fixture show".to_string(),
@@ -1690,6 +1747,7 @@ mod ownership_tests {
         Episode::insert(
             db,
             CreateEpisodeInput {
+                locked_fields: None,
                 show_id: show.id.clone(),
                 season: 0,
                 episode: 0,

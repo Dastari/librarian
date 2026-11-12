@@ -18,9 +18,15 @@
  *   Left/Right; other zones (the top bar) are entered vertically when content has nothing
  *   further that way.
  * - `[data-tv-skip]` controls (or regions) are pointer shortcuts a remote reaches another way.
+ * - What is a stop, the Back order and focus restoration are design.md Q141–Q143 and the
+ *   style guide's "Remote focus" section: `isRemoteStop` is the one definition of a stop.
  */
 import { prefersReducedMotion } from "glass-ux/appearance";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { DataTableRemoteContext } from "glass-ux/data-table";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+
+import { backHandled, isEditing, isRemoteBackKey } from "@/lib/remote-back";
+import { isTvApp } from "@/lib/tv-app";
 
 export type InputMode = "pointer" | "touch" | "tv";
 
@@ -37,6 +43,7 @@ const InputModeContext = createContext<InputModeContextValue | null>(null);
 function detectInitialMode(): InputMode {
   if (typeof window === "undefined") return "pointer";
   const ua = navigator.userAgent;
+  if (isTvApp(ua)) return "tv";
   if (/\b(SMART-TV|SmartTV|Tizen|Web0S|WebOS|BRAVIA|AppleTV|GoogleTV|Android TV|AFT[A-Z]?\b)/i.test(ua)) return "tv";
   if (window.matchMedia("(hover: none) and (pointer: coarse)").matches) return "touch";
   return "pointer";
@@ -49,30 +56,13 @@ function readForced(): InputMode | null {
 }
 
 export function InputModeProvider({ children }: { children: ReactNode }) {
-  const [detected, setDetected] = useState<InputMode>(detectInitialMode);
+  // TV comes from a TV's browser or a person's choice, never from arrow keys: a desktop keyboard
+  // user browsing rows with arrows would otherwise be switched to the TV scale mid-page.
+  const [detected] = useState<InputMode>(detectInitialMode);
   const [forced, setForcedState] = useState<InputMode | null>(readForced);
 
-  useEffect(() => {
-    // Promote to keyboard-driven behaviour when the user navigates with arrows for a while.
-    let arrowPresses = 0;
-    const onKey = (event: KeyboardEvent) => {
-      if (typeof event.key === "string" && event.key.startsWith("Arrow")) {
-        arrowPresses += 1;
-        if (arrowPresses >= 6 && detected === "pointer") setDetected("tv");
-      }
-    };
-    const onPointer = (event: PointerEvent) => {
-      if (event.pointerType === "mouse" && detected === "tv" && arrowPresses < 6) setDetected("pointer");
-    };
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("pointerdown", onPointer);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("pointerdown", onPointer);
-    };
-  }, [detected]);
-
-  const mode = forced ?? detected;
+  // The Android TV app is always driven by a remote, whatever this browser stored before.
+  const mode = isTvApp() ? "tv" : (forced ?? detected);
 
   useEffect(() => {
     document.documentElement.dataset.inputMode = mode;
@@ -85,7 +75,12 @@ export function InputModeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(() => ({ mode, forced, setForced }), [mode, forced, setForced]);
-  return <InputModeContext.Provider value={value}>{children}</InputModeContext.Provider>;
+  // A remote never stops on column headers, so tables put their sort menu in the toolbar (Q141).
+  return (
+    <InputModeContext.Provider value={value}>
+      <DataTableRemoteContext.Provider value={mode === "tv"}>{children}</DataTableRemoteContext.Provider>
+    </InputModeContext.Provider>
+  );
 }
 
 export function useInputMode(): InputModeContextValue {
@@ -94,21 +89,69 @@ export function useInputMode(): InputModeContextValue {
   return context;
 }
 
+/** Whether the app is in TV mode; false outside the provider (components used on their own). */
+export function useIsTvMode(): boolean {
+  return useContext(InputModeContext)?.mode === "tv";
+}
+
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [data-focusable]';
 
 /** The focusable selector scoped to the routed content (each list entry needs the prefix). */
 const IN_MAIN = FOCUSABLE_SELECTOR.split(",").map((selector) => `main ${selector.trim()}`).join(", ");
 
+/** A Glass data table's grid, and the lines in it (rows, cards, detail panels) the table moves between. */
+const TABLE_GRID = ".fa-dt-grid";
+const TABLE_LINE = "[data-item][data-index]";
+/** Every element the arrows consider: the focusable ones, plus a table's lines (only its active one is tabbable). */
+export const REMOTE_CANDIDATES = `${FOCUSABLE_SELECTOR}, ${TABLE_GRID} ${TABLE_LINE}`;
+/**
+ * Never stops, whatever they contain: a table's header (sort buttons, column menus, resize
+ * handles, select-all; sorting is in the toolbar's sort menu on a TV), resize separators, and a
+ * field's own buttons that Glass keeps out of the tab order (a number's −/+; OK adjusts instead).
+ */
+const NEVER_STOPS = '.fa-dt-head, [role="columnheader"], [role="separator"], [role="tooltip"], .fa-number-steppers, .fa-input-btn[tabindex="-1"]';
+
+const isTvDocument = () => typeof document !== "undefined" && document.documentElement.dataset.inputMode === "tv";
+
+/**
+ * Whether an element is a remote stop, apart from where it is on screen (design.md Q141). Not a
+ * stop: anything hidden, inert or `aria-hidden`; disabled controls; pointer-only shortcuts
+ * (`data-nav-skip`, and `data-tv-skip` on a TV); a data table's header; anything inside a table
+ * line except the line itself (a row or card is one stop; its checkbox and ⋯ are the pointer's,
+ * its actions are in its menu), though a detail panel's own controls are; and a region that only
+ * contains controls (focus lands on the controls).
+ */
+export function isRemoteStop(element: HTMLElement, tv = isTvDocument()): boolean {
+  if (element.closest("[aria-hidden='true'], [inert], [hidden], [data-nav-skip]")) return false;
+  if (tv && element.closest("[data-tv-skip]")) return false;
+  if (element.matches(":disabled") || element.getAttribute("aria-disabled") === "true") return false;
+  if (element.closest(NEVER_STOPS)) return false;
+  const line = element.matches(TABLE_LINE) && Boolean(element.closest(TABLE_GRID));
+  if (!line && element.closest(TABLE_GRID) && !element.closest('[data-item="detail"]')) return false;
+  if (!line && !element.matches("a[href], button, input, select, textarea") && element.querySelector(FOCUSABLE_SELECTOR)) return false;
+  return true;
+}
+
+/** The first stop matching a selector, in document order (no geometry: a page may not be laid out yet). */
+function firstStop(root: ParentNode, selector: string): HTMLElement | null {
+  for (const element of root.querySelectorAll<HTMLElement>(selector)) if (isRemoteStop(element)) return element;
+  return null;
+}
+
 type Direction = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
 
-/** webOS (461) and Tizen (10009) report their remote's Back key only as a key code. */
-const BACK_KEY_CODES = new Set([461, 10009]);
 const OPEN_OVERLAY = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]';
+/**
+ * Arrows stay inside a modal dialog. A non-modal one (the now playing drawer above the dock)
+ * does not hold them, so the dock's controls under it stay reachable.
+ */
+const ARROW_SCOPE = '[role="dialog"]:not([aria-modal="false"]), [role="alertdialog"]';
 
 function isVisible(element: HTMLElement): boolean {
   const rect = element.getBoundingClientRect();
-  if (rect.width === 0 && rect.height === 0) return false;
+  // A collapsed panel keeps its width but has no height: its controls are not stops either.
+  if (rect.width === 0 || rect.height === 0) return false;
   const style = window.getComputedStyle(element);
   return style.visibility !== "hidden" && style.display !== "none";
 }
@@ -162,15 +205,13 @@ export function findNext(current: HTMLElement, direction: Direction, scope: Pare
   type Scored = { element: HTMLElement; gap: number; distance: number; centre: number; overlaps: boolean; group: Element; zone: Element | null };
   const scored: Scored[] = [];
 
-  for (const candidate of scope.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)) {
-    if (candidate === current || candidate.closest("[aria-hidden='true'], [inert]") || !isVisible(candidate)) continue;
+  for (const candidate of scope.querySelectorAll<HTMLElement>(REMOTE_CANDIDATES)) {
+    // Pointer-only controls (a row's scroll arrows, a tile's play button) are never arrow-key
+    // stops: the arrows move to the next card, and the row scrolls to show it.
+    if (candidate === current || !isRemoteStop(candidate, tv) || !isVisible(candidate)) continue;
     const candidateZone = candidate.closest("[data-nav-zone]");
     // Side zones (the rail, the letter rail) are entered and left sideways only.
     if (vertical && candidateZone !== zone && (isSide(candidateZone) || isSide(zone))) continue;
-    // Secondary overlay targets (a tile's play button) are reached by the remote's keys instead.
-    if (tv && candidate.closest("[data-tv-skip]")) continue;
-    // Focus lands on controls, not on scrollable regions that contain them.
-    if (!candidate.matches("a[href], button, input, select, textarea") && candidate.querySelector(FOCUSABLE_SELECTOR)) continue;
     const rect = candidate.getBoundingClientRect();
     const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
     const ox = origin.left + origin.width / 2, oy = origin.top + origin.height / 2;
@@ -287,8 +328,18 @@ const OWNS_AXIS = '[role="tablist"], [role="radiogroup"], .fa-segmented, .fa-swa
  */
 function compositeOwns(active: HTMLElement, direction: Direction): boolean {
   const role = active.getAttribute("role");
+  // A seek bar takes Left/Right for scrubbing; Up and Down leave it (design.md Q125).
+  if (role === "slider" && active.closest("[data-owns-horizontal]")) return direction === "ArrowLeft" || direction === "ArrowRight";
+  if (role === "gridcell" && active.closest('[role="grid"][data-nav-group]')) return false;
   if (role === "slider" || role === "menuitem" || role === "option" || role === "listbox" || role === "combobox" || role === "treeitem" || role === "gridcell") return true;
-  if (active.closest(OWNS_ALL)) return true;
+  // A data table moves between its lines with Up/Down (and across a grid of cards, where it takes
+  // Left/Right itself); sideways keys it doesn't use leave it. Its edges are `leavesTable`'s.
+  // Controls inside a line or a detail panel don't belong to its keys: the arrows are ours there.
+  if (active.closest(TABLE_GRID)) return active.matches(TABLE_LINE) && (direction === "ArrowUp" || direction === "ArrowDown");
+  // A grid that is a navigation group (the guide's month of days) is a grid of buttons that
+  // spatial navigation walks; other grids and trees handle their own arrows.
+  const owner = active.closest(OWNS_ALL);
+  if (owner && !(owner.getAttribute("role") === "grid" && owner.hasAttribute("data-nav-group"))) return true;
   if (active.matches(OWNS_VERTICAL)) return direction === "ArrowUp" || direction === "ArrowDown";
   const strip = active.closest<HTMLElement>(OWNS_AXIS);
   if (!strip) return false;
@@ -310,45 +361,239 @@ function leavesField(active: HTMLElement, direction: Direction): boolean {
   return direction === start ? selectionStart === 0 : selectionStart === value.length;
 }
 
+/**
+ * A tag field is a combobox for its suggestions, but with its list closed it is one line of chips:
+ * on a TV Up/Down leave it instead of owning the remote.
+ */
+function leavesClosedTagField(active: HTMLElement, direction: string): boolean {
+  return (direction === "ArrowUp" || direction === "ArrowDown") && active instanceof HTMLInputElement && active.getAttribute("aria-expanded") !== "true" && Boolean(active.closest(".fa-tag-input"));
+}
+
+/** A ⋯ menu button or a select's trigger (not a typing combobox): OK opens it on a TV. */
+const POPUP_TRIGGER = '[aria-haspopup="menu"]:not([role="menuitem"]), [aria-haspopup="listbox"]:not(input)';
+
+function isHorizontalSlider(active: HTMLElement): boolean {
+  if (active.getAttribute("role") !== "slider" && !(active instanceof HTMLInputElement && active.type === "range")) return false;
+  const orientation = active.getAttribute("aria-orientation") ?? active.closest("[data-orientation]")?.getAttribute("data-orientation");
+  return orientation !== "vertical";
+}
+
+/** Glass NumberField's input (Base UI steps its value with Up/Down and stops the event). */
+const NUMBER_INPUT = '.fa-number-input, [aria-roledescription="Number field"]';
+const ADJUSTING = "data-tv-adjusting";
+
+function isNumberInput(active: HTMLElement | null): active is HTMLInputElement {
+  return active instanceof HTMLInputElement && active.matches(NUMBER_INPUT);
+}
+
+/**
+ * On a TV a number field does not own Up/Down, or a remote walking down a form would change
+ * values instead of moving to the next row (its −/+ steppers are pointer-only). OK (Enter)
+ * puts the focused field into an explicit adjusting state, marked `data-tv-adjusting`, where
+ * Up/Down step the value as usual; OK or Back, or leaving the field, ends it. Returns true
+ * when the key was taken.
+ */
+function handleTvNumberKey(event: KeyboardEvent, active: HTMLInputElement): boolean {
+  const adjusting = active.hasAttribute(ADJUSTING);
+  const take = () => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  if (event.key === "Enter") {
+    take();
+    if (adjusting) active.removeAttribute(ADJUSTING);
+    else active.setAttribute(ADJUSTING, "");
+    return true;
+  }
+  if (adjusting && (event.key === "Escape" || isRemoteBackKey(event))) {
+    take();
+    active.removeAttribute(ADJUSTING);
+    return true;
+  }
+  if (adjusting || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return false;
+  take();
+  const scope = active.closest<HTMLElement>('[role="dialog"], [role="alertdialog"]') ?? document;
+  const next = findNext(active, event.key, scope);
+  if (next) {
+    next.focus({ preventScroll: true });
+    revealFocused(next);
+  }
+  return true;
+}
+
+/** The topmost open overlay: portals append to the body, so the last one in document order. */
+function topOverlay(): HTMLElement | null {
+  const open = document.querySelectorAll<HTMLElement>(OPEN_OVERLAY);
+  return open.item(open.length - 1) ?? null;
+}
+
+const isArrow = (key: string): key is Direction => key === "ArrowUp" || key === "ArrowDown" || key === "ArrowLeft" || key === "ArrowRight";
+
+/**
+ * Whether an arrow leaves a data table from this line: Up from its first row (or the first row
+ * of cards), Down from its last once everything is loaded, and Left/Right from the end of a row
+ * of cards. The table itself would stay put there (it clamps), so the remote would be stuck.
+ */
+function leavesTable(line: HTMLElement, direction: Direction): boolean {
+  const grid = line.closest<HTMLElement>(TABLE_GRID);
+  if (!grid) return false;
+  const rect = line.getBoundingClientRect();
+  const index = Number(line.dataset.index);
+  const others = Array.from(grid.querySelectorAll<HTMLElement>(TABLE_LINE)).filter((other) => other !== line);
+  const sameRow = (other: DOMRect) => other.top < rect.bottom - 4 && other.bottom > rect.top + 4;
+  if (direction === "ArrowUp") return index === 0 || others.some((other) => other.dataset.index === "0" && sameRow(other.getBoundingClientRect()));
+  if (direction === "ArrowDown") {
+    if (grid.getAttribute("aria-busy") === "true") return false;
+    const later = others.filter((other) => Number(other.dataset.index) > index);
+    if (later.some((other) => other.getBoundingClientRect().top >= rect.bottom - 4)) return false;
+    // `aria-rowcount` is the header plus every row, or -1 while the total is unknown.
+    const count = Number(grid.getAttribute("aria-rowcount") ?? -1);
+    const loaded = Math.max(index, ...later.map((other) => Number(other.dataset.index)));
+    return count <= 0 || loaded + 2 >= count;
+  }
+  // Sideways only matters across a grid of cards; a table row leaves sideways by the bubbling path.
+  if (!line.classList.contains("fa-dt-card")) return false;
+  return !others.some((other) => {
+    const box = other.getBoundingClientRect();
+    return sameRow(box) && (direction === "ArrowLeft" ? box.right <= rect.left + 4 : box.left >= rect.right - 4);
+  });
+}
+
+/** A search field: Back clears its text before it goes back (design.md Q142). */
+const SEARCH_FIELD = 'input[type="search"], input[role="searchbox"], input[enterkeyhint="search"], [role="search"] input, input[data-back-clears]';
+
+/** Empty a field the way typing would, so a controlled React input hears it. */
+function clearField(input: HTMLInputElement) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, "");
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/** The last control focused outside any overlay: where focus returns when an overlay leaves it nowhere. */
+let lastOutside: HTMLElement | null = null;
+/** Set while Back is re-sent to an overlay as Escape, so that Escape is not taken as a second Back. */
+let resending = false;
+
+/** A visible, connected stop to put focus back on. */
+function usable(element: HTMLElement | null): element is HTMLElement {
+  return Boolean(element?.isConnected) && isVisible(element!) && !element!.matches(":disabled");
+}
+
+/**
+ * Put focus somewhere sensible when it has fallen to the page body (an overlay closed and its
+ * opener is gone, or the opener was a menu item): the control that opened it, the content control
+ * last used, the page's start, then its first stop (design.md Q143).
+ */
+export function restoreFocus(): HTMLElement | null {
+  const main = document.getElementById("main") ?? document.querySelector("main");
+  const opener = lastOutside && !lastOutside.matches(TABLE_LINE) ? lastOutside.closest<HTMLElement>(`${TABLE_GRID} ${TABLE_LINE}`) ?? lastOutside : lastOutside;
+  const start = main?.querySelector<HTMLElement>("[data-tv-autofocus]") ?? null;
+  const target = [opener, contentMemory, start].find(usable) ?? (main ? firstStop(main, "[data-spatial-start], " + REMOTE_CANDIDATES) : null);
+  if (!target) return null;
+  target.focus({ preventScroll: true });
+  revealFocused(target);
+  return target;
+}
+
+/** Scroll the page's scroller a step up or down when it has more that way; false when it has none. */
+function scrollPage(active: HTMLElement, direction: Direction): boolean {
+  if (direction !== "ArrowUp" && direction !== "ArrowDown") return false;
+  const scroller = active.closest<HTMLElement>("[data-page-scroller]") ?? document.querySelector<HTMLElement>("main [data-page-scroller], [data-page-scroller]");
+  if (!scroller || !scroller.contains(active) && !active.closest("main")) return false;
+  const room = direction === "ArrowDown" ? scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop : scroller.scrollTop;
+  if (room < 1) return false;
+  scroller.scrollBy({ top: (direction === "ArrowDown" ? 1 : -1) * Math.round(scroller.clientHeight * 0.6), behavior: scrollBehavior() });
+  return true;
+}
+
 function overlayOpen(): boolean {
   return Boolean(document.querySelector(OPEN_OVERLAY));
 }
 
 /**
  * Global arrow-key focus movement. Active in every mode so keyboard users on desktop get it
- * for free; text inputs, sliders and open menus keep their native arrow behaviour. In TV
- * mode Backspace and Escape act as the remote's Back key when nothing else consumes them.
+ * for free; text inputs, sliders and open menus keep their native arrow behaviour.
+ *
+ * Back (design.md Q142), when nothing nearer took it (`backHandled`; a closing tooltip doesn't
+ * count): close the topmost overlay, then leave an edit state (a search field's text), then
+ * `onBack`, one navigation step. `onBack` returns false when there is nowhere to go (Home), and
+ * the key is left unhandled so the TV app can exit. In TV mode Escape and Backspace (outside a
+ * text field) are Back too; the remote keys always are.
  */
-export function useSpatialNavigation(enabled = true, tv = false, onBack: () => void = () => window.history.back()): void {
+export function useSpatialNavigation(enabled = true, tv = false, onBack: () => boolean | void = () => window.history.back()): void {
+  // The latest callback, without re-registering every listener (and dropping a focus watch) per render.
+  const backStep = useRef(onBack);
+  backStep.current = onBack;
   useEffect(() => {
     if (!enabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
       const active = document.activeElement as HTMLElement | null;
-      const editing = Boolean(active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT" || active.isContentEditable));
-      const back = BACK_KEY_CODES.has(event.keyCode) || event.key === "GoBack" || event.key === "BrowserBack" || (tv && !editing && (event.key === "Backspace" || event.key === "Escape"));
+      const editing = isEditing(active);
+      const back = isRemoteBackKey(event) || (tv && (event.key === "Escape" || (event.key === "Backspace" && !editing)));
       if (back) {
-        if (overlayOpen()) return;
+        if (resending || backHandled(event)) return;
+        // 1. The topmost overlay. Dialogs and menus close on Escape themselves; another Back key,
+        // or focus outside the overlay (the now playing drawer, with focus on the page), is aimed
+        // at it as Escape.
+        const overlay = topOverlay();
+        if (overlay) {
+          const inside = Boolean(active && overlay.contains(active));
+          if (event.key !== "Escape" || !inside) {
+            resending = true;
+            try {
+              (inside ? active! : overlay).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true, composed: true }));
+            } finally {
+              resending = false;
+            }
+          }
+          event.preventDefault();
+          return;
+        }
+        // 2. An edit state: a search field's text goes before the page does.
+        if (active instanceof HTMLInputElement && active.matches(SEARCH_FIELD) && active.value !== "") {
+          event.preventDefault();
+          clearField(active);
+          return;
+        }
+        // 3. One navigation step, unless there is none (Home).
+        if (backStep.current() === false) return;
         event.preventDefault();
-        onBack();
         return;
       }
+      if (event.defaultPrevented) return;
       const direction = event.key as Direction;
-      if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(direction)) return;
+      if (!isArrow(direction)) return;
       if (!active || active === document.body) {
-        const first = document.querySelector<HTMLElement>("main [data-tv-autofocus]") ?? document.querySelector<HTMLElement>(`main [data-spatial-start], ${IN_MAIN}`);
+        const first = document.querySelector<HTMLElement>("main [data-tv-autofocus]") ?? firstStop(document, `main [data-spatial-start], ${IN_MAIN}`);
         first?.focus();
         if (first) event.preventDefault();
         return;
       }
       if ((editing && !(tv && leavesField(active, direction))) || compositeOwns(active, direction)) return;
       if (active.closest("[data-spatial-ignore]")) return;
-      const scope = active.closest<HTMLElement>('[role="dialog"], [role="alertdialog"]') ?? document;
+      const scope = active.closest<HTMLElement>(ARROW_SCOPE) ?? document;
       const next = findNext(active, direction, scope);
-      if (!next) return;
+      if (!next) {
+        // Nothing further that way, but the page goes on (charts, a summary): a remote scrolls it,
+        // or what is below the last stop could never be read.
+        if (tv && scope === document && scrollPage(active, direction)) event.preventDefault();
+        return;
+      }
       event.preventDefault();
       next.focus({ preventScroll: true });
       revealFocused(next);
+    };
+    /** Move on in a direction before a composite (Base UI) turns the key into its own. */
+    const moveFirst = (event: KeyboardEvent, active: HTMLElement): boolean => {
+      const scope = active.closest<HTMLElement>(ARROW_SCOPE) ?? document;
+      const next = findNext(active, event.key as Direction, scope);
+      if (!next) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      next.focus({ preventScroll: true });
+      revealFocused(next);
+      return true;
     };
     // Base UI modal scopes stop bubbling key events. Handle ordinary modal
     // controls before that boundary; composites still take the exemptions above.
@@ -356,42 +601,114 @@ export function useSpatialNavigation(enabled = true, tv = false, onBack: () => v
     // arrows before Base UI's trigger turns them into "open the menu".
     const onModalKeyDown = (event: KeyboardEvent) => {
       const active = document.activeElement as HTMLElement | null;
-      if (tv && active?.matches('[aria-haspopup="menu"]:not([role="menuitem"])') && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-        const scope = active.closest<HTMLElement>('[role="dialog"], [role="alertdialog"]') ?? document;
-        const next = findNext(active, event.key, scope);
-        if (next) {
-          event.preventDefault();
-          event.stopPropagation();
-          next.focus({ preventScroll: true });
-          revealFocused(next);
-        }
+      const plain = !event.defaultPrevented && !event.altKey && !event.ctrlKey && !event.metaKey;
+      if (tv && isNumberInput(active) && plain && !event.shiftKey && handleTvNumberKey(event, active)) return;
+      // Base UI's combobox takes Up/Down to open its list before a bubbling handler could run.
+      if (tv && active && plain && leavesClosedTagField(active, event.key)) {
+        moveFirst(event, active);
         return;
       }
-      if (active?.closest('[role="dialog"], [role="alertdialog"]')) onKeyDown(event);
+      // The same for a select (OK opens its list) and a horizontal slider (Left/Right change it):
+      // walking down a settings page never opens or nudges what it passes.
+      if (tv && active && plain && (event.key === "ArrowUp" || event.key === "ArrowDown") && (active.matches(POPUP_TRIGGER) || isHorizontalSlider(active))) {
+        moveFirst(event, active);
+        return;
+      }
+      // A data table clamps at its edges; the remote leaves it there instead of being stuck.
+      if (active && plain && !event.shiftKey && isArrow(event.key) && active.matches(`${TABLE_GRID} ${TABLE_LINE}`) && leavesTable(active, event.key)) {
+        moveFirst(event, active);
+        return;
+      }
+      if (active?.closest(ARROW_SCOPE)) onKeyDown(event);
+    };
+    // Focus is never left on the page body on a TV (Q143). It falls there when an overlay closes
+    // and its opener is gone (a menu item, a deleted row), and a removed element fires no
+    // focusout, so while an overlay holds focus or focus has just dropped, look every so often.
+    let watch: ReturnType<typeof setInterval> | undefined;
+    const stopWatch = () => {
+      clearInterval(watch);
+      watch = undefined;
+    };
+    const fallen = () => {
+      const now = document.activeElement;
+      return !now || now === document.body || now === document.documentElement;
+    };
+    const startWatch = () => {
+      if (!tv || watch !== undefined) return;
+      watch = setInterval(() => {
+        if (!fallen()) {
+          if (!document.activeElement?.closest(OPEN_OVERLAY)) stopWatch();
+          return;
+        }
+        // A closing overlay is still on screen while it animates out.
+        if (overlayOpen()) return;
+        stopWatch();
+        restoreFocus();
+      }, 100);
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      rememberFocus(event);
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.closest(OPEN_OVERLAY)) startWatch();
+      else lastOutside = target;
+      // On a TV a row's own controls (its ⋯, its checkbox) are the pointer's: focus handed back to
+      // one (a menu closing) goes to its row, the stop.
+      if (tv && target.closest(TABLE_GRID) && !isRemoteStop(target, true)) {
+        const line = target.closest<HTMLElement>(TABLE_LINE);
+        if (line) requestAnimationFrame(() => {
+          if (document.activeElement === target && !overlayOpen()) line.focus({ preventScroll: true });
+        });
+      }
+    };
+    const onFocusOut = (event: FocusEvent) => {
+      if (event.target instanceof HTMLElement) event.target.removeAttribute(ADJUSTING);
+      if (!event.relatedTarget) startWatch();
     };
     window.addEventListener("keydown", onModalKeyDown, true);
     window.addEventListener("keydown", onKeyDown);
-    document.addEventListener("focusin", rememberFocus);
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
     return () => {
+      stopWatch();
+      document.removeEventListener("focusout", onFocusOut);
       window.removeEventListener("keydown", onModalKeyDown, true);
       window.removeEventListener("keydown", onKeyDown);
-      document.removeEventListener("focusin", rememberFocus);
+      document.removeEventListener("focusin", onFocusIn);
     };
-  }, [enabled, tv, onBack]);
+  }, [enabled, tv]);
 }
 
-/** Identify a focused element well enough to find its replacement after a re-render. */
+/**
+ * Identify a focused element well enough to find it again after the page re-renders or is
+ * opened again: its link, table row, label, id or, for a button, its text.
+ */
 function focusKey(element: Element): string | null {
   const link = element.closest("a[href]");
   if (link) return `a[href="${CSS.escape(link.getAttribute("href") ?? "")}"]`;
+  const row = element.closest("[data-row-id]");
+  if (row) return `[data-row-id="${CSS.escape(row.getAttribute("data-row-id") ?? "")}"]`;
   const label = element.getAttribute("aria-label");
-  return label ? `[aria-label="${CSS.escape(label)}"]` : null;
+  if (label) return `[aria-label="${CSS.escape(label)}"]`;
+  if (element.id) return `#${CSS.escape(element.id)}`;
+  const text = element.matches("button") ? element.textContent?.trim() : "";
+  return text ? `button${TEXT_MARK}${text}` : null;
+}
+
+const TEXT_MARK = "\u0000";
+
+function findByKey(root: HTMLElement, key: string): HTMLElement | null {
+  const mark = key.indexOf(TEXT_MARK);
+  if (mark < 0) return root.querySelector<HTMLElement>(key);
+  const text = key.slice(mark + 1);
+  return Array.from(root.querySelectorAll<HTMLElement>(key.slice(0, mark))).find((element) => element.textContent?.trim() === text) ?? null;
 }
 
 /**
  * TV route focus. When a page opens, focus moves into it (its `[data-tv-autofocus]` control,
- * otherwise its first control) so the remote never starts from nowhere. Returning to a page
- * restores the card that was opened from it.
+ * otherwise its first stop) so the remote never starts from nowhere. Returning to a page (Back,
+ * or closing the player) restores the control that was used last on it, the card that was opened
+ * from it, when it is still there (design.md Q143).
  */
 export function useRouteFocus(pathname: string, active: boolean) {
   useEffect(() => {
@@ -407,15 +724,19 @@ export function useRouteFocus(pathname: string, active: boolean) {
     const settle = () => {
       const focused = document.activeElement;
       if (focused && focused !== previous && focused !== document.body && focused !== main && main.contains(focused)) return;
-      const restore = remembered ? main.querySelector<HTMLElement>(remembered) : null;
+      const found = remembered ? findByKey(main, remembered) : null;
+      const restore = found && isRemoteStop(found) ? found : found?.closest<HTMLElement>(`${TABLE_GRID} ${TABLE_LINE}`) ?? null;
       const elapsed = performance.now() - started;
       // Prefer the page's own start (Play), waiting for it while its data loads; otherwise
-      // any control. A page that is still a skeleton keeps waiting a little longer.
+      // any control. A page that is still a skeleton keeps waiting a little longer. A remembered
+      // card that loads with the page is worth the same wait.
       const start = main.querySelector<HTMLElement>("[data-tv-autofocus]");
+      const waitForRestore = Boolean(remembered) && !restore && elapsed < 1500;
       const target = restore
-        ?? (start && start.getAttribute("aria-disabled") !== "true" ? start : null)
-        ?? (elapsed > (start ? 3000 : 300) ? main.querySelector<HTMLElement>("[data-spatial-start], " + FOCUSABLE_SELECTOR) : null);
+        ?? (waitForRestore ? null : (start && start.getAttribute("aria-disabled") !== "true" ? start : null)
+          ?? (elapsed > (start ? 3000 : 300) ? firstStop(main, "[data-spatial-start], " + REMOTE_CANDIDATES) : null));
       if (target) {
+        // A restored control keeps the scroll position the router brought back.
         target.focus({ preventScroll: Boolean(restore) });
         if (!restore) revealFocused(target);
         return;

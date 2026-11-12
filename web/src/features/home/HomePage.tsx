@@ -5,23 +5,37 @@ import { HomeCustomization } from "@/features/personal/HomeCustomization";
 import { PersonalShelf } from "@/features/personal/PersonalShelf";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { ButtonLink } from "glass-ux/button-link";
 import { IconPlus } from "glass-ux/icons";
 import { IconStack2 } from "@tabler/icons-react";
 
 import { SceneBackdrop } from "@/components/three/SceneBackdrop";
-import { BackdropCard, Button, EmptyState, ErrorState, MediaRow, PosterCard, Section, SkeletonBlock } from "@/components/ui";
+import { Button, EmptyState, ErrorState, MediaRow, PosterCard, Section, SkeletonBlock } from "@/components/ui";
 import { LibraryCard } from "@/features/libraries/LibraryCard";
 import { usePlayer } from "@/features/player/usePlayer";
-import { LibrariesOverviewDocument, RecentAlbumsDocument, RecentAudiobooksDocument, RecentMoviesDocument, RecentShowsDocument } from "@/graphql/generated/graphql";
-import { albumCover, audiobookCover, moviePoster, showPoster } from "@/lib/artwork";
-import { formatClock, formatRuntime, formatYear } from "@/lib/format";
+import { GenreInterestShelvesDocument, type GenreInterestShelvesQuery, LibrariesOverviewDocument, RecentAlbumsDocument, RecentAudiobooksDocument, RecentMoviesDocument, RecentShowsDocument } from "@/graphql/generated/graphql";
+import { albumCover, audiobookCover, movieBackdrop, moviePoster, showPoster } from "@/lib/artwork";
+import { formatRuntime, formatYear, parseTimestamp } from "@/lib/format";
 import { LIBRARY_TYPES } from "@/lib/library-types";
 
 import { GuideSpotlight } from "@/features/guide/GuideSpotlight";
 import { MovieReleases } from "./MovieReleases";
+import { ResumeCard } from "./ResumeCard";
 import { useContinueWatching } from "./useContinueWatching";
 
 const ROW_LIMIT = 20;
+
+type InterestShelf = GenreInterestShelvesQuery["genreInterestShelves"][number];
+type InterestTitle = { kind: "movie"; movie: InterestShelf["movies"][number]; added: number } | { kind: "show"; show: InterestShelf["shows"][number]; added: number };
+const addedAt = (value: string) => parseTimestamp(value)?.getTime() ?? 0;
+
+/** A genre row's movies and shows together, newest first. */
+export function interestTitles(shelf: InterestShelf, limit = ROW_LIMIT): InterestTitle[] {
+  return [
+    ...shelf.movies.map((movie): InterestTitle => ({ kind: "movie", movie, added: addedAt(movie.createdAt) })),
+    ...shelf.shows.map((show): InterestTitle => ({ kind: "show", show, added: addedAt(show.createdAt) })),
+  ].sort((a, b) => b.added - a.added).slice(0, limit);
+}
 
 export function HomePage() {
   const navigate = useNavigate();
@@ -35,6 +49,8 @@ export function HomePage() {
   const albums = useQuery(RecentAlbumsDocument, { variables: { limit: ROW_LIMIT } });
   const audiobooks = useQuery(RecentAudiobooksDocument, { variables: { limit: ROW_LIMIT } });
   const resume = useContinueWatching();
+  const interests = useQuery(GenreInterestShelvesDocument, { variables: { perGenre: ROW_LIMIT } });
+  const interestShelves = (interests.data ?? interests.previousData)?.genreInterestShelves ?? [];
 
   const favouriteIds = new Set(preferences.rows.filter((row) => row.favourite).map((row) => row.libraryId));
   const libraryList = [...libraries.rows].sort((a, b) => Number(favouriteIds.has(b.id)) - Number(favouriteIds.has(a.id)));
@@ -54,11 +70,9 @@ export function HomePage() {
           title="Add your first library"
           description="Point Librarian at a folder of movies, shows, music or audiobooks and it will catalogue everything it finds."
           action={
-            <Link to="/settings/libraries">
-              <Button variant="primary" size="lg">
-                <IconPlus size="lg" /> Add library
-              </Button>
-            </Link>
+            <ButtonLink variant="primary" size="lg" icon={<IconPlus />} render={<Link to="/settings/libraries" />}>
+              Add library
+            </ButtonLink>
           }
           className="max-w-lg"
         />
@@ -71,28 +85,28 @@ export function HomePage() {
         <Section title="Continue watching" bleed>
           <MediaRow ariaLabel="Continue watching">
             {resume.items.map((item) => (
-              <BackdropCard
-                key={item.key}
-                width="row"
-                title={item.title}
-                subtitle={item.subtitle}
-                image={item.image}
-                progress={item.progress}
-                corner={item.duration ? `${formatClock(Math.max(0, item.duration - item.position))} left` : undefined}
-                onPress={() => {
-                  if (item.kind === "movie" || item.kind === "episode") {
-                    player.playVideo({ mediaFileId: item.mediaFileId, title: item.title, subtitle: item.subtitle, artwork: item.image, entity: item.entity, href: item.href, startPosition: item.position });
-                    void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: item.mediaFileId } });
-                  } else {
-                    void navigate({ href: item.href });
-                  }
-                }}
-              />
+              <ResumeCard key={item.key} item={item} />
             ))}
           </MediaRow>
         </Section>
       ) : null),
-    libraries: (<Section title="Libraries" bleed trailing={<Link to="/libraries" className="nav-focus rounded hover:text-foreground">See all</Link>}>
+    // One row per genre you picked in your profile, movies and shows together, newest first.
+    interests: (interestShelves.length > 0 ? (
+        <div className="flex min-w-0 flex-col gap-10">
+          {interestShelves.map((shelf) => (
+            <Section key={shelf.genre} title={`Because you like ${shelf.genre}`} bleed>
+              <MediaRow ariaLabel={`Because you like ${shelf.genre}`}>
+                {interestTitles(shelf).map((title) => (title.kind === "movie" ? (
+                  <PosterCard key={`movie-${title.movie.id}`} width="row" title={title.movie.title} meta={[title.movie.year, title.movie.runtime ? formatRuntime(title.movie.runtime, "minutes") : null].filter(Boolean).join(" · ")} image={moviePoster(title.movie.id)} tint={LIBRARY_TYPES.movies.tintVar} to="/movies/$movieId" params={{ movieId: title.movie.id }} />
+                ) : (
+                  <PosterCard key={`show-${title.show.id}`} width="row" title={title.show.name} meta={[title.show.year, title.show.network].filter(Boolean).join(" · ")} image={showPoster(title.show)} tint={LIBRARY_TYPES.tv.tintVar} to="/shows/$showId" params={{ showId: title.show.id }} />
+                )))}
+              </MediaRow>
+            </Section>
+          ))}
+        </div>
+      ) : null),
+    libraries: (<Section title="Libraries" bleed trailing={<Link to="/libraries" className="nav-focus rounded hover:text-foreground" data-tv-skip>See all</Link>}>
         <MediaRow ariaLabel="Libraries">
           {booting && libraryList.length === 0
             ? [0, 1, 2].map((index) => <SkeletonBlock key={index} className="h-40 w-64 shrink-0 rounded-card" />)
@@ -113,7 +127,7 @@ export function HomePage() {
                 to="/movies/$movieId"
                 params={{ movieId: movie.id }}
                 onPlay={movie.mediaFileId ? () => {
-                  player.playVideo({ mediaFileId: movie.mediaFileId!, title: movie.title, subtitle: movie.year ? String(movie.year) : undefined, artwork: moviePoster(movie.id), entity: { kind: "movie", id: movie.id } });
+                  player.playVideo({ mediaFileId: movie.mediaFileId!, title: movie.title, subtitle: movie.year ? String(movie.year) : undefined, artwork: moviePoster(movie.id), backdrop: movieBackdrop(movie.id), entity: { kind: "movie", id: movie.id } });
                   void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: movie.mediaFileId! } });
                 } : undefined}
               />

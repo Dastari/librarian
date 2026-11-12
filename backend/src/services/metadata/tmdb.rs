@@ -17,6 +17,10 @@ use tracing::{debug, info, warn};
 
 use crate::services::rate_limiter::{RateLimitConfig, RateLimitedClient, RetryConfig, retry_async};
 
+/// Every poster, backdrop, logo and still TMDB holds for a title (the artwork picker).
+#[path = "tmdb_images.rs"]
+pub mod images;
+
 /// Public release lists supported by TMDB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, async_graphql::Enum)]
 pub enum MovieReleaseKind {
@@ -743,6 +747,65 @@ impl TmdbClient {
         )
         .await
     }
+
+    /// Any TMDB v3 document as JSON, through the same rate limit, adaptive back-off and retries
+    /// as the typed calls. `path` starts with `/` (`/movie/603`); `query` adds parameters such as
+    /// `append_to_response`. A 404 is `Ok(None)`.
+    pub async fn get_value(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<Option<serde_json::Value>> {
+        if !self.has_api_key() {
+            anyhow::bail!("TMDB API key not configured");
+        }
+        let url = format!("{}{}", self.base_url, path);
+        let mut params: Vec<(String, String)> = vec![("api_key".into(), self.api_key.clone())];
+        params.extend(query.iter().map(|(k, v)| (k.to_string(), v.to_string())));
+        let client = self.client.clone();
+        let retry_config = self.retry_config.clone();
+        let adaptive_client = self.clone();
+        let label = path.to_string();
+        retry_async(
+            || {
+                let url = url.clone();
+                let client = client.clone();
+                let params = params.clone();
+                let adaptive_client = adaptive_client.clone();
+                let label = label.clone();
+                async move {
+                    adaptive_client.wait_for_adaptive_delay().await;
+                    let response = client.get_with_query(&url, &params).await?;
+                    if response.status().as_u16() == 429 {
+                        let delay_ms = adaptive_client.increase_adaptive_delay_from_429(&response);
+                        warn!(
+                            "TMDB rate limit hit (HTTP 429) while fetching {}; retrying with adaptive delay={}ms",
+                            label, delay_ms
+                        );
+                        anyhow::bail!("Rate limited (429)");
+                    }
+                    if response.status().as_u16() == 404 {
+                        return Ok(None);
+                    }
+                    if !response.status().is_success() {
+                        anyhow::bail!("TMDB {} failed with status: {}", label, response.status());
+                    }
+                    adaptive_client.reduce_adaptive_delay_on_success();
+                    let value: serde_json::Value =
+                        crate::services::http_client::response_json_limited(
+                            response,
+                            crate::services::http_client::METADATA_RESPONSE_LIMIT,
+                        )
+                        .await
+                        .with_context(|| format!("Failed to parse TMDB {label}"))?;
+                    Ok(Some(value))
+                }
+            },
+            &retry_config,
+            "tmdb_get_value",
+        )
+        .await
+    }
 }
 
 impl TmdbMovie {
@@ -795,7 +858,24 @@ impl TmdbCredits {
     }
 }
 
+/// TMDB release types: 1 premiere, 2 limited theatrical, 3 theatrical, 4 digital, 5 physical, 6 TV.
+pub const RELEASE_TYPE_DIGITAL: i32 = 4;
+pub const RELEASE_TYPE_PHYSICAL: i32 = 5;
+
 impl TmdbReleaseDates {
+    /// The earliest release of one type in any country, as `YYYY-MM-DD`.
+    pub fn earliest_of_type(&self, release_type: i32) -> Option<String> {
+        self.results
+            .iter()
+            .flat_map(|result| result.release_dates.iter())
+            .filter(|date| date.release_type == Some(release_type))
+            .filter_map(|date| date.release_date.as_deref())
+            .filter_map(|date| date.get(..10))
+            .filter(|date| chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok())
+            .min()
+            .map(str::to_string)
+    }
+
     /// Get US certification (MPAA rating)
     pub fn us_certification(&self) -> Option<String> {
         self.results
@@ -827,6 +907,33 @@ pub fn normalize_movie_status(status: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_earliest_digital_and_physical_dates_are_read_across_countries() {
+        let dates: TmdbReleaseDates = serde_json::from_value(serde_json::json!({
+            "id": 1,
+            "results": [
+                {"iso_3166_1": "US", "release_dates": [
+                    {"certification": "PG-13", "release_date": "2024-03-01T00:00:00.000Z", "type": 3},
+                    {"certification": "", "release_date": "2024-04-16T00:00:00.000Z", "type": 4},
+                    {"certification": "", "release_date": "2024-05-14T00:00:00.000Z", "type": 5}
+                ]},
+                {"iso_3166_1": "GB", "release_dates": [
+                    {"certification": "12A", "release_date": "2024-04-12T00:00:00.000Z", "type": 4}
+                ]}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(
+            dates.earliest_of_type(RELEASE_TYPE_DIGITAL).as_deref(),
+            Some("2024-04-12")
+        );
+        assert_eq!(
+            dates.earliest_of_type(RELEASE_TYPE_PHYSICAL).as_deref(),
+            Some("2024-05-14")
+        );
+        assert_eq!(dates.earliest_of_type(6), None);
+    }
 
     #[test]
     fn test_image_url() {

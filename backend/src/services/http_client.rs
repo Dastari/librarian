@@ -184,12 +184,41 @@ pub async fn response_text_limited(response: Response, max_bytes: usize) -> Resu
     String::from_utf8(body.to_vec()).context("Outbound HTTP response was not valid UTF-8")
 }
 
+/// Enough of an unexpected response to tell what it was, without repeating what a site sent, which
+/// could hold a passkey in a link.
+fn describe_body_start(body: &[u8]) -> &'static str {
+    let start = body
+        .iter()
+        .copied()
+        .find(|byte| !byte.is_ascii_whitespace())
+        .unwrap_or(0);
+    match start {
+        0 => "an empty body",
+        b'<' => "an HTML or XML page",
+        b'{' | b'[' => "JSON in a different shape",
+        _ => "plain text",
+    }
+}
+
 pub async fn response_json_limited<T: DeserializeOwned>(
     response: Response,
     max_bytes: usize,
 ) -> Result<T> {
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("no content type")
+        .to_string();
     let body = response_bytes_limited(response, max_bytes).await?;
-    serde_json::from_slice(&body).context("Outbound HTTP response contained invalid JSON")
+    serde_json::from_slice(&body).map_err(|error| {
+        anyhow::anyhow!(
+            "Outbound HTTP response was not the expected JSON: status {status}, {content_type}, {} bytes, {}: {error}",
+            body.len(),
+            describe_body_start(&body),
+        )
+    })
 }
 
 /// A sanitized telemetry label. It contains scheme/host/port/path, but never

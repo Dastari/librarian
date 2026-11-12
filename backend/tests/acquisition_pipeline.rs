@@ -862,6 +862,288 @@ fn remove_after_import_deletes_the_payload_and_spares_the_library_file() {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// On its own: the scheduler and RSS
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_scheduler_does_nothing_until_switched_on_then_grabs_and_leaves_a_trail() {
+    common::run_app_test(|| async {
+        let indexer = MockIndexer::start().await;
+        let release = indexer
+            .add_release(
+                "Timed Show S01E01 1080p WEB-DL x264-GRP",
+                "e01.mkv",
+                32 * 1024,
+            )
+            .await;
+
+        let app = TestApp::start_with(TestAppOptions {
+            with_auto_download: true,
+            fast_auto_download: true,
+            ..Default::default()
+        })
+        .await;
+        let mut admin = app.admin_client().await;
+        let world = World::build(&app, &mut admin, &indexer).await;
+        let profile = create_profile(&mut admin, json!({ "allowSeasonPacks": false })).await;
+        // ALL mode: nobody flags the episode wanted; the scheduler finds it by itself.
+        let show = world
+            .create_show(&mut admin, "Timed Show", "ALL", Some(&profile))
+            .await;
+        let episode = world
+            .create_episode(&mut admin, &show, 1, 1, "Pilot", false)
+            .await;
+
+        // Off is the default. The scheduler ticks every second here, and must not search.
+        let searched_before = indexer.total_searches();
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        assert_eq!(
+            indexer.total_searches(),
+            searched_before,
+            "nothing may search while auto_download.enabled is off"
+        );
+        assert!(torrent_by_hash(&mut admin, &release.info_hash).await["id"].is_null());
+
+        set_auto_download_setting(&mut admin, "auto_download.enabled", "true").await;
+
+        let data = admin
+            .wait_until(
+                SETTLE,
+                "the scheduler to grab the episode",
+                &torrent_query(),
+                json!({ "hash": release.info_hash }),
+                |data| !data["torrents"]["edges"][0]["node"]["id"].is_null(),
+            )
+            .await;
+        let torrent = data["torrents"]["edges"][0]["node"].clone();
+        assert_eq!(torrent["episodeId"], episode);
+        assert_eq!(torrent["showId"], show);
+
+        // The trail: one notification for the grab, saying what and why.
+        let notes = admin
+            .wait_until(
+                SETTLE,
+                "the grab notification",
+                AUTO_DOWNLOAD_NOTIFICATIONS,
+                json!({}),
+                |data| {
+                    !data["notifications"]["edges"]
+                        .as_array()
+                        .unwrap()
+                        .is_empty()
+                },
+            )
+            .await;
+        let note = &notes["notifications"]["edges"][0]["node"];
+        assert_eq!(note["title"], "Grabbed episode 'Timed Show S01E01'");
+        assert_eq!(note["notificationType"], "SUCCESS");
+        assert_eq!(note["torrentId"], torrent["id"]);
+        assert_eq!(note["libraryId"], world.library_id);
+        assert!(
+            note["message"]
+                .as_str()
+                .unwrap()
+                .contains("the scheduled sweep"),
+            "{note}"
+        );
+
+        // And the Downloads screen's status line.
+        let status = admin
+            .wait_until(
+                SETTLE,
+                "the sweep to be recorded",
+                "query S { appSettings(where: { key: { eq: \"auto_download.status\" } }) \
+                 { edges { node { value } } } }",
+                json!({}),
+                |data| !data["appSettings"]["edges"].as_array().unwrap().is_empty(),
+            )
+            .await;
+        let value: Value = serde_json::from_str(
+            status["appSettings"]["edges"][0]["node"]["value"]
+                .as_str()
+                .unwrap(),
+        )
+        .expect("status is JSON");
+        assert_eq!(value["sweep"]["grabbed"], 1, "{value}");
+
+        app.shutdown().await;
+        indexer.shutdown().await;
+    });
+}
+
+#[test]
+fn an_rss_feed_grabs_exactly_what_is_wanted() {
+    common::run_app_test(|| async {
+        let indexer = MockIndexer::start().await;
+        let wanted = indexer
+            .add_release(
+                "Feed Show S01E01 1080p WEB-DL x264-GRP",
+                "feed.e01.mkv",
+                32 * 1024,
+            )
+            .await;
+        // Same show, an episode that is not in the library; another show entirely.
+        let wrong_episode = indexer
+            .add_release(
+                "Feed Show S01E02 1080p WEB-DL x264-GRP",
+                "feed.e02.mkv",
+                32 * 1024,
+            )
+            .await;
+        let other_show = indexer
+            .add_release(
+                "Unrelated Show S01E01 1080p WEB-DL x264-GRP",
+                "other.e01.mkv",
+                32 * 1024,
+            )
+            .await;
+
+        let app = TestApp::start_with(TestAppOptions {
+            with_auto_download: true,
+            fast_auto_download: true,
+            ..Default::default()
+        })
+        .await;
+        let mut admin = app.admin_client().await;
+        // No source: the only way anything can be found is the feed.
+        let world = World::library_only(&app, &mut admin).await;
+        let profile = create_profile(&mut admin, json!({ "allowSeasonPacks": false })).await;
+        let show = world
+            .create_show(&mut admin, "Feed Show", "ALL", Some(&profile))
+            .await;
+        let episode = world
+            .create_episode(&mut admin, &show, 1, 1, "Pilot", false)
+            .await;
+
+        let feed = admin
+            .query(
+                r#"mutation C($input: CreateRssFeedInput!) {
+                     createRssFeed(input: $input) { success error rssFeed { id } }
+                   }"#,
+                json!({ "input": {
+                    "userId": world.user_id,
+                    "libraryId": world.library_id,
+                    "name": "Mock feed",
+                    "url": format!("{}?t=search&apikey={}", indexer.api_url, indexer.api_key),
+                    "enabled": true,
+                    "pollIntervalMinutes": 30
+                }}),
+            )
+            .await;
+        assert_eq!(feed["createRssFeed"]["success"], true, "{feed}");
+        let feed_id = feed["createRssFeed"]["rssFeed"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // A feed address that cannot be fetched is refused when it is saved.
+        let bad = admin
+            .post(
+                r#"mutation C($input: CreateRssFeedInput!) {
+                     createRssFeed(input: $input) { success error }
+                   }"#,
+                json!({ "input": {
+                    "userId": world.user_id, "name": "Local file",
+                    "url": "file:///etc/passwd", "enabled": true, "pollIntervalMinutes": 30
+                }}),
+            )
+            .await;
+        assert!(
+            bad.errors()
+                .iter()
+                .any(|error| error.contains("http or https")),
+            "{:?}",
+            bad.errors()
+        );
+
+        set_auto_download_setting(&mut admin, "auto_download.enabled", "true").await;
+
+        let data = admin
+            .wait_until(
+                SETTLE,
+                "the feed to be polled and the episode grabbed",
+                &torrent_query(),
+                json!({ "hash": wanted.info_hash }),
+                |data| !data["torrents"]["edges"][0]["node"]["id"].is_null(),
+            )
+            .await;
+        let torrent = data["torrents"]["edges"][0]["node"].clone();
+        assert_eq!(torrent["episodeId"], episode);
+        assert_eq!(torrent["sourceFeedId"], feed_id, "the grab names its feed");
+
+        // Nothing else was taken.
+        for other in [&wrong_episode, &other_show] {
+            assert!(torrent_by_hash(&mut admin, &other.info_hash).await["id"].is_null());
+        }
+
+        // Every item was seen and remembered, with why it was left alone.
+        let items = admin
+            .wait_until(
+                SETTLE,
+                "the feed items to be recorded",
+                "query I($id: String!) { rssFeedItems(where: { feedId: { eq: $id } }) \
+                 { edges { node { title processed torrentId skippedReason } } } }",
+                json!({ "id": feed_id }),
+                |data| data["rssFeedItems"]["edges"].as_array().unwrap().len() == 3,
+            )
+            .await;
+        let by_title = |needle: &str| -> Value {
+            items["rssFeedItems"]["edges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|edge| edge["node"].clone())
+                .find(|node| node["title"].as_str().unwrap().contains(needle))
+                .unwrap_or_else(|| panic!("no feed item for {needle}: {items}"))
+        };
+        let taken = by_title("Feed Show S01E01");
+        assert_eq!(taken["torrentId"], torrent["id"]);
+        assert!(taken["skippedReason"].is_null());
+        assert!(
+            by_title("Feed Show S01E02")["skippedReason"]
+                .as_str()
+                .unwrap()
+                .starts_with("wrong target"),
+        );
+        assert_eq!(by_title("Unrelated")["skippedReason"], "not wanted");
+
+        // The feed records that it was read.
+        let polled = admin
+            .query(
+                "query F($id: String!) { rssFeed(id: $id) { lastPolledAt lastSuccessfulAt lastError consecutiveFailures } }",
+                json!({ "id": feed_id }),
+            )
+            .await;
+        assert!(!polled["rssFeed"]["lastSuccessfulAt"].is_null(), "{polled}");
+        assert!(polled["rssFeed"]["lastError"].is_null(), "{polled}");
+
+        app.shutdown().await;
+        indexer.shutdown().await;
+    });
+}
+
+const AUTO_DOWNLOAD_NOTIFICATIONS: &str = "query N { notifications(where: { category: { eq: \"auto_download\" }, \
+    notificationType: { eq: \"SUCCESS\" } }) { edges { node { title notificationType message torrentId libraryId } } } }";
+
+fn torrent_query() -> String {
+    format!(
+        "query T($hash: String!) {{ torrents(where: {{ infoHash: {{ eq: $hash }} }}) \
+         {{ edges {{ node {{ {TORRENT_FIELDS} sourceFeedId }} }} }} }}"
+    )
+}
+
+async fn set_auto_download_setting(admin: &mut GqlClient, key: &str, value: &str) {
+    let result = admin
+        .query(
+            "mutation S($input: CreateAppSettingInput!) { createAppSetting(input: $input) \
+             { success error } }",
+            json!({ "input": { "key": key, "value": value, "category": "auto_download" } }),
+        )
+        .await;
+    assert_eq!(result["createAppSetting"]["success"], true, "{result}");
+}
+
 async fn start_app(options: &TestAppOptions) -> TestApp {
     TestApp::start_with(TestAppOptions {
         with_torrent: options.with_torrent,
@@ -883,7 +1165,18 @@ struct World {
 }
 
 impl World {
-    async fn build(app: &TestApp, admin: &mut GqlClient, indexer: &MockIndexer) -> Self {
+    /// A TV library and nothing that can be searched: for tests that find releases some other way.
+    async fn library_only(app: &TestApp, admin: &mut GqlClient) -> Self {
+        let (user_id, library_id, library_path) = Self::create_library(app, admin).await;
+        Self {
+            user_id,
+            library_id,
+            library_path,
+            source_id: String::new(),
+        }
+    }
+
+    async fn create_library(app: &TestApp, admin: &mut GqlClient) -> (String, String, String) {
         let user_id = admin.user_id.clone().expect("admin id");
         let library_path = app.path("media/tv");
         std::fs::create_dir_all(&library_path).expect("library dir");
@@ -907,6 +1200,11 @@ impl World {
             .as_str()
             .expect("library id")
             .to_string();
+        (user_id, library_id, library_path)
+    }
+
+    async fn build(app: &TestApp, admin: &mut GqlClient, indexer: &MockIndexer) -> Self {
+        let (user_id, library_id, library_path) = Self::create_library(app, admin).await;
 
         let source = admin
             .query(

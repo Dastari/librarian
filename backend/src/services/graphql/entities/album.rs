@@ -93,6 +93,12 @@ pub struct Album {
     #[sortable]
     pub release_date: Option<String>,
 
+    /// Fields a metadata refresh must leave alone, by their GraphQL names. Chosen artwork locks
+    /// its own field (`coverUrl`), so a refresh keeps the picture someone picked.
+    #[graphql(name = "lockedFields")]
+    #[json_field]
+    pub locked_fields: Option<Vec<String>>,
+
     #[graphql(name = "coverUrl")]
     pub cover_url: Option<String>,
 
@@ -329,6 +335,7 @@ impl AlbumMetadataMutations {
                 library_id,
                 user_id,
                 monitor_type,
+                listing: None,
             })
             .await
         {

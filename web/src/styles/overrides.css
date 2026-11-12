@@ -1,2 +1,131 @@
 /* Host media elements retain their own focus interaction; controls use Glass UX. */
 video:focus, audio:focus { outline: none; }
+
+/* The download dialog: wider and taller than a settings dialog, for a table beside its section
+   rail, and without rules between rows. Glass UX has no prop for these yet. */
+.torrent-detail { --_h: 54rem; }
+.torrent-detail .fa-dt { --_hairline: transparent; }
+.torrent-detail .fa-dt-frame::before { display: none; }
+.torrent-detail .fa-dt[data-scrolled-bottom] .fa-dt-footer { box-shadow: none; }
+
+/* On a phone a record's actions take their own line under its identity and the close button. */
+@media (max-width: 39.99rem) {
+  .entity-detail-header { flex-wrap: wrap; }
+  .entity-detail-header .fa-dialog-identity { flex-basis: calc(100% - 3rem); }
+  .entity-detail-header .fa-dialog-header-actions { order: 1; width: 100%; }
+}
+
+/* A settings dialog's table takes the whole pane; its fields keep the form's reading width. */
+.fa-entity-settings-tab:has(.fa-dt) { max-width: none; }
+/* A table in a settings tab fills what the dialog leaves it and is the only thing that scrolls, so
+ * its last row and its selection footer are always within reach. */
+.fa-vtabs-content:has(> .fa-vtabs-panel:not([hidden]) .entity-tab-table) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.fa-vtabs-panel:not([hidden]):has(.entity-tab-table),
+.fa-vtabs-panel:not([hidden]) .fa-entity-settings-tab:has(.entity-tab-table) {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 0;
+}
+.fa-entity-settings-tab .fa-dt { --_hairline: transparent; }
+
+/* A table's toolbar wraps its end section to fit it. With a filter that can fold, it should fold. */
+.fa-dt-toolbar-end:has(> .table-toolbar) { flex: 999 1 0; min-width: 0; }
+/* Too narrow for both: the filter and buttons take their own line under the search. */
+@container fa-dt (inline-size < 36rem) {
+  .fa-dt-toolbar-end:has(> .table-toolbar) { flex-basis: 100%; }
+}
+
+/* A download's details read as aligned columns of label and value, with no boxes around them. */
+.torrent-facts .fa-fact-list > div {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  gap: var(--space-3);
+}
+.torrent-facts .fa-fact-list dt { max-width: none; }
+
+/* A settings form's lock sits in the input, quiet until it's on. */
+.metadata-lock { color: var(--fg-muted); }
+.metadata-lock[data-locked] { color: var(--fg); }
+
+/* A poster is its own card, so the table's card frame stands back. Focus and the selected mark are
+ * drawn on the artwork, as they are everywhere else posters show. */
+.media-browser[data-view="card"] .fa-dt-card,
+.media-browser .fa-dt-cards .fa-dt-card {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+}
+.media-browser .fa-dt-card-slot { overflow: visible; }
+.media-browser .fa-dt { --_hairline: transparent; }
+/* The card holds focus, so the artwork shows it: the same ring and lift as any poster, with room
+ * around the grid so neither is cut off. */
+.media-browser .fa-dt-cards { padding: var(--focus-reach); }
+.media-browser .fa-dt-card:focus-visible { outline: none; }
+.media-browser .fa-dt-card:focus-visible .poster-art {
+  outline: var(--nav-focus-width) solid var(--focus);
+  outline-offset: var(--nav-focus-offset);
+}
+:root[data-input-mode="tv"] .media-browser .fa-dt-card:is(:focus, :focus-visible) .poster-art {
+  outline: var(--nav-focus-width) solid var(--focus);
+  outline-offset: var(--nav-focus-offset);
+  transform: scale(1.05);
+  box-shadow: var(--shadow-3);
+}
+:root[data-input-mode="tv"] .media-browser .fa-dt-cards { padding: 1.5rem 1.25rem; }
+
+/* A title's artwork in an identity's glyph slot (ArtGlyph): rows and table cells grow the slot
+   to a thumbnail so the cover reads; chips keep their small glyph size. Glass draws only glyphs
+   in rows, so the slot is sized here. */
+.fa-entity-glyph:has(> .entity-art) {
+  width: 2.5rem;
+  height: 2.5rem;
+}
+.fa-entity[data-tier="chip"] .fa-entity-glyph:has(> .entity-art) {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+}
+.entity-art {
+  display: block;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-mark, 0.375rem);
+  background-color: var(--surface-2);
+  box-shadow: 0 0 0 var(--border-width, 1px) var(--line);
+}
+.entity-art[data-shape="poster"] { width: 66.667%; justify-self: center; }
+.entity-art > img {
+  display: block;
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+}
+/* A playlist's picture: up to four covers, the way a music app draws one. */
+.entity-art[data-mosaic] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 1px;
+}
+.entity-art[data-mosaic="3"] > img:nth-child(3) { grid-column: span 2; }
+
+/* One highlight (design.md Q144): after a key press, a table row under a resting mouse keeps its
+   own fill. Since Glass 0.19.5 the hover fill snaps on, so rows the remote scrolls past the cursor
+   would each flash a second highlight beside the focused row. */
+:root[data-last-input="keys"] .fa-dt-rows > .fa-dt-row:not([data-selected], :focus-visible):hover { --_bg: transparent; }
+:root[data-last-input="keys"] .fa-dt-rows > .fa-dt-row[data-selected]:not(:focus-visible):hover { --_bg: var(--accent-soft); }
+
+/* Nothing over artwork is frosted (design.md Q155). Poster badges and actions, card corners, hero
+   buttons and the controls in an over-imagery top bar each ran a backdrop blur, re-done every
+   frame the artwork under them scrolled or faded. On weak GPUs (a GT 710 on an ultrawide, a
+   budget TV) that was most of the cost of scrolling. They take a solid tint instead. The rail and
+   top bar keep their frosting: they are thin strips, so their blur is cheap. */
+.over-imagery { --_frost: none; }
+.over-imagery :where(.glass-control, .fa-control):not(.fa-btn[data-variant="primary"], .fa-btn[data-variant="danger"], .fa-btn[data-variant="success"], .fa-btn[data-variant="warning"]) {
+  background-color: color-mix(in oklab, var(--canvas) 72%, transparent);
+}

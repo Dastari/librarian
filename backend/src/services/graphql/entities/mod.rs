@@ -4,16 +4,21 @@ pub mod common;
 
 // Base entities (no relations to other entities)
 pub mod audio_stream;
+pub mod credit;
+
+pub mod lyric;
 pub mod media_chapter;
 pub mod media_file;
 pub mod movie_cast_credit;
 pub mod person;
 pub mod subtitle;
+pub mod title_detail;
 pub mod torrent_file;
 pub mod video_stream;
 
 // User and auth entities
 pub mod invite_token;
+pub mod password_reset_token;
 pub mod refresh_token;
 pub mod user;
 
@@ -40,11 +45,15 @@ pub mod cast;
 pub mod cast_device;
 pub mod cast_session;
 pub mod cast_setting;
+pub mod device;
 pub mod personal;
+pub mod play_history;
 pub mod playback_progress;
 pub mod playback_session;
 
 // Download entities
+pub mod identification;
+pub mod matching_assistant;
 pub mod pending_file_match;
 pub mod usenet_download;
 pub mod usenet_server;
@@ -58,10 +67,14 @@ pub mod source_priority_rule;
 
 // Other entities
 pub mod artwork_cache;
+pub mod network_server;
 pub mod notification;
 pub mod quality_profile;
 pub mod release_blocklist;
+pub mod release_recommendation;
 pub mod storage_object;
+pub mod storage_volume;
+pub mod torrent_contents;
 pub mod torznab_category;
 
 // Higher-level entities with multiple relations
@@ -88,26 +101,35 @@ pub use cast_setting::*;
 pub use chapter::*;
 pub use collection::*;
 pub use common::*;
+pub use credit::*;
+pub use device::*;
 pub use episode::*;
+pub use identification::*;
 pub use invite_token::*;
 pub use library::*;
 pub use library_scan_issue::*;
 pub use library_scan_run::*;
+pub use lyric::*;
+pub use matching_assistant::*;
 pub use media_chapter::*;
 pub use media_file::*;
 pub use metadata_cache::*;
 pub use movie::*;
 pub use movie_cast_credit::*;
 pub use naming_pattern::*;
+pub use network_server::*;
 pub use notification::*;
+pub use password_reset_token::*;
 pub use pending_file_match::*;
 pub use person::*;
 pub use personal::*;
+pub use play_history::*;
 pub use playback_progress::*;
 pub use playback_session::*;
 pub use quality_profile::*;
 pub use refresh_token::*;
 pub use release_blocklist::*;
+pub use release_recommendation::*;
 pub use rss_feed::*;
 pub use rss_feed_item::*;
 pub use schedule_cache::*;
@@ -117,8 +139,11 @@ pub use show::*;
 pub use source::*;
 pub use source_priority_rule::*;
 pub use storage_object::*;
+pub use storage_volume::*;
 pub use subtitle::*;
+pub use title_detail::*;
 pub use torrent::*;
+pub use torrent_contents::*;
 pub use torrent_file::*;
 pub use torznab_category::*;
 pub use track::*;

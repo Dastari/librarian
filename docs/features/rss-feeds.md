@@ -2,9 +2,24 @@
 
 ## Status
 
-Planned. The repository currently has `RssFeed` and `RssFeedItem` entities in the GraphQL ORM schema, but it does not yet have a complete RSS polling, digesting, matching, or auto-download implementation.
+Implemented (see `docs/design.md` Q82 and Q90–Q97):
 
-A sanitized IPTorrents-style RSS XML fixture is checked in at `docs/sample-data/movie-sample.xml`. The old `legacy/sample-data/movie-sample.xml` path must not be reintroduced.
+- feeds are polled per feed (`jobs::rss_poll`), never faster than every 15 minutes, with backoff, dedupe and 30-day retention;
+- every item is kept as a **catalogue** of available torrents, fully parsed and **pre-matched** to the owner's library
+  (`services::feed_catalogue`), whether or not automatic downloading is on;
+- wanted shows and movies are matched exactly and grabbed only when automatic downloading is on (Q82);
+- the catalogue answers **Find releases** (marked "From feed", grabbed through `addTorrent.feedItemId`) and is browsable in
+  Settings › Sources › *What it has listed*;
+- the catalogue is the first input of **Recommended releases** (Q93);
+- a feed is **added and managed in Settings › Sources**, as a kind of source (Q90), and is health-checked and alerted on
+  like an indexer (Q96);
+- the feed address and every item link are **encrypted** and redacted everywhere (Q90).
+
+Not implemented: Atom, `PostDownloadAction`, a retention setting (30 days is fixed), and feed-only trackers without any
+search (their catalogue is used, but no live search exists to fall back on).
+
+A sanitized IPTorrents-style RSS XML fixture is checked in at `backend/tests/fixtures/rss/iptorrents_movies.xml` (its
+description is `12.1 GB; Movie/HD/Bluray`).
 
 ## Purpose
 
@@ -268,7 +283,7 @@ Operation and field names should follow the active `graphql-orm` generated schem
 
 ## Frontend Contract
 
-RSS UI should live under source settings and library acquisition views.
+RSS UI lives in Settings › Sources (feeds are rows beside the indexers) and in the library acquisition views.
 
 Settings UI:
 
@@ -290,7 +305,18 @@ Library/acquisition UI:
 
 Frontend must consume generated GraphQL types after backend codegen is refreshed.
 
-## Open Decisions
+## Decisions taken
+
+- **Source or entity?** A feed is shown as a source but stored as `RssFeed` (Q90).
+- **Credentials:** the address holds the passkey, so the feed has no separate credentials; the address is encrypted like
+  `Source.credentials`. A feed is not tied to a configured source for downloads: a link is fetched like any other
+  `.torrent` URL, or as a magnet.
+- **Minimum interval:** 15 minutes; the UI offers 15, 30 and 60.
+- **Retention:** 30 days, all items (processed or not).
+- **Before or after live search?** The catalogue first, for recommendations; for the hunt, a feed is read on its own
+  schedule and the search is the backup.
+
+## Open Decisions (historical)
 
 - Should RSS feeds be standalone `RssFeed` entities only, or should they also be a `Source` definition type?
 - Should a feed be tied to a configured authenticated source for download, or should credentials live on the feed itself?

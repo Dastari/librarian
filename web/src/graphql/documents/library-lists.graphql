@@ -85,6 +85,11 @@ query LibraryAlbums($where: AlbumWhereInput, $orderBy: [AlbumOrderByInput!], $pa
             totalCount
           }
         }
+        wantedMissing: tracks(where: { wanted: { eq: true }, mediaFileId: { isNull: true } }, page: { limit: 1, offset: 0 }) {
+          pageInfo {
+            totalCount
+          }
+        }
       }
     }
     pageInfo {
@@ -136,6 +141,11 @@ query LibraryAudiobooks($where: AudiobookWhereInput, $orderBy: [AudiobookOrderBy
       node {
         ...AudiobookFields
         downloaded: chapters(where: { mediaFileId: { isNull: false } }, page: { limit: 1, offset: 0 }) {
+          pageInfo {
+            totalCount
+          }
+        }
+        wantedMissing: chapters(where: { wanted: { eq: true }, mediaFileId: { isNull: true } }, page: { limit: 1, offset: 0 }) {
           pageInfo {
             totalCount
           }
@@ -206,6 +216,38 @@ query LibraryGenreShelves($libraryId: String!, $maxGenres: Int, $perGenre: Int) 
     }
     shows {
       ...ShowFields
+    }
+  }
+}
+
+query TitleFileOwners($showId: String!, $albumId: String!, $audiobookId: String!, $isShow: Boolean!, $isAlbum: Boolean!, $isBook: Boolean!) {
+  episodes(where: { showId: { eq: $showId } }, page: { limit: 2000, offset: 0 }) @include(if: $isShow) {
+    edges {
+      node {
+        id
+      }
+    }
+  }
+  tracks(where: { albumId: { eq: $albumId } }, page: { limit: 2000, offset: 0 }) @include(if: $isAlbum) {
+    edges {
+      node {
+        id
+      }
+    }
+  }
+  chapters(where: { audiobookId: { eq: $audiobookId } }, page: { limit: 2000, offset: 0 }) @include(if: $isBook) {
+    edges {
+      node {
+        id
+      }
+    }
+  }
+}
+
+query TitleFileCount($where: MediaFileWhereInput!) {
+  mediaFiles(where: $where, page: { limit: 1, offset: 0 }) {
+    pageInfo {
+      totalCount
     }
   }
 }

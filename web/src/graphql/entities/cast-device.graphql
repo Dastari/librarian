@@ -16,6 +16,10 @@ fragment CastDeviceFields on CastDevice {
   lastSeenAt
   lastProbeAt
   lastProbeError
+  manufacturer
+  receiverId
+  nameIsCustom
+  discoveryDetails
   createdAt
   updatedAt
 }

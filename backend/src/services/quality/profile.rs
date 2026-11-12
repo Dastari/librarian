@@ -22,6 +22,7 @@ use crate::graphql::entities::{
 };
 
 use super::scoring::{self, ParsedRelease};
+use super::title_match::WantedTitle;
 use crate::services::sources::SourceRelease;
 
 /// Result of evaluating a parsed release/media file against a [`QualityProfile`].
@@ -414,11 +415,7 @@ fn rank_key(scored: &scoring::ScoredRelease, profile: &QualityProfile) -> RankKe
     // 1. Resolution. With an explicit `resolution_preference` the list position
     //    decides (unlisted resolutions sort last); otherwise the highest
     //    parsed resolution wins.
-    let resolution = if profile.resolution_preference.is_empty() {
-        u32::from(u8::MAX - parsed.resolution_rank.0)
-    } else {
-        preference_index(&profile.resolution_preference, parsed.resolution.as_ref())
-    };
+    let resolution = resolution_tier(parsed, profile);
 
     // 2. PROPER/REPACK, when the profile prefers them.
     let proper = if profile.prefer_proper_repack && parsed.is_proper_or_repack() {
@@ -453,10 +450,26 @@ fn rank_key(scored: &scoring::ScoredRelease, profile: &QualityProfile) -> RankKe
     }
 }
 
+/// The resolution tier a release sits in for this profile, lower is better: its position in
+/// `resolution_preference` when that is set (unlisted last), else by the parsed resolution. The
+/// first thing [`filter_and_rank`] orders by, and what a coverage plan keeps equal.
+pub fn resolution_tier(parsed: &ParsedRelease, profile: &QualityProfile) -> u32 {
+    if profile.resolution_preference.is_empty() {
+        u32::from(u8::MAX - parsed.resolution_rank.0)
+    } else {
+        preference_index(&profile.resolution_preference, parsed.resolution.as_ref())
+    }
+}
+
+/// Order already-accepted releases the way [`filter_and_rank`] does.
+pub fn sort_by_profile(scored: &mut [scoring::ScoredRelease], profile: &QualityProfile) {
+    scored.sort_by_cached_key(|candidate| rank_key(candidate, profile));
+}
+
 /// Filter `releases` down to the ones this profile accepts and rank them.
 ///
-/// Hard filters (any failure drops the release): title similarity below
-/// [`scoring::MIN_TITLE_SIMILARITY`], then [`evaluate_release`] — allowed
+/// Hard filters (any failure drops the release): a title that does not name `wanted`
+/// ([`WantedTitle::mismatch`]: the release's title part, word for word), then [`evaluate_release`] — allowed
 /// resolution/codec/audio/HDR/source lists, release-group white/blacklist,
 /// `require_hdr`, `require_language_match`, `allow_season_packs`,
 /// `min_seeders`, `min_size_mb`/`max_size_mb` (per episode for packs) and
@@ -470,7 +483,7 @@ fn rank_key(scored: &scoring::ScoredRelease, profile: &QualityProfile) -> RankKe
 /// (6) higher title similarity; (7) release title, so the order is total and
 /// identical between runs.
 pub fn filter_and_rank(
-    wanted_title: &str,
+    wanted: &WantedTitle,
     releases: Vec<SourceRelease>,
     profile: &QualityProfile,
     episode_count: i32,
@@ -479,10 +492,10 @@ pub fn filter_and_rank(
     let mut scored: Vec<scoring::ScoredRelease> = releases
         .into_iter()
         .filter_map(|release| {
-            let title_similarity = scoring::title_similarity(wanted_title, &release.title);
-            if title_similarity < scoring::MIN_TITLE_SIMILARITY {
+            if wanted.mismatch(&release.title).is_some() {
                 return None;
             }
+            let title_similarity = wanted.similarity(&release.title);
             let parsed = scoring::parse_release(&release.title);
             let facts = ReleaseFacts {
                 now,
@@ -505,12 +518,12 @@ pub fn filter_and_rank(
 
 /// [`filter_and_rank`] returning only the winner.
 pub fn pick_best_for_profile(
-    wanted_title: &str,
+    wanted: &WantedTitle,
     releases: Vec<SourceRelease>,
     profile: &QualityProfile,
     episode_count: i32,
 ) -> Option<scoring::ScoredRelease> {
-    filter_and_rank(wanted_title, releases, profile, episode_count)
+    filter_and_rank(wanted, releases, profile, episode_count)
         .into_iter()
         .next()
 }
@@ -1125,7 +1138,7 @@ mod tests {
             release("Show S01E01 2160p WEB-DL x265-GRP", Some(100), None),
             release("Show S01E01 1080p WEB-DL x264-GRP", Some(10), None),
         ];
-        let best = pick_best_for_profile("Show S01E01", releases, &profile, 1)
+        let best = pick_best_for_profile(&WantedTitle::work("Show"), releases, &profile, 1)
             .expect("a release should be picked");
         assert!(
             best.release.title.contains("1080p"),
@@ -1141,7 +1154,7 @@ mod tests {
             release("Show S01E01 1080p WEB-DL x264-AAA", Some(500), None),
             release("Show S01E01 PROPER 1080p WEB-DL x264-BBB", Some(20), None),
         ];
-        let best = pick_best_for_profile("Show S01E01", releases, &profile, 1)
+        let best = pick_best_for_profile(&WantedTitle::work("Show"), releases, &profile, 1)
             .expect("a release should be picked");
         assert!(best.parsed.is_proper, "expected the PROPER release to win");
     }
@@ -1154,7 +1167,7 @@ mod tests {
             release("Show S01E01 1080p WEB-DL x264-OKAY", Some(900), None),
             release("Show S01E01 1080p WEB-DL x264-BEST", Some(1), None),
         ];
-        let best = pick_best_for_profile("Show S01E01", releases, &profile, 1)
+        let best = pick_best_for_profile(&WantedTitle::work("Show"), releases, &profile, 1)
             .expect("a release should be picked");
         assert_eq!(best.parsed.release_group.as_deref(), Some("BEST"));
     }
@@ -1167,8 +1180,8 @@ mod tests {
             release("Movie 2020 1080p BluRay x264-AAA", Some(900), None),
             release("Movie 2020 FRENCH 1080p BluRay x264-BBB", Some(5), None),
         ];
-        let best =
-            pick_best_for_profile("Movie 2020", releases, &profile, 1).expect("a release wins");
+        let best = pick_best_for_profile(&WantedTitle::work("Movie"), releases, &profile, 1)
+            .expect("a release wins");
         assert_eq!(best.parsed.languages, vec!["fr".to_string()]);
     }
 
@@ -1180,9 +1193,35 @@ mod tests {
             release("Show S01E01 1080p WEB-DL x264-AAA", Some(2), None),
             release("Show S01E01 720p WEB-DL x264-BBB", Some(40), None),
         ];
-        let ranked = filter_and_rank("Show S01E01", releases, &profile, 1);
+        let ranked = filter_and_rank(&WantedTitle::work("Show"), releases, &profile, 1);
         assert_eq!(ranked.len(), 1);
         assert!(ranked[0].release.title.contains("720p"));
+    }
+
+    #[test]
+    fn ranking_drops_a_release_for_another_show_with_a_similar_name() {
+        // The live regression: Babylon Berlin was recommended, and would have been grabbed, for
+        // Babylon 5.
+        let profile = base_profile();
+        let releases = vec![
+            release(
+                "Babylon.Berlin.S01.1080p.10bit.WEBRip.6CH.x265.HEVC-PSA",
+                Some(300),
+                None,
+            ),
+            release("Babylon.5.S01.720p.DVDRip.x264-GRP", Some(4), None),
+        ];
+        let ranked = filter_and_rank(&WantedTitle::work("Babylon 5"), releases, &profile, 22);
+        assert_eq!(ranked.len(), 1);
+        assert!(ranked[0].release.title.starts_with("Babylon.5."));
+        let only_berlin = vec![release(
+            "Babylon.Berlin.S01.1080p.10bit.WEBRip.6CH.x265.HEVC-PSA",
+            Some(300),
+            None,
+        )];
+        assert!(
+            filter_and_rank(&WantedTitle::work("Babylon 5"), only_berlin, &profile, 22).is_empty()
+        );
     }
 
     #[test]
@@ -1194,11 +1233,11 @@ mod tests {
                 release("Show S01E01 1080p WEB-DL x264-AAA", Some(10), None),
             ]
         };
-        let first: Vec<String> = filter_and_rank("Show S01E01", build(), &profile, 1)
+        let first: Vec<String> = filter_and_rank(&WantedTitle::work("Show"), build(), &profile, 1)
             .into_iter()
             .map(|scored| scored.release.title)
             .collect();
-        let second: Vec<String> = filter_and_rank("Show S01E01", build(), &profile, 1)
+        let second: Vec<String> = filter_and_rank(&WantedTitle::work("Show"), build(), &profile, 1)
             .into_iter()
             .map(|scored| scored.release.title)
             .collect();

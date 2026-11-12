@@ -567,6 +567,8 @@ struct DeviceNode {
     discovery_origin: Option<String>,
     #[serde(rename = "LastSeenAt")]
     last_seen_at: Option<String>,
+    #[serde(rename = "NameIsCustom", default)]
+    name_is_custom: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1633,40 +1635,50 @@ async fn upsert_discovered_device(
     auth_user: &AuthUser,
     device: &crate::services::cast::DiscoveredCastDevice,
 ) -> Result<DeviceNode> {
-    let existing =
+    // The endpoint first; then the receiver's own identifier, so a receiver
+    // whose address changed keeps its row (name, favourite, sessions).
+    let mut existing =
         query_device_by_address_port(manager, auth_user, &device.address, device.port).await?;
-    let now = chrono::Utc::now().to_rfc3339();
-    if let Some(existing) = existing {
-        let playback_supported = matches!(
-            device.device_type,
-            CastDeviceType::Chromecast | CastDeviceType::ChromecastAudio
-        );
-        let updated = update_cast_device(
-            manager,
-            auth_user,
-            &existing.id,
-            serde_json::json!({
-                "name": device.name,
-                "model": device.model,
-                "deviceType": device.device_type.as_str(),
-                "address": device.address,
-                "port": device.port,
-                "enabled": existing.enabled.unwrap_or(true),
-                "discoveryOrigin": "NETWORK",
-                "playbackSupported": playback_supported,
-                "lastSeenAt": now.clone(),
-                "lastProbeAt": now,
-                "lastProbeError": null,
-            }),
-        )
-        .await?;
-        return Ok(updated);
+    if existing.is_none()
+        && let Some(receiver_id) = device.receiver_id.as_deref()
+    {
+        existing = query_device_by_receiver_id(manager, auth_user, receiver_id).await?;
     }
-
+    let now = chrono::Utc::now().to_rfc3339();
     let playback_supported = matches!(
         device.device_type,
         CastDeviceType::Chromecast | CastDeviceType::ChromecastAudio
     );
+    if let Some(existing) = existing {
+        let mut input = serde_json::json!({
+            "model": device.model,
+            "deviceType": device.device_type.as_str(),
+            "address": device.address,
+            "port": device.port,
+            "enabled": existing.enabled.unwrap_or(true),
+            "discoveryOrigin": "NETWORK",
+            "playbackSupported": playback_supported,
+            "lastSeenAt": now.clone(),
+            "lastProbeAt": now,
+            "lastProbeError": null,
+        });
+        // Only what the receiver reported is refreshed: a name an administrator
+        // chose stays, and a reply that says less does not erase what is known.
+        if existing.name_is_custom != Some(true) {
+            input["name"] = serde_json::json!(device.name);
+        }
+        if device.manufacturer.is_some() {
+            input["manufacturer"] = serde_json::json!(device.manufacturer);
+        }
+        if device.receiver_id.is_some() {
+            input["receiverId"] = serde_json::json!(device.receiver_id);
+        }
+        if device.details.is_some() {
+            input["discoveryDetails"] = serde_json::json!(device.details);
+        }
+        return update_cast_device(manager, auth_user, &existing.id, input).await;
+    }
+
     create_cast_device(
         manager,
         auth_user,
@@ -1685,6 +1697,10 @@ async fn upsert_discovered_device(
             "lastSeenAt": now.clone(),
             "lastProbeAt": now,
             "lastProbeError": null,
+            "manufacturer": device.manufacturer,
+            "receiverId": device.receiver_id,
+            "nameIsCustom": false,
+            "discoveryDetails": device.details,
         }),
     )
     .await
@@ -1849,6 +1865,7 @@ async fn query_device_by_address_port(
                         PlaybackSupported: playbackSupported
                         DiscoveryOrigin: discoveryOrigin
                         LastSeenAt: lastSeenAt
+                        NameIsCustom: nameIsCustom
                     }
                 }
             }
@@ -1859,6 +1876,55 @@ async fn query_device_by_address_port(
                 "address": { "eq": address },
                 "port": { "eq": port }
             },
+            "page": { "limit": 1, "offset": 0 }
+        }),
+    )
+    .await?;
+
+    let node = data
+        .get("CastDevices")
+        .and_then(|v| v.get("Edges"))
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|edge| edge.get("Node"))
+        .cloned();
+
+    Ok(node.and_then(|v| serde_json::from_value(v).ok()))
+}
+
+async fn query_device_by_receiver_id(
+    manager: &Arc<ServicesManager>,
+    auth_user: &AuthUser,
+    receiver_id: &str,
+) -> Result<Option<DeviceNode>> {
+    let data = execute_graphql(
+        manager,
+        auth_user,
+        r#"
+        query CastDeviceByReceiverId($where: CastDeviceWhereInput, $page: PageInput) {
+            CastDevices: castDevices(where: $where, page: $page) {
+                Edges: edges {
+                    Node: node {
+                        Id: id
+                        Name: name
+                        Address: address
+                        Port: port
+                        Model: model
+                        DeviceType: deviceType
+                        IsFavorite: isFavorite
+                        IsManual: isManual
+                        Enabled: enabled
+                        PlaybackSupported: playbackSupported
+                        DiscoveryOrigin: discoveryOrigin
+                        LastSeenAt: lastSeenAt
+                        NameIsCustom: nameIsCustom
+                    }
+                }
+            }
+        }
+        "#,
+        serde_json::json!({
+            "where": { "receiverId": { "eq": receiver_id } },
             "page": { "limit": 1, "offset": 0 }
         }),
     )

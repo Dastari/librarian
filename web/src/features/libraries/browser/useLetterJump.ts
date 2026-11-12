@@ -63,8 +63,10 @@ function revealVirtualRow<TRow>(root: HTMLElement, rows: TRow[], getRowId: (row:
     } else {
       const nearest = lower ?? upper;
       if (!nearest) continue;
-      const neighbour = ordered.filter(([index]) => index !== nearest[0]).sort(([a], [b]) => Math.abs(a - nearest[0]) - Math.abs(b - nearest[0]))[0];
-      const pitch = neighbour ? (neighbour[1] - nearest[1]) / (neighbour[0] - nearest[0]) : anchor.getBoundingClientRect().height;
+      // The sample furthest away, because in a grid the next card can be on the same line.
+      const far = ordered.filter(([index]) => index !== nearest[0]).sort(([a], [b]) => Math.abs(b - nearest[0]) - Math.abs(a - nearest[0]))[0];
+      const across = far ? (far[1] - nearest[1]) / (far[0] - nearest[0]) : 0;
+      const pitch = across > 0 ? across : anchor.getBoundingClientRect().height;
       if (!(pitch > 0)) continue;
       top = nearest[1] + (targetAriaIndex - nearest[0]) * pitch;
     }

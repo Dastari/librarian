@@ -31,6 +31,15 @@ async fn user(db: &Database) -> User {
             avatar_url: None,
             is_active: true,
             last_login_at: None,
+            phone: None,
+            genre_interests: None,
+            must_change_password: false,
+            two_factor_enabled_at: None,
+            recovery_codes_remaining: 0,
+            password_changed_at: None,
+            totp_secret: None,
+            totp_pending_secret: None,
+            recovery_codes: None,
         },
     )
     .await
@@ -49,12 +58,17 @@ async fn library(db: &Database, user: &User, root: &Path) -> Library {
             color: None,
             auto_scan: false,
             auto_organize: false,
+            auto_resolve_duplicates: None,
             naming_pattern: "fixture naming_pattern".to_string(),
             scan_interval_minutes: 0,
             watch_for_changes: false,
+            watch_status: None,
+            watch_detail: None,
+            watch_status_since: None,
             scanning: false,
             last_scanned_at: None,
             quality_profile_id: None,
+            storage_volume_id: None,
         },
     )
     .await
@@ -65,6 +79,7 @@ async fn movie(db: &Database, library: &Library) -> Movie {
     Movie::insert(
         db,
         CreateMovieInput {
+            locked_fields: None,
             library_id: library.id.clone(),
             user_id: library.user_id.clone(),
             title: "fixture movie".to_string(),
@@ -90,6 +105,8 @@ async fn movie(db: &Database, library: &Library) -> Movie {
             collection_poster_url: None,
             release_date: None,
             certification: None,
+            digital_release_date: None,
+            physical_release_date: None,
             monitored: false,
             tmdb_status: None,
             wanted: true,
@@ -133,6 +150,7 @@ async fn media_file(
             resolution: None,
             is_hdr: false,
             hdr_type: None,
+            closed_captions: None,
             audio_channels: None,
             metadata: None,
             content_type: None,
@@ -143,6 +161,9 @@ async fn media_file(
             matched_by_user_id: None,
             match_confirmed_at: None,
             quality_status: None,
+            picture_crop: None,
+            storyboard: None,
+            previews_checked_at: None,
         },
     )
     .await
@@ -168,6 +189,9 @@ fn torrent_input(user: &AuthUser, hash: &str) -> CreateTorrentInput {
         source_feed_id: None,
         source_indexer_id: None,
         library_id: None,
+        identification_kind: None,
+        identification_status: None,
+        identification_summary: None,
         post_process_status: None,
         post_process_error: None,
         processed_at: None,

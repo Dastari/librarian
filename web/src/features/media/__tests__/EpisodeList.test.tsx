@@ -4,11 +4,12 @@ import { useState, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
-import { EntityEpisodeUpdateDocument, EntityEpisodeUpdateManyDocument, type ContentStatus, type PlaybackProgressFieldsFragment } from "@/graphql/generated/graphql";
+import { EntityEpisodeUpdateDocument, EntityEpisodeUpdateManyDocument, EntityPlaybackProgressDeleteManyDocument, type ContentStatus, type PlaybackProgressFieldsFragment } from "@/graphql/generated/graphql";
 import { renderWithProviders } from "@/test";
 
 import { EpisodeList } from "../EpisodeList";
 import type { EpisodeRow } from "../ShowPage";
+import { isRemoteStop } from "@/lib/input-mode";
 
 let isAdmin = true;
 vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => isAdmin, useSession: () => ({ status: "authenticated", user: { id: "episode-user", role: isAdmin ? "admin" : "member" }, expiresAt: null }) }));
@@ -164,6 +165,12 @@ describe("EpisodeList seasons", () => {
   });
 });
 
+/** A row's less common actions are in its menu. */
+async function chooseFromMenu(name: string, within_: HTMLElement = document.body) {
+  await userEvent.click(within(within_).getByRole("button", { name: /^More actions/ }));
+  await userEvent.click(await screen.findByRole("menuitem", { name }));
+}
+
 describe("EpisodeList rows", () => {
   it("marks an episode wanted", async () => {
     const { called, mock } = singleMock("ep-1-1", { wanted: true });
@@ -175,14 +182,14 @@ describe("EpisodeList rows", () => {
   it("ignores an episode and drops the wanted flag with it", async () => {
     const { called, mock } = singleMock("ep-1-1", { ignored: true, wanted: false });
     await mount([episode(1, 1, { wanted: true })], [mock]);
-    await userEvent.click(screen.getByRole("button", { name: "Ignore" }));
+    await chooseFromMenu("Ignore");
     await vi.waitFor(() => expect(called).toHaveBeenCalled());
   });
 
   it("unignores an episode without touching anything else", async () => {
     const { called, mock } = singleMock("ep-1-1", { ignored: false });
     await mount([episode(1, 1, { ignored: true })], [mock]);
-    await userEvent.click(screen.getByRole("button", { name: "Unignore" }));
+    await chooseFromMenu("Unignore");
     await vi.waitFor(() => expect(called).toHaveBeenCalled());
   });
 
@@ -197,13 +204,15 @@ describe("EpisodeList rows", () => {
     const available = rowFor(1, 1);
     const missing = rowFor(1, 2);
     expect(within(available).getByRole("button", { name: "Play" })).toBeEnabled();
-    expect(available).toHaveTextContent("1080p · HEVC · 2.3 GB");
+    expect(available).toHaveTextContent("1080p · HEVC");
+    expect(available).not.toHaveTextContent("2.3 GB");
     expect(available).toHaveTextContent("Optimal");
     expect(available).toHaveTextContent("Available");
     expect(within(missing).queryByRole("button", { name: "Play" })).not.toBeInTheDocument();
     expect(within(missing).getByRole("button", { name: "Want" })).toBeEnabled();
-    expect(within(missing).getByRole("button", { name: "Find" })).toBeEnabled();
-    expect(within(missing).getByRole("button", { name: "Ignore" })).toBeEnabled();
+    await userEvent.click(within(missing).getByRole("button", { name: /^More actions/ }));
+    expect(await screen.findByRole("menuitem", { name: "Find" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Ignore" })).toBeInTheDocument();
   });
 
   it("says so when a season has no episodes", async () => {
@@ -230,8 +239,6 @@ describe("EpisodeList Glass DataTable integration", () => {
     expect(onPlay).toHaveBeenCalledExactlyOnceWith(available);
     expect(within(rowFor(2, 1)).queryByRole("button", { name: "Play" })).not.toBeInTheDocument();
     expect(within(rowFor(2, 1)).getByRole("button", { name: "Want" })).toBeVisible();
-    expect(within(rowFor(2, 1)).getByRole("button", { name: "Find" })).toBeVisible();
-    expect(within(rowFor(2, 1)).getByRole("button", { name: "Ignore" })).toBeVisible();
     expect(container.querySelector("button button")).not.toBeInTheDocument();
   });
 
@@ -246,8 +253,7 @@ describe("EpisodeList Glass DataTable integration", () => {
     expect(onPlay).toHaveBeenCalledExactlyOnceWith(available);
     const missing = rowFor(1, 2);
     expect(within(missing).getByRole("button", { name: "Want" })).toBeVisible();
-    expect(within(missing).getByRole("button", { name: "Find" })).toBeVisible();
-    await userEvent.click(within(missing).getByRole("button", { name: /Actions for/ }));
+    await userEvent.click(within(missing).getByRole("button", { name: /^More actions/ }));
     expect(await screen.findByRole("menuitem", { name: "Ignore" })).toBeVisible();
     await userEvent.keyboard("{Escape}");
     expect(rowFor(2, 1)).toHaveTextContent("No file");
@@ -286,7 +292,7 @@ describe("EpisodeList Glass DataTable integration", () => {
     expect(screen.queryByRole("button", { name: /^(Want|Wanted|Find|Ignore|Unignore|Want all missing|Unwant all|Ignore season|Unignore season)$/ })).not.toBeInTheDocument();
     await userEvent.click(within(rowFor(1, 1)).getByRole("button", { name: "Play" }));
     expect(onPlay).toHaveBeenCalledExactlyOnceWith(available);
-    await userEvent.click(within(rowFor(1, 1)).getByRole("button", { name: /^Actions for/ }));
+    await userEvent.click(within(rowFor(1, 1)).getByRole("button", { name: /^More actions/ }));
     expect(await screen.findByRole("menuitem", { name: "Play" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: /Want|Find|Ignore/ })).not.toBeInTheDocument();
   });
@@ -295,7 +301,7 @@ describe("EpisodeList Glass DataTable integration", () => {
     const { called, mock } = singleMock("ep-2-1", { wanted: true });
     const onChanged = vi.fn();
     await mount([episode(1, 1, { mediaFileId: "file-1" }), episode(2, 1)], [mock], onChanged);
-    await userEvent.click(within(rowFor(2, 1)).getByRole("button", { name: /^Actions for/ }));
+    await userEvent.click(within(rowFor(2, 1)).getByRole("button", { name: /^More actions/ }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Want" }));
     await vi.waitFor(() => expect(called).toHaveBeenCalledOnce());
     expect(onChanged).toHaveBeenCalledOnce();
@@ -313,7 +319,7 @@ describe("EpisodeList Glass DataTable integration", () => {
 
   it("passes the selected episode, show and library through to release search", async () => {
     await mount([episode(1, 1, { mediaFileId: "file-1" }), episode(2, 7)]);
-    await userEvent.click(within(rowFor(2, 7)).getByRole("button", { name: "Find" }));
+    await chooseFromMenu("Find", rowFor(2, 7));
     expect(vi.mocked(ReleaseSearchDialog).mock.lastCall?.[0]).toMatchObject({
       isOpen: true, query: "Andor", season: 2, episode: 7, libraryId: "lib-1", target: { showId: "show-1", episodeId: "ep-2-7" },
     });
@@ -408,7 +414,9 @@ describe("EpisodeList row view", () => {
     isAdmin = false;
     await mount([episode(1, 1, { title: "Later" })], [], vi.fn(), { view: "row" });
     const tile = screen.getByRole("button", { name: /^S01E01 · Later/ });
-    expect(tile).toHaveAttribute("aria-disabled", "true");
+    // A card to read on a remote, not a disabled control: it stays a stop (design.md Q141).
+    expect(tile).not.toHaveAttribute("aria-disabled");
+    expect(isRemoteStop(tile, true)).toBe(true);
     expect(tile).not.toHaveAttribute("aria-haspopup");
   });
 });
@@ -435,5 +443,74 @@ describe("episode selection context", () => {
     await userEvent.click(screen.getByRole("button", { name: "Actions for 2 selected episodes" }));
     await screen.findByRole("menuitem", { name: "Copy episode titles" });
     expect(screen.queryByRole("menuitem", { name: /Want selected|Ignore selected/ })).toBeNull();
+  });
+});
+
+describe("marking episodes unwatched", () => {
+  const progressFor = (...entries: Array<[string, Partial<PlaybackProgressFieldsFragment>]>) =>
+    new Map<string | null | undefined, PlaybackProgressFieldsFragment>(entries.map(([file, row]) => [file, { currentPosition: 0, duration: 2700, isWatched: false, ...row } as PlaybackProgressFieldsFragment]));
+  const resetMock = (mediaFileIds: string[]) => {
+    const called = vi.fn(() => ({ data: { deletePlaybackProgresses: { __typename: "DeletePlaybackProgressesResult", success: true, error: null } } }));
+    return { called, mock: { request: { query: EntityPlaybackProgressDeleteManyDocument, variables: { where: { userId: { eq: "episode-user" }, mediaFileId: { inList: mediaFileIds } } } }, result: called } };
+  };
+  const episodes = [episode(1, 1, { mediaFileId: "file-1" }), episode(1, 2, { mediaFileId: "file-2" }), episode(1, 3, { mediaFileId: "file-3" }), episode(2, 1, { mediaFileId: "file-4" })];
+  const progressByFile = progressFor(["file-1", { currentPosition: 600 }], ["file-2", { isWatched: true }], ["file-4", { currentPosition: 90 }]);
+
+  it("offers it on an episode row only when that episode has progress, and resets just its file", async () => {
+    const { called, mock } = resetMock(["file-1"]);
+    await mount(episodes, [mock], vi.fn(), { progressByFile });
+    await userEvent.click(within(rowFor(1, 3)).getByRole("button", { name: /^More actions/ }));
+    expect(screen.queryByRole("menuitem", { name: "Mark as unwatched" })).not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await chooseFromMenu("Mark as unwatched", rowFor(1, 1));
+    await vi.waitFor(() => expect(called).toHaveBeenCalledOnce());
+  });
+
+  it("offers it to a member, who has no other episode actions, and treats a finished mark as progress", async () => {
+    isAdmin = false;
+    const { called, mock } = resetMock(["file-2"]);
+    await mount(episodes, [mock], vi.fn(), { progressByFile });
+    await chooseFromMenu("Mark as unwatched", rowFor(1, 2));
+    await vi.waitFor(() => expect(called).toHaveBeenCalledOnce());
+  });
+
+  it("resets a whole season from its header, to a member too, leaving other seasons alone", async () => {
+    isAdmin = false;
+    const { called, mock } = resetMock(["file-1", "file-2"]);
+    await mount(episodes, [mock], vi.fn(), { progressByFile });
+    const header = screen.getByRole("heading", { level: 3, name: "Season 1" }).closest("header")!;
+    await chooseFromMenu("Mark season as unwatched", header);
+    await vi.waitFor(() => expect(called).toHaveBeenCalledOnce());
+  });
+
+  it("shows no season action to a member when the season has no progress, and nothing for a member at all", async () => {
+    isAdmin = false;
+    await mount([episode(1, 1, { mediaFileId: "file-1" })], [], vi.fn(), { progressByFile: new Map() });
+    const header = screen.getByRole("heading", { level: 3, name: "Season 1" }).closest("header")!;
+    expect(within(header).queryByRole("button")).toBeNull();
+  });
+
+  it("holds the season action back until every episode is loaded", async () => {
+    await mount(episodes, [], vi.fn(), { progressByFile, complete: false });
+    const header = screen.getByRole("heading", { level: 3, name: "Season 1" }).closest("header")!;
+    await userEvent.click(within(header).getByRole("button", { name: /^More actions/ }));
+    expect(await screen.findByRole("menuitem", { name: "Mark season as unwatched" })).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("resets a selection of episodes in one request", async () => {
+    const { called, mock } = resetMock(["file-1", "file-2"]);
+    await mount(episodes, [mock], vi.fn(), { progressByFile });
+    for (const number of [1, 2, 3]) await userEvent.click(within(rowFor(1, number)).getByRole("checkbox"));
+    await userEvent.click(screen.getByRole("button", { name: /Actions for 3 selected/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Mark as unwatched" }));
+    await vi.waitFor(() => expect(called).toHaveBeenCalledOnce());
+  });
+
+  it("marks tiles in the row view too", async () => {
+    const { called, mock } = resetMock(["file-1"]);
+    await mount(episodes.slice(0, 1), [mock], vi.fn(), { progressByFile, view: "row" });
+    await userEvent.click(screen.getByRole("button", { name: "Actions for S01E01 · Episode 1" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Mark as unwatched" }));
+    await vi.waitFor(() => expect(called).toHaveBeenCalledOnce());
   });
 });

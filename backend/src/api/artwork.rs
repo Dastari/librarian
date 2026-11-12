@@ -5,7 +5,8 @@
 
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    body::Bytes,
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
     routing::get,
@@ -18,15 +19,29 @@ use crate::api::auth_guard::{require_authenticated_admin, require_authenticated_
 use crate::graphql::AuthUser;
 use crate::graphql::entities::{
     Album, Artist, ArtworkCache, Audiobook, Collection, CollectionWhereInput, Episode, Movie,
-    Season, Show, StorageObject,
+    PersonalList, Season, Show, StorageObject,
 };
 use crate::services::ArtworkService;
 use crate::services::artwork::normalize_artwork_width;
+use crate::services::artwork_choice::{self, ArtworkSlot, UploadFailure, upload::MAX_UPLOAD_BYTES};
 
 #[derive(Debug, Default, Deserialize)]
 struct ArtworkQuery {
     /// Desired display width in pixels; snapped to a supported step and never upscaled.
     w: Option<u32>,
+    /// A client's revision of the picture. A URL that names one never changes what it shows, so
+    /// it is cached for good; one without it is checked again after a few minutes, so a changed
+    /// picture reaches every device.
+    v: Option<String>,
+}
+
+/// How long a browser keeps a picture before asking again whether it changed.
+fn cache_control(query: &ArtworkQuery) -> String {
+    if query.v.as_deref().is_some_and(|v| !v.is_empty()) {
+        "private, max-age=31536000, immutable".to_string()
+    } else {
+        "private, max-age=300, stale-while-revalidate=604800".to_string()
+    }
 }
 
 /// Serve artwork from object storage.
@@ -146,7 +161,7 @@ async fn serve_artwork(
             StatusCode::NOT_MODIFIED,
             [
                 (header::ETAG, etag),
-                (header::CACHE_CONTROL, "private, max-age=86400".to_string()),
+                (header::CACHE_CONTROL, cache_control(&query)),
             ],
         )
             .into_response();
@@ -182,7 +197,7 @@ async fn serve_artwork(
                         .clone()
                         .unwrap_or_else(|| "application/octet-stream".to_string()),
                 ),
-                (header::CACHE_CONTROL, "private, max-age=86400".to_string()),
+                (header::CACHE_CONTROL, cache_control(&query)),
                 (header::ETAG, etag),
                 (header::VARY, "Cookie, Authorization".to_string()),
                 (
@@ -271,6 +286,11 @@ async fn can_access_artwork(
         "artist" => Artist::get(state.db.pool(), &entity_id)
             .await?
             .map(|entity| entity.user_id),
+        "playlist" => PersonalList::get(state.db.pool(), &entity_id)
+            .await?
+            .map(|entity| entity.user_id),
+        // A person's photo: theirs and administrators'.
+        "user" => Some(entity_id.clone()),
         _ => None,
     };
     Ok(owner.as_deref() == Some(user.user_id.as_str()))
@@ -339,6 +359,94 @@ fn normalize_artwork_type(artwork_type: &str) -> &str {
     }
 }
 
+fn upload_answer(status: StatusCode, error: Option<String>) -> axum::response::Response {
+    (
+        status,
+        Json(serde_json::json!({ "success": error.is_none(), "error": error })),
+    )
+        .into_response()
+}
+
+/// Upload a picture for a title and lock it (design note Q127).
+///
+/// PUT /api/artwork/:entity_type/:entity_id/:artwork_type, the image itself as the body with its
+/// `image/*` content type (which a cross-site form cannot send). Administrators may change any
+/// title's pictures and a playlist's owner its cover. Answers `{ success, error }`.
+async fn upload_artwork(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((entity_type, entity_id, artwork_type)): Path<(String, String, String)>,
+    body: Bytes,
+) -> impl IntoResponse {
+    let user = match require_authenticated_user(&state, &headers, None).await {
+        Ok(user) => user,
+        Err(status) => return status.into_response(),
+    };
+    let Some(slot) = ArtworkSlot::from_path(&entity_type, normalize_artwork_type(&artwork_type))
+    else {
+        return upload_answer(
+            StatusCode::NOT_FOUND,
+            Some("That kind of title has no picture of that kind".to_string()),
+        );
+    };
+    let is_image = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.trim().to_ascii_lowercase().starts_with("image/"));
+    if !is_image {
+        return upload_answer(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            Some("Only JPEG, PNG and WebP pictures can be used".to_string()),
+        );
+    }
+    match artwork_choice::slot_state(&state.db, slot, &entity_id).await {
+        Ok(Some(found)) if artwork_choice::may_change(&user, slot, &found) => {}
+        Ok(_) => return upload_answer(StatusCode::NOT_FOUND, Some("Not found".to_string())),
+        Err(error) => {
+            tracing::error!(
+                entity_type = slot.entity_type(),
+                entity_id = %entity_id,
+                error = %error,
+                "Failed to read {} {entity_id} for an artwork upload",
+                slot.entity_type()
+            );
+            return upload_answer(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Some("The picture couldn't be saved".to_string()),
+            );
+        }
+    }
+    let Some(storage) = state.services.get_storage().await else {
+        return upload_answer(
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("Object storage unavailable".to_string()),
+        );
+    };
+    let artwork = ArtworkService::new(state.db.clone(), storage);
+    let bytes = body.to_vec();
+    match artwork_choice::upload(&state.db, &artwork, slot, &entity_id, &bytes).await {
+        Ok(_) => upload_answer(StatusCode::OK, None),
+        Err(UploadFailure::Invalid(error)) => {
+            upload_answer(StatusCode::UNPROCESSABLE_ENTITY, Some(error.to_string()))
+        }
+        Err(UploadFailure::Failed(error)) => {
+            tracing::error!(
+                entity_type = slot.entity_type(),
+                entity_id = %entity_id,
+                artwork_type = slot.artwork_type(),
+                error = %error,
+                "Failed to store an uploaded {} {} picture",
+                slot.entity_type(),
+                slot.artwork_type()
+            );
+            upload_answer(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Some("The picture couldn't be saved".to_string()),
+            )
+        }
+    }
+}
+
 /// Create the artwork router.
 pub fn router() -> Router<AppState> {
     Router::new().nest(
@@ -346,7 +454,9 @@ pub fn router() -> Router<AppState> {
         Router::new()
             .route(
                 "/{entity_type}/{entity_id}/{artwork_type}",
-                get(serve_artwork),
+                get(serve_artwork)
+                    .put(upload_artwork)
+                    .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES + 64 * 1024)),
             )
             .route("/stats", get(storage_stats)),
     )

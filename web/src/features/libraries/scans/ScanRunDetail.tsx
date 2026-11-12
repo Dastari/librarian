@@ -1,10 +1,10 @@
 import { ActionBar, type ActionSet } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
 import { EntityIdentity } from "glass-ux/entity";
-import { IconClose, IconHistory } from "glass-ux/icons";
+import { IconHistory } from "glass-ux/icons";
 import { MeterCell } from "glass-ux/meter-cell";
 
-import { Button, KeyValueList, Panel } from "@/components/ui";
+import { KeyValueList } from "@/components/ui";
 import { scanDuration, scanRunStatus, scanStage } from "@/lib/entities/scan";
 import { formatDateTime, formatRelative } from "@/lib/format";
 
@@ -21,18 +21,17 @@ function Step({ label, done, failed, total }: { label: string; done: number; fai
 }
 
 /** One scan run: its outcome and how far each pipeline step got. */
-export function ScanRunDetail({ row, actions, onClose }: { row: RunRow; actions: ActionSet<RunRow>; onClose: () => void }) {
+export function ScanRunDetail({ row, actions }: { row: RunRow; actions: ActionSet<RunRow> }) {
   const status = scanRunStatus(row.status);
   const started = row.startedAt ?? row.createdAt;
   const issues = row.issues.pageInfo.totalCount ?? 0;
   const matchTotal = row.matchedCount + row.unmatchedCount + row.providerBlockedCount;
   return (
-    <Panel className="self-start xl:sticky xl:top-0">
+    <div className="flex min-w-0 flex-col">
       <div className="flex items-start gap-2">
         <EntityIdentity className="min-w-0 flex-1" tier="compact" heading="h2" kind="Scan" name={formatDateTime(started)} icon={<IconHistory />} facts={[status.label, scanDuration(row) ?? scanStage(row.currentStage), formatRelative(started)]} />
-        <Button variant="ghost" size="sm" isIconOnly aria-label="Close scan details" onPress={onClose}><IconClose /></Button>
+        <ActionBar set={actions} targets={[row]} label={`Scan ${formatDateTime(started)}`} maxButtons={2} />
       </div>
-      <ActionBar className="mt-3 justify-start" set={actions} targets={[row]} label={`Scan ${formatDateTime(started)}`} maxButtons={2} />
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Badge size="sm" marker="dot" tone={status.tone}>{status.label}</Badge>
         {issues ? <Badge size="sm" tone="warning">{issues === 1 ? "1 issue" : `${issues} issues`}</Badge> : null}
@@ -57,6 +56,6 @@ export function ScanRunDetail({ row, actions, onClose }: { row: RunRow; actions:
           { label: "Error", value: row.errorCode ? <span className="font-mono text-danger">{row.errorCode}</span> : undefined },
         ]}
       />
-    </Panel>
+    </div>
   );
 }

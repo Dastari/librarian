@@ -52,6 +52,9 @@ export function useSourceSearch() {
       if (version !== generation.current || scope.current !== epoch) return;
       if (!response.data) throw new Error("Source search unavailable");
       currentData.current = response.data;
+      // Later pages are bound to the term that was actually searched, which may be a wider one.
+      const term = response.data.searchSources.searchedTerm;
+      if (term && term !== variables.input.query) currentInput.current = { input: { ...variables.input, query: term, autoWiden: false } };
       setSnapshot({ epoch, data: response.data, loading: false, loadingMore: false });
     } catch (cause) {
       if (version === generation.current && scope.current === epoch) setSnapshot({ epoch, loading: false, loadingMore: false, error: cause instanceof Error ? cause : new Error(String(cause)) });

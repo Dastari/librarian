@@ -19,3 +19,5 @@ pub use service::{GraphqlService, GraphqlServiceConfig};
 
 #[cfg(test)]
 mod trusted_fields_tests;
+#[cfg(test)]
+mod user_profile_tests;

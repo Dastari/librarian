@@ -1,0 +1,255 @@
+diff --git a/dist/ui/data-table/data-table.d.ts b/dist/ui/data-table/data-table.d.ts
+index fe2d797..706d9c1 100644
+--- a/dist/ui/data-table/data-table.d.ts
++++ b/dist/ui/data-table/data-table.d.ts
+@@ -9,4 +9,9 @@ import type { DataTableProps } from "./types.js";
+  * (`reorder`) that leaves the order to the host, and opt-in detail panels (`renderRowDetail`)
+  * and tree rows with lazy children (`tree`).
+  */
++/**
++ * True where a remote control or D-pad drives the tables, which never stop on column headers:
++ * the toolbar then carries the sort menu in table mode too.
++ */
++export declare const DataTableRemoteContext: import("react").Context<boolean>;
+ export declare function DataTable<T extends RowData>(props: DataTableProps<T>): import("react").JSX.Element;
+diff --git a/dist/ui/data-table/data-table.js b/dist/ui/data-table/data-table.js
+index bb9b65e..555b035 100644
+--- a/dist/ui/data-table/data-table.js
++++ b/dist/ui/data-table/data-table.js
+@@ -12,7 +12,7 @@ import { ActionMenuItems } from "../actions/index.js";
+ import { normaliseColumnOrder, moveColumn } from "./column-order.js";
+ import { DragDropProvider } from "../drag-drop/index.js";
+ import { functionalUpdate, useTable, } from "@tanstack/react-table";
+-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, } from "react";
++import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, } from "react";
+ import { flushSync } from "react-dom";
+ import { IconArrowUp, IconMoreHorizontal, } from "../../icons/generated/icons.js";
+ import { resolveActions, } from "../../lib/actions/actions.js";
+@@ -147,6 +147,11 @@ const NO_TOGGLES = [];
+  * (`reorder`) that leaves the order to the host, and opt-in detail panels (`renderRowDetail`)
+  * and tree rows with lazy children (`tree`).
+  */
++/**
++ * Tables under `remote` are driven by a remote control or D-pad that never stops on column
++ * headers: the toolbar then carries the sort menu in table mode too.
++ */
++export const DataTableRemoteContext = createContext(false);
+ export function DataTable(props) {
+     const { id, label, rows, columns, getRowId, rowCount, cursor, pageSizes = DEFAULT_PAGE_SIZES, loading = false, refetching = false, error, onRetry, emptyMessage, emptyAction, emptyIcon, selectable = true, actions, getRowActions, grouping, renderRowActions, renderRowContextMenu, renderBulkActions, height = "fill", live = false, updatedAt, toolbar, search, filterToggles, status, view = "auto", cardBreakpoint = 36, cardMinWidth, cardMaxWidth, cardSort = true, renderCard, renderCardSkeleton, className, reorder, } = props;
+     const locale = useLocale(props.locale);
+@@ -1349,7 +1354,7 @@ export function DataTable(props) {
+     const offerExpandAll = expandable && props.expandAll !== false && expandTargets.length > 0;
+     const expandAllControl = useMemo(() => offerExpandAll ? (_jsx(ExpandAllButton, { open: allOpen, label: expandAllLabel, onToggle: () => setAllOpen(!allOpen) })) : undefined, [offerExpandAll, allOpen, expandAllLabel, setAllOpen]);
+     const expanderColumn = expandable
+-        ? (visibleColumns.find((column) => column.id === tree?.column) ??
++        ? (visibleColumns.find((column) => column.id === (tree?.column ?? props.expanderColumn)) ??
+             visibleColumns[0])?.id
+         : undefined;
+     const commitWidth = useCallback((columnId, width) => {
+@@ -2040,9 +2045,10 @@ export function DataTable(props) {
+     const cardExpandAll = useMemo(() => offerExpandAll && mode === "cards"
+         ? { label: expandAllLabel, onToggle: () => setAllOpen(!allOpen) }
+         : undefined, [offerExpandAll, mode, expandAllLabel, setAllOpen, allOpen]);
+-    const offerSort = mode === "cards" && cardSort && sortableColumns.length > 0;
++    const remote = useContext(DataTableRemoteContext);
++    const offerSort = (mode === "cards" || remote) && cardSort && sortableColumns.length > 0;
+     // Before measuring, a table is taken as narrow: the button then only ever appears, never overlaps.
+-    const sortFolded = offerSort && (!measured || widthRem < CARD_SORT_FOLD_REM);
++    const sortFolded = offerSort && mode === "cards" && (!measured || widthRem < CARD_SORT_FOLD_REM);
+     const settingsMenu = useMemo(() => (_jsx(SettingsMenu, { sort: sortFolded ? (_jsx(SortGroups, { columns: sortableColumns, sorting: sorting, controller: headerController })) : undefined, columns: mode === "cards" && renderCard ? NO_COLUMNS : settingsColumns, userHidden: userHidden, autoHidden: autoHiddenSet, density: effectiveDensity, controller: headerController, expandAll: cardExpandAll })), [
+         sortFolded,
+         sortableColumns,
+@@ -2217,7 +2223,8 @@ export function DataTable(props) {
+                                     props.export ||
+                                     hasFilterBar ||
+                                     searchBinding ||
+-                                    mode === "cards" ? (_jsxs("div", { className: "fa-dt-toolbar", children: [hasFilterBar || searchBinding ? (_jsx(FilterBar, { controller: filterController, toggles: toggles, search: searchBinding, compact: measured && widthRem < FILTERS_COMPACT_REM })) : null, toolbar || props.export || mode === "cards" ? (_jsxs("div", { className: "fa-dt-toolbar-end", children: [offerSort && !sortFolded ? (_jsx(CardSortMenu, { columns: sortableColumns, sorting: sorting, controller: headerController })) : null, mode === "cards" ? settingsMenu : null, props.export ? (_jsx(ExportMenu, { run: (format) => {
++                                    offerSort ||
++                                    mode === "cards" ? (_jsxs("div", { className: "fa-dt-toolbar", children: [hasFilterBar || searchBinding ? (_jsx(FilterBar, { controller: filterController, toggles: toggles, search: searchBinding, compact: measured && widthRem < FILTERS_COMPACT_REM })) : null, toolbar || props.export || offerSort || mode === "cards" ? (_jsxs("div", { className: "fa-dt-toolbar-end", children: [offerSort && !sortFolded ? (_jsx(CardSortMenu, { columns: sortableColumns, sorting: sorting, controller: headerController })) : null, mode === "cards" ? settingsMenu : null, props.export ? (_jsx(ExportMenu, { run: (format) => {
+                                                         void runExport(format);
+                                                     } })) : null, toolbar] })) : null] })) : null, _jsxs("div", { className: "fa-dt-frame", children: [_jsxs("div", { role: tree ? "treegrid" : "grid", className: "fa-dt-grid", "aria-label": label, "aria-rowcount": showSkeleton || showError || showEmpty
+                                                 ? -1
+@@ -2226,7 +2233,7 @@ export function DataTable(props) {
+                                                     : totalRows + 1, "aria-colcount": colCount, "aria-multiselectable": selectable || undefined, "aria-busy": loading ||
+                                                 refetching ||
+                                                 Boolean(infinite?.loadingMore) ||
+-                                                undefined, tabIndex: -1, onKeyDown: onGridKeyDown, children: [mode === "table" ? (_jsx("div", { role: "rowgroup", ref: headRef, className: "glass-inset fa-dt-head", children: _jsx(DataTableHeader, { columns: visibleColumns, sorting: sorting, sized: sized, selectable: selectable, pageSelection: pageSelection(selection, selectOrder), pageRowCount: selectOrder.length, loadedRows: Boolean(infinite), hiddenCount: hiddenColumns.length, expandedAll: expandAll, columnMenu: columnMenu, controller: headerController, filtered: filtered, settings: settingsMenu, reorderable: reorderable, expanderColumn: expanderColumn, expandControl: expandAllControl }) })) : null, _jsx("div", { className: "fa-dt-body", children: _jsx("div", { ref: scrollRef, className: "fa-dt-scroll", "data-scroll-container": "", onScroll: onScroll, children: body }) })] }), _jsx("div", { className: "fa-dt-progress", "aria-hidden": true }), liveRows.pending > 0 ? (_jsx("div", { className: "fa-dt-new", children: _jsx(Button, { size: "sm", variant: "primary", shape: "circle", icon: _jsx(IconArrowUp, {}), onClick: applyPending, children: m.newRows(liveRows.pending) }) })) : null] }), _jsx(DataTableFooter, { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, pageRows: data.length, rowCount: rowCount, pageSizes: pageSizes, cursor: cursor, onPageChange: (pageIndex) => setPagination((current) => ({ ...current, pageIndex })), onPageSizeChange: (pageSize) => setPagination({ pageIndex: 0, pageSize }), compact: compactFooter, disabled: showSkeleton, loading: showSkeleton, updatedAt: updatedAt, status: status, label: label, countLabel: countLabelText, counted: Boolean(grouping) || Boolean(infinite), bulk: {
++                                                undefined, tabIndex: -1, onFocusCapture: (event) => { const hit = lineFromEvent(event.target); if (hit) setActiveIndex(hit.index); }, onKeyDown: onGridKeyDown, children: [mode === "table" ? (_jsx("div", { role: "rowgroup", ref: headRef, className: "glass-inset fa-dt-head", children: _jsx(DataTableHeader, { columns: visibleColumns, sorting: sorting, sized: sized, selectable: selectable, pageSelection: pageSelection(selection, selectOrder), pageRowCount: selectOrder.length, loadedRows: Boolean(infinite), hiddenCount: hiddenColumns.length, expandedAll: expandAll, columnMenu: columnMenu, controller: headerController, filtered: filtered, settings: settingsMenu, reorderable: reorderable, expanderColumn: expanderColumn, expandControl: expandAllControl }) })) : null, _jsx("div", { className: "fa-dt-body", children: _jsx("div", { ref: scrollRef, className: "fa-dt-scroll", "data-scroll-container": "", onScroll: onScroll, children: body }) })] }), _jsx("div", { className: "fa-dt-progress", "aria-hidden": true }), liveRows.pending > 0 ? (_jsx("div", { className: "fa-dt-new", children: _jsx(Button, { size: "sm", variant: "primary", shape: "circle", icon: _jsx(IconArrowUp, {}), onClick: applyPending, children: m.newRows(liveRows.pending) }) })) : null] }), _jsx(DataTableFooter, { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, pageRows: data.length, rowCount: rowCount, pageSizes: pageSizes, cursor: cursor, onPageChange: (pageIndex) => setPagination((current) => ({ ...current, pageIndex })), onPageSizeChange: (pageSize) => setPagination({ pageIndex: 0, pageSize }), compact: compactFooter, disabled: showSkeleton, loading: showSkeleton, updatedAt: updatedAt, status: status, label: label, countLabel: countLabelText, counted: Boolean(grouping) || Boolean(infinite), bulk: {
+                                         count: selected,
+                                         targets: selectedTargets,
+                                         groups: bulkGroups,
+diff --git a/dist/ui/data-table/index.d.ts b/dist/ui/data-table/index.d.ts
+index e81a229..fcbcdab 100644
+--- a/dist/ui/data-table/index.d.ts
++++ b/dist/ui/data-table/index.d.ts
+@@ -1,6 +1,6 @@
+ export * from "./cells/index.js";
+ export { columnIdOf, createDataTableColumns, resolveColumnMeta, type ColumnPriority, type DataColumnSpec, type DataTableColumn, } from "./columns.js";
+-export { DataTable } from "./data-table.js";
++export { DataTable, DataTableRemoteContext } from "./data-table.js";
+ export { dataTableFeatures, type CardRole, type CellSkeleton, type ColumnAlign, type DataColumnMeta, type DataTableCellEntity, type DataTableFeatures, } from "./features.js";
+ export * from "./filters/index.js";
+ export { formatAbsolute, formatCount, formatNumber, formatRelative, formatWithUnit, } from "./format.js";
+diff --git a/dist/ui/data-table/index.js b/dist/ui/data-table/index.js
+index dd5a92a..c5009a4 100644
+--- a/dist/ui/data-table/index.js
++++ b/dist/ui/data-table/index.js
+@@ -1,6 +1,6 @@
+ export * from "./cells/index.js";
+ export { columnIdOf, createDataTableColumns, resolveColumnMeta, } from "./columns.js";
+-export { DataTable } from "./data-table.js";
++export { DataTable, DataTableRemoteContext } from "./data-table.js";
+ export { dataTableFeatures, } from "./features.js";
+ export * from "./filters/index.js";
+ export { formatAbsolute, formatCount, formatNumber, formatRelative, formatWithUnit, } from "./format.js";
+diff --git a/dist/ui/data-table/infinite.js b/dist/ui/data-table/infinite.js
+index e2f0e69..f9ac317 100644
+--- a/dist/ui/data-table/infinite.js
++++ b/dist/ui/data-table/infinite.js
+@@ -5,7 +5,7 @@ import { IconAlert } from "../../icons/generated/icons.js";
+ import { RetryButton, SkeletonRow } from "./body.js";
+ import { SkeletonCards } from "./cards.js";
+ export function useLoadMore({ infinite, resultKey, loaded, refetching, failedMessage, }) {
+-    const batch = `${resultKey}\u0000${loaded}`;
++    const batch = `${resultKey}\u0000${infinite?.revision ?? ""}\u0000${loaded}`;
+     const latest = useRef({ infinite, batch, refetching });
+     latest.current = { infinite, batch, refetching };
+     const inFlight = useRef(false);
+diff --git a/dist/ui/data-table/types.d.ts b/dist/ui/data-table/types.d.ts
+index 67d1c8d..71aa8a7 100644
+--- a/dist/ui/data-table/types.d.ts
++++ b/dist/ui/data-table/types.d.ts
+@@ -71,6 +71,8 @@ export interface CursorPagination {
+  * the top, as it returns a paged table to page 1.
+  */
+ export interface DataTableInfinite {
++    /** Host snapshot generation. Rearm continuation without resetting scroll, focus or selection. */
++    revision?: string | number;
+     /** The server has rows after the last one in `rows`. */
+     hasMore: boolean;
+     /**
+@@ -305,6 +307,8 @@ export interface DataTableProps<T extends RowData> {
+      * function stable: a new one redraws the panels on screen.
+      */
+     renderRowDetail?: (row: T) => ReactNode;
++    /** The column that holds the expander (default: the first visible). */
++    expanderColumn?: string;
+     /** Rows that have a panel (default: all). */
+     canExpandRow?: (row: T) => boolean;
+     /**
+diff --git a/dist/ui/entity/entity-identity.js b/dist/ui/entity/entity-identity.js
+index 4a37e12..b104993 100644
+--- a/dist/ui/entity/entity-identity.js
++++ b/dist/ui/entity/entity-identity.js
+@@ -202,7 +202,7 @@ function HeaderTier({ parts, dom }) {
+     // first. Buttons give way before the metric, so once the metric has gone the bar is ⋯.
+     const actionsNode = slots?.actions !== undefined ? (slots.actions) : actions && targets.length ? (_jsx(ActionBar, { set: actions, targets: targets, label: name, maxButtons: metric && !metricFits ? 0 : maxActions, available: fit.available })) : null;
+     const stateNode = slots?.state !== undefined ? slots.state : state ? _jsx(EntityStateBadge, { state: state }) : null;
+-    return (_jsxs("header", { ...dom, ...stateData(state), className: cx("fa-entity", dom.className), "data-tier": "header", "data-metric": metric && !metricFits ? "hidden" : undefined, children: [_jsx(WithContextMenu, { actions: actions, targets: targets, name: name, children: _jsxs("div", { ref: rowRef, className: "fa-entity-row", children: [icon || image || portrait ? _jsx(EntityTile, { icon: icon, image: image, portrait: portrait, state: state, count: count, labelled: false, badge: slots?.badge }) : null, _jsxs("div", { className: "fa-entity-heading", children: [_jsxs("div", { className: "fa-entity-titleline", children: [_jsx(Heading, { className: "fa-entity-title", children: _jsx(TitleText, { name: name, title: title, href: href, onOpen: onOpen }) }), stateNode ? _jsx("span", { className: "fa-entity-state", children: stateNode }) : null] }), factsNode ? _jsx("p", { className: "fa-entity-facts", children: factsNode }) : null] }), metric ? _jsx("div", { className: "fa-entity-metric", children: metric }) : null, actionsNode ? _jsx("div", { className: "fa-entity-actions", children: actionsNode }) : null] }) }), tabs ? _jsx("div", { className: "fa-entity-tabs", children: tabs }) : null] }));
++    return (_jsxs("header", { ...dom, ...stateData(state), className: cx("fa-entity", dom.className), "data-tier": "header", "data-metric": metric && !metricFits ? "hidden" : undefined, children: [_jsx(WithContextMenu, { actions: actions, targets: targets, name: name, children: _jsxs("div", { ref: rowRef, className: "fa-entity-row", children: [icon || image || portrait ? _jsx(EntityTile, { icon: icon, image: image, portrait: portrait, state: state, count: count, labelled: false, badge: slots?.badge }) : null, _jsxs("div", { className: "fa-entity-heading", children: [_jsxs("div", { className: "fa-entity-titleline", children: [_jsx(Heading, { className: "fa-entity-title", children: _jsx(TitleText, { name: name, title: title, href: href, onOpen: onOpen }) }), stateNode ? _jsx("span", { className: "fa-entity-state", children: stateNode }) : null] }), factsNode ? _jsx(typeof factsNode === "string" ? "p" : "div", { className: "fa-entity-facts", children: factsNode }) : null] }), metric ? _jsx("div", { className: "fa-entity-metric", children: metric }) : null, actionsNode ? _jsx("div", { className: "fa-entity-actions", children: actionsNode }) : null] }) }), tabs ? _jsx("div", { className: "fa-entity-tabs", children: tabs }) : null] }));
+ }
+ function CompactTier({ parts, dom }) {
+     const { name, title, kind, icon, image, portrait, state, count, facts, actions, targets, href, onOpen, heading = "h2", slots } = parts;
+diff --git a/dist/ui/entity-settings/entity-settings-dialog.d.ts b/dist/ui/entity-settings/entity-settings-dialog.d.ts
+index d65e3e1..e4d31a1 100644
+--- a/dist/ui/entity-settings/entity-settings-dialog.d.ts
++++ b/dist/ui/entity-settings/entity-settings-dialog.d.ts
+@@ -33,6 +33,8 @@ export interface EntitySettingsTab {
+     label: string;
+     /** Pass the icon without a size. */
+     icon?: ReactNode;
++    /** A count at the end of the tab: issues, files. */
++    count?: number;
+     /**
+      * The form fields the tab edits, as names or prefixes ("snmp" covers "snmp.port"). They
+      * drive the tab's dots: unsaved changes, and errors after a failed save. A tab that acts
+diff --git a/dist/ui/entity-settings/entity-settings-dialog.js b/dist/ui/entity-settings/entity-settings-dialog.js
+index 1de874d..e6ab32b 100644
+--- a/dist/ui/entity-settings/entity-settings-dialog.js
++++ b/dist/ui/entity-settings/entity-settings-dialog.js
+@@ -201,6 +201,7 @@ export function EntitySettingsDialog({ open, onOpenChange, confirmOnCancel = fal
+         value: entry.value,
+         label: entry.label,
+         icon: entry.icon,
++        count: entry.count,
+         marker: markers[entry.value],
+         content: loading ? (_jsx(TabSkeleton, {})) : (_jsx("div", { className: "fa-form-stack fa-entity-settings-tab", "data-settings-tab": entry.value, children: entry.content })),
+     }));
+diff --git a/dist/ui/media-player/controller.js b/dist/ui/media-player/controller.js
+index 5e1266d..2591c5f 100644
+--- a/dist/ui/media-player/controller.js
++++ b/dist/ui/media-player/controller.js
+@@ -69,6 +69,12 @@ export function createMediaController(initial = {}) {
+     let handle = null;
+     let cleanupAttach = null;
+     let reattach = 0;
++    /** The stream engine's length for a playlist still growing; the element under-reports it. */
++    let reportedDuration = 0;
++    const fullDuration = (media) => {
++        const own = Number.isFinite(media.duration) || media.duration === Infinity ? media.duration : 0;
++        return own === Infinity ? own : Math.max(own, reportedDuration);
++    };
+     let cleanupCast = null;
+     let adapter;
+     let casting = false;
+@@ -102,7 +108,7 @@ export function createMediaController(initial = {}) {
+             return;
+         const seekable = media.seekable;
+         const last = seekable?.length ? seekable.length - 1 : -1;
+-        const duration = Number.isFinite(media.duration) || media.duration === Infinity ? media.duration : 0;
++        const duration = fullDuration(media);
+         updateTime({
+             currentTime: media.currentTime,
+             duration,
+@@ -210,6 +216,12 @@ export function createMediaController(initial = {}) {
+             setQualities: (levels) => live(() => update({ qualities: levels })),
+             setActiveQuality: (id) => live(() => update({ activeQuality: id })),
+             setLive: (value) => live(() => update({ live: value })),
++            setDuration: (seconds) => live(() => {
++                reportedDuration = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
++                if (element)
++                    update({ chapters: normaliseChapters(state.item?.chapters, fullDuration(element)) });
++                readTime();
++            }),
+             fail: () => live(() => fail("stream")),
+         });
+         if (typeof result === "function")
+@@ -226,6 +238,7 @@ export function createMediaController(initial = {}) {
+             return;
+         const item = state.item;
+         loaded = signature(item);
++        reportedDuration = 0;
+         clearStall();
+         update({ ready: false, loading: true, ended: false, error: null, buffered: [], qualities: [], activeQuality: null, quality: null, live: Boolean(item?.live), chapters: normaliseChapters(item?.chapters, 0) });
+         updateTime({ currentTime: resumeAt ?? 0, duration: 0, seekableStart: 0, seekableEnd: 0 });
+@@ -263,7 +276,7 @@ export function createMediaController(initial = {}) {
+                 resumeAt = null;
+             }
+             const live = state.live || media.duration === Infinity;
+-            update({ ready: true, loading: false, live, chapters: normaliseChapters(state.item?.chapters, media.duration) });
++            update({ ready: true, loading: false, live, chapters: normaliseChapters(state.item?.chapters, fullDuration(media)) });
+             readTime();
+             if (playWhenReady) {
+                 playWhenReady = false;
+@@ -282,7 +295,7 @@ export function createMediaController(initial = {}) {
+         on(media, "webkitendfullscreen", () => showNatively(false));
+         on(media, "webkitpresentationmodechanged", () => showNatively(media.webkitPresentationMode === "picture-in-picture"));
+         on(media, "durationchange", () => {
+-            update({ chapters: normaliseChapters(state.item?.chapters, media.duration) });
++            update({ chapters: normaliseChapters(state.item?.chapters, fullDuration(media)) });
+             readTime();
+         });
+         // Some browsers fill `seekable` only after metadata, and nothing else fires while paused.
+diff --git a/dist/ui/media-player/types.d.ts b/dist/ui/media-player/types.d.ts
+index a5ebf27..d558108 100644
+--- a/dist/ui/media-player/types.d.ts
++++ b/dist/ui/media-player/types.d.ts
+@@ -128,6 +128,8 @@ export interface MediaStreamContext {
+     setActiveQuality(id: string | null): void;
+     /** Report that the stream is live, once the manifest says so. */
+     setLive(live: boolean): void;
++    /** Report the full length when the element under-reports it: a playlist still growing. */
++    setDuration(seconds: number): void;
+     /** Report a fatal stream error. The player shows its error state with Retry. */
+     fail(): void;
+ }

@@ -87,3 +87,47 @@ query OwnedAudiobookByOpenlibrary($providerId: String!) {
     }
   }
 }
+
+query OwnedMoviesByTmdb($ids: [Int!]!) {
+  movies(where: { tmdbId: { inList: $ids } }, page: { limit: 100 }) {
+    edges {
+      node {
+        id
+        tmdbId
+      }
+    }
+  }
+}
+
+query OwnedShowsByTvmaze($ids: [Int!]!) {
+  shows(where: { tvmazeId: { inList: $ids } }, page: { limit: 100 }) {
+    edges {
+      node {
+        id
+        tvmazeId
+      }
+    }
+  }
+}
+
+query OwnedAlbumsByMusicbrainz($ids: [String!]!) {
+  albums(where: { musicbrainzId: { inList: $ids } }, page: { limit: 100 }) {
+    edges {
+      node {
+        id
+        musicbrainzId
+      }
+    }
+  }
+}
+
+query OwnedAudiobooksByAudible($ids: [String!]!) {
+  audiobooks(where: { audibleId: { inList: $ids } }, page: { limit: 100 }) {
+    edges {
+      node {
+        id
+        audibleId
+      }
+    }
+  }
+}

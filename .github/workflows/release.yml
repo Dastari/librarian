@@ -91,6 +91,9 @@ jobs:
 
       - name: Build backend
         run: |
+          # A tag build carries its tag, so v0.6.1-dev.2 reports 0.6.1-dev.2 (the Cargo version
+          # has no pre-release part) and self-upgrade compares the right versions.
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then export LIBRARIAN_RELEASE_TAG="$GITHUB_REF_NAME"; fi
           cd backend
           cargo build --locked --release --features embed-frontend
 
@@ -146,6 +149,7 @@ jobs:
       - name: Build backend
         shell: bash
         run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then export LIBRARIAN_RELEASE_TAG="$GITHUB_REF_NAME"; fi
           cd backend
           cargo build --locked --release --features embed-frontend --target x86_64-pc-windows-msvc
 
@@ -199,6 +203,20 @@ jobs:
         with:
           path: dist
 
+      # Servers verify a self-upgrade against this list and refuse a release without it
+      # (backend/src/services/updates). One line per uploaded file, `sha256sum` format, named by
+      # the file's base name as the release shows it.
+      - name: Write SHA256SUMS
+        run: |
+          files=$(find dist -type f ! -name SHA256SUMS | sort)
+          dupes=$(for f in $files; do basename "$f"; done | sort | uniq -d)
+          if [ -n "$dupes" ]; then echo "Two release files share a name: $dupes"; exit 1; fi
+          for f in $files; do
+            printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$(basename "$f")"
+          done > SHA256SUMS
+          mv SHA256SUMS dist/SHA256SUMS
+          cat dist/SHA256SUMS
+
       - name: Write release notes
         run: |
           if [ "$PRERELEASE" = "true" ]; then
@@ -241,6 +259,8 @@ jobs:
           ## Portable builds
 
           `librarian-<version>-linux-x86_64.tar.gz` and `librarian-<version>-windows-server-x86_64.zip` contain a single binary with the web app embedded; run it in server mode and open http://localhost:3000.
+
+          `SHA256SUMS` lists the checksum of every file here (`sha256sum -c SHA256SUMS --ignore-missing`). A running server installs a release from Settings › Updates only after checking it against this list.
           EOF
 
       - name: Create Release

@@ -10,6 +10,11 @@ import type { DownloadRow } from "../useDownloads";
 import { DownloadsPage } from "../DownloadsPage";
 
 const fixture = vi.hoisted(() => ({ wide: true, admin: true, rows: [] as DownloadRow[], pause: vi.fn(), resume: vi.fn(), remove: vi.fn(), update: vi.fn(), process: vi.fn(), refetch: vi.fn() }));
+vi.mock("../TorrentIdentification", () => ({
+  useTorrentIdentification: () => ({ items: [], events: [], loading: false, refetch: vi.fn() }),
+  IdentifiedResults: () => null,
+  IdentificationActivity: () => null,
+}));
 vi.mock("@apollo/client/react", () => ({ useMutation: (doc: unknown) => {
   if (doc === PauseTorrentDocument) return [fixture.pause];
   if (doc === ResumeTorrentDocument) return [fixture.resume];

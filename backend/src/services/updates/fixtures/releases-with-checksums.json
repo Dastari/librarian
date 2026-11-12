@@ -1,0 +1,178 @@
+[
+  {
+    "tag_name": "v9.9.9",
+    "name": "v9.9.9",
+    "draft": true,
+    "prerelease": false,
+    "published_at": "2026-12-01T10:00:00Z",
+    "html_url": "https://github.com/Dastari/librarian/releases/tag/v9.9.9",
+    "body": "## What's Changed\n* Things for v9.9.9\n<script>alert(1)</script>",
+    "assets": [
+      {
+        "name": "librarian",
+        "size": 80000000,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v9.9.9/librarian"
+      },
+      {
+        "name": "librarian-9.9.9-linux-x86_64.tar.gz",
+        "size": 32000000,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v9.9.9/librarian-9.9.9-linux-x86_64.tar.gz"
+      },
+      {
+        "name": "librarian-9.9.9-windows-server-x86_64.zip",
+        "size": 36000000,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v9.9.9/librarian-9.9.9-windows-server-x86_64.zip"
+      },
+      {
+        "name": "SHA256SUMS",
+        "size": 420,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v9.9.9/SHA256SUMS"
+      }
+    ]
+  },
+  {
+    "tag_name": "v0.7.1-dev.1",
+    "name": "v0.7.1-dev.1",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-12-01T10:00:00Z",
+    "html_url": "https://github.com/Dastari/librarian/releases/tag/v0.7.1-dev.1",
+    "body": "## What's Changed\n* Things for v0.7.1-dev.1\n<script>alert(1)</script>",
+    "assets": [
+      {
+        "name": "librarian",
+        "size": 80000000,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.7.1-dev.1/librarian"
+      },
+      {
+        "name": "librarian-0.7.1-linux-x86_64.tar.gz",
+        "size": 32000000,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.7.1-dev.1/librarian-0.7.1-linux-x86_64.tar.gz"
+      },
+      {
+        "name": "librarian-0.7.1-windows-server-x86_64.zip",
+        "size": 36000000,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.7.1-dev.1/librarian-0.7.1-windows-server-x86_64.zip"
+      },
+      {
+        "name": "SHA256SUMS",
+        "size": 420,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.7.1-dev.1/SHA256SUMS"
+      }
+    ]
+  },
+  {
+    "tag_name": "tv-v1.1.0",
+    "name": "TV app 1.1.0",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-12-01T09:00:00Z",
+    "html_url": "https://github.com/Dastari/librarian/releases/tag/tv-v1.1.0",
+    "body": "TV",
+    "assets": [
+      {
+        "name": "librarian-tv-1.1.0.apk",
+        "size": 240000,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/tv-v1.1.0/librarian-tv-1.1.0.apk"
+      }
+    ]
+  },
+  {
+    "tag_name": "v0.7.0",
+    "name": "v0.7.0",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-12-01T10:00:00Z",
+    "html_url": "https://github.com/Dastari/librarian/releases/tag/v0.7.0",
+    "body": "## What's Changed\n* Things for v0.7.0\n<script>alert(1)</script>",
+    "assets": [
+      {
+        "name": "librarian",
+        "size": 80000000,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.7.0/librarian"
+      },
+      {
+        "name": "librarian-0.7.0-linux-x86_64.tar.gz",
+        "size": 32000000,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.7.0/librarian-0.7.0-linux-x86_64.tar.gz"
+      },
+      {
+        "name": "librarian-0.7.0-windows-server-x86_64.zip",
+        "size": 36000000,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.7.0/librarian-0.7.0-windows-server-x86_64.zip"
+      },
+      {
+        "name": "SHA256SUMS",
+        "size": 420,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.7.0/SHA256SUMS"
+      }
+    ]
+  },
+  {
+    "tag_name": "v0.7.0-rc.1",
+    "name": "v0.7.0-rc.1",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-12-01T10:00:00Z",
+    "html_url": "https://github.com/Dastari/librarian/releases/tag/v0.7.0-rc.1",
+    "body": "## What's Changed\n* Things for v0.7.0-rc.1\n<script>alert(1)</script>",
+    "assets": [
+      {
+        "name": "librarian",
+        "size": 80000000,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.7.0-rc.1/librarian"
+      },
+      {
+        "name": "librarian-0.7.0-linux-x86_64.tar.gz",
+        "size": 32000000,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.7.0-rc.1/librarian-0.7.0-linux-x86_64.tar.gz"
+      },
+      {
+        "name": "librarian-0.7.0-windows-server-x86_64.zip",
+        "size": 36000000,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.7.0-rc.1/librarian-0.7.0-windows-server-x86_64.zip"
+      },
+      {
+        "name": "SHA256SUMS",
+        "size": 420,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.7.0-rc.1/SHA256SUMS"
+      }
+    ]
+  },
+  {
+    "tag_name": "v0.6.0-dev.1",
+    "name": "v0.6.0-dev.1",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-12-01T10:00:00Z",
+    "html_url": "https://github.com/Dastari/librarian/releases/tag/v0.6.0-dev.1",
+    "body": "## What's Changed\n* Things for v0.6.0-dev.1\n<script>alert(1)</script>",
+    "assets": [
+      {
+        "name": "librarian",
+        "size": 80000000,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.6.0-dev.1/librarian"
+      },
+      {
+        "name": "librarian-0.6.0-linux-x86_64.tar.gz",
+        "size": 32000000,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.6.0-dev.1/librarian-0.6.0-linux-x86_64.tar.gz"
+      },
+      {
+        "name": "librarian-0.6.0-windows-server-x86_64.zip",
+        "size": 36000000,
+        "browser_download_url": "https://github.com/Dastari/librarian/releases/download/v0.6.0-dev.1/librarian-0.6.0-windows-server-x86_64.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "nightly",
+    "name": "not a version",
+    "draft": false,
+    "prerelease": true,
+    "published_at": null,
+    "html_url": "https://github.com/Dastari/librarian/releases/tag/nightly",
+    "body": null,
+    "assets": []
+  }
+]

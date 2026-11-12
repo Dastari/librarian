@@ -94,6 +94,9 @@ pub struct TestAppOptions {
     /// disabled by default (`auto_download.enabled`), so this only makes
     /// `manager.get_auto_download()` available for `searchMissing`.
     pub with_auto_download: bool,
+    /// Make the auto-download scheduler tick every second and start at once, so a test can watch
+    /// it act on its own instead of waiting out the production rhythm.
+    pub fast_auto_download: bool,
     /// Real HLS packaging for media acceptance tests; disabled for other tests.
     pub with_transcode: bool,
     pub transcode_ffmpeg_path: Option<String>,
@@ -112,6 +115,7 @@ impl Default for TestAppOptions {
             secure_cookies: false,
             with_torrent: false,
             with_auto_download: false,
+            fast_auto_download: false,
             with_transcode: false,
             transcode_ffmpeg_path: None,
             torrent_max_concurrent: 5,
@@ -284,7 +288,15 @@ impl TestApp {
             });
         }
         if options.with_auto_download {
-            builder = builder.add_service(AutoDownloadServiceConfig::default());
+            builder = builder.add_service(if options.fast_auto_download {
+                AutoDownloadServiceConfig {
+                    tick_seconds: 1,
+                    startup_delay_seconds: 0,
+                    ..Default::default()
+                }
+            } else {
+                AutoDownloadServiceConfig::default()
+            });
         }
         if options.with_transcode {
             builder = builder.add_service(librarian::services::transcode::TranscodeServiceConfig {
@@ -910,8 +922,8 @@ impl WsClient {
 ///
 /// `#[tokio::test]` uses the platform default 2 MiB thread stacks, which the
 /// generated GraphQL schema (recursion limit 512, ~46 entities with relation
-/// types) can blow through while building or resolving. `main.rs` runs with
-/// 8 MiB worker stacks for exactly that reason, so tests use the same size —
+/// types) can blow through while building or resolving. Production runs with
+/// 32 MiB worker stacks for exactly that reason, so tests use the same size —
 /// otherwise a test failure is a stack overflow rather than an assertion.
 /// Every app test owns a full service stack (and, for acquisition tests, two librqbit
 /// sessions). libtest runs the tests of a binary concurrently, and under a CPU quota
@@ -930,7 +942,7 @@ where
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let result = std::thread::Builder::new()
         .name("librarian-test".to_string())
-        .stack_size(16 * 1024 * 1024)
+        .stack_size(32 * 1024 * 1024)
         .spawn(move || {
             tokio::runtime::Builder::new_multi_thread()
                 // Two is enough for a test body plus the server it drives.
@@ -940,7 +952,7 @@ where
                 // just starves the machine.
                 .worker_threads(2)
                 .max_blocking_threads(4)
-                .thread_stack_size(8 * 1024 * 1024)
+                .thread_stack_size(32 * 1024 * 1024)
                 .enable_all()
                 .build()
                 .expect("test runtime should build")

@@ -2,8 +2,13 @@ use std::collections::HashSet;
 
 use anyhow::Result;
 
+use tracing::info;
+
 use crate::db::Database;
 use crate::services::graphql::entities::*;
+use crate::services::library_scan::{
+    TV_DEFAULT_NAMING_PATTERN, TV_PREVIOUS_DEFAULT_NAMING_PATTERN,
+};
 
 struct AppSettingSeed {
     key: &'static str,
@@ -216,6 +221,12 @@ const APP_SETTINGS: &[AppSettingSeed] = &[
         category: "playback",
     },
     AppSettingSeed {
+        key: "playback.video_preview_backfill",
+        value: "true",
+        description: "Make seek-bar previews and detect black bars for videos that have none yet, slowly in the background (design.md Q124)",
+        category: "playback",
+    },
+    AppSettingSeed {
         key: "metadata.tmdb_api_key",
         value: "null",
         description: "TMDB API key for movie/TV metadata",
@@ -263,6 +274,18 @@ const APP_SETTINGS: &[AppSettingSeed] = &[
         description: "File operation mode: copy, move, or hardlink",
         category: "organize",
     },
+    AppSettingSeed {
+        key: "discovery.advertise",
+        value: "true",
+        description: "Announce this server on the local network (mDNS _librarian._tcp) so TV apps can find it",
+        category: "discovery",
+    },
+    AppSettingSeed {
+        key: "discovery.web_url",
+        value: "\"\"",
+        description: "Web address announced on the local network; empty to use this machine's LAN address",
+        category: "discovery",
+    },
 ];
 
 const NAMING_PATTERNS: &[NamingPatternSeed] = &[
@@ -270,8 +293,8 @@ const NAMING_PATTERNS: &[NamingPatternSeed] = &[
         user_id: "system",
         library_type: "tv",
         name: "Standard",
-        pattern: "{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}",
-        description: "Show/Season 01/Show - S01E01 - Title.ext",
+        pattern: TV_DEFAULT_NAMING_PATTERN,
+        description: "Show (Year)/Season 01/Show - S01E01 - Title.ext",
         is_default: true,
     },
     NamingPatternSeed {
@@ -827,6 +850,7 @@ pub async fn seed_defaults(db: &Database) -> Result<()> {
     seed_app_settings(db).await?;
     seed_cast_settings(db).await?;
     seed_naming_patterns(db).await?;
+    migrate_previous_tv_default(db).await?;
     seed_torznab_categories(db).await?;
     seed_quality_profiles(db).await?;
     Ok(())
@@ -844,16 +868,49 @@ mod tests;
 /// with the static seed (port 6881, `/data/downloads`) no matter what the
 /// deployment asked for, and the settings screen showed a value that was never
 /// the one in effect.
-const ENVIRONMENT_DEFAULTS: &[(&str, &str, bool)] = &[
-    // (setting key, environment variable, value is a JSON string)
-    ("torrent.listen_port", "TORRENT_LISTEN_PORT", false),
-    ("torrent.download_dir", "DOWNLOADS_PATH", true),
-    ("torrent.session_dir", "SESSION_PATH", true),
+const ENVIRONMENT_DEFAULTS: &[(&str, &str, EnvironmentValue)] = &[
+    // (setting key, environment variable, how the value is stored)
+    (
+        "torrent.listen_port",
+        "TORRENT_LISTEN_PORT",
+        EnvironmentValue::Port,
+    ),
+    (
+        "torrent.download_dir",
+        "DOWNLOADS_PATH",
+        EnvironmentValue::String,
+    ),
+    (
+        "torrent.session_dir",
+        "SESSION_PATH",
+        EnvironmentValue::String,
+    ),
+    // The LAN announcement (Q138): the address TV apps open, and a way to turn it off.
+    (
+        "discovery.web_url",
+        "LIBRARIAN_PUBLIC_WEB_URL",
+        EnvironmentValue::String,
+    ),
+    (
+        "discovery.advertise",
+        "LIBRARIAN_LAN_ADVERTISE",
+        EnvironmentValue::Bool,
+    ),
 ];
+
+#[derive(Clone, Copy)]
+enum EnvironmentValue {
+    /// Stored as a JSON string.
+    String,
+    /// A port number.
+    Port,
+    /// `true`/`false` (also accepts 1/0, yes/no, on/off).
+    Bool,
+}
 
 /// Resolves the value a setting should be seeded with, preferring the environment.
 pub fn environment_default(key: &str) -> Option<String> {
-    let (_, variable, is_string) = ENVIRONMENT_DEFAULTS
+    let (_, variable, kind) = ENVIRONMENT_DEFAULTS
         .iter()
         .find(|(setting, _, _)| *setting == key)?;
     let raw = std::env::var(variable).ok()?;
@@ -861,10 +918,15 @@ pub fn environment_default(key: &str) -> Option<String> {
     if raw.is_empty() {
         return None;
     }
-    if *is_string {
-        return Some(serde_json::Value::String(raw.to_string()).to_string());
+    match kind {
+        EnvironmentValue::String => Some(serde_json::Value::String(raw.to_string()).to_string()),
+        EnvironmentValue::Port => raw.parse::<u16>().ok().map(|port| port.to_string()),
+        EnvironmentValue::Bool => match raw.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some("true".to_string()),
+            "0" | "false" | "no" | "off" => Some("false".to_string()),
+            _ => None,
+        },
     }
-    raw.parse::<u16>().ok().map(|port| port.to_string())
 }
 
 async fn seed_app_settings(db: &Database) -> Result<()> {
@@ -1005,6 +1067,75 @@ async fn seed_naming_patterns(db: &Database) -> Result<()> {
         .await?;
     }
 
+    Ok(())
+}
+
+/// Move what still uses the previous TV default to the one with the show's year in its folder
+/// (design.md Q145), once: afterwards nothing stores the previous default, so this finds nothing.
+/// Only a stored pattern exactly equal to the previous default changes; any other pattern was
+/// someone's choice and stays. Files move on the library's next full scan, through organize.
+async fn migrate_previous_tv_default(db: &Database) -> Result<()> {
+    let is_tv = |library_type: &str| {
+        matches!(
+            library_type.trim().to_ascii_lowercase().as_str(),
+            "tv" | "show" | "shows"
+        )
+    };
+    for library in Library::query(db.pool()).fetch_all().await? {
+        if !is_tv(&library.library_type)
+            || library.naming_pattern != TV_PREVIOUS_DEFAULT_NAMING_PATTERN
+        {
+            continue;
+        }
+        Library::update_by_id(
+            db,
+            &library.id,
+            UpdateLibraryInput {
+                naming_pattern: Some(TV_DEFAULT_NAMING_PATTERN.to_string()),
+                ..Default::default()
+            },
+        )
+        .await?;
+        info!(
+            library_id = %library.id,
+            library_name = %library.name,
+            old_pattern = TV_PREVIOUS_DEFAULT_NAMING_PATTERN,
+            new_pattern = TV_DEFAULT_NAMING_PATTERN,
+            "Moved TV library '{}' to the naming pattern with the show's year: '{}' is now '{}'; its next full scan organizes episodes into it",
+            library.name,
+            TV_PREVIOUS_DEFAULT_NAMING_PATTERN,
+            TV_DEFAULT_NAMING_PATTERN
+        );
+    }
+    // The built-in pattern a library with no pattern of its own uses.
+    for pattern in NamingPattern::query(db.pool()).fetch_all().await? {
+        if !pattern.is_system
+            || !is_tv(&pattern.library_type)
+            || pattern.pattern != TV_PREVIOUS_DEFAULT_NAMING_PATTERN
+        {
+            continue;
+        }
+        NamingPattern::update_by_id(
+            db,
+            &pattern.id,
+            UpdateNamingPatternInput {
+                pattern: Some(TV_DEFAULT_NAMING_PATTERN.to_string()),
+                description: Some(Some(
+                    "Show (Year)/Season 01/Show - S01E01 - Title.ext".to_string(),
+                )),
+                ..Default::default()
+            },
+        )
+        .await?;
+        info!(
+            naming_pattern_id = %pattern.id,
+            naming_pattern_name = %pattern.name,
+            new_pattern = TV_DEFAULT_NAMING_PATTERN,
+            "Moved the built-in TV naming pattern '{}' to '{}'",
+            pattern.name,
+            TV_DEFAULT_NAMING_PATTERN
+        );
+    }
     Ok(())
 }
 

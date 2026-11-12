@@ -1,0 +1,106 @@
+import { useMutation } from "@apollo/client/react";
+import { useNavigate } from "@tanstack/react-router";
+import { defineActions, type ActionSet } from "glass-ux/actions";
+import { IconDownload, IconExternalLink, IconPlay, IconRefresh, IconSettings, IconTrash } from "glass-ux/icons";
+import { useMemo, useState, type ReactNode } from "react";
+
+import { useArtworkAction } from "@/features/artwork/useArtworkAction";
+import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
+import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
+import { useQueueActions } from "@/features/player/queueActions";
+import { RefreshShowDocument } from "@/graphql/generated/graphql";
+import { useIsAdmin, useSession } from "@/lib/auth/useSession";
+import { assertSuccess } from "@/lib/graphql/errors";
+
+import type { ShowEntity } from "./ShowIdentity";
+import { resetProgressAction, useResetProgress, type ProgressReset } from "./progressReset";
+
+export const SHOW_SETTINGS_TABS = ["general", "artwork", "downloads", "files", "info", "remove"] as const;
+export type ShowSettingsTab = (typeof SHOW_SETTINGS_TABS)[number];
+
+/**
+ * Everything that can be done to a show, wherever it's shown. `play` is the next episode, which
+ * only its page knows; `season` is the one a release search starts from.
+ */
+export function useShowActions<T extends ShowEntity>({ settings, open = true, play, season, onRefreshed, reset }: {
+  settings: (show: T, tab?: ShowSettingsTab) => void;
+  open?: boolean;
+  play?: { label: string; run: () => void };
+  season?: number;
+  onRefreshed?: () => void;
+  /** Where this person's progress is known (its page), which adds "Mark as unwatched". */
+  reset?: ProgressReset<T>;
+}): { actions: ActionSet<T>; dialogs: ReactNode } {
+  const navigate = useNavigate();
+  const isAdmin = useIsAdmin();
+  const { user } = useSession();
+  const [refresh, { loading: refreshing }] = useMutation(RefreshShowDocument);
+  const resetProgress = useResetProgress();
+  const playlist = useAddToPlaylist<T>({
+    targetsOf: (rows) => rows.map((row) => ({ kind: "show" as const, id: row.id })),
+    titleOf: (rows) => playlistTitle(rows, rows[0]!.name, { one: "show", other: "shows" }),
+    allowed: (rows) => Boolean(user) && rows.every((row) => row.userId === user?.id),
+    bulk: true,
+    priority: 2,
+  });
+  // Play next / Add to queue (the play queue): every playable episode of each selected show, in order.
+  const queueActions = useQueueActions<T>((rows) => rows.map((show) => ({ kind: "show" as const, id: show.id })));
+  const [finding, setFinding] = useState<T | null>(null);
+  const artwork = useArtworkAction<T>({ targetOf: (row) => ({ entityType: "SHOW", entityId: row.id, title: row.name }), allowed: () => isAdmin, priority: 4 });
+
+  const actions = useMemo(() => {
+    const one = (rows: readonly T[]) => rows.length === 1;
+    return defineActions<T>("show", [
+      ...(play ? [{
+        id: "play", label: play.label, icon: IconPlay, group: "open" as const, priority: 0, surfaces: ["menu" as const, "context" as const, "palette" as const],
+        visible: one,
+        run: () => play.run(),
+      }] : []),
+      ...queueActions,
+      ...(open ? [{
+        id: "open", label: "Open show", icon: IconExternalLink, group: "open" as const, priority: 1,
+        visible: one,
+        run: (rows: readonly T[]) => void navigate({ to: "/shows/$showId", params: { showId: rows[0]!.id } }),
+      }] : []),
+      playlist.action,
+      ...resetProgressAction("video", reset, resetProgress),
+      ...(isAdmin ? [
+        {
+          id: "find", label: "Find releases", icon: IconDownload, group: "manage" as const, priority: 2, primary: !play,
+          visible: one,
+          run: (rows: readonly T[]) => setFinding(rows[0]!),
+        },
+        {
+          id: "refresh", label: "Refresh metadata", icon: IconRefresh, group: "manage" as const, priority: 3,
+          visible: one,
+          disabledReason: () => (refreshing ? "Already refreshing" : false),
+          run: async (rows: readonly T[]) => {
+            assertSuccess((await refresh({ variables: { id: rows[0]!.id } })).data?.refreshShow, "Could not refresh metadata");
+            onRefreshed?.();
+          },
+          successMessage: () => "Metadata refreshed",
+        },
+      ] : []),
+      artwork.action,
+      {
+        id: "settings", label: isAdmin ? "Show settings" : "Details", icon: IconSettings, group: "manage", priority: 4,
+        visible: one,
+        run: (rows) => settings(rows[0]!),
+      },
+      ...(isAdmin ? [{
+        id: "remove", label: "Remove from library…", icon: IconTrash, group: "danger" as const, priority: 9,
+        visible: one,
+        run: (rows: readonly T[]) => settings(rows[0]!, "remove"),
+      }] : []),
+    ]);
+  }, [artwork.action, isAdmin, navigate, onRefreshed, open, play, queueActions, refresh, refreshing, reset, resetProgress, settings, user?.id]);
+
+  const dialogs = (
+    <>
+      {playlist.dialog}
+      {artwork.dialog}
+      {finding ? <ReleaseSearchDialog isOpen onOpenChange={(next) => { if (!next) setFinding(null); }} query={finding.name} imdbId={finding.imdbId} season={season} libraryId={finding.libraryId} target={{ showId: finding.id }} /> : null}
+    </>
+  );
+  return { actions, dialogs };
+}

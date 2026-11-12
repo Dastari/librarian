@@ -11,8 +11,8 @@ vi.mock("@/lib/auth/useSession", () => ({ useSession: () => ({ user: { id: "admi
 
 const library: LibraryFieldsFragment = {
   id: "library-a", userId: OWNER, name: "Music", path: "/media/music", libraryType: "music", icon: null, color: null,
-  autoScan: false, autoOrganize: false, namingPattern: "", scanIntervalMinutes: 60,
-  watchForChanges: false, scanning: false, lastScannedAt: null, qualityProfileId: null, createdAt: STAMP, updatedAt: STAMP,
+  autoScan: false, autoOrganize: false, autoResolveDuplicates: null, namingPattern: "", scanIntervalMinutes: 60,
+  watchForChanges: false, watchStatus: null, watchDetail: null, watchStatusSince: null, scanning: false, lastScannedAt: null, qualityProfileId: null, storageVolumeId: null, createdAt: STAMP, updatedAt: STAMP,
 };
 const track: TrackFieldsFragment = {
   id: "track-a", title: "Saved shelf track", albumId: "album-a", libraryId: "library-a", trackNumber: 1, discNumber: 1,

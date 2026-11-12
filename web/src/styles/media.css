@@ -13,8 +13,10 @@
   z-index: 0;
   overflow: clip;
   pointer-events: none;
-  opacity: calc(1 - var(--art-scroll, 0) * 0.72);
-  transform: translateY(calc(var(--art-scroll, 0) * -4svh));
+  /* Its own GPU layer: AppShell moves and fades it while the page scrolls, and a layer of its own
+   * turns that into compositing only, with no repaint of the full-screen artwork (design.md Q155). */
+  contain: strict;
+  will-change: opacity, transform;
 }
 
 .media-backdrop {
@@ -50,12 +52,14 @@
   inline-size: 100%;
   block-size: var(--media-art-h);
   object-position: center 22%;
-  mask-image: linear-gradient(to bottom, #000 0%, #000 52%, transparent 100%);
+  /* No mask of its own: .media-backdrop already feathers the whole layer, and every mask is a
+   * full-screen offscreen pass on the GPU. The settle-in zoom is short, so it is over before the
+   * first scroll (design.md Q155). */
   opacity: 0;
-  transform: scale(1.04);
+  transform: scale(1.02);
   transition:
     opacity calc(var(--duration-slower) * var(--motion-scale)) var(--ease-glide),
-    transform calc(var(--duration-slower) * 3 * var(--motion-scale)) var(--ease-glide);
+    transform calc(var(--duration-slower) * var(--motion-scale)) var(--ease-glide);
 }
 
 .media-backdrop-image[data-loaded="true"] {
@@ -63,17 +67,20 @@
   transform: none;
 }
 
-/* One static blur of the same image tints the page; it is never animated. */
+/* A thumbnail of the same image, stretched, tints the page (MediaBackdrop's BackdropWash). It is
+ * pre-blurred in a tiny canvas, so the page never pays for a full-screen blur filter. */
 .media-backdrop-wash {
-  inset-inline: -10%;
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: -10%;
   inline-size: 120%;
   block-size: 100%;
-  filter: blur(4.5rem) saturate(1.4);
-  opacity: 0.42;
-  mask-image: linear-gradient(to bottom, #000 25%, transparent 100%);
+  opacity: 0;
+  transition: opacity calc(var(--duration-slower) * var(--motion-scale)) var(--ease-glide);
 }
+.media-backdrop-wash[data-loaded="true"] { opacity: 0.42; }
 
-:root[data-mode="light"] .media-backdrop-wash { opacity: 0.3; }
+:root[data-mode="light"] .media-backdrop-wash[data-loaded="true"] { opacity: 0.3; }
 
 .media-backdrop-scrim {
   background:
@@ -126,24 +133,47 @@
 /* ---- Poster tiles ----------------------------------------------------------------------- */
 
 .poster-art {
+  transition: transform calc(var(--duration-base) * var(--motion-scale)) var(--ease-spring);
+}
+
+/* The tile's shadow: drawn once on a layer the art's shape and size (PosterCard sets
+ * --poster-ratio), then only faded and scaled. Animating the art's own box-shadow repainted the
+ * shadow on every frame of the transition, on every tile the pointer or remote passed over. */
+.poster-card::before {
+  content: "";
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  aspect-ratio: var(--poster-ratio, 2 / 3);
+  border-radius: var(--radius-tile);
+  box-shadow: var(--poster-shadow-hover);
+  opacity: 0;
+  pointer-events: none;
   transition:
-    transform calc(var(--duration-base) * var(--motion-scale)) var(--ease-spring),
-    box-shadow calc(var(--duration-base) * var(--motion-scale)) var(--ease-standard);
+    opacity calc(var(--duration-base) * var(--motion-scale)) var(--ease-standard),
+    transform calc(var(--duration-base) * var(--motion-scale)) var(--ease-spring);
 }
 
 /* The link covers the whole tile; the ring belongs to the artwork, which is the card. */
-.poster-navigation:is(:focus-visible, [data-focus-visible="true"]) + .poster-art {
+/* Whichever input was used last owns the highlight (lib/pointer-focus.ts, design.md Q144): once the
+ * mouse moves, a keyboard ring left on another tile hides, and after a key press hover stops lifting. */
+:root:not([data-last-input="pointer"]) .poster-navigation:is(:focus-visible, [data-focus-visible="true"]) + .poster-art {
   outline: var(--nav-focus-width) solid var(--focus);
   outline-offset: var(--nav-focus-offset);
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .poster-card:hover .poster-art { box-shadow: var(--poster-shadow-hover); }
+  :root:not([data-last-input="keys"]) .poster-card:hover::before { opacity: 1; }
 }
 
 /* Remote focus: the focused tile grows like on a TV home screen. Transform only, so
  * neighbours never move (R9.6, R18.1). */
-:root[data-input-mode="tv"] .poster-card:focus-within .poster-art,
+/* In TV mode hovering a tile focuses it (lib/pointer-focus.ts), so focus alone marks it: the mouse
+ * and the remote never highlight two tiles at once. The lifted tile draws over its neighbours. */
+:root[data-input-mode="tv"] .poster-card:focus-within { position: relative; z-index: 1; }
+:root[data-input-mode="tv"] .poster-card::before { box-shadow: var(--shadow-3); }
+:root[data-input-mode="tv"] .poster-card:focus-within::before { opacity: 1; transform: scale(1.05); }
+:root[data-input-mode="tv"] .poster-card:focus-within .poster-art { transform: scale(1.05); z-index: 1; }
 :root[data-input-mode="tv"] .tv-lift:focus-within > .tv-lift-target,
 :root[data-input-mode="tv"] .tv-lift:is(:focus-visible, [data-focus-visible="true"]) {
   transform: scale(1.05);
@@ -151,9 +181,36 @@
   z-index: 1;
 }
 
+/* A number field in TV mode only steps with Up/Down after OK puts it in the adjusting state
+ * (lib/input-mode.tsx); the group wears the focus ring and an accent edge while it does. */
+:root[data-input-mode="tv"] .fa-number-group:has(.fa-number-input[data-tv-adjusting]) {
+  outline: var(--nav-focus-width) solid var(--focus);
+  outline-offset: 2px;
+  box-shadow: inset 0 0 0 1px var(--focus);
+}
+
 :root[data-input-mode="tv"] .tv-lift,
 :root[data-input-mode="tv"] .tv-lift > .tv-lift-target {
   transition: transform calc(var(--duration-base) * var(--motion-scale)) var(--ease-spring);
+}
+
+/* TV mode has one pointer, wherever it came from: the focused tile carries the ring, even after a
+ * mouse click, which :focus-visible alone would hide. */
+:root[data-input-mode="tv"] .poster-card:focus-within .poster-art {
+  outline: var(--nav-focus-width) solid var(--focus);
+  outline-offset: var(--nav-focus-offset);
+}
+
+/* The chosen tile is marked inside its artwork, apart from the ring and the shadows that focus and
+ * hover change, so it stays marked whatever the pointer is doing. */
+.poster-card[data-selected="true"] .poster-art::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: 3px solid var(--brand);
+  border-radius: inherit;
+  pointer-events: none;
 }
 
 /* Posters grow upwards from their bottom edge so the title underneath stays readable. */
@@ -257,8 +314,47 @@
   flex: none;
 }
 
-.guide-day-poster {
-  inline-size: min(calc((100cqb - 1.25rem) * 2 / 3), 100cqi, 5rem);
+/* One show portrait, in any of the guide's sizes. */
+.guide-poster-slot { display: block; flex: none; }
+.guide-poster-slot[data-size="day"] { inline-size: min(calc((100cqb - 1.25rem) * 2 / 3), 100cqi, 5rem); }
+.guide-poster-slot[data-size="tile"] { inline-size: 3.5rem; }
+.guide-poster-slot[data-size="row"] { inline-size: 2.5rem; }
+.guide-poster-slot[data-size="panel"] { inline-size: 4.5rem; }
+
+.guide-poster {
+  position: relative;
+  display: block;
+  inline-size: 100%;
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-1);
+  transition:
+    transform calc(var(--duration-fast) * var(--motion-scale)) var(--ease-standard),
+    box-shadow calc(var(--duration-fast) * var(--motion-scale)) var(--ease-standard);
+}
+.guide-poster[data-size="day"],
+.guide-poster[data-size="row"] { border-radius: var(--radius-control-sm, calc(var(--radius-control) * 0.75)); }
+
+@media (hover: hover) and (pointer: fine) {
+  .guide-poster[data-pressable]:hover {
+    z-index: 1;
+    transform: translateY(-0.125rem) scale(1.05);
+    box-shadow: var(--shadow-3);
+  }
+}
+.guide-poster[data-pressable]:active { transform: scale(0.98); }
+
+.guide-poster-badge {
+  position: absolute;
+  inset-block-end: 0.25rem;
+  inset-inline-start: 0.25rem;
+  padding-inline: 0.25rem;
+  border-radius: 0.25rem;
+  background-color: var(--color-brand, var(--accent));
+  color: var(--color-brand-foreground, var(--accent-fg));
+  font-size: 0.5625rem;
+  font-weight: 700;
+  line-height: 1.4;
+  text-transform: uppercase;
 }
 
 .guide-day-title {
@@ -296,6 +392,19 @@
 /* A row's actions are smaller than a page's: they sit in every row of a table. */
 .table-row-actions { --control-h-md: 1.75rem; --control-h-sm: 1.75rem; }
 
+/* The main action's slot is always there, so every row's menu lines up. */
+.row-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-1); min-inline-size: 0; }
+.row-actions-slot { display: grid; place-items: center; inline-size: 2rem; flex: none; }
+
+/* Now playing: three bars, swapped for a pause icon when pointing at it. */
+.playing-bars { display: inline-flex; align-items: flex-end; gap: 2px; block-size: 0.875rem; color: var(--brand); }
+.playing-bars > span { inline-size: 3px; block-size: 100%; border-radius: 1px; background: currentColor; }
+.row-play .row-play-pause { display: none; }
+@media (hover: hover) {
+  .row-play:hover .row-play-pause { display: block; }
+  .row-play:hover .playing-bars { display: none; }
+}
+
 /* Provider results in the add dialog: poster tiles that fill the dialog's width. */
 .provider-results {
   display: grid;
@@ -308,7 +417,15 @@
 /* Search results scroll under still controls. The gutter keeps the columns the same width whether
  * or not there are enough results to scroll; the row of suggestions scrolls sideways, not wraps. */
 .search-results { scrollbar-gutter: stable; }
-.search-terms { overflow-x: auto; scrollbar-width: none; }
+.search-terms {
+  overflow-x: auto;
+  scrollbar-width: none;
+  /* The strip clips; its chips' focus rings need room inside it (--focus-reach). */
+  padding: var(--focus-reach);
+  margin: calc(-1 * var(--focus-reach));
+  scroll-padding-inline: var(--focus-reach);
+  box-sizing: content-box;
+}
 .search-tv { grid-template-rows: minmax(0, 1fr); }
 /* Room for a focused tile's lift and ring, without moving the first column off the heading. */
 .search-tv-scroll { scrollbar-gutter: stable; padding: 1rem 1.25rem 2rem; margin-inline: -1.25rem; }
@@ -336,12 +453,26 @@
   padding-block-end: 0;
 }
 
-.app-top { padding-inline-end: var(--page-gutter); }
-.app-rail-gap { flex: none; block-size: var(--space-4); }
+/* The top bar keeps clear of a landscape iPhone's notch and rounded corners; the page runs under
+ * the home indicator but its scroll ends above it. */
+.app-top { padding-inline-end: max(var(--page-gutter), var(--safe-inline-end)); }
+.app-shell-scroll { padding-block-end: var(--safe-bottom); }
+/* The rail's list scrolls (it clips on both axes), and Glass gives it only a hair of padding, so the
+ * focus ring of the first and last item (Home, the account) was cut off, most of all in TV mode where
+ * the ring is wide. Inset it by the focus reach (the convention of snap-row and the poster grids) and
+ * keep scrolled-to items clear of the edge too. */
+.app-shell-rail .fa-shell-rail-list {
+  padding-block: max(var(--space-1), var(--focus-reach));
+  padding-inline: max(0px, var(--focus-reach));
+  scroll-padding-block: var(--focus-reach);
+}
+.app-rail-divider { flex: none; align-self: stretch; inline-size: auto; padding-block: var(--space-2); padding-inline: var(--space-2); list-style: none; }
 
 @media (width < 48rem) {
   .app-frame { padding-inline: 0; }
-  .app-top { padding-inline: var(--page-gutter); }
+  .app-top { padding-inline: max(var(--page-gutter), var(--safe-inline-start)) max(var(--page-gutter), var(--safe-inline-end)); }
+  /* The tab bar's reserved space already covers the home indicator. */
+  .app-shell-scroll { padding-block-end: 0; }
 }
 
 /* ---- Streaming grid ---------------------------------------------------------------------- */
@@ -369,25 +500,35 @@
 
 .guide-tile:active { transform: scale(0.98); }
 
-/* Solid fills: the rows pass under these headings as they scroll. */
+/* Solid fills: the rows pass under these headings as they scroll. They used to frost what passed
+ * under them, but every heading cell then re-blurred its patch on every scroll frame, which a weak
+ * GPU feels; an opaque band a shade off the canvas reads the same. */
 .guide-grid-scroll { scroll-padding-block-start: 4rem; scroll-padding-inline-start: 9.5rem; }
+
+.guide-grid-corner,
+.guide-grid-day,
+.guide-grid-service {
+  --_band: color-mix(in oklab, var(--canvas) 94%, var(--fg));
+  background-color: var(--_band);
+}
 
 .guide-grid-corner,
 .guide-grid-day {
   position: sticky;
   inset-block-start: 0;
   z-index: 2;
-  background-color: var(--surface-2);
 }
 
 .guide-grid-corner { inset-inline-start: 0; z-index: 3; }
-.guide-grid-day.guide-grid-today { background-color: color-mix(in oklab, var(--accent) 22%, var(--surface-2)); }
+.guide-grid-day.guide-grid-today { background-color: color-mix(in oklab, var(--accent) 18%, var(--_band)); }
 
 .guide-grid-service {
   position: sticky;
   inset-inline-start: 0;
   z-index: 1;
-  background-color: var(--surface-2);
 }
 
-.guide-grid-service.guide-grid-yours { background-color: color-mix(in oklab, var(--accent) 16%, var(--surface-2)); }
+.guide-grid-service.guide-grid-yours { background-color: color-mix(in oklab, var(--accent) 12%, var(--_band)); }
+
+/* An episode someone followed a link to. */
+.episode-focus { background-color: var(--fill-selected, color-mix(in oklab, var(--accent) 22%, transparent)); border-radius: var(--radius-control); outline: 2px solid var(--accent); outline-offset: 2px; }

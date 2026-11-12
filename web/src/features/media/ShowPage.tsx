@@ -1,38 +1,62 @@
+import { ActionContextMenu, defineActions } from "glass-ux/actions";
 import { IconInfo } from "glass-ux/icons";
-import { useMutation } from "@apollo/client/react";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
-import { toast } from "glass-ux/toast";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { Button, ConfirmDialog, EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, PosterCard, Section, SkeletonHero, ViewToggle, type ViewMode } from "@/components/ui";
+import { Button, EmptyState, ErrorState, HeroFacts, MediaRow, MetaLine, PosterCard, Section, SkeletonHero, ViewToggle, type ViewMode } from "@/components/ui";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
-import { AcquisitionDialog } from "@/features/acquisition/AcquisitionDialog";
+import { useArtworkAction } from "@/features/artwork/useArtworkAction";
 import { autoDownloadMeta } from "@/features/acquisition/mode";
-import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
+import { CastAndCrew, CastRow, useTitleCredits } from "@/features/people/CastAndCrew";
+import { episodePlayItem } from "@/features/player/playItems";
+import { useIsTvMode } from "@/lib/input-mode";
+import type { PlayItem } from "@/features/player/store";
 import { usePlayer } from "@/features/player/usePlayer";
-import { EntitySeasonListDocument, EntityShowDeleteDocument, RefreshShowDocument, ShowDetailDocument, type ShowEpisodesQuery } from "@/graphql/generated/graphql";
+import { EntitySeasonListDocument, ShowDetailDocument, type ShowEpisodesQuery } from "@/graphql/generated/graphql";
 import { useContentStatuses } from "@/hooks/useContentStatuses";
 import { seasonPoster, showBackdrop, showPoster } from "@/lib/artwork";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { formatRuntime } from "@/lib/format";
-import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { LIBRARY_TYPES } from "@/lib/library-types";
 import { usePref } from "@/lib/prefs";
 
 
+import { filesWithProgress, type ProgressReset } from "./progressReset";
 import { useMediaProgress } from "./useMediaProgress";
 import { useShowEpisodes } from "./useShowEpisodes";
 import { MediaActions } from "./MediaActions";
+import { useTitleDetailFacts } from "./titleDetailFacts";
+import { useShowEntity } from "./useShowEntity";
 import { DetailShell } from "./DetailShell";
 import { EpisodeList } from "./EpisodeList";
+import { useRecommended } from "@/features/recommendations/useRecommended";
 
 export type EpisodeRow = ShowEpisodesQuery["episodes"]["edges"][number]["node"];
 
-export function ShowPage({ showId }: { showId: string }) {
+export function ShowPage({ showId, initialSeason, focusEpisodeId }: {
+  showId: string;
+  /** The season to open on, when a link asks for one. */
+  initialSeason?: number;
+  /** An episode to bring into view and mark. */
+  focusEpisodeId?: string;
+}) {
   const navigate = useNavigate();
   const player = usePlayer();
   const isAdmin = useIsAdmin();
+  const tv = useIsTvMode();
+  // Choosing a season brings its episodes into view. Not in TV mode: there focus stays on the
+  // season card and the remote's Down moves to the episodes, which scrolls them in anyway.
+  const episodesRef = useRef<HTMLElement>(null);
+  const [revealEpisodes, setRevealEpisodes] = useState(0);
+  useEffect(() => {
+    if (!revealEpisodes) return;
+    const frame = requestAnimationFrame(() => {
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      episodesRef.current?.scrollIntoView({ block: "start", behavior: reduced ? "auto" : "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [revealEpisodes]);
   const { user } = useSession();
   const { data, previousData, loading, error, refetch } = useQuery(ShowDetailDocument, { variables: { id: showId } });
   const candidate = (data ?? previousData)?.show;
@@ -45,52 +69,53 @@ export function ShowPage({ showId }: { showId: string }) {
   const seasons = useMemo(() => [...new Set(list.map((episode) => episode.season))].sort((a, b) => a - b), [list]);
   const [season, setSeason] = useState<{ showId: string; value: number } | null>(null);
   const chosenSeason = season?.showId === showId && seasons.includes(season.value) ? season.value : null;
-  const activeSeason = chosenSeason ?? seasons.find((value) => value > 0) ?? seasons[0] ?? 1;
+  const linkedSeason = initialSeason !== undefined && seasons.includes(initialSeason) ? initialSeason : null;
+  const activeSeason = chosenSeason ?? linkedSeason ?? seasons.find((value) => value > 0) ?? seasons[0] ?? 1;
   const seasonEpisodes = useMemo(() => list.filter((episode) => episode.season === activeSeason), [list, activeSeason]);
 
   const ids = useMemo(() => seasonEpisodes.map((episode) => episode.id), [seasonEpisodes]);
+  const { credits } = useTitleCredits({ showId: { eq: showId } });
+  // The chosen season's guest stars, across its episodes.
+  const guests = useTitleCredits({ episodeId: { inList: ids }, guest: { eq: true } }, ids.length === 0);
+  const details = useTitleDetailFacts({ showId: { eq: showId } }, { networks: true });
   const statuses = useContentStatuses("EPISODE", ids);
   const fileIds = useMemo(() => list.map((episode) => episode.mediaFileId).filter((id): id is string => Boolean(id)), [list]);
   const progress = useMediaProgress(fileIds, user?.id);
   const { progressByFile } = progress;
 
-  const [refreshShow, { loading: refreshing }] = useMutation(RefreshShowDocument);
-  const [deleteShow, { loading: deleting }] = useMutation(EntityShowDeleteDocument);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [searching, setSearching] = useState(false);
-  const [acquisition, setAcquisition] = useState(false);
   const [episodeView, setEpisodeView] = usePref<ViewMode>("show.episodes.view", "card");
 
+  const nextUp = list.find((episode) => episode.mediaFileId && !progressByFile.get(episode.mediaFileId!)?.isWatched) ?? list.find((episode) => episode.mediaFileId);
+  const play = (episode: EpisodeRow) => {
+    if (!show || !episode.mediaFileId || progress.loading || progress.error) return;
+    const saved = progressByFile.get(episode.mediaFileId);
+    const first = episodePlayItem(episode, show, saved && !saved.isWatched && saved.currentPosition > 5 ? saved.currentPosition : undefined);
+    if (!first) return;
+    // The rest of the show follows in the queue; if the list is still loading, the queue finds them when it runs out.
+    const at = list.findIndex((candidate) => candidate.id === episode.id);
+    const following = episodes.complete && at >= 0 ? list.slice(at + 1).map((candidate) => episodePlayItem(candidate, show)).filter((item): item is PlayItem => item !== null) : [];
+    player.playVideo(first, following);
+    void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: episode.mediaFileId } });
+  };
+
+  const playNext = nextUp?.mediaFileId ? { label: `${(progressByFile.get(nextUp.mediaFileId!)?.currentPosition ?? 0) > 5 && !progressByFile.get(nextUp.mediaFileId!)?.isWatched ? "Resume" : "Play"} S${String(nextUp.season).padStart(2, "0")}E${String(nextUp.episode).padStart(2, "0")}`, run: () => play(nextUp), disabledReason: !episodes.complete ? "Loading the complete episode list" : progress.loading ? "Loading watch progress" : progress.error ? "Watch progress could not be loaded" : undefined } : undefined;
+  // The whole show: every episode's file, so it waits for the complete list and for progress.
+  const reset = useMemo<ProgressReset<unknown>>(() => ({
+    files: () => filesWithProgress(fileIds, progressByFile),
+    disabledReason: () => (!episodes.complete ? "Loading the complete episode list" : progress.loading ? "Loading watch progress" : progress.error ? "Watch progress could not be loaded" : undefined),
+  }), [fileIds, progressByFile, episodes.complete, progress.loading, progress.error]);
+  // A season's poster is changed from its tile's menu (and from the show's settings, Artwork).
+  type SeasonInfo = NonNullable<ReturnType<typeof seasonMeta.get>>;
+  const seasonArtwork = useArtworkAction<SeasonInfo>({ targetOf: (info) => ({ entityType: "SEASON", entityId: info.id, title: `${show?.name ?? ""} ${info.season === 0 ? "Specials" : `Season ${info.season}`}` }), allowed: () => isAdmin });
+  const seasonActions = useMemo(() => defineActions<SeasonInfo>("season", [seasonArtwork.action]), [seasonArtwork.action]);
+  const { actions, dialogs, openSettings } = useShowEntity<NonNullable<typeof show>>({ open: false, play: playNext, season: activeSeason, onRefreshed: () => { void episodes.refetch().catch(() => {}); }, reset });
+
+  // Find releases carries a badge with the number of releases in the show's plan.
+  const recommended = useRecommended({ showId, series: true }, show ? list.filter((episode) => !episode.mediaFileId).length : 0);
   if (error && !show) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!show) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Show not found" description="This item may have been removed from the library." className="page-gutter my-8" />;
 
   const downloaded = list.filter((episode) => episode.mediaFileId).length;
-  const nextUp = list.find((episode) => episode.mediaFileId && !progressByFile.get(episode.mediaFileId!)?.isWatched) ?? list.find((episode) => episode.mediaFileId);
-
-  const play = (episode: EpisodeRow) => {
-    if (!episode.mediaFileId || progress.loading || progress.error) return;
-    const code = `S${String(episode.season).padStart(2, "0")} · E${String(episode.episode).padStart(2, "0")}`;
-    const saved = progressByFile.get(episode.mediaFileId);
-    player.playVideo({ mediaFileId: episode.mediaFileId, title: show.name, subtitle: [code, episode.title].filter(Boolean).join("  "), artwork: showPoster(show), entity: { kind: "episode", id: episode.id }, href: `/shows/${show.id}`, startPosition: saved && !saved.isWatched && saved.currentPosition > 5 ? saved.currentPosition : undefined });
-    void navigate({ to: "/watch/$mediaFileId", params: { mediaFileId: episode.mediaFileId } });
-  };
-
-  const refresh = async () => {
-    const { data: result } = await refreshShow({ variables: { id: show.id } });
-    assertSuccess(result?.refreshShow, "Could not refresh metadata");
-    await episodes.refetch();
-  };
-
-  const remove = async () => {
-    try {
-      const { data: result } = await deleteShow({ variables: { id: show.id } });
-      assertSuccess(result?.deleteShow, "Could not remove show");
-      toast.success("Show removed from the library");
-      await navigate({ to: "/libraries/$libraryId/shows", params: { libraryId: show.libraryId } });
-    } catch (mutationError) {
-      toast.danger(errorMessage(mutationError));
-    }
-  };
 
   return (
     <DetailShell
@@ -107,25 +132,17 @@ export function ShowPage({ showId }: { showId: string }) {
         meta: (
           <>
             <MetaLine items={[show.year, show.network, show.status ?? show.contentRating, show.runtime ? formatRuntime(show.runtime, "minutes") : null, episodes.complete ? `${downloaded}/${list.length} episodes` : "Loading episodes"]} />
-            <AcquisitionChip status={autoDownloadMeta(show.autoDownloadMode)} onPress={isAdmin ? () => setAcquisition(true) : undefined} />
+            <AcquisitionChip status={autoDownloadMeta(show.autoDownloadMode)} onPress={isAdmin ? () => openSettings(show, "downloads") : undefined} />
           </>
         ),
         description: show.overview,
         facts: <HeroFacts items={[
           { label: "Genres", value: show.genres.join(", ") },
+          ...details.facts.filter((fact) => !(fact.label === "Network" && show.network) && !(fact.label === "Rated" && show.contentRating)),
           { label: "Links", value: show.tvmazeId || show.imdbId ? <ProviderLinks tvmazeId={show.tvmazeId} imdbId={show.imdbId} /> : null },
         ]} />,
         actions: (
-          <MediaActions
-            personal={show.userId === user?.id ? { kind: "show", id: show.id } : undefined}
-            id={show.id}
-            label={show.name}
-            play={nextUp?.mediaFileId ? { label: `${(progressByFile.get(nextUp.mediaFileId!)?.currentPosition ?? 0) > 5 && !progressByFile.get(nextUp.mediaFileId!)?.isWatched ? "Resume" : "Play"} S${String(nextUp.season).padStart(2, "0")}E${String(nextUp.episode).padStart(2, "0")}`, run: () => play(nextUp), disabledReason: !episodes.complete ? "Loading the complete episode list" : progress.loading ? "Loading watch progress" : progress.error ? "Watch progress could not be loaded" : undefined } : undefined}
-            find={isAdmin ? () => setSearching(true) : undefined}
-            settings={isAdmin ? () => setAcquisition(true) : undefined}
-            refresh={isAdmin ? { pending: refreshing, run: refresh } : undefined}
-            remove={isAdmin ? () => setConfirmDelete(true) : undefined}
-          />
+          <MediaActions target={show} label={show.name} actions={actions} play={playNext} recommended={recommended.forTarget} />
         ),
       }}
     >
@@ -139,29 +156,33 @@ export function ShowPage({ showId }: { showId: string }) {
                 const info = seasonMeta.get(value);
                 const label = value === 0 ? "Specials" : `Season ${value}`;
                 const year = info?.premiereDate?.slice(0, 4);
-                return (
+                const card = (
                   <PosterCard key={value} width="compact" title={info?.name ? `${label} · ${info.name}` : label} selected={value === activeSeason}
                     meta={[year, `${inSeason.filter((episode) => episode.mediaFileId).length} of ${info?.episodeOrder ?? inSeason.length} episodes`].filter(Boolean).join(" · ")}
                     image={seasonPoster(info, show)} tint={LIBRARY_TYPES.tv.tintVar} badge={info?.posterUrl ? undefined : value === 0 ? "SP" : `S${value}`}
-                    onPress={() => setSeason({ showId, value })} />
+                    onPress={() => { setSeason({ showId, value }); if (!tv) setRevealEpisodes((count) => count + 1); }} />
                 );
+                return info && isAdmin ? <ActionContextMenu key={value} set={seasonActions} targets={[info]} label={`Actions for ${label}`}>{card}</ActionContextMenu> : card;
               })}
             </MediaRow>
           </Section>
         ) : null}
 
-        <section className="flex flex-col gap-4" aria-label="Episodes">
-          <EpisodeList view={episodeView === "card" ? "row" : "table"} tint={LIBRARY_TYPES.tv.tintVar}
+        <section ref={episodesRef} className="flex flex-col gap-4" aria-label="Episodes" style={{ scrollMarginTop: "calc(var(--topbar-height, 4rem) + 1rem)" }}>
+          <EpisodeList focusEpisodeId={focusEpisodeId} view={episodeView === "card" ? "row" : "table"} tint={LIBRARY_TYPES.tv.tintVar}
             headerExtra={<ViewToggle value={episodeView} onChange={setEpisodeView} className="shrink-0" />}
             complete={episodes.complete} episodes={seasonEpisodes} statuses={statuses} progressByFile={progressByFile} loading={episodes.loading && list.length === 0} playbackUnavailable={progress.loading ? "Loading watch progress" : progress.error ? "Retry watch progress" : undefined}
             status={episodes.error || progress.error ? <span role="status">Could not load {episodes.error ? "all episodes" : "watch progress"}. <Button size="sm" onPress={() => { void episodes.refetch().catch(() => {}); void progress.refetch().catch(() => {}); }}>Retry</Button></span> : !episodes.complete || progress.loading ? "Loading episodes and watch progress…" : undefined}
-            onPlay={play} showId={show.id} showName={show.name} libraryId={show.libraryId} onChanged={() => { void episodes.refetch().catch(() => {}); }} />
+            onPlay={play} showId={show.id} showName={show.name} libraryId={show.libraryId} ownerId={show.userId} onChanged={() => { void episodes.refetch().catch(() => {}); }} />
         </section>
       </div>
 
-      <ConfirmDialog isOpen={confirmDelete} onOpenChange={setConfirmDelete} title={`Remove ${show.name}?`} description="The show and its episodes leave the catalogue. Files stay on disk." confirmLabel="Remove" destructive isPending={deleting} onConfirm={remove} />
-      <AcquisitionDialog isOpen={acquisition} onOpenChange={setAcquisition} target={{ kind: "show", id: show.id, title: show.name, libraryId: show.libraryId, autoDownloadMode: show.autoDownloadMode, qualityProfileId: show.qualityProfileId }} onSaved={() => void refetch()} />
-      <ReleaseSearchDialog isOpen={searching} onOpenChange={setSearching} query={show.name} imdbId={show.imdbId} season={activeSeason} libraryId={show.libraryId} target={{ showId: show.id }} />
+      <CastAndCrew credits={credits} castTitle="Cast" showEpisodes />
+
+      <CastRow credits={guests.credits} guest title={activeSeason === 0 ? "Guest stars in the specials" : `Guest stars in season ${activeSeason}`} />
+
+      {dialogs}
+      {seasonArtwork.dialog}
     </DetailShell>
   );
 }

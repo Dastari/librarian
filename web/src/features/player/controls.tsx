@@ -2,27 +2,42 @@ import { IconPlayerSkipBackFilled, IconPlayerSkipForwardFilled, IconVolume, Icon
 import { Button } from "glass-ux/button";
 import { IconPause, IconPlay } from "glass-ux/icons";
 import { Slider } from "glass-ux/slider";
-import { useCallback, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 
 import { formatClock } from "@/lib/format";
+import { isBackKey } from "@/lib/remote-back";
+import { setTvMuted, setTvVolume } from "@/lib/tv-app";
 import { clamp, cn } from "@/lib/utils";
+
+import { audioScrub } from "./mediaKeys";
+import { formatScrubDelta } from "./scrub";
+import { useScrubber } from "./useScrubber";
+import { useTvVolume } from "./useTvVolume";
+
+const SNAP_PIXELS = 6;
 
 interface SeekBarProps {
   position: number;
   duration: number;
   buffered?: number;
   onSeek: (position: number) => void;
-  chapters?: Array<{ start: number; title?: string | null }>;
+  /** Breaks to show. Hovering names the chapter, and a click close to a break lands on it. */
+  chapters?: ReadonlyArray<{ start: number; title?: string | null }>;
   className?: string;
   /** Compact variant for the dock. */
   thin?: boolean;
+  /** A name for a moment, shown while scrubbing (an audiobook's chapter). */
+  labelAt?: (position: number) => string | null | undefined;
+  /** Take the audio player's Rewind and Fast-forward keys while on screen. */
+  mediaKeys?: boolean;
 }
 
 /**
  * Scrubber with buffered range, hover/drag preview and chapter ticks. Works with pointer,
- * keyboard (arrows step 5s, Shift+arrows 30s) and remote controls.
+ * keyboard and remote controls: Left/Right scrub, faster while held or pressed again, and seek
+ * once on OK or a short pause; Back puts it back (design.md Q125). Up and Down leave it.
  */
-export function SeekBar({ position, duration, buffered = 0, onSeek, chapters, className, thin }: SeekBarProps) {
+export function SeekBar({ position, duration, buffered = 0, onSeek, chapters, className, thin, labelAt, mediaKeys }: SeekBarProps) {
   const track = useRef<HTMLDivElement>(null);
   const [preview, setPreview] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -34,15 +49,33 @@ export function SeekBar({ position, duration, buffered = 0, onSeek, chapters, cl
     (event: PointerEvent<HTMLDivElement>) => {
       const rect = track.current?.getBoundingClientRect();
       if (!rect || !safeDuration) return 0;
-      return clamp((event.clientX - rect.left) / rect.width, 0, 1) * safeDuration;
+      const at = clamp((event.clientX - rect.left) / rect.width, 0, 1) * safeDuration;
+      // Within a few pixels of a break, it's the break that's meant.
+      const reach = (SNAP_PIXELS / Math.max(rect.width, 1)) * safeDuration;
+      const near = chapters?.find((chapter) => Math.abs(chapter.start - at) <= reach);
+      return near ? near.start : at;
     },
-    [safeDuration],
+    [safeDuration, chapters],
   );
 
+  const { scrub, scrubber } = useScrubber({ position: () => position, duration: () => safeDuration, commit: onSeek });
+  useEffect(() => {
+    if (!mediaKeys) return;
+    const take = (direction: 1 | -1, repeat: boolean) => {
+      // Hidden (the dock on a phone): seek at once rather than scrub out of sight.
+      if (track.current?.offsetParent === null) onSeek(clamp(position + direction * 10, 0, safeDuration));
+      else scrubber.step(direction, repeat);
+    };
+    audioScrub.current = take;
+    return () => { if (audioScrub.current === take) audioScrub.current = null; };
+  }, [mediaKeys, scrubber, onSeek, position, safeDuration]);
+
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const step = event.shiftKey ? 30 : 5;
-    if (event.key === "ArrowLeft") onSeek(clamp(position - step, 0, safeDuration));
-    else if (event.key === "ArrowRight") onSeek(clamp(position + step, 0, safeDuration));
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      scrubber.step(event.key === "ArrowRight" ? 1 : -1, event.repeat);
+    } else if (event.key === "Enter" && scrubber.active) scrubber.commit();
+    else if (isBackKey(event, { tv: true }) && scrubber.active) scrubber.cancel();
     else if (event.key === "Home") onSeek(0);
     else if (event.key === "End") onSeek(safeDuration);
     else return;
@@ -50,7 +83,10 @@ export function SeekBar({ position, duration, buffered = 0, onSeek, chapters, cl
     event.stopPropagation();
   };
 
-  const shown = preview ?? position;
+  const shown = scrub?.target ?? preview ?? position;
+  const label = (at: number) => labelAt?.(at) ?? chapters?.filter((chapter) => chapter.start <= at).at(-1)?.title ?? undefined;
+  const shownChapter = scrub ? label(scrub.target) : preview !== null ? label(preview) : undefined;
+  const bubble = scrub !== null || preview !== null;
 
   return (
     <div
@@ -63,7 +99,10 @@ export function SeekBar({ position, duration, buffered = 0, onSeek, chapters, cl
       aria-valuemax={Math.round(safeDuration)}
       aria-valuenow={Math.round(position)}
       aria-valuetext={`${formatClock(position)} of ${formatClock(safeDuration)}`}
+      data-owns-horizontal
       onKeyDown={onKeyDown}
+      // Leaving the bar (Up, Down, a click elsewhere) seeks to where the scrub got to.
+      onBlur={() => { if (scrubber.active) scrubber.commit(); }}
       onPointerDown={(event) => {
         event.currentTarget.setPointerCapture(event.pointerId);
         setDragging(true);
@@ -85,18 +124,19 @@ export function SeekBar({ position, duration, buffered = 0, onSeek, chapters, cl
     >
       <div className={cn("glass-inset relative w-full overflow-hidden rounded-full transition-[height] duration-fast", thin ? "h-1.5 group-hover/seek:h-2" : "h-2 group-hover/seek:h-2.5")}>
         <div className="absolute inset-y-0 left-0 bg-white/30" style={{ width: `${bufferedFraction * 100}%` }} />
-        <div className="absolute inset-y-0 left-0 bg-brand" style={{ width: `${(safeDuration ? (preview ?? position) / safeDuration : 0) * 100}%` }} />
+        <div className="absolute inset-y-0 left-0 bg-brand" style={{ width: `${(safeDuration ? shown / safeDuration : 0) * 100}%` }} />
         {chapters?.map((chapter) =>
-          chapter.start > 0 && safeDuration ? <span key={chapter.start} className="absolute inset-y-0 w-0.5 bg-black/50" style={{ left: `${(chapter.start / safeDuration) * 100}%` }} /> : null,
+          chapter.start > 0 && safeDuration ? <span key={chapter.start} data-chapter-break className="absolute inset-y-0 z-10 w-0.5 bg-fg" style={{ left: `${(chapter.start / safeDuration) * 100}%` }} /> : null,
         )}
       </div>
       <div
         className={cn("bg-fg absolute size-4 -translate-x-1/2 rounded-full transition-transform duration-fast", thin ? "scale-0 group-hover/seek:scale-100" : "scale-75 group-hover/seek:scale-100 group-focus-visible/seek:scale-100", dragging && "!scale-125")}
-        style={{ left: `${(safeDuration ? (preview ?? position) / safeDuration : fraction) * 100}%` }}
+        style={{ left: `${(safeDuration ? shown / safeDuration : fraction) * 100}%` }}
       />
-      {preview !== null ? (
-        <span className="pointer-events-none absolute -top-8 -translate-x-1/2 rounded-md bg-scrim px-2 py-1 text-label-sm text-foreground" style={{ left: `${(safeDuration ? shown / safeDuration : 0) * 100}%` }}>
-          {formatClock(shown)}
+      {bubble ? (
+        <span className="pointer-events-none absolute -top-8 -translate-x-1/2 whitespace-nowrap rounded-md bg-scrim px-2 py-1 text-label-sm text-foreground" style={{ left: `${(safeDuration ? shown / safeDuration : 0) * 100}%` }}>
+          {shownChapter ? `${shownChapter} · ` : ""}{formatClock(shown)}
+          {scrub ? <span className="text-numeric ms-1.5 text-muted" data-scrub-delta>{formatScrubDelta(scrub.target - scrub.origin)}</span> : null}
         </span>
       ) : null}
     </div>
@@ -108,10 +148,12 @@ interface TransportButtonProps {
   onToggle: () => void;
   size?: "sm" | "md" | "lg";
   className?: string;
+  /** Where focus goes when now playing opens (`data-dock-start`). */
+  start?: boolean;
 }
 
-export function PlayPauseButton({ playing, onToggle, size = "md", className }: TransportButtonProps) {
-  return <Button type="button" variant="primary" shape="circle" size={size} aria-label={playing ? "Pause" : "Play"} onClick={onToggle} icon={playing ? <IconPause /> : <IconPlay />} className={className} data-focusable />;
+export function PlayPauseButton({ playing, onToggle, size = "md", className, start }: TransportButtonProps) {
+  return <Button type="button" variant="primary" shape="circle" size={size} aria-label={playing ? "Pause" : "Play"} onClick={onToggle} icon={playing ? <IconPause /> : <IconPlay />} className={className} data-focusable data-dock-start={start || undefined} />;
 }
 
 export function SkipButton({ direction, onPress, disabled, className }: { direction: "back" | "forward"; onPress: () => void; disabled?: boolean; className?: string }) {
@@ -127,24 +169,37 @@ interface VolumeControlProps {
   className?: string;
 }
 
-export function VolumeControl({ volume, muted, onVolume, onMuted, className }: VolumeControlProps) {
+/**
+ * Mute and a volume slider. In the TV app they are the TV's own volume, live from the remote too
+ * (Q137): the player's `volume` stays at full (PlayerDock), and `onMuted` is used only when the TV
+ * will not mute. A fixed TV volume shows a note instead of the slider.
+ */
+export function VolumeControl({ volume: ownVolume, muted: ownMuted, onVolume, onMuted, className }: VolumeControlProps) {
+  const tv = useTvVolume();
+  const volume = tv ? tv.level : ownVolume;
+  const muted = tv ? tv.muted || ownMuted : ownMuted;
+  const changeVolume = tv ? (level: number) => setTvVolume(level) : onVolume;
+  const changeMuted = tv ? (next: boolean) => {
+    // The TV muted: make sure the element is not muted as well. Otherwise mute the element.
+    if (setTvMuted(next)) { if (ownMuted) onMuted(false); } else onMuted(next);
+  } : onMuted;
   const effective = muted ? 0 : volume;
   const Icon = effective === 0 ? IconVolumeOff : effective < 0.5 ? IconVolume2 : IconVolume;
   return (
     <div className={cn("flex min-w-0 items-center gap-1", className)}>
-      <Button type="button" variant="ghost" shape="circle" aria-label={muted ? "Unmute" : "Mute"} onClick={() => onMuted(!muted)} icon={<Icon />} data-focusable />
-      <Slider
+      <Button type="button" variant="ghost" shape="circle" aria-label={muted ? "Unmute" : "Mute"} onClick={() => changeMuted(!muted)} icon={<Icon />} data-focusable />
+      {tv?.fixed ? <span className="tv-volume-note text-label-sm text-muted">Volume is controlled by your TV or sound system</span> : <Slider
         min={0}
         max={1}
-        step={0.02}
+        step={tv ? 1 / tv.max : 0.02}
         largeStep={0.2}
         value={effective}
         aria-label="Volume"
         size="sm"
         format={(value) => `${Math.round(value * 100)}%`}
-        onValueChange={(value) => { if (typeof value === "number") onVolume(value); }}
+        onValueChange={(value) => { if (typeof value === "number") changeVolume(value); }}
         className="w-24 shrink-0"
-      />
+      />}
     </div>
   );
 }

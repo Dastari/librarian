@@ -1,3 +1,4 @@
+import { NuqsTestingAdapter } from "nuqs/adapters/testing";
 import { render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +10,7 @@ import { SettingsLayout } from "@/features/settings/SettingsLayout";
 const route = vi.hoisted(() => ({ pathname: "/settings/general", routeId: "" }));
 vi.mock("@tanstack/react-router", () => ({
   Outlet: () => <button>Outlet action</button>,
+  useNavigate: () => vi.fn(),
   Link: ({ children }: { children: ReactNode }) => <a>{children}</a>,
   useRouterState: ({ select }: { select: (state: unknown) => unknown }) => select({
     location: { pathname: route.pathname }, matches: [{ routeId: route.routeId }],
@@ -45,14 +47,19 @@ function outletPane() {
   return pane;
 }
 
+vi.mock("@/features/libraries/LibrarySettingsDialog", () => ({ LibrarySettingsDialog: () => null }));
+vi.mock("@/features/libraries/useLibraryActions", async () => {
+  const { defineActions } = await import("glass-ux/actions");
+  return { useLibraryActions: () => defineActions("library", []), useLibrarySettingsParam: () => ({ tab: null, open: vi.fn(), close: vi.fn() }) };
+});
+
 describe("nested route boundaries", () => {
-  it.each(["", "/_app/libraries/$libraryId/settings", "/_app/libraries/$libraryId/scans"])("reserves focus room and print flow for library outlet %s", (routeId) => {
+  it.each([""])("reserves focus room and print flow for library outlet %s", (routeId) => {
     route.routeId = routeId;
-    render(<LibraryLayout library={library} />);
+    render(<NuqsTestingAdapter><LibraryLayout library={library} /></NuqsTestingAdapter>);
     // A bounded pane clips rather than hides: code must not be able to scroll it away.
-    expect(outletPane()).toHaveClass(routeId ? "overflow-y-auto" : "overflow-y-clip");
-    // The breadcrumb names the library on screen; the heading remains for assistive technology.
-    expect(screen.getByRole("heading", { name: "Family films" })).toHaveClass("sr-only");
+    expect(outletPane()).toHaveClass("overflow-y-clip");
+    expect(screen.getByRole("heading", { name: "Family films" })).toBeInTheDocument();
   });
 
   it.each(["/settings/general", "/settings/logs"])("keeps the screen scroll owner and print marker for %s", (pathname) => {

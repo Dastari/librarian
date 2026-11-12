@@ -13,6 +13,7 @@ use tokio::fs;
 
 use crate::services::graphql::auth::AuthExt;
 use crate::services::graphql::filesystem_network;
+use crate::services::library_storage::SmbLocation;
 use crate::{db::Database, services::manager::ServicesManager};
 
 // ---------------------------------------------------------------------------
@@ -108,6 +109,88 @@ pub struct ConfigureNetworkPathInput {
     pub persist: Option<bool>,
     #[graphql(name = "attemptConnect")]
     pub attempt_connect: Option<bool>,
+}
+
+/// Sign in to a network share to check it, and keep the sign-in for the share.
+#[derive(InputObject)]
+#[graphql(name = "ConnectShareInput")]
+pub struct ConnectShareInput {
+    /// Host name or IP address of the file server.
+    #[graphql(name = "host")]
+    pub host: String,
+    /// Port, when it is not 445.
+    #[graphql(name = "port")]
+    pub port: Option<i32>,
+    /// Share name, such as `media`.
+    #[graphql(name = "share")]
+    pub share: String,
+    /// Blank for the saved sign-in, or a guest share when none is saved.
+    #[graphql(name = "username")]
+    pub username: Option<String>,
+    /// Blank keeps the saved password when the user name is the saved one.
+    #[graphql(name = "password")]
+    pub password: Option<String>,
+    /// Keep the sign-in, encrypted, if it works. On by default.
+    #[graphql(name = "save")]
+    pub save: Option<bool>,
+}
+
+/// Move a library to a folder its files were copied to.
+#[derive(InputObject)]
+#[graphql(name = "MoveLibraryInput", rename_fields = "camelCase")]
+pub struct MoveLibraryInput {
+    pub library_id: String,
+    /// The new folder: an absolute path, or `smb://host/share/folder`.
+    pub new_path: String,
+    /// Move even though some files are not on the new folder yet. They are then reported
+    /// missing by the next scan.
+    pub allow_missing: Option<bool>,
+}
+
+#[derive(Clone, async_graphql::SimpleObject)]
+#[graphql(name = "MoveLibraryResult", rename_fields = "camelCase")]
+pub struct MoveLibraryResult {
+    pub success: bool,
+    pub error: Option<String>,
+    /// File records rewritten to the new folder.
+    pub moved_files: i32,
+    /// Show, album and audiobook folders rewritten.
+    pub moved_folders: i32,
+    /// Open scan issues closed, because they named paths that no longer apply.
+    pub closed_issues: i32,
+}
+
+#[derive(Clone)]
+pub struct ConnectSharePayload {
+    pub success: bool,
+    pub error: Option<String>,
+    pub share: Option<String>,
+    pub folders: i32,
+}
+
+#[Object]
+impl ConnectSharePayload {
+    #[graphql(name = "success")]
+    async fn success(&self) -> bool {
+        self.success
+    }
+
+    #[graphql(name = "error")]
+    async fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    /// The share's normalised `smb://host[:port]/share` address.
+    #[graphql(name = "share")]
+    async fn share(&self) -> Option<&str> {
+        self.share.as_deref()
+    }
+
+    /// Folders at the top of the share.
+    #[graphql(name = "folders")]
+    async fn folders(&self) -> i32 {
+        self.folders
+    }
 }
 
 #[derive(Clone)]
@@ -207,6 +290,106 @@ impl FilesystemMutations {
         })
     }
 
+    /// Sign in to a network share, check that it can be read, and keep the sign-in. The answer
+    /// names what is wrong in words a person can act on (a name that does not resolve here, a
+    /// refused password, a share that does not exist).
+    #[graphql(name = "connectShare")]
+    async fn connect_share(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "input")] input: ConnectShareInput,
+    ) -> Result<ConnectSharePayload> {
+        ctx.require_admin()?;
+        let db = ctx.data::<Database>()?;
+        let services = ctx.data::<Arc<ServicesManager>>()?;
+        let failed = |error: String| ConnectSharePayload {
+            success: false,
+            error: Some(error),
+            share: None,
+            folders: 0,
+        };
+        let host = input.host.trim();
+        if host.is_empty() || input.share.trim().is_empty() {
+            return Ok(failed("Enter the server and the share name".to_string()));
+        }
+        let port = match input.port {
+            Some(port) if (1..=65535).contains(&port) => format!(":{port}"),
+            Some(_) => return Ok(failed("The port must be between 1 and 65535".to_string())),
+            None => String::new(),
+        };
+        let location = match SmbLocation::parse(&format!(
+            "smb://{host}{port}/{}",
+            input.share.trim().trim_matches('/')
+        )) {
+            Ok(location) => location,
+            Err(error) => return Ok(failed(error.to_string())),
+        };
+        match filesystem_network::connect_share(
+            db,
+            services,
+            &location,
+            input.username.as_deref().unwrap_or(""),
+            input.password.as_deref().unwrap_or(""),
+            input.save.unwrap_or(true),
+        )
+        .await
+        {
+            Ok(connection) => Ok(ConnectSharePayload {
+                success: true,
+                error: None,
+                share: Some(connection.share),
+                folders: i32::try_from(connection.folders).unwrap_or(i32::MAX),
+            }),
+            Err(error) => Ok(failed(error.to_string())),
+        }
+    }
+
+    /// Change a library's folder after its files were copied there, keeping every record: the
+    /// files keep their ids, matches, progress and playlists. Run a scan afterwards to verify.
+    #[graphql(name = "moveLibrary")]
+    async fn move_library(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "input")] input: MoveLibraryInput,
+    ) -> Result<MoveLibraryResult> {
+        ctx.require_admin()?;
+        let services = ctx.data::<Arc<ServicesManager>>()?;
+        let scan = services
+            .get_library_scan()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Library scan service not available"))?;
+        let allow_missing = input.allow_missing.unwrap_or(false);
+        // Detached from this request, so a closed browser tab cannot stop it half way.
+        let task = tokio::spawn(async move {
+            scan.apply_library_move(&input.library_id, &input.new_path, allow_missing)
+                .await
+        });
+        let count = |value: usize| i32::try_from(value).unwrap_or(i32::MAX);
+        Ok(match task.await {
+            Ok(Ok(outcome)) => MoveLibraryResult {
+                success: true,
+                error: None,
+                moved_files: count(outcome.moved_files),
+                moved_folders: count(outcome.moved_folders),
+                closed_issues: count(outcome.closed_issues),
+            },
+            Ok(Err(error)) => MoveLibraryResult {
+                success: false,
+                error: Some(format!("{error:#}")),
+                moved_files: 0,
+                moved_folders: 0,
+                closed_issues: 0,
+            },
+            Err(error) => MoveLibraryResult {
+                success: false,
+                error: Some(format!("The move stopped unexpectedly: {error}")),
+                moved_files: 0,
+                moved_folders: 0,
+                closed_issues: 0,
+            },
+        })
+    }
+
     #[graphql(name = "reconnectLibraryPath")]
     async fn reconnect_library_path(
         &self,
@@ -260,7 +443,16 @@ async fn run_create_directory(
             "Path must not be empty",
         )));
     }
-    match fs::create_dir_all(&path).await {
+    // A folder on a share is made through it, not as a local folder named `smb:`.
+    let made = if crate::services::library_storage::is_smb_uri(input.path.trim()) {
+        crate::services::library_storage::library_storage()
+            .create_dir_all(input.path.trim())
+            .await
+            .map_err(|error| std::io::Error::other(error.to_string()))
+    } else {
+        fs::create_dir_all(&path).await
+    };
+    match made {
         Ok(_) => {
             use crate::services::graphql::subscriptions::filesystem::{
                 FilesystemChangeBroker, FilesystemChangeEvent,

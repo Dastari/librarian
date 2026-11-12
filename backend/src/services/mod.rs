@@ -30,28 +30,47 @@
 
 #![allow(unused_imports)]
 
+pub mod account_security;
 pub mod artwork;
+pub mod artwork_choice;
 pub mod auth;
 pub mod backup;
 pub mod bootstrap_defaults;
 pub mod cast;
 pub mod database;
 pub mod extract;
+pub mod feed_catalogue;
 pub mod graphql;
 pub mod http_client;
 pub mod http_server;
+pub mod identify_rules;
+pub mod jev;
+pub mod lan_advertise;
 pub mod library_scan;
+pub mod library_storage;
 pub mod logging;
 pub mod login_rate_limit;
+pub mod lyrics;
 pub mod manager;
 pub mod metadata;
+pub mod music_rules;
+pub mod network_servers;
 pub mod ollama;
+pub mod play_history;
 pub mod quality;
 pub mod rate_limiter;
+pub mod redact;
+pub mod release_match;
 pub mod sources;
 pub mod storage;
+pub mod storage_capacity;
+pub mod subtitles;
+pub mod tool_url;
 pub mod torrent;
 pub mod transcode;
+pub mod updates;
+pub mod video_preview;
+pub mod whisper;
 pub mod write_rules;
 
 pub use rate_limiter::{RateLimitConfig, RateLimitedClient, RetryConfig, retry_async};

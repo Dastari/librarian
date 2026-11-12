@@ -1,4 +1,5 @@
 import { useLiveRoute } from "@/lib/graphql/live/hooks";
+import { libraryTrail } from "@/components/shell/Breadcrumbs";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { ArtistPage } from "@/features/media/ArtistPage";
@@ -7,7 +8,7 @@ import { ArtistDetailDocument } from "@/graphql/generated/graphql";
 export const Route = createFileRoute("/_app/artists/$artistId")({
     loader: async ({ context, params }) => {
     const { data } = await context.apollo.query({ query: ArtistDetailDocument, variables: { id: params.artistId }, fetchPolicy: "cache-first" });
-    return { crumb: data?.artist?.name ?? "Artist" };
+    return { crumb: data?.artist?.name ?? "Artist", trail: libraryTrail(data?.artist?.library, "artists") };
   },
   component: () => {
     const { artistId } = Route.useParams();

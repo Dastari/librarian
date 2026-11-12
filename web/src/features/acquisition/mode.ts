@@ -32,5 +32,5 @@ export const MODE_SEGMENTS: Array<{ key: AutoDownloadMode; label: string }> = [
 export const MODE_HELP: Record<AutoDownloadMode, string> = {
   NONE: "Nothing is downloaded automatically. You can still search for releases by hand.",
   WANTED: "Only items you mark as wanted are searched for and downloaded.",
-  ALL: "Every item without a file is searched for and downloaded as it appears.",
+  ALL: "Every item without a file is searched for and downloaded once it has aired or been released.",
 };

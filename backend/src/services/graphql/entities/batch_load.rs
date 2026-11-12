@@ -35,6 +35,7 @@ impl_string_pk_batch_load!(
     super::Season,
     super::HomeShelf,
     super::InviteToken,
+    super::PasswordResetToken,
     super::Library,
     super::LibraryScanIssue,
     super::LibraryScanRun,
@@ -45,6 +46,8 @@ impl_string_pk_batch_load!(
     super::MetadataCache,
     super::Movie,
     super::MovieCastCredit,
+    super::Credit,
+    super::TitleDetail,
     super::NamingPattern,
     super::Notification,
     super::PendingFileMatch,
@@ -63,11 +66,15 @@ impl_string_pk_batch_load!(
     super::SourcePriorityRule,
     super::StorageObject,
     super::Subtitle,
+    super::Lyric,
     super::Torrent,
     super::TorrentFile,
     super::Track,
     super::UsenetDownload,
     super::UsenetServer,
+    super::MatchingAssistant,
+    super::IdentificationEvent,
+    super::IdentifiedItem,
     super::User,
     super::VideoStream,
 );
@@ -75,3 +82,10 @@ impl_string_pk_batch_load!(
 impl_string_pk_batch_load!(super::TorznabCategory);
 impl_string_pk_batch_load!(super::QualityProfile);
 impl_string_pk_batch_load!(super::ReleaseBlocklist);
+impl_string_pk_batch_load!(super::ReleaseRecommendation);
+impl_string_pk_batch_load!(super::NetworkServer);
+impl_string_pk_batch_load!(super::Device);
+impl_string_pk_batch_load!(super::PlayHistory);
+impl_string_pk_batch_load!(super::StatsShare);
+impl_string_pk_batch_load!(super::TorrentContents);
+impl_string_pk_batch_load!(super::StorageVolume);

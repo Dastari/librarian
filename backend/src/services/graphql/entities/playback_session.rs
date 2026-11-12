@@ -107,6 +107,46 @@ pub struct PlaybackSession {
     #[filterable(type = "date")]
     pub completed_at: Option<String>,
 
+    // Added for devices, now playing and play history (design.md Q133–Q134).
+    /// The chapter being listened to, for an audiobook session.
+    #[graphql(name = "chapterId")]
+    #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
+    pub chapter_id: Option<String>,
+
+    #[graphql(name = "deviceId")]
+    #[filterable(type = "string")]
+    #[graphql_orm(write_policy = "owned.link")]
+    pub device_id: Option<String>,
+
+    /// `playing`, `paused`, `buffering` or `stopped`.
+    #[graphql(name = "state")]
+    #[filterable(type = "string")]
+    pub state: Option<String>,
+
+    /// `direct`, `hls`, `transcode` or `cast`.
+    #[graphql(name = "playMethod")]
+    #[filterable(type = "string")]
+    pub play_method: Option<String>,
+
+    /// The quality being played, as shown to people ("1080p", "Original", "320 kbps").
+    #[graphql(name = "quality")]
+    pub quality: Option<String>,
+
+    /// Bits per second of what is being sent, when known.
+    #[graphql(name = "bitrate")]
+    pub bitrate: Option<i64>,
+
+    /// Set when the player closed; an open session without it goes stale after a few minutes.
+    #[graphql(name = "endedAt")]
+    #[filterable(type = "date")]
+    pub ended_at: Option<String>,
+
+    /// Someone asked this player to stop (its owner from another device, or an administrator).
+    #[graphql(name = "stopRequestedAt")]
+    #[filterable(type = "date")]
+    pub stop_requested_at: Option<String>,
+
     #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]
@@ -189,6 +229,18 @@ pub struct PlaybackSession {
         emit_fk = false
     )]
     pub show: Option<Box<Show>>,
+
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(
+        target = "Device",
+        from = "device_id",
+        to = "id",
+        on_delete = "set_null",
+        emit_fk = false
+    )]
+    pub device: Option<Box<Device>>,
 
     #[graphql(skip)]
     #[serde(skip)]

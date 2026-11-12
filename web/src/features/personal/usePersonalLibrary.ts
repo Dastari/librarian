@@ -14,6 +14,8 @@ export const DEFAULT_SHELVES = [
   { key: "movies", label: "Recently added movies" }, { key: "shows", label: "Recently added shows" },
   { key: "albums", label: "New music" }, { key: "audiobooks", label: "New audiobooks" },
   { key: "guide", label: "TV guide" }, { key: "releases", label: "Movie releases" },
+  // Added later: right after Continue watching without moving anyone's saved order (design.md Q149).
+  { key: "interests", label: "Genres you like", position: 5 },
 ] as const;
 
 export function usePersonalLists() {
@@ -60,7 +62,7 @@ export function useHomeShelves() {
   const shelves = [
     ...DEFAULT_SHELVES.map((item, index) => {
       const saved = list.rows.find((row) => row.shelfKey === item.key);
-      return { ...item, id: saved?.id, position: saved?.position ?? index * 10, visible: saved?.visible ?? true, listId: saved?.listId, libraryId: saved?.libraryId };
+      return { key: item.key, label: item.label, id: saved?.id, position: saved?.position ?? ("position" in item ? item.position : index * 10), visible: saved?.visible ?? true, listId: saved?.listId, libraryId: saved?.libraryId };
     }),
     ...list.rows.filter((row) => !DEFAULT_SHELVES.some((item) => item.key === row.shelfKey)).map((row) => ({ key: row.shelfKey, label: "Personal list", id: row.id, position: row.position, visible: row.visible, listId: row.listId, libraryId: row.libraryId })),
   ].sort((a, b) => a.position - b.position || a.key.localeCompare(b.key));

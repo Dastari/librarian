@@ -25,8 +25,10 @@
 pub mod categories;
 pub mod definitions;
 pub mod encryption;
+pub mod health;
 pub mod manager;
 pub mod service;
+pub mod session;
 pub mod types;
 
 pub use types::{
@@ -95,6 +97,29 @@ impl std::fmt::Display for TrackerType {
             TrackerType::SemiPrivate => write!(f, "SemiPrivate"),
         }
     }
+}
+
+/// A source's session has ended: its cookie expired, or a fresh sign-in was refused. The text says
+/// why and what to do. Health checks classify it as an authentication failure.
+#[derive(Debug, Clone)]
+pub struct SessionExpired(pub String);
+
+impl std::fmt::Display for SessionExpired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for SessionExpired {}
+
+/// Signs a source in again when its session has ended. Implemented where the database is (the
+/// sources service): it holds the credentials, enforces the one-sign-in-an-hour limit and stores the
+/// new session. A source with a username and password calls it when a request finds it signed out.
+#[async_trait]
+pub trait SessionRefresher: Send + Sync {
+    /// A fresh `Cookie` header value, or the reason there is none (shown to people, so it must not
+    /// contain credentials or cookies).
+    async fn refresh(&self, source_id: &str) -> Result<String, String>;
 }
 
 /// Core trait for all source implementations

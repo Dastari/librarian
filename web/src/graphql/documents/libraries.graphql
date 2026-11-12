@@ -207,11 +207,64 @@ mutation RetryScanIssue($issueId: String!) {
   }
 }
 
-mutation TrashDuplicateScanIssue($issueId: String!) {
-  trashDuplicateScanIssue(issueId: $issueId) {
+mutation TrashDuplicateScanIssue($issueId: String!, $keep: String) {
+  trashDuplicateScanIssue(issueId: $issueId, keep: $keep) {
     success
     message
     oldPath
     trashPath
+  }
+}
+
+mutation SettleDuplicateScanIssues($libraryId: String!) {
+  settleDuplicateScanIssues(libraryId: $libraryId) {
+    success
+    queued
+    message
+  }
+}
+
+# A library's location can be a folder on a network share (docs/design.md Q85).
+mutation ConnectShare($input: ConnectShareInput!) {
+  connectShare(input: $input) {
+    success
+    error
+    share
+    folders
+  }
+}
+
+query ShareSignIn($share: String!) {
+  shareSignIn(share: $share) {
+    share
+    saved
+    username
+  }
+}
+
+query LibraryMovePlan($libraryId: String!, $newPath: String!) {
+  libraryMovePlan(libraryId: $libraryId, newPath: $newPath) {
+    oldPath
+    newPath
+    fileCount
+    matched
+    missing
+    missingFiles
+    changed
+    changedFiles
+    extra
+    extraFiles
+    blocked
+    canApply
+  }
+}
+
+mutation MoveLibrary($input: MoveLibraryInput!) {
+  moveLibrary(input: $input) {
+    success
+    error
+    movedFiles
+    movedFolders
+    closedIssues
   }
 }

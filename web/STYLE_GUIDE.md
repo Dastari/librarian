@@ -1,6 +1,6 @@
 # Librarian web style guide
 
-Glass UX 0.16.1 owns the shared UI and appearance runtime. Follow the
+Glass UX 0.19.5 owns the shared UI and appearance runtime. Follow the
 [migration plan](../docs/glass-ux-migration-plan.md),
 [shared design rules](../docs/glass-ux/ui-rules.md) and
 [layout contract](../docs/glass-ux/layout-contract.md). The
@@ -11,7 +11,13 @@ implemented components and the remaining compatibility boundary.
 
 - The frame is Glass `AppShell` with its `Rail`, `TopBar` and phone `TabBar`, all on the canvas:
   the bar has no material, so artwork shows through it. Use `page-gutter` for page content;
-  preserve safe areas and dock offsets.
+  preserve safe areas and dock offsets. Installed on iOS the app draws under the status bar
+  (`black-translucent`): anything at an edge pads with `--safe-top`, `--safe-bottom` and the
+  inline `--safe-inline-start`/`--safe-inline-end` (a landscape notch), and full-screen
+  layers use `dvh`, never `vh`. Check portrait and landscape with emulated insets.
+  `styles/native.css` holds the installed-app and touch behaviour (no double-tap zoom, no callout or
+  selection on chrome, no keyboard hint on the search field). The dev server serves the web manifest
+  (so the live site installs standalone) but registers no service worker; production builds add the worker.
 - The document never scrolls and neither does the frame. Each page has one `PageScroller`. Routed
   tabs sit outside it, so they stay put while the view under them scrolls. A bounded pane clips
   (`overflow: clip`); `overflow: hidden` can still be scrolled from code by a focus or a reveal.
@@ -25,9 +31,16 @@ implemented components and the remaining compatibility boundary.
 ## Tokens, materials and typography
 
 Import `glass-ux/styles.css` once through `src/styles/app.css`. Glass owns mode,
-palette, fonts, density, glass amount, motion and geometry. Register host palette
-parameters in `palettes.css`; do not reproduce complete themes. Device choices
-persist under `librarian.appearance.v1`, migrated once from `librarian.theme`.
+palette, fonts, density, glass amount, motion and geometry. Librarian's appearance is
+fixed (`lib/glass/appearance.ts` locks it): the Cinema palette (`palettes.css`, the only
+one), full glass, comfortable density, system motion and the default radius, line weight
+and interface size. Two choices remain. Dark or Light (Dark by default, never following
+the system) persists under `librarian.appearance.v1`; anything else stored there is
+dropped. Blur is a device setting under `librarian.blur.v1`, for everyone on that browser:
+off, Glass renders with `glassRendering: "none"`. Glass 0.19.4 made blur a stored
+preference too, so the device's choice is passed as `locked.glassRendering`: the colour
+mode's `update()` stores the whole appearance, and a stored blur would otherwise outrank it.
+Do not add palettes or appearance knobs.
 
 Use `Surface` material/radius/padding props and `PanelHeader`, `PanelBody` and
 `PanelFooter` slots. Raw material classes supply neither content insets nor the
@@ -58,6 +71,47 @@ Existing React Hook Form schemas remain the validation owner while their field
 bridge uses Glass inputs/selects/numbers/switches. Preserve blur/ref behavior and
 nullable numeric values. New complete form migrations should use the library's
 form bindings; remove the bridge when its final consumer moves.
+
+## Settings pages
+
+Routes under `/settings` are site settings: pages, with no card or panel around anything. Group with
+space and a label (R15.8), and let the settings navigation name the page, so no page repeats its
+title. Build them from three shared pieces in `features/settings`:
+
+- `SettingsPage` stacks the page's groups `gap-8` apart.
+- `SettingsSection` is one group. **Rows** (`width="readable"`) get the overline group label and
+  are held to `--settings-measure` (52rem, the `settings-measure` utility), left-aligned with the
+  page gutter. They stay left-aligned on wide screens so a table below them on the same page shares
+  their left edge. **Records** (the default, `width="full"`) get a title row (one line of help,
+  actions on the right) above a full-width table, the way every entity table sits on the canvas.
+  A form wrapping several row groups puts `settings-measure` on the `Form` once, and its
+  `FormActions` end the page in the same column.
+- `SettingFields` holds the row-shaped bound fields for `useAppForm`: `NumberRow`, `PercentRow`,
+  `DurationRow`, `ByteSizeRow`, `TextRow`, `UrlRow`, `SelectRow` and `TagsRow`, beside the library's
+  `field.SwitchRow` and `field.SegmentedRow`. Each is a `SettingRow` (label and help left, control
+  right, the validation message in the description slot) over the bare Glass control, so the control
+  keeps its value contract. Pass `settingsFormBehaviour` instead of `formBehaviour`, because the
+  library's focus-first-invalid only looks inside `Field`s.
+
+Choose the control by what the value is: a switch for a boolean, a number with a `unit` for a count,
+`DurationRow` for an interval stored in seconds, `PercentRow` for a ratio stored as a fraction,
+`ByteSizeRow` for sizes, `UrlRow` for an address, chips for a short list, a select for a choice with
+detail and segmented for two to four short ones. Keep a stored contract as it is: convert at the
+form boundary, never in the schema. Secrets are `TextRow type="password" autoComplete="off"`,
+because the password input would let a browser fill the account password into an API key.
+Read-only facts are `SettingRow`s with the value as the control (see About).
+
+Lists of records are tables (`LoadedDataTable`, `height="auto"` on these scrolling pages, or `fill`
+for an unbounded feed such as Logs) with their `EntityIdentity` and `ActionSet`; adding or editing
+one opens its dialog. A row's control wraps under its text in a narrow row and takes the full width
+there (`SettingFields` sizes controls by the row's own container, not the viewport), so phones need
+no separate layout. Check a new page at 390px, a laptop, 2560px, TV mode and Light.
+
+Anything personal is not a settings page: it belongs to the User entity's settings dialog, your
+profile (`UserSettingsDialog`, opened from the account menu, the command palette, a `UserIdentity`
+or any address with `?profile=<tab>`; design.md Q147). Settings › Statistics is the server-wide
+counterpart for administrators, with segment tabs over bounded tables (design.md Q150). There is no
+dashboard page.
 
 ## Tables and media compositions
 
@@ -106,7 +160,7 @@ See [responsive audit](../docs/responsive-media-audit.md) for route coverage and
 the release-source continuation limitation. Never filter a partial server batch
 while presenting it as the complete dataset.
 
-The pinned Glass dependency has a small pnpm patch at `patches/glass-ux@0.16.1.patch`: grid
+The pinned Glass dependency has a small pnpm patch at `patches/glass-ux@0.19.5.patch`: grid
 focus capture synchronizes the virtualizer's active row after native focus, retaining
 alphabet-jump and cell focus while scrolling. Its additive `infinite.revision` rearms replaced
 batches without using the semantic query key or resetting the reader, and `setDuration` lets the
@@ -198,7 +252,52 @@ results that are not in the library keep their remote URLs.
 
 ## Remote focus
 
-`lib/input-mode.tsx` owns TV behaviour; mark structure, do not script focus per page:
+`lib/input-mode.tsx` owns TV behaviour; mark structure, do not script focus per page.
+
+**What is a stop** (design.md Q141; `isRemoteStop` is the one definition). A stop is something to act on: a card, a
+row, a control.
+- **One stop per card or row.** A poster, an episode still or a table row is a single stop. Its secondary buttons
+  (play, favourite, ⋯, a checkbox, an in-cell button) are the pointer's, and their actions go in the card's menu, which
+  the remote's Menu key opens: wrap a card that has actions in `ActionContextMenu`. Inside a Glass `DataTable` this is
+  automatic. Elsewhere mark the secondary buttons `tabIndex={-1}` and `data-nav-skip`.
+- **Never a stop:**
+  - table headers (sort, column menus, resize handles, select-all);
+  - disabled controls (`disabled`, `aria-disabled`, a `disabledReason`);
+  - decoration, labels, badges, and the anchor of a tooltip on something that isn't a control;
+  - anything hidden, collapsed, `inert` or off screen in a closed panel (unmount it or make it `inert`);
+  - a field's own −/+ or clear buttons.
+- **Sorting:** on a TV a table's toolbar carries a sort menu (`DataTableRemoteContext`, provided by `InputModeProvider`).
+  Don't make a header reachable to get it.
+- **Cards that can't act now:** a card worth reading that can't act right now stays a stop and says why. Don't set
+  `aria-disabled` on it.
+- **Dense control rows** (filters, toolbars): put the controls in one row, so Left/Right walk the row and Up/Down move
+  between rows. Composites own only their own axis. Selects, ⋯ menus and horizontal sliders let Up/Down pass in TV mode
+  (OK opens or adjusts them), and nothing ever traps.
+- **Reading:** when nothing lies further down, Down scrolls the page, so a summary or a chart below the last control is
+  still readable.
+- **Test it:** `src/test/remote.ts` has `layoutColumn`, `remoteStops`, `walkRemote` and `RemoteNavigation`. Assert a new
+  page's stop list and a walk down and back up.
+
+**Back, in order** (Q142):
+1. The nearest thing that handles it: scrubbing, a number field being adjusted, the player, the now playing drawer.
+2. The topmost overlay: a menu, popover, dialog or drawer.
+3. An edit state: a search field's text.
+4. One navigation step: history, then Home. On Home the key is left alone, and the TV app exits.
+
+To react to Back, use `isBackKey(event, { tv })` from `lib/remote-back.ts` and check `backHandled(event)`, never
+`event.defaultPrevented`: a focused button's tooltip prevents Escape as it closes, and must not swallow Back. When a
+component takes Back, it calls `preventDefault()` and `stopPropagation()`.
+
+**Focus restoration** (Q143):
+- After a dialog, menu, drawer or the player closes, focus returns to the control that opened it.
+- Glass and Base UI overlays do this themselves. A custom overlay returns focus in its effect's cleanup, as the now
+  playing drawer does.
+- If the opener is gone (a menu item, a deleted row), the shell returns focus to the last control outside the overlay,
+  then to the page's `data-tv-autofocus`, then to its first stop. Focus never rests on the body.
+- Going back restores the control last used on that page (by link, table row id, label, id or button text). Give a
+  control that should come back a stable link or label.
+
+**Structure:**
 
 - `data-nav-section` on each hero/row. Up/Down moves to the nearest section, then the
   nearest row inside it; a remote reveals the whole section when it fits on screen.
@@ -210,11 +309,54 @@ results that are not in the library keep their remote URLs.
   left with Left/Right only; leaving returns to the content control left behind.
   The top bar is a zone reached by Up when content has nothing further up.
 - `data-tv-autofocus` names a page's starting control; `data-tv-skip` marks pointer
-  shortcuts (a tile's play button, "See all") that a remote reaches another way. The
+  shortcuts (a tile's play button, "See all") that a remote reaches another way. `data-nav-skip`
+  marks pointer-only controls (a row's scroll arrows) that arrow keys never stop on, in any
+  input mode; give them `tabIndex={-1}` too. The
   remote's Play key plays a focused tile.
-- In TV mode single-line fields, ⋯ menu buttons and horizontal tab strips never trap
-  the remote; Backspace/Escape and the webOS/Tizen Back keys go back through in-app
-  history, then Home. Focused tiles grow with a transform only.
+- In TV mode single-line fields, ⋯ menu buttons, selects, horizontal sliders and horizontal tab
+  strips never trap the remote. Back follows the order above. Focused tiles grow with a transform only.
+- TV mode trims the app chrome: the top bar loses search, Commands, Cast and the account (the
+  rail has Search; the account is its last item, opening the same menu beside the rail; casting
+  is in the players' own controls) and keeps the breadcrumbs. Every scroller that clips (a rail's
+  list, a poster row) pads its ends by `--focus-reach` so the first and last item's ring is
+  never cut off; pad or `scroll-padding`, do not remove the clip.
+- A number field (Glass `NumberField`) never traps Up/Down in TV mode either; OK on it starts an
+  adjusting state (`data-tv-adjusting`) in which Up/Down step the value, and OK or Back ends it
+  (design.md Q107).
+- **Media keys** (`MediaPlayPause`, `MediaPlay`, `MediaPause`, `MediaStop`, `MediaTrackNext`,
+  `MediaTrackPrevious`, `MediaFastForward`, `MediaRewind`) are handled once, in
+  `features/player/mediaKeys.ts`, on the window before any control: they work wherever focus is.
+  They go to the video player while it holds the screen, otherwise to the audio player. Do not
+  handle them in a component; a player registers what it offers (`videoKeyTarget`, `audioScrub`).
+- **Now playing:** on a TV the rail's first entry is what is playing (artwork and title) while
+  anything is playing or paused. It, the remote's **Info** key and **N** on a keyboard
+  (`nowPlaying.tsx`) open the video player, or the now playing drawer with Play/Pause focused.
+  Starting audio on a TV (an album, a track, a book, a playlist, Play next with nothing playing)
+  opens the drawer the same way; Add to queue does not. Back (Escape) collapses it and returns
+  focus to the control that opened it; Back or Up from the bar returns to the page control focus
+  came from. The bar is never a trap.
+- **Scrubbing:** on a seek bar, or the video picture with its controls hidden, Left/Right (and
+  Rewind/Fast-forward from anywhere) move a target with a preview (time, delta, storyboard tile,
+  chapter), faster while held: 10 s, then 30 s, then a minute or two. OK seeks, a pause of 0.7 s
+  seeks, Back puts it back; it is one seek, however many presses. Up/Down leave the bar (mark a
+  slider `data-owns-horizontal` for that). A non-modal dialog (`aria-modal="false"`) does not hold
+  the arrows.
+
+- The Android TV app (`LibrarianTV` in the user agent, `lib/tv-app.ts`, design.md Q137–Q139)
+  is always in TV mode, and the shell sets its viewport to 1920 CSS px wide; never write the
+  viewport meta from the page. Its remote's Back, Menu, Info, Guide and media buttons arrive as
+  standard `GoBack`, `ContextMenu`, `Info`, `Guide` and `Media*` key events (the table is in
+  design.md Q137), so handle those rather than Android key codes. In the TV app the player's volume
+  is the TV's (`bindTvVolume`). Handle `GoBack` with `preventDefault()`; otherwise the shell also steps back.
+  `[data-tv-app]` (`styles/tv-app.css`) drops costly effects on budget TVs: a new full-screen
+  blur, mask, shadow or animation needs a rule there too.
+
+- **One highlight.** Keyboard focus and mouse hover never highlight two items at once: the input used
+  last owns it (`data-last-input`, `lib/pointer-focus.ts`). Style hover under
+  `:root:not([data-last-input="keys"])` and focus rings under `:root:not([data-last-input="pointer"])`;
+  in TV mode hover moves focus, so style `:focus-within` only (design.md Q144). Glass's own
+  DataTable row hover fill is dropped after a key press (`styles/overrides.css`): since 0.19.5 it
+  snaps on, so rows the remote scrolls under a resting cursor would each flash.
 
 ## Motion
 

@@ -230,7 +230,7 @@ all route bindings and feature consumers.
 | StatTile | Metric/DetailTile; supply a definite height and real values/series. |
 | KeyValueList, MetaLine | FactList/DetailGrid, semantic metadata and ChipOverflow where appropriate. |
 | SegmentTabs, SideTabs | RouteTabs/RouteVerticalTabs for routes; Tabs/Segmented for controlled local state. |
-| ThemePicker | SwatchPicker plus appearance controls. |
+| ThemePicker | Segmented Dark/Light and a Blur switch; every other appearance knob is locked. |
 | SkeletonBlock/Text/Card/Row/Grid/Hero | Packaged skeletons plus host media-shaped skeleton compositions. |
 | BrandMark | Configure product brand assets; retain existing artwork, PWA icons and wordmark. |
 | PageHeader, Section, Toolbar | Prefer EntityHeader/ActionBar where meaningful, otherwise simple host semantic layout. Remove duplicate visible route headings. |

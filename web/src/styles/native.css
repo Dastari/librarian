@@ -1,0 +1,22 @@
+/*
+ * Native-app behaviour for touch devices and the installed (Home Screen) app. Glass already clears
+ * the tap highlight, text-size inflation and overscroll bounce; these are the rest.
+ */
+
+/* No double-tap zoom: it leaves an installed app stuck magnified, which reads as a stretched page.
+ * Panning and pinching still work. */
+html { touch-action: manipulation; }
+
+/* Touch: the keyboard hint on the search field means nothing without a keyboard to press it. */
+:root[data-input-mode="touch"] .fa-shell-search-kbd { display: none; }
+
+/* Installed on a touch device the chrome behaves like an app's: pressing and holding a control,
+ * a link or artwork does not select it or raise the browser's callout. Text you can read and
+ * every field stay selectable. */
+@media (display-mode: standalone) and (pointer: coarse) {
+  :where(button, [role="button"], [role="tab"], [role="menuitem"], nav, img, a) {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}

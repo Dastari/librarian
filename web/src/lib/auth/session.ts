@@ -16,7 +16,8 @@ import { CurrentUserDocument, LogoutDocument, RefreshSessionDocument } from "@/g
 import type { CurrentUserQuery } from "@/graphql/generated/graphql";
 import { isUnauthorizedError } from "@/lib/graphql/errors";
 
-export type SessionUser = NonNullable<CurrentUserQuery["me"]>;
+/** The account; the photo marker is known once `me` has been read (a sign-in answer has none). */
+export type SessionUser = Omit<NonNullable<CurrentUserQuery["me"]>, "avatarUrl"> & { avatarUrl?: string | null };
 export type SessionStatus = "booting" | "anonymous" | "authenticated";
 
 export interface SessionState {

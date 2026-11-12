@@ -177,9 +177,18 @@ async fn seeds_and_downloads_over_loopback_then_payload_deletion_spares_the_hard
         downloaded.display(),
         elapsed
     );
+    // Progress reaches 100% when the pieces are verified, which can be a moment before the
+    // writes land on disk: wait for the payload to read back in full before comparing.
+    let mut on_disk = std::fs::read(&downloaded).expect("read downloaded payload");
+    for _ in 0..100 {
+        if on_disk == payload {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        on_disk = std::fs::read(&downloaded).expect("read downloaded payload");
+    }
     assert_eq!(
-        std::fs::read(&downloaded).expect("read downloaded payload"),
-        payload,
+        on_disk, payload,
         "downloaded bytes differ from the seeded payload"
     );
 

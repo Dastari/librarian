@@ -5,6 +5,18 @@ fragment PersonFields on Person {
   tmdbPersonId
   name
   profileUrl
+  imdbId
+  musicbrainzArtistId
+  wikidataId
+  nameKey
+  biography
+  birthday
+  deathday
+  placeOfBirth
+  knownForDepartment
+  alsoKnownAs
+  imageUrls
+  detailsFetchedAt
   createdAt
   updatedAt
 }

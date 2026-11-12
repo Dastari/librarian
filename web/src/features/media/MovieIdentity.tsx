@@ -1,0 +1,76 @@
+import type { ActionSet } from "glass-ux/actions";
+import { EntityIdentity, type EntityIdentityProps, type EntityTierProp } from "glass-ux/entity";
+import type { ReactNode } from "react";
+
+import { moviePoster } from "@/lib/artwork";
+import { sizedArtwork } from "@/lib/api/urls";
+import { ArtGlyph, ArtImage } from "@/components/entities/ArtGlyph";
+import { ENTITY_KINDS } from "@/lib/entities/kinds";
+import { formatRuntime } from "@/lib/format";
+import { statusMeta, type StatusMeta } from "@/lib/status";
+
+import { mediaEntityState } from "./entity/mediaState";
+
+export interface MovieEntity {
+  id: string;
+  title: string;
+  libraryId: string;
+  userId: string;
+  year?: number | null;
+  runtime?: number | null;
+  certification?: string | null;
+  imdbId?: string | null;
+  mediaFileId?: string | null;
+  hasFile: boolean;
+  wanted: boolean;
+  monitored: boolean;
+}
+
+/** Whether it's here, wanted or neither, for wherever the live status isn't loaded. */
+const statusOf = (movie: MovieEntity): StatusMeta => statusMeta(movie.hasFile ? "AVAILABLE" : movie.wanted ? "WANTED" : "MISSING");
+
+/**
+ * A movie wherever it's named in a list or a heading: its poster or glyph with a state dot, then
+ * its year, length and rating. Poster grids draw posters instead, with the same state and actions.
+ */
+/** What MovieIdentity draws, for surfaces that take an identity's props (a settings dialog's header). */
+export function movieIdentityProps<T extends MovieEntity>(movie: T, { actions, status }: {
+  /** Its live status, where it's loaded. */
+  status?: StatusMeta;
+  actions?: ActionSet<T>;
+} = {}): EntityIdentityProps<T> {
+  return {
+    kind: ENTITY_KINDS.movie.noun,
+    name: movie.title,
+    icon: <ArtGlyph src={sizedArtwork(moviePoster(movie.id), 96)} fallback={<ENTITY_KINDS.movie.icon />} shape="poster" />,
+    image: <ArtImage src={sizedArtwork(moviePoster(movie.id), 120)} fallback={<ENTITY_KINDS.movie.icon />} />,
+    state: mediaEntityState(status ?? statusOf(movie)),
+    facts: [movie.year ? String(movie.year) : "", movie.runtime ? formatRuntime(movie.runtime, "minutes") : "", movie.certification ?? ""],
+    target: movie,
+    actions,
+  };
+}
+
+export function MovieIdentity<T extends MovieEntity>({ movie, tier = "row", status, actions, headerActions, heading, className, onOpen }: {
+  movie: T;
+  tier?: EntityTierProp;
+  /** Its live status, where it's loaded. */
+  status?: StatusMeta;
+  actions?: ActionSet<T>;
+  /** What sits at the end of the header, in place of its own action buttons. */
+  headerActions?: ReactNode;
+  heading?: "h1" | "h2" | "h3" | "h4" | "p";
+  className?: string;
+  onOpen?: () => void;
+}) {
+  return (
+    <EntityIdentity
+      {...movieIdentityProps(movie, { actions, status })}
+      tier={tier}
+      heading={heading}
+      className={className}
+      slots={headerActions ? { actions: headerActions } : undefined}
+      onOpen={onOpen}
+    />
+  );
+}

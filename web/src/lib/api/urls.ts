@@ -1,24 +1,43 @@
+import { isConstrainedDevice } from "@/lib/tv-app";
+
 /**
  * REST endpoints that sit beside GraphQL: artwork, media streaming and health.
  * The browser always talks to the same origin; the dev server proxies to the backend.
  */
 
-export type ArtworkEntity = "movie" | "show" | "season" | "episode" | "album" | "artist" | "audiobook" | "collection" | "person" | "guide" | "provider-movie" | "provider-show" | "provider-audiobook" | "provider-episode";
-export type ArtworkKind = "poster" | "backdrop" | "banner" | "cover" | "profile" | "thumbnail";
+import { artworkRevision } from "@/lib/artworkRevisions";
 
+export type ArtworkEntity = "movie" | "show" | "season" | "episode" | "album" | "artist" | "audiobook" | "playlist" | "collection" | "person" | "guide" | "provider-movie" | "provider-show" | "provider-audiobook" | "provider-episode" | "user";
+export type ArtworkKind = "poster" | "backdrop" | "banner" | "cover" | "profile" | "thumbnail" | "logo" | "avatar";
+
+/**
+ * A cached picture's address. A picture changed on this device (chosen or uploaded) carries its
+ * revision (`?v=`), so the browser fetches the new one at once instead of its cached copy.
+ */
 export function artworkUrl(entity: ArtworkEntity, id: string | number, kind: ArtworkKind): string {
-  return `/api/artwork/${entity}/${encodeURIComponent(String(id))}/${kind}`;
+  const url = `/api/artwork/${entity}/${encodeURIComponent(String(id))}/${kind}`;
+  const revision = artworkRevision(entity, String(id));
+  return revision ? `${url}?v=${revision}` : url;
 }
+
+/** Widest artwork a constrained device asks for (a full-screen backdrop on a 1080p TV). */
+export const CONSTRAINED_MAX_ARTWORK_WIDTH = 1280;
 
 /**
  * Ask the artwork cache for a stored copy close to the displayed size. The server snaps the
  * width to a small set of steps and never upscales, so the result is cacheable everywhere.
  * Only local cache URLs are resized; anything else is returned unchanged.
+ *
+ * In the TV app and on 2 GB devices every decoded picture costs memory the player needs, so
+ * artwork is fetched at one pixel per CSS pixel, at most 1280 wide, and unsized artwork (a
+ * backdrop) gets that cap too (Q139).
  */
-export function sizedArtwork(url: string | undefined, displayWidth: number | undefined): string | undefined {
-  if (!url || !displayWidth || !url.startsWith("/api/artwork/") || url.includes("?")) return url;
+export function sizedArtwork(url: string | undefined, displayWidth: number | undefined, constrained: boolean = isConstrainedDevice()): string | undefined {
+  if (!url || !url.startsWith("/api/artwork/") || /[?&]w=/.test(url)) return url;
+  if (constrained) return `${url}${url.includes("?") ? "&" : "?"}w=${Math.min(CONSTRAINED_MAX_ARTWORK_WIDTH, Math.round(displayWidth ?? CONSTRAINED_MAX_ARTWORK_WIDTH))}`;
+  if (!displayWidth) return url;
   const density = typeof window === "undefined" ? 1 : Math.min(window.devicePixelRatio || 1, 2);
-  return `${url}?w=${Math.round(displayWidth * density)}`;
+  return `${url}${url.includes("?") ? "&" : "?"}w=${Math.round(displayWidth * density)}`;
 }
 
 /**
@@ -66,12 +85,16 @@ export interface PlaybackSource {
 }
 
 /** Resolve the authorised playback decision before attaching a media element. */
-export async function resolvePlaybackSource(mediaFileId: string, signal?: AbortSignal, options?: { audioStreamIndex?: number }): Promise<PlaybackSource> {
-  const query = options?.audioStreamIndex === undefined ? "" : `?audioStream=${encodeURIComponent(options.audioStreamIndex)}`;
+export async function resolvePlaybackSource(mediaFileId: string, signal?: AbortSignal, options?: { audioStreamIndex?: number; burnSubtitleId?: string }): Promise<PlaybackSource> {
+  const params = new URLSearchParams();
+  if (options?.audioStreamIndex !== undefined) params.set("audioStream", String(options.audioStreamIndex));
+  if (options?.burnSubtitleId) params.set("burnSubtitle", options.burnSubtitleId);
+  const query = params.size ? `?${params.toString()}` : "";
   const response = await fetch(`${mediaInfoUrl(mediaFileId)}${query}`, { credentials: "include", signal });
   if (!response.ok) {
     if (response.status === 401) throw new Error("Your session ended. Sign in to continue playback.");
     if (response.status === 403 || response.status === 404) throw new Error("This media file is unavailable or you no longer have access to it.");
+    if (response.status === 415 || response.status === 422) throw new Error("That subtitle cannot be burned into this file. Choose another or turn it off.");
     throw new Error("The server could not prepare this file. Retry playback.");
   }
   const info = (await response.json()) as MediaInfo;

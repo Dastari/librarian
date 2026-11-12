@@ -6,6 +6,17 @@
 
 /* Layout helpers shared by every page. */
 
+/* Settings pages made of setting rows read at a limited measure, left-aligned with the
+ * page; tables on the same page keep the full width (web/STYLE_GUIDE.md, Settings pages). */
+:root {
+  --settings-measure: 52rem;
+}
+
+@utility settings-measure {
+  width: 100%;
+  max-width: var(--settings-measure);
+}
+
 @utility page-gutter {
   padding-inline: calc(var(--page-gutter) + var(--safe-left)) calc(var(--page-gutter) + var(--safe-right));
 }
@@ -66,10 +77,6 @@
   mask-image: linear-gradient(180deg, #000 60%, transparent 100%);
 }
 
-@utility mask-fade-x {
-  mask-image: linear-gradient(90deg, transparent 0, #000 var(--page-gutter), #000 calc(100% - var(--page-gutter)), transparent 100%);
-}
-
 @utility text-shadow-hero {
   text-shadow: 0 2px 24px oklch(0 0 0 / 0.6), 0 1px 2px oklch(0 0 0 / 0.5);
 }
@@ -103,10 +110,12 @@
     var(--background);
 }
 
-/* Library tiles: fluid columns capped so a two-library server does not get half-screen cards. */
+/* Library tiles: as many columns of at least 19rem as fit, sharing the row between them, so a tablet
+ * pane fills with three tiles instead of two fixed-width ones and a dead strip. `auto-fill` keeps
+ * empty tracks, so a two-library server still gets tile-sized cards, not half-screen ones. */
 @utility library-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 22rem));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr));
   gap: 1rem;
 }
 

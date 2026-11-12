@@ -367,6 +367,15 @@ async fn library_reassignment_cannot_write_foreign_progress_even_after_a_status_
             avatar_url: None,
             is_active: true,
             last_login_at: None,
+            phone: None,
+            genre_interests: None,
+            must_change_password: false,
+            two_factor_enabled_at: None,
+            recovery_codes_remaining: 0,
+            password_changed_at: None,
+            totp_secret: None,
+            totp_pending_secret: None,
+            recovery_codes: None,
         },
     )
     .await
@@ -957,7 +966,7 @@ mod generated_writes {
         async fn devices(&self) -> Vec<Value> {
             let response = self
                 .run(
-                    "{ castDevices { edges { node { id name address port deviceType isFavorite lastSeenAt } } } }",
+                    "{ castDevices { edges { node { id name address port deviceType isFavorite lastSeenAt manufacturer receiverId nameIsCustom discoveryDetails } } } }",
                     json!({}),
                 )
                 .await;
@@ -1227,6 +1236,9 @@ mod generated_writes {
             model: None,
             device_type,
             last_seen_at: chrono::Utc::now().to_rfc3339(),
+            manufacturer: None,
+            receiver_id: None,
+            details: None,
         };
         let actor = AuthUser::system_admin();
         // No model recognised: persisted as UNKNOWN, which the rules must allow.
@@ -1260,6 +1272,60 @@ mod generated_writes {
         assert_eq!(devices[0]["name"], "Hall speaker");
         assert_eq!(devices[0]["deviceType"], "CHROMECAST_AUDIO");
         assert_eq!(devices[0]["isFavorite"], false);
+        r.services.stop_all().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn discovery_keeps_a_chosen_name_and_follows_a_receiver_to_its_new_address() {
+        let r = Real::new().await;
+        let actor = AuthUser::system_admin();
+        let samsung = |address: &str| DiscoveredCastDevice {
+            name: "Samsung 8 Series (55)".into(),
+            address: address.into(),
+            port: 9197,
+            model: Some("UA55KS8000".into()),
+            device_type: CastDeviceType::DlnaRenderer,
+            last_seen_at: chrono::Utc::now().to_rfc3339(),
+            manufacturer: Some("Samsung Electronics".into()),
+            receiver_id: Some("uuid:a32ea4b3".into()),
+            details: Some(
+                r#"{"protocol":"dlna","reportedName":"[TV] Samsung 8 Series (55)"}"#.into(),
+            ),
+        };
+        persist_discovered_device(&r.services, &actor, &samsung("10.0.1.223"))
+            .await
+            .unwrap();
+        let devices = r.devices().await;
+        assert_eq!(devices.len(), 1, "{devices:?}");
+        assert_eq!(devices[0]["name"], "Samsung 8 Series (55)");
+        assert_eq!(devices[0]["manufacturer"], "Samsung Electronics");
+        assert_eq!(devices[0]["receiverId"], "uuid:a32ea4b3");
+        assert_eq!(devices[0]["nameIsCustom"], false);
+        assert!(
+            devices[0]["discoveryDetails"]
+                .as_str()
+                .unwrap()
+                .contains("reportedName")
+        );
+
+        // An administrator renames it; the next discovery keeps that name.
+        let id = devices[0]["id"].as_str().unwrap().to_string();
+        let response = r
+            .run(
+                "mutation($id: String!) { updateCastDevice(id: $id, input: { name: \"Lounge TV\", nameIsCustom: true }) { success error } }",
+                json!({ "id": id }),
+            )
+            .await;
+        assert!(response.errors.is_empty(), "{response:?}");
+        // Its address changes: the receiver id finds the same row.
+        persist_discovered_device(&r.services, &actor, &samsung("10.0.1.224"))
+            .await
+            .unwrap();
+        let devices = r.devices().await;
+        assert_eq!(devices.len(), 1, "{devices:?}");
+        assert_eq!(devices[0]["id"], id.as_str());
+        assert_eq!(devices[0]["name"], "Lounge TV");
+        assert_eq!(devices[0]["address"], "10.0.1.224");
         r.services.stop_all().await.unwrap();
     }
 

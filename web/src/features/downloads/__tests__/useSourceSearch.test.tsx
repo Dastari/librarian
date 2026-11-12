@@ -10,7 +10,7 @@ type Source = SearchSourcesQuery["searchSources"]["sources"][number];
 type Release = Source["releases"][number];
 const release = (stableId: string, title = stableId) => ({ stableId, title } as Release);
 const source = (sourceId: string, releases: Release[], overrides: Partial<Source> = {}): Source => ({
-  sourceId, sourceName: sourceId, releases, elapsedMs: 1, fromCache: false, error: null,
+  sourceId, sourceName: sourceId, releases, elapsedMs: 1, fromCache: false, fromFeed: false, error: null,
   pageInfo: { support: "SUPPORTED", state: "UNKNOWN", hasMore: null, nextCursor: "opaque", retryCursor: null, returnedCount: releases.length },
   ...overrides,
 });

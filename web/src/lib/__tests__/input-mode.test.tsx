@@ -3,11 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { Select } from "glass-ux/select";
 import { Dialog } from "glass-ux/dialog";
 import { Segmented } from "glass-ux/segmented";
+import { TagInput } from "glass-ux/tag-input";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GlassSegmented } from "@/components/ui/GlassControls";
 
-import { InputModeProvider, useInputMode, useSpatialNavigation, type InputMode } from "../input-mode";
+import { findNext, InputModeProvider, useInputMode, useSpatialNavigation, type InputMode } from "../input-mode";
 
 const realMatchMedia = window.matchMedia;
 
@@ -75,14 +76,10 @@ describe("input mode", () => {
     expect(screen.getByTestId("mode")).toHaveTextContent("tv");
   });
 
-  it("promotes to TV after repeated arrow presses and returns to pointer on a mouse press", () => {
+  it("stays in pointer mode however many arrow keys are pressed", () => {
     setCoarsePointer(false);
     mount();
-    for (let press = 0; press < 6; press += 1) act(() => void fireEvent.keyDown(window, { key: "ArrowDown" }));
-    expect(screen.getByTestId("mode")).toHaveTextContent("tv");
-    // Note: the arrow counter lives inside the effect, so it resets when `detected` changes and
-    // the `arrowPresses < 6` guard in the pointer handler never holds. Any mouse press demotes.
-    act(() => void fireEvent.pointerDown(window, { pointerType: "mouse" }));
+    for (let press = 0; press < 20; press += 1) act(() => void fireEvent.keyDown(window, { key: "ArrowRight" }));
     expect(screen.getByTestId("mode")).toHaveTextContent("pointer");
   });
 
@@ -141,6 +138,17 @@ function GlassSpatialFixture({ overlay }: { overlay: boolean }) {
       ) : (
         <GlassSegmented ariaLabel="View" value="list" onChange={() => {}} items={[{ key: "list", label: "List" }, { key: "grid", label: "Grid" }]} />
       )}
+    </main>
+  );
+}
+
+function TagFixture() {
+  useSpatialNavigation(true, true);
+  return (
+    <main>
+      <button type="button" data-testid="above">Above</button>
+      <TagInput aria-label="Languages" defaultValue={["en"]} suggestions={[{ value: "en", label: "English" }, { value: "de", label: "German" }]} />
+      <button type="button" data-testid="beneath">Beneath</button>
     </main>
   );
 }
@@ -216,6 +224,21 @@ describe("spatial navigation", () => {
     expect(list).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("lets the remote leave a tag field with its list closed, up and down", () => {
+    window.localStorage.setItem("librarian.inputMode", "tv");
+    render(<InputModeProvider><TagFixture /></InputModeProvider>);
+    const above = position("above", { x: 0, y: 0 });
+    const beneath = position("beneath", { x: 0, y: 200 });
+    const field = screen.getByRole("combobox", { name: "Languages" });
+    field.getBoundingClientRect = () => ({ x: 0, y: 100, left: 0, top: 100, right: 40, bottom: 120, width: 40, height: 20, toJSON: () => ({}) }) as DOMRect;
+    field.focus();
+    fireEvent.keyDown(field, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(beneath);
+    field.focus();
+    fireEvent.keyDown(field, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(above);
+  });
+
   it("moves focus to the nearest element in the pressed direction", () => {
     window.localStorage.setItem("librarian.inputMode", "tv");
     render(<InputModeProvider><SpatialFixture /></InputModeProvider>);
@@ -237,6 +260,25 @@ describe("spatial navigation", () => {
 
     fireEvent.keyDown(window, { key: "ArrowUp" });
     expect(document.activeElement).toBe(left);
+  });
+
+  it("moves to the next card in a row past the row's scroll arrow, even off screen", () => {
+    render(
+      <div role="list" data-nav-group>
+        <a href="/a" data-testid="card-a">A</a>
+        <a href="/b" data-testid="card-b">B</a>
+        <button type="button" tabIndex={-1} data-nav-skip data-testid="row-next">Next items</button>
+      </div>,
+    );
+    const box = (testId: string, x: number, width: number) => {
+      const element = screen.getByTestId(testId);
+      element.getBoundingClientRect = () => ({ x, y: 0, left: x, top: 0, right: x + width, bottom: 300, width, height: 300, toJSON: () => ({}) }) as DOMRect;
+      return element;
+    };
+    const a = box("card-a", 0, 200);
+    const b = box("card-b", 1300, 200);
+    box("row-next", 1100, 40);
+    expect(findNext(a, "ArrowRight")).toBe(b);
   });
 
   it("leaves text fields, modified keys and ignored regions alone", () => {

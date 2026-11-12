@@ -20,10 +20,9 @@ describe("library types", () => {
     expect(LIBRARY_TYPES.other.label).toBe("Files");
   });
 
-  it("gives every type a tint, an icon and a matching key", () => {
+  it("gives every type a placeholder tint, an icon and a matching key", () => {
     for (const [key, meta] of Object.entries(LIBRARY_TYPES)) {
       expect(meta.type).toBe(key);
-      expect(meta.tint).toContain("text-media-");
       expect(meta.tintVar).toMatch(/^var\(--media-/);
       expect(typeof meta.icon).not.toBe("undefined");
     }

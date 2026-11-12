@@ -1,6 +1,6 @@
 import { copyText } from "glass-ux/copy-button";
 import { useApolloClient, useMutation } from "@apollo/client/react";
-import { ActionBar, ActionMenu, defineActions, type ActionSet } from "glass-ux/actions";
+import { ActionBar, ActionContextMenu, ActionMenu, defineActions, type ActionSet } from "glass-ux/actions";
 import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, filters, NumericCell, TextCell, TwoLineCell } from "glass-ux/data-table";
 import { IconBookmark, IconCheck, IconCopy, IconDownload, IconEye, IconEyeOff, IconPlay } from "glass-ux/icons";
@@ -8,17 +8,23 @@ import { MeterCell } from "glass-ux/meter-cell";
 import { Progress } from "glass-ux/progress";
 import { Surface } from "glass-ux/surface";
 import { toast } from "glass-ux/toast";
-import { createContext, useContext, useCallback, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { Artwork } from "@/components/ui/Artwork";
 import { MediaRow } from "@/components/ui/MediaRow";
 import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
+import { useTitleCredits } from "@/features/people/CastAndCrew";
+import { castOf, crewLine } from "@/features/people/credits";
+import { useArtworkAction } from "@/features/artwork/useArtworkAction";
 import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
+import { FindReleasesButton } from "@/features/recommendations/FindReleasesButton";
+import { useRecommended } from "@/features/recommendations/useRecommended";
 import { EntityEpisodeUpdateDocument, EntityEpisodeUpdateManyDocument, type PlaybackProgressFieldsFragment, type UpdateEpisodeInput } from "@/graphql/generated/graphql";
 import { episodeThumb } from "@/lib/artwork";
+import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
-import { formatBytes, formatDate } from "@/lib/format";
+import { formatDate } from "@/lib/format";
 import { activeContentStatusQueries } from "@/lib/graphql/content-status";
 import { assertSuccess } from "@/lib/graphql/errors";
 import { contentStatusMeta, type ContentStatusMap } from "@/hooks/useContentStatuses";
@@ -26,8 +32,15 @@ import { qualityStatus, statusMeta } from "@/lib/status";
 
 import { groupBySeason, type SeasonGroup } from "./seasons";
 import type { EpisodeRow } from "./ShowPage";
+import { filesWithProgress, resetProgressAction, useResetProgress, type ProgressReset } from "./progressReset";
+import { episodePlayItem } from "@/features/player/playItems";
+import { useQueueActions } from "@/features/player/queueActions";
+import type { PlayItem } from "@/features/player/store";
+import { noRowMenu, RowActions, type RowPlayState } from "./RowPlayAction";
 
 interface EpisodeListProps {
+  /** An episode to bring into view and mark. */
+  focusEpisodeId?: string;
   episodes: EpisodeRow[];
   statuses: ContentStatusMap;
   progressByFile: Map<string | null | undefined, PlaybackProgressFieldsFragment>;
@@ -39,6 +52,8 @@ interface EpisodeListProps {
   showId: string;
   showName: string;
   libraryId: string;
+  /** Whose show this is: only its owner can add its episodes to a playlist. */
+  ownerId?: string;
   /** Called after a bulk or single update so the parent can refetch. */
   onChanged?: () => void;
   /** `row` is the watching view (a row of stills); `table` is the management view. */
@@ -60,7 +75,12 @@ interface EpisodePresentation {
   actions: ActionSet<EpisodeRow>;
   statuses: ContentStatusMap;
   progressByFile: EpisodeListProps["progressByFile"];
+  playEpisode: (episode: EpisodeRow) => void;
+  wantEpisode?: (episode: EpisodeRow) => Promise<unknown>;
   playbackUnavailable?: string;
+  /** Marks a whole season unwatched, from its header. */
+  seasonReset: ProgressReset<SeasonGroup<EpisodeRow>>;
+  resetFiles: (mediaFileIds: readonly string[]) => Promise<void>;
 }
 const EpisodePresentationContext = createContext<EpisodePresentation | null>(null);
 const useEpisodePresentation = () => {
@@ -82,12 +102,22 @@ function EpisodeProgressCell({ row }: EpisodeCellProps) {
   const fraction = saved.isWatched ? 1 : saved.duration && saved.duration > 0 ? Math.max(0, Math.min(1, saved.currentPosition / saved.duration)) : 0;
   return <MeterCell label={`Playback progress for ${episodeCode(row.original)}`} value={fraction * 100} max={100} valueText={saved.isWatched ? "Watched" : `${Math.round(fraction * 100)}%`} warningAt={2} dangerAt={2} tone="data" />;
 }
-function EpisodeActionsCell({ row }: EpisodeCellProps) {
-  const { actions } = useEpisodePresentation();
-  return <ActionBar set={actions} targets={[row.original]} label={episodeLabel(row.original)} maxButtons={3} className="table-row-actions" />;
+function EpisodeActionsCell({ row: { original: episode } }: EpisodeCellProps) {
+  const { actions, progressByFile, playbackUnavailable, playEpisode, wantEpisode } = useEpisodePresentation();
+  const saved = episode.mediaFileId ? progressByFile.get(episode.mediaFileId) : undefined;
+  const state: RowPlayState = saved?.isWatched ? "finished" : saved && saved.currentPosition > 0 ? "resume" : "ready";
+  return (
+    <RowActions
+      set={actions}
+      target={episode}
+      label={episodeLabel(episode)}
+      play={episode.mediaFileId ? { state, onPress: () => playEpisode(episode), disabledReason: playbackUnavailable ?? undefined } : undefined}
+      want={wantEpisode && !episode.mediaFileId && !episode.ignored ? { wanted: episode.wanted, onPress: () => wantEpisode(episode) } : undefined}
+    />
+  );
 }
 
-function createEpisodeColumns(isAdmin: boolean) {
+function createEpisodeColumns() {
     const col = createDataTableColumns<EpisodeRow>();
     return col.columns([
       col.accessor("title", {
@@ -115,7 +145,7 @@ function createEpisodeColumns(isAdmin: boolean) {
         cell: ({ row }) => {
           const file = row.original.mediaFile;
           if (!file) return <TextCell muted>{row.original.mediaFileId ? "File linked" : "No file"}</TextCell>;
-          return <TwoLineCell title={[file.resolution, file.videoCodec?.toUpperCase(), formatBytes(file.size)].filter(Boolean).join(" · ")} subtitle={qualityStatus(file.qualityStatus).label} />;
+          return <TwoLineCell title={[file.resolution, file.videoCodec?.toUpperCase()].filter(Boolean).join(" · ")} subtitle={qualityStatus(file.qualityStatus).label} />;
         },
       }),
       col.display({
@@ -125,7 +155,7 @@ function createEpisodeColumns(isAdmin: boolean) {
       // A real column keeps promoted actions visible without relying on the table's
       // hover-enhanced trailing menu; priority 1 keeps them in responsive cards too.
       col.display({
-        id: "episodeActions", header: "Actions", priority: 1, width: isAdmin ? 21 : 6, minWidth: isAdmin ? 18 : 5, hideable: false, grow: false,
+        id: "episodeActions", header: "", priority: 1, width: 7, minWidth: 6, hideable: false, grow: false,
         cell: EpisodeActionsCell,
       }),
       col.accessor("overview", {
@@ -134,18 +164,49 @@ function createEpisodeColumns(isAdmin: boolean) {
       }),
     ]);
 }
-const adminColumns = createEpisodeColumns(true);
-const memberColumns = createEpisodeColumns(false);
+const episodeColumns = createEpisodeColumns();
 
 /** Season tables over the parent-owned episode query, playback and acquisition handlers. */
-export function EpisodeList({ episodes, statuses, progressByFile, loading, complete = true, status, playbackUnavailable, onPlay, showId, showName, libraryId, onChanged, view = "table", tint, headerExtra }: EpisodeListProps) {
+export function EpisodeList({ focusEpisodeId, episodes, statuses, progressByFile, loading, complete = true, status, playbackUnavailable, onPlay, showId, showName, libraryId, ownerId, onChanged, view = "table", tint, headerExtra }: EpisodeListProps) {
   const client = useApolloClient();
   const isAdmin = useIsAdmin();
   const { user } = useSession();
+  // A link to an episode lands on it: its row scrolls into view and stays marked for a moment.
+  const focusLoaded = Boolean(focusEpisodeId) && episodes.some((episode) => episode.id === focusEpisodeId);
+  useEffect(() => {
+    if (!focusEpisodeId || !focusLoaded) return;
+    // The table draws its rows a moment after the episodes arrive.
+    let tries = 0;
+    let clear: ReturnType<typeof setTimeout> | undefined;
+    const look = setInterval(() => {
+      const row = document.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(focusEpisodeId)}"]`);
+      if (!row && ++tries < 40) return;
+      clearInterval(look);
+      if (!row) return;
+      row.scrollIntoView({ block: "center", inline: "center" });
+      row.classList.add("episode-focus");
+      clear = setTimeout(() => row.classList.remove("episode-focus"), 4000);
+    }, 100);
+    return () => { clearInterval(look); if (clear) clearTimeout(clear); };
+  }, [focusEpisodeId, focusLoaded]);
   const [updateEpisode] = useMutation(EntityEpisodeUpdateDocument, { refetchQueries: () => activeContentStatusQueries(client) });
   const [updateEpisodes] = useMutation(EntityEpisodeUpdateManyDocument, { refetchQueries: () => activeContentStatusQueries(client) });
+  const resetProgress = useResetProgress();
+  const episodePlaylist = useAddToPlaylist<EpisodeRow>({
+    targetsOf: (rows) => rows.map((row) => ({ kind: "episode" as const, id: row.id })),
+    titleOf: (rows) => playlistTitle(rows, rows[0]!.title ?? `Episode ${rows[0]!.episode}`, episodeNoun),
+    allowed: () => Boolean(user) && ownerId === user?.id,
+    bulk: true,
+    priority: 3,
+  });
   const [searching, setSearching] = useState<EpisodeRow | null>(null);
+  const episodeArtwork = useArtworkAction<EpisodeRow>({ targetOf: (episode) => ({ entityType: "EPISODE", entityId: episode.id, title: `${showName} ${episodeLabel(episode)}` }), allowed: () => isAdmin, priority: 4 });
   const groups = useMemo(() => groupBySeason(episodes), [episodes]);
+  // The show's coverage plan is shown whole above the seasons when several seasons are missing
+  // something; each season then shows its part. With one season missing, that season shows it whole.
+  // Find releases for a whole season, from its header; recommendations are listed in that dialog.
+  const [seasonSearch, setSeasonSearch] = useState<number | null>(null);
+  const findSeason = isAdmin ? (season: number) => { setSearching(null); setSeasonSearch(season); } : undefined;
   const tableScope = `episodes:${user?.id ?? "anonymous"}:${libraryId}:${showId}`;
 
   // The shared action runner owns error feedback. Reject unsuccessful payloads before
@@ -182,6 +243,20 @@ export function EpisodeList({ episodes, statuses, progressByFile, loading, compl
     } finally { onChanged?.(); }
   }, [isAdmin, updateEpisodes, showId, onChanged]);
 
+  // Only what is on this page can be reset, so an unfinished episode list or progress read waits.
+  const episodeReset = useMemo<ProgressReset<EpisodeRow>>(() => ({
+    files: (rows) => filesWithProgress(rows.map((row) => row.mediaFileId), progressByFile),
+    disabledReason: () => playbackUnavailable,
+  }), [progressByFile, playbackUnavailable]);
+  const seasonReset = useMemo<ProgressReset<SeasonGroup<EpisodeRow>>>(() => ({
+    files: (seasons) => filesWithProgress(seasons.flatMap((season) => season.episodes.map((episode) => episode.mediaFileId)), progressByFile),
+    disabledReason: () => (!complete ? "Loading the complete episode list" : playbackUnavailable),
+  }), [progressByFile, playbackUnavailable, complete]);
+  // Play next / Add to queue (the play queue): the selected episodes that have a file, in show order.
+  const queueActions = useQueueActions<EpisodeRow>((rows) => [[...rows]
+    .sort((a, b) => (a.season || Number.MAX_SAFE_INTEGER) - (b.season || Number.MAX_SAFE_INTEGER) || a.episode - b.episode)
+    .map((episode) => episodePlayItem(episode, { id: showId, name: showName }))
+    .filter((item): item is PlayItem => item !== null)], { visible: (rows) => rows.some((episode) => episode.mediaFileId), disabledReason: () => playbackUnavailable });
   const actions = useMemo(() => defineActions<EpisodeRow>("episode", [
     {
       id: "play", label: "Play", icon: IconPlay, group: "open", primary: true, bulk: true,
@@ -189,6 +264,7 @@ export function EpisodeList({ episodes, statuses, progressByFile, loading, compl
       disabledReason: () => playbackUnavailable,
       run: ([episode]) => { if (episode?.mediaFileId) onPlay(episode); },
     },
+    ...queueActions,
     {
       id: "wanted", label: ([episode]) => episode?.wanted ? "Wanted" : "Want", icon: IconBookmark, group: "manage", priority: 1, bulk: true,
       visible: (rows) => rows.length === 1 && isAdmin && Boolean(rows[0] && !rows[0].mediaFileId && !rows[0].ignored),
@@ -229,29 +305,38 @@ export function EpisodeList({ episodes, statuses, progressByFile, loading, compl
       visible: (rows) => isAdmin && rows.length > 1 && rows.some((episode) => !episode.mediaFileId && episode.ignored),
       run: (rows) => updateSelected(rows, { ignored: false }), successMessage: () => "Selected missing episodes no longer ignored",
     },
+    ...resetProgressAction("video", episodeReset, resetProgress),
+    episodePlaylist.action,
+    episodeArtwork.action,
     { id: "copy-titles", label: "Copy episode titles", icon: IconCopy, group: "organise", bulk: true,
       run: async (rows) => { await copyText(rows.map(episodeLabel).join("\n")); }, successMessage: () => "Episode titles copied" },
-  ]), [isAdmin, onPlay, update, updateSelected, playbackUnavailable]);
+  ]), [episodePlaylist.action, episodeArtwork.action, queueActions, isAdmin, onPlay, update, updateSelected, playbackUnavailable, episodeReset, resetProgress]);
 
-  const columns = isAdmin ? adminColumns : memberColumns;
-  const presentation = useMemo(() => ({ actions, statuses, progressByFile, playbackUnavailable }), [actions, statuses, progressByFile, playbackUnavailable]);
+  const columns = episodeColumns;
+  const presentation = useMemo(() => ({
+    actions, statuses, progressByFile, playbackUnavailable, seasonReset, resetFiles: resetProgress,
+    playEpisode: onPlay,
+    wantEpisode: isAdmin ? (episode: EpisodeRow) => update(episode, { wanted: !episode.wanted }) : undefined,
+  }), [actions, statuses, progressByFile, playbackUnavailable, seasonReset, resetProgress, onPlay, isAdmin, update]);
 
   if (view === "row") {
     return (
       <EpisodePresentationContext.Provider value={presentation}>
         <div className="flex min-w-0 flex-col gap-3">
           {loading ? <EpisodeRowSkeleton /> : episodes.length === 0 ? <p className="text-body-sm text-muted">No episodes in this season</p> : groups.map((group) => (
-            <EpisodeShelf key={group.season} group={group} isAdmin={isAdmin} onBulk={bulk} onPlay={onPlay} tint={tint} headerExtra={headerExtra} />
+            <EpisodeShelf key={`${group.season}:${focusEpisodeId ?? ""}`} showId={showId} onFind={findSeason} focusEpisodeId={focusEpisodeId} group={group} isAdmin={isAdmin} onBulk={bulk} onPlay={onPlay} tint={tint} headerExtra={headerExtra} />
           ))}
           {status ? <div className="text-label-sm text-muted">{status}</div> : null}
-          <ReleaseSearchDialog isOpen={Boolean(searching)} onOpenChange={(open) => !open && setSearching(null)} query={showName} season={searching?.season} episode={searching?.episode} libraryId={libraryId} target={{ showId, episodeId: searching?.id }} />
+          <ReleaseSearchDialog isOpen={Boolean(searching) || seasonSearch !== null} onOpenChange={(open) => { if (!open) { setSearching(null); setSeasonSearch(null); } }} query={showName} season={searching?.season ?? seasonSearch} episode={searching?.episode} libraryId={libraryId} target={{ showId, episodeId: searching?.id }} />
+          {episodePlaylist.dialog}
+          {episodeArtwork.dialog}
         </div>
       </EpisodePresentationContext.Provider>
     );
   }
 
   if (loading || episodes.length === 0) {
-    return <EpisodePresentationContext.Provider value={presentation}><LoadedDataTable id={`${tableScope}:empty`} label={`${showName} episodes`} rows={[]} columns={columns} getRowId={episodeId} loading={loading} status={status} height="auto" selectable actions={actions} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={episodeNoun} />} complete={complete} search={{ fields: ["title", { field: "episodeCode", value: episodeCode }], placeholder: "Search episodes" }} noun={episodeNoun} emptyMessage="No episodes in this season" defaultHiddenColumns={["overview"]} /></EpisodePresentationContext.Provider>;
+    return <EpisodePresentationContext.Provider value={presentation}><LoadedDataTable id={`${tableScope}:empty`} label={`${showName} episodes`} rows={[]} columns={columns} getRowId={episodeId} loading={loading} status={status} height="auto" selectable actions={actions} renderRowActions={noRowMenu} renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={episodeNoun} />} complete={complete} search={{ fields: ["title", { field: "episodeCode", value: episodeCode }], placeholder: "Search episodes" }} noun={episodeNoun} emptyMessage="No episodes in this season" defaultHiddenColumns={["overview"]} /></EpisodePresentationContext.Provider>;
   }
 
   return (
@@ -259,7 +344,7 @@ export function EpisodeList({ episodes, statuses, progressByFile, loading, compl
     <div className="flex min-w-0 flex-col gap-6">
       {groups.map((group) => (
         <section key={group.season} aria-label={`${group.label} episodes`} className="flex min-w-0 flex-col gap-2">
-          <SeasonHeader group={group} isAdmin={isAdmin} onBulk={bulk} extra={headerExtra} />
+          <SeasonHeader showId={showId} group={group} isAdmin={isAdmin} onBulk={bulk} onFind={findSeason} extra={headerExtra} />
           <LoadedDataTable
             id={`${tableScope}:season:${group.season}`}
             label={`${group.label} episodes`}
@@ -272,41 +357,55 @@ export function EpisodeList({ episodes, statuses, progressByFile, loading, compl
             selectable
             complete={complete} search={{ fields: ["title", { field: "episodeCode", value: episodeCode }], placeholder: "Search episodes" }}
             noun={episodeNoun}
-            actions={actions}
+            actions={actions} renderRowActions={noRowMenu}
             renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={episodeNoun} />}
             defaultHiddenColumns={["overview"]}
           />
         </section>
       ))}
-      <ReleaseSearchDialog isOpen={Boolean(searching)} onOpenChange={(open) => !open && setSearching(null)} query={showName} season={searching?.season} episode={searching?.episode} libraryId={libraryId} target={{ showId, episodeId: searching?.id }} />
+      <ReleaseSearchDialog isOpen={Boolean(searching) || seasonSearch !== null} onOpenChange={(open) => { if (!open) { setSearching(null); setSeasonSearch(null); } }} query={showName} season={searching?.season ?? seasonSearch} episode={searching?.episode} libraryId={libraryId} target={{ showId, episodeId: searching?.id }} />
+      {episodePlaylist.dialog}
+          {episodeArtwork.dialog}
     </div>
     </EpisodePresentationContext.Provider>
   );
 }
 
 interface SeasonHeaderProps {
+  showId: string;
   group: SeasonGroup<EpisodeRow>;
+  /** Open Find releases for this season. */
+  onFind?: (season: number) => void;
   isAdmin: boolean;
   onBulk: (season: number, input: UpdateEpisodeInput, missingOnly: boolean, message: string) => Promise<void>;
   extra?: ReactNode;
 }
 
-function SeasonHeader({ group, isAdmin, onBulk, extra }: SeasonHeaderProps) {
+function SeasonHeader({ showId, group, isAdmin, onBulk, onFind, extra }: SeasonHeaderProps) {
+  const { seasonReset, resetFiles } = useEpisodePresentation();
+  // The badge counts the releases of the show's plan that cover this season.
+  const recommended = useRecommended({ showId, season: group.season }, onFind ? group.missing : 0);
   const actions: ActionSet<SeasonGroup<EpisodeRow>> = useMemo(() => defineActions<SeasonGroup<EpisodeRow>>("season", [
     {
       id: "want-missing", label: "Want all missing", icon: IconBookmark, group: "manage", priority: 1,
+      visible: () => isAdmin,
       disabledReason: () => group.missing === 0 ? "No missing episodes in this season" : null,
       run: ([season]) => season && onBulk(season.season, { wanted: true, ignored: false }, true, `${season.label}: missing episodes wanted`),
     },
     {
       id: "unwant", label: "Unwant all", icon: IconBookmark, group: "manage", priority: 2,
+      visible: () => isAdmin,
       run: ([season]) => season && onBulk(season.season, { wanted: false }, false, `${season.label}: no longer wanted`),
     },
     {
       id: "ignore", label: group.allIgnored ? "Unignore season" : "Ignore season", icon: group.allIgnored ? IconEye : IconEyeOff, group: "manage", priority: 3,
+      visible: () => isAdmin,
       run: ([season]) => season && onBulk(season.season, season.allIgnored ? { ignored: false } : { ignored: true, wanted: false }, false, `${season.label}: ${season.allIgnored ? "no longer ignored" : "ignored"}`),
     },
-  ]), [group, onBulk]);
+    // Every member can reset their own progress; the rest of the bar is administration.
+    ...resetProgressAction("video", seasonReset, resetFiles, { id: "reset-progress", label: "Mark season as unwatched" }),
+  ]), [group, onBulk, isAdmin, seasonReset, resetFiles]);
+  const showBar = isAdmin || seasonReset.files([group]).length > 0;
 
   return (
     <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -316,25 +415,28 @@ function SeasonHeader({ group, isAdmin, onBulk, extra }: SeasonHeaderProps) {
         {group.wanted > 0 ? ` · ${group.wanted} wanted` : ""}
         {group.ignored > 0 ? ` · ${group.ignored} ignored` : ""}
       </span>
+      <span className="ms-auto flex min-w-0 max-w-full items-center gap-2">
+      {onFind && group.missing > 0 ? <FindReleasesButton size="sm" count={recommended.forTarget} onPress={() => onFind(group.season)} /> : null}
       {/* Season management is for pointer and keyboard; the remote moves straight to episodes. */}
-      <span data-tv-skip className="ms-auto flex min-w-0 max-w-full items-center gap-2">
-        {isAdmin ? <ActionBar set={actions} targets={[group]} label={group.label} className="min-w-0 max-w-full" /> : null}
+      <span data-tv-skip className="flex min-w-0 max-w-full items-center gap-2">
+        {showBar ? <ActionBar set={actions} targets={[group]} label={group.label} className="min-w-0 max-w-full" /> : null}
         {extra}
+      </span>
       </span>
     </header>
   );
 }
 
 /** A season's episodes as a row of stills with the focused episode's summary underneath. */
-function EpisodeShelf({ group, isAdmin, onBulk, onPlay, tint, headerExtra }: { group: SeasonGroup<EpisodeRow>; isAdmin: boolean; onBulk: SeasonHeaderProps["onBulk"]; onPlay: (episode: EpisodeRow) => void; tint?: string; headerExtra?: ReactNode }) {
+function EpisodeShelf({ showId, onFind, focusEpisodeId, group, isAdmin, onBulk, onPlay, tint, headerExtra }: { showId: string; onFind?: (season: number) => void; focusEpisodeId?: string; group: SeasonGroup<EpisodeRow>; isAdmin: boolean; onBulk: SeasonHeaderProps["onBulk"]; onPlay: (episode: EpisodeRow) => void; tint?: string; headerExtra?: ReactNode }) {
   const { progressByFile } = useEpisodePresentation();
   // Start on the next episode to watch; the summary follows remote focus and the pointer.
   const nextUp = group.episodes.find((episode) => episode.mediaFileId && !progressByFile.get(episode.mediaFileId)?.isWatched) ?? group.episodes[0];
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(focusEpisodeId ?? null);
   const active = group.episodes.find((episode) => episode.id === activeId) ?? nextUp;
   return (
     <section aria-label={`${group.label} episodes`} className="flex min-w-0 flex-col gap-3">
-      <SeasonHeader group={group} isAdmin={isAdmin} onBulk={onBulk} extra={headerExtra} />
+      <SeasonHeader showId={showId} group={group} isAdmin={isAdmin} onBulk={onBulk} onFind={onFind} extra={headerExtra} />
       <div className="detail-bleed">
         <MediaRow ariaLabel={`${group.label} episodes`}>
           {group.episodes.map((episode) => <EpisodeTile key={episode.id} episode={episode} onPlay={onPlay} tint={tint} active={episode.id === active?.id} nextUp={episode.id === nextUp?.id} onActive={setActiveId} />)}
@@ -362,16 +464,20 @@ function EpisodeTile({ episode, onPlay, tint, active, nextUp, onActive }: { epis
   const targetClass = "poster-navigation absolute inset-0 z-10 rounded-tile outline-none";
   const focus = { onFocus: () => onActive(episode.id), onMouseEnter: () => onActive(episode.id) };
   return (
-    <article data-active={active ? "true" : undefined} className="poster-card episode-tile relative flex w-[calc(var(--poster-min)*1.75)] shrink-0 flex-col xl:w-[calc(var(--poster-max)*1.6)]" {...focus}>
+    <article data-row-id={episode.id} data-active={active ? "true" : undefined} className="poster-card episode-tile relative flex w-[calc(var(--poster-min)*1.75)] shrink-0 flex-col xl:w-[calc(var(--poster-max)*1.6)]" {...focus}>
       {playable ? (
-        <button type="button" data-focusable data-nav-default={nextUp ? "" : undefined} className={targetClass} aria-label={`Play ${label}`} aria-disabled={playbackUnavailable ? true : undefined} aria-description={playbackUnavailable}
-          onClick={() => { if (!playbackUnavailable) onPlay(episode); }} />
+        // A card stays a stop when it can't play now (its summary is still worth reading), so it
+        // says why rather than being disabled. The Menu key opens the ⋯ menu's actions.
+        <ActionContextMenu set={actions} targets={[episode]} label={label}>
+          <button type="button" data-focusable data-nav-default={nextUp ? "" : undefined} className={targetClass} aria-label={`Play ${label}`} aria-description={playbackUnavailable}
+            onClick={() => { if (!playbackUnavailable) onPlay(episode); }} />
+        </ActionContextMenu>
       ) : isAdmin ? (
         <ActionMenu set={actions} targets={[episode]} label={label} align="start"
           trigger={<button type="button" data-focusable data-nav-default={nextUp ? "" : undefined} className={targetClass} aria-label={`${label} · ${state.label}`} />} />
       ) : (
         // Nothing to do yet, but a remote can still browse onto it to read its summary.
-        <button type="button" data-focusable aria-disabled data-nav-default={nextUp ? "" : undefined} className={targetClass} aria-label={`${label} · ${state.label}`} />
+        <button type="button" data-focusable data-nav-default={nextUp ? "" : undefined} className={targetClass} aria-label={`${label} · ${state.label}`} />
       )}
       <Surface material="card" radius="tile" padding="none" className="poster-art pointer-events-none relative overflow-clip">
         <Artwork src={episodeThumb(episode.id)} alt="" aspect="backdrop" tint={tint} className={playable ? undefined : "opacity-55"} displayWidth={360} />
@@ -388,7 +494,7 @@ function EpisodeTile({ episode, onPlay, tint, active, nextUp, onActive }: { epis
         ) : null}
       </Surface>
       {playable ? (
-        <span data-tv-skip className="absolute end-1 top-1 z-20" data-print="hide"><ActionMenu set={actions} targets={[episode]} label={label} /></span>
+        <span data-nav-skip className="absolute end-1 top-1 z-20" data-print="hide"><ActionMenu set={actions} targets={[episode]} label={label} /></span>
       ) : null}
       <div className="pointer-events-none min-w-0 px-0.5 pt-2">
         <p className="truncate text-title-sm text-foreground">{episode.episode} · {title}</p>
@@ -402,12 +508,21 @@ function EpisodeTile({ episode, onPlay, tint, active, nextUp, onActive }: { epis
 function EpisodeSummary({ episode }: { episode: EpisodeRow }) {
   const runtime = episode.runtime || (episode.mediaFile?.duration ? Math.round(episode.mediaFile.duration / 60) : null);
   return (
-    <div aria-live="polite" className="min-h-[calc(var(--type-body-size)*1.5*3+var(--type-label-size)*1.5*2+var(--space-2))] max-w-3xl">
+    <div aria-live="polite" className="min-h-[calc(var(--type-body-size)*1.5*3+var(--type-label-size)*1.5*3+var(--space-2)*2)] max-w-3xl">
       <p className="text-numeric text-label-sm text-muted">{[episodeCode(episode), formatDate(episode.airDate), runtime ? `${runtime} min` : null].filter(Boolean).join(" · ")}</p>
       <p className="text-title-sm text-foreground">{episode.title ?? `Episode ${episode.episode}`}</p>
       <p className="mt-1 line-clamp-3 text-body text-muted">{episode.overview ?? "No summary yet."}</p>
+      <EpisodeCreditsLine episodeId={episode.id} />
     </div>
   );
+}
+
+/** The episode's director, writers and guest stars in one line (Q130); empty until read. */
+function EpisodeCreditsLine({ episodeId }: { episodeId: string }) {
+  const { credits } = useTitleCredits({ episodeId: { eq: episodeId } });
+  const guests = castOf(credits, { guest: true }).slice(0, 4).map((entry) => entry.person.name);
+  const line = [crewLine(credits, 2), guests.length ? `Guest stars ${guests.join(", ")}` : ""].filter(Boolean).join(" · ");
+  return <p className="mt-2 line-clamp-1 text-label-sm text-muted">{line || "\u00a0"}</p>;
 }
 
 function EpisodeRowSkeleton() {

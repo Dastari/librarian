@@ -1,5 +1,6 @@
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useState } from "react";
 
+import { useAnimatedBackdrop } from "@/lib/animated-backdrop";
 import { cn } from "@/lib/utils";
 
 const AmbientScene = lazy(() => import("./AmbientScene"));
@@ -12,25 +13,41 @@ interface SceneBackdropProps {
 }
 
 /**
- * Wraps the 3D scene with a gradient that always paints first, and skips WebGL entirely for
- * reduced-motion users, very small screens and devices that report low memory.
+ * Wraps the 3D scene with a gradient that always paints first. WebGL (and its chunk) is skipped
+ * entirely in the TV app, on 2 GB devices, for reduced motion, on small screens and when this
+ * device turned animated backgrounds off (`useAnimatedBackdrop`). A GPU the scene finds too slow
+ * keeps the gradient for the rest of the tab's life.
  */
-export function SceneBackdrop({ className, density, images }: SceneBackdropProps) {
-  const [enabled, setEnabled] = useState(false);
+/** Remembered for the tab: a GPU that couldn't keep up once won't on the next page either. */
+const SLOW_KEY = "librarian.ambient.slow";
 
-  useEffect(() => {
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const small = window.innerWidth < 640;
-    const lowMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory !== undefined && (navigator as Navigator & { deviceMemory?: number }).deviceMemory! < 2;
-    setEnabled(!reduced && !small && !lowMemory);
+function rememberedSlow(): boolean {
+  try {
+    return window.sessionStorage.getItem(SLOW_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function SceneBackdrop({ className, density, images }: SceneBackdropProps) {
+  const allowed = useAnimatedBackdrop();
+  const [slow, setSlow] = useState(rememberedSlow);
+  const onSlow = useCallback(() => {
+    setSlow(true);
+    try {
+      window.sessionStorage.setItem(SLOW_KEY, "1");
+    } catch {
+      // Without storage it simply measures again next time.
+    }
   }, []);
+  const enabled = allowed && !slow;
 
   return (
     <div className={cn("pointer-events-none absolute inset-0 -z-10 overflow-hidden", className)} aria-hidden>
       <div className="canvas-ambient absolute inset-0" />
       {enabled ? (
         <Suspense fallback={null}>
-          <AmbientScene density={density} images={images} />
+          <AmbientScene density={density} images={images} onSlow={onSlow} />
         </Suspense>
       ) : null}
       <div className="absolute inset-0 bg-gradient-to-t from-background/70 via-transparent to-background/30" />

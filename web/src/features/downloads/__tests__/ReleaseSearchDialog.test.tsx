@@ -2,10 +2,17 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AddTorrentDocument, HasEnabledSourcesDocument, SearchSourcesDocument } from "@/graphql/generated/graphql";
+import { AddTorrentDocument, GrabRecommendationDocument, GrabRecommendationPlanDocument, HasEnabledSourcesDocument, SearchSourcesDocument } from "@/graphql/generated/graphql";
 import { renderWithProviders } from "@/test";
+import { layoutColumn, RemoteNavigation, remoteStopElements, walkRemote } from "@/test/remote";
 
 import { ReleaseSearchDialog } from "../ReleaseSearchDialog";
+
+// What the server recommends for the target; nothing unless a test says otherwise.
+const recommendedState = vi.hoisted(() => ({ value: null as unknown }));
+vi.mock("@/features/recommendations/useRecommended", () => ({
+  useRecommended: () => recommendedState.value ?? { plan: null, releases: [], forTarget: 0, searching: false, none: null, rows: [], loaded: true, refetch: () => {} },
+}));
 
 // The public Glass table uses measured viewport geometry to render its rows.
 beforeEach(() => {
@@ -15,7 +22,10 @@ beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1200);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(700);
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  recommendedState.value = null;
+});
 
 type Parsed = Partial<{
   resolution: string | null;
@@ -54,6 +64,11 @@ const parsed = (overrides: Parsed = {}) => ({
 const release = (guid: string, overrides: Partial<Record<string, unknown>> = {}) => ({
   __typename: "SourceRelease" as const,
   title: `Release ${guid}`,
+  format: null,
+  formatReason: null,
+  packHint: null,
+  relevance: null,
+  otherBookNumber: null,
   guid,
   stableId: `${String(overrides.sourceId ?? "src-1")}:${guid}`,
   link: `https://tracker/${guid}.torrent`,
@@ -76,6 +91,8 @@ const release = (guid: string, overrides: Partial<Record<string, unknown>> = {})
   sourceName: "Tracker",
   profileMatch: "optimal",
   rejectReasons: [] as string[],
+  fromFeed: false,
+  feedItemId: null as string | null,
   ...overrides,
   parsed: parsed((overrides.parsed as Parsed) ?? {}),
 });
@@ -93,6 +110,7 @@ const searchInput = (overrides: Partial<Record<string, unknown>> = {}) => ({
   movieId: null,
   albumId: null,
   audiobookId: null,
+  autoWiden: false,
   limit: null,
   ...overrides,
 });
@@ -106,6 +124,8 @@ const searchMock = (releases: unknown[], sourceOverrides: Partial<Record<string,
         totalReleases: releases.length,
         totalElapsedMs: 120,
         sourcesSearched: 1,
+        searchedTerm: "Andor",
+        widened: false,
         sources: [
           {
             __typename: "SourceSearchResult",
@@ -113,6 +133,7 @@ const searchMock = (releases: unknown[], sourceOverrides: Partial<Record<string,
             sourceName: "Tracker",
             elapsedMs: 120,
             fromCache: false,
+            fromFeed: false,
             error: null,
             pageInfo: { support: "UNSUPPORTED", state: "UNKNOWN", hasMore: null, nextCursor: null, retryCursor: null, returnedCount: releases.length },
             releases,
@@ -340,6 +361,7 @@ describe("ReleaseSearchDialog grabbing", () => {
             input: {
               magnet: "magnet:?xt=urn:btih:single",
               url: null,
+              feedItemId: null,
               libraryId: "lib-1",
               movieId: null,
               showId: "show-1",
@@ -373,6 +395,7 @@ describe("ReleaseSearchDialog grabbing", () => {
             input: {
               magnet: null,
               url: "https://tracker/pack.torrent",
+              feedItemId: null,
               libraryId: "lib-1",
               movieId: null,
               showId: "show-1",
@@ -405,6 +428,7 @@ describe("ReleaseSearchDialog grabbing", () => {
             input: {
               magnet: "magnet:?xt=urn:btih:single",
               url: null,
+              feedItemId: null,
               libraryId: "lib-1",
               movieId: null,
               showId: "show-1",
@@ -438,7 +462,7 @@ describe("release selection actions", () => {
   it("confirms a multi-release acquisition once and requests exactly the selected releases", async () => {
     const added = vi.fn(() => ({ data: { addTorrent: { __typename: "AddTorrentResult", success: true, error: null, torrent: null } } }));
     const addMock = (id: string) => ({
-      request: { query: AddTorrentDocument, variables: { input: { magnet: `magnet:?xt=urn:btih:${id}`, url: null, libraryId: "lib-1", movieId: null, showId: "show-1", episodeId: "ep-1", albumId: null, trackId: null, audiobookId: null, chapterId: null, season: null, sourceIndexerId: "src-1", sourceUrl: `https://tracker/details/${id}` } } }, result: added,
+      request: { query: AddTorrentDocument, variables: { input: { magnet: `magnet:?xt=urn:btih:${id}`, url: null, feedItemId: null, libraryId: "lib-1", movieId: null, showId: "show-1", episodeId: "ep-1", albumId: null, trackId: null, audiobookId: null, chapterId: null, season: null, sourceIndexerId: "src-1", sourceUrl: `https://tracker/details/${id}` } } }, result: added,
     });
     await mount([searchMock([release("one"), release("two"), release("unselected")]), addMock("one"), addMock("two")]);
     await userEvent.click(await screen.findByRole("checkbox", { name: "Select Release one" }));
@@ -451,5 +475,131 @@ describe("release selection actions", () => {
     await userEvent.click(within(confirmation).getByRole("button", { name: "Download" }));
     await vi.waitFor(() => expect(added).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  });
+});
+
+describe("ReleaseSearchDialog feed releases", () => {
+  it("grabs a feed release by its catalogue item and never sends a link", async () => {
+    const add = vi.fn(() => ({ data: { addTorrent: { __typename: "AddTorrentResult", success: true, error: null, torrent: null } } }));
+    const feedRelease = release("feed-1", { sourceId: "feed-a", sourceName: "TV feed (feed)", fromFeed: true, feedItemId: "item-9", link: null, magnetUri: null });
+    await mount([
+      searchMock([feedRelease], { sourceId: "feed-a", sourceName: "TV feed (feed)", fromFeed: true }),
+      {
+        request: {
+          query: AddTorrentDocument,
+          variables: {
+            input: {
+              magnet: null,
+              url: null,
+              feedItemId: "item-9",
+              libraryId: "lib-1",
+              movieId: null,
+              showId: "show-1",
+              episodeId: "ep-1",
+              albumId: null,
+              trackId: null,
+              audiobookId: null,
+              chapterId: null,
+              season: null,
+              sourceIndexerId: null,
+              sourceUrl: "https://tracker/details/feed-1",
+            },
+          },
+        },
+        result: add,
+      },
+    ]);
+    await screen.findByText("Release feed-1");
+    expect(screen.getByText("From feed")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Grab/ }));
+    await vi.waitFor(() => expect(add).toHaveBeenCalled());
+  });
+});
+
+describe("ReleaseSearchDialog recommended releases", () => {
+  const rec = (id: string, extra: Record<string, unknown> = {}) => ({
+    __typename: "ReleaseRecommendation", id, userId: "me", libraryId: "lib-1", scope: "season_pack", status: "ready", targetLabel: "Andor Season 2", showId: "show-1", season: 2,
+    episodeId: null, movieId: null, albumId: null, trackId: null, audiobookId: null, artistId: null, title: `Andor.S02.${id}.1080p.WEB-DL`, sourceKind: "indexer", sourceId: "src-1", sourceName: "Tracker",
+    feedItemId: null, infoHash: `hash-${id}`, guid: `guid-${id}`, size: 12_000_000_000, seeders: 40, quality: "1080p WEB-DL", coversCount: 6, missingCount: 8, coversIds: "[]",
+    reasons: ["1080p WEB-DL fits the 'HD' profile", "40 seeders"], note: null, planId: "plan-1", planPosition: 0, coversSeasons: "[2]", coversAlbums: null, fileIndices: null,
+    selectedSize: null, downloadNote: null, rulesVersion: 4, foundAt: "2026-11-09T00:00:00Z", expiresAt: "2026-11-10T00:00:00Z", createdAt: "2026-11-09T00:00:00Z", updatedAt: "2026-11-09T00:00:00Z", ...extra,
+  });
+  const plan = rec("plan-1", { scope: "plan", planId: null, title: null, coversCount: 8, missingCount: 10, note: "Still missing: S03E01–E02 (no usable release found)" });
+  const withPlan = (releases: unknown[], planRow: unknown = plan) => {
+    recommendedState.value = { plan: planRow, releases, forTarget: releases.length, searching: false, none: null, rows: [planRow, ...releases], loaded: true, refetch: () => {} };
+  };
+
+  it("pins the recommended releases first, as ordinary rows that say Recommended and what they cover", async () => {
+    withPlan([rec("a"), rec("b", { scope: "episode", targetLabel: "Andor S02E07", coversCount: 1, planPosition: 1 })]);
+    // The live search also returned release a: it is shown once, as the recommended row.
+    await mount([searchMock([release("live", { title: "Andor.S02E05.720p" }), release("dupe", { infoHash: "hash-a", title: "Andor.S02.a.1080p.WEB-DL" })])]);
+    const row = await releaseRow("Andor.S02.a.1080p.WEB-DL");
+    expect(within(row).getByText("Recommended")).toBeInTheDocument();
+    expect(within(row).getByText("S02 · adds 6")).toBeInTheDocument();
+    expect(row).toHaveTextContent("Tracker");
+    expect(screen.getAllByText("Andor.S02.a.1080p.WEB-DL")).toHaveLength(1);
+    expect(within(await releaseRow("Andor.S02.b.1080p.WEB-DL")).getByText("S02E07")).toBeInTheDocument();
+    // Pinned above the search results.
+    const rows = screen.getAllByRole("row").map((node) => node.textContent ?? "");
+    const first = rows.findIndex((text) => text.includes("Andor.S02.a.1080p.WEB-DL"));
+    const live = rows.findIndex((text) => text.includes("Andor.S02E05.720p"));
+    expect(first).toBeGreaterThan(-1);
+    expect(first).toBeLessThan(live);
+    // What the plan leaves uncovered is a quiet line, not a panel.
+    expect(screen.getByText("Still missing: S03E01–E02 (no usable release found)")).toBeInTheDocument();
+  });
+
+  it("downloads the whole plan from the table's Download recommended action, after confirming", async () => {
+    withPlan([rec("a"), rec("b", { planPosition: 1 })]);
+    const grabbedPlan = vi.fn(() => ({ data: { grabRecommendationPlan: { __typename: "GrabRecommendationPlanPayload", success: true, error: null, started: 2, failed: [], torrentIds: ["t1", "t2"] } } }));
+    await mount([searchMock([]), { request: { query: GrabRecommendationPlanDocument, variables: { id: "plan-1" } }, result: grabbedPlan }]);
+    await userEvent.click(await screen.findByRole("button", { name: /Download recommended: 2 releases cover 8 of 10 missing/ }));
+    const confirmation = await screen.findByRole("dialog", { name: /Download 2 recommended releases/ });
+    expect(grabbedPlan).not.toHaveBeenCalled();
+    await userEvent.click(within(confirmation).getByRole("button", { name: "Download recommended" }));
+    await vi.waitFor(() => expect(grabbedPlan).toHaveBeenCalledOnce());
+    expect(await screen.findByText("Downloading 2 recommended releases")).toBeInTheDocument();
+  });
+
+  it("grabs one recommended row through its recommendation, never through a link", async () => {
+    withPlan([rec("a")]);
+    const grabbedOne = vi.fn(() => ({ data: { grabRecommendation: { __typename: "GrabRecommendationPayload", success: true, error: null, torrentId: "t1", torrentName: "Andor S02" } } }));
+    await mount([searchMock([]), { request: { query: GrabRecommendationDocument, variables: { id: "a" } }, result: grabbedOne }]);
+    const row = await releaseRow("Andor.S02.a.1080p.WEB-DL");
+    await userEvent.click(within(row).getByRole("button", { name: /Grab/ }));
+    await vi.waitFor(() => expect(grabbedOne).toHaveBeenCalledOnce());
+    expect(await screen.findByText("Downloading Andor S02")).toBeInTheDocument();
+  });
+
+  it("offers no Download recommended without a plan", async () => {
+    recommendedState.value = { plan: null, releases: [rec("movie", { scope: "movie", planId: null, showId: null, season: null, coversSeasons: null })], forTarget: 1, searching: false, none: null, rows: [], loaded: true, refetch: () => {} };
+    await mount([searchMock([release("x")])]);
+    expect(within(await releaseRow("Andor.S02.movie.1080p.WEB-DL")).getByText("Recommended")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Download recommended/ })).toBeNull();
+  });
+});
+
+describe("ReleaseSearchDialog on a TV remote", () => {
+  it("stops on the search controls and each release row, never on a column header or a row's own buttons", async () => {
+    window.localStorage.setItem("librarian.inputMode", "tv");
+    await renderWithProviders(
+      <>
+        <RemoteNavigation />
+        <ReleaseSearchDialog isOpen onOpenChange={() => {}} query="Andor" season={2} episode={5} libraryId="lib-1" target={{ showId: "show-1", episodeId: "ep-1" }} />
+      </>,
+      { mocks: [sourcesMock(true), searchMock([release("a"), release("b", { profileMatch: "rejected", rejectReasons: ["Blocked group"] })])] as never, shell: true },
+    );
+    await releaseRow("Release b");
+    const dialog = screen.getByRole("dialog");
+    layoutColumn(dialog);
+    const stops = remoteStopElements(dialog);
+    expect(stops.some((stop) => stop.closest('[role="columnheader"], .fa-dt-head'))).toBe(false);
+    const rows = stops.filter((stop) => stop.matches('.fa-dt-grid [role="row"][data-row-id]'));
+    expect(rows.map((row) => row.textContent)).toEqual([expect.stringContaining("Release a"), expect.stringContaining("Release b")]);
+    // The verdict's reasons button and the row's Grab and ⋯ are inside the row: not stops.
+    expect(stops.filter((stop) => stop.closest('.fa-dt-grid [role="row"]') && !rows.includes(stop))).toEqual([]);
+    // Walking down from the dialog's first stop reaches both releases.
+    const walk = walkRemote(stops[0]!);
+    expect(walk.filter((stop) => stop.startsWith("row:"))).toHaveLength(2);
   });
 });

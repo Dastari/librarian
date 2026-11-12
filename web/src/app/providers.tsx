@@ -5,6 +5,7 @@ import { PaletteProvider } from "glass-ux/command-palette";
 import { TooltipProvider } from "glass-ux/tooltip";
 import type { ReactNode } from "react";
 
+import { UpdatePrompt } from "@/components/shell/UpdatePrompt";
 import { LiveDataProvider } from "@/lib/graphql/live/provider";
 import { apolloClient } from "@/lib/apollo/client";
 import { createEntityResolver } from "@/lib/entities/resolver";
@@ -31,6 +32,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
                 <EntityResolverProvider resolver={entityResolver}>
                   <PaletteProvider>
                     {children}
+                    <UpdatePrompt />
                   </PaletteProvider>
                 </EntityResolverProvider>
               </ActionProvider>

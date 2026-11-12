@@ -19,6 +19,14 @@ fragment PlaybackSessionFields on PlaybackSession {
   startedAt
   lastUpdatedAt
   completedAt
+  chapterId
+  deviceId
+  state
+  playMethod
+  quality
+  bitrate
+  endedAt
+  stopRequestedAt
   createdAt
   updatedAt
 }

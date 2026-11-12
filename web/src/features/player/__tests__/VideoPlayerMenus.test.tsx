@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import type { CastAdapter } from "glass-ux/media-player";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { MediaFilePreviewsDocument } from "@/graphql/generated/graphql";
+import { readPref } from "@/lib/prefs";
 import { renderWithProviders } from "@/test";
 
 import { subtitleTracks, VideoPlayer } from "../VideoPlayer";
@@ -12,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   source: vi.fn(),
   connect: vi.fn(),
   audio: [] as Array<{ streamIndex: number; title: string; language: string; isDefault: boolean }>,
-  subtitles: [] as Array<{ id: string; title: string; language: string; codec: string }>,
+  subtitles: [] as Array<{ id: string; title: string; language: string; codec: string; sourceType: string }>,
 }));
 
 vi.mock("@/features/settings/useSettingsConnection", () => ({
@@ -25,12 +27,12 @@ vi.mock("@/features/settings/useSettingsConnection", () => ({
 vi.mock("@/lib/input-mode", () => ({ useInputMode: () => ({ mode: "pointer" }) }));
 vi.mock("../CastButton", () => ({ CastButton: () => null }));
 vi.mock("../useMediaSource", () => ({
-  useMediaSource: (fileId: string | null, _element: unknown, _start: unknown, options: { audioStreamIndex?: number }) => {
-    mocks.source(fileId, options.audioStreamIndex);
+  useMediaSource: (fileId: string | null, _element: unknown, _start: unknown, options: { audioStreamIndex?: number; burnSubtitleId?: string }) => {
+    mocks.source(fileId, options.audioStreamIndex, options.burnSubtitleId);
     return { source: null, loading: false, error: null, duration: 300, hls: null, retry: mocks.retry, isTransitioning: () => false };
   },
 }));
-vi.mock("../useProgressSync", () => ({ useProgressSync: () => ({ loading: false, resumePosition: 0, report: vi.fn(), flush: vi.fn() }) }));
+vi.mock("../useProgressSync", () => ({ useProgressSync: () => ({ loading: false, resumePosition: 0, report: vi.fn(), flush: vi.fn(), describe: vi.fn() }), playbackDetails: () => null }));
 vi.mock("../useCastAdapter", () => ({
   useCastAdapter: () => {
     const adapter: CastAdapter = {
@@ -56,8 +58,25 @@ describe("VideoPlayer", () => {
     await renderWithProviders(<VideoPlayer item={item} onBack={onBack} />);
     await userEvent.click(screen.getByRole("button", { name: "Audio track" }));
     await userEvent.click(await screen.findByRole("menuitemradio", { name: "French" }));
-    expect(mocks.source).toHaveBeenLastCalledWith("file-1", 2);
+    expect(mocks.source).toHaveBeenLastCalledWith("file-1", 2, undefined);
     expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it("offers fill mode only for a file with black bars, and remembers it on this device", async () => {
+    window.localStorage.clear();
+    const previews = {
+      request: { query: MediaFilePreviewsDocument, variables: { id: "file-1" } },
+      result: { data: { mediaFile: { __typename: "MediaFile", id: "file-1", previewsCheckedAt: "2026-11-09T00:00:00Z", pictureCrop: { __typename: "PictureCrop", left: 0, top: 138, width: 1920, height: 804, frameWidth: 1920, frameHeight: 1080 }, storyboard: null } } },
+    };
+    await renderWithProviders(<VideoPlayer item={item} onBack={vi.fn()} />, { mocks: [previews] });
+    await userEvent.click(await screen.findByRole("button", { name: "Picture size" }));
+    await userEvent.click(await screen.findByRole("menuitemradio", { name: /Fill the screen/ }));
+    expect(readPref("player.pictureMode", "fit")).toBe("fill");
+  });
+
+  it("has no picture size menu for a file without black bars", async () => {
+    await renderWithProviders(<VideoPlayer item={item} onBack={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Picture size" })).not.toBeInTheDocument();
   });
 
   it("has no audio menu for a file with one track", async () => {
@@ -68,9 +87,21 @@ describe("VideoPlayer", () => {
 
   it("gives the player only the subtitles the server can deliver as WebVTT", () => {
     expect(subtitleTracks("file-1", [
-      { id: "sub-1", title: "English", language: "en", codec: "subrip" },
-      { id: "sub-2", title: "Signs", language: "en", codec: "hdmv_pgs_subtitle" },
-    ])).toEqual([{ id: "sub-1", src: "/api/media/file-1/subtitles/sub-1.vtt", label: "English", language: "en" }]);
+      { id: "sub-1", title: "English", language: "en", codec: "subrip", sourceType: "embedded" },
+      { id: "sub-2", title: "Signs", language: "en", codec: "hdmv_pgs_subtitle", sourceType: "embedded" },
+    ])).toEqual([{ id: "sub-1", src: "/api/media/file-1/subtitles/sub-1.vtt", label: "English", language: "en", kind: "subtitles" }]);
+  });
+
+  it("burns a picture subtitle in by asking for a new stream, and offers the search", async () => {
+    // jsdom has no text tracks, so only a picture subtitle is rendered here.
+    mocks.subtitles = [{ id: "sub-2", title: "", language: "eng", codec: "hdmv_pgs_subtitle", sourceType: "embedded" }];
+    await renderWithProviders(<VideoPlayer item={item} onBack={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Subtitle options" }));
+    await userEvent.click(await screen.findByRole("menuitemradio", { name: "English" }));
+    expect(mocks.source).toHaveBeenLastCalledWith("file-1", undefined, "sub-2");
+    await userEvent.click(screen.getByRole("button", { name: "Subtitle options" }));
+    expect(await screen.findByRole("menuitem", { name: /Find subtitles/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Later by/ })).toBeInTheDocument();
   });
 
   it("leaves on Back and Escape, but not from inside a menu", async () => {

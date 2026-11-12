@@ -192,6 +192,38 @@ fn secure_cookie_transport(
         && forwarded_proto(headers).is_some_and(|proto| proto.eq_ignore_ascii_case("https"))
 }
 
+/// The client's address and user agent for device check-ins. A forwarded address is taken
+/// only from a configured trusted proxy, like the forwarded scheme above.
+fn request_client_info(
+    headers: &HeaderMap,
+    peer_ip: IpAddr,
+    trusted_proxies: &[ipnet::IpNet],
+) -> crate::services::play_history::devices::RequestClientInfo {
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    };
+    let trusted = trusted_proxies
+        .iter()
+        .any(|network| network.contains(&peer_ip));
+    let forwarded = trusted
+        .then(|| {
+            header("x-forwarded-for")
+                .and_then(|value| value.split(',').next())
+                .map(str::trim)
+                .or_else(|| header("x-real-ip"))
+                .and_then(|value| value.parse::<IpAddr>().ok())
+        })
+        .flatten();
+    crate::services::play_history::devices::RequestClientInfo {
+        ip: Some(forwarded.unwrap_or(peer_ip).to_string()),
+        user_agent: header("user-agent").map(|value| value.chars().take(512).collect()),
+    }
+}
+
 fn extract_token(headers: &HeaderMap) -> Option<String> {
     let header_token = headers
         .get(AUTHORIZATION)
@@ -287,7 +319,11 @@ async fn graphql_handler(
         );
         return StatusCode::FORBIDDEN.into_response();
     }
-    let mut request = req.into_inner();
+    let mut request = req.into_inner().data(request_client_info(
+        &headers,
+        peer.ip(),
+        &state.config.trusted_proxies,
+    ));
     let refresh_cookie = extract_cookie(&headers, REFRESH_TOKEN_COOKIE);
     request = request.data(AuthCookieContext {
         refresh_token: refresh_cookie,
@@ -336,6 +372,8 @@ async fn graphql_ws_handler(
         _ => None,
     };
     let auth_for_init = auth.clone();
+    let client_info = request_client_info(&headers, peer.ip(), &state.config.trusted_proxies);
+    let client_info_for_init = client_info.clone();
 
     ws.protocols(["graphql-transport-ws", "graphql-ws"])
         .on_upgrade(move |socket| {
@@ -343,6 +381,7 @@ async fn graphql_ws_handler(
                 async_graphql_axum::GraphQLWebSocket::new(socket, state.schema.clone(), protocol);
             if let Some(user) = auth_user {
                 let mut data = async_graphql::Data::default();
+                data.insert(client_info.clone());
                 let authority = super::session_authority::SessionAuthority(user.clone());
                 data.insert(authority.subject());
                 data.insert(authority);
@@ -353,6 +392,7 @@ async fn graphql_ws_handler(
             }
             ws.on_connection_init(move |params| {
                 let auth = auth_for_init.clone();
+                let client_info = client_info_for_init.clone();
                 async move {
                     if let Some(token) = params
                         .get("Authorization")
@@ -364,6 +404,7 @@ async fn graphql_ws_handler(
                             && let Ok(user) = auth.authenticate_access_token(token).await
                         {
                             let mut data = async_graphql::Data::default();
+                            data.insert(client_info);
                             let authority =
                                 super::session_authority::SessionAuthority(user.clone());
                             data.insert(authority.subject());

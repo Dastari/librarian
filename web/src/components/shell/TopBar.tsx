@@ -7,6 +7,7 @@ import { Tooltip } from "glass-ux/tooltip";
 
 import { CastButton } from "@/features/player/CastButton";
 import { requestSearchFocus } from "@/features/search/searchFocus";
+import { useInputMode } from "@/lib/input-mode";
 import { cn } from "@/lib/utils";
 
 import { Breadcrumbs } from "./Breadcrumbs";
@@ -19,6 +20,7 @@ import { UserMenu } from "./UserMenu";
  */
 export function TopBar() {
   const navigate = useNavigate();
+  const tv = useInputMode().mode === "tv";
   const palette = useCommandPalette();
   const overArt = useHasShellArt();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
@@ -36,20 +38,20 @@ export function TopBar() {
       data-print="hide"
       breadcrumb={
         <div className="flex min-w-0 flex-1 items-center gap-1">
-          {!isRoot ? <Button variant="ghost" size="sm" shape="circle" icon={<IconArrowLeft className="rtl:rotate-180" />} aria-label="Back" onClick={() => window.history.back()} className="nav-focus shrink-0 max-md:hidden" data-focusable /> : null}
+          {!isRoot && !tv ? <Button variant="ghost" size="sm" shape="circle" icon={<IconArrowLeft className="rtl:rotate-180" />} aria-label="Back" onClick={() => window.history.back()} className="nav-focus shrink-0 max-md:hidden" data-focusable /> : null}
           <Breadcrumbs className="min-w-0 flex-1" />
         </div>
       }
-      search={<SearchTrigger placeholder="Search library" shortcut="mod+shift+f" onOpen={openSearch} className="nav-focus" data-focusable />}
-      actions={
+      search={tv ? undefined : <SearchTrigger placeholder="Search library" shortcut="mod+shift+f" onOpen={openSearch} className="nav-focus" data-focusable />}
+      actions={tv ? undefined : (
         <>
           <CastButton className="nav-focus" />
           <Tooltip content="Commands">
             <Button variant="ghost" size="sm" shape="circle" icon={<IconCommand />} aria-label="Commands" onClick={palette.open} className="nav-focus" data-focusable />
           </Tooltip>
         </>
-      }
-      account={<UserMenu />}
+      )}
+      account={tv ? undefined : <UserMenu />}
     />
   );
 }

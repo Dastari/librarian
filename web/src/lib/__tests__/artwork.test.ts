@@ -11,10 +11,16 @@ describe("artwork resolution", () => {
     expect(showBackdrop({ id: "s1" })).toBe("/api/artwork/show/s1/backdrop");
     expect(episodeThumb("ep-1")).toBe("/api/artwork/episode/ep-1/thumbnail");
     expect(albumCover({ id: "a1" })).toBe("/api/artwork/album/a1/cover");
-    expect(artistImage({ id: "ar1" })).toBe("/api/artwork/artist/ar1/poster");
+    expect(artistImage({ id: "ar1", imageUrl: "https://upload.wikimedia.org/a.jpg" })).toBe("/api/artwork/artist/ar1/poster");
     expect(audiobookCover({ id: "b1" })).toBe("/api/artwork/audiobook/b1/cover");
     expect(collectionPoster({ tmdbCollectionId: 10 })).toBe("/api/artwork/collection/10/poster");
     expect(collectionBackdrop({ tmdbCollectionId: 10 })).toBe("/api/artwork/collection/10/backdrop");
+  });
+
+  it("gives an artist an image only once the server has found one", () => {
+    expect(artistImage({ id: "ar1" })).toBeUndefined();
+    expect(artistImage({ id: "ar1", imageUrl: null })).toBeUndefined();
+    expect(artistImage({ id: "ar1", imageUrl: "" })).toBeUndefined();
   });
 
   it("never hotlinks the provider URL an entity carries", () => {

@@ -5,22 +5,26 @@
 //!
 //! # Authentication
 //!
-//! IPTorrents uses cookie-based authentication. Users need to:
-//! 1. Log into IPTorrents in their browser
-//! 2. Copy the cookie value from their browser's developer tools
-//! 3. Configure the cookie and user agent in Librarian
+//! IPTorrents uses cookie-based authentication, which can be supplied two ways:
+//!
+//! - **Username and password** (the default): Librarian signs in, keeps the `uid`/`pass` session
+//!   cookies, and signs in again when they expire (`iptorrents_login`, at most once an hour).
+//! - **Cookie** (advanced): copy the cookie value and user agent from a signed-in browser.
 //!
 //! # Configuration
 //!
-//! Required credentials:
-//! - `Cookie`: Session cookie from the browser
-//! - `UserAgent`: Browser user agent string
+//! Credentials (`AuthMethod` is `password` or `cookie`):
+//! - `Username`, `Password`: the account, for `password`
+//! - `SessionCookie`: the cookies a sign-in produced (written by Librarian)
+//! - `Cookie`: session cookie from the browser, for `cookie`
+//! - `UserAgent`: browser user agent string
 //!
 //! Optional settings:
 //! - `Freeleech`: Only search for freeleech torrents
 //! - `Sort`: Sort order (time, size, seeders, name)
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
@@ -33,8 +37,9 @@ use crate::services::rate_limiter::RateLimitedClient;
 use crate::services::sources::categories::CategoryMapping;
 use crate::services::sources::categories::cats;
 use crate::services::sources::{
-    BookSearchParam, MovieSearchParam, MusicSearchParam, QueryType, Source, SourceCapabilities,
-    SourceQuery, SourceRelease, SourceType, TrackerType, TvSearchParam,
+    BookSearchParam, MovieSearchParam, MusicSearchParam, QueryType, SessionExpired,
+    SessionRefresher, Source, SourceCapabilities, SourceQuery, SourceRelease, SourceType,
+    TrackerType, TvSearchParam,
 };
 
 /// IPTorrents source
@@ -47,8 +52,13 @@ pub struct IPTorrentsSource {
     site_link: String,
     /// HTTP client
     client: Client,
-    /// Session cookie (stored for reference)
-    cookie: String,
+    /// The session cookies requests carry; replaced by a fresh sign-in.
+    cookie: parking_lot::RwLock<String>,
+    /// Set when the source signs in with a username and password; then an ended session is
+    /// renewed through it.
+    refresher: Option<Arc<dyn SessionRefresher>>,
+    /// Whether a username and password are configured (so an ended session can be renewed).
+    password_login: bool,
     /// Settings
     settings: HashMap<String, String>,
     /// Request rate limiter for indexer calls
@@ -70,20 +80,14 @@ impl IPTorrentsSource {
         let site_link = site_url.unwrap_or_else(|| "https://iptorrents.com/".to_string());
 
         if cookie.is_empty() {
-            tracing::warn!(source_id = %id, "Cookie is empty - authentication will fail");
+            tracing::debug!(source_id = %id, "No session cookie yet; a sign-in or a pasted cookie is needed");
         }
-
-        // Build HTTP client with cookie and user agent
+        // The cookie travels on each request (it is replaced by a fresh sign-in), not as a default.
+        if let Err(e) = header::HeaderValue::from_str(cookie) {
+            tracing::error!(source_id = %id, error = %e, "Failed to parse cookie header");
+            return Err(anyhow!("Invalid cookie format: {}", e));
+        }
         let mut headers = header::HeaderMap::new();
-        match cookie.parse() {
-            Ok(v) => {
-                headers.insert(header::COOKIE, v);
-            }
-            Err(e) => {
-                tracing::error!(source_id = %id, error = %e, "Failed to parse cookie header");
-                return Err(anyhow!("Invalid cookie format: {}", e));
-            }
-        }
         if !user_agent.is_empty() {
             match user_agent.parse() {
                 Ok(v) => {
@@ -112,11 +116,75 @@ impl IPTorrentsSource {
             name,
             site_link,
             client,
-            cookie: cookie.to_string(),
+            cookie: parking_lot::RwLock::new(cookie.to_string()),
+            refresher: None,
+            password_login: false,
             settings,
             rate_limiter: RateLimitedClient::for_indexer(),
             capabilities,
         })
+    }
+
+    /// Sign in with a username and password: an ended session is renewed through `refresher`.
+    pub fn with_password_login(mut self, refresher: Option<Arc<dyn SessionRefresher>>) -> Self {
+        self.password_login = true;
+        self.refresher = refresher;
+        self
+    }
+
+    /// Whether the session cookie is set.
+    fn has_session(&self) -> bool {
+        !self.cookie.read().is_empty()
+    }
+
+    /// GET a page that needs a signed-in session. If the site shows it signed out, renew the
+    /// session once (password sign-in only) and ask again.
+    async fn get_signed_in(&self, url: &str, referer: Option<&str>) -> Result<String> {
+        for attempt in 0..2 {
+            self.rate_limiter.wait_for_permit().await;
+            let mut request = self.client.get(url);
+            let cookie = self.cookie.read().clone();
+            if !cookie.is_empty() {
+                request = request.header(header::COOKIE, cookie);
+            }
+            if let Some(referer) = referer {
+                request = request.header(header::REFERER, referer);
+            }
+            let response = request.send().await?;
+            let text = crate::services::http_client::response_text_limited(
+                response,
+                crate::services::http_client::INDEXER_RESPONSE_LIMIT,
+            )
+            .await?;
+            if text.contains("/lout.php") {
+                return Ok(text);
+            }
+            if attempt == 0 && self.renew_session().await? {
+                continue;
+            }
+            return Err(anyhow::Error::new(SessionExpired(if self.password_login {
+                "The user is not logged in and signing in again was not possible.".to_string()
+            } else {
+                "The user is not logged in. The cookie may have expired or is incorrect."
+                    .to_string()
+            })));
+        }
+        unreachable!("the loop returns on its second pass")
+    }
+
+    /// Ask the refresher for a new session. `Ok(true)`: renewed, ask again. `Ok(false)`: nothing to
+    /// renew with (cookie sign-in). `Err`: the sign-in was refused or not allowed yet.
+    async fn renew_session(&self) -> Result<bool> {
+        let (true, Some(refresher)) = (self.password_login, self.refresher.as_ref()) else {
+            return Ok(false);
+        };
+        match refresher.refresh(&self.id).await {
+            Ok(cookie) => {
+                *self.cookie.write() = cookie;
+                Ok(true)
+            }
+            Err(reason) => Err(anyhow::Error::new(SessionExpired(reason))),
+        }
     }
 
     /// Build the capabilities for IPTorrents
@@ -261,7 +329,7 @@ impl IPTorrentsSource {
                 search_term.push('*');
             }
 
-            search_parts.push(format!("+({})", search_term));
+            search_parts.push(format!("+({})", urlencoding::encode(&search_term)));
         }
 
         // Episode string
@@ -399,55 +467,21 @@ impl Source for IPTorrentsSource {
     }
 
     fn is_configured(&self) -> bool {
-        !self.cookie.is_empty()
+        self.has_session() || self.password_login
     }
 
     async fn test_connection(&self) -> Result<bool> {
         let url = format!("{}t", self.site_link);
-
-        self.rate_limiter.wait_for_permit().await;
-        let response = self.client.get(&url).send().await?;
-        let text = crate::services::http_client::response_text_limited(
-            response,
-            crate::services::http_client::INDEXER_RESPONSE_LIMIT,
-        )
-        .await?;
-
-        let is_logged_in = text.contains("/lout.php");
-
-        if !is_logged_in {
-            tracing::warn!(
-                source_id = %self.id,
-                "Connection test failed - cookie may be invalid"
-            );
-        }
-
-        Ok(is_logged_in)
+        // `get_signed_in` fails with `SessionExpired` when the site shows the page signed out.
+        self.get_signed_in(&url, None).await?;
+        Ok(true)
     }
 
     async fn search(&self, query: &SourceQuery) -> Result<Vec<SourceRelease>> {
         let search_url = self.build_search_url(query);
 
-        self.rate_limiter.wait_for_permit().await;
-        let response = self
-            .client
-            .get(&search_url)
-            .header(header::REFERER, format!("{}t", self.site_link))
-            .send()
-            .await?;
-
-        let text = crate::services::http_client::response_text_limited(
-            response,
-            crate::services::http_client::INDEXER_RESPONSE_LIMIT,
-        )
-        .await?;
-
-        // Check if logged in
-        if !text.contains("/lout.php") {
-            return Err(anyhow!(
-                "The user is not logged in. The cookie may have expired or is incorrect."
-            ));
-        }
+        let referer = format!("{}t", self.site_link);
+        let text = self.get_signed_in(&search_url, Some(&referer)).await?;
 
         // Check for no results
         if text.contains("No Torrents Found!") {
@@ -536,15 +570,9 @@ impl Source for IPTorrentsSource {
                 && query.genre.is_none()
                 && let Some(ref term) = query.search_term
                 && !term.is_empty()
+                && !crate::services::release_match::title_has_all_words(term, &title)
             {
-                let term_lower = term.to_lowercase();
-                let title_lower = title.to_lowercase();
-                if !term_lower
-                    .split_whitespace()
-                    .all(|word| title_lower.contains(word))
-                {
-                    continue;
-                }
+                continue;
             }
 
             let href = title_el.value().attr("href").unwrap_or("");
@@ -688,27 +716,43 @@ impl Source for IPTorrentsSource {
     }
 
     async fn download(&self, link: &str) -> Result<Vec<u8>> {
-        self.rate_limiter.wait_for_permit().await;
-        let response = self
-            .client
-            .get(link)
-            .header(header::REFERER, &self.site_link)
-            .send()
+        for attempt in 0..2 {
+            self.rate_limiter.wait_for_permit().await;
+            let mut request = self
+                .client
+                .get(link)
+                .header(header::REFERER, &self.site_link);
+            let cookie = self.cookie.read().clone();
+            if !cookie.is_empty() {
+                request = request.header(header::COOKIE, cookie);
+            }
+            let response = request.send().await?;
+            let is_page = response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|kind| kind.to_ascii_lowercase().contains("text/html"));
+            let status = response.status();
+            // A signed-out session is answered with the login page, not a torrent file.
+            if is_page || matches!(status.as_u16(), 401 | 403) {
+                if attempt == 0 && self.renew_session().await? {
+                    continue;
+                }
+                return Err(anyhow::Error::new(SessionExpired(
+                    "The user is not logged in. The session may have expired.".to_string(),
+                )));
+            }
+            if !status.is_success() {
+                return Err(anyhow!("Download failed with status: {}", status));
+            }
+            let bytes = crate::services::http_client::response_bytes_limited(
+                response,
+                crate::services::http_client::DOWNLOAD_RESPONSE_LIMIT,
+            )
             .await?;
-
-        if !response.status().is_success() {
-            return Err(anyhow!(
-                "Download failed with status: {}",
-                response.status()
-            ));
+            return Ok(bytes.to_vec());
         }
-
-        let bytes = crate::services::http_client::response_bytes_limited(
-            response,
-            crate::services::http_client::DOWNLOAD_RESPONSE_LIMIT,
-        )
-        .await?;
-        Ok(bytes.to_vec())
+        unreachable!("the loop returns on its second pass")
     }
 }
 

@@ -1,22 +1,38 @@
 //! GraphQL mutation modules (auth, filesystem, etc.).
 
+pub mod account;
 pub mod artwork;
 pub mod auth;
 pub mod auto_download;
 pub mod backup;
+pub mod devices;
+pub mod downloads_move;
+pub mod feeds;
 pub mod filesystem;
 pub mod library_scan;
+pub mod network_servers;
 pub mod notifications;
 pub mod quality;
+pub mod recommendations;
+pub mod server_update;
+pub mod subtitles;
 
+pub use account::AccountMutations;
 pub use artwork::ArtworkMutations;
 pub use auth::AuthMutations;
 pub use auto_download::AutoDownloadMutations;
 pub use backup::BackupMutations;
+pub use devices::DeviceActionMutations;
+pub use downloads_move::{DownloadsMoveMutations, DownloadsMoveQueries};
+pub use feeds::FeedMutations;
 pub use filesystem::FilesystemMutations;
 pub use library_scan::LibraryScanMutations;
+pub use network_servers::{ServerConnectionMutations, ServerConnectionQueries};
 pub use notifications::NotificationFeedMutations;
 pub use quality::QualityMutations;
+pub use recommendations::RecommendationMutations;
+pub use server_update::{ServerUpdateMutations, ServerUpdateQueries};
+pub use subtitles::SubtitleActionMutations;
 
 #[cfg(test)]
 mod auth_session_tests;

@@ -20,22 +20,76 @@ import { useSelectableTableState } from "@/hooks/useTableSelection";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { runSelectionAction } from "@/lib/actions/runSelectionAction";
 import { useSession } from "@/lib/auth/useSession";
-import { Button, EmptyState, ErrorState, GlassSegmented, Spinner } from "@/components/ui";
+import { Button, ConfirmDialog, EmptyState, ErrorState, GlassSegmented, Spinner } from "@/components/ui";
 import { ENTITY_KINDS } from "@/lib/entities/kinds";
-import { AddTorrentDocument, HasEnabledSourcesDocument, type SearchSourcesQuery } from "@/graphql/generated/graphql";
+import { coverageCell, planSummary, type Recommendation, type RecommendationTarget } from "@/features/recommendations/recommendations";
+import { useRecommended } from "@/features/recommendations/useRecommended";
+import { AddTorrentDocument, GrabRecommendationDocument, GrabRecommendationPlanDocument, HasEnabledSourcesDocument, type SearchSourcesQuery } from "@/graphql/generated/graphql";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
 import { languageName } from "@/lib/languages";
 import { cn } from "@/lib/utils";
 
-type Release = SearchSourcesQuery["searchSources"]["sources"][number]["releases"][number];
+type SearchRelease = SearchSourcesQuery["searchSources"]["sources"][number]["releases"][number];
+/**
+ * A row of the releases table: a search result, or a release Librarian recommends (pinned at the
+ * top, grabbed through its recommendation so its link never reaches the browser).
+ */
+type Release = SearchRelease & { recommendation?: Recommendation };
 const releaseId = (release: Release) => release.stableId;
+/** A release can be grabbed from a link, a magnet, (a feed release, whose link stays on the server) its catalogue item, or its recommendation. */
+const hasDownload = (release: Release) => Boolean(release.recommendation || release.magnetUri || release.link || release.feedItemId);
+
+/** A recommended release as a row of the table, with the same columns as a search result. */
+export function recommendedRow(rec: Recommendation): Release {
+  return {
+    __typename: "SourceRelease",
+    stableId: `recommendation:${rec.id}`,
+    fromFeed: rec.sourceKind === "feed",
+    feedItemId: null,
+    format: null,
+    formatReason: null,
+    packHint: null,
+    relevance: null,
+    otherBookNumber: null,
+    title: rec.title ?? rec.targetLabel,
+    guid: rec.guid ?? rec.id,
+    link: null,
+    magnetUri: null,
+    infoHash: rec.infoHash ?? null,
+    details: null,
+    publishDate: rec.foundAt,
+    categories: [],
+    size: rec.size ?? null,
+    sizeFormatted: null,
+    seeders: rec.seeders ?? null,
+    leechers: null,
+    peers: null,
+    grabs: null,
+    isFreeleech: false,
+    imdbId: null,
+    poster: null,
+    description: null,
+    sourceId: rec.sourceId ?? null,
+    sourceName: rec.sourceKind === "feed" ? `${rec.sourceName ?? "feed"}` : rec.sourceName ?? null,
+    profileMatch: "recommended",
+    rejectReasons: rec.reasons,
+    parsed: { __typename: "ParsedRelease", resolution: null, codec: null, hdrType: null, sourceType: null, audio: null, releaseGroup: null, languages: [], isSeasonPack: false, isProper: false, isRepack: false, season: rec.season ?? null, episodes: [], year: null },
+    recommendation: rec,
+  } as Release;
+}
+
+/** Whether a search result is a release already recommended (same info hash or guid): it is shown once, as the recommended row. */
+export function isRecommended(release: Pick<Release, "infoHash" | "guid">, recommended: readonly Recommendation[]): boolean {
+  const hash = release.infoHash?.toLowerCase();
+  return recommended.some((rec) => (hash && rec.infoHash?.toLowerCase() === hash) || (rec.guid && rec.guid === release.guid));
+}
 const ReleaseActionsContext = createContext<{ busy: string | null; grab: (release: Release) => Promise<void> } | null>(null);
 
 function GrabReleaseCell({ release }: { release: Release }) {
   const actions = useContext(ReleaseActionsContext)!;
   return (
-    <Button size="sm" variant="primary" isPending={actions.busy === releaseId(release)} onPress={() => void actions.grab(release)} isDisabled={Boolean(actions.busy && actions.busy !== releaseId(release)) || (!release.magnetUri && !release.link)}>
+    <Button size="sm" variant="primary" isPending={actions.busy === releaseId(release)} onPress={() => void actions.grab(release)} isDisabled={Boolean(actions.busy && actions.busy !== releaseId(release)) || !hasDownload(release)}>
       <IconDownload size="sm" /> Grab
     </Button>
   );
@@ -62,6 +116,16 @@ const health = (seeders: number | null | undefined): Health => (!seeders ? "dead
 const ReleaseGlyph = ENTITY_KINDS.torrent.icon;
 
 function ProfileMatchCell({ release }: { release: Release }) {
+  if (release.recommendation) {
+    const reasons = release.recommendation.reasons;
+    const badge = <Badge size="sm" tone="accent">Recommended</Badge>;
+    if (!reasons.length) return badge;
+    return (
+      <Tooltip content={reasons.join(" · ")}>
+        <Button variant="ghost" size="sm" data-focusable aria-label={`Why recommended: ${reasons.join(", ")}`} className="h-auto min-h-0 cursor-help rounded-pill border-0 bg-transparent p-0 shadow-none backdrop-blur-none">{badge}</Button>
+      </Tooltip>
+    );
+  }
   if (!release.profileMatch) return <TextCell muted>—</TextCell>;
   const match = MATCH[release.profileMatch] ?? MATCH.suboptimal!;
   const badge = <Badge size="sm" marker="dot" tone={match.tone}>{match.label}</Badge>;
@@ -77,7 +141,7 @@ const column = createDataTableColumns<Release>();
 const columns = column.columns([
   column.accessor("title", {
     header: "Release", width: 30, priority: 1, cardRole: "title",
-    cell: ({ row }) => <IdentityCell icon={<ReleaseGlyph />} title={row.original.title} subtitle={[row.original.sourceName, formatRelative(row.original.publishDate)].filter(Boolean).join(" · ")} />,
+    cell: ({ row }) => <IdentityCell icon={<ReleaseGlyph />} title={row.original.title} subtitle={(row.original.recommendation ? [row.original.recommendation.sourceKind === "feed" ? `from feed ${row.original.sourceName ?? ""}`.trim() : row.original.sourceName, row.original.recommendation.downloadNote] : [row.original.sourceName, formatRelative(row.original.publishDate)]).filter(Boolean).join(" · ")} />,
   }),
   column.display({ id: "tags", header: "Quality", width: 18, priority: 2, cell: ({ row }) => <span className="flex min-w-0 flex-wrap items-center gap-1"><ReleaseTags release={row.original} /></span> }),
   column.accessor((release) => release.profileMatch ?? "", { id: "match", header: "Profile", width: 9, priority: 2, cardRole: "status", cell: ({ row }) => <ProfileMatchCell release={row.original} /> }),
@@ -90,6 +154,8 @@ const columns = column.columns([
   column.display({ id: "grab", header: "", width: 7, priority: 1, align: "end", grow: false, cell: ({ row }) => <GrabReleaseCell release={row.original} /> }),
 ]);
 const MATCH_RANK: Record<string, number> = { optimal: 0, suboptimal: 1, rejected: 2 };
+/** For a book: this book, then packs holding it, then other books of the series, then ebooks. Within each, the closest name. */
+const bookRank = (release: Release) => (release.format === "ebook" ? 8 : 0) + (release.otherBookNumber != null ? 4 : 0) + (release.packHint ? 2 : 0);
 
 /** Which of the segmented resolution buckets a parsed resolution belongs to. */
 function resolutionBucket(resolution: string | null | undefined): Resolution {
@@ -109,6 +175,21 @@ export interface ReleaseTarget {
   trackId?: string;
   audiobookId?: string;
   chapterId?: string;
+  /** The album's, the track's or the artist's own: music recommendations are the artist's plan. */
+  artistId?: string;
+}
+
+/**
+ * What a pinned recommendation is for: a show's whole coverage plan (whichever season or episode
+ * is searched, the plan says what covers everything missing), else the movie, album or book.
+ */
+export function recommendationTarget(target: ReleaseTarget | undefined): RecommendationTarget {
+  if (target?.movieId) return { movieId: target.movieId };
+  if (target?.artistId) return { artistId: target.artistId, ...(target.albumId ? { albumId: target.albumId } : {}) };
+  if (target?.albumId) return { albumId: target.albumId };
+  if (target?.audiobookId) return { audiobookId: target.audiobookId };
+  if (target?.showId) return { showId: target.showId, series: true };
+  return {};
 }
 
 interface ReleaseSearchDialogProps {
@@ -134,6 +215,12 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
   const [query, setQuery] = useState(initialQuery);
   const { search, result, loadMore, retrySource, retryContinuation, revision, hasMore, queryKey } = useSourceSearch();
   const [addTorrent] = useMutation(AddTorrentDocument);
+  const [grabRecommendation] = useMutation(GrabRecommendationDocument);
+  const [grabPlan, planGrab] = useMutation(GrabRecommendationPlanDocument);
+  const [confirmingPlan, setConfirmingPlan] = useState(false);
+  // What Librarian recommends for this target, pinned at the top of the table (Q93, Q101, Q110).
+  const recommendation = useRecommended(recommendationTarget(target), target ? 1 : 0, isOpen);
+  const recommendedRows = useMemo(() => recommendation.releases.map(recommendedRow), [recommendation.releases]);
   const [busy, setBusy] = useState<string | null>(null);
   const [resolution, setResolution] = useState<Resolution>("any");
   const [codec, setCodec] = useState<Codec>("any");
@@ -142,6 +229,9 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
   const [hdrOnly, setHdrOnly] = useState(false);
   const [freeleechOnly, setFreeleechOnly] = useState(false);
   const [seededOnly, setSeededOnly] = useState(true);
+  const [showEbooks, setShowEbooks] = useState(false);
+  const bookSearch = Boolean(target?.audiobookId || target?.chapterId || author);
+  const audioSearch = bookSearch || Boolean(target?.albumId || target?.trackId || artist || album);
   const sourceCapability = useQuery(HasEnabledSourcesDocument, { skip: !isOpen });
 
   const variables = useMemo(
@@ -159,12 +249,13 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
         movieId: target?.movieId ?? null,
         albumId: target?.albumId ?? null,
         audiobookId: target?.audiobookId ?? null,
+        autoWiden: bookSearch,
         // The response count describes this batch, not an external total.
         // Local filters apply to accumulated returned releases only.
         limit: null,
       },
     }),
-    [initialQuery, imdbId, season, episode, year, artist, album, author, target?.showId, target?.movieId, target?.albumId, target?.audiobookId],
+    [initialQuery, imdbId, season, episode, year, artist, album, author, target?.showId, target?.movieId, target?.albumId, target?.audiobookId, bookSearch],
   );
 
   useEffect(() => {
@@ -174,9 +265,11 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
   }, [isOpen, initialQuery, variables, search]);
 
   const allReleases = useMemo<Release[]>(() => {
-    const all = result.data?.searchSources.sources.flatMap((source) => source.releases) ?? [];
-    return [...all].sort((a, b) => (MATCH_RANK[a.profileMatch ?? ""] ?? 1) - (MATCH_RANK[b.profileMatch ?? ""] ?? 1) || (b.seeders ?? 0) - (a.seeders ?? 0));
-  }, [result.data]);
+    // A release that is also recommended is shown once, as the recommended row.
+    const all = (result.data?.searchSources.sources.flatMap((source) => source.releases) ?? []).filter((release) => !isRecommended(release, recommendation.releases));
+    return [...all].sort((a, b) => bookRank(a) - bookRank(b) || Math.round(((b.relevance ?? 0) - (a.relevance ?? 0)) * 10) || (MATCH_RANK[a.profileMatch ?? ""] ?? 1) - (MATCH_RANK[b.profileMatch ?? ""] ?? 1) || (b.seeders ?? 0) - (a.seeders ?? 0));
+  }, [result.data, recommendation.releases]);
+  const ebookCount = useMemo(() => allReleases.filter((release) => release.format === "ebook").length, [allReleases]);
 
   const languages = useMemo(() => [...new Set(allReleases.flatMap((release) => release.parsed.languages))].sort(), [allReleases]);
 
@@ -184,6 +277,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
     () =>
       allReleases.filter((release) => {
         const parsed = release.parsed;
+        if (release.format === "ebook" && !showEbooks) return false;
         if (resolution !== "any" && resolutionBucket(parsed.resolution) !== resolution) return false;
         if (codec !== "any" && parsed.codec?.toLowerCase() !== codec) return false;
         if (packs === "packs" && !parsed.isSeasonPack) return false;
@@ -194,20 +288,28 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
         if (seededOnly && !(release.seeders && release.seeders > 0)) return false;
         return true;
       }),
-    [allReleases, resolution, codec, packs, language, hdrOnly, freeleechOnly, seededOnly],
+    [allReleases, showEbooks, resolution, codec, packs, language, hdrOnly, freeleechOnly, seededOnly],
   );
-  const selection = useSelectableTableState({ scope: [isOpen, user?.id, queryKey, libraryId, target, resolution, codec, packs, language, hdrOnly, freeleechOnly, seededOnly], rows: releases, columns, getRowId: releaseId, ready: !result.loading });
+  // Recommended releases are pinned first and are not hidden by the filters.
+  const tableRows = useMemo(() => [...recommendedRows, ...releases], [recommendedRows, releases]);
+  const selection = useSelectableTableState({ scope: [isOpen, user?.id, queryKey, libraryId, target, showEbooks, resolution, codec, packs, language, hdrOnly, freeleechOnly, seededOnly], rows: tableRows, columns, getRowId: releaseId, ready: !result.loading });
   const failures = result.data?.searchSources.sources.filter((source) => source.error) ?? [];
   const retryableSource = failures.find((source) => source.pageInfo.retryCursor);
   const paginationError = result.moreError ?? (!hasMore && retryableSource ? new Error(retryableSource.error ?? "Source page failed") : undefined);
   const retryPage = () => retryableSource && !result.moreError ? retrySource(retryableSource.sourceId) : retryContinuation();
 
   const download = async (release: Release) => {
+      if (release.recommendation) {
+        const started = assertSuccess((await grabRecommendation({ variables: { id: release.recommendation.id } })).data?.grabRecommendation, "Could not start the download");
+        recommendation.refetch();
+        return started.torrentName ?? release.title;
+      }
       const { data } = await addTorrent({
         variables: {
           input: {
-            magnet: release.magnetUri ?? null,
-            url: release.magnetUri ? null : release.link,
+            magnet: release.feedItemId ? null : release.magnetUri ?? null,
+            url: release.feedItemId || release.magnetUri ? null : release.link,
+            feedItemId: release.feedItemId ?? null,
             libraryId: libraryId ?? null,
             movieId: target?.movieId ?? null,
             showId: target?.showId ?? null,
@@ -217,13 +319,25 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
             audiobookId: target?.audiobookId ?? null,
             chapterId: target?.chapterId ?? null,
             season: release.parsed.isSeasonPack ? release.parsed.season ?? season ?? null : null,
-            sourceIndexerId: release.sourceId ?? null,
+            sourceIndexerId: release.feedItemId ? null : release.sourceId ?? null,
             sourceUrl: release.details ?? null,
           },
         },
       });
       assertSuccess(data?.addTorrent, "Could not start the download");
     return data?.addTorrent.torrent?.name ?? release.title;
+  };
+  const plan = recommendation.plan;
+  const planReleases = plan ? recommendation.releases : [];
+  const planTotal = planReleases.reduce((sum, row) => sum + (row.size ?? 0), 0);
+  const downloadPlan = async () => {
+    const outcome = (await grabPlan({ variables: { id: plan!.id } })).data?.grabRecommendationPlan;
+    if (!outcome || outcome.started === 0) throw new Error(outcome?.failed[0] ?? outcome?.error ?? "Could not start the downloads");
+    if (outcome.failed.length > 0) toast.warning(`Downloading ${outcome.started} of ${outcome.started + outcome.failed.length} releases. ${outcome.failed.join(" · ")}`);
+    else toast.success(`Downloading ${outcome.started} recommended ${outcome.started === 1 ? "release" : "releases"}`);
+    setConfirmingPlan(false);
+    recommendation.refetch();
+    onOpenChange(false);
   };
   const grab = async (release: Release) => {
     setBusy(releaseId(release));
@@ -237,7 +351,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
   const actions = defineActions<Release>("release", [
     {
       id: "grab", label: (selected) => selected.length === 1 ? "Grab release" : `Grab ${selected.length} releases`, icon: ReleaseGlyph, group: "manage", priority: 1, bulk: true,
-      disabledReason: (selected) => busy ? "A download is already being requested." : selected.some((release) => !release.magnetUri && !release.link) ? "Some selected releases have no download link. Deselect them to continue." : false,
+      disabledReason: (selected) => busy ? "A download is already being requested." : selected.some((release) => !hasDownload(release)) ? "Some selected releases have no download link. Deselect them to continue." : false,
       confirm: (selected) => selected.length > 1 ? { title: `Download ${selected.length} releases?`, body: "Each selected release starts a separate download.", confirmLabel: "Download", tone: "warning" } : null,
       run: async (selected) => {
         setBusy("selection");
@@ -247,7 +361,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
     },
     { id: "copy-titles", label: "Copy release titles", icon: IconCopy, group: "open", bulk: true, run: (selected) => copyText(selected.map((release) => release.title).join("\n")), successMessage: () => "Release titles copied" },
     { id: "copy-links", label: "Copy download links", icon: IconCopy, group: "open", bulk: true,
-      disabledReason: (selected) => selected.some((release) => !release.magnetUri && !release.link) ? "Some selected releases have no download link." : false,
+      disabledReason: (selected) => selected.some((release) => !release.magnetUri && !release.link) ? "Some selected releases have no download link to copy (a feed release's link is kept private)." : false,
       run: (selected) => copyText(selected.map((release) => release.magnetUri ?? release.link).join("\n")), successMessage: () => "Download links copied" },
   ]);
 
@@ -262,7 +376,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
           className="flex min-w-0 shrink-0 gap-2"
           onSubmit={(event) => {
             event.preventDefault();
-            void search({ variables: { input: { ...variables.input, query } } });
+            void search({ variables: { input: { ...variables.input, query, autoWiden: false } } });
           }}
         >
           <SearchField aria-label="Search releases" value={query} onValueChange={setQuery} placeholder="Search releases" className="min-w-0 flex-1" />
@@ -281,19 +395,39 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
         ) : (
           <>
             {failures.length ? <p className="shrink-0 text-label-sm text-warning">{failures.map((source) => `${source.sourceName}: ${source.error}`).join(" · ")}</p> : null}
+            {result.data?.searchSources.widened ? <p className="shrink-0 text-label-sm text-foreground">Nothing for the full title, so this searched for {"\u201c"}{result.data.searchSources.searchedTerm}{"\u201d"}.</p> : null}
             {result.data ? <p className="shrink-0 text-label-sm text-muted">Source results may be partial. Filters apply to returned releases.</p> : null}
             <DataTable<Release>
-              toolbar={allReleases.length > 0 ? (
+              toolbar={allReleases.length > 0 || recommendedRows.length > 0 ? (
                 <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-            <GlassSegmented<Resolution> ariaLabel="Resolution" size="sm" value={resolution} onChange={setResolution} items={[{ key: "any", label: "Any" }, { key: "2160p", label: "2160p" }, { key: "1080p", label: "1080p" }, { key: "720p", label: "720p" }, { key: "sd", label: "SD" }]} />
-            <GlassSegmented<Codec> ariaLabel="Codec" size="sm" value={codec} onChange={setCodec} items={[{ key: "any", label: "Any codec" }, { key: "hevc", label: "HEVC" }, { key: "h264", label: "H.264" }, { key: "av1", label: "AV1" }]} />
-            <GlassSegmented<Packs> ariaLabel="Season packs" size="sm" value={packs} onChange={setPacks} items={[{ key: "any", label: "All" }, { key: "packs", label: "Season packs" }, { key: "episodes", label: "Single" }]} />
+            {plan && planReleases.length > 0 ? (
+              <span className="me-auto flex min-w-0 items-center gap-2">
+                <Button size="sm" variant="primary" isPending={planGrab.loading} onPress={() => setConfirmingPlan(true)} aria-label={`Download recommended: ${planSummary(plan, planReleases.length)}`}>
+                  <IconDownload size="sm" /> Download recommended
+                </Button>
+                <span className="truncate text-label-sm text-muted">{planSummary(plan, planReleases.length)}{planTotal > 0 ? ` · ${formatBytes(planTotal)}` : ""}</span>
+              </span>
+            ) : null}
+            {audioSearch ? null : (
+              <>
+                <GlassSegmented<Resolution> ariaLabel="Resolution" size="sm" value={resolution} onChange={setResolution} items={[{ key: "any", label: "Any" }, { key: "2160p", label: "2160p" }, { key: "1080p", label: "1080p" }, { key: "720p", label: "720p" }, { key: "sd", label: "SD" }]} />
+                <GlassSegmented<Codec> ariaLabel="Codec" size="sm" value={codec} onChange={setCodec} items={[{ key: "any", label: "Any codec" }, { key: "hevc", label: "HEVC" }, { key: "h264", label: "H.264" }, { key: "av1", label: "AV1" }]} />
+                <GlassSegmented<Packs> ariaLabel="Season packs" size="sm" value={packs} onChange={setPacks} items={[{ key: "any", label: "All" }, { key: "packs", label: "Season packs" }, { key: "episodes", label: "Single" }]} />
+              </>
+            )}
+            {ebookCount > 0 ? (
+              <Button size="sm" variant={showEbooks ? "primary" : "secondary"} onPress={() => setShowEbooks((value) => !value)} aria-pressed={showEbooks}>
+                Ebooks ({ebookCount})
+              </Button>
+            ) : null}
             {languages.length > 0 ? (
               <Select aria-label="Language" value={language} onValueChange={(value) => setLanguage(value ?? "any")} size="sm" className="w-40" options={[{ value: "any", label: "Any language" }, ...languages.map((code) => ({ value: code, label: languageName(code) }))]} />
             ) : null}
-            <Button size="sm" variant={hdrOnly ? "primary" : "secondary"} onPress={() => setHdrOnly((value) => !value)} aria-pressed={hdrOnly}>
-              HDR
-            </Button>
+            {audioSearch ? null : (
+              <Button size="sm" variant={hdrOnly ? "primary" : "secondary"} onPress={() => setHdrOnly((value) => !value)} aria-pressed={hdrOnly}>
+                HDR
+              </Button>
+            )}
             <Button size="sm" variant={freeleechOnly ? "primary" : "secondary"} onPress={() => setFreeleechOnly((value) => !value)} aria-pressed={freeleechOnly}>
               Freeleech
             </Button>
@@ -307,7 +441,7 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
               label="Releases"
               columns={columns}
               rows={selection.rows}
-              queryKey={[user?.id, queryKey, libraryId, target, resolution, codec, packs, language, hdrOnly, freeleechOnly, seededOnly]}
+              queryKey={[user?.id, queryKey, libraryId, target, showEbooks, resolution, codec, packs, language, hdrOnly, freeleechOnly, seededOnly]}
               actions={actions}
               state={selection.state}
               onStateChange={selection.onStateChange}
@@ -317,17 +451,29 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
               onRetry={() => void retryPage()}
               getRowId={releaseId}
               getRowLabel={(release) => release.title}
-              density="compact"
               noun={{ one: "release", other: "releases" }}
-              emptyMessage={<span className="flex flex-col items-center gap-1"><span>{allReleases.length ? "Nothing matches these filters" : "No releases found"}</span><span className="shrink-0 text-label-sm text-muted">{allReleases.length ? "Loosen a filter to see more." : "Try a shorter title or search without the year."}</span></span>}
+              emptyMessage={<span className="flex flex-col items-center gap-1"><span>{allReleases.length ? "Nothing matches these filters" : "No releases found"}</span><span className="shrink-0 text-label-sm text-muted">{allReleases.length ? (ebookCount === allReleases.length ? "Every result looks like an ebook." : "Loosen a filter to see more.") : "Try a shorter title or search without the year."}</span></span>}
             />
+            {plan?.note ? <p className="shrink-0 text-label-sm text-muted">{plan.note}</p> : recommendation.searching ? <p className="shrink-0 text-label-sm text-muted" role="status">Looking for the best release to recommend…</p> : !plan && recommendation.releases.length === 0 && recommendation.none?.note ? <p className="shrink-0 text-label-sm text-muted">Nothing to recommend yet: {recommendation.none.note}</p> : null}
             {result.data ? <p className="shrink-0 text-label-sm text-muted">{allReleases.length} returned releases from {result.data.searchSources.sources.length} sources · latest response {result.data.searchSources.totalElapsedMs} ms</p> : null}
           </>
         )}
       </div>
+    {plan ? (
+      <ConfirmDialog
+        isOpen={confirmingPlan}
+        onOpenChange={setConfirmingPlan}
+        title={`Download ${planReleases.length} recommended ${planReleases.length === 1 ? "release" : "releases"}?`}
+        description={`${planSummary(plan, planReleases.length)}. Each release starts its own download${planTotal > 0 ? `, ${formatBytes(planTotal)} in all` : ""}. With "Download only the missing files" on, packs take only the files for what is missing.`}
+        confirmLabel="Download recommended"
+        isPending={planGrab.loading}
+        onConfirm={downloadPlan}
+      />
+    ) : null}
       </GlassDialog.Body>
     </GlassDialog.Popup>
     </GlassDialog.Root>
+
     </ReleaseActionsContext>
   );
 }
@@ -336,6 +482,17 @@ export function ReleaseSearchDialog({ isOpen, onOpenChange, query: initialQuery,
 function ReleaseTags({ release }: { release: Release }) {
   const parsed = release.parsed;
   const tags: Array<{ key: string; label: string; tone?: "brand" | "info" }> = [];
+  const rec = release.recommendation;
+  if (rec) {
+    // What it is and what it covers, in the same tag style as a search result's facts.
+    if (rec.quality) tags.push({ key: "quality", label: rec.quality });
+    tags.push({ key: "covers", label: coverageCell(rec), tone: "info" });
+    if (rec.sourceKind === "feed") tags.push({ key: "feed", label: "From feed", tone: "brand" });
+  }
+  if (release.format === "audio") tags.push({ key: "format", label: "Audiobook", tone: "info" });
+  if (release.format === "ebook") tags.push({ key: "format", label: "Ebook" });
+  if (release.packHint) tags.push({ key: "books", label: release.packHint, tone: "info" });
+  if (release.otherBookNumber != null) tags.push({ key: "other-book", label: `Book ${release.otherBookNumber}, not this one` });
   if (parsed.resolution) tags.push({ key: "resolution", label: parsed.resolution });
   if (parsed.sourceType) tags.push({ key: "source", label: parsed.sourceType });
   if (parsed.codec) tags.push({ key: "codec", label: parsed.codec.toUpperCase() });
@@ -347,6 +504,7 @@ function ReleaseTags({ release }: { release: Release }) {
   if (parsed.isRepack) tags.push({ key: "repack", label: "REPACK", tone: "brand" });
   if (parsed.releaseGroup) tags.push({ key: "group", label: parsed.releaseGroup });
   if (release.isFreeleech) tags.push({ key: "freeleech", label: "Freeleech", tone: "info" });
+  if (release.fromFeed) tags.push({ key: "feed", label: "From feed", tone: "brand" });
 
   return (
     <>

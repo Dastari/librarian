@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   AlbumDetailDocument, AlbumTracksPageDocument, AudiobookChaptersPageDocument, AudiobookDetailDocument,
-  EntityChapterUpdateDocument, EntityTrackUpdateDocument, EntityTrackUpdateManyDocument, PlaybackProgressForFilesDocument,
+  AudiobookPartsDocument, EntityChapterUpdateDocument, EntityPlaybackProgressDeleteManyDocument, EntityTrackUpdateDocument, EntityTrackUpdateManyDocument, PlaybackProgressForFilesDocument,
   type AlbumDetailQuery, type AudiobookDetailQuery, type PlaybackProgressFieldsFragment,
 } from "@/graphql/generated/graphql";
 import { renderWithProviders } from "@/test";
@@ -26,7 +26,6 @@ vi.mock("@/features/player/usePlayer", async (importOriginal) => {
 });
 vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => admin, useSession: () => ({ user: { id: "audio-user", role: admin ? "admin" : "member" } }) }));
 vi.mock("@/hooks/useContentStatuses", async (original) => ({ ...(await original<typeof import("@/hooks/useContentStatuses")>()), useContentStatuses: () => new Map() }));
-vi.mock("@/features/acquisition/AcquisitionDialog", () => ({ AcquisitionDialog: () => null }));
 vi.mock("@/features/downloads/ReleaseSearchDialog", () => ({ ReleaseSearchDialog: () => null }));
 
 type Track = NonNullable<AlbumDetailQuery["album"]>["tracks"]["edges"][number]["node"] & { __typename: "Track" };
@@ -40,7 +39,7 @@ const track = (n: number, overrides: Partial<Track> = {}): Track => ({
   mediaFile: null, ...overrides,
 });
 const chapter = (n: number, overrides: Partial<Chapter> = {}): Chapter => ({
-  __typename: "Chapter", id: `chapter-${n}`, audiobookId: "book", title: `Part ${n}`, chapterNumber: n, startTimeSecs: 0,
+  __typename: "Chapter", id: `chapter-${n}`, audiobookId: "book", title: `Part ${n}`, chapterNumber: n, startTimeSecs: 0, fileOffsetSecs: null,
   endTimeSecs: null, durationSecs: 300, wanted: false, ignored: false, mediaFileId: `chapter-file-${n}`,
   createdAt: stamp, updatedAt: stamp, mediaFile: null, ...overrides,
 });
@@ -50,16 +49,16 @@ const connection = <T,>(rows: T[], totalCount = rows.length, hasNextPage = false
 const album = (rows: Track[], total = rows.length, hasMore = false): NonNullable<AlbumDetailQuery["album"]> & { __typename: "Album" } => ({
   __typename: "Album", id: "album", artistId: "artist", libraryId: "music", userId: "audio-user", name: "Recording", sortName: null,
   year: 2026, musicbrainzId: null, albumType: null, genres: [], label: null, country: null, releaseDate: null,
-  coverUrl: null, trackCount: total, discCount: 2, totalDurationSecs: null, autoDownload: false, autoDownloadMode: "NONE",
+  coverUrl: null, lockedFields: null, trackCount: total, discCount: 2, totalDurationSecs: null, autoDownload: false, autoDownloadMode: "NONE",
   qualityProfileId: null, hasFiles: true, sizeBytes: null, path: null, createdAt: stamp, updatedAt: stamp,
-  library: null, tracks: connection(rows, total, hasMore),
+  library: null, wantedMissing: { pageInfo: { totalCount: 0 } }, tracks: connection(rows, total, hasMore),
 });
 const book = (rows: Chapter[], total = rows.length, hasMore = false): NonNullable<AudiobookDetailQuery["audiobook"]> & { __typename: "Audiobook" } => ({
-  __typename: "Audiobook", id: "book", libraryId: "books", userId: "audio-user", title: "Long book", sortTitle: null, authorName: "Author",
+  __typename: "Audiobook", id: "book", lockedFields: null, libraryId: "books", userId: "audio-user", title: "Long book", sortTitle: null, authorName: "Author", seriesName: null, seriesPosition: null, chapterCheckState: null, chapterCheck: null, chapterSource: null, fileShape: null, providerChapters: null,
   narratorName: null, narrators: [], description: null, publisher: null, publishedDate: null, language: null,
   isbn: null, asin: null, audibleId: null, goodreadsId: null, totalDurationSecs: null, chapterCount: total,
   coverUrl: null, autoDownload: false, autoDownloadMode: "NONE", qualityProfileId: null, hasFiles: true,
-  sizeBytes: null, path: null, createdAt: stamp, updatedAt: stamp, library: null, chapters: connection(rows, total, hasMore),
+  sizeBytes: null, path: null, createdAt: stamp, updatedAt: stamp, library: null, wantedMissing: { pageInfo: { totalCount: 0 } }, chapters: connection(rows, total, hasMore),
 });
 const saved = (n: number, position: number, watched = false): PlaybackProgressFieldsFragment & { __typename: "PlaybackProgress" } => ({
   __typename: "PlaybackProgress", id: `progress-${n}`, userId: "audio-user", mediaFileId: `chapter-file-${n}`, currentPosition: position,
@@ -241,7 +240,7 @@ describe("audio detail tables", { timeout: 30000 }, () => {
     expect(playAudio.mock.lastCall![0][100]).toMatchObject({ mediaFileId: "chapter-file-101", startPosition: 45, entity: { kind: "chapter", id: "chapter-101" }, audiobookId: "book", href: "/audiobooks/book" });
     const later = row("book", "Part 101");
     expect(within(later).getByRole("button", { name: "Resume" })).toBeVisible();
-    await userEvent.click(within(row("book", "Part 1")).getByRole("button", { name: "Play" }));
+    await userEvent.click(within(row("book", "Part 1")).getByRole("button", { name: "Play again" }));
     expect(playAudio.mock.lastCall![1]).toBe(0);
     expect(playAudio.mock.lastCall![0][0]).toMatchObject({ startPosition: 0 });
   });
@@ -268,23 +267,22 @@ describe("audio detail tables", { timeout: 30000 }, () => {
       mediaFileId: `chapter-file-${n}`, title: "Long book", entity: { kind: "chapter", id: `chapter-${n}` },
     })), 0));
     await waitFor(() => expect(title).toHaveClass("text-brand"));
-    expect(within(first).getByRole("button", { name: "Play" })).toBe(play);
+    expect(within(first).getByRole("button", { name: "Pause" })).toBe(play);
 
     act(() => client.cache.writeQuery({
       query: PlaybackProgressForFilesDocument,
       variables: { userId: "audio-user", mediaFileIds: ["chapter-file-1", "chapter-file-2"] },
       data: { playbackProgresses: { edges: [saved(1, 45), saved(2, 300, true)].map((node) => ({ node })) } },
     }));
-    await waitFor(() => expect(within(first).getByRole("button", { name: "Resume" })).toBe(play));
+    await waitFor(() => expect(within(second).getByRole("button", { name: "Play again" })).toBeVisible());
     expect(play.isConnected).toBe(true);
-    expect(within(second).getByText("Finished")).toBeVisible();
-    await userEvent.click(play);
-    expect(playAudio.mock.lastCall![0][0]).toMatchObject({ mediaFileId: "chapter-file-1", startPosition: 45 });
 
     act(() => playerStore.jumpTo(1));
     await waitFor(() => expect(nextTitle).toHaveClass("text-brand"));
     expect(title).not.toHaveClass("text-brand");
     expect(within(first).getByRole("button", { name: "Resume" })).toBe(play);
+    await userEvent.click(play);
+    expect(playAudio.mock.lastCall![0][0]).toMatchObject({ mediaFileId: "chapter-file-1", startPosition: 45 });
   });
 
   it("labels in-progress chapter 1 as Resume chapter 1 and keeps actions in narrow cards", async () => {
@@ -327,8 +325,10 @@ describe("selected audio detail actions", { timeout: 30000 }, () => {
     expect(playAudio.mock.lastCall![0].map((item: { entity: { id: string } }) => item.entity.id)).toEqual(["track-1", "track-3"]);
     await userEvent.click(screen.getByRole("button", { name: "Actions for 2 selected tracks" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Add to queue" }));
-    await waitFor(() => expect(enqueue).toHaveBeenCalled());
-    expect(enqueue.mock.lastCall![0].map((item: { entity: { id: string } }) => item.entity.id)).toEqual(["track-1", "track-3"]);
+    // The queue actions write to the player store directly; with nothing playing, queueing starts it.
+    await waitFor(() => expect(playerStore.getSnapshot().queue).toHaveLength(2));
+    expect(playerStore.getSnapshot().queue.map((item) => item.entity.id)).toEqual(["track-1", "track-3"]);
+    playerStore.stopAudio();
   });
 
   it("updates only selected missing tracks and disables playback of mixed availability", async () => {
@@ -371,5 +371,138 @@ describe("selected audio detail actions", { timeout: 30000 }, () => {
     await screen.findByRole("menuitem", { name: "Copy track titles" });
     expect(screen.queryByRole("menuitem", { name: /Want selected/ })).toBeNull();
     expect(screen.getByRole("menuitem", { name: "Play selected tracks" })).toHaveAttribute("aria-disabled", "true");
+  });
+});
+
+describe("marking audio unplayed", { timeout: 30000 }, () => {
+  const heard = (file: string, overrides: Partial<PlaybackProgressFieldsFragment> = {}) => ({ ...saved(1, 40), id: `progress-${file}`, mediaFileId: file, ...overrides });
+  const resetMock = (mediaFileIds: string[]) => {
+    const called = vi.fn(() => ({ data: { deletePlaybackProgresses: { __typename: "DeletePlaybackProgressesResult", success: true, error: null } } }));
+    return { called, mock: { request: { query: EntityPlaybackProgressDeleteManyDocument, variables: { where: { userId: { eq: "audio-user" }, mediaFileId: { inList: mediaFileIds } } } }, result: called } };
+  };
+  const menuItems = async (button: HTMLElement) => {
+    await userEvent.click(button);
+    return within(await screen.findByRole("menu")).getAllByRole("menuitem").map((item) => item.textContent);
+  };
+  const menuClosed = () => waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+  const rowMenu = (kind: "album" | "book", title: string) => within(row(kind, title)).getByRole("button", { name: /^More actions/ });
+
+  it("offers a track only the action it can use, and resets just that track's file", async () => {
+    const tracks = [track(1), track(2), track(3)];
+    const { called, mock } = resetMock(["track-file-1"]);
+    await mount("album", [albumMock(tracks), progressMock([heard("track-file-1"), heard("track-file-3", { currentPosition: 0, isWatched: true })]), mock]);
+    await findRow("album", "Track 3");
+    await waitFor(() => expect(within(row("album", "Track 1")).getByRole("button", { name: "Resume" })).not.toHaveAttribute("aria-disabled", "true"));
+    expect(await menuItems(rowMenu("album", "Track 2"))).not.toContain("Mark as unplayed");
+    await userEvent.keyboard("{Escape}");
+    await menuClosed();
+    await userEvent.click(rowMenu("album", "Track 1"));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Mark as unplayed" }));
+    await waitFor(() => expect(called).toHaveBeenCalledOnce());
+  });
+
+  it("resets the whole album from its header, and a selection of tracks", async () => {
+    const tracks = [track(1), track(2), track(3)];
+    const everything = resetMock(["track-file-1", "track-file-3"]);
+    await mount("album", [albumMock(tracks), progressMock([heard("track-file-1"), heard("track-file-3", { currentPosition: 0, isWatched: true })]), everything.mock]);
+    await findRow("album", "Track 3");
+    await waitFor(() => expect(within(row("album", "Track 1")).getByRole("button", { name: "Resume" })).not.toHaveAttribute("aria-disabled", "true"));
+    await userEvent.click(within(hero()).getByRole("button", { name: /^More actions/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Mark as unplayed" }));
+    await waitFor(() => expect(everything.called).toHaveBeenCalledOnce());
+  });
+
+  it("resets a selection of tracks in one request", async () => {
+    const tracks = [track(1), track(2), track(3)];
+    const picked = resetMock(["track-file-1"]);
+    await mount("album", [albumMock(tracks), progressMock([heard("track-file-1")]), picked.mock]);
+    await findRow("album", "Track 3");
+    await waitFor(() => expect(within(row("album", "Track 1")).getByRole("button", { name: "Resume" })).not.toHaveAttribute("aria-disabled", "true"));
+    for (const n of [1, 2]) await userEvent.click(screen.getByRole("checkbox", { name: `Select Track ${n}` }));
+    await userEvent.click(screen.getByRole("button", { name: "Actions for 2 selected tracks" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Mark as unplayed" }));
+    await waitFor(() => expect(picked.called).toHaveBeenCalledOnce());
+  });
+
+  it("is a member's action as much as an administrator's", async () => {
+    admin = false;
+    const tracks = [track(1), track(2)];
+    const { called, mock } = resetMock(["track-file-1"]);
+    await mount("album", [albumMock(tracks), progressMock([heard("track-file-1")]), mock]);
+    await findRow("album", "Track 2");
+    await waitFor(() => expect(within(row("album", "Track 1")).getByRole("button", { name: "Resume" })).not.toHaveAttribute("aria-disabled", "true"));
+    await userEvent.click(rowMenu("album", "Track 1"));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Mark as unplayed" }));
+    await waitFor(() => expect(called).toHaveBeenCalledOnce());
+  });
+
+  it("offers nothing on an album with no progress", async () => {
+    await mount("album", [albumMock([track(1), track(2)]), progressMock()]);
+    await findRow("album", "Track 2");
+    expect(await menuItems(within(hero()).getByRole("button", { name: /^More actions/ }))).not.toContain("Mark as unplayed");
+  });
+
+  it("resets a chapter that has a file of its own, and the book through every file", async () => {
+    const chapters = [chapter(1), chapter(2), chapter(3)];
+    const one = resetMock(["chapter-file-2"]);
+    const whole = resetMock(["chapter-file-2", "chapter-file-3"]);
+    await mount("book", [bookMock(chapters), progressMock([saved(2, 45), saved(3, 300, true)]), one.mock, whole.mock]);
+    await findRow("book", "Part 3");
+    await waitFor(() => expect(within(row("book", "Part 2")).getByRole("button", { name: "Resume" })).not.toHaveAttribute("aria-disabled", "true"));
+    expect(await menuItems(rowMenu("book", "Part 1"))).not.toContain("Mark as unplayed");
+    await userEvent.keyboard("{Escape}");
+    await menuClosed();
+    await userEvent.click(rowMenu("book", "Part 2"));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Mark as unplayed" }));
+    await waitFor(() => expect(one.called).toHaveBeenCalledOnce());
+    await menuClosed();
+    await userEvent.click(within(hero()).getByRole("button", { name: /^More actions/ }));
+    // Progress is read again after a reset, and the book's action waits for that.
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Mark as unplayed" })).not.toHaveAttribute("aria-disabled", "true"));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Mark as unplayed" }));
+    await waitFor(() => expect(whole.called).toHaveBeenCalledOnce());
+  });
+
+  it("only offers the whole book when its chapters are places in one file", async () => {
+    const shared = [1, 2, 3].map((n) => chapter(n, { mediaFileId: "book-file", startTimeSecs: (n - 1) * 100 }));
+    const { called, mock } = resetMock(["book-file"]);
+    await mount("book", [bookMock(shared), progressMock([heard("book-file", { duration: 300 })]), mock]);
+    await findRow("book", "Part 3");
+    await waitFor(() => expect(within(hero()).getByRole("button", { name: /^Resume chapter/ })).not.toHaveAttribute("aria-disabled", "true"));
+    // One saved position can't be split between chapters, so no chapter offers its own reset.
+    for (const part of ["Part 1", "Part 2", "Part 3"]) {
+      expect(await menuItems(rowMenu("book", part))).not.toContain("Mark as unplayed");
+      await userEvent.keyboard("{Escape}");
+      await menuClosed();
+    }
+    await userEvent.click(within(hero()).getByRole("button", { name: /^More actions/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Mark as unplayed" }));
+    await waitFor(() => expect(called).toHaveBeenCalledOnce());
+  });
+
+  it("resets a book cut into parts through every part, including one no chapter starts in", async () => {
+    // Chapters are places in the parts; listening is saved against the part files themselves.
+    const chapters = [1, 2].map((n) => chapter(n, { mediaFileId: `part-${n}`, fileOffsetSecs: 0 }));
+    const parts = ["part-1", "part-2", "part-3"].map((id, index) => ({ __typename: "MediaFile", id, chapterId: chapters[Math.min(index, 1)]!.id, path: `/books/${id}.mp3`, duration: 300 }));
+    const partsMock = { request: { query: AudiobookPartsDocument, variables: () => true }, result: { data: { mediaFiles: { __typename: "MediaFileConnection", edges: parts.map((node) => ({ __typename: "MediaFileEdge", node })) } } } };
+    const unreferenced = heard("part-3", { currentPosition: 0, isWatched: true });
+    const { called, mock } = resetMock(["part-1", "part-3"]);
+    await mount("book", [{ ...bookMock(chapters), result: { data: { audiobook: { ...book(chapters), fileShape: "parts" } } } }, partsMock, progressMock([heard("part-1"), unreferenced]), mock]);
+    await findRow("book", "Part 2");
+    await waitFor(() => expect(within(hero()).getByRole("button", { name: /^Resume chapter|^Listen/ })).not.toHaveAttribute("aria-disabled", "true"));
+    await userEvent.click(within(hero()).getByRole("button", { name: /^More actions/ }));
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Mark as unplayed" })).not.toHaveAttribute("aria-disabled", "true"));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Mark as unplayed" }));
+    await waitFor(() => expect(called).toHaveBeenCalledOnce());
+  });
+
+  it("waits for the whole list before offering to reset a long book", async () => {
+    const first = Array.from({ length: 100 }, (_, i) => chapter(i + 1));
+    // The last chapter never arrives, so the book can't claim to reset all of it.
+    await mount("book", [bookMock(first, 101, true), { request: { query: AudiobookChaptersPageDocument, variables: { id: "book", offset: 100 } }, error: new Error("Offline") }, progressMock([saved(1, 45)])]);
+    await notice(/Could not load all chapters/);
+    await userEvent.click(within(hero()).getByRole("button", { name: /^More actions/ }));
+    const reset = await screen.findByRole("menuitem", { name: "Mark as unplayed" });
+    expect(reset).toHaveAttribute("aria-disabled", "true");
   });
 });

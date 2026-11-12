@@ -145,6 +145,8 @@ pub(crate) fn entity_metadata() -> Vec<&'static graphql_orm::graphql::orm::Entit
         <Movie as Entity>::metadata(),
         <Person as Entity>::metadata(),
         <MovieCastCredit as Entity>::metadata(),
+        <Credit as Entity>::metadata(),
+        <TitleDetail as Entity>::metadata(),
         <Collection as Entity>::metadata(),
         <Show as Entity>::metadata(),
         <Episode as Entity>::metadata(),
@@ -163,14 +165,19 @@ pub(crate) fn entity_metadata() -> Vec<&'static graphql_orm::graphql::orm::Entit
         <Source as Entity>::metadata(),
         <User as Entity>::metadata(),
         <InviteToken as Entity>::metadata(),
+        <PasswordResetToken as Entity>::metadata(),
         <RefreshToken as Entity>::metadata(),
         <AppSetting as Entity>::metadata(),
         <AppLog as Entity>::metadata(),
         <VideoStream as Entity>::metadata(),
         <AudioStream as Entity>::metadata(),
         <Subtitle as Entity>::metadata(),
+        <Lyric as Entity>::metadata(),
         <MediaChapter as Entity>::metadata(),
         <PlaybackSession as Entity>::metadata(),
+        <Device as Entity>::metadata(),
+        <PlayHistory as Entity>::metadata(),
+        <StatsShare as Entity>::metadata(),
         <PlaybackProgress as Entity>::metadata(),
         <PersonalList as Entity>::metadata(),
         <ListEntry as Entity>::metadata(),
@@ -181,6 +188,9 @@ pub(crate) fn entity_metadata() -> Vec<&'static graphql_orm::graphql::orm::Entit
         <CastSession as Entity>::metadata(),
         <CastSetting as Entity>::metadata(),
         <UsenetServer as Entity>::metadata(),
+        <MatchingAssistant as Entity>::metadata(),
+        <IdentificationEvent as Entity>::metadata(),
+        <IdentifiedItem as Entity>::metadata(),
         <UsenetDownload as Entity>::metadata(),
         <ScheduleCache as Entity>::metadata(),
         <ScheduleSyncState as Entity>::metadata(),
@@ -193,6 +203,10 @@ pub(crate) fn entity_metadata() -> Vec<&'static graphql_orm::graphql::orm::Entit
         <TorznabCategory as Entity>::metadata(),
         <QualityProfile as Entity>::metadata(),
         <ReleaseBlocklist as Entity>::metadata(),
+        <ReleaseRecommendation as Entity>::metadata(),
+        <NetworkServer as Entity>::metadata(),
+        <TorrentContents as Entity>::metadata(),
+        <StorageVolume as Entity>::metadata(),
     ]
 }
 
@@ -588,6 +602,75 @@ impl AppWriteInputTransform {
             .filter(|user| !user.is_admin())
     }
 
+    /// A library root on a network share is normalised (`smb://host/share/folder`, host and share
+    /// in lower case) and must be reachable and a folder: a library that cannot be read from the
+    /// start would only ever report itself unavailable. A local path is kept exactly as typed.
+    async fn checked_library_root(path: &str) -> async_graphql::Result<String> {
+        use crate::services::library_storage::{StorageKind, StorageLocation, library_storage};
+        let location = match StorageLocation::parse(path) {
+            Ok(location) if location.kind() == StorageKind::Smb => location,
+            _ => return Ok(path.to_string()),
+        };
+        let root = location.root_path();
+        let meta = library_storage().stat(&root).await.map_err(|error| {
+            async_graphql::Error::new(format!(
+                "The library folder on the share cannot be read: {error}"
+            ))
+        })?;
+        if !meta.is_dir() {
+            return Err(async_graphql::Error::new(
+                "The library location on the share is not a folder",
+            ));
+        }
+        Ok(location.to_path_string())
+    }
+
+    /// Sign-in accepts a username or an email, so two accounts can never share an address. Read
+    /// through the generated update's own transaction (re-entering the pool would wait on it).
+    /// SQLite's `LIKE` behind `contains` ignores ASCII case; the exact match is checked here.
+    async fn require_unused_email(
+        write_ctx: &mut graphql_orm::graphql::orm::WriteInputContext<'_, '_>,
+        user_id: &str,
+        email: &str,
+    ) -> async_graphql::Result<()> {
+        let contains = || StringFilter {
+            contains: Some(email.to_string()),
+            ..Default::default()
+        };
+        let candidates = write_ctx
+            .query::<User>()
+            .filter(UserWhereInput {
+                or: Some(vec![
+                    UserWhereInput {
+                        email: Some(contains()),
+                        ..Default::default()
+                    },
+                    UserWhereInput {
+                        username: Some(contains()),
+                        ..Default::default()
+                    },
+                ]),
+                ..Default::default()
+            })
+            .fetch_all()
+            .await
+            .map_err(|error| async_graphql::Error::new(error.to_string()))?;
+        if candidates.iter().any(|user| {
+            user.id != user_id
+                && (user
+                    .email
+                    .as_deref()
+                    .is_some_and(|other| other.eq_ignore_ascii_case(email))
+                    || user.username.eq_ignore_ascii_case(email))
+        }) {
+            return Err(async_graphql::Error::new(
+                "Another account already uses that email address",
+            )
+            .extend_with(|_, extensions| extensions.set("code", "BAD_USER_INPUT")));
+        }
+        Ok(())
+    }
+
     fn assign_create_owner(
         ctx: Option<&async_graphql::Context<'_>>,
         entity_name: &str,
@@ -618,6 +701,8 @@ impl AppWriteInputTransform {
         assign!("PendingFileMatch", CreatePendingFileMatchInput);
         assign!("PlaybackProgress", CreatePlaybackProgressInput);
         assign!("PlaybackSession", CreatePlaybackSessionInput);
+        assign!("Device", CreateDeviceInput);
+        assign!("StatsShare", CreateStatsShareInput);
         assign!("Notification", CreateNotificationInput);
         assign!("RssFeed", CreateRssFeedInput);
         assign!("Torrent", CreateTorrentInput);
@@ -668,6 +753,9 @@ impl AppWriteInputTransform {
         supplied!("PendingFileMatch", UpdatePendingFileMatchInput);
         supplied!("PlaybackProgress", UpdatePlaybackProgressInput);
         supplied!("PlaybackSession", UpdatePlaybackSessionInput);
+        supplied!("Device", UpdateDeviceInput);
+        supplied!("PlayHistory", UpdatePlayHistoryInput);
+        supplied!("StatsShare", UpdateStatsShareInput);
         supplied!("Notification", UpdateNotificationInput);
         supplied!("RssFeed", UpdateRssFeedInput);
         supplied!("Torrent", UpdateTorrentInput);
@@ -822,6 +910,15 @@ impl AppWriteInputTransform {
                         .downcast_ref::<UpdateArtistInput>()
                         .is_some_and(|input| input.image_url.is_some())
             }
+            // A playlist's cover comes from its owner's upload (`PUT /api/artwork/playlist/…`).
+            "PersonalList" => {
+                input
+                    .downcast_ref::<CreatePersonalListInput>()
+                    .is_some_and(|input| input.cover_url.is_some())
+                    || input
+                        .downcast_ref::<UpdatePersonalListInput>()
+                        .is_some_and(|input| input.cover_url.is_some())
+            }
             _ => false,
         };
 
@@ -874,18 +971,64 @@ impl AppWriteInputTransform {
         }
     }
 
+    /// App settings with a shape of their own (the LAN announcement, Q138). A person's bad value
+    /// is refused; one from the environment or a seed is logged and stored as automatic, so a
+    /// typo in `LIBRARIAN_PUBLIC_WEB_URL` cannot stop the server starting.
+    fn checked_app_setting(
+        ctx: Option<&async_graphql::Context<'_>>,
+        key: &str,
+        value: &str,
+    ) -> async_graphql::Result<Option<String>> {
+        match crate::services::lan_advertise::prepare_setting_value(key, value) {
+            Ok(value) => Ok(value),
+            Err(error) if ctx.is_some() => Err(async_graphql::Error::new(error.to_string())
+                .extend_with(|_, extensions| extensions.set("code", "BAD_USER_INPUT"))),
+            Err(error) => {
+                warn!(key, error = %error, "Ignoring an invalid app setting value; using the default");
+                Ok(
+                    crate::services::lan_advertise::prepare_setting_value(key, "")
+                        .ok()
+                        .flatten()
+                        .or_else(|| Some("true".to_string())),
+                )
+            }
+        }
+    }
+
     /// Content rules for the entities outside Cast. See `services::write_rules`.
     fn prepare_content_create(
         entity_name: &str,
         input: &mut (dyn std::any::Any + Send + Sync),
     ) -> async_graphql::Result<()> {
         use crate::services::write_rules;
-        match entity_name {
-            "User" => input
-                .downcast_mut::<CreateUserInput>()
-                .map_or(Ok(()), write_rules::prepare_user_create),
-            _ => Ok(()),
+        // Everything with a title sorts the same way, however it was added.
+        macro_rules! sort_key {
+            ($ty:ty, $title:ident, $key:ident) => {
+                if let Some(input) = input.downcast_mut::<$ty>() {
+                    input.$key = write_rules::sort_key_for_new(&input.$title, input.$key.take());
+                }
+            };
         }
+        match entity_name {
+            "User" => {
+                return input
+                    .downcast_mut::<CreateUserInput>()
+                    .map_or(Ok(()), write_rules::prepare_user_create);
+            }
+            "RssFeed" => {
+                return input
+                    .downcast_mut::<CreateRssFeedInput>()
+                    .map_or(Ok(()), write_rules::prepare_feed_create);
+            }
+            "Movie" => sort_key!(CreateMovieInput, title, sort_title),
+            "Audiobook" => sort_key!(CreateAudiobookInput, title, sort_title),
+            "Show" => sort_key!(CreateShowInput, name, sort_name),
+            "Album" => sort_key!(CreateAlbumInput, name, sort_name),
+            "Artist" => sort_key!(CreateArtistInput, name, sort_name),
+            "Collection" => sort_key!(CreateCollectionInput, name, sort_name),
+            _ => {}
+        }
+        Ok(())
     }
 
     fn prepare_content_update(
@@ -895,10 +1038,50 @@ impl AppWriteInputTransform {
         input: &mut (dyn std::any::Any + Send + Sync),
     ) -> async_graphql::Result<()> {
         use crate::services::write_rules;
+        // A rename moves the sort key along, unless someone set their own or is setting it now.
+        macro_rules! sort_key {
+            ($input:ty, $row:ty, $title:ident, $key:ident) => {
+                if let (Some(input), Some(row)) = (
+                    input.downcast_mut::<$input>(),
+                    existing_row.and_then(|row| row.downcast_ref::<$row>()),
+                ) {
+                    let cleared = matches!(
+                        &input.$key,
+                        Some(key) if key.as_deref().is_none_or(|key| key.trim().is_empty())
+                    );
+                    if cleared {
+                        // Blanking it hands the sort order back to the title.
+                        let title = input.$title.as_deref().unwrap_or(&row.$title);
+                        input.$key = Some(Some(write_rules::sort_key(title)));
+                    } else if input.$key.is_none()
+                        && let Some(new_title) = input.$title.as_deref()
+                    {
+                        input.$key = write_rules::sort_key_after_rename(
+                            &row.$title,
+                            row.$key.as_deref(),
+                            new_title,
+                        )
+                        .map(Some);
+                    }
+                }
+            };
+        }
+        match entity_name {
+            "Movie" => sort_key!(UpdateMovieInput, Movie, title, sort_title),
+            "Audiobook" => sort_key!(UpdateAudiobookInput, Audiobook, title, sort_title),
+            "Show" => sort_key!(UpdateShowInput, Show, name, sort_name),
+            "Album" => sort_key!(UpdateAlbumInput, Album, name, sort_name),
+            "Artist" => sort_key!(UpdateArtistInput, Artist, name, sort_name),
+            "Collection" => sort_key!(UpdateCollectionInput, Collection, name, sort_name),
+            _ => {}
+        }
         match entity_name {
             "User" => input
                 .downcast_mut::<UpdateUserInput>()
                 .map_or(Ok(()), write_rules::prepare_user_update),
+            "RssFeed" => input
+                .downcast_mut::<UpdateRssFeedInput>()
+                .map_or(Ok(()), write_rules::prepare_feed_update),
             "LibraryScanIssue" => {
                 input
                     .downcast_mut::<UpdateLibraryScanIssueInput>()
@@ -922,6 +1105,154 @@ impl AppWriteInputTransform {
             }
             _ => Ok(()),
         }
+    }
+
+    /// Encrypt a secret that rides in a feed address or link, like source credentials. Where no
+    /// services manager exists at all (a bare repository in a tool or test) the value is kept as
+    /// given; a running server always has one, and one without a credential key refuses the write.
+    /// Encrypt a server password unless it already is an envelope (a sign-in carried over from
+    /// the old store). Without a key (unit tests with no services) it is kept as given.
+    async fn protect_server_password(
+        &self,
+        ctx: Option<&async_graphql::Context<'_>>,
+        password: String,
+    ) -> async_graphql::Result<String> {
+        if password.is_empty() || Self::credentials_look_encrypted(&password) {
+            return Ok(password);
+        }
+        if ctx.is_none() && self.services_from_ctx(None).is_none() {
+            return Ok(password);
+        }
+        self.encrypt_source_credentials(ctx, password).await
+    }
+
+    async fn prepare_network_server_create(
+        &self,
+        ctx: Option<&async_graphql::Context<'_>>,
+        db: &Database,
+        input: &mut CreateNetworkServerInput,
+    ) -> async_graphql::Result<()> {
+        use crate::services::network_servers as servers;
+        input.host = servers::normalize_host(&input.host).map_err(Self::refused)?;
+        input.port = servers::normalize_port(input.port).map_err(Self::refused)?;
+        if input.name.trim().is_empty() {
+            input.name = input.host.clone();
+        }
+        input.name = input.name.trim().to_string();
+        input.username = input
+            .username
+            .take()
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty());
+        input.known_shares = servers::normalize_shares(&input.known_shares);
+        input.has_password = !input.password.is_empty();
+        input.password = self
+            .protect_server_password(ctx, std::mem::take(&mut input.password))
+            .await?;
+        let port = input.port.and_then(|port| u16::try_from(port).ok());
+        if servers::find_server(db, &input.host, port)
+            .await
+            .map_err(Self::hook_error)?
+            .is_some()
+        {
+            return Err(Self::refused(format!(
+                "The server {} is already saved",
+                Self::server_label(&input.host, input.port)
+            )));
+        }
+        Ok(())
+    }
+
+    async fn prepare_network_server_update(
+        &self,
+        ctx: Option<&async_graphql::Context<'_>>,
+        db: &Database,
+        existing: Option<&NetworkServer>,
+        input: &mut UpdateNetworkServerInput,
+    ) -> async_graphql::Result<()> {
+        use crate::services::network_servers as servers;
+        if let Some(host) = input.host.as_mut() {
+            *host = servers::normalize_host(host).map_err(Self::refused)?;
+        }
+        if let Some(port) = input.port.as_mut() {
+            *port = servers::normalize_port(*port).map_err(Self::refused)?;
+        }
+        if let Some(name) = input.name.as_mut() {
+            *name = name.trim().to_string();
+        }
+        if let Some(username) = input.username.as_mut() {
+            *username = username
+                .take()
+                .map(|name| name.trim().to_string())
+                .filter(|name| !name.is_empty());
+        }
+        if let Some(shares) = input.known_shares.as_mut() {
+            *shares = servers::normalize_shares(shares);
+        }
+        // Whether a password is stored follows the password itself, and nothing else can claim it.
+        input.has_password = None;
+        if let Some(password) = input.password.take() {
+            input.has_password = Some(!password.is_empty());
+            input.password = Some(self.protect_server_password(ctx, password).await?);
+        }
+        if let Some(existing) = existing {
+            let host = input.host.clone().unwrap_or_else(|| existing.host.clone());
+            let port = input.port.unwrap_or(existing.port);
+            if host != existing.host || port != existing.port {
+                let old_port = existing.port.and_then(|port| u16::try_from(port).ok());
+                let uses = servers::server_usage(db, &existing.host, old_port)
+                    .await
+                    .map_err(Self::hook_error)?;
+                if !uses.is_empty() {
+                    return Err(Self::refused(format!(
+                        "{} is used by {}. Its address cannot change while anything is stored on it: move them to the new address first",
+                        existing.name,
+                        servers::join_words(&uses)
+                    )));
+                }
+                let new_port = port.and_then(|port| u16::try_from(port).ok());
+                if servers::find_server(db, &host, new_port)
+                    .await
+                    .map_err(Self::hook_error)?
+                    .is_some_and(|other| other.id != existing.id)
+                {
+                    return Err(Self::refused(format!(
+                        "The server {} is already saved",
+                        Self::server_label(&host, port)
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A refusal the person can act on: shown to them as it is (resolver errors without a public
+    /// code are replaced by a generic message).
+    fn refused(message: impl Into<String>) -> async_graphql::Error {
+        async_graphql::Error::new(message.into())
+            .extend_with(|_, extensions| extensions.set("code", "BAD_USER_INPUT"))
+    }
+
+    fn server_label(host: &str, port: Option<i32>) -> String {
+        match port {
+            Some(port) => format!("{host}:{port}"),
+            None => host.to_string(),
+        }
+    }
+
+    fn hook_error(error: anyhow::Error) -> async_graphql::Error {
+        async_graphql::Error::new(error.to_string())
+    }
+
+    async fn protect_feed_secret(
+        &self,
+        ctx: Option<&async_graphql::Context<'_>>,
+        plaintext: String,
+    ) -> async_graphql::Result<String> {
+        if ctx.is_none() && self.services_from_ctx(None).is_none() {
+            return Ok(plaintext);
+        }
+        self.encrypt_source_credentials(ctx, plaintext).await
     }
 
     async fn encrypt_source_credentials(
@@ -975,6 +1306,18 @@ impl WriteInputTransform for AppWriteInputTransform {
             )
             .await?;
 
+            if write_ctx.entity_name() == "User"
+                && write_ctx.graphql_ctx().is_some()
+                && let Some(email) = input
+                    .downcast_ref::<UpdateUserInput>()
+                    .and_then(|input| input.email.clone().flatten())
+                && let Some(user_id) = existing_row
+                    .and_then(|row| row.downcast_ref::<User>())
+                    .map(|row| row.id.clone())
+            {
+                Self::require_unused_email(write_ctx, &user_id, &email).await?;
+            }
+
             // Generated update holds its MutationContext before field policies
             // run. Validate this mutable link through WriteQuery, which uses
             // that transaction, rather than re-entering the connection pool.
@@ -1009,15 +1352,72 @@ impl WriteInputTransform for AppWriteInputTransform {
         Box::pin(async move {
             crate::services::graphql::personal_policy::prepare_create(ctx, entity_name, input)?;
             Self::assign_create_owner(ctx, entity_name, input);
+            if ctx.is_some() {
+                crate::services::play_history::prepare_public_create(db, entity_name, input)
+                    .await?;
+            }
             Self::validate_upsert_link_workaround(ctx, db, entity_name, input, true).await?;
             Self::reject_member_artwork_source_write(ctx, entity_name, input)?;
             Self::prepare_cast_create(entity_name, input)?;
             Self::prepare_content_create(entity_name, input)?;
+            if entity_name == "AppSetting"
+                && let Some(input) = input.downcast_mut::<CreateAppSettingInput>()
+                && let Some(value) = Self::checked_app_setting(ctx, &input.key, &input.value)?
+            {
+                input.value = value;
+            }
+            if entity_name == "Library"
+                && let Some(input) = input.downcast_mut::<CreateLibraryInput>()
+            {
+                input.path = Self::checked_library_root(&input.path).await?;
+            }
             if entity_name == "Source"
                 && let Some(input) = input.downcast_mut::<CreateSourceInput>()
             {
                 input.credentials = self
                     .encrypt_source_credentials(ctx, input.credentials.clone())
+                    .await?;
+            }
+            if entity_name == "RssFeed"
+                && let Some(input) = input.downcast_mut::<CreateRssFeedInput>()
+            {
+                input.url_display = Some(crate::services::redact::feed_url_display(&input.url));
+                input.url = self.protect_feed_secret(ctx, input.url.clone()).await?;
+            }
+            if entity_name == "RssFeedItem"
+                && let Some(input) = input.downcast_mut::<CreateRssFeedItemInput>()
+            {
+                input.link = self.protect_feed_secret(ctx, input.link.clone()).await?;
+            }
+            if entity_name == "ReleaseRecommendation"
+                && let Some(input) = input.downcast_mut::<CreateReleaseRecommendationInput>()
+            {
+                input.release_link = self
+                    .protect_feed_secret(ctx, input.release_link.clone())
+                    .await?;
+            }
+            if entity_name == "NetworkServer"
+                && let Some(input) = input.downcast_mut::<CreateNetworkServerInput>()
+            {
+                self.prepare_network_server_create(ctx, db, input).await?;
+            }
+            if entity_name == "AppSetting"
+                && let Some(input) = input.downcast_mut::<CreateAppSettingInput>()
+                && crate::services::subtitles::provider::SECRET_SETTING_KEYS
+                    .contains(&input.key.as_str())
+                && !matches!(input.value.trim(), "" | "null")
+            {
+                // A provider password is stored encrypted, like a source's credentials.
+                input.value = self
+                    .encrypt_source_credentials(ctx, std::mem::take(&mut input.value))
+                    .await?;
+            }
+            if entity_name == "MatchingAssistant"
+                && let Some(input) = input.downcast_mut::<CreateMatchingAssistantInput>()
+            {
+                input.has_api_key = !input.api_key.is_empty();
+                input.api_key = self
+                    .encrypt_source_credentials(ctx, std::mem::take(&mut input.api_key))
                     .await?;
             }
             Ok(())
@@ -1040,15 +1440,88 @@ impl WriteInputTransform for AppWriteInputTransform {
                 input,
             )?;
             Self::reject_owner_update(ctx, entity_name, input)?;
+            if ctx.is_some() {
+                crate::services::play_history::prepare_public_update(entity_name, input)?;
+            }
             Self::validate_upsert_link_workaround(ctx, db, entity_name, input, false).await?;
             Self::reject_member_artwork_source_write(ctx, entity_name, input)?;
+            crate::services::artwork_choice::keep_locked_artwork(entity_name, existing_row, input);
             Self::prepare_cast_update(entity_name, existing_row, input)?;
             Self::prepare_content_update(ctx, entity_name, existing_row, input)?;
+
+            if entity_name == "AppSetting"
+                && let Some(input) = input.downcast_mut::<UpdateAppSettingInput>()
+                && let Some(row) = existing_row.and_then(|row| row.downcast_ref::<AppSetting>())
+                && let Some(value) = input.value.as_deref()
+                && let Some(value) = Self::checked_app_setting(ctx, &row.key, value)?
+            {
+                input.value = Some(value);
+            }
+            if entity_name == "Library"
+                && let Some(input) = input.downcast_mut::<UpdateLibraryInput>()
+                && let Some(path) = input.path.as_mut()
+            {
+                // Saving other settings sends the path again; only a changed path is checked, so
+                // a share that is down does not stop a person changing a scan interval.
+                let unchanged = existing_row
+                    .and_then(|row| row.downcast_ref::<Library>())
+                    .is_some_and(|library| library.path == *path);
+                if !unchanged {
+                    *path = Self::checked_library_root(path).await?;
+                }
+            }
             if entity_name == "Source"
                 && let Some(input) = input.downcast_mut::<UpdateSourceInput>()
                 && let Some(credentials) = input.credentials.take()
             {
                 input.credentials = Some(self.encrypt_source_credentials(ctx, credentials).await?);
+            }
+            if entity_name == "RssFeed"
+                && let Some(input) = input.downcast_mut::<UpdateRssFeedInput>()
+                && let Some(url) = input.url.take()
+            {
+                input.url_display = Some(Some(crate::services::redact::feed_url_display(&url)));
+                input.url = Some(self.protect_feed_secret(ctx, url).await?);
+            }
+            if entity_name == "RssFeedItem"
+                && let Some(input) = input.downcast_mut::<UpdateRssFeedItemInput>()
+                && let Some(link) = input.link.take()
+            {
+                input.link = Some(self.protect_feed_secret(ctx, link).await?);
+            }
+            if entity_name == "NetworkServer"
+                && let Some(input) = input.downcast_mut::<UpdateNetworkServerInput>()
+            {
+                let existing = existing_row.and_then(|row| row.downcast_ref::<NetworkServer>());
+                self.prepare_network_server_update(ctx, db, existing, input)
+                    .await?;
+            }
+            if entity_name == "AppSetting"
+                && let Some(input) = input.downcast_mut::<UpdateAppSettingInput>()
+                && existing_row
+                    .and_then(|row| row.downcast_ref::<AppSetting>())
+                    .is_some_and(|row| {
+                        crate::services::subtitles::provider::SECRET_SETTING_KEYS
+                            .contains(&row.key.as_str())
+                    })
+                && let Some(value) = input.value.take()
+            {
+                // Clearing it stores nothing to encrypt.
+                input.value = Some(if matches!(value.trim(), "" | "null") {
+                    value
+                } else {
+                    self.encrypt_source_credentials(ctx, value).await?
+                });
+            }
+            if entity_name == "MatchingAssistant"
+                && let Some(input) = input.downcast_mut::<UpdateMatchingAssistantInput>()
+            {
+                // Whether a key is stored follows the key itself, and nothing else can claim it.
+                input.has_api_key = None;
+                if let Some(key) = input.api_key.take() {
+                    input.has_api_key = Some(!key.is_empty());
+                    input.api_key = Some(self.encrypt_source_credentials(ctx, key).await?);
+                }
             }
             Ok(())
         })
@@ -1397,6 +1870,37 @@ impl AppMutationHook {
             .or_else(|| self.services.as_ref().and_then(Weak::upgrade))
     }
 
+    /// Removing a server that a library, the download folder or a stored torrent still uses would
+    /// leave them unable to sign in: refuse, and say what uses it.
+    async fn refuse_removing_used_server(
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        let server = Self::before::<NetworkServer>(event, "NetworkServer")?;
+        let port = server.port.and_then(|port| u16::try_from(port).ok());
+        let uses =
+            crate::services::network_servers::server_usage(hook_ctx.database(), &server.host, port)
+                .await
+                .map_err(Self::db_error)?;
+        if uses.is_empty() {
+            return Ok(());
+        }
+        Err(async_graphql::Error::new(format!(
+            "{} cannot be removed while it is used by {}. Move {} to another location first",
+            server.name,
+            crate::services::network_servers::join_words(&uses),
+            if uses.len() == 1
+                && !uses[0].starts_with("the libraries")
+                && !uses[0].ends_with("torrents")
+            {
+                "it"
+            } else {
+                "them"
+            }
+        ))
+        .extend_with(|_, extensions| extensions.set("code", "BAD_USER_INPUT")))
+    }
+
     async fn cleanup_library_children(
         hook_ctx: &mut MutationContext<'_>,
         library_id: &str,
@@ -1573,6 +2077,14 @@ impl AppMutationHook {
             // the credits here gives each one a delete event, which invalidates its movie.
             "Person" => {
                 tx.delete_where::<MovieCastCredit>(MovieCastCreditWhereInput {
+                    person_id: Some(Self::string_eq(&event.id)),
+                    ..Default::default()
+                })
+                .await
+                .map_err(Self::db_error)?;
+                // Credits on any title (Q129). A title's own delete leaves its credits and
+                // details to the physical cascade: the title's page goes with it.
+                tx.delete_where::<Credit>(CreditWhereInput {
                     person_id: Some(Self::string_eq(&event.id)),
                     ..Default::default()
                 })
@@ -1950,6 +2462,12 @@ impl AppMutationHook {
         })
         .await
         .map_err(Self::db_error)?;
+        tx.delete_where::<Lyric>(LyricWhereInput {
+            media_file_id: Some(Self::string_eq(id)),
+            ..Default::default()
+        })
+        .await
+        .map_err(Self::db_error)?;
         tx.delete_where::<MediaChapter>(MediaChapterWhereInput {
             media_file_id: Some(Self::string_eq(id)),
             ..Default::default()
@@ -1982,6 +2500,28 @@ impl AppMutationHook {
             },
             UpdateTorrentFileInput {
                 media_file_id: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(Self::db_error)?;
+        // A duplicate issue is about this copy, so removing it leaves nothing to settle.
+        tx.update_where::<LibraryScanIssue>(
+            LibraryScanIssueWhereInput {
+                media_file_id: Some(Self::string_eq(id)),
+                issue_code: Some(Self::string_eq("BYTE_IDENTICAL_DUPLICATE")),
+                resolved_at: Some(graphql_orm::graphql::filters::DateFilter {
+                    is_null: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            UpdateLibraryScanIssueInput {
+                resolved_at: Some(Some(Self::now_rfc3339())),
+                resolution: Some(Some(format!(
+                    "{}: this copy was removed from the library.",
+                    crate::services::library_scan::NO_LONGER_DUPLICATE
+                ))),
                 ..Default::default()
             },
         )
@@ -2351,6 +2891,7 @@ impl AppMutationHook {
             "VideoStream" => edge!(VideoStream, media_file_id, "MediaFile"),
             "AudioStream" => edge!(AudioStream, media_file_id, "MediaFile"),
             "Subtitle" => edge!(Subtitle, media_file_id, "MediaFile"),
+            "Lyric" => edge!(Lyric, media_file_id, "MediaFile"),
             "MediaChapter" => edge!(MediaChapter, media_file_id, "MediaFile"),
             _ => {}
         }
@@ -2801,9 +3342,15 @@ impl AppMutationHook {
         }
         // A file that held a whole book leaves every chapter it was shared with.
         if old.is_some() && old != active_chapter {
+            // The chapter it is moving to keeps it: clearing that too would undo the move and start
+            // these hooks over.
             tx.update_where::<Chapter>(
                 ChapterWhereInput {
                     media_file_id: Some(Self::string_eq(&after.id)),
+                    id: active_chapter.map(|id| graphql_orm::graphql::filters::StringFilter {
+                        ne: Some(id.to_string()),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 },
                 UpdateChapterInput {
@@ -2974,11 +3521,19 @@ impl AppMutationHook {
         if old == after.media_file_id.as_deref() {
             return Ok(());
         }
-        if let Some(file_id) = old {
+        // A book in parts has several files naming chapters they don't start: moving a chapter
+        // between two files of its own book takes neither file out of the book.
+        let same_book = match after.media_file_id.as_deref() {
+            Some(file_id) => Self::file_belongs_to_chapters_book(tx, file_id, &after).await?,
+            None => false,
+        };
+        if let Some(file_id) = old
+            && !same_book
+        {
             Self::clear_media_file_target_if_matches(tx, file_id, "Chapter", &after.id).await?;
         }
         if let Some(file_id) = after.media_file_id.as_deref()
-            && !Self::file_belongs_to_chapters_book(tx, file_id, &after).await?
+            && !same_book
         {
             Self::set_media_file_target(tx, file_id, None, None, None, Some(&after.id)).await?;
         }
@@ -3010,8 +3565,9 @@ impl AppMutationHook {
         else {
             return Ok(false);
         };
-        Ok(other.audiobook_id == chapter.audiobook_id
-            && other.media_file_id.as_deref() == Some(file_id))
+        // Only the book matters. In a book cut into parts, the chapter a file names can already
+        // point at a later part, and insisting it point back made these hooks chase each other.
+        Ok(other.audiobook_id == chapter.audiobook_id)
     }
 
     fn defer_storage_object_delete(
@@ -3224,6 +3780,7 @@ impl AppMutationHook {
             "Artist" => "artist",
             "Audiobook" => "audiobook",
             "Person" => "person",
+            "PersonalList" => "playlist",
             _ => "unknown",
         }
     }
@@ -3413,6 +3970,41 @@ impl AppMutationHook {
                 return Ok::<(), anyhow::Error>(());
             };
             cast.apply_runtime_settings(auto_discovery, interval).await
+        });
+        Ok(())
+    }
+
+    /// Saving the LAN announcement's switch or address re-announces with it (Q138).
+    fn defer_lan_advertise_restart(
+        &self,
+        ctx: Option<&async_graphql::Context<'_>>,
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) -> async_graphql::Result<()> {
+        use crate::services::lan_advertise;
+        let before = event.before::<AppSetting>()?;
+        let after = event.after::<AppSetting>()?;
+        let changed = match (&before, &after) {
+            (Some(before), Some(after)) => before.key != after.key || before.value != after.value,
+            _ => true,
+        };
+        let ours = [&before, &after]
+            .into_iter()
+            .flatten()
+            .any(|setting| lan_advertise::is_own_setting(&setting.key));
+        if !changed || !ours {
+            return Ok(());
+        }
+        let Some(services) = self.services_from_ctx(ctx) else {
+            return Ok(());
+        };
+        hook_ctx.defer(move |_db| async move {
+            // Absent in tests and tools that build no services; the service reads the
+            // settings itself when it starts.
+            if services.get(lan_advertise::SERVICE_NAME).await.is_none() {
+                return Ok::<(), anyhow::Error>(());
+            }
+            services.restart_one(lan_advertise::SERVICE_NAME).await
         });
         Ok(())
     }
@@ -3633,6 +4225,43 @@ impl AppMutationHook {
             })
             .await
             .map_err(Self::db_error)?;
+        hook_ctx
+            .delete_where::<PasswordResetToken>(PasswordResetTokenWhereInput {
+                user_id: Some(Self::string_eq(&event.id)),
+                ..PasswordResetTokenWhereInput::default()
+            })
+            .await
+            .map_err(Self::db_error)?;
+        Ok(())
+    }
+
+    /// Accounts are made by registration and invites, and removed by administrators. A member
+    /// may edit their own row (design.md Q147) but not create, delete or reset accounts, so
+    /// public generated creates and deletes of `User` and `PasswordResetToken` need an
+    /// administrator, and reset links are made only by `createPasswordResetLink`.
+    fn require_admin_account_write(
+        ctx: Option<&async_graphql::Context<'_>>,
+        entity_name: &str,
+        action: &ChangeAction,
+    ) -> async_graphql::Result<()> {
+        let Some(ctx) = ctx else {
+            return Ok(());
+        };
+        let refused = match entity_name {
+            "User" => {
+                !matches!(action, ChangeAction::Updated)
+                    && !ctx.data_opt::<AuthUser>().is_some_and(AuthUser::is_admin)
+            }
+            "PasswordResetToken" => !matches!(action, ChangeAction::Deleted),
+            _ => false,
+        };
+        if refused {
+            return Err(async_graphql::Error::new(match entity_name {
+                "User" => "Only an administrator can add or remove accounts",
+                _ => "Reset links are made with createPasswordResetLink",
+            })
+            .extend_with(|_, extensions| extensions.set("code", "FORBIDDEN")));
+        }
         Ok(())
     }
 
@@ -3710,6 +4339,87 @@ impl AppMutationHook {
         Ok(())
     }
 
+    /// Whether a write changes what is on disk or where a measured folder is: a media file made,
+    /// removed or moved, a library made, removed or moved, or the download folder changed. The
+    /// capacity job's own writes (a library's `storageVolumeId`) are not.
+    fn moves_disk_space(event: &MutationEvent) -> bool {
+        macro_rules! path_changed {
+            ($ty:ty, $field:ident) => {{
+                let before = event
+                    .before::<$ty>()
+                    .ok()
+                    .flatten()
+                    .map(|row| row.$field.clone());
+                let after = event
+                    .after::<$ty>()
+                    .ok()
+                    .flatten()
+                    .map(|row| row.$field.clone());
+                before != after
+            }};
+        }
+        match event.entity_name {
+            "MediaFile" => path_changed!(MediaFile, path),
+            "Library" => path_changed!(Library, path),
+            "AppSetting" => event
+                .after::<AppSetting>()
+                .ok()
+                .flatten()
+                .is_some_and(|row| row.key == "torrent.download_dir"),
+            _ => false,
+        }
+    }
+
+    /// After a title leaves a library, or a library is made, downloads compared with it are
+    /// looked at again: what they matched may be gone, or they may now have somewhere to go.
+    fn defer_identified_recheck(
+        &self,
+        ctx: Option<&async_graphql::Context<'_>>,
+        hook_ctx: &mut MutationContext<'_>,
+        event: &MutationEvent,
+    ) {
+        let owner_and_type = match event.entity_name {
+            "Album" => event
+                .before::<Album>()
+                .ok()
+                .flatten()
+                .map(|row| (row.user_id.clone(), "music")),
+            "Movie" => event
+                .before::<Movie>()
+                .ok()
+                .flatten()
+                .map(|row| (row.user_id.clone(), "movies")),
+            "Show" => event
+                .before::<Show>()
+                .ok()
+                .flatten()
+                .map(|row| (row.user_id.clone(), "tv")),
+            "Audiobook" => event
+                .before::<Audiobook>()
+                .ok()
+                .flatten()
+                .map(|row| (row.user_id.clone(), "audiobooks")),
+            "Library" => event
+                .after::<Library>()
+                .ok()
+                .flatten()
+                .map(|row| (row.user_id.clone(), row.library_type.as_str())),
+            _ => None,
+        };
+        let (Some((owner, library_type)), Some(services)) =
+            (owner_and_type, self.services_from_ctx(ctx))
+        else {
+            return;
+        };
+        let library_type = library_type.to_string();
+        hook_ctx.defer(move |_db| async move {
+            if let Some(scan) = services.get_library_scan().await {
+                scan.recheck_identified(&owner, &library_type);
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+    }
+
     async fn torrent_service(
         &self,
         ctx: Option<&async_graphql::Context<'_>>,
@@ -3741,6 +4451,9 @@ impl MutationHook for AppMutationHook {
     ) -> BoxFuture<'a, async_graphql::Result<()>> {
         Box::pin(async move {
             crate::services::graphql::personal_policy::on_mutation(ctx, hook_ctx, event).await?;
+            if event.phase == MutationPhase::Before {
+                Self::require_admin_account_write(ctx, event.entity_name, &event.action)?;
+            }
             match (&event.phase, &event.action, event.entity_name) {
                 (MutationPhase::Before, ChangeAction::Deleted, "Library") => {
                     Self::cleanup_library_children(hook_ctx, &event.id).await?;
@@ -3753,8 +4466,40 @@ impl MutationHook for AppMutationHook {
                 ) => {
                     Self::cleanup_parent_children(hook_ctx, event).await?;
                 }
+                (MutationPhase::Before, ChangeAction::Deleted, "NetworkServer") => {
+                    Self::refuse_removing_used_server(hook_ctx, event).await?;
+                }
+                (MutationPhase::After, _, "NetworkServer") => {
+                    // A changed or removed sign-in: connections made with the old one go.
+                    for server in [
+                        event.before::<NetworkServer>().ok().flatten(),
+                        event.after::<NetworkServer>().ok().flatten(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        crate::services::library_storage::library_storage().forget_server(
+                            &server.host,
+                            server.port.and_then(|port| u16::try_from(port).ok()),
+                        );
+                    }
+                }
                 (MutationPhase::Before, ChangeAction::Deleted, "User") => {
                     Self::cleanup_user_refresh_tokens(hook_ctx, event).await?;
+                    crate::services::play_history::cleanup_deleted_user(hook_ctx, &event.id)
+                        .await?;
+                }
+                (MutationPhase::After, ChangeAction::Updated, "PlaybackSession") => {
+                    crate::services::play_history::record_session_change(hook_ctx, event).await?;
+                }
+                (MutationPhase::After, ChangeAction::Created, "PlaybackSession") => {
+                    crate::services::play_history::devices::end_other_device_sessions(
+                        hook_ctx, event,
+                    )
+                    .await?;
+                }
+                (MutationPhase::Before, ChangeAction::Deleted, "Device") => {
+                    crate::services::play_history::devices::forget_device(hook_ctx, event).await?;
                 }
                 (MutationPhase::After, ChangeAction::Updated, "User") => {
                     Self::revoke_user_sessions_if_needed(hook_ctx, event).await?;
@@ -3821,6 +4566,9 @@ impl MutationHook for AppMutationHook {
                 ) => {
                     self.defer_cast_runtime_settings(ctx, hook_ctx, event)?;
                 }
+                (MutationPhase::After, _, "AppSetting") => {
+                    self.defer_lan_advertise_restart(ctx, hook_ctx, event)?;
+                }
                 (MutationPhase::Before, ChangeAction::Deleted, "Torrent") => {
                     // Everything that should fail visibly to the client belongs here: a
                     // Before hook can abort the transaction, a deferred action cannot.
@@ -3830,9 +4578,35 @@ impl MutationHook for AppMutationHook {
                 (MutationPhase::After, ChangeAction::Deleted, "Torrent") => {
                     self.defer_torrent_runtime_removal(ctx, hook_ctx, event)?;
                 }
+                (
+                    MutationPhase::After,
+                    ChangeAction::Deleted,
+                    "Album" | "Movie" | "Show" | "Audiobook",
+                )
+                | (MutationPhase::After, ChangeAction::Created, "Library") => {
+                    self.defer_identified_recheck(ctx, hook_ctx, event);
+                }
                 _ => {}
             }
 
+            if event.phase == MutationPhase::After && event.entity_name == "Library" {
+                // A library added, removed, moved, or its watch turned on or off: the folder
+                // watches follow at once (docs/design.md Q115).
+                let before = event.before::<Library>().ok().flatten();
+                let after = event.after::<Library>().ok().flatten();
+                let watch_of = |row: &Option<&Library>| {
+                    row.as_ref()
+                        .map(|row| (row.path.clone(), row.watch_for_changes))
+                };
+                if watch_of(&before) != watch_of(&after) {
+                    crate::services::library_scan::nudge_library_watches();
+                }
+            }
+            if event.phase == MutationPhase::After && Self::moves_disk_space(event) {
+                // Files landed, left or moved, or a folder now lives elsewhere: read the free
+                // space again soon (docs/design.md Q146). Bursts collapse into one reading.
+                crate::jobs::storage_capacity::nudge();
+            }
             if event.phase == MutationPhase::Before
                 && event.action == ChangeAction::Deleted
                 && matches!(event.entity_name, "Movie" | "Episode" | "Track" | "Chapter")
@@ -3872,6 +4646,7 @@ impl MutationHook for AppMutationHook {
                         | "Artist"
                         | "Audiobook"
                         | "Person"
+                        | "PersonalList"
                         | "Collection"
                 )
             {
@@ -4150,6 +4925,15 @@ mod lifecycle_tests {
                 avatar_url: None,
                 is_active: true,
                 last_login_at: None,
+                phone: None,
+                genre_interests: None,
+                must_change_password: false,
+                two_factor_enabled_at: None,
+                recovery_codes_remaining: 0,
+                password_changed_at: None,
+                totp_secret: None,
+                totp_pending_secret: None,
+                recovery_codes: None,
             },
         )
         .await
@@ -4168,12 +4952,17 @@ mod lifecycle_tests {
                 color: None,
                 auto_scan: false,
                 auto_organize: false,
+                auto_resolve_duplicates: None,
                 naming_pattern: "default".to_string(),
                 scan_interval_minutes: 60,
                 watch_for_changes: false,
+                watch_status: None,
+                watch_detail: None,
+                watch_status_since: None,
                 scanning: false,
                 last_scanned_at: None,
                 quality_profile_id: None,
+                storage_volume_id: None,
             },
         )
         .await
@@ -4184,6 +4973,7 @@ mod lifecycle_tests {
         Movie::insert(
             db,
             CreateMovieInput {
+                locked_fields: None,
                 library_id: library_id.to_string(),
                 user_id: user_id.to_string(),
                 title: title.to_string(),
@@ -4209,6 +4999,8 @@ mod lifecycle_tests {
                 collection_poster_url: None,
                 release_date: None,
                 certification: None,
+                digital_release_date: None,
+                physical_release_date: None,
                 monitored: true,
                 tmdb_status: None,
                 wanted: true,
@@ -4246,6 +5038,7 @@ mod lifecycle_tests {
                 resolution: None,
                 is_hdr: false,
                 hdr_type: None,
+                closed_captions: None,
                 audio_channels: None,
                 metadata: None,
                 content_type: Some("movie".to_string()),
@@ -4256,6 +5049,9 @@ mod lifecycle_tests {
                 matched_by_user_id: None,
                 match_confirmed_at: None,
                 quality_status: None,
+                picture_crop: None,
+                storyboard: None,
+                previews_checked_at: None,
             },
         )
         .await
@@ -4277,6 +5073,15 @@ mod lifecycle_tests {
                 avatar_url: None,
                 is_active: true,
                 last_login_at: None,
+                phone: None,
+                genre_interests: None,
+                must_change_password: false,
+                two_factor_enabled_at: None,
+                recovery_codes_remaining: 0,
+                password_changed_at: None,
+                totp_secret: None,
+                totp_pending_secret: None,
+                recovery_codes: None,
             },
         )
         .await
@@ -4407,6 +5212,9 @@ mod lifecycle_tests {
                 source_feed_id: None,
                 source_indexer_id: None,
                 library_id: None,
+                identification_kind: None,
+                identification_status: None,
+                identification_summary: None,
                 post_process_status: None,
                 post_process_error: None,
                 processed_at: None,
@@ -4462,7 +5270,7 @@ mod lifecycle_tests {
 
 #[cfg(test)]
 #[path = "database_summary_tests.rs"]
-mod summary_tests;
+pub(crate) mod summary_tests;
 
 #[cfg(test)]
 #[path = "database_parent_summary_tests.rs"]

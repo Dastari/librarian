@@ -9,17 +9,31 @@ import {
   EntityPlaybackSessionCreateDocument,
   EntityPlaybackSessionUpdateDocument,
   PlaybackProgressForFileDocument,
+  PlaybackSessionStopDocument,
   PlaybackSyncIntervalDocument,
   type PlaybackProgressFieldsFragment,
 } from "@/graphql/generated/graphql";
 import { useSession } from "@/lib/auth/useSession";
 import { session } from "@/lib/auth/session";
 import { assertSuccess } from "@/lib/graphql/errors";
+import { currentDevice } from "@/features/devices/clientDevice";
 
 import type { PlayItem } from "./store";
 
 const WATCHED_THRESHOLD = 0.92;
 type Checkpoint = { position: number; duration: number; playing: boolean };
+/** How this activation is being played, for now playing and the play history (design.md Q134). */
+export type PlaybackDetails = { method: "direct" | "hls" | "transcode" | "cast"; quality?: string | null; bitrate?: number | null };
+/** A media source's answer, as the session reports it. */
+export function playbackDetails(source: { isHls: boolean; info: { transcode_decision?: string | null; resolution?: string | null; audio_codec?: string | null; size_bytes?: number | null; duration?: number | null } | null } | null | undefined): PlaybackDetails | null {
+  if (!source) return null;
+  const info = source.info;
+  const method = !source.isHls ? "direct" : info?.transcode_decision === "transcode" ? "transcode" : "hls";
+  const quality = info?.resolution || (info?.audio_codec ? info.audio_codec.toUpperCase() : null);
+  // A direct file's average rate; a stream's is whatever the server makes of it.
+  const bitrate = method === "direct" && info?.size_bytes && info.duration ? Math.round((info.size_bytes * 8) / info.duration) : null;
+  return { method, quality, bitrate };
+}
 type Activation = {
   order: number;
   latest: Checkpoint;
@@ -28,6 +42,8 @@ type Activation = {
   sessionId: string | null;
   sessionRequested: boolean;
   lastSaved: number;
+  details: PlaybackDetails | null;
+  stopHandled: boolean;
 };
 type FileLane = {
   progressId: string | null;
@@ -79,7 +95,13 @@ function acquireLane(client: ApolloClient, key: string, fileId: string) {
 type LaneLease = ReturnType<typeof acquireLane>;
 
 /** Checkpoint reads and writes share a file lane; sessions stay local to each activation. */
-export function useProgressSync(item: PlayItem | null, activationKey?: string | number) {
+export function useProgressSync(item: PlayItem | null, activationKey?: string | number, options?: {
+  /** Someone asked this player to stop (its owner elsewhere, or an administrator). */
+  onStopRequested?: () => void;
+}) {
+  const onStop = useRef(options?.onStopRequested);
+  onStop.current = options?.onStopRequested;
+  const [liveSession, setLiveSession] = useState<string | null>(null);
   const { user } = useSession();
   const client = useApolloClient();
   const epoch = useLiveEpoch();
@@ -109,6 +131,9 @@ export function useProgressSync(item: PlayItem | null, activationKey?: string | 
       if (!canWrite() || !scope.readReady) return;
       if (!force && Date.now() - activation.lastSaved < intervalMs.current) return;
       const { position, duration, playing } = snapshot;
+      const details = activation.details;
+      const reported = details ? { playMethod: details.method, quality: details.quality ?? null, bitrate: details.bitrate ?? null } : {};
+      const state = closing ? "stopped" : playing ? "playing" : "paused";
       const percent = duration > 0 ? Math.min(100, (position / duration) * 100) : 0;
       const isWatched = duration > 0 && position / duration >= WATCHED_THRESHOLD;
       const now = new Date().toISOString();
@@ -140,21 +165,27 @@ export function useProgressSync(item: PlayItem | null, activationKey?: string | 
           const entityField = kind === "movie" ? { movieId: entityId }
             : kind === "episode" ? { episodeId: entityId }
             : kind === "track" ? { trackId: entityId }
-            : { audiobookId };
+            : { audiobookId, chapterId: entityId };
+          const deviceId = currentDevice.get();
           const result = await client.mutate({
             mutation: EntityPlaybackSessionCreateDocument,
-            variables: { input: { userId, mediaFileId, contentType: kind!, ...entityField, currentPosition: position, duration: duration || null, volume: 1, isMuted: false, isPlaying: !activation.closed && playing, startedAt: now, lastUpdatedAt: now } },
+            variables: { input: { userId, mediaFileId, contentType: kind!, ...entityField, ...(deviceId ? { deviceId } : {}), ...reported, state, currentPosition: position, duration: duration || null, volume: 1, isMuted: false, isPlaying: !activation.closed && playing, startedAt: now, lastUpdatedAt: now } },
           });
           const payload = assertSuccess(result.data?.createPlaybackSession, "Could not start playback session");
           if (!payload.playbackSession?.id) throw new Error("Playback session ID missing");
           if (!canWrite()) return;
           activation.sessionId = payload.playbackSession.id;
+          setLiveSession(payload.playbackSession.id);
         } else if (activation.sessionId) {
           const result = await client.mutate({
             mutation: EntityPlaybackSessionUpdateDocument,
-            variables: { id: activation.sessionId, input: { currentPosition: position, duration: duration || null, isPlaying: closing ? false : playing, lastUpdatedAt: now, completedAt: isWatched ? now : null } },
+            variables: { id: activation.sessionId, input: { currentPosition: position, duration: duration || null, isPlaying: closing ? false : playing, lastUpdatedAt: now, completedAt: isWatched ? now : null, ...reported, state, endedAt: closing ? now : null } },
           });
-          assertSuccess(result.data?.updatePlaybackSession, "Could not update playback session");
+          const updated = assertSuccess(result.data?.updatePlaybackSession, "Could not update playback session");
+          if (!closing && updated.playbackSession?.stopRequestedAt && !activation.stopHandled) {
+            activation.stopHandled = true;
+            onStop.current?.();
+          }
         }
       } catch {
         saved = false;
@@ -180,7 +211,9 @@ export function useProgressSync(item: PlayItem | null, activationKey?: string | 
         const rows = result.data?.playbackProgresses.edges;
         const row = rows?.find(({ node }) => node.userId === userId && node.mediaFileId === mediaFileId)?.node;
         if (!rows || (!row && rows.length > 0)) throw new Error("Playback checkpoint scope mismatch");
-        lease.lane.progressId = row?.id ?? lease.lane.progressId;
+        // No row is the truth: it may have been reset ("Mark as unwatched") while this plays, so the
+        // next checkpoint creates a fresh one instead of updating a row that is gone.
+        lease.lane.progressId = row?.id ?? null;
         scope.readReady = true;
         setRead({ scope, row });
         if (activation.reported && activation.latest.playing && !activation.sessionRequested) {
@@ -208,7 +241,7 @@ export function useProgressSync(item: PlayItem | null, activationKey?: string | 
     const activation: Activation = {
       order: ++lease.lane.nextActivation,
       latest: { position: 0, duration: 0, playing: false }, reported: false, closed: false,
-      sessionId: null, sessionRequested: false, lastSaved: -Infinity,
+      sessionId: null, sessionRequested: false, lastSaved: -Infinity, details: null, stopHandled: false,
     };
     scope.activation = activation;
     void refresh();
@@ -226,6 +259,7 @@ export function useProgressSync(item: PlayItem | null, activationKey?: string | 
       window.removeEventListener("pagehide", onPageHide);
       void persist(activation, { ...activation.latest, playing: false }, true, true);
       lease.release();
+      setLiveSession(null);
     };
   }, [client, epoch, sessionEpoch, userId, mediaFileId, scope, refresh, persist, flush]);
 
@@ -242,8 +276,30 @@ export function useProgressSync(item: PlayItem | null, activationKey?: string | 
     }
   }, [scope, canWrite, persist]);
 
+  // A stop request reaches the player as soon as the session changes, not only at its next save.
+  const checkStop = useCallback(async () => {
+    const activation = scope.activation;
+    const id = activation?.sessionId;
+    if (!activation || !id || activation.closed || activation.stopHandled || !canWrite()) return;
+    try {
+      const result = await client.query({ query: PlaybackSessionStopDocument, variables: { id }, fetchPolicy: "no-cache" });
+      if (result.data?.playbackSession?.stopRequestedAt && !activation.stopHandled && !activation.closed) {
+        activation.stopHandled = true;
+        onStop.current?.();
+      }
+    } catch { /* the next save checks again */ }
+  }, [client, scope, canWrite]);
+  useLiveInvalidation(PlaybackSessionStopDocument, { id: liveSession ?? "" }, checkStop, { enabled: Boolean(liveSession), shared: false });
+
+  /** How this activation is played: set once the source is known; sent with the next save. */
+  const describe = useCallback((details: PlaybackDetails | null) => {
+    const activation = scope.activation;
+    if (!activation || activation.closed) return;
+    activation.details = details;
+  }, [scope]);
+
   const row = read?.scope === scope ? read.row : undefined;
   const resumePosition = item?.startPosition !== undefined ? item.startPosition
     : row && !row.isWatched && row.currentPosition > 5 ? row.currentPosition : undefined;
-  return { resumePosition, report, flush, loading: Boolean(userId && mediaFileId && !scope.readReady && !(read?.scope === scope && read.error)) };
+  return { resumePosition, report, flush, describe, loading: Boolean(userId && mediaFileId && !scope.readReady && !(read?.scope === scope && read.error)) };
 }

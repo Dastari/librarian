@@ -13,6 +13,7 @@
 //!
 //! See `docs/design.md` (Background Services section) for how to implement and register services.
 
+use crate::jobs::credit_fill::{CreditFillConfig, CreditFillService};
 use crate::jobs::schedule_sync::{ScheduleSyncConfig, ScheduleSyncService};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -36,6 +37,7 @@ use crate::services::cast::{CastService, CastServiceConfig};
 use crate::services::database::{DatabaseService, DatabaseServiceConfig};
 use crate::services::graphql::{GraphqlService, GraphqlServiceConfig};
 use crate::services::http_server::{HttpServerConfig, HttpServerService};
+use crate::services::lan_advertise::{LanAdvertiseConfig, LanAdvertiseService};
 use crate::services::library_scan::{LibraryScanService, LibraryScanServiceConfig};
 use crate::services::logging::{LoggingService, LoggingServiceConfig};
 use crate::services::sources::service::{SourcesService, SourcesServiceConfig};
@@ -160,6 +162,9 @@ enum ServiceRegistrationKind {
     LibraryScan(LibraryScanServiceConfig),
     AutoDownload(AutoDownloadServiceConfig),
     ScheduleSync(ScheduleSyncConfig),
+    CreditFill(CreditFillConfig),
+    LanAdvertise(LanAdvertiseConfig),
+    PlayHistory(crate::services::play_history::service::PlayHistoryConfig),
     Transcode(TranscodeServiceConfig),
     Service(Arc<dyn Service>),
 }
@@ -244,6 +249,24 @@ impl IntoServiceRegistration for LibraryScanServiceConfig {
 impl IntoServiceRegistration for ScheduleSyncConfig {
     fn into_registration(self) -> ServiceRegistration {
         ServiceRegistration(ServiceRegistrationKind::ScheduleSync(self))
+    }
+}
+
+impl IntoServiceRegistration for CreditFillConfig {
+    fn into_registration(self) -> ServiceRegistration {
+        ServiceRegistration(ServiceRegistrationKind::CreditFill(self))
+    }
+}
+
+impl IntoServiceRegistration for LanAdvertiseConfig {
+    fn into_registration(self) -> ServiceRegistration {
+        ServiceRegistration(ServiceRegistrationKind::LanAdvertise(self))
+    }
+}
+
+impl IntoServiceRegistration for crate::services::play_history::service::PlayHistoryConfig {
+    fn into_registration(self) -> ServiceRegistration {
+        ServiceRegistration(ServiceRegistrationKind::PlayHistory(self))
     }
 }
 
@@ -393,6 +416,26 @@ impl ServicesManagerBuilder {
                 ServiceRegistrationKind::ScheduleSync(config) => {
                     manager
                         .register(Arc::new(ScheduleSyncService::new(manager.clone(), config)))
+                        .await;
+                }
+                ServiceRegistrationKind::CreditFill(config) => {
+                    manager
+                        .register(Arc::new(CreditFillService::new(manager.clone(), config)))
+                        .await;
+                }
+                ServiceRegistrationKind::LanAdvertise(config) => {
+                    manager
+                        .register(Arc::new(LanAdvertiseService::new(manager.clone(), config)))
+                        .await;
+                }
+                ServiceRegistrationKind::PlayHistory(config) => {
+                    manager
+                        .register(Arc::new(
+                            crate::services::play_history::service::PlayHistoryService::new(
+                                manager.clone(),
+                                config,
+                            ),
+                        ))
                         .await;
                 }
                 ServiceRegistrationKind::AutoDownload(config) => {

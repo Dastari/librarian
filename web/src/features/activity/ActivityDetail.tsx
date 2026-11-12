@@ -15,15 +15,41 @@ import type { ActivityRow } from "./useActivity";
 
 const NotificationGlyph = ENTITY_KINDS.notification.icon;
 
+/** What an upgrade would swap: the file there now and the release that would replace it. */
+export function UpgradeComparison({ upgrade, className }: { upgrade: NonNullable<ReturnType<typeof upgradeDetails>>; className?: string }) {
+  return (
+    <div className={`flex items-center gap-3 ${className ?? ""}`}>
+      <div className="min-w-0 flex-1">
+        <p className="text-overline text-muted">Current</p>
+        <p className="text-title-sm">{upgrade.from ?? "Unknown"}</p>
+        {upgrade.targetPath ? <Tooltip content={upgrade.targetPath}><p className="truncate text-label-sm text-muted">{fileName(upgrade.targetPath)}</p></Tooltip> : null}
+      </div>
+      <IconArrowRight className="shrink-0 text-muted" />
+      <div className="min-w-0 flex-1">
+        <p className="text-overline text-muted">Upgrade</p>
+        <p className="text-title-sm text-success">{upgrade.to ?? "Unknown"}</p>
+        {upgrade.sourcePath ? <Tooltip content={upgrade.sourcePath}><p className="truncate text-label-sm text-muted">{fileName(upgrade.sourcePath)}</p></Tooltip> : null}
+      </div>
+    </div>
+  );
+}
+
 /** One notification in full: what happened, what it is about, and the decision it asks for. */
-export function ActivityDetail({ row, actions, onClose }: { row: ActivityRow; actions: ActionSet<ActivityRow>; onClose: () => void }) {
+export function ActivityDetail({ row, actions, onClose, bare = false }: {
+  row: ActivityRow;
+  actions: ActionSet<ActivityRow>;
+  onClose: () => void;
+  /** Already inside a dialog, which is its frame and has its own close. */
+  bare?: boolean;
+}) {
   const level = notificationLevel(row.notificationType);
   const decision = notificationDecision(row);
   const subjects = notificationSubjects(row);
   const upgrade = row.actionType === "quality_upgrade" ? upgradeDetails(row.actionData) : null;
+  const Frame = bare ? "div" : Panel;
 
   return (
-    <Panel className="self-start xl:sticky xl:top-0">
+    <Frame className={bare ? "flex min-w-0 flex-col" : "self-start xl:sticky xl:top-0"}>
       <div className="flex items-start gap-2">
         <EntityIdentity
           className="min-w-0 flex-1"
@@ -34,7 +60,7 @@ export function ActivityDetail({ row, actions, onClose }: { row: ActivityRow; ac
           icon={<NotificationGlyph />}
           facts={[level.label, humanize(row.category), formatRelative(row.createdAt)]}
         />
-        <Button variant="ghost" size="sm" isIconOnly aria-label="Close notification details" onPress={onClose}><IconClose /></Button>
+        {bare ? null : <Button variant="ghost" size="sm" isIconOnly aria-label="Close notification details" onPress={onClose}><IconClose /></Button>}
       </div>
       <ActionBar className="mt-3 justify-start" set={actions} targets={[row]} label={row.title} maxButtons={3} />
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -42,21 +68,7 @@ export function ActivityDetail({ row, actions, onClose }: { row: ActivityRow; ac
         {decision ? <Badge size="sm" tone={decision.tone}>{decision.label}</Badge> : null}
       </div>
       <p className="mt-4 whitespace-pre-wrap break-words text-body-sm text-foreground">{row.message}</p>
-      {upgrade?.from || upgrade?.to ? (
-        <div className="mt-4 flex items-center gap-3 rounded-control border border-separator p-3">
-          <div className="min-w-0 flex-1">
-            <p className="text-overline text-muted">Current</p>
-            <p className="text-title-sm">{upgrade.from ?? "Unknown"}</p>
-            {upgrade.targetPath ? <Tooltip content={upgrade.targetPath}><p className="truncate text-label-sm text-muted">{fileName(upgrade.targetPath)}</p></Tooltip> : null}
-          </div>
-          <IconArrowRight className="shrink-0 text-muted" />
-          <div className="min-w-0 flex-1">
-            <p className="text-overline text-muted">Upgrade</p>
-            <p className="text-title-sm text-success">{upgrade.to ?? "Unknown"}</p>
-            {upgrade.sourcePath ? <Tooltip content={upgrade.sourcePath}><p className="truncate text-label-sm text-muted">{fileName(upgrade.sourcePath)}</p></Tooltip> : null}
-          </div>
-        </div>
-      ) : null}
+      {upgrade?.from || upgrade?.to ? <UpgradeComparison upgrade={upgrade} className="mt-4" /> : null}
       {subjects.length ? (
         <>
           <p className="text-overline mb-2 mt-5 text-muted">About</p>
@@ -72,6 +84,6 @@ export function ActivityDetail({ row, actions, onClose }: { row: ActivityRow; ac
           { label: "Category", value: humanize(row.category) },
         ]}
       />
-    </Panel>
+    </Frame>
   );
 }

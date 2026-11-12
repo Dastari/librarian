@@ -116,6 +116,7 @@ impl AutoDownloadMutations {
             album_id: input.album_id,
             audiobook_id: input.audiobook_id,
             ignore_backoff: true,
+            ..Default::default()
         };
         if !scope.has_target() {
             return Ok(SearchMissingPayload {

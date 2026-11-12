@@ -1,35 +1,40 @@
+import { CastAndCrew, useTitleCredits } from "@/features/people/CastAndCrew";
+import { useRecommended } from "@/features/recommendations/useRecommended";
 import { copyText } from "glass-ux/copy-button";
 import { useApolloClient, useMutation } from "@apollo/client/react";
 import { useLiveQuery as useQuery } from "@/lib/graphql/live/hooks";
-import { toast } from "glass-ux/toast";
-import { Link, useNavigate } from "@tanstack/react-router";
-import { ActionBar, defineActions, type ActionSet } from "glass-ux/actions";
+import { Link } from "@tanstack/react-router";
+import { defineActions, type ActionSet } from "glass-ux/actions";
 import { Button } from "glass-ux/button";
 import { createDataTableColumns, filters, NumericCell, TextCell, TwoLineCell } from "glass-ux/data-table";
-import { IconBookmark, IconCopy, IconInfo, IconPlay, IconPlus } from "glass-ux/icons";
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { IconBookmark, IconCopy, IconInfo, IconPlay } from "glass-ux/icons";
+import { createContext, useCallback, useContext, useMemo } from "react";
 
-import { ConfirmDialog, EmptyState, ErrorState, KeyValueList, MetaLine, Panel, SkeletonHero, StatusChip } from "@/components/ui";
+import { EmptyState, ErrorState, MetaLine, SkeletonHero, StatusChip } from "@/components/ui";
 import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { AcquisitionChip } from "@/features/acquisition/AcquisitionChip";
-import { AcquisitionDialog } from "@/features/acquisition/AcquisitionDialog";
 import { autoDownloadMeta } from "@/features/acquisition/mode";
-import { ReleaseSearchDialog } from "@/features/downloads/ReleaseSearchDialog";
 import { trackToPlayItem } from "@/features/libraries/browser/TracksBrowser";
+import { useQueueActions } from "@/features/player/queueActions";
 import { usePlayer } from "@/features/player/usePlayer";
-import type { PlayItem } from "@/features/player/store";
-import { AlbumDetailDocument, AlbumTracksPageDocument, EntityAlbumDeleteDocument, EntityTrackUpdateDocument, EntityTrackUpdateManyDocument, type AlbumDetailQuery } from "@/graphql/generated/graphql";
+import { playerStore, type PlayItem } from "@/features/player/store";
+import { AlbumDetailDocument, AlbumTracksPageDocument, EntityTrackUpdateDocument, EntityTrackUpdateManyDocument, type AlbumDetailQuery } from "@/graphql/generated/graphql";
 import { useContentStatuses, contentStatusMeta } from "@/hooks/useContentStatuses";
 import { albumCover } from "@/lib/artwork";
+import { playlistTitle, useAddToPlaylist } from "@/features/personal/useAddToPlaylist";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
-import { formatBytes, formatClock, formatDate, formatRuntime, formatYear } from "@/lib/format";
+import { formatClock, formatRuntime, formatYear } from "@/lib/format";
 import { activeContentStatusQueries } from "@/lib/graphql/content-status";
-import { assertSuccess, errorMessage } from "@/lib/graphql/errors";
+import { assertSuccess } from "@/lib/graphql/errors";
 import { LIBRARY_TYPES } from "@/lib/library-types";
 import { statusMeta } from "@/lib/status";
 
 import { MediaActions } from "./MediaActions";
+import { useAlbumEntity } from "./useAlbumEntity";
+import { noRowMenu, PlayProgressCell, RowActions, type RowPlayState } from "./RowPlayAction";
+import { filesWithProgress, resetProgressAction, useResetProgress, type ProgressReset } from "./progressReset";
+import { useMediaProgress } from "./useMediaProgress";
 import { DetailShell } from "./DetailShell";
 import { useAudioPages } from "./useAudioPages";
 
@@ -41,6 +46,10 @@ const AlbumTableContext = createContext<{
   statuses: ReturnType<typeof useContentStatuses>;
   currentItemId: string | undefined;
   discs: number;
+  fractionOf: (track: TrackRow) => number;
+  playStateOf: (track: TrackRow) => RowPlayState;
+  press: (track: TrackRow) => void;
+  want?: (track: TrackRow) => Promise<unknown>;
 } | null>(null);
 
 function useAlbumTable() {
@@ -65,16 +74,29 @@ function TrackStatusCell({ row: { original: track } }: TrackCellProps) {
 }
 
 function TrackFormatCell({ row: { original: track } }: TrackCellProps) {
-  return <TextCell muted>{track.mediaFile ? [track.mediaFile.audioCodec?.toUpperCase(), track.mediaFile.bitrate ? `${Math.round(track.mediaFile.bitrate / 1000)} kb/s` : null, formatBytes(track.mediaFile.size)].filter(Boolean).join(" · ") : "—"}</TextCell>;
+  return <TextCell muted>{track.mediaFile ? [track.mediaFile.audioCodec?.toUpperCase(), track.mediaFile.bitrate ? `${Math.round(track.mediaFile.bitrate / 1000)} kb/s` : null].filter(Boolean).join(" · ") || "—" : "—"}</TextCell>;
 }
 
 function TrackDurationCell({ row: { original: track } }: TrackCellProps) {
   return <TextCell identifier>{formatClock(track.durationSecs ?? track.mediaFile?.duration)}</TextCell>;
 }
 
-function TrackActionsCell({ row }: TrackCellProps) {
-  const { actions } = useAlbumTable();
-  return <ActionBar set={actions} targets={[row.original]} label={row.original.title} maxButtons={1} className="table-row-actions" />;
+function TrackProgressCell({ row: { original: track } }: TrackCellProps) {
+  const { fractionOf } = useAlbumTable();
+  return <PlayProgressCell fraction={fractionOf(track)} label={`Listening progress for ${track.title}`} available={Boolean(track.mediaFileId)} />;
+}
+
+function TrackActionsCell({ row: { original: track } }: TrackCellProps) {
+  const { actions, playStateOf, press, want } = useAlbumTable();
+  return (
+    <RowActions
+      set={actions}
+      target={track}
+      label={track.title}
+      play={track.mediaFileId ? { state: playStateOf(track), onPress: () => press(track) } : undefined}
+      want={want && !track.mediaFileId ? { wanted: track.wanted, onPress: () => want(track) } : undefined}
+    />
+  );
 }
 
 // flexRender treats cell functions as component types. Context keeps live values
@@ -84,13 +106,13 @@ const trackColumns = trackColumn.columns([
   trackColumn.accessor("title", { header: "Title", sortable: true, filter: filters.text({ field: "title" }), cardRole: "title", priority: 1, width: 20, minWidth: 10, hideable: false, cell: TrackTitleCell }),
   trackColumn.accessor("trackNumber", { header: "Track", sortable: true, filter: filters.number({ field: "trackNumber", server: "int" }), priority: 2, width: 5, minWidth: 4, align: "end", grow: false, cell: TrackNumberCell }),
   trackColumn.display({ id: "status", header: "Status", cardRole: "status", priority: 2, width: 9, minWidth: 7, cell: TrackStatusCell }),
+  trackColumn.display({ id: "progress", header: "Progress", priority: 3, width: 10, minWidth: 8, cell: TrackProgressCell }),
   trackColumn.display({ id: "format", header: "Format", priority: 4, width: 14, minWidth: 8, cell: TrackFormatCell }),
   trackColumn.display({ id: "duration", header: "Length", priority: 3, width: 6, minWidth: 5, align: "end", grow: false, cell: TrackDurationCell }),
-  trackColumn.display({ id: "trackActions", header: "Actions", priority: 1, width: 12, minWidth: 10, grow: false, hideable: false, cell: TrackActionsCell }),
+  trackColumn.display({ id: "trackActions", header: "", priority: 1, width: 7, minWidth: 6, grow: false, hideable: false, cell: TrackActionsCell }),
 ]);
 
 export function AlbumPage({ albumId }: { albumId: string }) {
-  const navigate = useNavigate();
   const client = useApolloClient();
   const { user } = useSession();
   const player = usePlayer();
@@ -107,12 +129,8 @@ export function AlbumPage({ albumId }: { albumId: string }) {
   const tracks = useMemo(() => [...pages.rows].sort((a, b) => (a.discNumber ?? 1) - (b.discNumber ?? 1) || a.trackNumber - b.trackNumber), [pages.rows]);
   const ids = useMemo(() => tracks.map((track) => track.id), [tracks]);
   const statuses = useContentStatuses("TRACK", ids);
-  const [deleteAlbum, { loading: deleting }] = useMutation(EntityAlbumDeleteDocument);
   const [updateTrack] = useMutation(EntityTrackUpdateDocument, { refetchQueries: () => activeContentStatusQueries(client) });
   const [updateTracks] = useMutation(EntityTrackUpdateManyDocument, { refetchQueries: () => activeContentStatusQueries(client) });
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [searching, setSearching] = useState(false);
-  const [acquisition, setAcquisition] = useState(false);
 
   const toggleWanted = useCallback(async (track: TrackRow) => {
     if (!isAdmin) return;
@@ -129,6 +147,13 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     if (items.length && index >= 0) player.playAudio(items, index);
   }, [pages.complete, queue, player]);
   const discs = new Set(tracks.map((track) => track.discNumber ?? 1)).size;
+  const fileIds = useMemo(() => tracks.map((track) => track.mediaFileId).filter((id): id is string => Boolean(id)), [tracks]);
+  const { progressByFile, loading: progressLoading, error: progressError } = useMediaProgress(fileIds, user?.id);
+  const resetProgress = useResetProgress();
+  // Only the tracks on this page can be reset, so it waits for the whole album and for progress.
+  const progressWait = !pages.complete ? "Loading all tracks" : progressLoading ? "Loading playback progress" : progressError ? "Playback progress could not be loaded" : undefined;
+  const albumReset = useMemo<ProgressReset<unknown>>(() => ({ files: () => filesWithProgress(fileIds, progressByFile), disabledReason: () => progressWait }), [fileIds, progressByFile, progressWait]);
+  const trackReset = useMemo<ProgressReset<TrackRow>>(() => ({ files: (rows) => filesWithProgress(rows.map((row) => row.mediaFileId), progressByFile), disabledReason: () => (progressLoading ? "Loading playback progress" : progressError ? "Playback progress could not be loaded" : undefined) }), [progressByFile, progressLoading, progressError]);
   const setSelectedWanted = useCallback(async (selected: readonly TrackRow[], wanted: boolean) => {
     if (!isAdmin) throw new Error("Administrator access required");
     const missing = selected.filter((item) => !item.mediaFileId && item.wanted !== wanted);
@@ -145,6 +170,16 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     return queue.filter((item) => selected.has(item.entity.id));
   }, [queue]);
   const selectedPlaybackUnavailable = (rows: readonly TrackRow[]) => rows.some((item) => !item.mediaFileId) ? "Some selected tracks have no file. Deselect them to play this selection." : undefined;
+  const ownAlbum = Boolean(user) && album?.userId === user?.id;
+  const trackPlaylist = useAddToPlaylist<TrackRow>({
+    targetsOf: (rows) => rows.map((row) => ({ kind: "track" as const, id: row.id })),
+    titleOf: (rows) => playlistTitle(rows, rows[0]!.title, { one: "track", other: "tracks" }),
+    allowed: () => ownAlbum,
+    bulk: true,
+    priority: 2,
+  });
+  // Play next / Add to queue (the play queue): the selected tracks, in album order.
+  const queueActions = useQueueActions<TrackRow>((rows) => [selectedQueue(rows)], { visible: (rows) => rows.some((item) => item.mediaFileId), disabledReason: selectedPlaybackUnavailable });
   const actions = useMemo(() => defineActions<TrackRow>("track", [
     { id: "play", label: "Play", icon: IconPlay, group: "open", primary: true, bulk: true,
       visible: (rows) => rows.length === 1 && Boolean(rows[0]?.mediaFileId),
@@ -155,32 +190,48 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     { id: "play-selected", label: "Play selected tracks", icon: IconPlay, group: "open", bulk: true,
       visible: (rows) => rows.length > 1, disabledReason: selectedPlaybackUnavailable,
       run: (rows) => { const items = selectedQueue(rows); if (!items.length || selectedPlaybackUnavailable(rows)) throw new Error("Selected tracks are not ready to play"); player.playAudio(items); } },
-    { id: "enqueue", label: "Add to queue", icon: IconPlus, group: "organise", bulk: true,
-      disabledReason: selectedPlaybackUnavailable,
-      run: (rows) => { const items = selectedQueue(rows); if (!items.length || selectedPlaybackUnavailable(rows)) throw new Error("Selected tracks are not ready to queue"); player.enqueue(items); }, successMessage: () => "Added to queue" },
+    ...queueActions,
     { id: "want-selected", label: "Want selected missing tracks", icon: IconBookmark, group: "manage", bulk: true,
       visible: (rows) => isAdmin && rows.length > 1 && rows.some((item) => !item.mediaFileId && !item.wanted),
       run: (rows) => setSelectedWanted(rows, true), successMessage: () => "Selected missing tracks wanted" },
     { id: "unwant-selected", label: "Unwant selected missing tracks", icon: IconBookmark, group: "manage", bulk: true,
       visible: (rows) => isAdmin && rows.length > 1 && rows.some((item) => !item.mediaFileId && item.wanted),
       run: (rows) => setSelectedWanted(rows, false), successMessage: () => "Selected missing tracks no longer wanted" },
+    ...resetProgressAction<TrackRow>("audio", trackReset, resetProgress),
+    trackPlaylist.action,
     { id: "copy-titles", label: "Copy track titles", icon: IconCopy, group: "organise", bulk: true,
       run: async (rows) => { await copyText(rows.map((item) => item.title).join("\n")); }, successMessage: () => "Track titles copied" },
-  ]), [isAdmin, playFrom, toggleWanted, setSelectedWanted, selectedQueue, player]);
+  ]), [trackPlaylist.action, queueActions, isAdmin, playFrom, toggleWanted, setSelectedWanted, selectedQueue, player, trackReset, resetProgress]);
 
+  const currentItemId = player.audio?.entity.id;
+  const fractionOf = (track: TrackRow) => {
+    if (!track.mediaFileId) return 0;
+    const saved = progressByFile.get(track.mediaFileId);
+    if (track.id === currentItemId && player.transport.duration > 0) return Math.min(1, player.transport.position / player.transport.duration);
+    if (saved?.isWatched) return 1;
+    const seconds = track.mediaFile?.duration ?? track.durationSecs ?? saved?.duration ?? 0;
+    return saved && seconds > 0 ? Math.min(1, saved.currentPosition / seconds) : 0;
+  };
+  const playStateOf = (track: TrackRow): RowPlayState => {
+    if (track.id === currentItemId && player.transport.playing) return "playing";
+    if (track.id !== currentItemId && track.mediaFileId && progressByFile.get(track.mediaFileId)?.isWatched) return "finished";
+    return fractionOf(track) > 0 ? "resume" : "ready";
+  };
+  // Pressing what's already playing pauses or carries on; pressing anything else starts it.
+  const press = (track: TrackRow) => {
+    if (track.id === currentItemId) playerStore.updateTransport({ playing: !player.transport.playing });
+    else playFrom(track);
+  };
+
+  const playAlbum = queue.length > 0 ? { label: "Play", run: () => playFrom(), disabledReason: !pages.complete ? "Load all tracks to play the album" : undefined } : undefined;
+  const { actions: albumActions, dialogs: albumDialogs, openSettings } = useAlbumEntity<NonNullable<typeof album>>({ open: false, play: playAlbum, artist: tracks[0]?.artistName, reset: albumReset, onChanged: pages.refresh });
+
+  const { credits } = useTitleCredits({ albumId: { eq: albumId } });
+
+  // An album is answered by its artist's plan; the badge counts the releases for this album.
+  const recommended = useRecommended({ albumId, artistId: album?.artistId }, album ? tracks.filter((track) => !track.mediaFileId).length : 0, Boolean(album));
   if (error && !album) return <ErrorState error={error} onRetry={() => void refetch()} className="m-8" />;
   if (!album) return loading ? <SkeletonHero /> : <EmptyState icon={IconInfo} title="Album not found" description="This item may have been removed from the library." className="page-gutter my-8" />;
-
-  const remove = async () => {
-    try {
-      const { data: result } = await deleteAlbum({ variables: { id: album.id } });
-      assertSuccess(result?.deleteAlbum, "Could not remove album");
-      toast.success("Album removed");
-      await navigate({ to: "/libraries/$libraryId/albums", params: { libraryId: album.libraryId } });
-    } catch (mutationError) {
-      toast.danger(errorMessage(mutationError));
-    }
-  };
 
   return (
     <DetailShell
@@ -208,40 +259,28 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                 formatRuntime(album.totalDurationSecs),
               ]}
             />
-            <AcquisitionChip status={autoDownloadMeta(album.autoDownloadMode)} onPress={isAdmin ? () => setAcquisition(true) : undefined} />
+            <AcquisitionChip status={autoDownloadMeta(album.autoDownloadMode)} onPress={isAdmin ? () => openSettings(album, "downloads") : undefined} />
           </>
         ),
         actions: (
-          <MediaActions
-            personal={album.userId === user?.id ? { kind: "album", id: album.id } : undefined}
-            id={album.id}
-            label={album.name}
-            play={queue.length > 0 ? { label: "Play", run: () => playFrom(), disabledReason: !pages.complete ? "Load all tracks to play the album" : undefined } : undefined}
-            enqueue={pages.complete && queue.length > 0 ? () => player.enqueue(queue) : undefined}
-            find={isAdmin ? () => setSearching(true) : undefined}
-            settings={isAdmin ? () => setAcquisition(true) : undefined}
-            remove={isAdmin ? () => setConfirmDelete(true) : undefined}
-          />
+          <MediaActions target={album} label={album.name} actions={albumActions} play={playAlbum} recommended={recommended.forTarget} />
         ),
       }}
     >
-      <AlbumTableContext.Provider value={{ actions, statuses, currentItemId: player.audio?.entity.id, discs }}>
+      <AlbumTableContext.Provider value={{ actions, statuses, currentItemId, discs, fractionOf, playStateOf, press, want: isAdmin ? toggleWanted : undefined }}>
         <LoadedDataTable
           id={`album-tracks:${user?.id ?? "anonymous"}:${album.libraryId}:${album.id}`}
           label={`${album.name} tracks`} columns={trackColumns} rows={tracks} getRowId={(track) => track.id} getRowLabel={(track) => track.title}
-          height="auto" density="compact" noun={{ one: "track", other: "tracks" }} selectable actions={actions}
+          height="auto" noun={{ one: "track", other: "tracks" }} selectable actions={actions} renderRowActions={noRowMenu}
           renderBulkActions={(rows) => <TableBulkActions set={actions} rows={rows} noun={{ one: "track", other: "tracks" }} />}
           complete={pages.complete} search={{ fields: ["title", { field: "artistName", value: (track) => track.artistName }], placeholder: "Search tracks" }} refetching={loading || pages.loading}
           status={pages.error ? <span role="status">Could not load all tracks. Play individual tracks or <Button size="sm" variant="ghost" onClick={pages.retry}>Retry tracks</Button></span> : pages.loading ? "Loading remaining tracks…" : error ? <span role="status">Could not refresh tracks. <Button size="sm" variant="ghost" onClick={() => void refetch()}>Retry refresh</Button></span> : undefined}
           emptyMessage="No tracks" onRowOpen={(track) => { if (track.mediaFileId) playFrom(track); }}
         />
       </AlbumTableContext.Provider>
-      <Panel title="Details" className="lg:max-w-2xl">
-        <KeyValueList columns={2} items={[{ label: "Label", value: album.label }, { label: "Country", value: album.country }, { label: "Genres", value: album.genres.join(", ") || undefined }, { label: "Released", value: formatDate(album.releaseDate) }, { label: "Discs", value: album.discCount }, { label: "Size", value: formatBytes(album.sizeBytes) }, { label: "Folder", value: album.path, mono: true }, { label: "MusicBrainz", value: album.musicbrainzId ? <a className="nav-focus rounded text-brand hover:underline" href={`https://musicbrainz.org/release-group/${album.musicbrainzId}`} target="_blank" rel="noreferrer">{album.musicbrainzId}</a> : undefined }]} />
-      </Panel>
-      <AcquisitionDialog isOpen={acquisition} onOpenChange={setAcquisition} target={{ kind: "album", id: album.id, title: album.name, libraryId: album.libraryId, autoDownloadMode: album.autoDownloadMode, qualityProfileId: album.qualityProfileId }} onSaved={() => void refetch()} />
-      <ReleaseSearchDialog isOpen={searching} onOpenChange={setSearching} query={[tracks[0]?.artistName, album.name].filter(Boolean).join(" ")} year={album.year} libraryId={album.libraryId} artist={tracks[0]?.artistName} album={album.name} target={{ albumId: album.id }} />
-      <ConfirmDialog isOpen={confirmDelete} onOpenChange={setConfirmDelete} title={`Remove ${album.name}?`} description="The album and its tracks leave the catalogue. Files stay on disk." confirmLabel="Remove" destructive isPending={deleting} onConfirm={remove} />
+      <CastAndCrew credits={credits} castTitle="Performers" crewTitle="Credits" />
+      {albumDialogs}
+      {trackPlaylist.dialog}
     </DetailShell>
   );
 }

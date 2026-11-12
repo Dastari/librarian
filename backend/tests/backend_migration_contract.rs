@@ -248,7 +248,9 @@ fn private_artwork_requires_auth_and_private_cache_headers() {
     let artwork_api = read(backend_root().join("src/api/artwork.rs"));
     assert!(artwork_api.contains("require_authenticated_user"));
     assert!(artwork_api.contains("can_access_artwork"));
-    assert!(artwork_api.contains("private, max-age=86400"));
+    // Versioned addresses (`?v=`) are immutable; plain ones revalidate after five minutes (Q127).
+    assert!(artwork_api.contains("private, max-age=31536000, immutable"));
+    assert!(artwork_api.contains("private, max-age=300, stale-while-revalidate"));
     assert!(artwork_api.contains("Cookie, Authorization"));
     assert!(!artwork_api.contains("public, max-age"));
 }
@@ -467,7 +469,6 @@ fn rbac_policy_hooks_and_sensitive_entity_annotations_are_registered() {
     assert!(database_service.contains("set_entity_policy(AppEntityPolicy)"));
 
     let admin_only_entities = [
-        "user.rs",
         "refresh_token.rs",
         "invite_token.rs",
         "app_setting.rs",
@@ -496,6 +497,21 @@ fn rbac_policy_hooks_and_sensitive_entity_annotations_are_registered() {
     }
 
     let user = read(backend_root().join("src/services/graphql/entities/user.rs"));
+    // A member reads and edits their own User row (the profile, design.md Q147); the row
+    // policy scopes it to its owner, and who-you-are fields stay admin-written.
+    assert!(user.contains(r#"read_policy = "member.read""#));
+    assert!(user.contains(r#"write_policy = "member.write""#));
+    for admin_field in ["pub username:", "pub role:", "pub is_active:"] {
+        let field_at = user
+            .find(admin_field)
+            .unwrap_or_else(|| panic!("user.rs should declare {admin_field}"));
+        let preceding = &user[..field_at];
+        let attribute_at = preceding.rfind("#[graphql_orm(").unwrap_or(0);
+        assert!(
+            preceding[attribute_at..].contains(r#"write_policy = "admin.write""#),
+            "User {admin_field} should stay admin-written"
+        );
+    }
     let refresh_token = read(backend_root().join("src/services/graphql/entities/refresh_token.rs"));
     let invite_token = read(backend_root().join("src/services/graphql/entities/invite_token.rs"));
     let usenet_server = read(backend_root().join("src/services/graphql/entities/usenet_server.rs"));

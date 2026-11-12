@@ -1,7 +1,7 @@
 import { defineEntityKinds, type EntityKindSpec } from "glass-ux/ai";
 import type { IconComponent, IconProps } from "glass-ux/icon";
 import { IconAlerts, IconDownload, IconFileVideo, IconLayers, IconPlug, IconUser, IconWarning } from "glass-ux/icons";
-import { IconBooks, IconDeviceTv, IconDisc, IconMicrophone2, IconMovie, IconMusic, IconStack2, IconUserStar, type TablerIcon } from "@tabler/icons-react";
+import { IconBooks, IconDevices, IconDeviceTv, IconDisc, IconMicrophone2, IconMovie, IconMusic, IconPlaylist, IconServer2, IconStack2, IconUserStar, type TablerIcon } from "@tabler/icons-react";
 
 /** Tabler glyphs (media kinds Glass UX has no icon for) in Glass's icon contract. */
 export function glyph(Icon: TablerIcon, name: string): IconComponent {
@@ -29,6 +29,7 @@ export const ENTITY_KINDS = defineEntityKinds({
   audiobook: kind(glyph(IconBooks, "audiobook"), "Audiobook", "Audiobooks", "audiobooks"),
   person: kind(glyph(IconUserStar, "person"), "Person", "People", "people"),
   collection: kind(glyph(IconStack2, "collection"), "Collection", "Collections", "collections"),
+  playlist: kind(glyph(IconPlaylist, "playlist"), "Playlist", "Playlists", "lists"),
   library: kind(IconLayers, "Library", "Libraries", "libraries"),
   torrent: kind(IconDownload, "Download", "Downloads", "downloads"),
   mediaFile: kind(IconFileVideo, "File", "Files", "files"),
@@ -36,6 +37,8 @@ export const ENTITY_KINDS = defineEntityKinds({
   scanIssue: kind(IconWarning, "Scan issue", "Scan issues", "scans"),
   source: kind(IconPlug, "Source", "Sources", "settings/sources"),
   user: kind(IconUser, "User", "Users", "settings/users"),
+  networkServer: kind(glyph(IconServer2, "server"), "Network server", "Network servers", "settings/network-shares"),
+  device: kind(glyph(IconDevices, "device"), "Device", "Devices", "settings/statistics/devices"),
 });
 
 export type EntityKindName = keyof typeof ENTITY_KINDS;
@@ -48,6 +51,8 @@ export function entityPath(kind: EntityKindName, id: string, parentId?: string |
     case "notification": return "/activity";
     case "scanIssue": return undefined;
     case "mediaFile": return undefined;
+    // Your devices are in your profile; everyone's in Settings › Statistics.
+    case "device": return "/?profile=devices";
     default: return `/${ENTITY_KINDS[kind].segment}/${id}`;
   }
 }

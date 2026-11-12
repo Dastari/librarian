@@ -1,4 +1,4 @@
-import { render, renderHook, screen, waitFor } from "@testing-library/react";
+import { render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ActionProvider, defineActions } from "glass-ux/actions";
 import { describe, expect, it, vi } from "vitest";
@@ -7,13 +7,19 @@ import { TooltipProvider } from "glass-ux/tooltip";
 import type { ReactNode } from "react";
 
 import { TorrentDetail } from "../TorrentDetail";
-import { fileOutcome, filesSummary, useTorrentFiles } from "../TorrentFiles";
+import { fileOutcome, filesSummary, groupFilesByTitle, useTorrentFiles, type TorrentFileRow } from "../TorrentFiles";
+import type { IdentifiedItem } from "../TorrentIdentification";
 import { TorrentIdentity } from "../TorrentIdentity";
 import type { DownloadRow } from "../useDownloads";
 
 const fixture = vi.hoisted(() => ({ detail: undefined as unknown }));
 vi.mock("@/lib/auth/useSession", () => ({ useIsAdmin: () => true }));
 vi.mock("../MatchFileDialog", () => ({ MatchFileDialog: () => null }));
+vi.mock("../TorrentIdentification", () => ({
+  useTorrentIdentification: () => ({ items: [], events: [], loading: false, refetch: vi.fn() }),
+  IdentifiedResults: () => null,
+  IdentificationActivity: () => null,
+}));
 vi.mock("@/lib/graphql/live/hooks", () => ({ useLiveQuery: () => ({ data: fixture.detail, loading: false, refetch: vi.fn() }) }));
 
 const name = "Fallout.2024.S01E04.1080p.HEVC.x265-MeGusta";
@@ -26,7 +32,7 @@ function download(): DownloadRow {
       name, state: "seeding", progress: 1, totalBytes: 492096000, downloadedBytes: 492096000,
       uploadedBytes: 0, uploadedBytesTotal: 123024000, savePath: `/data/downloads/${name}`, downloadPath: null,
       sourceUrl: null, sourceFeedId: null, sourceIndexerId: null, libraryId: null,
-      postProcessStatus: "failed", postProcessError: error, processedAt: null,
+      identificationKind: null, identificationStatus: null, identificationSummary: null, postProcessStatus: "failed", postProcessError: error, processedAt: null,
       episodeId: null, movieId: null, trackId: null, chapterId: null, showId: null, albumId: null, audiobookId: null,
       minimumRatio: 1, minimumSeedTimeMinutes: 120, season: null, excludedFiles: [], deleteFilesOnRemove: false,
       addedAt: "2026-09-07T12:57:00Z", createdAt: "2026-09-07T12:57:00Z", updatedAt: "2026-09-07T13:02:00Z", completedAt: "2026-09-07T13:02:00Z",
@@ -35,7 +41,7 @@ function download(): DownloadRow {
     live: {
       id: 1, infoHash: "99cbe573f0d0bf8c219584fba6e90dff0913daae", name, state: "seeding", progress: 1,
       size: 492096000, downloaded: 492096000, uploaded: 123024000, downloadSpeed: 0, uploadSpeed: 1024,
-      peers: 3, savePath: `/data/downloads/${name}`,
+      peers: 3, savePath: `/data/downloads/${name}`, statusDetail: null,
       files: Array.from({ length: 30 }, (_, index) => ({ index, path: `${name}/folder/${index ? `screen${index}.png` : `${name}.mkv`}`, size: index ? 1024 : 480000000, progress: 1 })),
     },
   };
@@ -105,11 +111,30 @@ describe("download details dialog", () => {
     fixture.detail = undefined;
   });
 
+  it("shows only what the line under the name is for, with icons in place of words", async () => {
+    mount();
+    const stats = within(await screen.findByRole("group", { name: "Transfer" }));
+    for (const label of ["Size", "Share ratio", "Download", "Upload", "Peers"]) expect(stats.getByRole("img", { name: label })).toBeInTheDocument();
+    expect(stats.getByText("0.25")).toBeInTheDocument();
+    expect(stats.queryByText("Audio Books")).toBeNull();
+  });
+
+  it("files a pack's files under the titles they were identified as", () => {
+    const file = (name: string, size = 100): TorrentFileRow => ({ id: name, index: 0, name, path: `Pack/${name}`, filePath: `/data/Pack/${name}`, size, progress: 1, media: true, match: null });
+    const title = (id: string, paths: string[]) => ({ id, title: id, label: id, filePaths: JSON.stringify(paths) }) as IdentifiedItem;
+    const files = [file("a.mp3"), file("b.mp3", 300), file("info.txt")];
+    const rows = groupFilesByTitle(files, [title("Book A", ["/data/Pack/a.mp3"]), title("Book B", ["/data/Pack/b.mp3"])]);
+    expect(rows.map((row) => row.name)).toEqual(["Book A", "Book B", "Other files"]);
+    expect(rows[1]!.size).toBe(300);
+    expect(rows[2]!.group?.files.map((row) => row.name)).toEqual(["info.txt"]);
+    expect(groupFilesByTitle(files, [])).toEqual(files);
+  });
+
   it("summarises a list of failed files in the notice, keeping the whole message under Details", async () => {
     const row = download();
     row.record = { ...row.record, postProcessStatus: "unmatched", postProcessError: "2 file(s) did not match any library item: a.mkv, b.mkv (No safe automatic match found)" };
     mount(row);
-    expect(await screen.findByText("2 file(s) did not match any library item. See the list below.")).toBeInTheDocument();
+    expect(await screen.findByText("2 file(s) did not match any library item. See the Files section.")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /Details/ }));
     expect(await screen.findByText(/a\.mkv, b\.mkv/)).toBeInTheDocument();
   });
@@ -129,7 +154,6 @@ describe("download details dialog", () => {
     mount(row);
     await screen.findByRole("dialog");
     expect(screen.queryByText("0 B/s")).toBeNull();
-    expect(screen.getAllByText("Share ratio").length).toBeGreaterThan(0);
-    expect(screen.getByText(/uploaded/)).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Share ratio" })).toBeInTheDocument();
   });
 });

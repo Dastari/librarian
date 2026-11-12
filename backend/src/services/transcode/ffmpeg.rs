@@ -25,6 +25,7 @@ use tokio::process::{Child, Command};
 use tracing::warn;
 
 use super::session::TranscodeKind;
+use crate::services::library_storage::{TOOL_PROTOCOL_WHITELIST, is_tool_url};
 
 /// Playlist filename written into every session's output directory.
 pub const PLAYLIST_FILENAME: &str = "playlist.m3u8";
@@ -66,6 +67,15 @@ pub async fn ffmpeg_available(ffmpeg_path: &str) -> bool {
         }
     }
 }
+
+/// Transcoded audio is mixed down to stereo (mono stays mono). Surround folded down by the
+/// player is not safe: some TVs' WebView plays 5.1 AAC by keeping only front left and right, which
+/// drops the centre channel and with it nearly all dialogue (music and effects only). ffmpeg's
+/// downmix folds the centre and surrounds into both sides. It also keeps the output in a layout AAC
+/// has a standard code for: a file's 5.1(side), the usual layout of E-AC-3 and AC-3, would otherwise
+/// make ffmpeg describe the channels in a way browsers can't append. Direct play still passes a
+/// file's own surround track to players that can decode it.
+const AAC_CHANNEL_LAYOUTS: &str = "aformat=channel_layouts=stereo|mono";
 
 /// Full path to the playlist file inside a session's output directory.
 pub fn playlist_path(output_dir: &Path) -> PathBuf {
@@ -118,6 +128,10 @@ pub fn build_transcode_args(input: &Path, output_dir: &Path) -> Vec<String> {
         "expr:gte(t,n_forced*6)".to_string(),
         "-preset".to_string(),
         "veryfast".to_string(),
+        "-sn".to_string(),
+        "-dn".to_string(),
+        "-af".to_string(),
+        AAC_CHANNEL_LAYOUTS.to_string(),
         "-c:a".to_string(),
         "aac".to_string(),
         "-f".to_string(),
@@ -159,6 +173,26 @@ pub fn vod_playlist(duration_seconds: u32) -> String {
     playlist
 }
 
+/// A picture subtitle drawn into the video (Q120): PGS, VobSub and DVB subtitles cannot be
+/// sent to a browser as text, so a variant with them burned in is encoded instead.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum BurnIn {
+    /// A subtitle stream of the file itself, by its absolute ffprobe index.
+    Stream(i32),
+    /// A VobSub sidecar on this machine, by its `.idx` (ffmpeg finds the `.sub` beside it).
+    VobSub(PathBuf),
+}
+
+impl BurnIn {
+    /// Names the variant in a session key.
+    pub fn key(&self) -> String {
+        match self {
+            Self::Stream(index) => format!("stream:{index}"),
+            Self::VobSub(path) => format!("vobsub:{}", path.display()),
+        }
+    }
+}
+
 /// Re-encode from `start_segment` to the end of the file. The output keeps the file's own
 /// timeline, so a segment is the same wherever the encoder started: a later seek can reuse it.
 pub fn build_on_demand_transcode_args(
@@ -168,17 +202,57 @@ pub fn build_on_demand_transcode_args(
     audio_stream: Option<i32>,
     audio_only: bool,
 ) -> Vec<String> {
+    build_on_demand_transcode_args_with_burn(
+        input,
+        output_dir,
+        start_segment,
+        audio_stream,
+        audio_only,
+        None,
+    )
+}
+
+/// [`build_on_demand_transcode_args`], optionally with a picture subtitle burned in. The
+/// subtitle input is seeked like the video, so its pictures stay on the file's timeline.
+pub fn build_on_demand_transcode_args_with_burn(
+    input: &Path,
+    output_dir: &Path,
+    start_segment: u32,
+    audio_stream: Option<i32>,
+    audio_only: bool,
+    burn: Option<&BurnIn>,
+) -> Vec<String> {
     let offset = (start_segment * SEGMENT_SECONDS).to_string();
     let mut args: Vec<String> = ["-y", "-ss", &offset, "-i"].map(str::to_owned).to_vec();
     args.push(input.to_string_lossy().into_owned());
-    if let Some(index) = audio_stream {
+    let burn = burn.filter(|_| !audio_only);
+    if let Some(BurnIn::VobSub(index_file)) = burn {
+        args.extend(["-ss".to_owned(), offset.clone(), "-i".to_owned()]);
+        args.push(index_file.to_string_lossy().into_owned());
+    }
+    if let Some(burn) = burn {
+        let subtitle = match burn {
+            BurnIn::Stream(index) => format!("[0:{index}]"),
+            BurnIn::VobSub(_) => "[1:s:0]".to_owned(),
+        };
+        // `eof_action=pass` keeps the picture going after the last subtitle.
+        args.extend([
+            "-filter_complex".to_owned(),
+            format!("[0:v:0]{subtitle}overlay=eof_action=pass[burned]"),
+            "-map".to_owned(),
+            "[burned]".to_owned(),
+            "-map".to_owned(),
+            match audio_stream {
+                Some(index) => format!("0:{index}"),
+                None => "0:a:0?".to_owned(),
+            },
+        ]);
+    } else if let Some(index) = audio_stream {
         args.extend([
             "-map".to_owned(),
             "0:v:0?".to_owned(),
             "-map".to_owned(),
             format!("0:{index}"),
-            "-sn".to_owned(),
-            "-dn".to_owned(),
         ]);
     }
     let forced_key_frames = format!("expr:gte(t,n_forced*{SEGMENT_SECONDS})");
@@ -200,6 +274,12 @@ pub fn build_on_demand_transcode_args(
                 &forced_key_frames,
                 "-preset",
                 "veryfast",
+                // Subtitles are served by their own route. Converting them here wastes work, and
+                // an image format would stop the encoder.
+                "-sn",
+                "-dn",
+                "-af",
+                AAC_CHANNEL_LAYOUTS,
             ]
             .map(str::to_owned),
         );
@@ -240,6 +320,7 @@ pub fn build_on_demand_transcode_args(
 }
 
 /// Start an on-demand encoder at `start_segment`.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_on_demand_transcode(
     ffmpeg_path: &str,
     input: &Path,
@@ -248,9 +329,16 @@ pub fn spawn_on_demand_transcode(
     start_segment: u32,
     audio_stream: Option<i32>,
     audio_only: bool,
+    burn: Option<&BurnIn>,
 ) -> Result<Child> {
-    let args =
-        build_on_demand_transcode_args(input, output_dir, start_segment, audio_stream, audio_only);
+    let args = build_on_demand_transcode_args_with_burn(
+        input,
+        output_dir,
+        start_segment,
+        audio_stream,
+        audio_only,
+        burn,
+    );
     spawn_ffmpeg(ffmpeg_path, &args, session_id)
 }
 
@@ -264,7 +352,14 @@ pub fn spawn_on_demand_transcode(
 /// ever dropped without an explicit kill (normal shutdown/reap paths always
 /// kill explicitly first).
 fn spawn_ffmpeg(ffmpeg_path: &str, args: &[String], session_id: &str) -> Result<Child> {
+    // An input read through a tool URL (a file on a share) needs the http protocol allowed.
+    let whitelist: &[&str] = if args.iter().any(|arg| is_tool_url(arg)) {
+        &["-protocol_whitelist", TOOL_PROTOCOL_WHITELIST]
+    } else {
+        &[]
+    };
     Command::new(ffmpeg_path)
+        .args(whitelist)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -359,6 +454,12 @@ pub async fn subtitle_webvtt(
     input_format: Option<&str>,
 ) -> std::result::Result<Vec<u8>, SubtitleError> {
     let mut command = Command::new(ffmpeg_path);
+    // Local input may only be a file or a pipe; a file on a share arrives as a loopback URL.
+    let whitelist = if is_tool_url(&input.to_string_lossy()) {
+        TOOL_PROTOCOL_WHITELIST
+    } else {
+        "file,pipe"
+    };
     command.args([
         "-nostdin",
         "-v",
@@ -366,7 +467,7 @@ pub async fn subtitle_webvtt(
         "-threads",
         "1",
         "-protocol_whitelist",
-        "file,pipe",
+        whitelist,
     ]);
     if let Some(format) = input_format {
         command.args(["-f", format]);
@@ -416,6 +517,32 @@ pub async fn subtitle_webvtt(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn burn_in_overlays_the_subtitle_and_keeps_the_audio() {
+        let args = build_on_demand_transcode_args_with_burn(
+            Path::new("/in.mkv"),
+            Path::new("/out"),
+            2,
+            Some(1),
+            false,
+            Some(&BurnIn::Stream(4)),
+        );
+        let joined = args.join(" ");
+        assert!(joined.starts_with("-y -ss 12 -i /in.mkv -filter_complex [0:v:0][0:4]overlay=eof_action=pass[burned] -map [burned] -map 0:1"), "{joined}");
+        let vobsub = build_on_demand_transcode_args_with_burn(
+            Path::new("/in.mkv"),
+            Path::new("/out"),
+            0,
+            None,
+            false,
+            Some(&BurnIn::VobSub(PathBuf::from("/m/Film.idx"))),
+        )
+        .join(" ");
+        assert!(vobsub.starts_with("-y -ss 0 -i /in.mkv -ss 0 -i /m/Film.idx -filter_complex [0:v:0][1:s:0]overlay=eof_action=pass[burned] -map [burned] -map 0:a:0?"), "{vobsub}");
+        // Still no subtitle stream in the output.
+        assert!(vobsub.contains(" -sn "));
+    }
+
     use super::*;
 
     #[test]
@@ -429,6 +556,38 @@ mod tests {
         assert!(playlist.ends_with("#EXT-X-ENDLIST\n"));
         assert_eq!(segment_count(14), 3);
         assert_eq!(segment_count(12), 2);
+    }
+
+    /// The value after a flag, for asserting on what an encoder is told.
+    fn after(args: &[String], flag: &str) -> Option<String> {
+        args.iter()
+            .position(|arg| arg == flag)
+            .and_then(|index| args.get(index + 1).cloned())
+    }
+
+    #[test]
+    fn video_transcodes_only_write_aac_layouts_browsers_can_append() {
+        let on_demand =
+            build_on_demand_transcode_args(Path::new("/in.mkv"), Path::new("/out"), 0, None, false);
+        let full = build_transcode_args(Path::new("/in.mkv"), Path::new("/out"));
+        for args in [&on_demand, &full] {
+            assert_eq!(after(args, "-af").as_deref(), Some(AAC_CHANNEL_LAYOUTS));
+            assert!(args.contains(&"-sn".to_string()));
+            assert!(args.contains(&"-dn".to_string()));
+        }
+    }
+
+    #[test]
+    fn a_chosen_audio_track_gets_the_same_layouts() {
+        let args = build_on_demand_transcode_args(
+            Path::new("/in.mkv"),
+            Path::new("/out"),
+            0,
+            Some(2),
+            false,
+        );
+        assert_eq!(after(&args, "-af").as_deref(), Some(AAC_CHANNEL_LAYOUTS));
+        assert!(args.contains(&"0:2".to_string()));
     }
 
     #[test]

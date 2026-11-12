@@ -1,0 +1,88 @@
+{
+  "adult": false,
+  "backdrop_path": "/ncEsesgOJDNrTUED89hYbA117wo.jpg",
+  "belongs_to_collection": {"id": 2344, "name": "The Matrix Collection", "poster_path": "/bV9qTVHTVf0gkW0j7p7M0ILD4pG.jpg", "backdrop_path": "/bRm2DEgUiYciDw3myHuYFInD7la.jpg"},
+  "budget": 63000000,
+  "genres": [{"id": 28, "name": "Action"}, {"id": 878, "name": "Science Fiction"}],
+  "homepage": "http://www.warnerbros.com/matrix",
+  "id": 603,
+  "imdb_id": "tt0133093",
+  "origin_country": ["US"],
+  "original_language": "en",
+  "original_title": "The Matrix",
+  "overview": "Set in the 22nd century, The Matrix tells the story of a computer hacker who joins a group of underground insurgents fighting the vast and powerful computers who now rule the earth.",
+  "popularity": 92.341,
+  "poster_path": "/p96dm7sCMn4VYAStA6siNz30G1r.jpg",
+  "production_companies": [
+    {"id": 79, "logo_path": "/at4uYdwAAgNRKhZuuFX8ShKSybw.png", "name": "Village Roadshow Pictures", "origin_country": "US"},
+    {"id": 372, "logo_path": null, "name": "Groucho II Film Partnership", "origin_country": ""},
+    {"id": 1885, "logo_path": "/xlvoOZr4s1PygosrwZyolIFe5xs.png", "name": "Silver Pictures", "origin_country": "US"},
+    {"id": 174, "logo_path": "/zhD3hhtKB5qyv7ZeL4uLpNxgMVU.png", "name": "Warner Bros. Pictures", "origin_country": "US"}
+  ],
+  "production_countries": [{"iso_3166_1": "AU", "name": "Australia"}, {"iso_3166_1": "US", "name": "United States of America"}],
+  "release_date": "1999-03-31",
+  "runtime": 136,
+  "spoken_languages": [{"english_name": "English", "iso_639_1": "en", "name": "English"}],
+  "status": "Released",
+  "tagline": "Welcome to the Real World.",
+  "title": "The Matrix",
+  "video": false,
+  "vote_average": 8.2,
+  "vote_count": 26318,
+  "credits": {
+    "cast": [
+      {"adult": false, "gender": 2, "id": 2975, "known_for_department": "Acting", "name": "Laurence Fishburne", "original_name": "Laurence Fishburne", "popularity": 27.1, "profile_path": "/iwx7h0AfUwAMIESHnBvG3ETyuVA.jpg", "cast_id": 35, "character": "Morpheus", "credit_id": "52fe425bc3a36847f80181c1", "order": 1},
+      {"adult": false, "gender": 2, "id": 6384, "known_for_department": "Acting", "name": "Keanu Reeves", "original_name": "Keanu Reeves", "popularity": 46.4, "profile_path": "/4D0PpNI0kmP58hgrwGC3wCjxhnm.jpg", "cast_id": 34, "character": "Thomas A. Anderson / Neo", "credit_id": "52fe425bc3a36847f80181bd", "order": 0},
+      {"adult": false, "gender": 1, "id": 530, "known_for_department": "Acting", "name": "Carrie-Anne Moss", "original_name": "Carrie-Anne Moss", "popularity": 21.4, "profile_path": "/xD4jTA3KmVp5Rq3aHcymL9DUGjD.jpg", "cast_id": 36, "character": "Trinity", "credit_id": "52fe425bc3a36847f80181c5", "order": 2},
+      {"adult": false, "gender": 2, "id": 1331, "known_for_department": "Acting", "name": "Hugo Weaving", "original_name": "Hugo Weaving", "popularity": 19.0, "profile_path": "/lSM1hy6GDqEs0NCIP6jD7MtUydO.jpg", "cast_id": 37, "character": "Agent Smith", "credit_id": "52fe425bc3a36847f80181c9", "order": 3},
+      {"adult": false, "gender": 0, "id": 9999999, "known_for_department": "Acting", "name": "   ", "original_name": "", "popularity": 0, "profile_path": null, "cast_id": 99, "character": "Blank name is skipped", "credit_id": "x", "order": 50}
+    ],
+    "crew": [
+      {"adult": false, "gender": 1, "id": 9339, "known_for_department": "Directing", "name": "Lilly Wachowski", "original_name": "Lilly Wachowski", "popularity": 3.9, "profile_path": "/bTQV8VVRzrhPfTyDwC2K7yfsjTf.jpg", "credit_id": "52fe425bc3a36847f8018187", "department": "Writing", "job": "Writer"},
+      {"adult": false, "gender": 1, "id": 9340, "known_for_department": "Directing", "name": "Lana Wachowski", "original_name": "Lana Wachowski", "popularity": 4.4, "profile_path": "/7AwkGaMfy5v2xwkfqLrhy0Lk8Ng.jpg", "credit_id": "52fe425bc3a36847f801818d", "department": "Directing", "job": "Director"},
+      {"adult": false, "gender": 1, "id": 9339, "known_for_department": "Directing", "name": "Lilly Wachowski", "original_name": "Lilly Wachowski", "popularity": 3.9, "profile_path": "/bTQV8VVRzrhPfTyDwC2K7yfsjTf.jpg", "credit_id": "52fe425bc3a36847f8018181", "department": "Directing", "job": "Director"},
+      {"adult": false, "gender": 2, "id": 1091, "known_for_department": "Production", "name": "Joel Silver", "original_name": "Joel Silver", "popularity": 2.5, "profile_path": "/bJNBxCtXBUaTAXwYxTWpD3b7xvT.jpg", "credit_id": "52fe425bc3a36847f8018193", "department": "Production", "job": "Producer"},
+      {"adult": false, "gender": 2, "id": 6410, "known_for_department": "Sound", "name": "Don Davis", "original_name": "Don Davis", "popularity": 1.1, "profile_path": null, "credit_id": "52fe425bc3a36847f80181a5", "department": "Sound", "job": "Original Music Composer"},
+      {"adult": false, "gender": 2, "id": 1091, "known_for_department": "Production", "name": "Joel Silver", "original_name": "Joel Silver", "popularity": 2.5, "profile_path": "/bJNBxCtXBUaTAXwYxTWpD3b7xvT.jpg", "credit_id": "52fe425bc3a36847f8018193", "department": "Production", "job": "Producer"},
+      {"adult": false, "gender": 2, "id": 21032, "known_for_department": "Production", "name": "Barrie M. Osborne", "original_name": "Barrie M. Osborne", "popularity": 0.8, "profile_path": null, "credit_id": "5d4a0c6a0e0a2629b0e0a0a0", "department": "Production", "job": "Executive Producer"}
+    ]
+  },
+  "release_dates": {
+    "results": [
+      {"iso_3166_1": "US", "release_dates": [
+        {"certification": "", "descriptors": [], "iso_639_1": "", "note": "Premiere", "release_date": "1999-03-24T00:00:00.000Z", "type": 1},
+        {"certification": "R", "descriptors": ["Sci-Fi Violence"], "iso_639_1": "", "note": "", "release_date": "1999-03-31T00:00:00.000Z", "type": 3}
+      ]},
+      {"iso_3166_1": "GB", "release_dates": [
+        {"certification": "15", "descriptors": [], "iso_639_1": "", "note": "", "release_date": "1999-06-11T00:00:00.000Z", "type": 3}
+      ]},
+      {"iso_3166_1": "DE", "release_dates": [
+        {"certification": "", "descriptors": [], "iso_639_1": "", "note": "", "release_date": "1999-06-17T00:00:00.000Z", "type": 3},
+        {"certification": "16", "descriptors": [], "iso_639_1": "de", "note": "DVD", "release_date": "1999-11-30T00:00:00.000Z", "type": 5}
+      ]},
+      {"iso_3166_1": "FR", "release_dates": [
+        {"certification": "", "descriptors": [], "iso_639_1": "", "note": "", "release_date": "1999-06-23T00:00:00.000Z", "type": 3}
+      ]}
+    ]
+  },
+  "keywords": {"keywords": [
+    {"id": 83, "name": "saving the world"},
+    {"id": 310, "name": "artificial intelligence (a.i.)"},
+    {"id": 4565, "name": "dystopia"},
+    {"id": 4565, "name": "dystopia"}
+  ]},
+  "alternative_titles": {"id": 603, "titles": [
+    {"iso_3166_1": "BR", "title": "Matrix", "type": ""},
+    {"iso_3166_1": "JP", "title": "マトリックス", "type": ""},
+    {"iso_3166_1": "BR", "title": "Matrix", "type": ""},
+    {"iso_3166_1": "US", "title": "The Matrix 1", "type": "informal"}
+  ]},
+  "videos": {"id": 603, "results": [
+    {"iso_639_1": "en", "iso_3166_1": "US", "name": "Behind the Scenes", "key": "abcBehind", "site": "YouTube", "size": 1080, "type": "Featurette", "official": true, "published_at": "2021-11-01T17:00:00.000Z", "id": "v1"},
+    {"iso_639_1": "en", "iso_3166_1": "US", "name": "Fan trailer", "key": "fanKey", "site": "YouTube", "size": 720, "type": "Trailer", "official": false, "published_at": "2022-01-01T00:00:00.000Z", "id": "v2"},
+    {"iso_639_1": "en", "iso_3166_1": "US", "name": "The Matrix (1999) Official Trailer", "key": "vKQi3bBA1y8", "site": "YouTube", "size": 1080, "type": "Trailer", "official": true, "published_at": "2019-03-31T16:00:04.000Z", "id": "v3"},
+    {"iso_639_1": "en", "iso_3166_1": "US", "name": "Clip on Vimeo", "key": "123456", "site": "Vimeo", "size": 720, "type": "Clip", "official": true, "published_at": "2018-01-01T00:00:00.000Z", "id": "v4"},
+    {"iso_639_1": "en", "iso_3166_1": "US", "name": "No key", "key": "", "site": "YouTube", "size": 720, "type": "Clip", "official": true, "published_at": "2018-01-01T00:00:00.000Z", "id": "v5"}
+  ]},
+  "external_ids": {"imdb_id": "tt0133093", "wikidata_id": "Q83495", "facebook_id": "TheMatrixMovie", "instagram_id": null, "twitter_id": null}
+}

@@ -1,0 +1,108 @@
+# Credits, people and title details (docs/design.md Q129–Q132).
+
+fragment CreditPersonFields on Person {
+  id
+  name
+  profileUrl
+  knownForDepartment
+}
+
+# A title's credits: pass the title's id field (movieId, showId, episodeId…).
+query TitleCredits($where: CreditWhereInput!) {
+  credits(where: $where, orderBy: [{ creditOrder: ASC }], page: { limit: 400, offset: 0 }) {
+    edges {
+      node {
+        ...CreditFields
+        person {
+          ...CreditPersonFields
+        }
+      }
+    }
+  }
+}
+
+query TitleDetailsFor($where: TitleDetailWhereInput!) {
+  titleDetails(where: $where, page: { limit: 1, offset: 0 }) {
+    edges {
+      node {
+        ...TitleDetailFields
+      }
+    }
+  }
+}
+
+query PersonDetail($id: String!) {
+  person(id: $id) {
+    ...PersonFields
+  }
+}
+
+# Everything a person is credited on in the libraries the viewer can see.
+query PersonCredits($personId: String!) {
+  credits(where: { personId: { eq: $personId } }, orderBy: [{ creditOrder: ASC }], page: { limit: 1000, offset: 0 }) {
+    edges {
+      node {
+        ...CreditFields
+        movie {
+          id
+          title
+          year
+          libraryId
+          userId
+          runtime
+          certification
+          imdbId
+          mediaFileId
+          hasFile
+          wanted
+          monitored
+        }
+        show {
+          id
+          name
+          year
+          posterUrl
+        }
+        season {
+          id
+          season
+          showId
+        }
+        episode {
+          id
+          season
+          episode
+          title
+          showId
+        }
+        album {
+          id
+          name
+          year
+          artistId
+        }
+        track {
+          id
+          title
+          albumId
+          trackNumber
+        }
+        audiobook {
+          id
+          title
+          authorName
+        }
+      }
+    }
+  }
+}
+
+mutation RefreshPersonDetails($id: String!) {
+  refreshPersonDetails(id: $id) {
+    success
+    error
+    person {
+      ...PersonFields
+    }
+  }
+}

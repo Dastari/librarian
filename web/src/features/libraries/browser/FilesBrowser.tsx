@@ -2,7 +2,9 @@ import { Badge } from "glass-ux/badge";
 import { createDataTableColumns, DataTable, RelativeTime, TextCell, type DataTableSearch, type DataTableState, type DataTableStateChange } from "glass-ux/data-table";
 import { useMemo } from "react";
 
+import { TableToolbar } from "@/components/ui/TableToolbar";
 import { EntityChip } from "@/components/entities/EntityChip";
+import { refCellEntity } from "@/lib/entities/resolver";
 import { ErrorState, GlassSegmented } from "@/components/ui";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { openFileDialog } from "@/features/files/fileDialog";
@@ -29,6 +31,7 @@ const columns = column.columns([
   column.accessor("path", { header: "File", width: 28, priority: 1, cardRole: "title", sortable: true, cell: ({ row }) => <FileIdentity file={row.original} /> }),
   column.display({
     id: "linked", header: "Linked to", width: 16, priority: 2, cardRole: "subtitle",
+    entity: (row) => refCellEntity(linkedItem(row)),
     cell: ({ row }) => { const item = linkedItem(row.original); return item ? <EntityChip entity={item} /> : isFileLinked(row.original) ? <Badge size="sm" tone="success">Linked</Badge> : <Badge size="sm" marker="dot" tone="warning">Unmatched</Badge>; },
   }),
   column.display({ id: "quality", header: "Quality", width: 13, priority: 3, cell: ({ row }) => <TextCell muted>{fileFormat(row.original) || "—"}</TextCell> }),
@@ -39,9 +42,15 @@ const columns = column.columns([
 ]);
 
 /** Every media file the scanner knows about, with the unmatched ones one filter away. */
-export function FilesBrowser({ libraryId }: { libraryId: string }) {
+export function FilesBrowser({ libraryId, scope, filterPrefix }: {
+  libraryId: string;
+  /** Only these files, such as one title's. */
+  scope?: MediaFileWhereInput;
+  /** Keeps this list's filters in the URL apart from those of a page behind it. */
+  filterPrefix?: string;
+}) {
   const { user } = useSession();
-  const filters = useBrowserFilters();
+  const filters = useBrowserFilters(filterPrefix);
   const table = useServerTable<MediaFileOrderByInput>({ persistKey: `files.${libraryId}`, defaultSorting: [{ id: "addedAt", desc: true }] });
 
   const where = useMemo<MediaFileWhereInput>(() => {
@@ -54,8 +63,8 @@ export function FilesBrowser({ libraryId }: { libraryId: string }) {
       clause.chapterId = { isNull: true };
     }
     if (filters.availability === "available") clause.qualityStatus = { eq: "suboptimal" };
-    return clause;
-  }, [libraryId, filters.debouncedQuery, filters.availability]);
+    return scope ? { and: [clause, scope] } : clause;
+  }, [libraryId, scope, filters.debouncedQuery, filters.availability]);
 
   const list = useInfiniteConnection(LibraryMediaFilesDocument, { where, orderBy: table.orderBy }, (data) => data.mediaFiles);
 
@@ -90,13 +99,13 @@ export function FilesBrowser({ libraryId }: { libraryId: string }) {
           noun={noun}
           search={search}
           toolbar={
-            <GlassSegmented<AvailabilityFilter>
+            <TableToolbar filter={<GlassSegmented<AvailabilityFilter>
               ariaLabel="File filter"
               size="sm"
               value={filters.availability === "wanted" ? "missing" : filters.availability}
               onChange={filters.setAvailability}
               items={(["all", "missing", "available"] as AvailabilityFilter[]).map((option) => ({ key: option, label: availabilityLabels[option] }))}
-            />
+            />} />
           }
           onRowOpen={(row) => openFileDialog(row.id)}
           rowOpen="click"

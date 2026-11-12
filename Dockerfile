@@ -92,6 +92,8 @@ RUN mkdir -p /data/media /data/downloads /data/cache /data/session
 # Default environment variables
 ENV PORT=3000
 ENV RUST_LOG=info
+# The server replaces itself only outside containers; an image is upgraded by pulling a new one.
+ENV LIBRARIAN_IN_DOCKER=1
 ENV DATABASE_PATH=/data/librarian.db
 ENV MEDIA_PATH=/data/media
 ENV DOWNLOADS_PATH=/data/downloads

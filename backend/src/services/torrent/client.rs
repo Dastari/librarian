@@ -147,6 +147,9 @@ pub struct TorrentInfo {
     pub seeds: usize,
     pub save_path: String,
     pub files: Vec<TorrentFile>,
+    /// Why the torrent is stopped or waiting, in words: the client's error, or that its download
+    /// share is unreachable.
+    pub status_detail: Option<String>,
 }
 
 /// Information about a file within a torrent

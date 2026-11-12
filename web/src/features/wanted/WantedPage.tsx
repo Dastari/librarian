@@ -11,6 +11,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { parseAsStringEnum, useQueryState } from "nuqs";
 import { useMemo, useState } from "react";
 
+import { TableToolbar } from "@/components/ui/TableToolbar";
 import { LoadedDataTable } from "@/components/ui/LoadedDataTable";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { runSelectionAction } from "@/lib/actions/runSelectionAction";
@@ -186,12 +187,11 @@ export function WantedPage() {
           error={list.error && list.groups.length === 0 ? <ErrorState error={list.error} onRetry={() => list.refetch()} /> : undefined}
           emptyMessage={`${EMPTY[tab].title}. ${EMPTY[tab].description}`}
           toolbar={
-            <div className="flex min-w-0 items-center gap-2">
-              <Segmented<WantedTab> aria-label="Show" size="sm" value={tab} onValueChange={(value) => void setTab(value === "wanted" ? null : value)} options={WANTED_TABS.map((value) => ({ value, label: WANTED_TAB_LABEL[value] }))} />
+            <TableToolbar filter={<Segmented<WantedTab> aria-label="Show" size="sm" value={tab} onValueChange={(value) => void setTab(value === "wanted" ? null : value)} options={WANTED_TABS.map((value) => ({ value, label: WANTED_TAB_LABEL[value] }))} />}>
               {list.groups.length > 0 ? <span className="text-numeric whitespace-nowrap text-label-sm max-xl:hidden text-muted">{list.groups.length} titles · {list.itemCount} items</span> : null}
               {isAdmin ? <Button size="sm" variant="primary" onPress={() => void searchAll()} isPending={triggering || libraries.loading} isDisabled={Boolean(libraries.error)}><IconDownload size="md" /> Search all missing</Button> : null}
               <Button size="sm" variant="ghost" isIconOnly aria-label="Refresh" isPending={list.refreshing} onPress={() => list.refetch()}><IconRefresh /></Button>
-            </div>
+            </TableToolbar>
           }
         />
       </div>

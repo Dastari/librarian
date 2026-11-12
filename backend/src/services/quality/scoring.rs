@@ -183,9 +183,56 @@ fn resolution_rank_and_label(lower: &str) -> (ResolutionRank, Option<String>) {
         || lower.ends_with("sd")
     {
         (ResolutionRank(1), Some("480p".to_string()))
+    } else if let Some((width, height)) = pixel_size(lower) {
+        // A file's own size, as analysis reports it. Films are cropped, so 1920x800 is 1080p.
+        let rank = if width >= 3200 || height >= 1800 {
+            4
+        } else if width >= 1800 || height >= 1000 {
+            3
+        } else if width >= 1200 || height >= 700 {
+            2
+        } else {
+            1
+        };
+        let label = ["480p", "720p", "1080p", "2160p"][rank as usize - 1];
+        (ResolutionRank(rank), Some(label.to_string()))
     } else {
         (ResolutionRank(0), None)
     }
+}
+
+/// `1920x800` or `1920×800`: a width and height, each three or four digits.
+fn pixel_size(lower: &str) -> Option<(u32, u32)> {
+    let bytes: Vec<char> = lower.chars().collect();
+    for (index, ch) in bytes.iter().enumerate() {
+        if *ch != 'x' && *ch != '×' {
+            continue;
+        }
+        let width: String = bytes[..index]
+            .iter()
+            .rev()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        let height: String = bytes[index + 1..]
+            .iter()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        let before_ok =
+            index == width.len() || !bytes[index - width.len() - 1].is_ascii_alphanumeric();
+        let after = index + 1 + height.len();
+        let after_ok = after >= bytes.len() || !bytes[after].is_ascii_alphanumeric();
+        if (3..=4).contains(&width.len())
+            && (3..=4).contains(&height.len())
+            && before_ok
+            && after_ok
+        {
+            return Some((width.parse().ok()?, height.parse().ok()?));
+        }
+    }
+    None
 }
 
 /// Parse a coarse resolution rank out of a release title's quality tags.
@@ -826,6 +873,43 @@ mod tests {
             "expected the higher-seeder release to win the resolution tie, got '{}'",
             best.title
         );
+    }
+
+    #[test]
+    fn pixel_sizes_rank_by_their_class_not_their_exact_height() {
+        assert_eq!(
+            parse_resolution_rank("1920x800"),
+            parse_resolution_rank("1080p")
+        );
+        assert_eq!(
+            parse_resolution_rank("1920x1080"),
+            parse_resolution_rank("1080p")
+        );
+        assert_eq!(
+            parse_resolution_rank("1280x534"),
+            parse_resolution_rank("720p")
+        );
+        assert_eq!(
+            parse_resolution_rank("3840x1600"),
+            parse_resolution_rank("2160p")
+        );
+        assert_eq!(
+            parse_resolution_rank("720x480"),
+            parse_resolution_rank("480p")
+        );
+        // Not a size: a word that happens to hold an x, or a season-by-episode number.
+        assert_eq!(parse_resolution_rank("Show.2x05.WEB"), ResolutionRank(0));
+        assert_eq!(parse_resolution_rank("box"), ResolutionRank(0));
+    }
+
+    #[test]
+    fn a_cropped_film_is_not_upgraded_by_the_same_class() {
+        let existing = ParsedRelease {
+            resolution_rank: parse_resolution_rank("1920x800"),
+            ..Default::default()
+        };
+        let new = parse_release("Fallout.2024.S01E02.1080p.HEVC.x265-MeGusta.mkv");
+        assert!(!is_upgrade(&new, Some(&existing)));
     }
 
     #[test]

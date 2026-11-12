@@ -57,6 +57,13 @@ export function useScanIssueActions(onChanged: () => void, isAdmin: boolean): Ac
           successMessage: (rows) => plural(rows, "Analysis retried", "Retried {n} files"),
         },
         {
+          id: "keep-best", label: (rows) => plural(rows, "Keep the better copy", "Keep the better copy of {n}"), icon: IconCheck, group: "manage", priority: 0, bulk: true,
+          visible: (rows) => rows.every((row) => open(row) && row.issueCode === "BYTE_IDENTICAL_DUPLICATE"),
+          confirm: (rows) => ({ title: plural(rows, "Keep the better copy?", "Keep the better copy of {n} duplicates?"), body: "For each pair, the copy a title plays stays and the other moves to the library's .librarian-trash folder, where it can be restored. Pairs where both copies are played are left for you.", confirmLabel: "Keep better copies", tone: "warning" }),
+          run: (rows) => runSelectionAction(rows, "Keep the better copy", (row) => row.mediaFile?.path.split("/").pop() ?? row.issueCode, async (row) => check((await trash({ variables: { issueId: row.id, keep: "best" } })).data?.trashDuplicateScanIssue, "Could not settle the duplicate"), onChanged),
+          successMessage: (rows) => plural(rows, "Kept the better copy", "Kept the better copy of {n} duplicates"),
+        },
+        {
           id: "trash-duplicate", label: (rows) => plural(rows, "Move duplicate to trash", "Move {n} duplicates to trash"), icon: IconTrash, group: "danger", priority: 1, bulk: true,
           visible: (rows) => rows.every((row) => open(row) && row.issueCode === "BYTE_IDENTICAL_DUPLICATE"),
           confirm: (rows) => ({ title: plural(rows, "Move the duplicate copy to the trash?", "Move {n} duplicate copies to the trash?"), body: "Only the duplicate moves, into the library's .librarian-trash folder where it can be restored. The copy the library uses stays where it is.", confirmLabel: "Move to trash", tone: "warning" }),

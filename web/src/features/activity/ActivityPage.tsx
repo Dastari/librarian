@@ -6,9 +6,11 @@ import { Segmented } from "glass-ux/segmented";
 import { parseAsStringEnum, useQueryState } from "nuqs";
 import { useCallback, useMemo, useState } from "react";
 
+import { TableToolbar } from "@/components/ui/TableToolbar";
 import { TableBulkActions } from "@/components/ui/TableBulkActions";
 import { useTableSelection } from "@/hooks/useTableSelection";
 import { EntityChip } from "@/components/entities/EntityChip";
+import { refCellEntity } from "@/lib/entities/resolver";
 import { Button, Dialog } from "@/components/ui";
 import { useCompleteConnection } from "@/features/libraries/browser/useCompleteConnection";
 import { EntityLibraryListDocument, EntityNotificationUpdateDocument } from "@/graphql/generated/graphql";
@@ -17,7 +19,7 @@ import { usePrintMode } from "@/hooks/usePrintMode";
 import { tableUrlFilters, useTableUrlState } from "@/hooks/useTableUrlState";
 import { useIsAdmin, useSession } from "@/lib/auth/useSession";
 import { ENTITY_KINDS, type EntityKindName } from "@/lib/entities/kinds";
-import { humanize } from "@/lib/entities/linked";
+import { humanize, libraryRef } from "@/lib/entities/linked";
 import { notificationDecision, notificationLevel, notificationSubjects, NOTIFICATION_LEVELS } from "@/lib/entities/notification";
 import { parseTimestamp } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -25,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { ActivityDetail } from "./ActivityDetail";
 import { ACTIVITY_CATEGORIES, ACTIVITY_PRESETS, useActivity, type ActivityPreset, type ActivityRow } from "./useActivity";
 import { useMarkAllRead } from "./useMarkAllRead";
+import { UpgradeDialog } from "./UpgradeDialog";
 import { useNotificationActions } from "./useNotificationActions";
 
 const PRESET_LABEL: Record<ActivityPreset, string> = { unread: "Unread", action: "Needs action", all: "Everything" };
@@ -53,6 +56,7 @@ function columnsFor(libraries: Array<{ id: string; name: string }>) {
     }),
     column.display({
       id: "subject", header: "About", width: 16, priority: 2, cardRole: "subtitle",
+      entity: (row) => refCellEntity(notificationSubjects(row)[0]),
       cell: ({ row }) => { const subject = notificationSubjects(row.original)[0]; return subject ? <EntityChip entity={subject} /> : <TextCell muted>—</TextCell>; },
     }),
     column.accessor((row) => row.message, { id: "message", header: "Details", width: 26, priority: 5, cardRole: "hidden", cell: ({ row }) => <TextCell muted>{row.original.message}</TextCell> }),
@@ -63,6 +67,7 @@ function columnsFor(libraries: Array<{ id: string; name: string }>) {
     }),
     column.accessor((row) => row.libraryId ?? "", {
       id: "library", header: "Library", width: 9, priority: 5, cardRole: "hidden",
+      entity: (row) => refCellEntity(row.library ? libraryRef(row.library) : null),
       filter: filters.options({ field: "libraryId", nullable: false, operators: ["in"], options: libraries.map((library) => ({ value: library.id, label: library.name })) }),
       cell: ({ row }) => <TextCell muted>{row.original.library?.name ?? "—"}</TextCell>,
     }),
@@ -119,14 +124,17 @@ export function ActivityPage() {
   const onStateChange = (next: DataTableState, change: DataTableStateChange) => change === "selection" ? selectedRows.onSelectionChange(next.selection) : url.onStateChange(next, change);
   const refetch = activity.refetch;
   const onChanged = useCallback(() => refetch(), [refetch]);
-  const actions = useNotificationActions(onChanged, isAdmin);
+  const [reviewing, setReviewing] = useState<ActivityRow | null>(null);
+  const actions = useNotificationActions(onChanged, isAdmin, setReviewing);
   const [update] = useMutation(EntityNotificationUpdateDocument);
   const { markAllRead, loading: markingAllRead } = useMarkAllRead(onChanged);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = rows.find((row) => row.id === selectedId) ?? null;
   const open = (row: ActivityRow) => {
-    setSelectedId(row.id);
+    // An upgrade waiting on a decision opens as that decision, not as a notification to read.
+    if (isAdmin && row.actionType === "quality_upgrade" && !row.resolvedAt) setReviewing(row);
+    else setSelectedId(row.id);
     if (row.readAt) return;
     const readAt = new Date().toISOString();
     setOpened((current) => new Map(current).set(row.id, { row: { ...row, readAt }, index: rows.findIndex((candidate) => candidate.id === row.id) }));
@@ -170,25 +178,25 @@ export function ActivityPage() {
             onRetry={refresh}
             emptyMessage={preset === "unread" ? "You're all caught up." : preset === "action" ? "Nothing needs a decision." : "No activity yet."}
             toolbar={
-              <div className="flex min-w-0 items-center gap-2">
-                <Segmented<ActivityPreset>
+              <TableToolbar filter={<Segmented<ActivityPreset>
                   aria-label="Show activity"
                   size="sm"
                   value={preset}
                   onValueChange={(value) => void setPreset(value === "unread" ? null : value)}
                   options={ACTIVITY_PRESETS.map((value) => ({ value, label: activity.counts[value] !== undefined ? `${PRESET_LABEL[value]} ${activity.counts[value]}` : PRESET_LABEL[value] }))}
-                />
+                />}>
                 <Button size="sm" variant="secondary" isDisabled={!activity.counts.unread || markingAllRead} onPress={() => void markAllRead()}><IconCheck /> Mark all read</Button>
                 <Button size="sm" variant="ghost" isIconOnly aria-label="Refresh activity" isPending={activity.list.fetching} onPress={refresh}><IconRefresh /></Button>
-              </div>
+              </TableToolbar>
             }
           />
         </div>
         {selected && wide ? <div data-print-flow className="scrollbar-thin min-h-0 overflow-y-auto"><ActivityDetail row={selected} actions={actions} onClose={() => setSelectedId(null)} /></div> : null}
       </div>
       <Dialog isOpen={Boolean(selected) && !wide} onOpenChange={(value) => !value && setSelectedId(null)} title="Notification" size="md">
-        {selected ? <ActivityDetail row={selected} actions={actions} onClose={() => setSelectedId(null)} /> : null}
+        {selected ? <ActivityDetail bare row={selected} actions={actions} onClose={() => setSelectedId(null)} /> : null}
       </Dialog>
+      {reviewing ? <UpgradeDialog row={reviewing} onClose={() => setReviewing(null)} onChanged={onChanged} /> : null}
     </div>
   );
 }

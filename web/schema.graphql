@@ -1,3 +1,8 @@
+type AccountActionResult {
+	success: Boolean!
+	error: String
+}
+
 input AddAlbumInput {
 	libraryId: String!
 	musicbrainzId: String!
@@ -89,6 +94,11 @@ input AddTorrentInput {
 	sourceUrl: String
 	sourceIndexerId: String
 	sourceFeedId: String
+	"""
+	Grab a release from an RSS feed's catalogue. The link carries the tracker's passkey and is
+	never sent to a client, so the server reads it; `magnet` and `url` are ignored.
+	"""
+	feedItemId: String
 }
 
 """
@@ -135,6 +145,11 @@ type Album {
 	label: String
 	country: String
 	releaseDate: String
+	"""
+	Fields a metadata refresh must leave alone, by their GraphQL names. Chosen artwork locks
+	its own field (`coverUrl`), so a refresh keeps the picture someone picked.
+	"""
+	lockedFields: [String!]
 	coverUrl: String
 	trackCount: Int
 	discCount: Int
@@ -549,6 +564,11 @@ type Artist {
 	musicbrainzId: String
 	bio: String
 	disambiguation: String
+	"""
+	Fields a metadata refresh must leave alone, by their GraphQL names. Chosen artwork locks
+	its own field (`imageUrl`), so a refresh keeps the picture someone picked.
+	"""
+	lockedFields: [String!]
 	imageUrl: String
 	albumCount: Int
 	trackCount: Int
@@ -650,6 +670,130 @@ input ArtistWhereInput {
 	Logical NOT of condition
 	"""
 	not: ArtistWhereInput
+}
+
+"""
+What became of a change of artwork.
+"""
+type ArtworkChangeResult {
+	success: Boolean!
+	error: String
+}
+
+"""
+What a picture belongs to.
+"""
+enum ArtworkEntityKind {
+	MOVIE
+	SHOW
+	SEASON
+	EPISODE
+	ALBUM
+	ARTIST
+	AUDIOBOOK
+	PLAYLIST
+	"""
+	A person's photo (design.md Q147).
+	"""
+	USER
+}
+
+"""
+Which picture of it. An artist's picture is stored as its poster, an episode's still as its
+thumbnail, the names the artwork cache already uses.
+"""
+enum ArtworkKind {
+	POSTER
+	BACKDROP
+	LOGO
+	THUMBNAIL
+	COVER
+	AVATAR
+}
+
+"""
+One picture a provider offers.
+"""
+type ArtworkOption {
+	"""
+	The full-size picture that is stored when chosen.
+	"""
+	url: String!
+	"""
+	A smaller copy of it for the picker's grid (the provider's own, not cached here).
+	"""
+	previewUrl: String!
+	"""
+	Who offers it: "TMDB", "TVmaze", "Cover Art Archive"…
+	"""
+	source: String!
+	"""
+	The language of any text on it (ISO 639-1); none for textless art.
+	"""
+	language: String
+	width: Int
+	height: Int
+	"""
+	TMDB's average vote and count.
+	"""
+	voteAverage: Float
+	voteCount: Int
+	"""
+	What tells it apart: "Back", an edition's date and country.
+	"""
+	label: String
+	"""
+	What a metadata refresh chooses, and what reverting puts back.
+	"""
+	isDefault: Boolean!
+	"""
+	What the slot shows now.
+	"""
+	isCurrent: Boolean!
+}
+
+"""
+A slot and the pictures its providers list for it.
+"""
+type ArtworkOptions {
+	slot: ArtworkSlotState!
+	"""
+	The default (what a refresh would choose) first, then the providers' own order.
+	"""
+	options: [ArtworkOption!]!
+	"""
+	Providers that couldn't be asked, or aren't set up, by name.
+	"""
+	unavailable: [String!]!
+}
+
+"""
+What a slot shows, for the picker: its source, whether it is locked, whether it was uploaded.
+"""
+type ArtworkSlotState {
+	entityType: ArtworkEntityKind!
+	entityId: String!
+	kind: ArtworkKind!
+	"""
+	Something is shown: a cached picture, or a source the cache will download on first use.
+	"""
+	hasArtwork: Boolean!
+	"""
+	A metadata refresh leaves the picture alone.
+	"""
+	locked: Boolean!
+	"""
+	Someone uploaded the picture.
+	"""
+	uploaded: Boolean!
+	"""
+	A provider lists pictures for this slot (a playlist's cover is only ever uploaded).
+	"""
+	hasProvider: Boolean!
+	"""
+	All of the entity's locks, for an unlock through its generated update.
+	"""
+	lockedFields: [String!]!
 }
 
 type AudioStream {
@@ -766,6 +910,10 @@ type Audiobook {
 	authorName: String
 	narratorName: String
 	narrators: [String!]!
+	"""
+	Fields a metadata refresh must leave alone, by their GraphQL names.
+	"""
+	lockedFields: [String!]
 	description: String
 	publisher: String
 	publishedDate: String
@@ -776,6 +924,28 @@ type Audiobook {
 	goodreadsId: String
 	totalDurationSecs: Int
 	chapterCount: Int
+	seriesName: String
+	seriesPosition: String
+	"""
+	Where the chapters came from: `provider`, `embedded`, `files` or `parts`.
+	"""
+	chapterSource: String
+	"""
+	How the book's files are cut: `whole_book`, `per_chapter` or `parts`.
+	"""
+	fileShape: String
+	"""
+	Whether chapters are being checked by listening: `listening`, `done` or `failed`.
+	"""
+	chapterCheckState: String
+	"""
+	What listening found, in plain words.
+	"""
+	chapterCheck: String
+	"""
+	The provider's chapter list, kept while the release's own chapters replace it. JSON.
+	"""
+	providerChapters: String
 	coverUrl: String
 	autoDownload: Boolean!
 	autoDownloadMode: AutoDownloadMode!
@@ -900,6 +1070,7 @@ input AudiobookWhereInput {
 	goodreadsId: StringFilter
 	totalDurationSecs: IntFilter
 	chapterCount: IntFilter
+	seriesName: StringFilter
 	autoDownload: BoolFilter
 	qualityProfileId: StringFilter
 	hasFiles: BoolFilter
@@ -925,6 +1096,10 @@ type AuthPayload {
 	error: String
 	user: AuthenticatedUser
 	tokens: AuthSessionInfo
+	"""
+	Set instead of a session when the account needs another step.
+	"""
+	challenge: SignInChallenge
 }
 
 """
@@ -1111,6 +1286,22 @@ type CastDevice {
 	"""
 	lastProbeError: String
 	"""
+	Who made it, when the receiver says (DLNA descriptions do; Google Cast does not).
+	"""
+	manufacturer: String
+	"""
+	A stable identifier that survives an address change: the Google Cast `id` or the UPnP UDN. Discovery finds a receiver by it when its address moved.
+	"""
+	receiverId: String
+	"""
+	True once an administrator renamed it; discovery then keeps that name. Null on rows from before the column existed, read as false.
+	"""
+	nameIsCustom: Boolean
+	"""
+	What discovery last learned, as JSON (`services::cast::describe::DiscoveryDetails`): the protocol, the name as reported, the TXT record or UPnP description and so on.
+	"""
+	discoveryDetails: String
+	"""
 	Created At
 	"""
 	createdAt: String!
@@ -1192,6 +1383,8 @@ input CastDeviceWhereInput {
 	firstSeenAt: DateFilter
 	lastSeenAt: DateFilter
 	lastProbeAt: DateFilter
+	receiverId: StringFilter
+	nameIsCustom: BoolFilter
 	createdAt: DateFilter
 	updatedAt: DateFilter
 	"""
@@ -1474,6 +1667,11 @@ enum ChangeKind {
 	PROPAGATED
 }
 
+input ChangePasswordInput {
+	currentPassword: String!
+	newPassword: String!
+}
+
 type Chapter {
 	id: String!
 	audiobookId: String!
@@ -1482,6 +1680,11 @@ type Chapter {
 	startTimeSecs: Float!
 	endTimeSecs: Float
 	durationSecs: Int
+	"""
+	Where this chapter starts in its file, when files don't line up with chapters. `None` means
+	the file starts with it, or holds the whole book and `startTimeSecs` is the position.
+	"""
+	fileOffsetSecs: Float
 	wanted: Boolean!
 	"""
 	Explicit user opt-out. `None` is the legacy/default false value.
@@ -1584,12 +1787,46 @@ input ChapterWhereInput {
 	not: ChapterWhereInput
 }
 
+type CheckForServerUpdateResult {
+	success: Boolean!
+	error: String
+	status: ServerUpdateStatus
+}
+
+input CheckInDeviceInput {
+	"""
+	The client's stable id, kept in its own storage.
+	"""
+	clientId: String!
+	"""
+	The client's suggested name ("Safari on iPad", "TV"); kept only until someone renames it.
+	"""
+	name: String
+	"""
+	`tv`, `phone`, `tablet` or `desktop`.
+	"""
+	formFactor: String
+	platform: String
+	product: String
+	appVersion: String
+}
+
+type CheckInDevicePayload {
+	success: Boolean!
+	error: String
+	device: Device
+}
+
 type Collection {
 	id: String!
 	libraryId: String!
 	userId: String!
 	tmdbCollectionId: Int!
 	name: String!
+	"""
+	How it sorts: its name without a leading "The", "A" or "An".
+	"""
+	sortName: String
 	overview: String
 	posterUrl: String
 	backdropUrl: String
@@ -1650,6 +1887,7 @@ type CollectionEdge {
 
 input CollectionOrderByInput {
 	name: OrderDirection
+	sortName: OrderDirection
 	movieCount: OrderDirection
 	lastSyncedAt: OrderDirection
 	createdAt: OrderDirection
@@ -1671,6 +1909,7 @@ input CollectionWhereInput {
 	userId: StringFilter
 	tmdbCollectionId: IntFilter
 	name: StringFilter
+	sortName: StringFilter
 	movieCount: IntFilter
 	lastSyncedAt: DateFilter
 	createdAt: DateFilter
@@ -1689,6 +1928,19 @@ input CollectionWhereInput {
 	not: CollectionWhereInput
 }
 
+input CompletePasswordChangeInput {
+	token: String!
+	newPassword: String!
+}
+
+input CompleteTwoFactorSignInInput {
+	token: String!
+	"""
+	Six digits from the app, or a recovery code.
+	"""
+	code: String!
+}
+
 input ConfigureNetworkPathInput {
 	path: String!
 	username: String
@@ -1696,6 +1948,49 @@ input ConfigureNetworkPathInput {
 	mountPoint: String
 	persist: Boolean
 	attemptConnect: Boolean
+}
+
+"""
+Sign in to a network share to check it, and keep the sign-in for the share.
+"""
+input ConnectShareInput {
+	"""
+	Host name or IP address of the file server.
+	"""
+	host: String!
+	"""
+	Port, when it is not 445.
+	"""
+	port: Int
+	"""
+	Share name, such as `media`.
+	"""
+	share: String!
+	"""
+	Blank for the saved sign-in, or a guest share when none is saved.
+	"""
+	username: String
+	"""
+	Blank keeps the saved password when the user name is the saved one.
+	"""
+	password: String
+	"""
+	Keep the sign-in, encrypted, if it works. On by default.
+	"""
+	save: Boolean
+}
+
+type ConnectSharePayload {
+	success: Boolean!
+	error: String
+	"""
+	The share's normalised `smb://host[:port]/share` address.
+	"""
+	share: String
+	"""
+	Folders at the top of the share.
+	"""
+	folders: Int!
 }
 
 """
@@ -1786,6 +2081,7 @@ input CreateAlbumInput {
 	label: String
 	country: String
 	releaseDate: String
+	lockedFields: JSON
 	coverUrl: String
 	trackCount: Int
 	discCount: Int
@@ -1823,6 +2119,7 @@ input CreateArtistInput {
 	musicbrainzId: String
 	bio: String
 	disambiguation: String
+	lockedFields: JSON
 	imageUrl: String
 	albumCount: Int
 	trackCount: Int
@@ -1854,6 +2151,7 @@ input CreateAudiobookInput {
 	authorName: String
 	narratorName: String
 	narrators: JSON!
+	lockedFields: JSON
 	description: String
 	publisher: String
 	publishedDate: String
@@ -1864,6 +2162,13 @@ input CreateAudiobookInput {
 	goodreadsId: String
 	totalDurationSecs: Int
 	chapterCount: Int
+	seriesName: String
+	seriesPosition: String
+	chapterSource: String
+	fileShape: String
+	chapterCheckState: String
+	chapterCheck: String
+	providerChapters: String
 	coverUrl: String
 	autoDownload: Boolean!
 	autoDownloadMode: AutoDownloadMode!
@@ -1888,6 +2193,10 @@ input CreateCastDeviceInput {
 	lastSeenAt: String
 	lastProbeAt: String
 	lastProbeError: String
+	manufacturer: String
+	receiverId: String
+	nameIsCustom: Boolean
+	discoveryDetails: String
 }
 
 input CreateCastSessionInput {
@@ -1929,6 +2238,7 @@ input CreateChapterInput {
 	startTimeSecs: Float!
 	endTimeSecs: Float
 	durationSecs: Int
+	fileOffsetSecs: Float
 	wanted: Boolean!
 	ignored: Boolean
 	mediaFileId: String
@@ -1939,11 +2249,49 @@ input CreateCollectionInput {
 	userId: String!
 	tmdbCollectionId: Int!
 	name: String!
+	sortName: String
 	overview: String
 	posterUrl: String
 	backdropUrl: String
 	movieCount: Int!
 	lastSyncedAt: String
+}
+
+input CreateCreditInput {
+	userId: String!
+	personId: String!
+	targetKind: String!
+	movieId: String
+	showId: String
+	seasonId: String
+	episodeId: String
+	albumId: String
+	trackId: String
+	audiobookId: String
+	kind: String!
+	guest: Boolean!
+	department: String
+	job: String
+	characterName: String
+	creditOrder: Int
+	episodeCount: Int
+	source: String!
+	providerCreditId: String
+}
+
+input CreateDeviceInput {
+	userId: String!
+	clientId: String!
+	name: String!
+	nameIsCustom: Boolean!
+	formFactor: String!
+	platform: String
+	product: String
+	appVersion: String
+	userAgent: String
+	lastIp: String
+	lastSeenAt: String!
+	signedOutAt: String
 }
 
 input CreateDirectoryInput {
@@ -1960,6 +2308,7 @@ input CreateEpisodeInput {
 	airDate: String
 	airStamp: String
 	runtime: Int
+	lockedFields: JSON
 	stillUrl: String
 	tvmazeId: Int
 	tmdbId: Int
@@ -1984,6 +2333,47 @@ input CreateHomeShelfInput {
 	libraryId: String
 }
 
+input CreateIdentificationEventInput {
+	userId: String!
+	infoHash: String!
+	runId: String!
+	trigger: String!
+	sequence: Int!
+	status: String!
+	message: String!
+	detail: String
+	durationMs: Int
+}
+
+input CreateIdentifiedItemInput {
+	userId: String!
+	infoHash: String!
+	itemKey: String!
+	kind: String!
+	status: String!
+	label: String!
+	title: String
+	creator: String
+	year: Int
+	coverUrl: String
+	fileCount: Int!
+	finishedFiles: Int!
+	seconds: Float
+	confidence: Float!
+	summary: String
+	evidence: String!
+	candidates: String!
+	filePaths: String!
+	identity: String!
+	providerId: String
+	libraryItemType: String
+	libraryItemId: String
+	libraryId: String
+	season: Int
+	canAccept: Boolean!
+	addsCount: Int
+}
+
 input CreateInviteTokenInput {
 	createdBy: String!
 	libraryIds: JSON!
@@ -2006,12 +2396,17 @@ input CreateLibraryInput {
 	color: String
 	autoScan: Boolean!
 	autoOrganize: Boolean!
+	autoResolveDuplicates: Boolean
 	namingPattern: String!
 	scanIntervalMinutes: Int!
 	watchForChanges: Boolean!
+	watchStatus: String
+	watchDetail: String
+	watchStatusSince: String
 	scanning: Boolean!
 	lastScannedAt: String
 	qualityProfileId: String
+	storageVolumeId: String
 }
 
 input CreateLibraryPreferenceInput {
@@ -2047,6 +2442,28 @@ input CreateListEntryInput {
 	albumId: String
 	audiobookId: String
 	trackId: String
+	episodeId: String
+	chapterId: String
+}
+
+input CreateLyricInput {
+	mediaFileId: String!
+	trackId: String
+	source: String!
+	synced: Boolean!
+	syncedLyrics: String
+	plainLyrics: String
+	language: String
+	instrumental: Boolean!
+	providerId: String
+	fetchedAt: String!
+}
+
+input CreateMatchingAssistantInput {
+	enabled: Boolean!
+	model: String!
+	apiKey: String!
+	hasApiKey: Boolean!
 }
 
 input CreateMediaFileInput {
@@ -2069,6 +2486,7 @@ input CreateMediaFileInput {
 	resolution: String
 	isHdr: Boolean!
 	hdrType: String
+	closedCaptions: Boolean
 	audioChannels: String
 	metadata: String
 	contentType: String
@@ -2079,6 +2497,9 @@ input CreateMediaFileInput {
 	matchedByUserId: String
 	matchConfirmedAt: String
 	qualityStatus: String
+	pictureCrop: JSON
+	storyboard: JSON
+	previewsCheckedAt: String
 }
 
 input CreateMetadataCacheInput {
@@ -2110,6 +2531,7 @@ input CreateMovieInput {
 	tagline: String
 	runtime: Int
 	genres: JSON!
+	lockedFields: JSON
 	director: String
 	castNames: JSON!
 	productionCountries: JSON!
@@ -2121,6 +2543,8 @@ input CreateMovieInput {
 	collectionPosterUrl: String
 	releaseDate: String
 	certification: String
+	digitalReleaseDate: String
+	physicalReleaseDate: String
 	monitored: Boolean!
 	tmdbStatus: String
 	wanted: Boolean!
@@ -2139,6 +2563,19 @@ input CreateNamingPatternInput {
 	description: String
 	isDefault: Boolean!
 	isSystem: Boolean!
+}
+
+input CreateNetworkServerInput {
+	name: String!
+	host: String!
+	port: Int
+	username: String
+	password: String!
+	hasPassword: Boolean!
+	knownShares: JSON!
+	status: String
+	lastError: String
+	lastCheckedAt: String
 }
 
 input CreateNotificationInput {
@@ -2188,14 +2625,59 @@ input CreatePersonInput {
 	tmdbPersonId: Int!
 	name: String!
 	profileUrl: String
+	imdbId: String
+	musicbrainzArtistId: String
+	wikidataId: String
+	nameKey: String
+	biography: String
+	birthday: String
+	deathday: String
+	placeOfBirth: String
+	knownForDepartment: String
+	alsoKnownAs: JSON
+	imageUrls: JSON
+	detailsFetchedAt: String
 }
 
 input CreatePersonalListInput {
 	userId: String!
 	name: String!
 	description: String
+	coverUrl: String
 	kind: PersonalListKind!
 	savedViewId: String
+}
+
+input CreatePlayHistoryInput {
+	userId: String!
+	deviceId: String
+	deviceName: String
+	playbackSessionId: String
+	contentType: String!
+	mediaFileId: String
+	movieId: String
+	episodeId: String
+	showId: String
+	trackId: String
+	albumId: String
+	artistId: String
+	audiobookId: String
+	chapterId: String
+	title: String!
+	parentTitle: String
+	subtitle: String
+	startedAt: String!
+	endedAt: String!
+	secondsPlayed: Float!
+	startPosition: Float!
+	endPosition: Float!
+	duration: Float
+	completed: Boolean!
+	playMethod: String
+	imported: Boolean!
+	sourceProgressId: String
+	origin: String
+	originName: String
 }
 
 input CreatePlaybackProgressInput {
@@ -2226,6 +2708,14 @@ input CreatePlaybackSessionInput {
 	startedAt: String!
 	lastUpdatedAt: String!
 	completedAt: String
+	chapterId: String
+	deviceId: String
+	state: String
+	playMethod: String
+	quality: String
+	bitrate: Int
+	endedAt: String
+	stopRequestedAt: String
 }
 
 input CreateQualityProfileInput {
@@ -2265,6 +2755,33 @@ input CreateReleaseBlocklistInput {
 	albumId: String
 	audiobookId: String
 	expiresAt: String
+}
+
+type CreateRssFeedFromSourcePayload {
+	success: Boolean!
+	error: String
+	feedId: String
+	"""
+	The new feed's address with every secret hidden.
+	"""
+	urlDisplay: String
+}
+
+input CreateRssFeedInput {
+	userId: String!
+	libraryId: String
+	name: String!
+	url: String!
+	urlDisplay: String
+	enabled: Boolean!
+	pollIntervalMinutes: Int!
+	postDownloadAction: String
+	lastPolledAt: String
+	lastSuccessfulAt: String
+	lastError: String
+	consecutiveFailures: Int
+	healthStatus: String
+	healthKind: String
 }
 
 input CreateSavedViewInput {
@@ -2315,6 +2832,7 @@ input CreateSeasonInput {
 	premiereDate: String
 	endDate: String
 	episodeOrder: Int
+	lockedFields: JSON
 	posterUrl: String
 }
 
@@ -2332,6 +2850,7 @@ input CreateShowInput {
 	network: String
 	runtime: Int
 	genres: JSON!
+	lockedFields: JSON
 	posterUrl: String
 	backdropUrl: String
 	contentRating: String
@@ -2361,6 +2880,17 @@ input CreateSourceInput {
 	errorCount: Int!
 	lastSuccessAt: String
 	lastErrorAt: String
+	healthStatus: String
+	healthKind: String
+	lastCheckedAt: String
+	nextCheckAt: String
+	loginAttemptedAt: String
+}
+
+input CreateStatsShareInput {
+	userId: String!
+	audience: String!
+	viewerUserId: String
 }
 
 input CreateSubtitleInput {
@@ -2378,6 +2908,30 @@ input CreateSubtitleInput {
 	opensubtitlesId: String
 	downloadedAt: String
 	metadata: String
+}
+
+input CreateTitleDetailInput {
+	userId: String!
+	targetKind: String!
+	movieId: String
+	showId: String
+	seasonId: String
+	episodeId: String
+	albumId: String
+	trackId: String
+	audiobookId: String
+	source: String!
+	providerId: String
+	studios: JSON!
+	networks: JSON!
+	keywords: JSON!
+	originCountries: JSON!
+	contentRatings: String
+	alternativeTitles: String
+	videos: String
+	externalIds: String
+	homepage: String
+	fetchedAt: String!
 }
 
 input CreateTorrentFileInput {
@@ -2410,6 +2964,9 @@ input CreateTorrentInput {
 	sourceIndexerId: String
 	libraryId: String
 	postProcessStatus: String
+	identificationStatus: String
+	identificationKind: String
+	identificationSummary: String
 	postProcessError: String
 	processedAt: String
 	episodeId: String
@@ -2452,7 +3009,202 @@ input CreateUserInput {
 	displayName: String
 	avatarUrl: String
 	isActive: Boolean!
-	lastLoginAt: String
+	phone: String
+	genreInterests: JSON
+}
+
+"""
+One person's part in one title, from a metadata provider (`docs/design.md` Q129).
+
+A credit names its title through exactly one of `movieId`, `showId`, `seasonId`,
+`episodeId`, `albumId`, `trackId` or `audiobookId`, with `targetKind` saying which. `kind` is
+`cast` or `crew`; a guest star is a `cast` credit with `guest` set. Crew credits carry the
+provider's department and job ("Directing", "Director"); cast credits carry the character.
+
+Credits are owned by the title's owner (`userId`, copied from the title when written), and
+are replaced per title and source on every metadata refresh
+(`services::metadata::credits::replace_credits`), so a refresh never duplicates them.
+"""
+type Credit {
+	id: String!
+	"""
+	The owner of the credited title.
+	"""
+	userId: String!
+	personId: String!
+	"""
+	`movie`, `show`, `season`, `episode`, `album`, `track` or `audiobook`.
+	"""
+	targetKind: String!
+	movieId: String
+	showId: String
+	seasonId: String
+	episodeId: String
+	albumId: String
+	trackId: String
+	audiobookId: String
+	"""
+	`cast` or `crew`.
+	"""
+	kind: String!
+	"""
+	A guest star of one episode (a `cast` credit).
+	"""
+	guest: Boolean!
+	"""
+	The provider's department: "Directing", "Writing", "Production", "Acting"…
+	"""
+	department: String
+	"""
+	"Director", "Screenplay", "Executive Producer", "Composer", "Narrator"…
+	"""
+	job: String
+	characterName: String
+	"""
+	The provider's billing order, lowest first.
+	"""
+	creditOrder: Int
+	"""
+	Episodes this person appears in or worked on, for a show or season credit.
+	"""
+	episodeCount: Int
+	"""
+	Where the credit came from: `tmdb`, `musicbrainz` or `audiobook` (the book's own record).
+	"""
+	source: String!
+	"""
+	The provider's id for this credit, where it has one (TMDB `credit_id`).
+	"""
+	providerCreditId: String
+	createdAt: String!
+	updatedAt: String!
+	"""
+	Person
+	"""
+	person: Person
+	"""
+	Movie
+	"""
+	movie: Movie
+	"""
+	Show
+	"""
+	show: Show
+	"""
+	Season
+	"""
+	season: Season
+	"""
+	Episode
+	"""
+	episode: Episode
+	"""
+	Album
+	"""
+	album: Album
+	"""
+	Track
+	"""
+	track: Track
+	"""
+	Audiobook
+	"""
+	audiobook: Audiobook
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type CreditChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	credit: Credit
+}
+
+"""
+Connection containing edges and page info
+"""
+type CreditConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [CreditEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type CreditEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Credit!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input CreditOrderByInput {
+	kind: OrderDirection
+	department: OrderDirection
+	creditOrder: OrderDirection
+	episodeCount: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+"""
+Result type for #struct_name mutations
+"""
+type CreditResult {
+	success: Boolean!
+	error: String
+	credit: Credit
+}
+
+input CreditWhereInput {
+	id: StringFilter
+	userId: StringFilter
+	personId: StringFilter
+	targetKind: StringFilter
+	movieId: StringFilter
+	showId: StringFilter
+	seasonId: StringFilter
+	episodeId: StringFilter
+	albumId: StringFilter
+	trackId: StringFilter
+	audiobookId: StringFilter
+	kind: StringFilter
+	guest: BoolFilter
+	department: StringFilter
+	job: StringFilter
+	characterName: StringFilter
+	creditOrder: IntFilter
+	episodeCount: IntFilter
+	source: StringFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [CreditWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [CreditWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: CreditWhereInput
 }
 
 input DateFilter {
@@ -2592,6 +3344,24 @@ type DeleteCollectionsResult {
 """
 Result of bulk delete by Where filter
 """
+type DeleteCreditsResult {
+	success: Boolean!
+	error: String
+	deletedCount: Int!
+}
+
+"""
+Result of bulk delete by Where filter
+"""
+type DeleteDevicesResult {
+	success: Boolean!
+	error: String
+	deletedCount: Int!
+}
+
+"""
+Result of bulk delete by Where filter
+"""
 type DeleteEpisodesResult {
 	success: Boolean!
 	error: String
@@ -2602,6 +3372,24 @@ type DeleteEpisodesResult {
 Result of bulk delete by Where filter
 """
 type DeleteHomeShelvesResult {
+	success: Boolean!
+	error: String
+	deletedCount: Int!
+}
+
+"""
+Result of bulk delete by Where filter
+"""
+type DeleteIdentificationEventsResult {
+	success: Boolean!
+	error: String
+	deletedCount: Int!
+}
+
+"""
+Result of bulk delete by Where filter
+"""
+type DeleteIdentifiedItemsResult {
 	success: Boolean!
 	error: String
 	deletedCount: Int!
@@ -2647,6 +3435,24 @@ type DeleteLibraryScanIssuesResult {
 Result of bulk delete by Where filter
 """
 type DeleteListEntriesResult {
+	success: Boolean!
+	error: String
+	deletedCount: Int!
+}
+
+"""
+Result of bulk delete by Where filter
+"""
+type DeleteLyricsResult {
+	success: Boolean!
+	error: String
+	deletedCount: Int!
+}
+
+"""
+Result of bulk delete by Where filter
+"""
+type DeleteMatchingAssistantsResult {
 	success: Boolean!
 	error: String
 	deletedCount: Int!
@@ -2705,6 +3511,15 @@ type DeleteNamingPatternsResult {
 """
 Result of bulk delete by Where filter
 """
+type DeleteNetworkServersResult {
+	success: Boolean!
+	error: String
+	deletedCount: Int!
+}
+
+"""
+Result of bulk delete by Where filter
+"""
 type DeleteNotificationsResult {
 	success: Boolean!
 	error: String
@@ -2741,6 +3556,15 @@ type DeletePersonalListsResult {
 """
 Result of bulk delete by Where filter
 """
+type DeletePlayHistoriesResult {
+	success: Boolean!
+	error: String
+	deletedCount: Int!
+}
+
+"""
+Result of bulk delete by Where filter
+"""
 type DeletePlaybackProgressesResult {
 	success: Boolean!
 	error: String
@@ -2769,6 +3593,15 @@ type DeleteQualityProfilesResult {
 Result of bulk delete by Where filter
 """
 type DeleteReleaseBlocklistsResult {
+	success: Boolean!
+	error: String
+	deletedCount: Int!
+}
+
+"""
+Result of bulk delete by Where filter
+"""
+type DeleteRssFeedsResult {
 	success: Boolean!
 	error: String
 	deletedCount: Int!
@@ -2831,7 +3664,25 @@ type DeleteSourcesResult {
 """
 Result of bulk delete by Where filter
 """
+type DeleteStatsSharesResult {
+	success: Boolean!
+	error: String
+	deletedCount: Int!
+}
+
+"""
+Result of bulk delete by Where filter
+"""
 type DeleteSubtitlesResult {
+	success: Boolean!
+	error: String
+	deletedCount: Int!
+}
+
+"""
+Result of bulk delete by Where filter
+"""
+type DeleteTitleDetailsResult {
 	success: Boolean!
 	error: String
 	deletedCount: Int!
@@ -2873,6 +3724,217 @@ type DeleteUsersResult {
 	deletedCount: Int!
 }
 
+"""
+Device
+"""
+type Device {
+	"""
+	Id
+	"""
+	id: String!
+	"""
+	User Id
+	"""
+	userId: String!
+	"""
+	The client's own stable identifier, kept in its storage.
+	"""
+	clientId: String!
+	"""
+	Name
+	"""
+	name: String!
+	"""
+	True once someone renamed it; check-ins then keep the name.
+	"""
+	nameIsCustom: Boolean!
+	"""
+	`tv`, `phone`, `tablet`, `desktop` or `unknown`.
+	"""
+	formFactor: String!
+	"""
+	Operating system or TV platform, as the client reported it ("iPadOS", "webOS").
+	"""
+	platform: String
+	"""
+	Browser or app ("Safari", "Librarian app").
+	"""
+	product: String
+	"""
+	App Version
+	"""
+	appVersion: String
+	"""
+	User Agent
+	"""
+	userAgent: String
+	"""
+	Last Ip
+	"""
+	lastIp: String
+	"""
+	Last Seen At
+	"""
+	lastSeenAt: String!
+	"""
+	Signed Out At
+	"""
+	signedOutAt: String
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type DeviceChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	device: Device
+}
+
+"""
+Connection containing edges and page info
+"""
+type DeviceConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [DeviceEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type DeviceEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Device!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input DeviceOrderByInput {
+	name: OrderDirection
+	lastSeenAt: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+"""
+Result type for #struct_name mutations
+"""
+type DeviceResult {
+	success: Boolean!
+	error: String
+	device: Device
+}
+
+input DeviceWhereInput {
+	id: StringFilter
+	userId: StringFilter
+	clientId: StringFilter
+	name: StringFilter
+	nameIsCustom: BoolFilter
+	formFactor: StringFilter
+	platform: StringFilter
+	lastSeenAt: DateFilter
+	signedOutAt: DateFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [DeviceWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [DeviceWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: DeviceWhereInput
+}
+
+input DownloadSubtitleInput {
+	mediaFileId: String!
+	fileId: String!
+	language: String
+	hearingImpaired: Boolean
+	forced: Boolean
+	release: String
+	uploader: String
+}
+
+type DownloadSubtitlePayload {
+	success: Boolean!
+	error: String
+	subtitle: Subtitle
+	"""
+	Downloads left today on the account, as OpenSubtitles counts them.
+	"""
+	remainingDownloads: Int
+	"""
+	When the allowance renews.
+	"""
+	resetsAt: String
+}
+
+type DownloadsMovePlan {
+	"""
+	The download folder now.
+	"""
+	oldPath: String!
+	"""
+	The new folder, as it would be saved.
+	"""
+	newPath: String!
+	"""
+	Torrents stored under the download folder.
+	"""
+	torrentCount: Int!
+	"""
+	Their files that are on disk now.
+	"""
+	fileCount: Int!
+	"""
+	Found at the new folder with the same size.
+	"""
+	matched: Int!
+	missing: Int!
+	"""
+	The first of them, as paths below the download folder.
+	"""
+	missingFiles: [String!]!
+	"""
+	At the new folder at another size (a copy that did not finish).
+	"""
+	changed: Int!
+	changedFiles: [String!]!
+	"""
+	Why the move cannot be made at all.
+	"""
+	blocked: String
+	canApply: Boolean!
+}
+
 type Episode {
 	id: String!
 	showId: String!
@@ -2887,6 +3949,11 @@ type Episode {
 	"""
 	airStamp: String
 	runtime: Int
+	"""
+	Fields a metadata refresh must leave alone, by their GraphQL names. Chosen artwork locks
+	its own field (`stillUrl`), so a refresh keeps the picture someone picked.
+	"""
+	lockedFields: [String!]
 	"""
 	Provider still image URL: the source the artwork cache downloads the episode
 	thumbnail from. Clients use `/api/artwork/episode/{id}/thumbnail`.
@@ -3005,6 +4072,12 @@ input EpisodeWhereInput {
 	not: EpisodeWhereInput
 }
 
+type FetchLyricsPayload {
+	success: Boolean!
+	error: String
+	lyric: Lyric
+}
+
 type FileOperationPayload {
 	success: Boolean!
 	error: String
@@ -3035,6 +4108,15 @@ type FilesystemRuntimeInfo {
 }
 
 """
+A genre someone can pick as an interest, with how many titles of it they can see.
+"""
+type GenreChoice {
+	genre: String!
+	movies: Int!
+	shows: Int!
+}
+
+"""
 One genre row: the most recently added titles of that genre and how many there are.
 """
 type GenreShelf {
@@ -3051,6 +4133,30 @@ type GenreShelf {
 	Newest first; empty for movie libraries.
 	"""
 	shows: [Show!]!
+}
+
+type GrabRecommendationPayload {
+	success: Boolean!
+	error: String
+	torrentId: String
+	torrentName: String
+}
+
+type GrabRecommendationPlanPayload {
+	"""
+	True when every release of the plan started.
+	"""
+	success: Boolean!
+	error: String
+	"""
+	How many releases started.
+	"""
+	started: Int!
+	"""
+	`'release title': why` for each release that did not start.
+	"""
+	failed: [String!]!
+	torrentIds: [String!]!
 }
 
 type HomeShelf {
@@ -3152,6 +4258,397 @@ input HomeShelfWhereInput {
 	Logical NOT of condition
 	"""
 	not: HomeShelfWhereInput
+}
+
+"""
+Something a download could be.
+"""
+type IdentificationCandidate {
+	source: String!
+	provider: String
+	providerId: String
+	libraryItemType: String
+	libraryItemId: String
+	libraryId: String
+	title: String!
+	creator: String
+	narrator: String
+	year: Int
+	coverUrl: String
+	seconds: Float
+	chapters: Int
+	lengthPercent: Float
+	fit: String
+	score: Float!
+	reasons: [String!]!
+}
+
+"""
+One step of working out what a download is: what was tried, what it found and how long it took. Steps are grouped by run, and a download keeps only its last few runs.
+"""
+type IdentificationEvent {
+	"""
+	Id
+	"""
+	id: String!
+	"""
+	User Id
+	"""
+	userId: String!
+	"""
+	Info Hash
+	"""
+	infoHash: String!
+	"""
+	Which run this step belongs to. Sorting by it keeps a run's steps together.
+	"""
+	runId: String!
+	"""
+	What started the run, shown on its first step.
+	"""
+	trigger: String!
+	"""
+	Sequence
+	"""
+	sequence: Int!
+	"""
+	`running`, `done`, `found`, `warning`, `skipped` or `failed`.
+	"""
+	status: String!
+	"""
+	Message
+	"""
+	message: String!
+	"""
+	Detail
+	"""
+	detail: String
+	"""
+	Duration Ms
+	"""
+	durationMs: Int
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type IdentificationEventChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	identificationEvent: IdentificationEvent
+}
+
+"""
+Connection containing edges and page info
+"""
+type IdentificationEventConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [IdentificationEventEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type IdentificationEventEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: IdentificationEvent!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input IdentificationEventOrderByInput {
+	runId: OrderDirection
+	sequence: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+"""
+Result type for #struct_name mutations
+"""
+type IdentificationEventResult {
+	success: Boolean!
+	error: String
+	identificationEvent: IdentificationEvent
+}
+
+input IdentificationEventWhereInput {
+	id: StringFilter
+	userId: StringFilter
+	infoHash: StringFilter
+	runId: StringFilter
+	sequence: IntFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [IdentificationEventWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [IdentificationEventWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: IdentificationEventWhereInput
+}
+
+"""
+Something found in a download: a book, an album, a season, a movie. It says what it most likely is, what else it could be, and whether it has reached the library.
+"""
+type IdentifiedItem {
+	"""
+	Id
+	"""
+	id: String!
+	"""
+	User Id
+	"""
+	userId: String!
+	"""
+	Info Hash
+	"""
+	infoHash: String!
+	"""
+	Identifies it within the download across runs, such as a book's group of files.
+	"""
+	itemKey: String!
+	"""
+	`audiobook`, `music`, `tv`, `movie`, `ebook` or `unknown`.
+	"""
+	kind: String!
+	"""
+	`imported`, `wanted`, `adds` (fills gaps in what the library holds), `upgrade` (better copies of what it holds), `in_library`, `identified`, `needs_choice` or `unknown`.
+	"""
+	status: String!
+	"""
+	What its files say it is.
+	"""
+	label: String!
+	"""
+	What it was identified as, once it has been.
+	"""
+	title: String
+	"""
+	The author, artist or show.
+	"""
+	creator: String
+	"""
+	Year
+	"""
+	year: Int
+	"""
+	Cover Url
+	"""
+	coverUrl: String
+	"""
+	File Count
+	"""
+	fileCount: Int!
+	"""
+	How many of its files have finished downloading.
+	"""
+	finishedFiles: Int!
+	"""
+	Seconds
+	"""
+	seconds: Float
+	"""
+	Zero to one.
+	"""
+	confidence: Float!
+	"""
+	One line on what it is or what's needed.
+	"""
+	summary: String
+	"""
+	Why it's thought to be this. JSON list of strings.
+	"""
+	evidence: String!
+	"""
+	What else it could be, best first. JSON list of candidates.
+	"""
+	candidates: String!
+	"""
+	Its files' paths. JSON list of strings.
+	"""
+	filePaths: String!
+	"""
+	What its files say about themselves, to compare listings with. JSON.
+	"""
+	identity: String!
+	"""
+	The provider listing it matched.
+	"""
+	providerId: String
+	"""
+	`Audiobook`, `Album`, `Show` or `Movie`: what it matched in the library.
+	"""
+	libraryItemType: String
+	"""
+	Library Item Id
+	"""
+	libraryItemId: String
+	"""
+	Library Id
+	"""
+	libraryId: String
+	"""
+	Season number for a TV item.
+	"""
+	season: Int
+	"""
+	A person can import it despite what the plan says.
+	"""
+	canAccept: Boolean!
+	"""
+	How many tracks, episodes or chapters its files would add to what the library holds, or for an upgrade how many would replace worse copies.
+	"""
+	addsCount: Int
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type IdentifiedItemChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	identifiedItem: IdentifiedItem
+}
+
+"""
+Connection containing edges and page info
+"""
+type IdentifiedItemConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [IdentifiedItemEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type IdentifiedItemEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: IdentifiedItem!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input IdentifiedItemOrderByInput {
+	title: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+"""
+Result type for #struct_name mutations
+"""
+type IdentifiedItemResult {
+	success: Boolean!
+	error: String
+	identifiedItem: IdentifiedItem
+}
+
+input IdentifiedItemWhereInput {
+	id: StringFilter
+	userId: StringFilter
+	infoHash: StringFilter
+	itemKey: StringFilter
+	kind: StringFilter
+	status: StringFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [IdentifiedItemWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [IdentifiedItemWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: IdentifiedItemWhereInput
+}
+
+"""
+What a person decided a result is.
+"""
+input ImportIdentifiedItemInput {
+	itemId: String!
+	"""
+	A listing to add to the library first.
+	"""
+	providerId: String
+	"""
+	Something already in the library.
+	"""
+	libraryItemId: String
+	"""
+	Which library to add it to, when there's a choice.
+	"""
+	libraryId: String
+	"""
+	Import even though the plan asks for review.
+	"""
+	acceptReview: Boolean
+	"""
+	Put better copies on tracks that already have files, keeping those files on disk.
+	"""
+	betterCopies: Boolean
+}
+
+type ImportPlayHistoryPayload {
+	success: Boolean!
+	error: String
+	imported: Int!
+	skipped: Int!
 }
 
 input IntFilter {
@@ -3362,9 +4859,29 @@ type Library {
 	color: String
 	autoScan: Boolean!
 	autoOrganize: Boolean!
+	"""
+	After each scan, settle byte-identical duplicates by moving the copy no title plays to the
+	library's recoverable trash. Pairs both played by titles are left for a person.
+	"""
+	autoResolveDuplicates: Boolean
 	namingPattern: String!
 	scanIntervalMinutes: Int!
 	watchForChanges: Boolean!
+	"""
+	What the folder watch is doing (`docs/design.md` Q117): `starting`, `watching`,
+	`unavailable` (the share cannot be reached; it is retried), `failed` (the folder cannot be
+	watched; `watchDetail` says why), or empty while the library is not watched. Written by the
+	watch itself.
+	"""
+	watchStatus: String
+	"""
+	Why the watch is in that state, in words a person can act on.
+	"""
+	watchDetail: String
+	"""
+	When the watch entered its current state.
+	"""
+	watchStatusSince: String
 	scanning: Boolean!
 	lastScannedAt: String
 	"""
@@ -3373,6 +4890,11 @@ type Library {
 	Audiobook) > this field > seeded default profile.
 	"""
 	qualityProfileId: String
+	"""
+	The disk or share this library's folder is on, with its free space (`docs/design.md`
+	Q146). Set by the capacity job; libraries on one share point at the same volume.
+	"""
+	storageVolumeId: String
 	createdAt: String!
 	updatedAt: String!
 	"""
@@ -3419,6 +4941,10 @@ type Library {
 	Quality Profile
 	"""
 	qualityProfile: QualityProfile
+	"""
+	Storage Volume
+	"""
+	storageVolume: StorageVolume
 }
 
 """
@@ -3460,6 +4986,54 @@ type LibraryEdge {
 	A cursor for pagination
 	"""
 	cursor: String!
+}
+
+"""
+What moving a library to a folder its files were copied to would find. Nothing is changed.
+"""
+type LibraryMovePlan {
+	"""
+	The library's current folder.
+	"""
+	oldPath: String!
+	"""
+	The new folder, as it would be saved.
+	"""
+	newPath: String!
+	"""
+	Files the library holds.
+	"""
+	fileCount: Int!
+	"""
+	On the new folder with the same size.
+	"""
+	matched: Int!
+	"""
+	Not on the new folder at all.
+	"""
+	missing: Int!
+	"""
+	The first of them, as paths below the library's folder.
+	"""
+	missingFiles: [String!]!
+	"""
+	On the new folder, but at a different size (a copy that did not finish).
+	"""
+	changed: Int!
+	changedFiles: [String!]!
+	"""
+	Media files on the new folder that the library does not hold; the next scan finds them.
+	"""
+	extra: Int!
+	extraFiles: [String!]!
+	"""
+	Why the move cannot go ahead at all.
+	"""
+	blocked: String
+	"""
+	Every file is on the new folder at its size, and nothing blocks the move.
+	"""
+	canApply: Boolean!
 }
 
 input LibraryOrderByInput {
@@ -3840,6 +5414,7 @@ input LibraryWhereInput {
 	scanning: BoolFilter
 	lastScannedAt: DateFilter
 	qualityProfileId: StringFilter
+	storageVolumeId: StringFilter
 	createdAt: DateFilter
 	updatedAt: DateFilter
 	"""
@@ -3865,6 +5440,8 @@ type ListEntry {
 	albumId: String
 	audiobookId: String
 	trackId: String
+	episodeId: String
+	chapterId: String
 	createdAt: String!
 	updatedAt: String!
 	id: String!
@@ -3892,6 +5469,14 @@ type ListEntry {
 	Track
 	"""
 	track: Track
+	"""
+	Episode
+	"""
+	episode: Episode
+	"""
+	Chapter
+	"""
+	chapter: Chapter
 }
 
 """
@@ -3960,6 +5545,8 @@ input ListEntryWhereInput {
 	albumId: StringFilter
 	audiobookId: StringFilter
 	trackId: StringFilter
+	episodeId: StringFilter
+	chapterId: StringFilter
 	createdAt: DateFilter
 	updatedAt: DateFilter
 	id: StringFilter
@@ -3975,6 +5562,14 @@ input ListEntryWhereInput {
 	Logical NOT of condition
 	"""
 	not: ListEntryWhereInput
+}
+
+"""
+Whether listening to recordings is possible here.
+"""
+type ListeningStatus {
+	available: Boolean!
+	detail: String!
 }
 
 """
@@ -3994,6 +5589,11 @@ type LiveTorrent {
 	peers: Int!
 	savePath: String!
 	files: [LiveTorrentFile!]!
+	"""
+	Why the torrent is stopped or waiting: the client's error, or that its download share is
+	unreachable (it resumes by itself when the share answers).
+	"""
+	statusDetail: String
 }
 
 """
@@ -4040,6 +5640,155 @@ input LoginInput {
 type LogoutPayload {
 	success: Boolean!
 	error: String
+}
+
+"""
+What to look a recommendation up for: a season (or an episode of it), a movie, an album (or a
+track of it) or an audiobook.
+"""
+input LookupRecommendationsInput {
+	showId: String
+	season: Int
+	episodeId: String
+	movieId: String
+	albumId: String
+	trackId: String
+	audiobookId: String
+	"""
+	An artist: answered, like an album or a track of theirs, by the artist's coverage plan.
+	"""
+	artistId: String
+}
+
+type LookupRecommendationsPayload {
+	success: Boolean!
+	error: String
+	"""
+	`cached` (an answer is stored), `queued` or `waiting` (already queued).
+	"""
+	state: String
+}
+
+type Lyric {
+	id: String!
+	mediaFileId: String!
+	"""
+	The track the file plays, when it is linked to one.
+	"""
+	trackId: String
+	"""
+	`sidecar`, `embedded`, `lrclib` or `none`.
+	"""
+	source: String!
+	"""
+	Whether `syncedLyrics` holds timed lines.
+	"""
+	synced: Boolean!
+	"""
+	Timed lines, normalised to `[mm:ss.cc]text`, one per line, sorted.
+	"""
+	syncedLyrics: String
+	"""
+	The words without times.
+	"""
+	plainLyrics: String
+	"""
+	The language, when the source says.
+	"""
+	language: String
+	"""
+	The source says the track has no words.
+	"""
+	instrumental: Boolean!
+	"""
+	The provider's id for what was found (LRCLIB's record id).
+	"""
+	providerId: String
+	fetchedAt: String!
+	createdAt: String!
+	updatedAt: String!
+	"""
+	Media File
+	"""
+	mediaFile: MediaFile
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type LyricChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	lyric: Lyric
+}
+
+"""
+Connection containing edges and page info
+"""
+type LyricConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [LyricEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type LyricEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Lyric!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input LyricOrderByInput {
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+"""
+Result type for #struct_name mutations
+"""
+type LyricResult {
+	success: Boolean!
+	error: String
+	lyric: Lyric
+}
+
+input LyricWhereInput {
+	id: StringFilter
+	mediaFileId: StringFilter
+	trackId: StringFilter
+	source: StringFilter
+	synced: BoolFilter
+	fetchedAt: DateFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [LyricWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [LyricWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: LyricWhereInput
 }
 
 type MarkAllNotificationsReadResult {
@@ -4106,6 +5855,110 @@ enum MatchWantedPolicy {
 }
 
 """
+The optional service asked to settle release matches that names, tags and lengths can't. There is one row at most.
+"""
+type MatchingAssistant {
+	"""
+	Id
+	"""
+	id: String!
+	"""
+	Enabled
+	"""
+	enabled: Boolean!
+	"""
+	Model
+	"""
+	model: String!
+	"""
+	Whether a key is stored, since the key itself can't be read. Set by the write transform.
+	"""
+	hasApiKey: Boolean!
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type MatchingAssistantChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	matchingAssistant: MatchingAssistant
+}
+
+"""
+Connection containing edges and page info
+"""
+type MatchingAssistantConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [MatchingAssistantEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type MatchingAssistantEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: MatchingAssistant!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input MatchingAssistantOrderByInput {
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+"""
+Result type for #struct_name mutations
+"""
+type MatchingAssistantResult {
+	success: Boolean!
+	error: String
+	matchingAssistant: MatchingAssistant
+}
+
+input MatchingAssistantWhereInput {
+	id: StringFilter
+	enabled: BoolFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [MatchingAssistantWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [MatchingAssistantWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: MatchingAssistantWhereInput
+}
+
+"""
 Current user info returned by the Me query.
 """
 type MeUser {
@@ -4114,6 +5967,10 @@ type MeUser {
 	username: String!
 	role: String!
 	displayName: String
+	"""
+	The photo's marker when there is one (`/api/artwork/user/{id}/avatar` serves it).
+	"""
+	avatarUrl: String
 }
 
 type MediaChapter {
@@ -4224,6 +6081,11 @@ type MediaFile {
 	resolution: String
 	isHdr: Boolean!
 	hdrType: String
+	"""
+	The video carries closed captions (EIA-608/708) inside its picture stream, as ffprobe
+	reports them. Unknown until the file is analysed. See `docs/design.md` Q119.
+	"""
+	closedCaptions: Boolean
 	audioChannels: String
 	metadata: String
 	contentType: String
@@ -4245,6 +6107,22 @@ type MediaFile {
 	recomputed when the assigned profile changes (design.md Q23/Q24).
 	"""
 	qualityStatus: String
+	"""
+	The picture inside black bars baked into the video (letterbox or pillarbox), found with
+	ffmpeg `cropdetect` after analysis (design.md Q123). `null` when the picture fills the
+	frame, when detection was inconclusive, or before it has run.
+	"""
+	pictureCrop: PictureCrop
+	"""
+	Seek-bar preview sprite sheets, made after analysis (design.md Q122). Sheets are served
+	at `/api/media/<id>/storyboard/<key>/<sheet>.jpg`.
+	"""
+	storyboard: VideoStoryboard
+	"""
+	When the preview job (crop detection and storyboard) last finished for this version of
+	the file, whatever it found. Cleared when the file changes, so the job runs again.
+	"""
+	previewsCheckedAt: String
 	"""
 	Library
 	"""
@@ -4334,6 +6212,7 @@ input MediaFileOrderByInput {
 	analyzedAt: OrderDirection
 	fileModifiedAt: OrderDirection
 	matchConfirmedAt: OrderDirection
+	previewsCheckedAt: OrderDirection
 }
 
 """
@@ -4374,6 +6253,7 @@ input MediaFileWhereInput {
 	matchedByUserId: StringFilter
 	matchConfirmedAt: DateFilter
 	qualityStatus: StringFilter
+	previewsCheckedAt: DateFilter
 	"""
 	Logical AND of conditions
 	"""
@@ -4521,6 +6401,62 @@ input MetadataCacheWhereInput {
 	not: MetadataCacheWhereInput
 }
 
+input MoveDownloadsInput {
+	"""
+	The new folder: an absolute path, or `smb://host/share/folder` on a saved server.
+	"""
+	newPath: String!
+	"""
+	Point the torrents in the download folder at their copy there (default). Off: only new
+	downloads go to the new folder, and the torrents stay where they are.
+	"""
+	moveTorrents: Boolean
+	"""
+	Move even though some files are not at the new folder yet. The client downloads them again.
+	"""
+	allowMissing: Boolean
+}
+
+type MoveDownloadsResult {
+	success: Boolean!
+	error: String
+	movedTorrents: Int!
+	movedFiles: Int!
+}
+
+"""
+Move a library to a folder its files were copied to.
+"""
+input MoveLibraryInput {
+	libraryId: String!
+	"""
+	The new folder: an absolute path, or `smb://host/share/folder`.
+	"""
+	newPath: String!
+	"""
+	Move even though some files are not on the new folder yet. They are then reported
+	missing by the next scan.
+	"""
+	allowMissing: Boolean
+}
+
+type MoveLibraryResult {
+	success: Boolean!
+	error: String
+	"""
+	File records rewritten to the new folder.
+	"""
+	movedFiles: Int!
+	"""
+	Show, album and audiobook folders rewritten.
+	"""
+	movedFolders: Int!
+	"""
+	Open scan issues closed, because they named paths that no longer apply.
+	"""
+	closedIssues: Int!
+}
+
 type Movie {
 	id: String!
 	libraryId: String!
@@ -4535,6 +6471,10 @@ type Movie {
 	tagline: String
 	runtime: Int
 	genres: [String!]!
+	"""
+	Fields a metadata refresh must leave alone, by their GraphQL names.
+	"""
+	lockedFields: [String!]
 	director: String
 	castNames: [String!]!
 	productionCountries: [String!]!
@@ -4546,6 +6486,15 @@ type Movie {
 	collectionPosterUrl: String
 	releaseDate: String
 	certification: String
+	"""
+	The earliest digital release (TMDB release type 4), `YYYY-MM-DD`. Automatic downloading
+	searches for a wanted movie from this date (or the physical one), not its cinema date (Q113).
+	"""
+	digitalReleaseDate: String
+	"""
+	The earliest physical release (TMDB release type 5), `YYYY-MM-DD`.
+	"""
+	physicalReleaseDate: String
 	monitored: Boolean!
 	tmdbStatus: String
 	wanted: Boolean!
@@ -4846,6 +6795,8 @@ input MovieWhereInput {
 	collectionName: StringFilter
 	releaseDate: DateFilter
 	certification: StringFilter
+	digitalReleaseDate: DateFilter
+	physicalReleaseDate: DateFilter
 	monitored: BoolFilter
 	tmdbStatus: StringFilter
 	wanted: BoolFilter
@@ -4872,6 +6823,16 @@ input MovieWhereInput {
 
 type Mutation {
 	"""
+	Show one of the pictures the provider lists (`artworkOptions`) and lock it, so a metadata
+	refresh keeps it.
+	"""
+	chooseArtwork(entityType: ArtworkEntityKind!, entityId: String!, kind: ArtworkKind!, url: String!): ArtworkChangeResult!
+	"""
+	Unlock a picture and put back what a metadata refresh would choose (or nothing, where the
+	provider has nothing, as for a playlist or a movie's logo).
+	"""
+	revertArtwork(entityType: ArtworkEntityKind!, entityId: String!, kind: ArtworkKind!): ArtworkChangeResult!
+	"""
 	Recache artwork for a specific movie
 	"""
 	recacheMovieArtwork(movieId: String!): Boolean!
@@ -4885,12 +6846,33 @@ type Mutation {
 	logout: LogoutPayload!
 	createDirectory(input: CreateDirectoryInput!): FileOperationPayload!
 	configureNetworkPath(input: ConfigureNetworkPathInput!): NetworkPathConfigPayload!
+	"""
+	Sign in to a network share, check that it can be read, and keep the sign-in. The answer
+	names what is wrong in words a person can act on (a name that does not resolve here, a
+	refused password, a share that does not exist).
+	"""
+	connectShare(input: ConnectShareInput!): ConnectSharePayload!
+	"""
+	Change a library's folder after its files were copied there, keeping every record: the
+	files keep their ids, matches, progress and playlists. Run a scan afterwards to verify.
+	"""
+	moveLibrary(input: MoveLibraryInput!): MoveLibraryResult!
 	reconnectLibraryPath(path: String!): NetworkPathConfigPayload!
 	testTmdbConnection(input: TestTmdbConnectionInput!): TestTmdbConnectionResult!
 	scanLibrary(id: String!): ScanLibraryResult!
 	analyzeMediaFile(mediaFileId: String!, path: String!): AnalyzeMediaFileResult!
 	retryScanIssue(issueId: String!): ScanIssueActionResult!
-	trashDuplicateScanIssue(issueId: String!): TrashDuplicateResult!
+	"""
+	Settle every open duplicate in a library: keep the copy each pair's title plays and move the
+	other to the library's recoverable trash. Pairs both played by titles stay open.
+	"""
+	settleDuplicateScanIssues(libraryId: String!): ScanIssueActionResult!
+	trashDuplicateScanIssue(		issueId: String!,
+		"""
+		`keeper` (the default) keeps the copy the scan chose, `duplicate` keeps this issue's file, `best` keeps whichever a title plays.
+		"""
+		keep: String
+	): TrashDuplicateResult!
 	matchMediaFile(input: MatchMediaFileInput!): MatchMediaFileResult!
 	organizeMediaFile(input: OrganizeMediaFileInput!): OrganizeMediaFileResult!
 	unmatchMediaFile(mediaFileId: String!): UnmatchMediaFileResult!
@@ -4899,6 +6881,10 @@ type Mutation {
 	takes an administrator, whoever owns the library.
 	"""
 	deleteMediaFileFromDisk(mediaFileId: String!): DeleteMediaFileFromDiskResult!
+	"""
+	Check a Jev key, the one given or the saved one, without saving anything.
+	"""
+	testJevConnection(apiKey: String): OllamaConnectionResult!
 	testOllamaConnection(input: TestOllamaConnectionInput!): OllamaConnectionResult!
 	testLlmParser(input: TestLlmParserInput!): LlmParserTestResult!
 	"""
@@ -4924,6 +6910,31 @@ type Mutation {
 	"""
 	matchTorrentFile(input: MatchTorrentFileInput!): RematchSourceResult!
 	"""
+	Work out what a download is again.
+	"""
+	identifyTorrent(		infoHash: String!,
+		"""
+		Treat it as this kind: audiobook, music, tv or movie. `auto` goes back to working it out.
+		"""
+		kind: String
+	): RematchSourceResult!
+	"""
+	Bring in something identification found, as what a person says it is.
+	"""
+	importIdentifiedItem(input: ImportIdentifiedItemInput!): RematchSourceResult!
+	"""
+	Make a book a different listing, keeping its files.
+	"""
+	changeAudiobookEdition(audiobookId: String!, providerId: String!): RematchSourceResult!
+	"""
+	Check a book's chapters by listening for them, in the background.
+	"""
+	listenToAudiobookChapters(audiobookId: String!): RematchSourceResult!
+	"""
+	Put a book's provider chapters back after a release's own replaced them.
+	"""
+	restoreAudiobookChapters(audiobookId: String!): RematchSourceResult!
+	"""
 	Re-run matching for files from a source.
 	"""
 	rematchSource(sourceType: String!, sourceId: String!, libraryId: String): RematchSourceResult!
@@ -4939,6 +6950,10 @@ type Mutation {
 	Refresh a movie's metadata and artwork from TMDB.
 	"""
 	refreshMovie(id: String!): MovieOperationResult!
+	"""
+	Read a person's biography, dates, place of birth, ids and pictures from TMDB again.
+	"""
+	refreshPersonDetails(id: String!): PersonDetailsResult!
 	"""
 	Add a TV show to a library by fetching metadata from TVMaze
 	"""
@@ -5006,6 +7021,137 @@ type Mutation {
 	applying a repair is one generated transaction and publishes on commit.
 	"""
 	reconcileStoredMediaSummaries(dryRun: Boolean! = true): StoredSummaryReconciliationResult!
+	"""
+	Read a feed now, whether or not it is due (and even if it is disabled). New items go into the
+	catalogue; wanted titles are only grabbed when automatic downloading is on. Admin only.
+	"""
+	pollRssFeed(id: String!): PollRssFeedPayload!
+	"""
+	Read the personal RSS link from a signed-in IPTorrents source and make it an RSS feed. The
+	link carries the account's passkey: it goes straight into the feed's encrypted address and
+	only the redacted form comes back. Admin only.
+	"""
+	createRssFeedFromSource(sourceId: String!, name: String, pollIntervalMinutes: Int, libraryId: String): CreateRssFeedFromSourcePayload!
+	"""
+	Queue a lookup of the best release for something missing, when its page or season is opened.
+	An answer that has not expired is kept and nothing is searched; otherwise the worker looks
+	within the hourly search budget and the page shows "looking" until it has. Owner or admin.
+	"""
+	lookupRecommendations(input: LookupRecommendationsInput!): LookupRecommendationsPayload!
+	"""
+	Download every release of a show's coverage plan (a `plan` recommendation), in order, each
+	through the same path as `grabRecommendation`. Releases that start are reported even when
+	others do not. Owner or admin.
+	"""
+	grabRecommendationPlan(id: String!): GrabRecommendationPlanPayload!
+	"""
+	Download a recommended release through the same path automatic downloading uses, linked to
+	what it is for. With "Download only the missing files from packs" on, a pack downloads only
+	the files that fill what was missing. Owner or admin.
+	"""
+	grabRecommendation(id: String!): GrabRecommendationPayload!
+	"""
+	Sign in to a server and list its shares, with a saved server's sign-in or with what was
+	typed. The answer names what is wrong in words a person can act on. A saved server's
+	status records the outcome, and the shares it lists are remembered on it.
+	"""
+	testNetworkServer(input: TestNetworkServerInput!): TestNetworkServerResult!
+	"""
+	Move the download folder after its files were copied there: every torrent keeps seeding
+	from its copy, and nothing is downloaded again. The old files are not deleted. The client
+	restarts so the new folder is where new downloads go.
+	"""
+	moveDownloads(input: MoveDownloadsInput!): MoveDownloadsResult!
+	"""
+	Search OpenSubtitles for a file's subtitles, in `languages` or the preferred ones.
+	"""
+	searchSubtitles(mediaFileId: String!, languages: [String!]): SearchSubtitlesPayload!
+	"""
+	Download a subtitle beside the file's video and list it with the file's subtitles.
+	"""
+	downloadSubtitle(input: DownloadSubtitleInput!): DownloadSubtitlePayload!
+	"""
+	Check an OpenSubtitles key and account. Signs in when an account is given.
+	"""
+	testOpenSubtitles(input: TestOpenSubtitlesInput!): TestOpenSubtitlesPayload!
+	"""
+	A track's lyrics: what is cached, or a fresh look (`refresh`) at its `.lrc`, its tags and
+	LRCLIB, cached for next time.
+	"""
+	fetchLyrics(mediaFileId: String!, refresh: Boolean): FetchLyricsPayload!
+	"""
+	Add or refresh this client as one of your devices. Call it when the app starts, on a
+	sign-in, and now and then while it runs (last seen).
+	"""
+	checkInDevice(input: CheckInDeviceInput!): CheckInDevicePayload!
+	"""
+	Sign a device out: its login session is revoked and what it plays stops. Your own
+	devices, or anyone's for an administrator.
+	"""
+	signOutDevice(id: String!): SignOutDevicePayload!
+	"""
+	Seed play history from watch progress: one completed play per watched item, with no
+	time claimed, marked imported. Yours, or everyone's (`allUsers`, administrators).
+	Each checkpoint is imported once, so running it again only adds what is new.
+	"""
+	importPlayHistory(allUsers: Boolean! = false): ImportPlayHistoryPayload!
+	"""
+	Ask GitHub now. Pressed again within 20 seconds, it returns the last answer.
+	"""
+	checkForServerUpdate: CheckForServerUpdateResult!
+	"""
+	Upgrade to `version`, which must be the newest release on the channel (the confirmation
+	names it). Returns once the download has started; `serverUpdateStatus.progress` follows it,
+	and the server restarts when the new binary is in place.
+	"""
+	upgradeServer(version: String!): UpgradeServerResult!
+	"""
+	The second sign-in step: a code from the authenticator app or a recovery code, for the
+	challenge `login` returned. Signs in, or returns the next challenge (a new password).
+	"""
+	completeTwoFactorSignIn(input: CompleteTwoFactorSignInInput!): AuthPayload!
+	"""
+	After a temporary password: choose a new one and sign in.
+	"""
+	completePasswordChange(input: CompletePasswordChangeInput!): AuthPayload!
+	"""
+	Set a new password with a reset link an administrator passed on. Signs nobody in.
+	"""
+	resetPasswordWithLink(input: ResetPasswordWithLinkInput!): AccountActionResult!
+	"""
+	Change your password. Every session of yours ends; this device gets a new one.
+	"""
+	changePassword(input: ChangePasswordInput!): AuthPayload!
+	"""
+	Start turning on two-factor sign-in, with your password.
+	"""
+	beginTwoFactorSetup(input: PasswordConfirmationInput!): TwoFactorSetupResult!
+	"""
+	Finish turning it on with a code from the app. Returns the recovery codes.
+	"""
+	confirmTwoFactorSetup(input: TwoFactorCodeInput!): RecoveryCodesResult!
+	"""
+	New recovery codes; the old ones stop working.
+	"""
+	regenerateRecoveryCodes(input: PasswordConfirmationInput!): RecoveryCodesResult!
+	"""
+	Turn your two-factor sign-in off, with your password.
+	"""
+	disableTwoFactor(input: PasswordConfirmationInput!): AccountActionResult!
+	"""
+	Account recovery (administrators): turn someone's two-factor sign-in off. Logged.
+	"""
+	resetUserTwoFactor(userId: String!): AccountActionResult!
+	"""
+	Administrators: give someone a temporary password, which they must change when they next
+	sign in. Their sessions end.
+	"""
+	setTemporaryPassword(input: SetTemporaryPasswordInput!): AccountActionResult!
+	"""
+	Administrators: a one-time reset link for someone, valid for a day, to pass on yourself.
+	It replaces any earlier link.
+	"""
+	createPasswordResetLink(userId: String!): PasswordResetLinkResult!
 	"""
 	Create a new #struct_name_str
 	Create one Library records
@@ -5296,6 +7442,122 @@ type Mutation {
 		"""
 		where: MovieCastCreditWhereInput
 	): DeleteMovieCastCreditsResult!
+	"""
+	Create a new #struct_name_str
+	Create one Credit records
+	"""
+	createCredit(
+		"""
+		Input
+		"""
+		input: CreateCreditInput!
+	): CreditResult!
+	"""
+	Update an existing #struct_name_str
+	Update one Credit records
+	"""
+	updateCredit(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdateCreditInput!
+	): CreditResult!
+	"""
+	Delete a #struct_name_str
+	Delete one Credit records
+	"""
+	deleteCredit(
+		"""
+		Id
+		"""
+		id: String!
+	): CreditResult!
+	"""
+	Update multiple #plural_name matching the given Where filter
+	Update matching Credit records
+	"""
+	updateCredits(
+		"""
+		Where
+		"""
+		where: CreditWhereInput,
+		"""
+		Input
+		"""
+		input: UpdateCreditInput!
+	): UpdateCreditsResult!
+	"""
+	Delete multiple #plural_name matching the given Where filter
+	Delete matching Credit records
+	"""
+	deleteCredits(
+		"""
+		Where
+		"""
+		where: CreditWhereInput
+	): DeleteCreditsResult!
+	"""
+	Create a new #struct_name_str
+	Create one TitleDetail records
+	"""
+	createTitleDetail(
+		"""
+		Input
+		"""
+		input: CreateTitleDetailInput!
+	): TitleDetailResult!
+	"""
+	Update an existing #struct_name_str
+	Update one TitleDetail records
+	"""
+	updateTitleDetail(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdateTitleDetailInput!
+	): TitleDetailResult!
+	"""
+	Delete a #struct_name_str
+	Delete one TitleDetail records
+	"""
+	deleteTitleDetail(
+		"""
+		Id
+		"""
+		id: String!
+	): TitleDetailResult!
+	"""
+	Update multiple #plural_name matching the given Where filter
+	Update matching TitleDetail records
+	"""
+	updateTitleDetails(
+		"""
+		Where
+		"""
+		where: TitleDetailWhereInput,
+		"""
+		Input
+		"""
+		input: UpdateTitleDetailInput!
+	): UpdateTitleDetailsResult!
+	"""
+	Delete multiple #plural_name matching the given Where filter
+	Delete matching TitleDetail records
+	"""
+	deleteTitleDetails(
+		"""
+		Where
+		"""
+		where: TitleDetailWhereInput
+	): DeleteTitleDetailsResult!
 	"""
 	Create a new #struct_name_str
 	Create one Collection records
@@ -6021,6 +8283,64 @@ type Mutation {
 	): DeleteTorrentFilesResult!
 	"""
 	Create a new #struct_name_str
+	Create one RssFeed records
+	"""
+	createRssFeed(
+		"""
+		Input
+		"""
+		input: CreateRssFeedInput!
+	): RssFeedResult!
+	"""
+	Update an existing #struct_name_str
+	Update one RssFeed records
+	"""
+	updateRssFeed(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdateRssFeedInput!
+	): RssFeedResult!
+	"""
+	Delete a #struct_name_str
+	Delete one RssFeed records
+	"""
+	deleteRssFeed(
+		"""
+		Id
+		"""
+		id: String!
+	): RssFeedResult!
+	"""
+	Update multiple #plural_name matching the given Where filter
+	Update matching RssFeed records
+	"""
+	updateRssFeeds(
+		"""
+		Where
+		"""
+		where: RssFeedWhereInput,
+		"""
+		Input
+		"""
+		input: UpdateRssFeedInput!
+	): UpdateRssFeedsResult!
+	"""
+	Delete multiple #plural_name matching the given Where filter
+	Delete matching RssFeed records
+	"""
+	deleteRssFeeds(
+		"""
+		Where
+		"""
+		where: RssFeedWhereInput
+	): DeleteRssFeedsResult!
+	"""
+	Create a new #struct_name_str
 	Create one PendingFileMatch records
 	"""
 	createPendingFileMatch(
@@ -6485,6 +8805,64 @@ type Mutation {
 	): DeleteSubtitlesResult!
 	"""
 	Create a new #struct_name_str
+	Create one Lyric records
+	"""
+	createLyric(
+		"""
+		Input
+		"""
+		input: CreateLyricInput!
+	): LyricResult!
+	"""
+	Update an existing #struct_name_str
+	Update one Lyric records
+	"""
+	updateLyric(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdateLyricInput!
+	): LyricResult!
+	"""
+	Delete a #struct_name_str
+	Delete one Lyric records
+	"""
+	deleteLyric(
+		"""
+		Id
+		"""
+		id: String!
+	): LyricResult!
+	"""
+	Update multiple #plural_name matching the given Where filter
+	Update matching Lyric records
+	"""
+	updateLyrics(
+		"""
+		Where
+		"""
+		where: LyricWhereInput,
+		"""
+		Input
+		"""
+		input: UpdateLyricInput!
+	): UpdateLyricsResult!
+	"""
+	Delete multiple #plural_name matching the given Where filter
+	Delete matching Lyric records
+	"""
+	deleteLyrics(
+		"""
+		Where
+		"""
+		where: LyricWhereInput
+	): DeleteLyricsResult!
+	"""
+	Create a new #struct_name_str
 	Create one PlaybackSession records
 	"""
 	createPlaybackSession(
@@ -6599,6 +8977,180 @@ type Mutation {
 		"""
 		where: PlaybackProgressWhereInput
 	): DeletePlaybackProgressesResult!
+	"""
+	Create a new #struct_name_str
+	Create one Device records
+	"""
+	createDevice(
+		"""
+		Input
+		"""
+		input: CreateDeviceInput!
+	): DeviceResult!
+	"""
+	Update an existing #struct_name_str
+	Update one Device records
+	"""
+	updateDevice(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdateDeviceInput!
+	): DeviceResult!
+	"""
+	Delete a #struct_name_str
+	Delete one Device records
+	"""
+	deleteDevice(
+		"""
+		Id
+		"""
+		id: String!
+	): DeviceResult!
+	"""
+	Update multiple #plural_name matching the given Where filter
+	Update matching Device records
+	"""
+	updateDevices(
+		"""
+		Where
+		"""
+		where: DeviceWhereInput,
+		"""
+		Input
+		"""
+		input: UpdateDeviceInput!
+	): UpdateDevicesResult!
+	"""
+	Delete multiple #plural_name matching the given Where filter
+	Delete matching Device records
+	"""
+	deleteDevices(
+		"""
+		Where
+		"""
+		where: DeviceWhereInput
+	): DeleteDevicesResult!
+	"""
+	Create a new #struct_name_str
+	Create one PlayHistory records
+	"""
+	createPlayHistory(
+		"""
+		Input
+		"""
+		input: CreatePlayHistoryInput!
+	): PlayHistoryResult!
+	"""
+	Update an existing #struct_name_str
+	Update one PlayHistory records
+	"""
+	updatePlayHistory(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdatePlayHistoryInput!
+	): PlayHistoryResult!
+	"""
+	Delete a #struct_name_str
+	Delete one PlayHistory records
+	"""
+	deletePlayHistory(
+		"""
+		Id
+		"""
+		id: String!
+	): PlayHistoryResult!
+	"""
+	Update multiple #plural_name matching the given Where filter
+	Update matching PlayHistory records
+	"""
+	updatePlayHistories(
+		"""
+		Where
+		"""
+		where: PlayHistoryWhereInput,
+		"""
+		Input
+		"""
+		input: UpdatePlayHistoryInput!
+	): UpdatePlayHistoriesResult!
+	"""
+	Delete multiple #plural_name matching the given Where filter
+	Delete matching PlayHistory records
+	"""
+	deletePlayHistories(
+		"""
+		Where
+		"""
+		where: PlayHistoryWhereInput
+	): DeletePlayHistoriesResult!
+	"""
+	Create a new #struct_name_str
+	Create one StatsShare records
+	"""
+	createStatsShare(
+		"""
+		Input
+		"""
+		input: CreateStatsShareInput!
+	): StatsShareResult!
+	"""
+	Update an existing #struct_name_str
+	Update one StatsShare records
+	"""
+	updateStatsShare(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdateStatsShareInput!
+	): StatsShareResult!
+	"""
+	Delete a #struct_name_str
+	Delete one StatsShare records
+	"""
+	deleteStatsShare(
+		"""
+		Id
+		"""
+		id: String!
+	): StatsShareResult!
+	"""
+	Update multiple #plural_name matching the given Where filter
+	Update matching StatsShare records
+	"""
+	updateStatsShares(
+		"""
+		Where
+		"""
+		where: StatsShareWhereInput,
+		"""
+		Input
+		"""
+		input: UpdateStatsShareInput!
+	): UpdateStatsSharesResult!
+	"""
+	Delete multiple #plural_name matching the given Where filter
+	Delete matching StatsShare records
+	"""
+	deleteStatsShares(
+		"""
+		Where
+		"""
+		where: StatsShareWhereInput
+	): DeleteStatsSharesResult!
 	"""
 	Create a new #struct_name_str
 	Create one PersonalList records
@@ -7065,6 +9617,180 @@ type Mutation {
 	): DeleteCastSettingsResult!
 	"""
 	Create a new #struct_name_str
+	Create one MatchingAssistant records
+	"""
+	createMatchingAssistant(
+		"""
+		Input
+		"""
+		input: CreateMatchingAssistantInput!
+	): MatchingAssistantResult!
+	"""
+	Update an existing #struct_name_str
+	Update one MatchingAssistant records
+	"""
+	updateMatchingAssistant(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdateMatchingAssistantInput!
+	): MatchingAssistantResult!
+	"""
+	Delete a #struct_name_str
+	Delete one MatchingAssistant records
+	"""
+	deleteMatchingAssistant(
+		"""
+		Id
+		"""
+		id: String!
+	): MatchingAssistantResult!
+	"""
+	Update multiple #plural_name matching the given Where filter
+	Update matching MatchingAssistant records
+	"""
+	updateMatchingAssistants(
+		"""
+		Where
+		"""
+		where: MatchingAssistantWhereInput,
+		"""
+		Input
+		"""
+		input: UpdateMatchingAssistantInput!
+	): UpdateMatchingAssistantsResult!
+	"""
+	Delete multiple #plural_name matching the given Where filter
+	Delete matching MatchingAssistant records
+	"""
+	deleteMatchingAssistants(
+		"""
+		Where
+		"""
+		where: MatchingAssistantWhereInput
+	): DeleteMatchingAssistantsResult!
+	"""
+	Create a new #struct_name_str
+	Create one IdentificationEvent records
+	"""
+	createIdentificationEvent(
+		"""
+		Input
+		"""
+		input: CreateIdentificationEventInput!
+	): IdentificationEventResult!
+	"""
+	Update an existing #struct_name_str
+	Update one IdentificationEvent records
+	"""
+	updateIdentificationEvent(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdateIdentificationEventInput!
+	): IdentificationEventResult!
+	"""
+	Delete a #struct_name_str
+	Delete one IdentificationEvent records
+	"""
+	deleteIdentificationEvent(
+		"""
+		Id
+		"""
+		id: String!
+	): IdentificationEventResult!
+	"""
+	Update multiple #plural_name matching the given Where filter
+	Update matching IdentificationEvent records
+	"""
+	updateIdentificationEvents(
+		"""
+		Where
+		"""
+		where: IdentificationEventWhereInput,
+		"""
+		Input
+		"""
+		input: UpdateIdentificationEventInput!
+	): UpdateIdentificationEventsResult!
+	"""
+	Delete multiple #plural_name matching the given Where filter
+	Delete matching IdentificationEvent records
+	"""
+	deleteIdentificationEvents(
+		"""
+		Where
+		"""
+		where: IdentificationEventWhereInput
+	): DeleteIdentificationEventsResult!
+	"""
+	Create a new #struct_name_str
+	Create one IdentifiedItem records
+	"""
+	createIdentifiedItem(
+		"""
+		Input
+		"""
+		input: CreateIdentifiedItemInput!
+	): IdentifiedItemResult!
+	"""
+	Update an existing #struct_name_str
+	Update one IdentifiedItem records
+	"""
+	updateIdentifiedItem(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdateIdentifiedItemInput!
+	): IdentifiedItemResult!
+	"""
+	Delete a #struct_name_str
+	Delete one IdentifiedItem records
+	"""
+	deleteIdentifiedItem(
+		"""
+		Id
+		"""
+		id: String!
+	): IdentifiedItemResult!
+	"""
+	Update multiple #plural_name matching the given Where filter
+	Update matching IdentifiedItem records
+	"""
+	updateIdentifiedItems(
+		"""
+		Where
+		"""
+		where: IdentifiedItemWhereInput,
+		"""
+		Input
+		"""
+		input: UpdateIdentifiedItemInput!
+	): UpdateIdentifiedItemsResult!
+	"""
+	Delete multiple #plural_name matching the given Where filter
+	Delete matching IdentifiedItem records
+	"""
+	deleteIdentifiedItems(
+		"""
+		Where
+		"""
+		where: IdentifiedItemWhereInput
+	): DeleteIdentifiedItemsResult!
+	"""
+	Create a new #struct_name_str
 	Create one ScheduleCache records
 	"""
 	createScheduleCache(
@@ -7469,6 +10195,64 @@ type Mutation {
 		"""
 		where: ReleaseBlocklistWhereInput
 	): DeleteReleaseBlocklistsResult!
+	"""
+	Create a new #struct_name_str
+	Create one NetworkServer records
+	"""
+	createNetworkServer(
+		"""
+		Input
+		"""
+		input: CreateNetworkServerInput!
+	): NetworkServerResult!
+	"""
+	Update an existing #struct_name_str
+	Update one NetworkServer records
+	"""
+	updateNetworkServer(
+		"""
+		Id
+		"""
+		id: String!,
+		"""
+		Input
+		"""
+		input: UpdateNetworkServerInput!
+	): NetworkServerResult!
+	"""
+	Delete a #struct_name_str
+	Delete one NetworkServer records
+	"""
+	deleteNetworkServer(
+		"""
+		Id
+		"""
+		id: String!
+	): NetworkServerResult!
+	"""
+	Update multiple #plural_name matching the given Where filter
+	Update matching NetworkServer records
+	"""
+	updateNetworkServers(
+		"""
+		Where
+		"""
+		where: NetworkServerWhereInput,
+		"""
+		Input
+		"""
+		input: UpdateNetworkServerInput!
+	): UpdateNetworkServersResult!
+	"""
+	Delete multiple #plural_name matching the given Where filter
+	Delete matching NetworkServer records
+	"""
+	deleteNetworkServers(
+		"""
+		Where
+		"""
+		where: NetworkServerWhereInput
+	): DeleteNetworkServersResult!
 }
 
 """
@@ -7604,6 +10388,156 @@ type NetworkPathConfigPayload {
 	connected: Boolean!
 	stored: Boolean!
 	message: String
+}
+
+"""
+A file server Librarian signs in to by itself (SMB, no operating-system mount), saved once
+with its sign-in so libraries and download folders on its shares never ask for it again
+(`docs/design.md` Q102). A location on it stays a plain `smb://host[:port]/share/...` string;
+the server is found from the host and port.
+
+The password is written through the generated mutations and encrypted by the write
+transform (the same envelope as `Source.credentials`); it is never readable through GraphQL.
+`hasPassword` says whether one is stored. The lifecycle hooks normalise the host, refuse a
+second server for the same host and port, and refuse removing a server, or moving it to
+another host, while a library or the download folder still uses it.
+"""
+type NetworkServer {
+	id: String!
+	"""
+	What the server is called in Librarian ("TrueNAS").
+	"""
+	name: String!
+	"""
+	A name or an IP address, lower case.
+	"""
+	host: String!
+	"""
+	`None` is the standard SMB port, 445.
+	"""
+	port: Int
+	"""
+	Empty for a guest sign-in.
+	"""
+	username: String
+	"""
+	Whether a password is stored. Set by the write transform from `password`.
+	"""
+	hasPassword: Boolean!
+	"""
+	Share names known on this server: those it listed, and any typed in by hand where it would
+	not list them. Offered when choosing a location, so a share is never typed twice.
+	"""
+	knownShares: [String!]!
+	"""
+	`ok` or `failing`, from the last test or use.
+	"""
+	status: String
+	lastError: String
+	lastCheckedAt: String
+	createdAt: String!
+	updatedAt: String!
+	"""
+	The server's address as locations on it begin: `smb://host` or `smb://host:port`.
+	"""
+	address: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type NetworkServerChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	networkServer: NetworkServer
+}
+
+"""
+Connection containing edges and page info
+"""
+type NetworkServerConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [NetworkServerEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type NetworkServerEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: NetworkServer!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input NetworkServerOrderByInput {
+	name: OrderDirection
+	host: OrderDirection
+	lastCheckedAt: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+"""
+Result type for #struct_name mutations
+"""
+type NetworkServerResult {
+	success: Boolean!
+	error: String
+	networkServer: NetworkServer
+}
+
+type NetworkServerSharesResult {
+	success: Boolean!
+	error: String
+	shares: [NetworkShare!]!
+}
+
+input NetworkServerWhereInput {
+	id: StringFilter
+	name: StringFilter
+	host: StringFilter
+	port: IntFilter
+	hasPassword: BoolFilter
+	status: StringFilter
+	lastCheckedAt: DateFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [NetworkServerWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [NetworkServerWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: NetworkServerWhereInput
+}
+
+type NetworkShare {
+	name: String!
+	comment: String
+	"""
+	Listed by the server just now (otherwise only remembered).
+	"""
+	listed: Boolean!
 }
 
 type Notification {
@@ -7817,6 +10751,126 @@ type ParsedRelease {
 	year: Int
 }
 
+input PasswordConfirmationInput {
+	password: String!
+}
+
+"""
+A reset link for an administrator to pass on.
+"""
+type PasswordResetLinkResult {
+	success: Boolean!
+	error: String
+	"""
+	The page to open, relative to the web app: `/reset-password?token=…`.
+	"""
+	path: String
+	expiresAt: String
+}
+
+"""
+Password Reset Token
+"""
+type PasswordResetToken {
+	"""
+	The signed token's id (`jti`).
+	"""
+	id: String!
+	"""
+	User Id
+	"""
+	userId: String!
+	"""
+	The administrator who made the link.
+	"""
+	createdByUserId: String
+	"""
+	Expires At
+	"""
+	expiresAt: String!
+	"""
+	When the link was used; it never works again.
+	"""
+	consumedAt: String
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type PasswordResetTokenChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	passwordResetToken: PasswordResetToken
+}
+
+"""
+Connection containing edges and page info
+"""
+type PasswordResetTokenConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [PasswordResetTokenEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type PasswordResetTokenEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: PasswordResetToken!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input PasswordResetTokenOrderByInput {
+	expiresAt: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+input PasswordResetTokenWhereInput {
+	id: StringFilter
+	userId: StringFilter
+	createdByUserId: StringFilter
+	expiresAt: DateFilter
+	consumedAt: DateFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [PasswordResetTokenWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [PasswordResetTokenWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: PasswordResetTokenWhereInput
+}
+
 type PendingFileMatch {
 	id: String!
 	userId: String!
@@ -7962,15 +11016,56 @@ input PendingFileMatchWhereInput {
 
 type Person {
 	id: String!
+	"""
+	The person's TMDB id. A person known only from another source (a MusicBrainz artist, a
+	book's author or narrator) has no TMDB id; the column predates that and cannot become
+	nullable additively, so such a person holds a negative stand-in derived from their own key
+	(`services::metadata::credits::stand_in_tmdb_id`). Zero and below mean "none".
+	"""
 	tmdbPersonId: Int!
 	name: String!
 	profileUrl: String
+	imdbId: String
+	musicbrainzArtistId: String
+	wikidataId: String
+	"""
+	The name lower-cased with punctuation and spacing folded, for people known by name only.
+	"""
+	nameKey: String
+	biography: String
+	"""
+	`YYYY-MM-DD`.
+	"""
+	birthday: String
+	"""
+	`YYYY-MM-DD`.
+	"""
+	deathday: String
+	placeOfBirth: String
+	"""
+	"Acting", "Directing", "Writing", "Sound"…
+	"""
+	knownForDepartment: String
+	alsoKnownAs: [String!]
+	"""
+	Every profile picture the provider lists, best first (remote URLs; the first is
+	`profileUrl`, which the artwork cache serves).
+	"""
+	imageUrls: [String!]
+	"""
+	When the person's own record (biography, dates, ids, pictures) was last read.
+	"""
+	detailsFetchedAt: String
 	createdAt: String!
 	updatedAt: String!
 	"""
 	Movie credits for this person. Deleting the person deletes its credits.
 	"""
 	castCredits(where: MovieCastCreditWhereInput, orderBy: MovieCastCreditOrderByInput, page: PageInput): MovieCastCreditConnection!
+	"""
+	Every credit of this person, on any title (`Credit`).
+	"""
+	credits(where: CreditWhereInput, orderBy: CreditOrderByInput, page: PageInput): CreditConnection!
 }
 
 """
@@ -8000,6 +11095,12 @@ type PersonConnection {
 	pageInfo: PageInfo!
 }
 
+type PersonDetailsResult {
+	success: Boolean!
+	person: Person
+	error: String
+}
+
 """
 Edge containing a node and cursor
 """
@@ -8016,6 +11117,7 @@ type PersonEdge {
 
 input PersonOrderByInput {
 	name: OrderDirection
+	detailsFetchedAt: OrderDirection
 	createdAt: OrderDirection
 	updatedAt: OrderDirection
 }
@@ -8033,6 +11135,12 @@ input PersonWhereInput {
 	id: StringFilter
 	tmdbPersonId: IntFilter
 	name: StringFilter
+	imdbId: StringFilter
+	musicbrainzArtistId: StringFilter
+	wikidataId: StringFilter
+	nameKey: StringFilter
+	knownForDepartment: StringFilter
+	detailsFetchedAt: DateFilter
 	createdAt: DateFilter
 	updatedAt: DateFilter
 	"""
@@ -8068,6 +11176,11 @@ type PersonalList {
 	userId: String!
 	name: String!
 	description: String
+	"""
+	An uploaded cover (`upload:<hash>`), in place of the mosaic of its entries' artwork.
+	Clients show `/api/artwork/playlist/{id}/cover`; only the upload route sets it.
+	"""
+	coverUrl: String
 	kind: PersonalListKind!
 	savedViewId: String
 	createdAt: String!
@@ -8170,6 +11283,406 @@ enum PersonalSort {
 	TITLE
 	CREATED_AT
 	UPDATED_AT
+}
+
+"""
+The picture's rectangle inside a frame with black bars, in the source's pixels.
+"""
+type PictureCrop {
+	left: Int!
+	top: Int!
+	width: Int!
+	height: Int!
+	"""
+	The frame the rectangle was measured in (the stream's coded size).
+	"""
+	frameWidth: Int!
+	frameHeight: Int!
+}
+
+"""
+Play History
+"""
+type PlayHistory {
+	"""
+	Id
+	"""
+	id: String!
+	"""
+	User Id
+	"""
+	userId: String!
+	"""
+	Device Id
+	"""
+	deviceId: String
+	"""
+	The device's name when the play happened.
+	"""
+	deviceName: String
+	"""
+	Playback Session Id
+	"""
+	playbackSessionId: String
+	"""
+	`movie`, `episode`, `track` or `audiobook`.
+	"""
+	contentType: String!
+	"""
+	Media File Id
+	"""
+	mediaFileId: String
+	"""
+	Movie Id
+	"""
+	movieId: String
+	"""
+	Episode Id
+	"""
+	episodeId: String
+	"""
+	Show Id
+	"""
+	showId: String
+	"""
+	Track Id
+	"""
+	trackId: String
+	"""
+	Album Id
+	"""
+	albumId: String
+	"""
+	Artist Id
+	"""
+	artistId: String
+	"""
+	Audiobook Id
+	"""
+	audiobookId: String
+	"""
+	Chapter Id
+	"""
+	chapterId: String
+	"""
+	What was played, as it was named then ("Pilot", "Paranoid Android").
+	"""
+	title: String!
+	"""
+	The show, artist or author it belongs to, as named then.
+	"""
+	parentTitle: String
+	"""
+	"S1 · E3", the album name or the chapter: one line under the title.
+	"""
+	subtitle: String
+	"""
+	Started At
+	"""
+	startedAt: String!
+	"""
+	The last moment anything was played in it.
+	"""
+	endedAt: String!
+	"""
+	Seconds of real playing: wall time while playing, never the distance of a seek.
+	"""
+	secondsPlayed: Float!
+	"""
+	Start Position
+	"""
+	startPosition: Float!
+	"""
+	End Position
+	"""
+	endPosition: Float!
+	"""
+	Duration
+	"""
+	duration: Float
+	"""
+	Completed
+	"""
+	completed: Boolean!
+	"""
+	`direct`, `hls`, `transcode` or `cast`; null when not known (imported).
+	"""
+	playMethod: String
+	"""
+	Seeded from watch progress: the play happened, its length is unknown.
+	"""
+	imported: Boolean!
+	"""
+	For an imported play, the checkpoint it came from, so an import runs once per item.
+	"""
+	sourceProgressId: String
+	"""
+	Where the play happened: null for this server. A play of a library shared from another server, once sharing exists, names that server here (design.md Q150).
+	"""
+	origin: String
+	"""
+	The origin's name when the play was recorded, so history outlives the link.
+	"""
+	originName: String
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type PlayHistoryChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	playHistory: PlayHistory
+}
+
+"""
+Connection containing edges and page info
+"""
+type PlayHistoryConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [PlayHistoryEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type PlayHistoryEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: PlayHistory!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input PlayHistoryOrderByInput {
+	title: OrderDirection
+	startedAt: OrderDirection
+	endedAt: OrderDirection
+	secondsPlayed: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+"""
+Result type for #struct_name mutations
+"""
+type PlayHistoryResult {
+	success: Boolean!
+	error: String
+	playHistory: PlayHistory
+}
+
+input PlayHistoryWhereInput {
+	id: StringFilter
+	userId: StringFilter
+	deviceId: StringFilter
+	playbackSessionId: StringFilter
+	contentType: StringFilter
+	mediaFileId: StringFilter
+	movieId: StringFilter
+	episodeId: StringFilter
+	showId: StringFilter
+	trackId: StringFilter
+	albumId: StringFilter
+	artistId: StringFilter
+	audiobookId: StringFilter
+	chapterId: StringFilter
+	title: StringFilter
+	startedAt: DateFilter
+	endedAt: DateFilter
+	secondsPlayed: IntFilter
+	completed: BoolFilter
+	playMethod: StringFilter
+	imported: BoolFilter
+	sourceProgressId: StringFilter
+	origin: StringFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [PlayHistoryWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [PlayHistoryWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: PlayHistoryWhereInput
+}
+
+type PlayStatistics {
+	"""
+	Whose statistics; null for an administrator's everyone view.
+	"""
+	userId: String
+	userName: String
+	from: String!
+	to: String!
+	totals: PlayStatisticsTotals!
+	streak: PlayStatisticsStreak!
+	"""
+	One per local day of the period (periods over 400 days have weeks only).
+	"""
+	days: [PlayStatisticsBucket!]!
+	weeks: [PlayStatisticsBucket!]!
+	"""
+	Seconds by local hour, 0–23.
+	"""
+	hours: [Float!]!
+	topShows: [PlayStatisticsTopItem!]!
+	topMovies: [PlayStatisticsTopItem!]!
+	topArtists: [PlayStatisticsTopItem!]!
+	topAlbums: [PlayStatisticsTopItem!]!
+	topAudiobooks: [PlayStatisticsTopItem!]!
+	topAuthors: [PlayStatisticsTopItem!]!
+	topGenres: [PlayStatisticsTopItem!]!
+	devices: [PlayStatisticsDevice!]!
+	"""
+	Per person; only in an administrator's everyone view.
+	"""
+	users: [PlayStatisticsUser!]!
+	"""
+	Per origin: this server, and later the servers shared libraries are on. One entry
+	(this server) until sharing exists, so clients show an origin choice only past one.
+	"""
+	origins: [PlayStatisticsOrigin!]!
+	recent: [PlayStatisticsPlay!]!
+	"""
+	False when the period held more plays than one answer reads.
+	"""
+	complete: Boolean!
+}
+
+type PlayStatisticsBucket {
+	"""
+	The day, or the Monday that starts the week (YYYY-MM-DD).
+	"""
+	date: String!
+	secondsWatched: Float!
+	secondsListened: Float!
+	plays: Int!
+}
+
+type PlayStatisticsDevice {
+	deviceId: String
+	name: String!
+	seconds: Float!
+	plays: Int!
+	lastPlayedAt: String!
+}
+
+"""
+Where plays happened: this server (`origin` null) or, once libraries can be shared between
+servers, the server a shared library is on (design.md Q150).
+"""
+type PlayStatisticsOrigin {
+	origin: String
+	name: String!
+	seconds: Float!
+	plays: Int!
+}
+
+"""
+One play as statistics show it: no device address, user agent or session.
+"""
+type PlayStatisticsPlay {
+	id: String!
+	contentType: String!
+	title: String!
+	parentTitle: String
+	subtitle: String
+	movieId: String
+	episodeId: String
+	showId: String
+	trackId: String
+	albumId: String
+	artistId: String
+	audiobookId: String
+	startedAt: String!
+	endedAt: String!
+	secondsPlayed: Float!
+	completed: Boolean!
+	imported: Boolean!
+	deviceName: String
+	playMethod: String
+}
+
+type PlayStatisticsStreak {
+	"""
+	Days in a row up to today (or yesterday, when nothing was played yet today).
+	"""
+	current: Int!
+	longest: Int!
+	"""
+	The last day of the longest run.
+	"""
+	longestEndedOn: String
+}
+
+type PlayStatisticsTopItem {
+	"""
+	Stable key: the entity id, or the name when there is none (authors, genres).
+	"""
+	key: String!
+	"""
+	`show`, `movie`, `artist`, `album`, `audiobook`, `author` or `genre`.
+	"""
+	kind: String!
+	"""
+	The entity, when the play named one; it may since have been removed.
+	"""
+	entityId: String
+	title: String!
+	subtitle: String
+	seconds: Float!
+	plays: Int!
+}
+
+type PlayStatisticsTotals {
+	secondsWatched: Float!
+	secondsListened: Float!
+	plays: Int!
+	completedPlays: Int!
+	importedPlays: Int!
+	"""
+	Different things played (an episode, a track, a film, a book).
+	"""
+	items: Int!
+	activeDays: Int!
+}
+
+type PlayStatisticsUser {
+	userId: String!
+	name: String!
+	seconds: Float!
+	plays: Int!
+	secondsWatched: Float!
+	secondsListened: Float!
+	completedPlays: Int!
+	lastPlayedAt: String!
 }
 
 type PlaybackProgress {
@@ -8288,6 +11801,35 @@ type PlaybackSession {
 	startedAt: String!
 	lastUpdatedAt: String!
 	completedAt: String
+	"""
+	The chapter being listened to, for an audiobook session.
+	"""
+	chapterId: String
+	deviceId: String
+	"""
+	`playing`, `paused`, `buffering` or `stopped`.
+	"""
+	state: String
+	"""
+	`direct`, `hls`, `transcode` or `cast`.
+	"""
+	playMethod: String
+	"""
+	The quality being played, as shown to people ("1080p", "Original", "320 kbps").
+	"""
+	quality: String
+	"""
+	Bits per second of what is being sent, when known.
+	"""
+	bitrate: Int
+	"""
+	Set when the player closed; an open session without it goes stale after a few minutes.
+	"""
+	endedAt: String
+	"""
+	Someone asked this player to stop (its owner from another device, or an administrator).
+	"""
+	stopRequestedAt: String
 	createdAt: String!
 	updatedAt: String!
 	"""
@@ -8314,6 +11856,10 @@ type PlaybackSession {
 	Show
 	"""
 	show: Show
+	"""
+	Device
+	"""
+	device: Device
 	"""
 	Album
 	"""
@@ -8396,6 +11942,12 @@ input PlaybackSessionWhereInput {
 	startedAt: DateFilter
 	lastUpdatedAt: DateFilter
 	completedAt: DateFilter
+	chapterId: StringFilter
+	deviceId: StringFilter
+	state: StringFilter
+	playMethod: StringFilter
+	endedAt: DateFilter
+	stopRequestedAt: DateFilter
 	createdAt: DateFilter
 	updatedAt: DateFilter
 	"""
@@ -8410,6 +11962,19 @@ input PlaybackSessionWhereInput {
 	Logical NOT of condition
 	"""
 	not: PlaybackSessionWhereInput
+}
+
+type PollRssFeedPayload {
+	success: Boolean!
+	error: String
+	"""
+	Items not seen before, now in the catalogue.
+	"""
+	newItems: Int!
+	"""
+	Releases grabbed for wanted titles (only when automatic downloading is on).
+	"""
+	grabbed: Int!
 }
 
 """
@@ -8703,6 +12268,23 @@ type Query {
 	"""
 	torrentFileCandidates(infoHash: String!, fileIndex: Int!, libraryId: String!): [TorrentFileCandidate!]!
 	"""
+	What a result of identifying a download could be: a person's own search, or the first one.
+	"""
+	identificationCandidates(itemId: String!, query: String): [IdentificationCandidate!]!
+	"""
+	Other listings of a book, compared with its files.
+	"""
+	audiobookEditions(audiobookId: String!, query: String): [IdentificationCandidate!]!
+	"""
+	Whether this server can listen to recordings.
+	"""
+	listeningStatus: ListeningStatus!
+	"""
+	What matching makes of a download's files, from names and sizes until they have downloaded
+	and from their tags and lengths after. Changes nothing.
+	"""
+	torrentMatchPreview(infoHash: String!): TorrentMatchPreview!
+	"""
 	Get all torrents with live state from the torrent client
 	"""
 	liveTorrents: [LiveTorrent!]!
@@ -8754,12 +12336,42 @@ type Query {
 	Small public poster selection from the TV guide for the sign-in scene.
 	"""
 	showcaseArtwork(limit: Int! = 12): [ShowcaseArtwork!]!
+	"""
+	Every picture a title has and what each shows, without asking any provider. Readable by
+	the title's owner and administrators.
+	"""
+	artworkSlots(entityType: ArtworkEntityKind!, entityId: String!): [ArtworkSlotState!]!
+	"""
+	The pictures a title's providers list for one of its pictures, asked for when the picker
+	opens and kept for a few minutes. For whoever may change it.
+	"""
+	artworkOptions(entityType: ArtworkEntityKind!, entityId: String!, kind: ArtworkKind!): ArtworkOptions!
 	filesystemRuntimeInfo: FilesystemRuntimeInfo!
 	libraryPathAvailability(input: LibraryPathAvailabilityInput!): [LibraryPathAvailability!]!
+	"""
+	Whether a sign-in is saved for a share (`smb://host[:port]/share`), and its user name. The
+	password is never returned.
+	"""
+	shareSignIn(share: String!): ShareSignIn!
+	"""
+	Compare a library's files with a folder they were copied to, before moving the library
+	there. Read only.
+	"""
+	libraryMovePlan(libraryId: String!, newPath: String!): LibraryMovePlan!
 	"""
 	Browse a directory on the server. Requires authentication.
 	"""
 	browseDirectory(input: BrowseDirectoryInput): BrowseDirectoryResult!
+	"""
+	The shares a saved server offers: what it lists now, with the shares remembered on it.
+	When it cannot be reached the remembered shares are returned with the reason.
+	"""
+	networkServerShares(id: String!): NetworkServerSharesResult!
+	"""
+	Compare the torrents in the download folder with a folder they were copied to, before
+	moving the download folder there. Read only.
+	"""
+	downloadsMovePlan(newPath: String!): DownloadsMovePlan!
 	"""
 	Get available source definitions (e.g., IPTorrents, Newznab, etc.)
 	"""
@@ -8793,6 +12405,37 @@ type Query {
 	owner and administrators; anyone else gets "Library not found".
 	"""
 	libraryGenreShelves(libraryId: String!, maxGenres: Int! = 6, perGenre: Int! = 20): [GenreShelf!]!
+	"""
+	Every genre among the titles you can see, most titles first, for picking interests.
+	"""
+	genreChoices: [GenreChoice!]!
+	"""
+	One shelf per genre you picked as an interest, in your order, each with the newest
+	movies and shows of it you can see. Genres with nothing to show are left out
+	(design.md Q149).
+	"""
+	genreInterestShelves(perGenre: Int! = 20): [GenreShelf!]!
+	"""
+	Totals, days, weeks, top titles, genres, streaks and devices for one person (yours by
+	default, or someone's who shares them with you), or for everyone (administrators,
+	`allUsers`). `from`/`to` default to the last 30 days; `utcOffsetMinutes` places local
+	days (east of UTC is positive, so UTC+10 is 600).
+	"""
+	playStatistics(userId: String, allUsers: Boolean! = false, from: String, to: String, utcOffsetMinutes: Int! = 0, top: Int! = 10, origin: String): PlayStatistics!
+	"""
+	Whose statistics you can open: yourself, people sharing with you, and (administrators)
+	everyone.
+	"""
+	statisticsPeople: [StatisticsPerson!]!
+	"""
+	The other people on this server, to share your statistics with.
+	"""
+	statisticsShareCandidates: [StatisticsPerson!]!
+	serverUpdateStatus: ServerUpdateStatus!
+	"""
+	The newest Android TV app release the last check found, for the TV shell to offer.
+	"""
+	tvAppRelease: TvAppRelease
 	"""
 	Get a list of #plural_name with optional filtering, sorting, and pagination
 	List Library records
@@ -8961,6 +12604,62 @@ type Query {
 		"""
 		id: String!
 	): MovieCastCredit
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List Credit records
+	"""
+	credits(
+		"""
+		Where
+		"""
+		where: CreditWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [CreditOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): CreditConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one Credit records
+	"""
+	credit(
+		"""
+		Id
+		"""
+		id: String!
+	): Credit
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List TitleDetail records
+	"""
+	titleDetails(
+		"""
+		Where
+		"""
+		where: TitleDetailWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [TitleDetailOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): TitleDetailConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one TitleDetail records
+	"""
+	titleDetail(
+		"""
+		Id
+		"""
+		id: String!
+	): TitleDetail
 	"""
 	Get a list of #plural_name with optional filtering, sorting, and pagination
 	List Collection records
@@ -9467,6 +13166,34 @@ type Query {
 	): InviteToken
 	"""
 	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List PasswordResetToken records
+	"""
+	passwordResetTokens(
+		"""
+		Where
+		"""
+		where: PasswordResetTokenWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [PasswordResetTokenOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): PasswordResetTokenConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one PasswordResetToken records
+	"""
+	passwordResetToken(
+		"""
+		Id
+		"""
+		id: String!
+	): PasswordResetToken
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
 	List RefreshToken records
 	"""
 	refreshTokens(
@@ -9652,6 +13379,34 @@ type Query {
 	): Subtitle
 	"""
 	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List Lyric records
+	"""
+	lyrics(
+		"""
+		Where
+		"""
+		where: LyricWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [LyricOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): LyricConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one Lyric records
+	"""
+	lyric(
+		"""
+		Id
+		"""
+		id: String!
+	): Lyric
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
 	List MediaChapter records
 	"""
 	mediaChapters(
@@ -9734,6 +13489,90 @@ type Query {
 		"""
 		id: String!
 	): PlaybackProgress
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List Device records
+	"""
+	devices(
+		"""
+		Where
+		"""
+		where: DeviceWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [DeviceOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): DeviceConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one Device records
+	"""
+	device(
+		"""
+		Id
+		"""
+		id: String!
+	): Device
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List PlayHistory records
+	"""
+	playHistories(
+		"""
+		Where
+		"""
+		where: PlayHistoryWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [PlayHistoryOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): PlayHistoryConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one PlayHistory records
+	"""
+	playHistory(
+		"""
+		Id
+		"""
+		id: String!
+	): PlayHistory
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List StatsShare records
+	"""
+	statsShares(
+		"""
+		Where
+		"""
+		where: StatsShareWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [StatsShareOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): StatsShareConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one StatsShare records
+	"""
+	statsShare(
+		"""
+		Id
+		"""
+		id: String!
+	): StatsShare
 	"""
 	Get a list of #plural_name with optional filtering, sorting, and pagination
 	List PersonalList records
@@ -9986,6 +13825,90 @@ type Query {
 		"""
 		id: String!
 	): UsenetServer
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List MatchingAssistant records
+	"""
+	matchingAssistants(
+		"""
+		Where
+		"""
+		where: MatchingAssistantWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [MatchingAssistantOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): MatchingAssistantConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one MatchingAssistant records
+	"""
+	matchingAssistant(
+		"""
+		Id
+		"""
+		id: String!
+	): MatchingAssistant
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List IdentificationEvent records
+	"""
+	identificationEvents(
+		"""
+		Where
+		"""
+		where: IdentificationEventWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [IdentificationEventOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): IdentificationEventConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one IdentificationEvent records
+	"""
+	identificationEvent(
+		"""
+		Id
+		"""
+		id: String!
+	): IdentificationEvent
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List IdentifiedItem records
+	"""
+	identifiedItems(
+		"""
+		Where
+		"""
+		where: IdentifiedItemWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [IdentifiedItemOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): IdentifiedItemConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one IdentifiedItem records
+	"""
+	identifiedItem(
+		"""
+		Id
+		"""
+		id: String!
+	): IdentifiedItem
 	"""
 	Get a list of #plural_name with optional filtering, sorting, and pagination
 	List UsenetDownload records
@@ -10266,6 +14189,127 @@ type Query {
 		"""
 		id: String!
 	): ReleaseBlocklist
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List ReleaseRecommendation records
+	"""
+	releaseRecommendations(
+		"""
+		Where
+		"""
+		where: ReleaseRecommendationWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [ReleaseRecommendationOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): ReleaseRecommendationConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one ReleaseRecommendation records
+	"""
+	releaseRecommendation(
+		"""
+		Id
+		"""
+		id: String!
+	): ReleaseRecommendation
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List NetworkServer records
+	"""
+	networkServers(
+		"""
+		Where
+		"""
+		where: NetworkServerWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [NetworkServerOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): NetworkServerConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one NetworkServer records
+	"""
+	networkServer(
+		"""
+		Id
+		"""
+		id: String!
+	): NetworkServer
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List TorrentContents records
+	"""
+	torrentContentsList(
+		"""
+		Where
+		"""
+		where: TorrentContentsWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [TorrentContentsOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): TorrentContentsConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one TorrentContents records
+	"""
+	torrentContents(
+		"""
+		Id
+		"""
+		id: String!
+	): TorrentContents
+	"""
+	Get a list of #plural_name with optional filtering, sorting, and pagination
+	List StorageVolume records
+	"""
+	storageVolumes(
+		"""
+		Where
+		"""
+		where: StorageVolumeWhereInput,
+		"""
+		Order by
+		"""
+		orderBy: [StorageVolumeOrderByInput!],
+		"""
+		Page
+		"""
+		page: PageInput
+	): StorageVolumeConnection!
+	"""
+	Get a single #struct_name_str by ID
+	Read one StorageVolume records
+	"""
+	storageVolume(
+		"""
+		Id
+		"""
+		id: String!
+	): StorageVolume
+}
+
+"""
+Recovery codes, shown this once.
+"""
+type RecoveryCodesResult {
+	success: Boolean!
+	error: String
+	recoveryCodes: [String!]!
 }
 
 """
@@ -10548,12 +14592,281 @@ input ReleaseBlocklistWhereInput {
 }
 
 """
+Release Recommendation
+"""
+type ReleaseRecommendation {
+	"""
+	Id
+	"""
+	id: String!
+	"""
+	The library's owner: recommendations belong to them.
+	"""
+	userId: String!
+	"""
+	Library Id
+	"""
+	libraryId: String!
+	"""
+	`episode`, `season_pack`, `series_pack`, `movie`, `album`, `track`, `discography`, `book`, or `plan` (a show's or an artist's coverage plan).
+	"""
+	scope: String!
+	"""
+	`ready`, `searching` or `none`.
+	"""
+	status: String!
+	"""
+	What the lookup is for, as a person would say it: `Fallout S01`, `Heat (1995)`.
+	"""
+	targetLabel: String!
+	"""
+	Show Id
+	"""
+	showId: String
+	"""
+	The season a season-pack or episode recommendation is for.
+	"""
+	season: Int
+	"""
+	Episode Id
+	"""
+	episodeId: String
+	"""
+	Movie Id
+	"""
+	movieId: String
+	"""
+	Album Id
+	"""
+	albumId: String
+	"""
+	An artist's coverage plan (Q110): set on the plan's row and on each release in it.
+	"""
+	artistId: String
+	"""
+	Track Id
+	"""
+	trackId: String
+	"""
+	Audiobook Id
+	"""
+	audiobookId: String
+	"""
+	The release's title. Empty unless `status` is `ready`.
+	"""
+	title: String
+	"""
+	`indexer` or `feed`.
+	"""
+	sourceKind: String
+	"""
+	Source Id
+	"""
+	sourceId: String
+	"""
+	Source Name
+	"""
+	sourceName: String
+	"""
+	For a release from a feed: its catalogue item.
+	"""
+	feedItemId: String
+	"""
+	Info Hash
+	"""
+	infoHash: String
+	"""
+	Guid
+	"""
+	guid: String
+	"""
+	Size
+	"""
+	size: Int
+	"""
+	Seeders
+	"""
+	seeders: Int
+	"""
+	The parsed quality, such as `1080p WEB-DL h264`.
+	"""
+	quality: String
+	"""
+	How many of the missing items this release would fill.
+	"""
+	coversCount: Int
+	"""
+	How many are missing in the scope that was looked at.
+	"""
+	missingCount: Int
+	"""
+	Ids of the episodes or tracks it covers, as a JSON array. Used to download only those files from a pack.
+	"""
+	coversIds: String
+	"""
+	Why it won, short: `Best allowed quality`, `Smallest at that quality`, `From a feed`.
+	"""
+	reasons: [String!]!
+	"""
+	For `none`: why nothing was usable.
+	"""
+	note: String
+	"""
+	For a release that is part of a coverage plan (Q101): the id of the plan's own row, whose scope is `plan`. A plan's row says how many of the missing items its releases cover and what stays uncovered (`note`); each release's row says what it adds.
+	"""
+	planId: String
+	"""
+	Where a release comes in its plan, from 0.
+	"""
+	planPosition: Int
+	"""
+	The seasons of the missing episodes this release covers, as a JSON array (shows only).
+	"""
+	coversSeasons: String
+	"""
+	The torrent's file indexes to download for exactly what it covers, as a JSON array, when its files were looked into before it was recommended (Q100). Used with "only the missing files".
+	"""
+	fileIndices: String
+	"""
+	The albums the missing tracks this release covers are on, as a JSON array of ids (music plans), so an album's Find a release can show its part of the artist's plan.
+	"""
+	coversAlbums: String
+	"""
+	Bytes downloaded for exactly the files it is taken for, when its files were read and only some are wanted ("only the missing files").
+	"""
+	selectedSize: Int
+	"""
+	What the grab downloads, when it is not the whole release: "Downloads 1 track (8 MB) from a 600 MB album".
+	"""
+	downloadNote: String
+	"""
+	The version of the rules that chose this answer (`jobs::recommend::RULES_VERSION`). An answer from older rules is not trusted: it is removed and looked up again (Q98).
+	"""
+	rulesVersion: Int
+	"""
+	Found At
+	"""
+	foundAt: String!
+	"""
+	Expires At
+	"""
+	expiresAt: String!
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type ReleaseRecommendationChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	releaseRecommendation: ReleaseRecommendation
+}
+
+"""
+Connection containing edges and page info
+"""
+type ReleaseRecommendationConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [ReleaseRecommendationEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type ReleaseRecommendationEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: ReleaseRecommendation!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input ReleaseRecommendationOrderByInput {
+	title: OrderDirection
+	planPosition: OrderDirection
+	foundAt: OrderDirection
+	expiresAt: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+input ReleaseRecommendationWhereInput {
+	id: StringFilter
+	userId: StringFilter
+	libraryId: StringFilter
+	scope: StringFilter
+	status: StringFilter
+	targetLabel: StringFilter
+	showId: StringFilter
+	season: IntFilter
+	episodeId: StringFilter
+	movieId: StringFilter
+	albumId: StringFilter
+	artistId: StringFilter
+	trackId: StringFilter
+	audiobookId: StringFilter
+	title: StringFilter
+	sourceKind: StringFilter
+	sourceId: StringFilter
+	feedItemId: StringFilter
+	infoHash: StringFilter
+	guid: StringFilter
+	size: IntFilter
+	seeders: IntFilter
+	coversCount: IntFilter
+	missingCount: IntFilter
+	planId: StringFilter
+	foundAt: DateFilter
+	expiresAt: DateFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [ReleaseRecommendationWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [ReleaseRecommendationWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: ReleaseRecommendationWhereInput
+}
+
+"""
 Result of re-matching files for a source
 """
 type RematchSourceResult {
 	success: Boolean!
 	matchCount: Int!
 	error: String
+}
+
+input ResetPasswordWithLinkInput {
+	token: String!
+	newPassword: String!
 }
 
 type ResumeShelf {
@@ -10576,7 +14889,11 @@ type RssFeed {
 	userId: String!
 	libraryId: String
 	name: String!
-	url: String!
+	"""
+	What to show of the address: host, path and parameter names with every value hidden. Set
+	by the write transform whenever the address is written.
+	"""
+	urlDisplay: String
 	enabled: Boolean!
 	pollIntervalMinutes: Int!
 	postDownloadAction: String
@@ -10584,6 +14901,14 @@ type RssFeed {
 	lastSuccessfulAt: String
 	lastError: String
 	consecutiveFailures: Int
+	"""
+	`ok`, `failing` or `auth_expired`, from the last poll or health check.
+	"""
+	healthStatus: String
+	"""
+	Why it is failing: `auth`, `unreachable`, `rate_limited` or `other`.
+	"""
+	healthKind: String
 	createdAt: String!
 	updatedAt: String!
 	"""
@@ -10644,7 +14969,48 @@ type RssFeedItem {
 	linkHash: String!
 	titleHash: String!
 	title: String!
-	link: String!
+	infoHash: String
+	"""
+	Bytes, from the feed's size or the description (`12.1 GB; Movie/HD/Bluray`).
+	"""
+	size: Int
+	seeders: Int
+	"""
+	The tracker's category label, from the description.
+	"""
+	category: String
+	"""
+	`episode`, `season_pack`, `series_pack`, `movie`, `album`, `book` or `unknown`.
+	"""
+	parsedScope: String
+	parsedYear: Int
+	parsedSeasonEnd: Int
+	parsedGroup: String
+	parsedArtist: String
+	parsedAlbum: String
+	parsedFormat: String
+	parsedBitrate: String
+	"""
+	What it was taken to be: `movie`, `show`, `season`, `episode`, `album` or `audiobook`;
+	empty when nothing in the library matched (see `matchReason`).
+	"""
+	matchKind: String
+	matchShowId: String
+	matchMovieId: String
+	matchAlbumId: String
+	matchAudiobookId: String
+	matchSeason: Int
+	matchEpisode: Int
+	matchLabel: String
+	"""
+	Percent.
+	"""
+	matchConfidence: Int
+	"""
+	Why it matched, or why it did not.
+	"""
+	matchReason: String
+	matchedAt: String
 	pubDate: String
 	description: String
 	parsedShowName: String
@@ -10712,6 +15078,8 @@ type RssFeedItemEdge {
 
 input RssFeedItemOrderByInput {
 	title: OrderDirection
+	size: OrderDirection
+	matchConfidence: OrderDirection
 	pubDate: OrderDirection
 	seenAt: OrderDirection
 }
@@ -10723,6 +15091,27 @@ input RssFeedItemWhereInput {
 	linkHash: StringFilter
 	titleHash: StringFilter
 	title: StringFilter
+	infoHash: StringFilter
+	size: IntFilter
+	seeders: IntFilter
+	category: StringFilter
+	parsedScope: StringFilter
+	parsedYear: IntFilter
+	parsedSeasonEnd: IntFilter
+	parsedGroup: StringFilter
+	parsedArtist: StringFilter
+	parsedAlbum: StringFilter
+	parsedFormat: StringFilter
+	matchKind: StringFilter
+	matchShowId: StringFilter
+	matchMovieId: StringFilter
+	matchAlbumId: StringFilter
+	matchAudiobookId: StringFilter
+	matchSeason: IntFilter
+	matchEpisode: IntFilter
+	matchLabel: StringFilter
+	matchConfidence: IntFilter
+	matchedAt: DateFilter
 	pubDate: DateFilter
 	parsedShowName: StringFilter
 	parsedSeason: IntFilter
@@ -10756,18 +15145,27 @@ input RssFeedOrderByInput {
 	updatedAt: OrderDirection
 }
 
+"""
+Result type for #struct_name mutations
+"""
+type RssFeedResult {
+	success: Boolean!
+	error: String
+	rssFeed: RssFeed
+}
+
 input RssFeedWhereInput {
 	id: StringFilter
 	userId: StringFilter
 	libraryId: StringFilter
 	name: StringFilter
-	url: StringFilter
 	enabled: BoolFilter
 	pollIntervalMinutes: IntFilter
 	postDownloadAction: StringFilter
 	lastPolledAt: DateFilter
 	lastSuccessfulAt: DateFilter
 	consecutiveFailures: IntFilter
+	healthStatus: StringFilter
 	createdAt: DateFilter
 	updatedAt: DateFilter
 	"""
@@ -11258,6 +15656,29 @@ input SearchSourcesInput {
 	A movie can return multiple torrent variants; all are preserved.
 	"""
 	limit: Int
+	"""
+	If nothing is found, try wider terms built from the target's title and author. For a default
+	search: a term someone typed is searched as they typed it.
+	"""
+	autoWiden: Boolean
+}
+
+type SearchSubtitlesPayload {
+	success: Boolean!
+	error: String
+	"""
+	Best first.
+	"""
+	candidates: [SubtitleCandidate!]!
+	"""
+	The languages searched, as stored codes.
+	"""
+	languages: [String!]!
+	"""
+	Why the automatic fetch leaves this file alone ("Has English subtitles built in"), when
+	it does. Searching by hand still works.
+	"""
+	autoSkipReason: String
 }
 
 type Season {
@@ -11279,6 +15700,11 @@ type Season {
 	Announced number of episodes, which can exceed the episodes listed so far.
 	"""
 	episodeOrder: Int
+	"""
+	Fields a metadata refresh must leave alone, by their GraphQL names. Chosen artwork locks
+	its own field (`posterUrl`), so a refresh keeps the picture someone picked.
+	"""
+	lockedFields: [String!]
 	"""
 	Provider poster URL: the source the artwork cache downloads from. Clients use the
 	cached `/api/artwork/season/{id}/poster`, never this remote address.
@@ -11376,11 +15802,121 @@ input SeasonWhereInput {
 	not: SeasonWhereInput
 }
 
+type ServerRelease {
+	version: String!
+	tag: String!
+	name: String
+	publishedAt: String
+	"""
+	The release page on GitHub.
+	"""
+	url: String!
+	"""
+	Markdown as written on GitHub. Show it as text; never as HTML.
+	"""
+	notes: String
+	prerelease: Boolean!
+	"""
+	This platform's archive, when the release has one.
+	"""
+	assetName: String
+	assetSize: Int
+	hasChecksums: Boolean!
+}
+
+type ServerUpdateStatus {
+	currentVersion: String!
+	"""
+	`release`, `debug`, `docker`, `dev` or `source`.
+	"""
+	buildKind: String!
+	"""
+	`linux-x86_64`, `windows-x86_64`, …
+	"""
+	platform: String!
+	"""
+	The GitHub repository releases come from.
+	"""
+	repository: String!
+	"""
+	`stable` or `dev`.
+	"""
+	channel: String!
+	"""
+	The channel was not chosen: it follows the running version.
+	"""
+	channelIsDefault: Boolean!
+	autoCheck: Boolean!
+	lastCheckedAt: String
+	lastError: String
+	nextCheckAt: String
+	"""
+	The newest release on the channel.
+	"""
+	latest: ServerRelease
+	updateAvailable: Boolean!
+	canSelfUpgrade: Boolean!
+	"""
+	Why this install can't upgrade itself (its build, platform or folder), or why the latest
+	release can't be installed (no checksums).
+	"""
+	selfUpgradeBlockedReason: String
+	"""
+	What to do instead.
+	"""
+	selfUpgradeInstructions: String
+	progress: ServerUpgradeProgress
+	history: [ServerUpgradeRecord!]!
+	tvApp: TvAppRelease
+}
+
+type ServerUpgradeProgress {
+	targetVersion: String!
+	"""
+	`downloading`, `verifying`, `backing_up`, `installing`, `restarting` or `failed`.
+	"""
+	stage: String!
+	message: String!
+	startedAt: String!
+	updatedAt: String!
+	failed: Boolean!
+}
+
+type ServerUpgradeRecord {
+	fromVersion: String!
+	toVersion: String!
+	at: String!
+	by: String!
+	"""
+	`upgraded`, `rolled_back` or `failed`.
+	"""
+	outcome: String!
+	detail: String
+	backupSnapshotId: String
+}
+
 type SessionInvalidation {
 	"""
 	ready, changed or resync. No account/credential payload is broadcast.
 	"""
 	kind: String!
+}
+
+input SetTemporaryPasswordInput {
+	userId: String!
+	password: String!
+}
+
+"""
+Whether a saved sign-in exists for a share, and for whom.
+"""
+type ShareSignIn {
+	"""
+	The share's normalised `smb://host[:port]/share` address.
+	"""
+	share: String!
+	saved: Boolean!
+	username: String
 }
 
 """
@@ -11412,6 +15948,10 @@ type Show {
 	network: String
 	runtime: Int
 	genres: [String!]!
+	"""
+	Fields a metadata refresh must leave alone, by their GraphQL names.
+	"""
+	lockedFields: [String!]
 	posterUrl: String
 	backdropUrl: String
 	contentRating: String
@@ -11546,6 +16086,31 @@ type ShowcaseArtwork {
 	posterUrl: String!
 }
 
+"""
+The next sign-in step, when a correct password does not sign in yet (design.md Q147). No
+session or cookie exists until it is completed.
+"""
+type SignInChallenge {
+	"""
+	Pass to `completeTwoFactorSignIn` or `completePasswordChange`; accepted nowhere else.
+	"""
+	token: String!
+	"""
+	`two_factor` or `password_change`.
+	"""
+	stage: String!
+	expiresIn: Int!
+}
+
+type SignOutDevicePayload {
+	success: Boolean!
+	error: String
+	"""
+	Refresh tokens revoked (0 when the device had already signed out).
+	"""
+	revokedSessions: Int!
+}
+
 input SimilarityInput {
 	value: String!
 }
@@ -11626,6 +16191,26 @@ type Source {
 	Last Error At
 	"""
 	lastErrorAt: String
+	"""
+	`ok`, `failing` or `auth_expired`: the outcome of the last health check or real use.
+	"""
+	healthStatus: String
+	"""
+	Why it is failing: `auth`, `unreachable`, `rate_limited` or `other`.
+	"""
+	healthKind: String
+	"""
+	When the source was last tested or used, whichever is later.
+	"""
+	lastCheckedAt: String
+	"""
+	When the hourly check will test it next (pushed out while it keeps failing).
+	"""
+	nextCheckAt: String
+	"""
+	When Librarian last tried to sign this source in with a username and password. Never more than one attempt an hour, so a wrong password cannot lock the account.
+	"""
+	loginAttemptedAt: String
 	"""
 	Created At
 	"""
@@ -11809,6 +16394,23 @@ type SourceReleaseInfo {
 	Source-scoped hash/GUID identity for deduplicating continued pages.
 	"""
 	stableId: String!
+	"""
+	For book searches: `audio`, `ebook` or `unknown`.
+	"""
+	format: String
+	formatReason: String
+	"""
+	For book searches: how many books the release's name says it holds, like `5 books`.
+	"""
+	packHint: String
+	"""
+	For a search for one book: how well the name fits it, from 0 to 1.
+	"""
+	relevance: Float
+	"""
+	For a search for one book: the other book of the series this release names.
+	"""
+	otherBookNumber: Int
 	title: String!
 	guid: String!
 	link: String
@@ -11838,6 +16440,15 @@ type SourceReleaseInfo {
 	description: String
 	sourceId: String
 	sourceName: String
+	"""
+	True for a release read from an RSS feed's catalogue rather than searched on an indexer.
+	"""
+	fromFeed: Boolean!
+	"""
+	For a feed release: the catalogue item to pass to `addTorrent.feedItemId`. A feed release
+	has no link a client may see, since the link carries the tracker passkey.
+	"""
+	feedItemId: String
 	"""
 	Quality tags parsed out of the release title.
 	"""
@@ -11904,6 +16515,10 @@ type SourceSearchResultItem {
 	releases: [SourceReleaseInfo!]!
 	elapsedMs: Int!
 	fromCache: Boolean!
+	"""
+	True when this entry is an RSS feed's catalogue, not an indexer.
+	"""
+	fromFeed: Boolean!
 	error: String
 }
 
@@ -11921,6 +16536,14 @@ type SourceSearchResultSet {
 	Number of per-source result entries, including failed/unavailable sources.
 	"""
 	sourcesSearched: Int!
+	"""
+	What was actually searched for, which differs from the request after cleaning or widening.
+	"""
+	searchedTerm: String!
+	"""
+	True when the requested term found nothing and a wider one was used instead.
+	"""
+	widened: Boolean!
 }
 
 """
@@ -11968,6 +16591,11 @@ input SourceWhereInput {
 	errorCount: IntFilter
 	lastSuccessAt: DateFilter
 	lastErrorAt: DateFilter
+	healthStatus: StringFilter
+	healthKind: StringFilter
+	lastCheckedAt: DateFilter
+	nextCheckAt: DateFilter
+	loginAttemptedAt: DateFilter
 	createdAt: DateFilter
 	updatedAt: DateFilter
 	"""
@@ -11982,6 +16610,268 @@ input SourceWhereInput {
 	Logical NOT of condition
 	"""
 	not: SourceWhereInput
+}
+
+type StatisticsPerson {
+	userId: String!
+	name: String!
+	isSelf: Boolean!
+	"""
+	Their statistics reach you through a share.
+	"""
+	shared: Boolean!
+}
+
+"""
+Stats Share
+"""
+type StatsShare {
+	"""
+	Id
+	"""
+	id: String!
+	"""
+	Whose statistics are shared.
+	"""
+	userId: String!
+	"""
+	`everyone` or `user`.
+	"""
+	audience: String!
+	"""
+	The user they are shared with; null when the audience is everyone.
+	"""
+	viewerUserId: String
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type StatsShareChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	statsShare: StatsShare
+}
+
+"""
+Connection containing edges and page info
+"""
+type StatsShareConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [StatsShareEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type StatsShareEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: StatsShare!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input StatsShareOrderByInput {
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+"""
+Result type for #struct_name mutations
+"""
+type StatsShareResult {
+	success: Boolean!
+	error: String
+	statsShare: StatsShare
+}
+
+input StatsShareWhereInput {
+	id: StringFilter
+	userId: StringFilter
+	audience: StringFilter
+	viewerUserId: StringFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [StatsShareWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [StatsShareWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: StatsShareWhereInput
+}
+
+"""
+One disk or share that library folders, the download folder or Librarian's own data live on, with its latest free-space reading (`docs/design.md` Q146). Several libraries usually share a volume (every library on `smb://nas/media` does), so the reading is kept once here and each `Library.storageVolumeId` points at it. Written only by the capacity job (`jobs::storage_capacity`), and only when the reading moves meaningfully, so subscriptions stay quiet.
+"""
+type StorageVolume {
+	"""
+	Id
+	"""
+	id: String!
+	"""
+	What identifies the volume: `smb://host/share` for a share, `local:<device id>` for a disk on this machine.
+	"""
+	volumeKey: String!
+	"""
+	`local` or `smb`.
+	"""
+	kind: String!
+	"""
+	What a person calls it: "media on 10.0.1.190", or the folder measured on this machine.
+	"""
+	label: String!
+	"""
+	`ok`, or `unavailable` when the share or folder could not be read; the byte counts then keep the last good reading.
+	"""
+	status: String!
+	"""
+	`normal`, `warning` or `critical`, with hysteresis: a level is left only once the space is clearly back above its threshold.
+	"""
+	level: String!
+	"""
+	Total Bytes
+	"""
+	totalBytes: Int
+	"""
+	What Librarian may still write, after quotas and reserved blocks.
+	"""
+	availableBytes: Int
+	"""
+	Free on the volume as a whole; more than `availableBytes` under a quota.
+	"""
+	freeBytes: Int
+	"""
+	Why the last reading failed, in words a person can act on.
+	"""
+	detail: String
+	"""
+	Whether the torrent download folder is on this volume.
+	"""
+	holdsDownloads: Boolean!
+	"""
+	Whether Librarian's own data and cache folder is on this volume.
+	"""
+	holdsAppData: Boolean!
+	"""
+	The names of the libraries on it, as a JSON list, for alerts and tooltips.
+	"""
+	libraryNames: String
+	"""
+	When the stored reading was taken.
+	"""
+	checkedAt: String
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type StorageVolumeChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	storageVolume: StorageVolume
+}
+
+"""
+Connection containing edges and page info
+"""
+type StorageVolumeConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [StorageVolumeEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type StorageVolumeEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: StorageVolume!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input StorageVolumeOrderByInput {
+	label: OrderDirection
+	level: OrderDirection
+	availableBytes: OrderDirection
+	checkedAt: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+input StorageVolumeWhereInput {
+	id: StringFilter
+	volumeKey: StringFilter
+	kind: StringFilter
+	label: StringFilter
+	status: StringFilter
+	level: StringFilter
+	holdsDownloads: BoolFilter
+	holdsAppData: BoolFilter
+	checkedAt: DateFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [StorageVolumeWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [StorageVolumeWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: StorageVolumeWhereInput
 }
 
 type StoredSummaryReconciliationResult {
@@ -12136,6 +17026,42 @@ type Subscription {
 		"""
 		keys: [String!]
 	): MovieCastCreditChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
+	Observe changes to Credit records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	creditChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): CreditChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
+	Observe changes to TitleDetail records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	titleDetailChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): TitleDetailChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
 	Observe changes to Collection records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
@@ -12462,6 +17388,24 @@ type Subscription {
 	): InviteTokenChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
+	Observe changes to PasswordResetToken records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	passwordResetTokenChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): PasswordResetTokenChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
 	Observe changes to RefreshToken records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
 	"""
 	refreshTokenChanged(
@@ -12570,6 +17514,24 @@ type Subscription {
 	): SubtitleChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
+	Observe changes to Lyric records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	lyricChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): LyricChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
 	Observe changes to MediaChapter records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
 	"""
 	mediaChapterChanged(
@@ -12622,6 +17584,60 @@ type Subscription {
 		"""
 		keys: [String!]
 	): PlaybackProgressChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
+	Observe changes to Device records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	deviceChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): DeviceChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
+	Observe changes to PlayHistory records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	playHistoryChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): PlayHistoryChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
+	Observe changes to StatsShare records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	statsShareChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): StatsShareChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
 	Observe changes to PersonalList records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
@@ -12784,6 +17800,60 @@ type Subscription {
 		"""
 		keys: [String!]
 	): UsenetServerChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
+	Observe changes to MatchingAssistant records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	matchingAssistantChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): MatchingAssistantChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
+	Observe changes to IdentificationEvent records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	identificationEventChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): IdentificationEventChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
+	Observe changes to IdentifiedItem records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	identifiedItemChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): IdentifiedItemChangedEvent!
 	"""
 	Subscribe to #struct_name_str changes
 	Observe changes to UsenetDownload records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
@@ -12964,6 +18034,78 @@ type Subscription {
 		"""
 		keys: [String!]
 	): ReleaseBlocklistChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
+	Observe changes to ReleaseRecommendation records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	releaseRecommendationChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): ReleaseRecommendationChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
+	Observe changes to NetworkServer records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	networkServerChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): NetworkServerChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
+	Observe changes to TorrentContents records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	torrentContentsChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): TorrentContentsChangedEvent!
+	"""
+	Subscribe to #struct_name_str changes
+	Observe changes to StorageVolume records Payload selections support persisted subscribable scalars only; relation/computed/custom selections are rejected. Events recheck current authorization and may be suppressed; refresh authorized queries for richer data.
+	"""
+	storageVolumeChanged(
+		"""
+		Filter
+		"""
+		filter: SubscriptionFilterInput,
+		"""
+		Exact complete primary key to observe
+		"""
+		key: String,
+		"""
+		Complete primary keys to observe, at most Database::subscription_key_limit (default 500); duplicates are ignored, an empty list matches nothing, and it cannot be combined with key
+		"""
+		keys: [String!]
+	): StorageVolumeChangedEvent!
 }
 
 input SubscriptionFilterInput {
@@ -13000,6 +18142,39 @@ type Subtitle {
 	Media File
 	"""
 	mediaFile: MediaFile
+}
+
+"""
+One subtitle OpenSubtitles offers for a file.
+"""
+type SubtitleCandidate {
+	"""
+	The provider's file id, passed back to `downloadSubtitle`.
+	"""
+	fileId: String!
+	"""
+	ISO 639-2/B, as subtitle rows store it.
+	"""
+	language: String
+	languageName: String
+	release: String
+	fileName: String
+	hearingImpaired: Boolean!
+	"""
+	Only the foreign-language parts.
+	"""
+	forced: Boolean!
+	"""
+	Made for this very file (its OpenSubtitles hash matched).
+	"""
+	hashMatch: Boolean!
+	downloads: Int!
+	rating: Float!
+	votes: Int!
+	trusted: Boolean!
+	machineTranslated: Boolean!
+	uploader: String
+	uploadDate: String
 }
 
 """
@@ -13090,8 +18265,61 @@ input TestLlmParserInput {
 	libraryType: String!
 }
 
+"""
+What to sign in with: a saved server, or what was typed before saving it (or both: typed
+values win, and a blank password with the saved user name keeps the saved password).
+"""
+input TestNetworkServerInput {
+	"""
+	A saved server. Its result is recorded on it.
+	"""
+	id: String
+	host: String
+	port: Int
+	username: String
+	password: String
+	"""
+	Also open this share and count its top-level folders.
+	"""
+	share: String
+}
+
+type TestNetworkServerResult {
+	"""
+	Signed in (and, with `share`, opened it).
+	"""
+	success: Boolean!
+	error: String
+	shares: [NetworkShare!]!
+	"""
+	Why the shares could not be listed, when signing in worked.
+	"""
+	sharesError: String
+	"""
+	Folders at the top of `share`, when one was given.
+	"""
+	folders: Int
+}
+
 input TestOllamaConnectionInput {
 	ollamaUrl: String
+}
+
+input TestOpenSubtitlesInput {
+	"""
+	What was typed; the saved value when left out.
+	"""
+	apiKey: String
+	username: String
+	"""
+	What was typed; the saved password when left out or empty.
+	"""
+	password: String
+}
+
+type TestOpenSubtitlesPayload {
+	success: Boolean!
+	message: String!
 }
 
 input TestTmdbConnectionInput {
@@ -13102,6 +18330,192 @@ type TestTmdbConnectionResult {
 	success: Boolean!
 	message: String!
 	correlationId: String
+}
+
+"""
+Everything else a metadata provider says about one title, kept whether or not a page shows
+it yet (`docs/design.md` Q130): studios, networks, ratings by country, keywords, alternative
+titles, trailers and other videos, and the title's ids on other sites.
+
+One row per title, named like a [`Credit`]'s target. Lists of plain names are JSON string
+lists; structured lists are JSON text in a documented shape (see each field), read by the web
+app's `lib/titleDetails.ts`. `fetchedAt` is when the provider was last read for this title,
+which is also how the background fill knows a title is done.
+"""
+type TitleDetail {
+	id: String!
+	"""
+	The owner of the title.
+	"""
+	userId: String!
+	"""
+	`movie`, `show`, `season`, `episode`, `album`, `track` or `audiobook`.
+	"""
+	targetKind: String!
+	movieId: String
+	showId: String
+	seasonId: String
+	episodeId: String
+	albumId: String
+	trackId: String
+	audiobookId: String
+	"""
+	`tmdb`, `musicbrainz` or `audiobook`.
+	"""
+	source: String!
+	"""
+	The provider's id for the title (`movie/603`, `tv/1399`, a release MBID).
+	"""
+	providerId: String
+	"""
+	Production companies (TMDB) or labels (MusicBrainz).
+	"""
+	studios: [String!]!
+	"""
+	Networks a show first aired on.
+	"""
+	networks: [String!]!
+	keywords: [String!]!
+	"""
+	Countries the title comes from (ISO 3166-1).
+	"""
+	originCountries: [String!]!
+	"""
+	JSON `[{ "country": "US", "rating": "PG-13", "kind": "theatrical" }]`: movie release
+	certifications or show content ratings, one per country.
+	"""
+	contentRatings: String
+	"""
+	JSON `[{ "title": "…", "country": "JP", "kind": "romaji" }]`.
+	"""
+	alternativeTitles: String
+	"""
+	JSON `[{ "site": "YouTube", "key": "…", "url": "https://…", "name": "…", "kind": "Trailer",
+	"official": true, "language": "en", "publishedAt": "…" }]`: links only, nothing is fetched.
+	"""
+	videos: String
+	"""
+	JSON `{ "tmdb": "603", "imdb": "tt0133093", "tvdb": "…", "wikidata": "Q83495", … }`.
+	"""
+	externalIds: String
+	homepage: String
+	fetchedAt: String!
+	createdAt: String!
+	updatedAt: String!
+	"""
+	Movie
+	"""
+	movie: Movie
+	"""
+	Show
+	"""
+	show: Show
+	"""
+	Season
+	"""
+	season: Season
+	"""
+	Episode
+	"""
+	episode: Episode
+	"""
+	Album
+	"""
+	album: Album
+	"""
+	Track
+	"""
+	track: Track
+	"""
+	Audiobook
+	"""
+	audiobook: Audiobook
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type TitleDetailChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	titleDetail: TitleDetail
+}
+
+"""
+Connection containing edges and page info
+"""
+type TitleDetailConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [TitleDetailEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type TitleDetailEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: TitleDetail!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input TitleDetailOrderByInput {
+	fetchedAt: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+"""
+Result type for #struct_name mutations
+"""
+type TitleDetailResult {
+	success: Boolean!
+	error: String
+	titleDetail: TitleDetail
+}
+
+input TitleDetailWhereInput {
+	id: StringFilter
+	userId: StringFilter
+	targetKind: StringFilter
+	movieId: StringFilter
+	showId: StringFilter
+	seasonId: StringFilter
+	episodeId: StringFilter
+	albumId: StringFilter
+	trackId: StringFilter
+	audiobookId: StringFilter
+	source: StringFilter
+	providerId: StringFilter
+	fetchedAt: DateFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [TitleDetailWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [TitleDetailWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: TitleDetailWhereInput
 }
 
 type Torrent {
@@ -13133,6 +18547,18 @@ type Torrent {
 	sourceIndexerId: String
 	libraryId: String
 	postProcessStatus: String
+	"""
+	How identifying this download is going: `running`, `done` or `failed`.
+	"""
+	identificationStatus: String
+	"""
+	What a person said this download is, when identification got it wrong.
+	"""
+	identificationKind: String
+	"""
+	One line on what it was found to be.
+	"""
+	identificationSummary: String
 	postProcessError: String
 	processedAt: String
 	episodeId: String
@@ -13284,6 +18710,151 @@ type TorrentConnection {
 }
 
 """
+Torrent Contents
+"""
+type TorrentContents {
+	"""
+	Id
+	"""
+	id: String!
+	"""
+	Lowercase hex v1 info hash.
+	"""
+	infoHash: String!
+	"""
+	A hash of the release's guid or link at the source it was read from, so a `.torrent` link with no info hash in its listing is not fetched twice. A hash, because a feed's link holds the account's passkey.
+	"""
+	linkKey: String
+	"""
+	The torrent's own name (its top folder, or its only file).
+	"""
+	name: String!
+	"""
+	Total Size
+	"""
+	totalSize: Int!
+	"""
+	File Count
+	"""
+	fileCount: Int!
+	"""
+	Piece Length
+	"""
+	pieceLength: Int!
+	"""
+	Piece Count
+	"""
+	pieceCount: Int!
+	"""
+	The torrent is marked private: its peers come only from its tracker.
+	"""
+	isPrivate: Boolean!
+	"""
+	How it was read: `torrent_file` (a `.torrent` parsed locally, no peers asked) or `magnet` (metadata asked of peers in list-only mode, nothing downloaded).
+	"""
+	via: String!
+	"""
+	The files, in torrent order, as a JSON array of `{index, path, size, kind, season, episodes, track, disc}` (`services::torrent::inspect::ContentFile`). Padding files are left out; `index` is the file's index in the torrent, which file selection uses.
+	"""
+	files: String!
+	"""
+	Base64 of the bencoded info dictionary, public torrents only.
+	"""
+	infoBytes: String
+	"""
+	A public torrent's tracker addresses, as a JSON array, so a grab from `infoBytes` can be given its trackers and its `Torrent` row a magnet to restore from (Q111). Never kept for a private torrent, whose announce address holds the account's passkey.
+	"""
+	trackers: String
+	"""
+	Fetched At
+	"""
+	fetchedAt: String!
+	"""
+	Created At
+	"""
+	createdAt: String!
+	"""
+	Updated At
+	"""
+	updatedAt: String!
+}
+
+"""
+Event for #struct_name changes (subscriptions)
+"""
+type TorrentContentsChangedEvent {
+	action: ChangeAction!
+	changeKind: ChangeKind!
+	id: String!
+	sourceEntity: String
+	sourceId: String
+	path: [String!]!
+	torrentContents: TorrentContents
+}
+
+"""
+Connection containing edges and page info
+"""
+type TorrentContentsConnection {
+	"""
+	The edges in this connection
+	"""
+	edges: [TorrentContentsEdge!]!
+	"""
+	Pagination information
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Edge containing a node and cursor
+"""
+type TorrentContentsEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: TorrentContents!
+	"""
+	A cursor for pagination
+	"""
+	cursor: String!
+}
+
+input TorrentContentsOrderByInput {
+	name: OrderDirection
+	totalSize: OrderDirection
+	fetchedAt: OrderDirection
+	createdAt: OrderDirection
+	updatedAt: OrderDirection
+}
+
+input TorrentContentsWhereInput {
+	id: StringFilter
+	infoHash: StringFilter
+	linkKey: StringFilter
+	name: StringFilter
+	totalSize: IntFilter
+	fileCount: IntFilter
+	isPrivate: BoolFilter
+	via: StringFilter
+	fetchedAt: DateFilter
+	createdAt: DateFilter
+	updatedAt: DateFilter
+	"""
+	Logical AND of conditions
+	"""
+	and: [TorrentContentsWhereInput!]
+	"""
+	Logical OR of conditions
+	"""
+	or: [TorrentContentsWhereInput!]
+	"""
+	Logical NOT of condition
+	"""
+	not: TorrentContentsWhereInput
+}
+
+"""
 Edge containing a node and cursor
 """
 type TorrentEdge {
@@ -13416,6 +18987,58 @@ input TorrentFileWhereInput {
 	not: TorrentFileWhereInput
 }
 
+type TorrentMatchFile {
+	fileIndex: Int!
+	groupKey: String
+	"""
+	`match`, `review`, `other` or `none`.
+	"""
+	status: String!
+	target: String
+	detail: String
+	warning: String
+}
+
+"""
+One book, or what looks like one, in a download.
+"""
+type TorrentMatchGroup {
+	key: String!
+	label: String!
+	fileCount: Int!
+	seconds: Float
+	isTarget: Boolean!
+	bookId: String
+	bookTitle: String
+	author: String
+}
+
+"""
+What matching makes of a download. Shown while it downloads and after, and based on the same plan
+the import uses, so a wrong match can be seen before anything moves.
+"""
+type TorrentMatchPreview {
+	"""
+	`ready`, `review`, `unlinked` or `none`.
+	"""
+	status: String!
+	summary: String
+	"""
+	Why it needs a person.
+	"""
+	reason: String
+	canAccept: Boolean!
+	chapterSource: String
+	fileShape: String
+	evidence: [String!]!
+	"""
+	False while the plan rests only on names and sizes.
+	"""
+	completeFacts: Boolean!
+	groups: [TorrentMatchGroup!]!
+	files: [TorrentMatchFile!]!
+}
+
 input TorrentOrderByInput {
 	name: OrderDirection
 	state: OrderDirection
@@ -13466,6 +19089,7 @@ input TorrentWhereInput {
 	sourceIndexerId: StringFilter
 	libraryId: StringFilter
 	postProcessStatus: StringFilter
+	identificationStatus: StringFilter
 	processedAt: DateFilter
 	episodeId: StringFilter
 	movieId: StringFilter
@@ -13715,6 +19339,17 @@ type TriggerAutoDownloadResult {
 	error: String
 }
 
+type TvAppRelease {
+	version: String!
+	tag: String!
+	publishedAt: String
+	url: String!
+	"""
+	The APK's download link, when the release has one.
+	"""
+	apkUrl: String
+}
+
 """
 Result of TV show operations
 """
@@ -13741,6 +19376,30 @@ type TvShowSearchResult {
 	score: Float
 }
 
+input TwoFactorCodeInput {
+	code: String!
+}
+
+"""
+A new secret to add to an authenticator app: scan `qrSvg` or type `secret`.
+"""
+type TwoFactorSetupResult {
+	success: Boolean!
+	error: String
+	"""
+	Base32, for typing in.
+	"""
+	secret: String
+	"""
+	The `otpauth://` address the QR code holds.
+	"""
+	uri: String
+	"""
+	The QR code as an SVG document.
+	"""
+	qrSvg: String
+}
+
 type UnmatchMediaFileResult {
 	success: Boolean!
 	reason: String
@@ -13759,6 +19418,7 @@ input UpdateAlbumInput {
 	label: String
 	country: String
 	releaseDate: String
+	lockedFields: JSON
 	coverUrl: String
 	trackCount: Int
 	discCount: Int
@@ -13823,6 +19483,7 @@ input UpdateArtistInput {
 	musicbrainzId: String
 	bio: String
 	disambiguation: String
+	lockedFields: JSON
 	imageUrl: String
 	albumCount: Int
 	trackCount: Int
@@ -13872,6 +19533,7 @@ input UpdateAudiobookInput {
 	authorName: String
 	narratorName: String
 	narrators: JSON
+	lockedFields: JSON
 	description: String
 	publisher: String
 	publishedDate: String
@@ -13882,6 +19544,13 @@ input UpdateAudiobookInput {
 	goodreadsId: String
 	totalDurationSecs: Int
 	chapterCount: Int
+	seriesName: String
+	seriesPosition: String
+	chapterSource: String
+	fileShape: String
+	chapterCheckState: String
+	chapterCheck: String
+	providerChapters: String
 	coverUrl: String
 	autoDownload: Boolean
 	autoDownloadMode: AutoDownloadMode
@@ -13915,6 +19584,10 @@ input UpdateCastDeviceInput {
 	lastSeenAt: String
 	lastProbeAt: String
 	lastProbeError: String
+	manufacturer: String
+	receiverId: String
+	nameIsCustom: Boolean
+	discoveryDetails: String
 }
 
 """
@@ -13983,6 +19656,7 @@ input UpdateChapterInput {
 	startTimeSecs: Float
 	endTimeSecs: Float
 	durationSecs: Int
+	fileOffsetSecs: Float
 	wanted: Boolean
 	ignored: Boolean
 	mediaFileId: String
@@ -14002,6 +19676,7 @@ input UpdateCollectionInput {
 	userId: String
 	tmdbCollectionId: Int
 	name: String
+	sortName: String
 	overview: String
 	posterUrl: String
 	backdropUrl: String
@@ -14018,6 +19693,61 @@ type UpdateCollectionsResult {
 	affectedCount: Int!
 }
 
+input UpdateCreditInput {
+	userId: String
+	personId: String
+	targetKind: String
+	movieId: String
+	showId: String
+	seasonId: String
+	episodeId: String
+	albumId: String
+	trackId: String
+	audiobookId: String
+	kind: String
+	guest: Boolean
+	department: String
+	job: String
+	characterName: String
+	creditOrder: Int
+	episodeCount: Int
+	source: String
+	providerCreditId: String
+}
+
+"""
+Result of bulk update by Where filter
+"""
+type UpdateCreditsResult {
+	success: Boolean!
+	error: String
+	affectedCount: Int!
+}
+
+input UpdateDeviceInput {
+	userId: String
+	clientId: String
+	name: String
+	nameIsCustom: Boolean
+	formFactor: String
+	platform: String
+	product: String
+	appVersion: String
+	userAgent: String
+	lastIp: String
+	lastSeenAt: String
+	signedOutAt: String
+}
+
+"""
+Result of bulk update by Where filter
+"""
+type UpdateDevicesResult {
+	success: Boolean!
+	error: String
+	affectedCount: Int!
+}
+
 input UpdateEpisodeInput {
 	showId: String
 	season: Int
@@ -14028,6 +19758,7 @@ input UpdateEpisodeInput {
 	airDate: String
 	airStamp: String
 	runtime: Int
+	lockedFields: JSON
 	stillUrl: String
 	tvmazeId: Int
 	tmdbId: Int
@@ -14059,6 +19790,65 @@ input UpdateHomeShelfInput {
 Result of bulk update by Where filter
 """
 type UpdateHomeShelvesResult {
+	success: Boolean!
+	error: String
+	affectedCount: Int!
+}
+
+input UpdateIdentificationEventInput {
+	userId: String
+	infoHash: String
+	runId: String
+	trigger: String
+	sequence: Int
+	status: String
+	message: String
+	detail: String
+	durationMs: Int
+}
+
+"""
+Result of bulk update by Where filter
+"""
+type UpdateIdentificationEventsResult {
+	success: Boolean!
+	error: String
+	affectedCount: Int!
+}
+
+input UpdateIdentifiedItemInput {
+	userId: String
+	infoHash: String
+	itemKey: String
+	kind: String
+	status: String
+	label: String
+	title: String
+	creator: String
+	year: Int
+	coverUrl: String
+	fileCount: Int
+	finishedFiles: Int
+	seconds: Float
+	confidence: Float
+	summary: String
+	evidence: String
+	candidates: String
+	filePaths: String
+	identity: String
+	providerId: String
+	libraryItemType: String
+	libraryItemId: String
+	libraryId: String
+	season: Int
+	canAccept: Boolean
+	addsCount: Int
+}
+
+"""
+Result of bulk update by Where filter
+"""
+type UpdateIdentifiedItemsResult {
 	success: Boolean!
 	error: String
 	affectedCount: Int!
@@ -14104,12 +19894,17 @@ input UpdateLibraryInput {
 	color: String
 	autoScan: Boolean
 	autoOrganize: Boolean
+	autoResolveDuplicates: Boolean
 	namingPattern: String
 	scanIntervalMinutes: Int
 	watchForChanges: Boolean
+	watchStatus: String
+	watchDetail: String
+	watchStatusSince: String
 	scanning: Boolean
 	lastScannedAt: String
 	qualityProfileId: String
+	storageVolumeId: String
 }
 
 input UpdateLibraryPreferenceInput {
@@ -14172,6 +19967,46 @@ input UpdateListEntryInput {
 	albumId: String
 	audiobookId: String
 	trackId: String
+	episodeId: String
+	chapterId: String
+}
+
+input UpdateLyricInput {
+	mediaFileId: String
+	trackId: String
+	source: String
+	synced: Boolean
+	syncedLyrics: String
+	plainLyrics: String
+	language: String
+	instrumental: Boolean
+	providerId: String
+	fetchedAt: String
+}
+
+"""
+Result of bulk update by Where filter
+"""
+type UpdateLyricsResult {
+	success: Boolean!
+	error: String
+	affectedCount: Int!
+}
+
+input UpdateMatchingAssistantInput {
+	enabled: Boolean
+	model: String
+	apiKey: String
+	hasApiKey: Boolean
+}
+
+"""
+Result of bulk update by Where filter
+"""
+type UpdateMatchingAssistantsResult {
+	success: Boolean!
+	error: String
+	affectedCount: Int!
 }
 
 input UpdateMediaFileInput {
@@ -14194,6 +20029,7 @@ input UpdateMediaFileInput {
 	resolution: String
 	isHdr: Boolean
 	hdrType: String
+	closedCaptions: Boolean
 	audioChannels: String
 	metadata: String
 	contentType: String
@@ -14204,6 +20040,9 @@ input UpdateMediaFileInput {
 	matchedByUserId: String
 	matchConfirmedAt: String
 	qualityStatus: String
+	pictureCrop: JSON
+	storyboard: JSON
+	previewsCheckedAt: String
 }
 
 """
@@ -14262,6 +20101,7 @@ input UpdateMovieInput {
 	tagline: String
 	runtime: Int
 	genres: JSON
+	lockedFields: JSON
 	director: String
 	castNames: JSON
 	productionCountries: JSON
@@ -14273,6 +20113,8 @@ input UpdateMovieInput {
 	collectionPosterUrl: String
 	releaseDate: String
 	certification: String
+	digitalReleaseDate: String
+	physicalReleaseDate: String
 	monitored: Boolean
 	tmdbStatus: String
 	wanted: Boolean
@@ -14306,6 +20148,28 @@ input UpdateNamingPatternInput {
 Result of bulk update by Where filter
 """
 type UpdateNamingPatternsResult {
+	success: Boolean!
+	error: String
+	affectedCount: Int!
+}
+
+input UpdateNetworkServerInput {
+	name: String
+	host: String
+	port: Int
+	username: String
+	password: String
+	hasPassword: Boolean
+	knownShares: JSON
+	status: String
+	lastError: String
+	lastCheckedAt: String
+}
+
+"""
+Result of bulk update by Where filter
+"""
+type UpdateNetworkServersResult {
 	success: Boolean!
 	error: String
 	affectedCount: Int!
@@ -14385,12 +20249,25 @@ input UpdatePersonInput {
 	tmdbPersonId: Int
 	name: String
 	profileUrl: String
+	imdbId: String
+	musicbrainzArtistId: String
+	wikidataId: String
+	nameKey: String
+	biography: String
+	birthday: String
+	deathday: String
+	placeOfBirth: String
+	knownForDepartment: String
+	alsoKnownAs: JSON
+	imageUrls: JSON
+	detailsFetchedAt: String
 }
 
 input UpdatePersonalListInput {
 	userId: String
 	name: String
 	description: String
+	coverUrl: String
 	kind: PersonalListKind
 	savedViewId: String
 }
@@ -14402,6 +20279,47 @@ type UpdatePersonalListsResult {
 	success: Boolean!
 	error: String
 	affectedCount: Int!
+}
+
+"""
+Result of bulk update by Where filter
+"""
+type UpdatePlayHistoriesResult {
+	success: Boolean!
+	error: String
+	affectedCount: Int!
+}
+
+input UpdatePlayHistoryInput {
+	userId: String
+	deviceId: String
+	deviceName: String
+	playbackSessionId: String
+	contentType: String
+	mediaFileId: String
+	movieId: String
+	episodeId: String
+	showId: String
+	trackId: String
+	albumId: String
+	artistId: String
+	audiobookId: String
+	chapterId: String
+	title: String
+	parentTitle: String
+	subtitle: String
+	startedAt: String
+	endedAt: String
+	secondsPlayed: Float
+	startPosition: Float
+	endPosition: Float
+	duration: Float
+	completed: Boolean
+	playMethod: String
+	imported: Boolean
+	sourceProgressId: String
+	origin: String
+	originName: String
 }
 
 input UpdatePlaybackProgressInput {
@@ -14441,6 +20359,14 @@ input UpdatePlaybackSessionInput {
 	startedAt: String
 	lastUpdatedAt: String
 	completedAt: String
+	chapterId: String
+	deviceId: String
+	state: String
+	playMethod: String
+	quality: String
+	bitrate: Int
+	endedAt: String
+	stopRequestedAt: String
 }
 
 """
@@ -14504,6 +20430,32 @@ input UpdateReleaseBlocklistInput {
 Result of bulk update by Where filter
 """
 type UpdateReleaseBlocklistsResult {
+	success: Boolean!
+	error: String
+	affectedCount: Int!
+}
+
+input UpdateRssFeedInput {
+	userId: String
+	libraryId: String
+	name: String
+	url: String
+	urlDisplay: String
+	enabled: Boolean
+	pollIntervalMinutes: Int
+	postDownloadAction: String
+	lastPolledAt: String
+	lastSuccessfulAt: String
+	lastError: String
+	consecutiveFailures: Int
+	healthStatus: String
+	healthKind: String
+}
+
+"""
+Result of bulk update by Where filter
+"""
+type UpdateRssFeedsResult {
 	success: Boolean!
 	error: String
 	affectedCount: Int!
@@ -14584,6 +20536,7 @@ input UpdateSeasonInput {
 	premiereDate: String
 	endDate: String
 	episodeOrder: Int
+	lockedFields: JSON
 	posterUrl: String
 }
 
@@ -14610,6 +20563,7 @@ input UpdateShowInput {
 	network: String
 	runtime: Int
 	genres: JSON
+	lockedFields: JSON
 	posterUrl: String
 	backdropUrl: String
 	contentRating: String
@@ -14648,6 +20602,11 @@ input UpdateSourceInput {
 	errorCount: Int
 	lastSuccessAt: String
 	lastErrorAt: String
+	healthStatus: String
+	healthKind: String
+	lastCheckedAt: String
+	nextCheckAt: String
+	loginAttemptedAt: String
 }
 
 """
@@ -14664,6 +20623,21 @@ input UpdateSourcePrioritiesInput {
 Result of bulk update by Where filter
 """
 type UpdateSourcesResult {
+	success: Boolean!
+	error: String
+	affectedCount: Int!
+}
+
+input UpdateStatsShareInput {
+	userId: String
+	audience: String
+	viewerUserId: String
+}
+
+"""
+Result of bulk update by Where filter
+"""
+type UpdateStatsSharesResult {
 	success: Boolean!
 	error: String
 	affectedCount: Int!
@@ -14690,6 +20664,39 @@ input UpdateSubtitleInput {
 Result of bulk update by Where filter
 """
 type UpdateSubtitlesResult {
+	success: Boolean!
+	error: String
+	affectedCount: Int!
+}
+
+input UpdateTitleDetailInput {
+	userId: String
+	targetKind: String
+	movieId: String
+	showId: String
+	seasonId: String
+	episodeId: String
+	albumId: String
+	trackId: String
+	audiobookId: String
+	source: String
+	providerId: String
+	studios: JSON
+	networks: JSON
+	keywords: JSON
+	originCountries: JSON
+	contentRatings: String
+	alternativeTitles: String
+	videos: String
+	externalIds: String
+	homepage: String
+	fetchedAt: String
+}
+
+"""
+Result of bulk update by Where filter
+"""
+type UpdateTitleDetailsResult {
 	success: Boolean!
 	error: String
 	affectedCount: Int!
@@ -14734,6 +20741,9 @@ input UpdateTorrentInput {
 	sourceIndexerId: String
 	libraryId: String
 	postProcessStatus: String
+	identificationStatus: String
+	identificationKind: String
+	identificationSummary: String
 	postProcessError: String
 	processedAt: String
 	episodeId: String
@@ -14794,7 +20804,8 @@ input UpdateUserInput {
 	displayName: String
 	avatarUrl: String
 	isActive: Boolean
-	lastLoginAt: String
+	phone: String
+	genreInterests: JSON
 }
 
 """
@@ -14804,6 +20815,11 @@ type UpdateUsersResult {
 	success: Boolean!
 	error: String
 	affectedCount: Int!
+}
+
+type UpgradeServerResult {
+	success: Boolean!
+	error: String
 }
 
 type UpsertEpisodeResult {
@@ -15107,7 +21123,7 @@ input UsenetServerWhereInput {
 }
 
 """
-User
+A person who signs in. Members read and edit only their own row (the row policy scopes `users` to `id`); administrators everyone's. Sign-in names, roles and access are for administrators, and the security facts below are written only by the auth actions (design.md Q147).
 """
 type User {
 	"""
@@ -15131,7 +21147,7 @@ type User {
 	"""
 	displayName: String
 	"""
-	Avatar Url
+	An uploaded photo's marker (`upload:<hash>`), written by the upload and removal actions; the picture itself is served from `/api/artwork/user/{id}/avatar`.
 	"""
 	avatarUrl: String
 	"""
@@ -15142,6 +21158,30 @@ type User {
 	Last Login At
 	"""
 	lastLoginAt: String
+	"""
+	A contact number, seen only by the person and administrators.
+	"""
+	phone: String
+	"""
+	Genres the person likes, by name as the libraries spell them. Home shows a row for each (design.md Q149).
+	"""
+	genreInterests: [String!]
+	"""
+	Set with a temporary password: the next sign-in must choose a new one before it gets a session.
+	"""
+	mustChangePassword: Boolean!
+	"""
+	When two-factor sign-in was turned on; null while it is off.
+	"""
+	twoFactorEnabledAt: String
+	"""
+	Unused recovery codes left.
+	"""
+	recoveryCodesRemaining: Int!
+	"""
+	Password Changed At
+	"""
+	passwordChangedAt: String
 	"""
 	Created At
 	"""
@@ -15218,6 +21258,8 @@ input UserWhereInput {
 	displayName: StringFilter
 	isActive: BoolFilter
 	lastLoginAt: DateFilter
+	mustChangePassword: BoolFilter
+	twoFactorEnabledAt: DateFilter
 	createdAt: DateFilter
 	updatedAt: DateFilter
 	"""
@@ -15238,6 +21280,32 @@ type VerifyBackupSnapshotResult {
 	success: Boolean!
 	snapshotId: String!
 	error: String
+}
+
+"""
+Sprite sheets of evenly spaced frames for the seek bar's preview.
+"""
+type VideoStoryboard {
+	"""
+	Names this set of sheets in their URLs; changes whenever they are made again.
+	"""
+	key: String!
+	"""
+	Seconds of video per tile. Tile `n` shows the picture near `(n + 0.5) * interval`.
+	"""
+	interval: Float!
+	tileWidth: Int!
+	tileHeight: Int!
+	"""
+	Tiles per row and rows per sheet.
+	"""
+	columns: Int!
+	rows: Int!
+	"""
+	Tiles in all, across every sheet.
+	"""
+	frameCount: Int!
+	sheetCount: Int!
 }
 
 type VideoStream {

@@ -39,3 +39,24 @@ mutation UpdateSourcePriorities($input: UpdateSourcePrioritiesInput!) {
     error
   }
 }
+
+# Read one feed now, whether or not it is due. New items go into the catalogue.
+mutation PollRssFeed($id: String!) {
+  pollRssFeed(id: $id) {
+    success
+    error
+    newItems
+    grabbed
+  }
+}
+
+# Make the personal RSS link of a signed-in IPTorrents source into a feed. The address carries the
+# account's passkey, so only its redacted form comes back.
+mutation CreateRssFeedFromSource($sourceId: String!, $name: String, $pollIntervalMinutes: Int, $libraryId: String) {
+  createRssFeedFromSource(sourceId: $sourceId, name: $name, pollIntervalMinutes: $pollIntervalMinutes, libraryId: $libraryId) {
+    success
+    error
+    feedId
+    urlDisplay
+  }
+}

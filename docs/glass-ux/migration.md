@@ -3,6 +3,237 @@
 Upgrade steps between releases. Each section lists the changes that need code edits first,
 then behaviour changes to review. The [changelog](../CHANGELOG.md) lists everything else.
 
+## 0.19.4 → 0.19.5
+
+No code edits are needed.
+
+Behaviour to review:
+
+- Hover-in is now instant on DataTable rows and row actions, notification rows and tools, and list items
+  (`.fa-item`); leaving still eases. A test that waited for a hover transition to finish no longer needs to.
+- Tests run against a documentation site built with the docs kit: demo blocks far from the view skip
+  rendering once a person scrolls, but not under automation unless `localStorage["docs-kit.far-blocks"]`
+  is `"on"`.
+
+## 0.19.3 → 0.19.4
+
+No code edits are needed.
+
+Behaviour to review:
+
+- `configureAppearance({ glassRendering })` still works, as the site-wide default. Move it to
+  `defaults: { glassRendering }`, or to `locked: { glassRendering }` if people must not change it.
+- If you kept blur under your own storage key and configured it before first paint, drop that code. Use
+  `useAppearance().update({ glassRendering })`, or the style group in `AppearanceSettings`. The boot
+  script now restores the choice, and Reset includes it.
+- `exportAppearance(...).theme.glassRendering` is no longer set. Read `theme.defaults.glassRendering`.
+  Themes you already committed with a top-level `glassRendering` still configure and import.
+- `appearanceConfig().glassRendering` is the site-wide default, or the locked value. For what a person
+  sees, read `useAppearance().appearance.glassRendering`.
+
+New props:
+
+- `Appearance.glassRendering`, and the Blur row in `AppearanceSettings`'s `"style"` section.
+
+## 0.19.2 → 0.19.3
+
+No code edits are needed.
+
+Behaviour to review:
+
+- A `Slider` in a `SettingRow` control now takes 14rem. Remove overrides such as
+  `.fa-appearance-slider { width: 14rem }`. A slider given its own width keeps it.
+- `AppearanceSettings` in Flat shows Material, Background and Animation as fixed, with "Not used in
+  Flat". Pass `flat="hide"` to leave them out instead.
+
+New props:
+
+- `AppearanceSettings.flat`, and `"style"` in `AppearanceSection`. If you added your own Style row above
+  the panel, you can use the section instead.
+
+## 0.19.1 → 0.19.2
+
+No code edits are needed.
+
+Behaviour to review:
+
+- On touch screens, text in inputs, textareas, selects and editable regions is at least 16 px. Remove any
+  override added to stop iPhone Safari zooming (such as `input { font-size: max(16px, …) }`). An element
+  whose own font size is larger than its parent's can carry `data-own-font-size` and set its own floor.
+- `RadioCard` titles wrap. Cards in a horizontal grid can differ in height when one title is longer; remove
+  any override that made titles wrap.
+- `PhoneInput.ref` is the number input. Replace a focus selector that skips `[aria-hidden='true']` with
+  `autoFocus` or the ref.
+- Remove overrides that enlarged `.fa-phone-country` or a pressable `.fa-level-gauge` on touch screens: their
+  hit areas now reach 44 px without the controls growing.
+
+New props:
+
+- `RadioCard.size`, `SignaturePad.maxHeight` and `SignatureField.maxHeight`, and standard input attributes on
+  `PhoneInput`, `PhoneField` and `MobileField` (`PhoneInputAttributes`).
+
+## 0.19.0 → 0.19.1
+
+No code edits are needed.
+
+Behaviour to review:
+
+- `AddressField`, `AddressInput`: a position alone no longer opens the address parts. If a screen relied on
+  that to show the map, pass an address part or have the person press Enter manually.
+- `PinMap`: a drag, click or nudge no longer recentres the map or raises its zoom. It now zooms with the wheel
+  at the cursor. Remove any override added for where the pin lands, and any wait or retry around it.
+- `DataTable`: below 36rem the sort menu joins the columns menu, whose accessible name becomes "Sort, columns
+  and density" when it holds sorting. Below 30rem Filters is icon-only, keeping "Filters" as its name. If you
+  pass `cardSort={false}` only because of the overlap, remove it.
+
+New props:
+
+- `EntitySettingsDialog.identity`, in place of a hidden title with the identity in `media`: pass the
+  identity's props and drop `media`, `title`, `subtitle` and `entityName`. `EntitySettingsDialog.headerActions`
+  for a header without one, and `Dialog.Header.identity`.
+- A DataTable column's `entity`, for right-click in a cell that shows another entity.
+- `SessionNav.renderSession`, to draw each session with an identity.
+- `PinMap.ref` (`PinMapHandle.goTo`), `Popover.Popup.headerActions`, the export `hasAddressParts`, and
+  `IconCrown`.
+
+## 0.18.0 → 0.19.0
+
+No code edits are needed.
+
+Behaviour to review:
+
+- `DataTable`: a table with a sortable column now shows a sort menu in the toolbar while cards show,
+  including on phones. If you already offer your own sort control there, pass `cardSort={false}`.
+- `DataTable`: while cards show, the columns menu moves ahead of Export and `toolbar`. A test that finds
+  these by position needs updating.
+- Flat style: an off `Switch` and a `Slider`'s thumb now show on every surface. Remove any override you
+  added for this. Screenshot tests of these controls in Flat will change.
+
+New props:
+
+- `DataTable.view` holds `"table"` or `"cards"` at any width. The default `"auto"` keeps today's
+  behaviour. If you force a view with `cardBreakpoint={Infinity}` or `{0}`, use this instead.
+- `DataTable.cardMinWidth`, `cardMaxWidth`, `renderCard` and `renderCardSkeleton`: a grid of cards and
+  your own card design. See [Choose a card view](data-filters.md#choose-a-card-view).
+- `DataTable.cardSort` turns the sort menu off.
+- `FileDialog`: `mode="folder"` with `onChoose`, and `places` for shortcuts to common folders in every
+  mode.
+- `TopologyCanvas.listFlush` removes the list view's inset. If you override `.fa-topology-list` to do
+  this, pass the prop and delete the override.
+
+## 0.17.1 → 0.18.0
+
+Breaking:
+
+- `addressField.lookupStatusError` is gone. If you override it through `configureMessages` or a language
+  pack, remove the override; `addressLookupFailed` is the message for that error.
+
+```ts
+// Before
+configureMessages({ addressField: { lookupStatusError: (status) => `Lookup failed: ${status}` } })
+// After
+configureMessages({ addressField: { addressLookupFailed: (status) => `Lookup failed: ${status}` } })
+```
+
+Behaviour to review:
+
+- `Toolbar.Group` with a choice folds tool by tool, not as a whole, so part of it can show beside More.
+- `Menu`: rows with no icon line up with rows that have one, so such a row starts further in. A menu with
+  no icons or ticks is unchanged.
+- `AddressInput` and `AddressField`: a failed lookup shows new wording, and a line under the field. Tests
+  that look for "Search failed" there need the new text.
+- `loadMessagePack` now runs its loader even if a pack for the language is already registered, and the
+  packs merge. To avoid the download, do not call it for a language you register yourself.
+- Language packs: wording changed in all eleven. Update tests that assert translated strings.
+- `formatRelative` from `glass-ux/data-table`: up to 20 seconds ahead now reads "just now".
+
+New props: `Histogram.series` and `blend`; `BarChart.layout="overlay"`, `blend` and `BarSeries.color`;
+`Autocomplete.errorText`; `OptionStatus.errorText`.
+
+## 0.17.0 → 0.17.1
+
+No code edits are needed.
+
+Behaviour to review:
+
+- `DataTable`: with rows selected on a table with pages, the pager stays in the Tab order after the
+  bar's actions, and the status text next to it hides. On a narrow table the footer takes two lines.
+- `registerMessagePack`: packs for one language merge instead of replacing. If you relied on a later
+  pack removing an earlier pack's messages, that no longer happens.
+- `SearchTrigger`: a custom `placeholder` now also becomes its accessible name, so tests that find it
+  by the default name need that placeholder or their own `aria-label`.
+- A link inside a `ContextMenu.Trigger`: the click that follows a long press which opened the menu no
+  longer reaches the link's `onClick`.
+
+## 0.16.2 → 0.17.0
+
+Baked glass rendering has been removed. It had to return to the live blur whenever a scroller moved
+its panels, and swapping panels to the blur and back made scrolling slower than the live blur alone
+([Blur and scrolling](performance.md#blur-and-scrolling)). `glassRendering: "none"`, which draws no
+blur at all, takes its place.
+
+Code edits, where a project uses these:
+
+- Replace or remove `glassRendering: "baked"`. It no longer type-checks, and at runtime it blurs live.
+
+  ```ts
+  // Before
+  configureAppearance({ glassRendering: "baked" });
+
+  // Keep the live blur: leave the setting out
+  configureAppearance({});
+
+  // Or draw no blur, for the smoothest scrolling
+  configureAppearance({ glassRendering: "none" });
+  ```
+
+  With `"none"`, every backdrop filter is gone and Glass takes Frosted's fills, so review the look.
+  A stored or exported theme that says `"baked"` still imports, and blurs live.
+- Remove calls to `installBakedFrost`, and uses of `FROST_LIVE_ATTRIBUTE`, `FROST_READY_ATTRIBUTE`
+  and `FROST_CANVAS_ATTRIBUTE`. `AppearanceProvider` no longer installs anything for this.
+- CSS that reads `data-frost`, `data-frost-live`, `data-frost-canvas`, `--glass-frost-panel`,
+  `--glass-frost-chrome` or `--glass-baked-*` no longer matches anything. Delete it.
+- If you use selective stylesheets, run `glass-ux styles --scan` again.
+
+Behaviour to review:
+
+- Removable chips: `EntityIdentity` and `EntityChip` with `onRemove` now keep their link, `onOpen`,
+  actions and preview. `Composer` context chips are links with a preview. Pass `preview={false}` to
+  leave the preview out. Inside the chip's group, the part that opens is now its own element
+  (`.fa-entity-chip-main`, `.fa-ai-chip-main`), so tests should find the link or button by role.
+- `AlertDialog` and `confirm()`: an `onConfirm` that returns or resolves to exactly `false` now
+  keeps the dialog open. Check any that return a boolean for another reason.
+- `Toast`: tests or tools that find a toast with `getByRole("dialog")` or `getByRole("alertdialog")`
+  need `getByRole("group", { name })`.
+- `Autocomplete`: with nothing to show, the popup stays shut and `aria-expanded` is `false`. While
+  suggestions are showing, Base UI still hides the rest of the page from assistive technology, as
+  it does for every combobox popup.
+- `Composer`: a rejecting `onSend` keeps the draft and is no longer an unhandled rejection, so a
+  global rejection handler no longer sees it. Report the failure in `onSend`.
+- `ReferenceInput`: the kind filter no longer wraps. It scrolls in one row, and Alt ←/→ brings the
+  chosen kind into view.
+- `WindowFrame.AppBar`: a `subtitle` that is an element, rather than a string or number, is no longer
+  wrapped in a truncating paragraph. It is drawn as given, so give it its own truncation.
+- `DataTable`: on a narrow toolbar, an active search can move the table's own tools to a second
+  line. In cards, a value holding a one-line element gives way before the field's label.
+- `AiStatusStrip`: below 26rem the state can take two lines.
+
+## 0.16.1 → 0.16.2
+
+No code edits are needed.
+
+Behaviour to review:
+
+- `Rail`: items that do not fit its height move into a More menu instead of scrolling, and the
+  current section stays visible. Set `overflow="scroll"` on `Rail.Root` to keep the scrolling
+  column.
+- `TabBar`: the bar shows at most five tabs, More included, and fewer when a tab would be too
+  narrow to read. The rest move into a More sheet. Bars with six or more `TabBar.Item`s now fold
+  even on wider phones; raise `maxItems` to keep more in the bar. A `TabBar.More` you wrote lists
+  the folded tabs before its own rows, and counts as one of the tabs.
+- Sheet rows for folded tabs are buttons that click the tab, so they do not offer a browser's
+  link actions. Tabs that need them can be written as `TabBar.MoreItem` links.
+
 ## 0.16.0 → 0.16.1
 
 Code edits, where a project uses these:

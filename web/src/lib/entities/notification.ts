@@ -23,7 +23,9 @@ export const NOTIFICATION_LEVELS = Object.keys(LEVEL);
 /** The decision a notification asks for, and how it ended. */
 export function notificationDecision(n: { actionType?: string | null; resolvedAt?: string | null; resolution?: string | null }): { label: string; tone: BadgeTone } | null {
   if (!n.actionType) return null;
-  if (!n.resolvedAt) return { label: n.actionType === "quality_upgrade" ? "Approve upgrade?" : "Needs a decision", tone: "accent" };
+  if (!n.resolvedAt) return { label: n.actionType === "quality_upgrade" ? "Approve upgrade?" : n.actionType === "server_update" ? "Update available" : "Needs a decision", tone: "accent" };
+  if (n.resolution === "installed") return { label: "Installed", tone: "success" };
+  if (n.resolution === "superseded") return { label: "Superseded", tone: "neutral" };
   if (n.resolution === "ACCEPTED" || n.resolution === "approved") return { label: "Approved", tone: "success" };
   return { label: n.resolution === "dismissed" ? "Dismissed" : "Resolved", tone: "neutral" };
 }

@@ -27,6 +27,15 @@ pub(crate) async fn account(db: &Database, role: &str) -> AuthUser {
             avatar_url: None,
             is_active: true,
             last_login_at: None,
+            phone: None,
+            genre_interests: None,
+            must_change_password: false,
+            two_factor_enabled_at: None,
+            recovery_codes_remaining: 0,
+            password_changed_at: None,
+            totp_secret: None,
+            totp_pending_secret: None,
+            recovery_codes: None,
         },
     )
     .await
@@ -57,6 +66,9 @@ fn torrent_input(user: &AuthUser, hash: &str) -> CreateTorrentInput {
         source_feed_id: None,
         source_indexer_id: None,
         library_id: None,
+        identification_kind: None,
+        identification_status: None,
+        identification_summary: None,
         post_process_status: None,
         post_process_error: None,
         processed_at: None,
@@ -98,6 +110,7 @@ pub(crate) fn live(hash: &str, id: usize) -> ServiceTorrentInfo {
         seeds: 2,
         save_path: "/test/live".into(),
         files: vec![],
+        status_detail: None,
     }
 }
 
@@ -268,12 +281,17 @@ async fn add_targets_require_actual_library_ownership_before_runtime_work() {
             color: None,
             auto_scan: false,
             auto_organize: false,
+            auto_resolve_duplicates: None,
             naming_pattern: "".into(),
             scan_interval_minutes: 60,
             watch_for_changes: false,
+            watch_status: None,
+            watch_detail: None,
+            watch_status_since: None,
             scanning: false,
             last_scanned_at: None,
             quality_profile_id: None,
+            storage_volume_id: None,
         },
     )
     .await

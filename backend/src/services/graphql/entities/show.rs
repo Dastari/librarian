@@ -115,6 +115,11 @@ pub struct Show {
     #[json_field]
     pub genres: Vec<String>,
 
+    /// Fields a metadata refresh must leave alone, by their GraphQL names.
+    #[graphql(name = "lockedFields")]
+    #[json_field]
+    pub locked_fields: Option<Vec<String>>,
+
     #[graphql(name = "posterUrl")]
     pub poster_url: Option<String>,
 

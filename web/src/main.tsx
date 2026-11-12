@@ -6,10 +6,20 @@ import "@/styles/app.css";
 
 import { AppProviders } from "@/app/providers";
 import { router } from "@/app/router";
+import { apolloClient } from "@/lib/apollo/client";
 import { session } from "@/lib/auth/session";
 import { bootAppearance } from "@/lib/glass/appearance";
+import { startPwa } from "@/lib/pwa";
+import { installPointerFocus } from "@/lib/pointer-focus";
+import { installTvApp } from "@/lib/tv-app";
 
 bootAppearance();
+// Keyboard focus and mouse hover share one highlight: whichever was used last owns it.
+installPointerFocus();
+// Inside the Android TV app: the remote's Back, Menu and media keys, and memory warnings.
+installTvApp({ pathname: () => router.state.location.pathname, onMemoryPressure: () => apolloClient.cache.gc() });
+// Production builds register the service worker and watch for new deployments; dev does neither.
+startPwa();
 // Start rebuilding the session from cookies immediately; route guards await it.
 void session.boot();
 

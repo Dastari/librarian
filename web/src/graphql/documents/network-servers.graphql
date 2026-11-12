@@ -1,0 +1,50 @@
+query NetworkServerShares($id: String!) {
+  networkServerShares(id: $id) {
+    success
+    error
+    shares {
+      name
+      comment
+      listed
+    }
+  }
+}
+
+mutation TestNetworkServer($input: TestNetworkServerInput!) {
+  testNetworkServer(input: $input) {
+    success
+    error
+    shares {
+      name
+      comment
+      listed
+    }
+    sharesError
+    folders
+  }
+}
+
+query DownloadsMovePlan($newPath: String!) {
+  downloadsMovePlan(newPath: $newPath) {
+    oldPath
+    newPath
+    torrentCount
+    fileCount
+    matched
+    missing
+    missingFiles
+    changed
+    changedFiles
+    blocked
+    canApply
+  }
+}
+
+mutation MoveDownloads($input: MoveDownloadsInput!) {
+  moveDownloads(input: $input) {
+    success
+    error
+    movedTorrents
+    movedFiles
+  }
+}

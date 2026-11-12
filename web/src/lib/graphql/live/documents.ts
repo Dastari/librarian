@@ -20,7 +20,11 @@ const entityDocuments = {
   CastSetting: G.EntityCastSettingChangedDocument,
   Chapter: G.EntityChapterChangedDocument,
   Collection: G.EntityCollectionChangedDocument,
+  Credit: G.EntityCreditChangedDocument,
+  Device: G.EntityDeviceChangedDocument,
   Episode: G.EntityEpisodeChangedDocument,
+  IdentificationEvent: G.EntityIdentificationEventChangedDocument,
+  IdentifiedItem: G.EntityIdentifiedItemChangedDocument,
   InviteToken: G.EntityInviteTokenChangedDocument,
   LibraryScanIssue: G.EntityLibraryScanIssueChangedDocument,
   LibraryScanRun: G.EntityLibraryScanRunChangedDocument,
@@ -36,14 +40,17 @@ const entityDocuments = {
   MovieCastCredit: G.EntityMovieCastCreditChangedDocument,
   Movie: G.EntityMovieChangedDocument,
   NamingPattern: G.EntityNamingPatternChangedDocument,
+  NetworkServer: G.EntityNetworkServerChangedDocument,
   Notification: G.EntityNotificationChangedDocument,
   PendingFileMatch: G.EntityPendingFileMatchChangedDocument,
   Person: G.EntityPersonChangedDocument,
   PlaybackProgress: G.EntityPlaybackProgressChangedDocument,
   PlaybackSession: G.EntityPlaybackSessionChangedDocument,
+  PlayHistory: G.EntityPlayHistoryChangedDocument,
   QualityProfile: G.EntityQualityProfileChangedDocument,
   RefreshToken: G.EntityRefreshTokenChangedDocument,
   ReleaseBlocklist: G.EntityReleaseBlocklistChangedDocument,
+  ReleaseRecommendation: G.EntityReleaseRecommendationChangedDocument,
   RssFeedItem: G.EntityRssFeedItemChangedDocument,
   RssFeed: G.EntityRssFeedChangedDocument,
   ScheduleCache: G.EntityScheduleCacheChangedDocument,
@@ -51,8 +58,11 @@ const entityDocuments = {
   Season: G.EntitySeasonChangedDocument,
   Show: G.EntityShowChangedDocument,
   SourcePriorityRule: G.EntitySourcePriorityRuleChangedDocument,
+  StatsShare: G.EntityStatsShareChangedDocument,
+  StorageVolume: G.EntityStorageVolumeChangedDocument,
   Source: G.EntitySourceChangedDocument,
   Subtitle: G.EntitySubtitleChangedDocument,
+  TitleDetail: G.EntityTitleDetailChangedDocument,
   Torrent: G.EntityTorrentChangedDocument,
   TorrentFile: G.EntityTorrentFileChangedDocument,
   TorznabCategory: G.EntityTorznabCategoryChangedDocument,
@@ -102,11 +112,16 @@ const extraRoots: Record<string, readonly LiveTopic[]> = {
   hasEnabledSources: ["EnabledSources"],
   resumeShelf: ["PlaybackProgress", "PlaybackSession", "MediaFile", "Movie", "Show", "Episode", "Album", "Artist", "Track", "Audiobook", "Chapter", "Library"],
   liveTorrents: runtimeTopics, liveTorrent: runtimeTopics,
+  // Stored progress changes every few seconds, which is also when more files finish.
+  torrentMatchPreview: ["Torrent", "TorrentAdded", "TorrentCompleted", "TorrentRemoved"],
   movieCollectionDetails: ["Collection", "Movie", "MediaFile"],
   backupCapabilities: ["Backup"], backupSnapshots: ["Backup"],
   availableSourceDefinitions: ["Source"], sourceSettingDefinitions: ["Source"],
   filesystemRoots: ["Filesystem", "AppSetting"], browseDirectory: ["Filesystem", "AppSetting"],
   libraryPathAvailability: ["Filesystem", "AppSetting"],
+  // Computed over plays; a share given or taken back changes whose can be read.
+  playStatistics: ["PlayHistory", "StatsShare"],
+  statisticsPeople: ["StatsShare", "User"],
 };
 // A root query does not also watch its children, or anything that reaches it by propagation:
 // each has `propagate_change = "up"` for creates and updates, and
@@ -191,7 +206,7 @@ export function queryDependencies(document: DocumentNode, variables: Record<stri
 /** How a generated `Changed` stream says it ended without delivering everything. */
 const CONTINUITY_ERRORS = new Set(["SUBSCRIPTION_CONTINUITY_LOST", "SUBSCRIPTION_SOURCE_CLOSED"]);
 
-const adminTopics = new Set<LiveTopic>(["AppLog", "AppSetting", "User", "InviteToken", "RefreshToken", "Source", "UsenetServer", "MetadataCache", "ScheduleSyncState", "Backup", "Filesystem"]);
+const adminTopics = new Set<LiveTopic>(["AppLog", "AppSetting", "User", "InviteToken", "RefreshToken", "Source", "UsenetServer", "NetworkServer", "MetadataCache", "ScheduleSyncState", "Backup", "Filesystem"]);
 
 export function apolloLiveSource(client: ApolloClient, isAdmin: boolean): LiveSource {
   const states = new Map<string, string>();

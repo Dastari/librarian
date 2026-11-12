@@ -10,9 +10,10 @@
 use async_graphql::{Error, ErrorExtensions, Result};
 
 use crate::graphql::entities::{
-    CreateUserInput, LibraryScanIssue, MediaFile, UpdateLibraryScanIssueInput,
-    UpdateMediaFileInput, UpdateUserInput,
+    CreateRssFeedInput, CreateUserInput, LibraryScanIssue, MediaFile, UpdateLibraryScanIssueInput,
+    UpdateMediaFileInput, UpdateRssFeedInput, UpdateUserInput,
 };
+use crate::jobs::rss_poll::{MIN_POLL_MINUTES, feed_url_problem};
 use crate::services::graphql::auth::{AuthUser, Role};
 
 /// Longest resolution note kept on a scan issue.
@@ -83,6 +84,124 @@ pub fn prepare_user_create(input: &mut CreateUserInput) -> Result<()> {
 pub fn prepare_user_update(input: &mut UpdateUserInput) -> Result<()> {
     if let Some(role) = input.role.as_deref() {
         input.role = Some(normalized_role(role)?);
+    }
+    if let Some(name) = input.display_name.as_mut() {
+        *name = clean_optional(name.take(), MAX_DISPLAY_NAME_CHARS, "A display name")?;
+    }
+    if let Some(email) = input.email.as_mut() {
+        let cleaned = clean_optional(email.take(), MAX_EMAIL_CHARS, "An email address")?;
+        if let Some(address) = cleaned.as_deref()
+            && !looks_like_email(address)
+        {
+            return Err(invalid("That doesn't look like an email address"));
+        }
+        *email = cleaned;
+    }
+    if let Some(phone) = input.phone.as_mut() {
+        let cleaned = clean_optional(phone.take(), MAX_PHONE_CHARS, "A phone number")?;
+        // E.164 as the web's phone field writes it ("+61412345678", or with ";ext=204"), or a
+        // number typed some other way.
+        if let Some(number) = cleaned.as_deref()
+            && !number.chars().all(|c| {
+                c.is_ascii_digit()
+                    || matches!(
+                        c,
+                        '+' | ' ' | '-' | '(' | ')' | '.' | ';' | '=' | 'e' | 'x' | 't'
+                    )
+            })
+        {
+            return Err(invalid("That doesn't look like a phone number"));
+        }
+        *phone = cleaned;
+    }
+    if let Some(genres) = input.genre_interests.as_mut() {
+        *genres = genres.take().map(|list| clean_genres(&list)).transpose()?;
+    }
+    Ok(())
+}
+
+pub const MAX_DISPLAY_NAME_CHARS: usize = 80;
+pub const MAX_EMAIL_CHARS: usize = 254;
+pub const MAX_PHONE_CHARS: usize = 32;
+/// Most genres a person can pick (each becomes a Home row at most, design.md Q149).
+pub const MAX_GENRE_INTERESTS: usize = 12;
+
+/// Trimmed, blank as none, refused past `max` characters.
+fn clean_optional(value: Option<String>, max: usize, what: &str) -> Result<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim().to_string();
+    if value.chars().count() > max {
+        return Err(invalid(format!("{what} can be at most {max} characters")));
+    }
+    Ok((!value.is_empty()).then_some(value))
+}
+
+/// One `@`, something on each side, a dot in the domain and no spaces: enough to catch a slip,
+/// without pretending to validate deliverability (nothing sends mail yet).
+pub fn looks_like_email(address: &str) -> bool {
+    let Some((local, domain)) = address.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && !domain.contains('@')
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && !address.chars().any(char::is_whitespace)
+}
+
+/// Genre names trimmed, without blanks or repeats (ignoring case), in the person's order.
+pub fn clean_genres(list: &[String]) -> Result<Vec<String>> {
+    let mut seen = std::collections::HashSet::new();
+    let cleaned: Vec<String> = list
+        .iter()
+        .map(|genre| genre.trim())
+        .filter(|genre| !genre.is_empty() && seen.insert(genre.to_lowercase()))
+        .map(|genre| bounded(genre, 60))
+        .collect();
+    if cleaned.len() > MAX_GENRE_INTERESTS {
+        return Err(invalid(format!(
+            "Pick at most {MAX_GENRE_INTERESTS} genres"
+        )));
+    }
+    Ok(cleaned)
+}
+
+/// A new RSS feed: a name, a fetchable `http`/`https` address, and an interval no shorter than the
+/// poller will honour (shorter is raised to it rather than refused).
+pub fn prepare_feed_create(input: &mut CreateRssFeedInput) -> Result<()> {
+    input.name = input.name.trim().to_string();
+    if input.name.is_empty() {
+        return Err(invalid("A feed needs a name"));
+    }
+    input.url = input.url.trim().to_string();
+    if let Some(problem) = feed_url_problem(&input.url) {
+        return Err(invalid(problem));
+    }
+    input.poll_interval_minutes = input.poll_interval_minutes.max(MIN_POLL_MINUTES as i32);
+    Ok(())
+}
+
+/// The same rules for an edit, for the fields it sets. A new address starts the feed afresh.
+pub fn prepare_feed_update(input: &mut UpdateRssFeedInput) -> Result<()> {
+    if let Some(name) = input.name.as_mut() {
+        *name = name.trim().to_string();
+        if name.is_empty() {
+            return Err(invalid("A feed needs a name"));
+        }
+    }
+    if let Some(url) = input.url.as_mut() {
+        *url = url.trim().to_string();
+        if let Some(problem) = feed_url_problem(url) {
+            return Err(invalid(problem));
+        }
+        input.consecutive_failures = Some(Some(0));
+        input.last_error = Some(None);
+    }
+    if let Some(minutes) = input.poll_interval_minutes.as_mut() {
+        *minutes = (*minutes).max(MIN_POLL_MINUTES as i32);
     }
     Ok(())
 }
@@ -196,6 +315,84 @@ mod tests {
         let stamped = input.resolved_at.unwrap().unwrap();
         assert_ne!(stamped, "client-supplied");
         chrono::DateTime::parse_from_rfc3339(&stamped).expect("server timestamp");
+    }
+
+    fn new_feed(name: &str, url: &str, minutes: i32) -> CreateRssFeedInput {
+        CreateRssFeedInput {
+            user_id: "u".into(),
+            library_id: None,
+            name: name.into(),
+            url: url.into(),
+            enabled: true,
+            poll_interval_minutes: minutes,
+            post_download_action: None,
+            last_polled_at: None,
+            last_successful_at: None,
+            last_error: None,
+            consecutive_failures: None,
+            url_display: None,
+            health_status: None,
+            health_kind: None,
+        }
+    }
+
+    #[test]
+    fn a_feed_needs_a_name_and_a_fetchable_address() {
+        let mut ok = new_feed("  TV  ", "  https://example.com/rss  ", 30);
+        prepare_feed_create(&mut ok).unwrap();
+        assert_eq!(ok.name, "TV");
+        assert_eq!(ok.url, "https://example.com/rss");
+        assert_eq!(ok.poll_interval_minutes, 30);
+
+        for (name, url) in [
+            ("", "https://example.com/rss"),
+            ("TV", "file:///etc/passwd"),
+            ("TV", "ftp://example.com/rss"),
+            ("TV", "not a url"),
+        ] {
+            assert!(
+                prepare_feed_create(&mut new_feed(name, url, 30)).is_err(),
+                "{name:?} {url:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_feed_interval_is_raised_to_the_polling_floor() {
+        let mut quick = new_feed("TV", "https://example.com/rss", 1);
+        prepare_feed_create(&mut quick).unwrap();
+        assert_eq!(quick.poll_interval_minutes, MIN_POLL_MINUTES as i32);
+
+        let mut edit = UpdateRssFeedInput {
+            poll_interval_minutes: Some(2),
+            ..Default::default()
+        };
+        prepare_feed_update(&mut edit).unwrap();
+        assert_eq!(edit.poll_interval_minutes, Some(MIN_POLL_MINUTES as i32));
+    }
+
+    #[test]
+    fn a_new_address_clears_a_feeds_failures_and_a_bad_one_is_refused() {
+        let mut moved = UpdateRssFeedInput {
+            url: Some("https://example.com/new".into()),
+            ..Default::default()
+        };
+        prepare_feed_update(&mut moved).unwrap();
+        assert_eq!(moved.consecutive_failures, Some(Some(0)));
+        assert_eq!(moved.last_error, Some(None));
+
+        let mut bad = UpdateRssFeedInput {
+            url: Some("gopher://example.com".into()),
+            ..Default::default()
+        };
+        assert!(prepare_feed_update(&mut bad).is_err());
+
+        let mut untouched = UpdateRssFeedInput {
+            enabled: Some(false),
+            ..Default::default()
+        };
+        prepare_feed_update(&mut untouched).unwrap();
+        assert_eq!(untouched.consecutive_failures, None);
     }
 
     #[test]
@@ -315,5 +512,179 @@ mod tests {
             "now",
         );
         assert!(unrelated.match_type.is_none());
+    }
+}
+
+/// How a title sorts: without a leading "The", "A" or "An", so "The Sagan Diary" sits among the S's.
+/// A title that's nothing but the word keeps it.
+pub fn sort_key(title: &str) -> String {
+    let title = title.trim();
+    for article in ["the", "an", "a"] {
+        let Some(head) = title.get(..article.len()) else {
+            continue;
+        };
+        let rest = &title[article.len()..];
+        if head.eq_ignore_ascii_case(article) && rest.starts_with(char::is_whitespace) {
+            let rest = rest.trim_start();
+            if !rest.is_empty() {
+                return rest.to_string();
+            }
+        }
+    }
+    title.to_string()
+}
+
+/// The sort key a new record starts with. One a provider just copied from the title isn't a choice.
+pub fn sort_key_for_new(title: &str, given: Option<String>) -> Option<String> {
+    match given {
+        Some(given) if !given.trim().is_empty() && given.trim() != title.trim() => Some(given),
+        _ => Some(sort_key(title)),
+    }
+}
+
+/// The sort key after a rename, unless someone set their own, which a rename leaves alone.
+pub fn sort_key_after_rename(
+    old_title: &str,
+    old_key: Option<&str>,
+    new_title: &str,
+) -> Option<String> {
+    let followed_title = match old_key.map(str::trim) {
+        None | Some("") => true,
+        Some(key) => key == old_title.trim() || key == sort_key(old_title),
+    };
+    followed_title.then(|| sort_key(new_title))
+}
+
+/// What a provider may still write, given the fields someone locked. Locks hold the GraphQL names.
+/// A locked title keeps its sort key too, and locked narrators keep the lead narrator.
+pub fn without_locked_fields(mut input: serde_json::Value, locked: &[String]) -> serde_json::Value {
+    let Some(fields) = input.as_object_mut() else {
+        return input;
+    };
+    for field in locked {
+        fields.remove(field);
+        match field.as_str() {
+            "title" => drop(fields.remove("sortTitle")),
+            "name" => drop(fields.remove("sortName")),
+            "narrators" => drop(fields.remove("narratorName")),
+            _ => {}
+        }
+    }
+    input
+}
+
+#[cfg(test)]
+mod locked_field_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn locked(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn locked_fields_are_left_out_and_others_still_write() {
+        let input = json!({ "overview": "provider", "tagline": "provider", "year": 1999 });
+        assert_eq!(
+            without_locked_fields(input, &locked(&["overview", "year"])),
+            json!({ "tagline": "provider" })
+        );
+    }
+
+    #[test]
+    fn a_locked_title_keeps_its_sort_key() {
+        let input = json!({ "title": "Provider", "sortTitle": "Provider", "year": 1999 });
+        assert_eq!(
+            without_locked_fields(input, &locked(&["title"])),
+            json!({ "year": 1999 })
+        );
+        let input = json!({ "name": "Provider", "sortName": "Provider" });
+        assert_eq!(without_locked_fields(input, &locked(&["name"])), json!({}));
+    }
+
+    #[test]
+    fn a_locked_sort_key_leaves_the_title_free() {
+        let input = json!({ "title": "Provider", "sortTitle": "Provider" });
+        assert_eq!(
+            without_locked_fields(input, &locked(&["sortTitle"])),
+            json!({ "title": "Provider" })
+        );
+    }
+
+    #[test]
+    fn locked_narrators_keep_the_lead_narrator() {
+        let input = json!({ "narrators": ["A"], "narratorName": "A", "publisher": "P" });
+        assert_eq!(
+            without_locked_fields(input, &locked(&["narrators"])),
+            json!({ "publisher": "P" })
+        );
+    }
+
+    #[test]
+    fn nothing_locked_writes_everything() {
+        let input = json!({ "title": "Provider", "sortTitle": "Provider" });
+        assert_eq!(without_locked_fields(input.clone(), &[]), input);
+    }
+}
+
+#[cfg(test)]
+mod sort_key_tests {
+    use super::*;
+
+    #[test]
+    fn leading_articles_are_ignored() {
+        assert_eq!(sort_key("The Sagan Diary"), "Sagan Diary");
+        assert_eq!(
+            sort_key("A Knight of the Seven Kingdoms"),
+            "Knight of the Seven Kingdoms"
+        );
+        assert_eq!(sort_key("An Old Road"), "Old Road");
+        assert_eq!(sort_key("the lower case"), "lower case");
+    }
+
+    #[test]
+    fn only_a_whole_leading_word_counts() {
+        assert_eq!(sort_key("Theory of Everything"), "Theory of Everything");
+        assert_eq!(sort_key("Amadeus"), "Amadeus");
+        assert_eq!(sort_key("Andor"), "Andor");
+        assert_eq!(sort_key("The"), "The");
+        assert_eq!(sort_key("Zoe's Tale"), "Zoe's Tale");
+    }
+
+    #[test]
+    fn a_new_record_keeps_a_real_choice_but_not_a_copy_of_its_title() {
+        assert_eq!(sort_key_for_new("The Wire", None).as_deref(), Some("Wire"));
+        assert_eq!(
+            sort_key_for_new("The Wire", Some(" ".into())).as_deref(),
+            Some("Wire")
+        );
+        assert_eq!(
+            sort_key_for_new("The Wire", Some("The Wire".into())).as_deref(),
+            Some("Wire")
+        );
+        assert_eq!(
+            sort_key_for_new("The Beatles", Some("Beatles, The".into())).as_deref(),
+            Some("Beatles, The")
+        );
+    }
+
+    #[test]
+    fn a_rename_only_moves_a_key_that_followed_the_title() {
+        assert_eq!(
+            sort_key_after_rename("The Old", None, "The New").as_deref(),
+            Some("New")
+        );
+        assert_eq!(
+            sort_key_after_rename("The Old", Some("Old"), "The New").as_deref(),
+            Some("New")
+        );
+        assert_eq!(
+            sort_key_after_rename("The Old", Some("The Old"), "The New").as_deref(),
+            Some("New")
+        );
+        assert_eq!(
+            sort_key_after_rename("The Old", Some("Mine"), "The New"),
+            None
+        );
     }
 }

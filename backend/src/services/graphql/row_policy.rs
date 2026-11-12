@@ -80,18 +80,31 @@ impl OwnershipRowPolicy {
         };
         let predicate = match entity_name {
             "Library" => direct!(LibraryWhereInput),
+            // A person's own account: the row's id is its owner.
+            "User" => ReadPredicate::from_filter::<DefaultBackend, _>(&UserWhereInput {
+                id: Some(owner_filter()),
+                ..Default::default()
+            })?,
             "LibraryScanRun" => direct!(LibraryScanRunWhereInput),
             "LibraryScanIssue" => direct!(LibraryScanIssueWhereInput),
             "Movie" => direct!(MovieWhereInput),
+            "Credit" => direct!(CreditWhereInput),
+            "TitleDetail" => direct!(TitleDetailWhereInput),
             "Collection" => direct!(CollectionWhereInput),
             "Show" => direct!(ShowWhereInput),
             "Artist" => direct!(ArtistWhereInput),
             "Album" => direct!(AlbumWhereInput),
             "Audiobook" => direct!(AudiobookWhereInput),
             "PendingFileMatch" => direct!(PendingFileMatchWhereInput),
+            "IdentificationEvent" => direct!(IdentificationEventWhereInput),
+            "IdentifiedItem" => direct!(IdentifiedItemWhereInput),
             "PlaybackProgress" => direct!(PlaybackProgressWhereInput),
             "PlaybackSession" => direct!(PlaybackSessionWhereInput),
+            "Device" => direct!(DeviceWhereInput),
+            "PlayHistory" => direct!(PlayHistoryWhereInput),
+            "StatsShare" => direct!(StatsShareWhereInput),
             "Notification" => direct!(NotificationWhereInput),
+            "ReleaseRecommendation" => direct!(ReleaseRecommendationWhereInput),
             "RssFeed" => direct!(RssFeedWhereInput),
             "Torrent" => direct!(TorrentWhereInput),
             "UsenetDownload" => direct!(UsenetDownloadWhereInput),
@@ -139,6 +152,10 @@ impl OwnershipRowPolicy {
                 &[("media_file_id", "id")],
                 file()?,
             )?,
+            "Lyric" => ReadPredicate::related::<DefaultBackend, Lyric, MediaFile>(
+                &[("media_file_id", "id")],
+                file()?,
+            )?,
             "MediaChapter" => ReadPredicate::related::<DefaultBackend, MediaChapter, MediaFile>(
                 &[("media_file_id", "id")],
                 file()?,
@@ -153,17 +170,44 @@ impl OwnershipRowPolicy {
             return Some(ScopeClass::Owner);
         }
         Some(match entity_name {
-            "Library" | "LibraryScanRun" | "LibraryScanIssue" | "Movie" | "Collection" | "Show"
-            | "Artist" | "Album" | "Audiobook" | "PendingFileMatch" | "PlaybackProgress"
-            | "PlaybackSession" | "Notification" | "RssFeed" | "Torrent" | "UsenetDownload"
-            | "NamingPattern" | "SourcePriorityRule" | "CastSession" => ScopeClass::Owner,
+            "Library"
+            | "LibraryScanRun"
+            | "LibraryScanIssue"
+            | "Movie"
+            | "Collection"
+            | "Show"
+            | "Artist"
+            | "Album"
+            | "Audiobook"
+            | "PendingFileMatch"
+            | "PlaybackProgress"
+            | "PlaybackSession"
+            | "Device"
+            | "PlayHistory"
+            | "StatsShare"
+            | "Notification"
+            | "ReleaseRecommendation"
+            | "RssFeed"
+            | "Torrent"
+            | "UsenetDownload"
+            | "NamingPattern"
+            | "SourcePriorityRule"
+            | "CastSession"
+            | "IdentificationEvent"
+            | "IdentifiedItem"
+            | "Credit"
+            | "TitleDetail"
+            | "User" => ScopeClass::Owner,
             "MovieCastCredit" | "Episode" | "Season" | "MediaFile" | "Track" | "Chapter"
             | "TorrentFile" | "RssFeedItem" | "VideoStream" | "AudioStream" | "Subtitle"
-            | "MediaChapter" => ScopeClass::Derived,
+            | "Lyric" | "MediaChapter" => ScopeClass::Derived,
             "Person" | "CastDevice" | "CastSetting" | "ScheduleCache" | "TorznabCategory"
             | "QualityProfile" | "ReleaseBlocklist" => ScopeClass::Shared,
-            "Source" | "User" | "InviteToken" | "RefreshToken" | "AppSetting" | "AppLog"
-            | "UsenetServer" | "ScheduleSyncState" | "MetadataCache" => ScopeClass::Admin,
+            "Source" | "InviteToken" | "PasswordResetToken" | "RefreshToken" | "AppSetting"
+            | "AppLog" | "UsenetServer" | "ScheduleSyncState" | "MetadataCache"
+            | "MatchingAssistant" | "NetworkServer" | "TorrentContents" | "StorageVolume" => {
+                ScopeClass::Admin
+            }
             _ => return None,
         })
     }
@@ -179,19 +223,30 @@ impl OwnershipRowPolicy {
             };
         }
         match entity_name {
+            "User" => row
+                .downcast_ref::<User>()
+                .map(|record| Some(record.id.as_str())),
             "Library" => required!(Library),
             "LibraryScanRun" => required!(LibraryScanRun),
             "LibraryScanIssue" => required!(LibraryScanIssue),
             "Movie" => required!(Movie),
+            "Credit" => required!(Credit),
+            "TitleDetail" => required!(TitleDetail),
             "Show" => required!(Show),
             "Collection" => required!(Collection),
             "Artist" => required!(Artist),
             "Album" => required!(Album),
             "Audiobook" => required!(Audiobook),
             "PendingFileMatch" => required!(PendingFileMatch),
+            "IdentificationEvent" => required!(IdentificationEvent),
+            "IdentifiedItem" => required!(IdentifiedItem),
             "PlaybackProgress" => required!(PlaybackProgress),
             "PlaybackSession" => required!(PlaybackSession),
+            "Device" => required!(Device),
+            "PlayHistory" => required!(PlayHistory),
+            "StatsShare" => required!(StatsShare),
             "Notification" => required!(Notification),
+            "ReleaseRecommendation" => required!(ReleaseRecommendation),
             "RssFeed" => required!(RssFeed),
             "Torrent" => required!(Torrent),
             "UsenetDownload" => required!(UsenetDownload),
@@ -296,6 +351,12 @@ impl OwnershipRowPolicy {
             }
             "Subtitle" => {
                 let Some(record) = row.downcast_ref::<Subtitle>() else {
+                    return Ok(Some(false));
+                };
+                Self::media_file_owned(db, &record.media_file_id, requester_user_id).await?
+            }
+            "Lyric" => {
+                let Some(record) = row.downcast_ref::<Lyric>() else {
                     return Ok(Some(false));
                 };
                 Self::media_file_owned(db, &record.media_file_id, requester_user_id).await?
