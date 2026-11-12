@@ -3264,3 +3264,39 @@ Second pass, the same kind of cost elsewhere:
 - **Home's 3D scene:** renders on demand at 30 fps, only while on screen and the tab is visible. It runs at 1× density without antialiasing, and its panes use a plain translucent material, because a physical "transmission" material renders the scene a second time. A software renderer, or a GPU that manages under 60% of the frames in its first seconds, falls back to the gradient for the rest of the tab.
 - **Sign-in constellation:** 1× density and 30 fps; hidden tabs already get no animation frames.
 - **Poster rows:** a row checks its scroll arrows once per frame, not once per scroll event.
+
+### Q156: How are cast receivers named, and what does "How it was found" show?
+**Answer:** By what each receiver says about itself, read at discovery (`services/cast/describe.rs`).
+- **Google Cast (mDNS `_googlecast._tcp`):** the TXT record's `fn` is the name and `md` the model; without `fn` the
+  service instance is tidied (`Chromecast-Ultra-<id>` → "Chromecast Ultra"). Anything answering on that service is a
+  Cast receiver, whatever its model says (TVs with Chromecast built in report their own model), so it is
+  `CHROMECAST` and can play, or `CHROMECAST_AUDIO` when its `ca` bitmask has audio out but no video out. One row per
+  receiver: its IPv4 address when it has one.
+- **DLNA (SSDP `MediaRenderer`):** the reply's `LOCATION` (already pinned to the replying device) is fetched, at most
+  256 KB within 3 s and without redirects, and the root `<device>` gives `friendlyName`, `manufacturer`, `modelName`,
+  `UDN` and the service list. Samsung's bracketed category is dropped ("[TV] Samsung 8 Series (55)" → "Samsung 8
+  Series (55)"). A description that can't be read leaves the renderer listed as "DLNA renderer (<address>)" with
+  the reason kept. The raw `USN` is never a name.
+- **Every network:** the SSDP search goes out of each private IPv4 interface (one socket each, `IP_MULTICAST_IF`),
+  skipping container bridges. A server on two subnets used to search only its default route's, which is why a
+  Samsung on the other subnet went unseen. mDNS already listens on every interface.
+- **Stored:** `manufacturer`, `receiverId` (the Cast `id` or the UDN), `nameIsCustom` and `discoveryDetails` (JSON:
+  protocol, the name as reported, TXT record or description URL, `SERVER`, `USN`, services, capabilities). All are
+  nullable, so the migration is additive.
+- **Upserts:** found by address and port, then by `receiverId`, so a receiver whose address changed keeps its row,
+  name, favourite and sessions. A name an administrator chose (`nameIsCustom`) is kept; a reply that says less never
+  erases what is known. Renaming back to the reported name clears `nameIsCustom`.
+- **UI:** a `CastDevice` identity (TV, speaker or cast glyph; Available / Not responding / Turned off), actions
+  (How it was found, settings, rename, favourite, turn off, copy address, remove) and a settings dialog with
+  General, How it was found and Remove tabs. The cast picker lists playable receivers first, favourites on top, and
+  folds the rest under "Can't play from Librarian" with the reason.
+
+**Casting from another network** (the question behind this): Librarian casts from the server. The server opens the
+Cast control channel to the receiver's LAN address, and the receiver fetches media from the server, so a receiver
+must be on (or routed to) the server's network. A cloud-hosted server cannot reach a TV behind a home router. Ways
+to cover that, none built yet: (1) the browser casts: the Google Cast Web Sender SDK in Chrome discovers and controls
+the TV from the viewer's own network, and the receiver streams from the server's public HTTPS address with a grant
+in the URL (Chrome on desktop and Android only); (2) "Play on" a Librarian app: the TV app (or any signed-in
+browser) holds a live connection to the server, so a phone anywhere can tell it what to play, as Plex and Spotify
+Connect do; (3) a small helper on the home network that relays discovery and control for DLNA, which browsers
+cannot speak.

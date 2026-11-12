@@ -3602,6 +3602,7 @@ dependencies = [
  "sha1 0.10.7",
  "sha2 0.11.1",
  "smb2",
+ "socket2",
  "sqlx",
  "strsim",
  "sysinfo",

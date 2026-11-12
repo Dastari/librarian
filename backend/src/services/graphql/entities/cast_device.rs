@@ -81,6 +81,27 @@ pub struct CastDevice {
     #[graphql(name = "lastProbeError")]
     pub last_probe_error: Option<String>,
 
+    /// Who made it, when the receiver says (DLNA descriptions do; Google Cast does not).
+    #[graphql(name = "manufacturer")]
+    pub manufacturer: Option<String>,
+
+    /// A stable identifier that survives an address change: the Google Cast `id`
+    /// or the UPnP UDN. Discovery finds a receiver by it when its address moved.
+    #[graphql(name = "receiverId")]
+    #[filterable(type = "string")]
+    pub receiver_id: Option<String>,
+
+    /// True once an administrator renamed it; discovery then keeps that name.
+    /// Null on rows from before the column existed, read as false.
+    #[graphql(name = "nameIsCustom")]
+    #[filterable(type = "boolean")]
+    pub name_is_custom: Option<bool>,
+
+    /// What discovery last learned, as JSON (`services::cast::describe::DiscoveryDetails`):
+    /// the protocol, the name as reported, the TXT record or UPnP description and so on.
+    #[graphql(name = "discoveryDetails")]
+    pub discovery_details: Option<String>,
+
     #[graphql(name = "createdAt")]
     #[filterable(type = "date")]
     #[sortable]

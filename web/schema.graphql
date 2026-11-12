@@ -1286,6 +1286,22 @@ type CastDevice {
 	"""
 	lastProbeError: String
 	"""
+	Who made it, when the receiver says (DLNA descriptions do; Google Cast does not).
+	"""
+	manufacturer: String
+	"""
+	A stable identifier that survives an address change: the Google Cast `id` or the UPnP UDN. Discovery finds a receiver by it when its address moved.
+	"""
+	receiverId: String
+	"""
+	True once an administrator renamed it; discovery then keeps that name. Null on rows from before the column existed, read as false.
+	"""
+	nameIsCustom: Boolean
+	"""
+	What discovery last learned, as JSON (`services::cast::describe::DiscoveryDetails`): the protocol, the name as reported, the TXT record or UPnP description and so on.
+	"""
+	discoveryDetails: String
+	"""
 	Created At
 	"""
 	createdAt: String!
@@ -1367,6 +1383,8 @@ input CastDeviceWhereInput {
 	firstSeenAt: DateFilter
 	lastSeenAt: DateFilter
 	lastProbeAt: DateFilter
+	receiverId: StringFilter
+	nameIsCustom: BoolFilter
 	createdAt: DateFilter
 	updatedAt: DateFilter
 	"""
@@ -2175,6 +2193,10 @@ input CreateCastDeviceInput {
 	lastSeenAt: String
 	lastProbeAt: String
 	lastProbeError: String
+	manufacturer: String
+	receiverId: String
+	nameIsCustom: Boolean
+	discoveryDetails: String
 }
 
 input CreateCastSessionInput {
@@ -19562,6 +19584,10 @@ input UpdateCastDeviceInput {
 	lastSeenAt: String
 	lastProbeAt: String
 	lastProbeError: String
+	manufacturer: String
+	receiverId: String
+	nameIsCustom: Boolean
+	discoveryDetails: String
 }
 
 """

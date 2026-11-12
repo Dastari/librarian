@@ -16,7 +16,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 use url::Host;
 
-use super::{CastGrantClaims, CastGrantSigner};
+use super::{CastGrantClaims, CastGrantSigner, describe};
 use crate::services::manager::{Service, ServiceHealth, ServicesManager};
 
 const CHROMECAST_SERVICE_TYPE: &str = "_googlecast._tcp.local.";
@@ -43,22 +43,6 @@ impl CastDeviceType {
             Self::Unknown => "UNKNOWN",
         }
     }
-
-    pub fn from_model(model: Option<&str>) -> Self {
-        let Some(model) = model else {
-            return Self::Unknown;
-        };
-        let lower = model.to_ascii_lowercase();
-        if lower.contains("chromecast audio") {
-            Self::ChromecastAudio
-        } else if lower.contains("chromecast") {
-            Self::Chromecast
-        } else if lower.contains("dlna") || lower.contains("upnp") {
-            Self::DlnaRenderer
-        } else {
-            Self::Unknown
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +53,15 @@ pub struct DiscoveredCastDevice {
     pub model: Option<String>,
     pub device_type: CastDeviceType,
     pub last_seen_at: String,
+    /// The maker, when the receiver says (UPnP descriptions do; Google Cast does not).
+    #[serde(default)]
+    pub manufacturer: Option<String>,
+    /// A stable identifier that survives an address change: the Cast `id` or the UPnP UDN.
+    #[serde(default)]
+    pub receiver_id: Option<String>,
+    /// What discovery learned, kept as `CastDevice.discoveryDetails` (JSON).
+    #[serde(default)]
+    pub details: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -1144,24 +1137,67 @@ impl CastService {
                 let wait = remaining.min(Duration::from_millis(250));
                 match receiver.recv_timeout(wait) {
                     Ok(ServiceEvent::ServiceResolved(info)) => {
-                        let model = info
+                        let txt: std::collections::BTreeMap<String, String> = info
                             .get_properties()
-                            .get("md")
-                            .map(|v| v.val_str().to_string());
-                        let name = info
-                            .get_properties()
+                            .iter()
+                            .map(|property| {
+                                (property.key().to_string(), property.val_str().to_string())
+                            })
+                            .collect();
+                        let model = txt.get("md").cloned().filter(|value| !value.is_empty());
+                        let reported_name = txt
                             .get("fn")
-                            .map(|v| v.val_str().to_string())
-                            .unwrap_or_else(|| info.get_fullname().to_string());
-                        let device_type = CastDeviceType::from_model(model.as_deref());
-                        for address in info.get_addresses() {
+                            .cloned()
+                            .filter(|value| !value.trim().is_empty());
+                        let name = reported_name.clone().map_or_else(
+                            || describe::name_from_service_instance(info.get_fullname()),
+                            |name| name.trim().to_string(),
+                        );
+                        let ca = txt.get("ca").map(String::as_str);
+                        let device_type = describe::google_cast_device_type(model.as_deref(), ca);
+                        // One row per receiver: an IPv4 address when it has one,
+                        // otherwise every address (link-local IPv6 included).
+                        let mut addresses: Vec<String> = info
+                            .get_addresses()
+                            .iter()
+                            .map(|address| address.to_string())
+                            .collect();
+                        addresses.sort();
+                        let v4: Vec<String> = addresses
+                            .iter()
+                            .filter(|address| address.parse::<std::net::Ipv4Addr>().is_ok())
+                            .cloned()
+                            .collect();
+                        let targets = if v4.is_empty() {
+                            addresses.clone()
+                        } else {
+                            v4.into_iter().take(1).collect()
+                        };
+                        let details = describe::DiscoveryDetails {
+                            protocol: describe::PROTOCOL_GOOGLE_CAST,
+                            reported_name,
+                            service_name: Some(info.get_fullname().to_string()),
+                            hostname: Some(info.get_hostname().to_string()),
+                            addresses: addresses.clone(),
+                            capabilities: describe::cast_capabilities(ca),
+                            running_app: txt.get("rs").cloned().filter(|value| !value.is_empty()),
+                            txt: txt.clone(),
+                            ..Default::default()
+                        };
+                        for address in targets {
                             devices.push(DiscoveredCastDevice {
                                 name: name.clone(),
-                                address: address.to_string(),
+                                address,
                                 port: info.get_port() as i32,
                                 model: model.clone(),
                                 device_type,
                                 last_seen_at: chrono::Utc::now().to_rfc3339(),
+                                manufacturer: None,
+                                receiver_id: txt
+                                    .get("id")
+                                    .cloned()
+                                    .filter(|value| !value.is_empty()),
+                                details: details.to_json(),
                             });
                         }
                     }
@@ -1237,12 +1273,9 @@ impl CastService {
     }
 
     async fn discover_dlna_ssdp(timeout_ms: u64) -> Result<Vec<DiscoveredCastDevice>> {
-        tokio::task::spawn_blocking(move || -> Result<Vec<DiscoveredCastDevice>> {
-            let mut devices = Vec::new();
-            let socket = UdpSocket::bind("0.0.0.0:0").context("Failed to bind SSDP socket")?;
-            socket
-                .set_read_timeout(Some(Duration::from_millis(200)))
-                .context("Failed to set SSDP timeout")?;
+        let answers = tokio::task::spawn_blocking(move || -> Result<Vec<SsdpAnswer>> {
+            let mut answers: Vec<SsdpAnswer> = Vec::new();
+            let sockets = ssdp_sockets()?;
 
             let search = concat!(
                 "M-SEARCH * HTTP/1.1\r\n",
@@ -1252,51 +1285,77 @@ impl CastService {
                 "ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n",
                 "\r\n"
             );
-            socket
-                .send_to(search.as_bytes(), DLNA_MULTICAST_ADDR)
-                .context("Failed to send SSDP discovery")?;
+            let mut sent = 0;
+            for socket in &sockets {
+                match socket.send_to(search.as_bytes(), DLNA_MULTICAST_ADDR) {
+                    Ok(_) => sent += 1,
+                    Err(error) => debug!(
+                        local = ?socket.local_addr().ok(),
+                        error = %error,
+                        "Could not send the SSDP search from one interface"
+                    ),
+                }
+            }
+            if sent == 0 {
+                anyhow::bail!("Failed to send SSDP discovery from any interface");
+            }
 
             let until = Instant::now() + Duration::from_millis(timeout_ms);
             let mut buf = [0u8; 4096];
             while Instant::now() < until {
-                match socket.recv_from(&mut buf) {
-                    Ok((len, src)) => {
-                        let response = String::from_utf8_lossy(&buf[..len]).to_string();
-                        if !response.to_ascii_lowercase().contains("mediarenderer") {
-                            continue;
+                let mut quiet = true;
+                for socket in &sockets {
+                    match socket.recv_from(&mut buf) {
+                        Ok((len, src)) => {
+                            quiet = false;
+                            let response = String::from_utf8_lossy(&buf[..len]).to_string();
+                            if !response.to_ascii_lowercase().contains("mediarenderer") {
+                                continue;
+                            }
+                            let Some((address, port)) =
+                                validated_ssdp_location_endpoint(&response, src.ip())
+                            else {
+                                warn!(
+                                    source_address = %src.ip(),
+                                    "Ignoring DLNA response without a safe same-device LOCATION"
+                                );
+                                continue;
+                            };
+                            // Renderers answer more than once; one entry per endpoint.
+                            if answers
+                                .iter()
+                                .any(|answer| answer.address == address && answer.port == port)
+                            {
+                                continue;
+                            }
+                            answers.push(SsdpAnswer {
+                                address,
+                                port,
+                                location: extract_ssdp_header(&response, "LOCATION"),
+                                server: extract_ssdp_header(&response, "SERVER"),
+                                usn: extract_ssdp_header(&response, "USN"),
+                            });
                         }
-                        let model = extract_ssdp_header(&response, "SERVER");
-                        let name = extract_ssdp_header(&response, "USN")
-                            .or_else(|| extract_ssdp_header(&response, "SERVER"))
-                            .unwrap_or_else(|| format!("DLNA Renderer ({})", src.ip()));
-                        let Some((address, port)) =
-                            validated_ssdp_location_endpoint(&response, src.ip())
-                        else {
-                            warn!(
-                                source_address = %src.ip(),
-                                "Ignoring DLNA response without a safe same-device LOCATION"
-                            );
-                            continue;
-                        };
-                        devices.push(DiscoveredCastDevice {
-                            name,
-                            address: address.to_string(),
-                            port: i32::from(port),
-                            model,
-                            device_type: CastDeviceType::DlnaRenderer,
-                            last_seen_at: chrono::Utc::now().to_rfc3339(),
-                        });
+                        Err(err)
+                            if err.kind() == std::io::ErrorKind::WouldBlock
+                                || err.kind() == std::io::ErrorKind::TimedOut => {}
+                        Err(err) => return Err(err).context("Failed reading SSDP response"),
                     }
-                    Err(err)
-                        if err.kind() == std::io::ErrorKind::WouldBlock
-                            || err.kind() == std::io::ErrorKind::TimedOut => {}
-                    Err(err) => return Err(err).context("Failed reading SSDP response"),
+                }
+                if quiet {
+                    std::thread::sleep(Duration::from_millis(25));
                 }
             }
 
-            Ok(devices)
+            Ok(answers)
         })
-        .await?
+        .await??;
+
+        let mut devices = Vec::with_capacity(answers.len());
+        for answer in answers {
+            devices.push(describe_dlna_renderer(answer).await);
+        }
+        Ok(devices)
     }
 
     fn cast_media_blocking(
@@ -1632,6 +1691,147 @@ impl ServiceHealthExt for ServiceHealth {
         self.message = Some(message);
         self
     }
+}
+
+/// The IPv4 addresses SSDP searches go out of: every private or link-local
+/// interface, skipping container bridges. A server on two networks (a NAS on a
+/// LAN and a VLAN, say) would otherwise only search the default route's.
+fn ssdp_interfaces() -> Vec<std::net::Ipv4Addr> {
+    const SKIP: [&str; 6] = ["lo", "docker", "veth", "br-", "virbr", "cni"];
+    let mut addresses: Vec<std::net::Ipv4Addr> = local_ip_address::list_afinet_netifas()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(name, _)| !SKIP.iter().any(|prefix| name.starts_with(prefix)))
+        .filter_map(|(_, address)| match address {
+            IpAddr::V4(v4) if (v4.is_private() || v4.is_link_local()) && !v4.is_loopback() => {
+                Some(v4)
+            }
+            _ => None,
+        })
+        .collect();
+    addresses.sort();
+    addresses.dedup();
+    addresses
+}
+
+/// One non-blocking UDP socket per interface, each sending its multicast out of
+/// that interface; one unbound socket when no interface could be listed.
+fn ssdp_sockets() -> Result<Vec<UdpSocket>> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let mut sockets = Vec::new();
+    for address in ssdp_interfaces() {
+        let socket = (|| -> std::io::Result<UdpSocket> {
+            let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+            socket.set_multicast_if_v4(&address)?;
+            socket.bind(&SocketAddr::from((address, 0)).into())?;
+            socket.set_nonblocking(true)?;
+            Ok(socket.into())
+        })();
+        match socket {
+            Ok(socket) => sockets.push(socket),
+            Err(error) => {
+                debug!(%address, error = %error, "Could not open an SSDP socket on this interface")
+            }
+        }
+    }
+    if sockets.is_empty() {
+        let socket = UdpSocket::bind("0.0.0.0:0").context("Failed to bind SSDP socket")?;
+        socket
+            .set_nonblocking(true)
+            .context("Failed to set the SSDP socket non-blocking")?;
+        sockets.push(socket);
+    }
+    Ok(sockets)
+}
+
+/// One renderer's SSDP reply, kept until its description has been read.
+struct SsdpAnswer {
+    address: IpAddr,
+    port: u16,
+    location: Option<String>,
+    server: Option<String>,
+    usn: Option<String>,
+}
+
+const UPNP_DESCRIPTION_TIMEOUT: Duration = Duration::from_secs(3);
+const UPNP_DESCRIPTION_MAX_BYTES: usize = 256 * 1024;
+
+/// Reads the UPnP description an SSDP reply points to (on the replying device
+/// only, see `validated_ssdp_location_endpoint`) for the renderer's real name,
+/// maker and model. A renderer whose description cannot be read is still listed,
+/// named by its address, with the reason in its details.
+async fn describe_dlna_renderer(answer: SsdpAnswer) -> DiscoveredCastDevice {
+    let mut details = describe::DiscoveryDetails {
+        protocol: describe::PROTOCOL_DLNA,
+        description_url: answer.location.clone(),
+        server: answer.server.clone(),
+        usn: answer.usn.clone(),
+        addresses: vec![answer.address.to_string()],
+        ..Default::default()
+    };
+    let description = match answer.location.as_deref() {
+        Some(location) => match fetch_upnp_description(location).await {
+            Ok(description) => Some(description),
+            Err(error) => {
+                debug!(location, error = %error, "Could not read a DLNA renderer's description");
+                details.description_error = Some(error.to_string());
+                None
+            }
+        },
+        None => None,
+    };
+    let description = description.unwrap_or_default();
+    details.reported_name = description.friendly_name.clone();
+    details.model_description = description.model_description.clone();
+    details.model_number = description.model_number.clone();
+    details.services = description.services.clone();
+    let name = description
+        .friendly_name
+        .as_deref()
+        .map(describe::tidy_friendly_name)
+        .unwrap_or_else(|| format!("DLNA renderer ({})", answer.address));
+    DiscoveredCastDevice {
+        name,
+        address: answer.address.to_string(),
+        port: i32::from(answer.port),
+        model: description.model_name.clone().or(answer.server.clone()),
+        device_type: CastDeviceType::DlnaRenderer,
+        last_seen_at: chrono::Utc::now().to_rfc3339(),
+        manufacturer: description.manufacturer.clone(),
+        receiver_id: description
+            .udn
+            .clone()
+            .or_else(|| answer.usn.as_deref().and_then(describe::udn_from_usn)),
+        details: details.to_json(),
+    }
+}
+
+async fn fetch_upnp_description(location: &str) -> Result<describe::UpnpDescription> {
+    let client = reqwest::Client::builder()
+        .timeout(UPNP_DESCRIPTION_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .context("Could not build the HTTP client")?;
+    let mut response = client
+        .get(location)
+        .send()
+        .await
+        .context("The description did not answer")?
+        .error_for_status()
+        .context("The description answered with an error")?;
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .context("The description stopped part way")?
+    {
+        body.extend_from_slice(&chunk);
+        if body.len() > UPNP_DESCRIPTION_MAX_BYTES {
+            anyhow::bail!("The description is larger than 256 KB");
+        }
+    }
+    describe::parse_upnp_description(&String::from_utf8_lossy(&body))
+        .context("The description is not valid XML")
 }
 
 fn extract_ssdp_header(response: &str, header: &str) -> Option<String> {
